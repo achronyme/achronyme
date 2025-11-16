@@ -48,7 +48,7 @@ fn test_function_type_alias() {
     let mut eval = Evaluator::new();
     // Define a function type alias
     let result = eval.eval_str(r#"
-        type BinaryOp = (Number, Number) => Number
+        type BinaryOp = (Number, Number): Number
         let add: BinaryOp = (a, b) => a + b
         add(5, 3)
     "#);

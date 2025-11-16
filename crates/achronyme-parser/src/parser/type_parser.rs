@@ -66,6 +66,7 @@ impl AstParser {
             "String" => Ok(TypeAnnotation::String),
             "Complex" => Ok(TypeAnnotation::Complex),
             "Generator" => Ok(TypeAnnotation::Generator),
+            "Function" => Ok(TypeAnnotation::AnyFunction),
             "Edge" => Ok(TypeAnnotation::Edge),
             _ => Err(format!("Unknown simple type: {}", type_str))
         }
@@ -180,12 +181,12 @@ impl AstParser {
         Ok(TypeAnnotation::Record { fields })
     }
 
-    /// Parse function types: (Number, String) => Boolean
+    /// Parse function types: (Number, String): Boolean
     fn parse_function_type(&mut self, pair: Pair<Rule>) -> Result<TypeAnnotation, String> {
         let inner = pair.into_inner();
 
         // Collect all type annotations
-        // Grammar: "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "=>" ~ type_annotation
+        // Grammar: "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ ":" ~ type_annotation
         // All children are type_annotation pairs, the last one is the return type
         let mut params = Vec::new();
         let mut return_type_pair = None;

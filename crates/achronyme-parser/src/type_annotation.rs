@@ -65,6 +65,11 @@ pub enum TypeAnnotation {
     /// Future: Generator<T> for typed generators
     Generator,
 
+    /// Opaque function type (accepts any function without checking signature)
+    /// Use when you need to accept any callable, regardless of params/return
+    /// Example: let higher: (AnyFunction, Number): Number = (f, n) => f(n)
+    AnyFunction,
+
     /// Union type (CORE FEATURE)
     /// Represents "one of these types"
     /// Example: Number | String | null
@@ -94,6 +99,7 @@ impl TypeAnnotation {
             TypeAnnotation::Vector => "Vector".to_string(),
             TypeAnnotation::Edge => "Edge".to_string(),
             TypeAnnotation::Generator => "Generator".to_string(),
+            TypeAnnotation::AnyFunction => "Function".to_string(),
             TypeAnnotation::Null => "null".to_string(),
             TypeAnnotation::Any => "Any".to_string(),
 

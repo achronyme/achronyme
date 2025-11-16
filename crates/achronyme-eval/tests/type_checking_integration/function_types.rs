@@ -6,7 +6,7 @@ use achronyme_eval::Evaluator;
 fn test_function_type_annotation_basic() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let add: (Number, Number) => Number = (a, b) => a + b;
+        let add: (Number, Number): Number = (a, b) => a + b;
         add(10, 20)
     "#);
     assert!(result.is_ok());
@@ -20,7 +20,7 @@ fn test_function_type_annotation_basic() {
 fn test_function_type_annotation_enforces_param_types() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let add: (Number, Number) => Number = (a, b) => a + b;
+        let add: (Number, Number): Number = (a, b) => a + b;
         add(10, "Hola")
     "#);
     assert!(result.is_err());
@@ -35,7 +35,7 @@ fn test_function_type_annotation_enforces_param_types() {
 fn test_function_type_annotation_enforces_return_type() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let getNum: () => Number = () => "not a number";
+        let getNum: (): Number = () => "not a number";
         getNum()
     "#);
     assert!(result.is_err());
@@ -48,7 +48,7 @@ fn test_function_type_annotation_enforces_return_type() {
 fn test_function_type_mismatch_not_a_function() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let add: (Number, Number) => Number = "not a function"
+        let add: (Number, Number): Number = "not a function"
     "#);
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -60,7 +60,7 @@ fn test_function_type_mismatch_not_a_function() {
 fn test_function_type_with_any_param() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let toString: (Any) => String = x => "Value: " + x;
+        let toString: (Any): String = x => "Value: " + x;
         toString(42)
     "#);
     assert!(result.is_ok());
@@ -70,7 +70,7 @@ fn test_function_type_with_any_param() {
 fn test_higher_order_function_type() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let curry: (Number) => ((Number) => Number) = a => b => a + b;
+        let curry: (Number): ((Number): Number) = a => b => a + b;
         let add5 = curry(5);
         add5(10)
     "#);
@@ -85,7 +85,7 @@ fn test_higher_order_function_type() {
 fn test_function_type_no_params() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let getAnswer: () => Number = () => 42;
+        let getAnswer: (): Number = () => 42;
         getAnswer()
     "#);
     assert!(result.is_ok());
@@ -99,7 +99,7 @@ fn test_function_type_no_params() {
 fn test_function_type_with_union_param() {
     let mut eval = Evaluator::new();
     let result = eval.eval_str(r#"
-        let process: (Number | String) => Boolean = x => true;
+        let process: (Number | String): Boolean = x => true;
         process(42)
     "#);
     assert!(result.is_ok());

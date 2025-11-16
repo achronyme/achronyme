@@ -82,6 +82,9 @@ pub(crate) fn matches_type(value: &Value, expected: &TypeAnnotation) -> bool {
         // Generator type (opaque, no yield type checking)
         TypeAnnotation::Generator => matches!(value, Value::Generator(_)),
 
+        // Function type (opaque, accepts any function without signature checking)
+        TypeAnnotation::AnyFunction => matches!(value, Value::Function(_)),
+
         // Union type: value must match at least one variant
         TypeAnnotation::Union(types) => types.iter().any(|t| matches_type(value, t)),
 

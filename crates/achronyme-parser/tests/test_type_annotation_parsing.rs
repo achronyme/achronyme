@@ -273,8 +273,8 @@ fn test_let_with_tensor_no_shape() {
 
 #[test]
 fn test_lambda_with_function_return_type() {
-    // Use correct function type syntax: (Number) => Number
-    let result = parse("(): ((Number) => Number) => (x: Number) => x^2");
+    // Use correct function type syntax: (Number): Number
+    let result = parse("(): ((Number): Number) => (x: Number) => x^2");
     assert!(result.is_ok());
 
     let ast = result.unwrap();
@@ -331,8 +331,8 @@ fn test_sequence_with_types() {
 
 #[test]
 fn test_higher_order_function_with_types() {
-    // Use correct function type syntax: ((Number) => Number, Vector) => Vector
-    let result = parse("let map: (((Number) => Number), Vector) => Vector = (f, v) => v");
+    // Use correct function type syntax: ((Number): Number, Vector): Vector
+    let result = parse("let map: (((Number): Number), Vector): Vector = (f, v) => v");
     assert!(result.is_ok());
 
     let ast = result.unwrap();
@@ -343,7 +343,7 @@ fn test_higher_order_function_with_types() {
                 Some(TypeAnnotation::Function { params, return_type }) => {
                     assert_eq!(params.len(), 2);
 
-                    // First param: (Number) => Number
+                    // First param: (Number): Number
                     match &params[0] {
                         Some(TypeAnnotation::Function { params: inner_params, return_type: inner_return }) => {
                             assert_eq!(inner_params.len(), 1);

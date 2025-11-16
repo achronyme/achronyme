@@ -144,40 +144,40 @@ let validateAge = (age: Number): String | null =>
 
 ## Function Types
 
-Function types describe the signature of a function using arrow syntax:
+Function types describe the signature of a function using colon syntax for consistency with other type annotations:
 
 ### Basic Function Type Syntax
 
 ```javascript
 // Type for a function that takes Number and returns Number
-(Number) => Number
+(Number): Number
 
 // Type for a function that takes two Numbers and returns Number
-(Number, Number) => Number
+(Number, Number): Number
 
 // Type for a function that takes no arguments
-() => Number
+(): Number
 ```
 
 ### Annotating Higher-Order Functions
 
 ```javascript
 // Function that takes a function as parameter
-let applyTwice = (f: (Number) => Number, x: Number): Number =>
+let applyTwice = (f: (Number): Number, x: Number): Number =>
     f(f(x))
 
 let square = (x: Number): Number => x^2
 applyTwice(square, 3)  // 81
 
 // Function that returns a function
-let makeMultiplier = (factor: Number): (Number) => Number =>
+let makeMultiplier = (factor: Number): (Number): Number =>
     (x: Number) => x * factor
 
 let double = makeMultiplier(2)
 double(5)  // 10
 
 // Predicate function type
-let findFirst = (arr: Any, predicate: (Any) => Boolean): Any | null => do {
+let findFirst = (arr: Any, predicate: (Any): Boolean): Any | null => do {
     // Find first element matching predicate
     let found = filter(predicate, arr);
     if(len(found) > 0, found[0], null)
@@ -188,20 +188,20 @@ let findFirst = (arr: Any, predicate: (Any) => Boolean): Any | null => do {
 
 ```javascript
 // Transformer function type
-let mapValues = (data: Any, transform: (Any) => Any): Any =>
+let mapValues = (data: Any, transform: (Any): Any): Any =>
     map(transform, data)
 
 // Reducer function type
 let customReduce = (
     arr: Any,
-    reducer: (Any, Any) => Any,
+    reducer: (Any, Any): Any,
     initial: Any
 ): Any => reduce(reducer, initial, arr)
 
 // Comparison function type
 let sortBy = (
     arr: Any,
-    compare: (Any, Any) => Number
+    compare: (Any, Any): Number
 ): Any => do {
     // Sort implementation using compare function
     arr
@@ -246,10 +246,10 @@ let errorMessage: OptionalString = null
 
 ```javascript
 // Common function signatures
-type NumberTransform = (Number) => Number
-type Predicate = (Any) => Boolean
-type BinaryOp = (Number, Number) => Number
-type Comparator = (Any, Any) => Number
+type NumberTransform = (Number): Number
+type Predicate = (Any): Boolean
+type BinaryOp = (Number, Number): Number
+type Comparator = (Any, Any): Number
 
 // Use the aliases
 let square: NumberTransform = (x: Number) => x^2
@@ -261,16 +261,16 @@ let add: BinaryOp = (a: Number, b: Number) => a + b
 
 ```javascript
 // Mathematical function type
-type MathFunc = (Number) => Number
+type MathFunc = (Number): Number
 
 // Callback with optional result
-type Callback = (Any) => Any | null
+type Callback = (Any): Any | null
 
 // Event handler type
-type EventHandler = (String, Any) => Boolean
+type EventHandler = (String, Any): Boolean
 
 // Data processor
-type Processor = (Any) => Any
+type Processor = (Any): Any
 
 // Using aliases for cleaner signatures
 let compose = (
@@ -579,7 +579,7 @@ The gradual type system in Achronyme provides:
 - **Basic type annotations**: `Number`, `String`, `Boolean`, `Complex`, `Edge`
 - **Union types**: `Type1 | Type2` for values that can be multiple types
 - **Optional types**: `Type | null` for nullable values
-- **Function types**: `(Params) => ReturnType` for function signatures
+- **Function types**: `(Params): ReturnType` for function signatures
 - **Type aliases**: `type Name = TypeDefinition` for custom type names
 - **Any type**: Opt-out of type checking for dynamic code
 - **Type inference**: Automatic type propagation from annotations

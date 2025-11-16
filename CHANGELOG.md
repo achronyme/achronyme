@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.1] - 2025-11-15
+
+### Breaking Changes
+
+**Function Type Syntax Change**
+- Changed function type syntax from `(Params) => Return` to `(Params): Return`
+- This eliminates grammar ambiguity with lambda arrows
+- Provides consistency: `:` always means "has type" (variables, parameters, return types, function types)
+- Example: `let f: (Number, Number): Number = (a, b) => a + b`
+
+### New Features
+
+**Opaque `Function` Type**
+- Added `Function` as an opaque type (like `Generator`)
+- Useful for higher-order functions that accept any callable
+- Runtime type checking: `let higher: (Function, Number): Number = (f, n) => f(n)`
+- `typeof(myFunc)` returns "Function"
+
+### Bug Fixes
+
+- Fixed parsing ambiguity that caused `test_lambda_with_function_return_type` to fail in CI
+- Lambda return type with function signature now parses correctly:
+  `(): ((Number): Number) => (x: Number) => x^2`
+
+---
+
 ## [0.6.0] - 2025-11-15
 
 ### Major Features

@@ -25,7 +25,7 @@ print("Target point:")
 print(target)
 
 // Calculate distance with typed function
-let distance: (Point2D, Point2D) => Distance = (p1, p2) => do {
+let distance: (Point2D, Point2D): Distance = (p1, p2) => do {
     let dx = p2.x - p1.x
     let dy = p2.y - p1.y
     sqrt(dx * dx + dy * dy)
@@ -44,7 +44,7 @@ type MaybeNumber = Number | null
 type StringOrNumber = String | Number
 
 // Function that handles optional values
-let safeDivide: (Number, Number) => MaybeNumber = (a, b) =>
+let safeDivide: (Number, Number): MaybeNumber = (a, b) =>
     if(b == 0) { null } else { a / b }
 
 let result1: MaybeNumber = safeDivide(10, 2)
@@ -183,7 +183,7 @@ print("\n=== Part 7: Typed Iterator Pattern ===")
 type IteratorResult = { value: Number | null, done: Boolean }
 
 // Create a typed iterator factory
-let createCounter: (Number) => { next: () => IteratorResult } = (limit) => do {
+let createCounter: (Number): { next: (): IteratorResult } = (limit) => do {
     mut count = 0
     {
         next: () => do {
@@ -239,7 +239,7 @@ let avgCelsius = (reading1.celsius + reading2.celsius + reading3.celsius) / 3
 print("Average temperature: " + str(avgCelsius) + "C")
 
 // Type-safe temperature conversion
-let celsiusToFahrenheit: (Temperature) => Temperature = (c) => c * 9 / 5 + 32
+let celsiusToFahrenheit: (Temperature): Temperature = (c) => c * 9 / 5 + 32
 print("Conversion check: " + str(avgCelsius) + "C = " + str(celsiusToFahrenheit(avgCelsius)) + "F")
 
 // -----------------------------------------------------------------------------

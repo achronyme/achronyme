@@ -147,14 +147,14 @@ type_reference = {
     identifier
 }
 
-// Grouped type for precedence: ((Number) => String)
+// Grouped type for precedence: ((Number): String)
 grouped_type = {
-    "(" ~ type_annotation ~ ")" ~ !"=>"
+    "(" ~ type_annotation ~ ")"
 }
 
-// Simple types: Number, Boolean, String, Complex, Edge, Generator
+// Simple types: Number, Boolean, String, Complex, Edge, Generator, Function (opaque)
 simple_type = @{
-    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Edge") ~ !ASCII_ALPHANUMERIC
+    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Edge") ~ !ASCII_ALPHANUMERIC
 }
 
 // Tensor type: Tensor<Number> or Tensor<Complex, [2,3]>
@@ -186,10 +186,11 @@ record_type_field = {
   | (identifier ~ ":" ~ type_annotation)                // name: String
 }
 
-// Function type: (param types) => return type
-// Examples: (Number) => String, (Number, String) => Boolean, () => Number
+// Function type: (param types): return type
+// Examples: (Number): String, (Number, String): Boolean, (): Number
+// Uses ":" for consistency with other type annotations (variables, parameters, return types)
 function_type = {
-    "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ "=>" ~ type_annotation
+    "(" ~ (type_annotation ~ ("," ~ type_annotation)*)? ~ ")" ~ ":" ~ type_annotation
 }
 
 // Any type (opt-out of type checking)

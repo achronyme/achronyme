@@ -38,6 +38,7 @@ pub(crate) fn type_annotation_to_string(ty: &TypeAnnotation) -> String {
         TypeAnnotation::Vector => "Vector".to_string(),
         TypeAnnotation::Edge => "Edge".to_string(),
         TypeAnnotation::Generator => "Generator".to_string(),
+        TypeAnnotation::AnyFunction => "Function".to_string(),
         TypeAnnotation::Null => "null".to_string(),
         TypeAnnotation::Any => "Any".to_string(),
 
