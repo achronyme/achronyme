@@ -1,0 +1,103 @@
+// Try/Catch/Throw Error Handling Examples
+// Testing comprehensive error handling system
+
+// 1. Basic throw with string
+let simpleError = try {
+    throw "Simple error message"
+} catch (e) {
+    "Caught: " + e.message
+};
+print("Test 1 - Simple throw: " + simpleError);
+
+// 2. Throw with structured error (message + kind)
+let typedError = try {
+    throw { message: "Invalid argument", kind: "TypeError" }
+} catch (err) {
+    err.kind + ": " + err.message
+};
+print("Test 2 - Typed error: " + typedError);
+
+// 3. No error case - returns try block value
+let noError = try {
+    42 + 8
+} catch (e) {
+    0
+};
+print("Test 3 - No error: " + str(noError));
+
+// 4. Nested try/catch
+let nested = try {
+    try {
+        throw "Inner error"
+    } catch (inner) {
+        throw { message: "Re-thrown: " + inner.message, kind: "ChainedError" }
+    }
+} catch (outer) {
+    outer.kind + " -> " + outer.message
+};
+print("Test 4 - Nested: " + nested);
+
+// 5. Error in function
+let riskyFunction = (x) => do {
+    if (x < 0) {
+        throw { message: "Negative not allowed", kind: "ValueError" }
+    };
+    sqrt(x)
+};
+
+let funcError = try {
+    riskyFunction(-5)
+} catch (e) {
+    "Function threw: " + e.message
+};
+print("Test 5 - Function error: " + funcError);
+
+// 6. Error with source (error chaining) - source is internal
+let chainedError = try {
+    throw { message: "Wrapper error", kind: "ApplicationError" }
+} catch (e) {
+    "Kind: " + e.kind + ", Message: " + e.message
+};
+print("Test 6 - Error fields: " + chainedError);
+
+// 7. Runtime error caught
+let runtimeError = try {
+    let x = 10 / 0;
+    x
+} catch (e) {
+    "Runtime error caught: " + e.message
+};
+print("Test 7 - Runtime error: " + runtimeError);
+
+// 8. Error type checking
+let errorValue: Error = try {
+    throw "Test"
+} catch (e) {
+    e
+};
+print("Test 8 - Error type: " + typeof(errorValue));
+
+// 9. Error in conditional
+let conditionalError = (flag) => try {
+    if (flag) {
+        throw "Flag is true"
+    };
+    "No error"
+} catch (e) {
+    e.message
+};
+print("Test 9a - Conditional (true): " + conditionalError(true));
+print("Test 9b - Conditional (false): " + conditionalError(false));
+
+// 10. Multiple errors in sequence
+let safeDiv = (a, b) => try { a / b } catch (e) { "DIV/0" };
+let results = [
+    safeDiv(10, 1),
+    safeDiv(10, 0),
+    safeDiv(10, 2),
+    safeDiv(10, 0),
+    safeDiv(10, 3)
+];
+print("Test 10 - Multiple errors: " + str(results));
+
+print("\nAll error handling tests completed!");

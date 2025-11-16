@@ -48,5 +48,11 @@ pub fn value_to_string(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Generator(_) => "<generator>".to_string(),
         Value::GeneratorYield(_) => "<generator-yield>".to_string(),
+        Value::Error { message, kind, .. } => {
+            match kind {
+                Some(k) => format!("Error({}: {})", k, message),
+                None => format!("Error({})", message),
+            }
+        }
     }
 }

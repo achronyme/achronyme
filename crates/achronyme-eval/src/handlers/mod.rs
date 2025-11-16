@@ -18,3 +18,4 @@ pub mod assignment;
 pub mod control_flow;
 pub mod functions;
 pub mod indexing;
+pub mod pattern_matching;

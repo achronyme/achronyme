@@ -58,6 +58,13 @@ pub enum Value {
     /// Contains the value to yield and signals that generator should suspend
     /// This variant should never be exposed to user code
     GeneratorYield(Box<Value>),
+    /// Error value for try/catch/throw error handling
+    /// Contains message, optional kind (TypeError, ValueError, etc.), and optional source error
+    Error {
+        message: String,
+        kind: Option<String>,
+        source: Option<Box<Value>>,
+    },
 }
 
 /// State of a generator function

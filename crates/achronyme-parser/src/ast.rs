@@ -165,6 +165,24 @@ pub enum AstNode {
         iterable: Box<AstNode>,
         body: Box<AstNode>,
     },
+    // Throw statement: throw expr
+    // Throws an error that can be caught by try/catch
+    Throw {
+        value: Box<AstNode>,
+    },
+    // Try-catch expression: try { block } catch(error) { block }
+    // Error handling with scoped error binding
+    TryCatch {
+        try_block: Box<AstNode>,
+        error_param: String,
+        catch_block: Box<AstNode>,
+    },
+    // Match expression: match value { pattern => expr, ... }
+    // Pattern matching with destructuring and guards
+    Match {
+        value: Box<AstNode>,
+        arms: Vec<MatchArm>,
+    },
 }
 
 /// Represents an array element - can be a single expression or a spread expression
@@ -205,4 +223,56 @@ impl ImportItem {
     pub fn local_name(&self) -> &str {
         self.alias.as_deref().unwrap_or(&self.name)
     }
+}
+
+/// Pattern for pattern matching
+/// Used in match expressions to destructure and test values
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// Literal pattern: matches exact values (42, "hello", true)
+    Literal(LiteralPattern),
+
+    /// Variable pattern: binds the matched value to a name (x, name)
+    Variable(String),
+
+    /// Wildcard pattern: matches anything, ignores the value (_)
+    Wildcard,
+
+    /// Record pattern: destructures record fields ({ name: n, age: a })
+    Record {
+        fields: Vec<(String, Pattern)>,  // (field_name, pattern)
+    },
+
+    /// Vector pattern: matches array structure ([x, y, ...rest])
+    Vector {
+        elements: Vec<VectorPatternElement>,
+    },
+
+    /// Type pattern: matches by runtime type (Number, String, Error)
+    Type(String),
+}
+
+/// Literal pattern variants
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiteralPattern {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+}
+
+/// Vector pattern element: either a pattern or a rest pattern
+#[derive(Debug, Clone, PartialEq)]
+pub enum VectorPatternElement {
+    /// Regular pattern element
+    Pattern(Pattern),
+    /// Rest pattern: ...identifier (captures remaining elements)
+    Rest(String),
+}
+
+/// Match arm: a single case in a match expression
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Box<AstNode>>,  // Optional if condition
+    pub body: Box<AstNode>,
 }

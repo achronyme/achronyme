@@ -331,3 +331,145 @@ fn make_iterator_result(value: Value, done: bool) -> Value {
     map.insert("done".to_string(), Value::Boolean(done));
     Value::Record(map)
 }
+
+/// Evaluate a throw statement
+/// Converts the thrown value into an Error and returns Err() to propagate
+pub fn evaluate_throw(
+    evaluator: &mut Evaluator,
+    value: &AstNode,
+) -> Result<Value, String> {
+    let thrown_value = evaluator.evaluate(value)?;
+
+    // Convert the thrown value into a Value::Error
+    let error_value = match thrown_value {
+        // If it's already an Error, preserve it (for re-throws)
+        Value::Error { message, kind, source } => {
+            Value::Error { message, kind, source }
+        }
+        // If it's a String, wrap in Error with no kind
+        Value::String(msg) => {
+            Value::Error {
+                message: msg,
+                kind: None,
+                source: None,
+            }
+        }
+        // If it's a Record, try to extract message and kind fields
+        Value::Record(ref map) => {
+            let message = match map.get("message") {
+                Some(Value::String(s)) => s.clone(),
+                Some(other) => format!("{:?}", other),
+                None => "Unknown error".to_string(),
+            };
+            let kind = match map.get("kind") {
+                Some(Value::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+            Value::Error {
+                message,
+                kind,
+                source: None,
+            }
+        }
+        // For other values, convert to string
+        other => {
+            Value::Error {
+                message: format!("{:?}", other),
+                kind: None,
+                source: None,
+            }
+        }
+    };
+
+    // Format the error for propagation
+    let error_string = match &error_value {
+        Value::Error { message, kind, .. } => {
+            match kind {
+                Some(k) => format!("Thrown: {} - {}", k, message),
+                None => format!("Thrown: {}", message),
+            }
+        }
+        _ => "Thrown: Unknown error".to_string(),
+    };
+
+    // Return the error as Err to propagate up the call stack
+    // We encode the error value in the string for try_catch to parse
+    Err(error_string)
+}
+
+/// Evaluate a try-catch expression
+/// Catches errors thrown in the try block and binds them to the error parameter
+pub fn evaluate_try_catch(
+    evaluator: &mut Evaluator,
+    try_block: &AstNode,
+    error_param: &str,
+    catch_block: &AstNode,
+) -> Result<Value, String> {
+    // Evaluate the try block
+    match evaluator.evaluate(try_block) {
+        Ok(value) => {
+            // Check for special internal markers that should propagate
+            match value {
+                // EarlyReturn should propagate through try/catch
+                Value::EarlyReturn(_) => Ok(value),
+                // GeneratorYield should propagate (generators can't span try/catch)
+                Value::GeneratorYield(_) => Ok(value),
+                // Normal value - return it
+                _ => Ok(value),
+            }
+        }
+        Err(error_string) => {
+            // An error was thrown - handle it in the catch block
+
+            // Parse the error string to create an Error value
+            let error_value = parse_error_string(&error_string);
+
+            // Create a new scope for the catch block
+            evaluator.environment_mut().push_scope();
+
+            // Bind the error value to the error parameter
+            if let Err(e) = evaluator.environment_mut().define(error_param.to_string(), error_value) {
+                evaluator.environment_mut().pop_scope();
+                return Err(e);
+            }
+
+            // Evaluate the catch block
+            let result = evaluator.evaluate(catch_block);
+
+            // Pop the catch scope
+            evaluator.environment_mut().pop_scope();
+
+            result
+        }
+    }
+}
+
+/// Parse an error string into a Value::Error
+/// Handles the "Thrown: " prefix format from evaluate_throw
+fn parse_error_string(error_string: &str) -> Value {
+    if let Some(rest) = error_string.strip_prefix("Thrown: ") {
+        // Check if it has a kind prefix (e.g., "TypeError - message")
+        if let Some(dash_pos) = rest.find(" - ") {
+            let kind = rest[..dash_pos].to_string();
+            let message = rest[dash_pos + 3..].to_string();
+            Value::Error {
+                message,
+                kind: Some(kind),
+                source: None,
+            }
+        } else {
+            Value::Error {
+                message: rest.to_string(),
+                kind: None,
+                source: None,
+            }
+        }
+    } else {
+        // Generic error (not from throw)
+        Value::Error {
+            message: error_string.to_string(),
+            kind: Some("RuntimeError".to_string()),
+            source: None,
+        }
+    }
+}

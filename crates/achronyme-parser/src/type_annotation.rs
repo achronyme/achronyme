@@ -65,6 +65,11 @@ pub enum TypeAnnotation {
     /// Future: Generator<T> for typed generators
     Generator,
 
+    /// Error type (opaque, represents any error value)
+    /// Used for try/catch/throw error handling
+    /// Error values have message, optional kind, and optional source
+    Error,
+
     /// Opaque function type (accepts any function without checking signature)
     /// Use when you need to accept any callable, regardless of params/return
     /// Example: let higher: (AnyFunction, Number): Number = (f, n) => f(n)
@@ -99,6 +104,7 @@ impl TypeAnnotation {
             TypeAnnotation::Vector => "Vector".to_string(),
             TypeAnnotation::Edge => "Edge".to_string(),
             TypeAnnotation::Generator => "Generator".to_string(),
+            TypeAnnotation::Error => "Error".to_string(),
             TypeAnnotation::AnyFunction => "Function".to_string(),
             TypeAnnotation::Null => "null".to_string(),
             TypeAnnotation::Any => "Any".to_string(),

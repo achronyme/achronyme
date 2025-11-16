@@ -70,6 +70,9 @@ Achronyme provides the following built-in type names:
 | `Boolean` | Logical values | `true`, `false` |
 | `Complex` | Complex numbers | `3 + 4i` |
 | `Edge` | Graph edges | `A -> B` |
+| `Generator` | Generator/iterator | `generate { yield 1 }` |
+| `Function` | Any callable function | `(x) => x^2` |
+| `Error` | Error value | `throw "error"` |
 | `Any` | Any type (opt-out) | All values |
 
 ## Union Types

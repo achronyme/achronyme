@@ -459,6 +459,12 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             // GeneratorYield is an internal marker that should never reach the REPL
             "<internal:generator-yield>".to_string()
         }
+        Value::Error { message, kind, .. } => {
+            match kind {
+                Some(k) => format!("Error({}: {})", k, message),
+                None => format!("Error({})", message),
+            }
+        }
     }
 }
 

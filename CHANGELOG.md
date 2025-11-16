@@ -17,6 +17,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.2] - 2025-11-15 (Unreleased)
+
+### New Features
+
+**Comprehensive Pattern Matching**
+- Full `match` expression with pattern-based control flow
+- Literal patterns for numbers, strings, and booleans
+- Variable binding patterns with scoped bindings
+- Wildcard pattern `_` for catch-all cases
+- Record destructuring with nested patterns
+- Vector/array patterns with rest syntax (`...tail`)
+- Type patterns (Number, String, Boolean, Error, etc.)
+- Guard clauses with `if` conditions
+- First-match-wins semantics
+
+**Pattern Matching Examples**
+```javascript
+// Literal and guard patterns
+match x {
+    0 => "zero",
+    n if n > 0 => "positive",
+    _ => "negative"
+}
+
+// Record destructuring
+match person {
+    { name: n, age: a } if a >= 18 => n + " (adult)",
+    { name: n } => n + " (minor)",
+    _ => "unknown"
+}
+
+// Vector patterns with rest
+match list {
+    [] => "empty",
+    [head, ...tail] => head
+}
+
+// Type patterns
+match value {
+    Number => "number",
+    String => "string",
+    Error => "error",
+    _ => "other"
+}
+```
+
+**Comprehensive Error Handling System**
+- Added `try/catch/throw` expressions for robust error management
+- `throw` statement for explicit error throwing with structured data
+- `Error` type as first-class value with `message`, `kind`, and `source` fields
+- Expression-based try/catch returns value from either block
+- Runtime errors (division by zero, type errors) automatically caught
+- Error type integration with gradual type system
+
+**Error Value Structure**
+```javascript
+// Simple throw
+throw "Error message"
+
+// Structured throw
+throw { message: "Invalid input", kind: "ValidationError" }
+
+// Try/catch expression
+let result = try { riskyOp() } catch (e) { "default" }
+
+// Access error fields
+catch (e) { e.message + " (" + e.kind + ")" }
+```
+
+**Error Type in Type System**
+- `Error` type annotation for variables and function signatures
+- Union types with Error: `Number | Error`
+- Runtime type checking: `typeof(error)` returns "Error"
+- Type aliases: `type Result = Number | Error`
+
+### Breaking Changes
+
+**Guard Clause Syntax**
+- Guard conditions now require parentheses: `if (condition)` instead of `if condition`
+- This eliminates ambiguity with lambda arrow `=>` in expressions
+- Consistent with if-statement syntax: `if (cond) { ... }`
+- Example: `{ x: a, y: b } if (a == b) => "equal"`
+
+---
+
 ## [0.6.1] - 2025-11-15
 
 ### Breaking Changes

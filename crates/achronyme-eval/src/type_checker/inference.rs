@@ -58,5 +58,7 @@ pub fn infer_type(value: &Value) -> TypeAnnotation {
         Value::Generator(_) => TypeAnnotation::Any, // TODO: Add Generator type annotation
         // GeneratorYield is internal marker - should not appear in type inference
         Value::GeneratorYield(_) => TypeAnnotation::Any,
+        // Error type - represents an error value
+        Value::Error { .. } => TypeAnnotation::Error,
     }
 }

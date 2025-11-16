@@ -120,6 +120,14 @@ pub fn is_tail_position(node: &AstNode) -> bool {
         AstNode::GenerateBlock { .. } => false,
         // For-in loops are NOT tail position
         AstNode::ForInLoop { .. } => false,
+        // Throw is NOT tail position (it throws an error)
+        AstNode::Throw { .. } => false,
+        // TryCatch: catch block could be tail position, but for simplicity mark as false
+        AstNode::TryCatch { .. } => false,
+        // Match: each arm body could be in tail position
+        AstNode::Match { arms, .. } => {
+            arms.iter().all(|arm| is_tail_position(&arm.body))
+        }
     }
 }
 
@@ -218,6 +226,13 @@ fn contains_rec(node: &AstNode) -> bool {
 
         AstNode::Edge { metadata, .. } => {
             metadata.as_ref().map(|m| contains_rec(m)).unwrap_or(false)
+        }
+
+        AstNode::Match { value, arms } => {
+            contains_rec(value) || arms.iter().any(|arm| {
+                arm.guard.as_ref().map(|g| contains_rec(g)).unwrap_or(false)
+                    || contains_rec(&arm.body)
+            })
         }
 
         _ => false,
@@ -366,6 +381,17 @@ fn all_rec_are_tail_helper(node: &AstNode, in_tail_position: bool) -> bool {
         // Edge: metadata is NOT in tail position
         AstNode::Edge { metadata, .. } => {
             metadata.as_ref().map(|m| all_rec_are_tail_helper(m, false)).unwrap_or(true)
+        }
+
+        // Match: value is NOT in tail position, guard is NOT, but body inherits
+        AstNode::Match { value, arms } => {
+            all_rec_are_tail_helper(value, false)
+                && arms.iter().all(|arm| {
+                    let guard_ok = arm.guard.as_ref()
+                        .map(|g| all_rec_are_tail_helper(g, false))
+                        .unwrap_or(true);
+                    guard_ok && all_rec_are_tail_helper(&arm.body, in_tail_position)
+                })
         }
 
         // Literals and references don't contain rec

@@ -13,7 +13,8 @@ impl AstParser {
             Rule::if_expr => self.build_if_expr(inner),
             Rule::while_expr => self.build_while_expr(inner),
             Rule::for_in_loop => self.build_for_in_loop(inner),
-            // Future: Rule::match_expr => build_match_expr(inner),
+            Rule::try_catch_expr => self.build_try_catch_expr(inner),
+            Rule::match_expr => self.build_match_expr(inner),
             _ => Err(format!("Unexpected control flow rule: {:?}", inner.as_rule()))
         }
     }
@@ -101,6 +102,34 @@ impl AstParser {
             variable,
             iterable,
             body,
+        })
+    }
+
+    /// Build try-catch expression: try { block } catch(error) { block }
+    pub(super) fn build_try_catch_expr(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
+        let mut inner = pair.into_inner();
+
+        // Grammar: "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block
+
+        // Get try block
+        let try_block_pair = inner.next()
+            .ok_or("Missing try block in try-catch expression")?;
+        let try_block = Box::new(self.build_block(try_block_pair)?);
+
+        // Get error parameter name
+        let error_param_pair = inner.next()
+            .ok_or("Missing error parameter in catch clause")?;
+        let error_param = error_param_pair.as_str().to_string();
+
+        // Get catch block
+        let catch_block_pair = inner.next()
+            .ok_or("Missing catch block in try-catch expression")?;
+        let catch_block = Box::new(self.build_block(catch_block_pair)?);
+
+        Ok(AstNode::TryCatch {
+            try_block,
+            error_param,
+            catch_block,
         })
     }
 

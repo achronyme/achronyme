@@ -173,6 +173,19 @@ impl Evaluator {
                 // Type alias statements don't produce a value, return unit (true)
                 Ok(Value::Boolean(true))
             }
+
+            // Error handling
+            AstNode::Throw { value } => {
+                handlers::control_flow::evaluate_throw(self, value)
+            }
+            AstNode::TryCatch { try_block, error_param, catch_block } => {
+                handlers::control_flow::evaluate_try_catch(self, try_block, error_param, catch_block)
+            }
+
+            // Pattern matching
+            AstNode::Match { value, arms } => {
+                handlers::pattern_matching::evaluate_match(self, value, arms)
+            }
         }
     }
 
@@ -210,6 +223,21 @@ impl Evaluator {
                         Err("Generator.next is a method - use generator.next() to call it".to_string())
                     }
                     _ => Err(format!("Generators only have a 'next' method, not '{}'", field)),
+                }
+            }
+            Value::Error { message, kind, source } => {
+                // Error field access
+                match field {
+                    "message" => Ok(Value::String(message)),
+                    "kind" => match kind {
+                        Some(k) => Ok(Value::String(k)),
+                        None => Ok(Value::Null),
+                    },
+                    "source" => match source {
+                        Some(src) => Ok(*src),
+                        None => Ok(Value::Null),
+                    },
+                    _ => Err(format!("Error has no field '{}'. Available fields: message, kind, source", field)),
                 }
             }
             _ => Err(format!("Cannot access field '{}' on non-record/edge value", field)),

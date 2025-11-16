@@ -10,6 +10,7 @@ pub mod control_flow;
 pub mod functions;
 pub mod util;
 pub mod type_parser;
+pub mod pattern;
 
 // ============================================================================
 // AST Parser Struct

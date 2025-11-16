@@ -122,6 +122,11 @@ impl SerializedValue {
                 // GeneratorYield is an internal marker and should never be persisted
                 SerializedValue::Unsupported("generator yield".to_string())
             },
+
+            Value::Error { .. } => {
+                // Errors should not be persisted across sessions
+                SerializedValue::Unsupported("error".to_string())
+            },
         }
     }
 

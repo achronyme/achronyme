@@ -25,6 +25,7 @@ pub(crate) fn get_value_type_name(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Generator(_) => "Generator".to_string(),
         Value::GeneratorYield(_) => "GeneratorYield (internal)".to_string(),
+        Value::Error { .. } => "Error".to_string(),
     }
 }
 
@@ -38,6 +39,7 @@ pub(crate) fn type_annotation_to_string(ty: &TypeAnnotation) -> String {
         TypeAnnotation::Vector => "Vector".to_string(),
         TypeAnnotation::Edge => "Edge".to_string(),
         TypeAnnotation::Generator => "Generator".to_string(),
+        TypeAnnotation::Error => "Error".to_string(),
         TypeAnnotation::AnyFunction => "Function".to_string(),
         TypeAnnotation::Null => "null".to_string(),
         TypeAnnotation::Any => "Any".to_string(),

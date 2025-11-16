@@ -108,6 +108,15 @@ fn describe_value(value: &Value, indent: usize) -> String {
         Value::GeneratorYield(inner) => {
             format!("GeneratorYield({})", describe_value(inner, indent))
         }
+
+        Value::Error { message, kind, source } => {
+            let kind_str = kind.as_deref().unwrap_or("Unknown");
+            let source_str = match source {
+                Some(src) => format!(" (source: {})", describe_value(src, indent + 1)),
+                None => String::new(),
+            };
+            format!("Error({}: {}){}",  kind_str, message, source_str)
+        }
     }
 }
 

@@ -94,6 +94,7 @@ fn get_type_name(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Generator(_) => "Generator".to_string(),
         Value::GeneratorYield(_) => "GeneratorYield".to_string(),
+        Value::Error { .. } => "Error".to_string(),
     }
 }
 
@@ -212,6 +213,12 @@ fn format_value(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Generator(_) => "<generator>".to_string(),
         Value::GeneratorYield(_) => "<generator-yield>".to_string(),
+        Value::Error { message, kind, .. } => {
+            match kind {
+                Some(k) => format!("Error({}: {})", k, message),
+                None => format!("Error({})", message),
+            }
+        }
     }
 }
 

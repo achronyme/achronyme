@@ -61,8 +61,10 @@ string_char = {
 }
 
 // Reserved keywords (use word boundaries to prevent matching prefixes)
+// Note: "if" is NOT a keyword because if() function call syntax needs to work
+// The if_expr rule uses &"{" lookahead to distinguish if(cond){block} from if(cond, then, else)
 keyword = _{
-    ("let" | "mut" | "rec" | "self" | "true" | "false" | "import" | "from" | "export" | "as" | "return" | "while" | "type" | "yield" | "generate" | "for" | "in") ~ !ASCII_ALPHANUMERIC
+    ("let" | "mut" | "rec" | "self" | "true" | "false" | "import" | "from" | "export" | "as" | "return" | "while" | "type" | "yield" | "generate" | "for" | "in" | "try" | "catch" | "throw" | "match") ~ !ASCII_ALPHANUMERIC
 }
 
 // Identifiers: x, foo, my_var, PI, sin (but not keywords)
@@ -152,9 +154,9 @@ grouped_type = {
     "(" ~ type_annotation ~ ")"
 }
 
-// Simple types: Number, Boolean, String, Complex, Edge, Generator, Function (opaque)
+// Simple types: Number, Boolean, String, Complex, Edge, Generator, Function (opaque), Error
 simple_type = @{
-    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Edge") ~ !ASCII_ALPHANUMERIC
+    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Error" | "Edge") ~ !ASCII_ALPHANUMERIC
 }
 
 // Tensor type: Tensor<Number> or Tensor<Complex, [2,3]>
@@ -265,12 +267,96 @@ lambda = {
 // ============================================================================
 // Extensible system for control flow: if, match (future), while (future), etc.
 
-// Control flow expression: if, while, for-in, and more in the future
+// Control flow expression: if, while, for-in, try/catch, match, and more in the future
 control_flow_expr = {
     if_expr
   | while_expr
   | for_in_loop
-    // Future: | match_expr
+  | try_catch_expr
+  | match_expr
+}
+
+// ============================================================================
+// Pattern Matching
+// ============================================================================
+// Match expression: match value { pattern => expr, pattern => expr, ... }
+
+// Match expression
+match_expr = {
+    "match" ~ expr ~ "{" ~ NEWLINE* ~
+    match_arm ~ (NEWLINE* ~ "," ~ NEWLINE* ~ match_arm)* ~
+    (NEWLINE* ~ ",")? ~ NEWLINE* ~ "}"
+}
+
+// Match arm: pattern [if guard] => expression
+match_arm = {
+    pattern ~ guard_clause? ~ "=>" ~ NEWLINE* ~ expr
+}
+
+// Optional guard clause: if (condition)
+// Requires parentheses to avoid ambiguity with lambda arrow =>
+guard_clause = {
+    "if" ~ "(" ~ expr ~ ")"
+}
+
+// Pattern: the different types of patterns we can match
+pattern = {
+    record_pattern      // { name: n, age: a } - must come before literal to avoid ambiguity
+  | vector_pattern      // [x, y, ...rest]
+  | literal_pattern     // 42, "hello", true, null
+  | type_pattern        // Number, String, Error
+  | wildcard_pattern    // _
+  | variable_pattern    // x (binds value to x)
+}
+
+// Literal pattern: match exact values
+literal_pattern = {
+    boolean | string_literal | number
+}
+
+// Wildcard pattern: match anything, ignore value
+wildcard_pattern = { "_" }
+
+// Variable pattern: bind matched value to a name
+// Must not be a keyword or type name (handled by identifier rule which excludes keywords)
+variable_pattern = { identifier }
+
+// Type pattern: match by runtime type
+// These are capital-case type names: Number, String, Boolean, Error, etc.
+type_pattern = @{
+    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Error" | "Tensor" | "Vector" | "Record" | "Edge" | "Null") ~ !ASCII_ALPHANUMERIC
+}
+
+// Record pattern: destructure record fields
+// Syntax: { field1: pattern1, field2: pattern2 } or { field1, field2 } (shorthand)
+record_pattern = {
+    "{" ~ NEWLINE* ~
+    (record_pattern_field ~ (NEWLINE* ~ "," ~ NEWLINE* ~ record_pattern_field)*)? ~
+    NEWLINE* ~ "}"
+}
+
+// Record pattern field: name: pattern OR just name (shorthand for name: name)
+record_pattern_field = {
+    identifier ~ ":" ~ pattern
+  | identifier  // shorthand: { name } means { name: name }
+}
+
+// Vector pattern: match array structure
+// Syntax: [], [x], [x, y], [head, ...tail]
+vector_pattern = {
+    "[" ~ NEWLINE* ~
+    (vector_pattern_element ~ (NEWLINE* ~ "," ~ NEWLINE* ~ vector_pattern_element)*)? ~
+    NEWLINE* ~ "]"
+}
+
+// Vector pattern element: pattern or rest pattern (...name)
+vector_pattern_element = {
+    rest_pattern | pattern
+}
+
+// Rest pattern: ...identifier (captures remaining elements)
+rest_pattern = {
+    "..." ~ identifier
 }
 
 // If expression: if(condition) { block } else { block }
@@ -290,6 +376,12 @@ while_expr = {
 // Iterates over an iterator (object with next() method)
 for_in_loop = {
     "for" ~ "(" ~ identifier ~ "in" ~ expr ~ ")" ~ &"{" ~ block
+}
+
+// Try-catch expression: try { block } catch(error) { block }
+// Error handling with scoped error binding
+try_catch_expr = {
+    "try" ~ block ~ "catch" ~ "(" ~ identifier ~ ")" ~ block
 }
 
 // ============================================================================
@@ -491,8 +583,14 @@ yield_statement = {
     "yield" ~ expr
 }
 
-// Statement: import, export, let, mut, type alias, return, yield, assignment, or expression
-// Try import/export first, then return/yield, then assignment before expr to avoid ambiguity
+// Throw statement: throw expr
+// Throws an error that can be caught by try/catch
+throw_stmt = {
+    "throw" ~ expr
+}
+
+// Statement: import, export, let, mut, type alias, return, yield, throw, assignment, or expression
+// Try import/export first, then return/yield/throw, then assignment before expr to avoid ambiguity
 statement = {
     import_statement
   | export_statement
@@ -501,6 +599,7 @@ statement = {
   | type_alias_statement
   | return_statement
   | yield_statement
+  | throw_stmt
   | assignment
   | expr
 }
