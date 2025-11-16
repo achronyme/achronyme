@@ -100,6 +100,10 @@ pub fn is_tail_position(node: &AstNode) -> bool {
         AstNode::MutableDecl { .. } => false,
         AstNode::Assignment { .. } => false,
 
+        // Destructuring declarations are NOT tail position (they're statements)
+        AstNode::LetDestructuring { .. } => false,
+        AstNode::MutableDestructuring { .. } => false,
+
         // Return statement: the value expression is in tail position
         AstNode::Return { value } => is_tail_position(value),
 
@@ -223,6 +227,10 @@ fn contains_rec(node: &AstNode) -> bool {
         AstNode::MutableDecl { initializer, .. } => contains_rec(initializer.as_ref()),
 
         AstNode::Assignment { value, .. } => contains_rec(value),
+
+        AstNode::LetDestructuring { initializer, .. } => contains_rec(initializer.as_ref()),
+
+        AstNode::MutableDestructuring { initializer, .. } => contains_rec(initializer.as_ref()),
 
         AstNode::Edge { metadata, .. } => {
             metadata.as_ref().map(|m| contains_rec(m)).unwrap_or(false)
@@ -370,6 +378,15 @@ fn all_rec_are_tail_helper(node: &AstNode, in_tail_position: bool) -> bool {
 
         // Mutable declaration: initializer is NOT in tail position
         AstNode::MutableDecl { initializer, .. } => {
+            all_rec_are_tail_helper(initializer.as_ref(), false)
+        }
+
+        // Destructuring declarations: initializer is NOT in tail position
+        AstNode::LetDestructuring { initializer, .. } => {
+            all_rec_are_tail_helper(initializer.as_ref(), false)
+        }
+
+        AstNode::MutableDestructuring { initializer, .. } => {
             all_rec_are_tail_helper(initializer.as_ref(), false)
         }
 

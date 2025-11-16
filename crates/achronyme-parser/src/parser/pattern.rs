@@ -117,7 +117,7 @@ impl AstParser {
     }
 
     /// Build a record pattern: { field1: pattern1, field2: pattern2 }
-    fn build_record_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
+    pub(super) fn build_record_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
         let mut fields = Vec::new();
 
         for field_pair in pair.into_inner() {
@@ -150,7 +150,7 @@ impl AstParser {
     }
 
     /// Build a vector pattern: [x, y, ...rest]
-    fn build_vector_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
+    pub(super) fn build_vector_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
         let mut elements = Vec::new();
 
         for elem_pair in pair.into_inner() {

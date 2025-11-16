@@ -59,6 +59,12 @@ impl Evaluator {
             AstNode::MutableDecl { name, type_annotation, initializer } => {
                 handlers::variables::evaluate_mutable_declaration(self, name, type_annotation, initializer)
             }
+            AstNode::LetDestructuring { pattern, type_annotation, initializer } => {
+                handlers::variables::evaluate_let_destructuring(self, pattern, type_annotation, initializer)
+            }
+            AstNode::MutableDestructuring { pattern, type_annotation, initializer } => {
+                handlers::variables::evaluate_mutable_destructuring(self, pattern, type_annotation, initializer)
+            }
             AstNode::Assignment { target, value } => {
                 handlers::assignment::evaluate_assignment(self, target, value)
             }

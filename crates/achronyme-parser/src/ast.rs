@@ -83,6 +83,18 @@ pub enum AstNode {
         type_annotation: Option<TypeAnnotation>,  // Optional type annotation
         initializer: Box<AstNode>,
     },
+    /// Destructuring let binding: let { x, y } = value or let [a, b] = value
+    LetDestructuring {
+        pattern: Pattern,
+        type_annotation: Option<TypeAnnotation>,  // Optional type annotation
+        initializer: Box<AstNode>,
+    },
+    /// Mutable destructuring binding: mut { x, y } = value or mut [a, b] = value
+    MutableDestructuring {
+        pattern: Pattern,
+        type_annotation: Option<TypeAnnotation>,  // Optional type annotation
+        initializer: Box<AstNode>,
+    },
     Assignment {
         target: Box<AstNode>,  // postfix_expression (variable, field access, index)
         value: Box<AstNode>,

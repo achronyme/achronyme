@@ -541,14 +541,23 @@ export_statement = {
 
 // Let statement with optional type annotation
 // Syntax: let x: Type = value  OR  let x = value
+// Also supports destructuring: let { x, y } = value  OR  let [a, b] = value
 let_statement = {
     "let" ~ identifier ~ (":" ~ type_annotation)? ~ "=" ~ expr
+  | "let" ~ destructuring_pattern ~ (":" ~ type_annotation)? ~ "=" ~ expr
+}
+
+// Destructuring pattern for let/mut bindings (record or vector patterns)
+destructuring_pattern = {
+    record_pattern | vector_pattern
 }
 
 // Mut statement with optional type annotation
 // Syntax: mut x: Type = value  OR  mut x = value
+// Also supports destructuring: mut { x, y } = value  OR  mut [a, b] = value
 mut_statement = {
     "mut" ~ identifier ~ (":" ~ type_annotation)? ~ "=" ~ expr
+  | "mut" ~ destructuring_pattern ~ (":" ~ type_annotation)? ~ "=" ~ expr
 }
 
 // Type alias statement

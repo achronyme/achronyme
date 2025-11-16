@@ -177,3 +177,69 @@ fn is_special_form(name: &str) -> bool {
         "reduced_costs" | "basic_variables" | "nonbasic_variables"
     )
 }
+
+/// Evaluate a let destructuring statement (let { x, y } = value)
+/// Uses pattern matching to bind variables from the destructured value
+pub fn evaluate_let_destructuring(
+    evaluator: &mut Evaluator,
+    pattern: &achronyme_parser::ast::Pattern,
+    type_annotation: &Option<TypeAnnotation>,
+    initializer: &AstNode,
+) -> Result<Value, String> {
+    // Evaluate the initializer
+    let value = evaluator.evaluate(initializer)?;
+
+    // Type check if annotation is provided
+    if let Some(expected_type) = type_annotation {
+        // Resolve type aliases before checking
+        let resolved_type = evaluator.resolve_type(expected_type);
+
+        type_checker::check_type(&value, &resolved_type).map_err(|err| {
+            format!("Type error in destructuring: {}", err.replace("Type mismatch: ", ""))
+        })?;
+    }
+
+    // Use pattern matching to extract bindings
+    let bindings = crate::handlers::pattern_matching::match_pattern(&value, pattern)?
+        .ok_or_else(|| "Destructuring pattern does not match value".to_string())?;
+
+    // Bind all variables in the environment (immutable)
+    for (name, bound_value) in bindings {
+        evaluator.environment_mut().define(name, bound_value)?;
+    }
+
+    Ok(value)
+}
+
+/// Evaluate a mutable destructuring statement (mut { x, y } = value)
+/// Uses pattern matching to bind mutable variables from the destructured value
+pub fn evaluate_mutable_destructuring(
+    evaluator: &mut Evaluator,
+    pattern: &achronyme_parser::ast::Pattern,
+    type_annotation: &Option<TypeAnnotation>,
+    initializer: &AstNode,
+) -> Result<Value, String> {
+    // Evaluate the initializer
+    let value = evaluator.evaluate(initializer)?;
+
+    // Type check if annotation is provided
+    if let Some(expected_type) = type_annotation {
+        // Resolve type aliases before checking
+        let resolved_type = evaluator.resolve_type(expected_type);
+
+        type_checker::check_type(&value, &resolved_type).map_err(|err| {
+            format!("Type error in destructuring: {}", err.replace("Type mismatch: ", ""))
+        })?;
+    }
+
+    // Use pattern matching to extract bindings
+    let bindings = crate::handlers::pattern_matching::match_pattern(&value, pattern)?
+        .ok_or_else(|| "Destructuring pattern does not match value".to_string())?;
+
+    // Bind all variables in the environment (mutable)
+    for (name, bound_value) in bindings {
+        evaluator.environment_mut().define_mutable(name, bound_value)?;
+    }
+
+    Ok(value)
+}

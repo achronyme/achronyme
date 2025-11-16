@@ -118,62 +118,132 @@ impl AstParser {
         let mut inner = pair.into_inner();
 
         // Grammar: "let" ~ identifier ~ (":" ~ type_annotation)? ~ "=" ~ expr
-        let identifier = inner.next()
-            .ok_or("Missing identifier in let statement")?
-            .as_str()
-            .to_string();
+        //        | "let" ~ destructuring_pattern ~ (":" ~ type_annotation)? ~ "=" ~ expr
+        let first = inner.next()
+            .ok_or("Missing identifier or pattern in let statement")?;
 
-        // Parse optional type annotation
-        let mut type_annotation = None;
-        let mut next_pair = inner.next()
-            .ok_or("Missing initializer in let statement")?;
+        // Check if it's a destructuring pattern or a simple identifier
+        if first.as_rule() == Rule::destructuring_pattern {
+            // Destructuring let
+            let pattern = self.build_destructuring_pattern(first)?;
 
-        // Check if next element is a type annotation or the initializer
-        if next_pair.as_rule() == Rule::type_annotation {
-            type_annotation = Some(self.parse_type_annotation(next_pair)?);
-            next_pair = inner.next()
-                .ok_or("Missing initializer after type annotation")?;
+            // Parse optional type annotation
+            let mut type_annotation = None;
+            let mut next_pair = inner.next()
+                .ok_or("Missing initializer in let statement")?;
+
+            // Check if next element is a type annotation or the initializer
+            if next_pair.as_rule() == Rule::type_annotation {
+                type_annotation = Some(self.parse_type_annotation(next_pair)?);
+                next_pair = inner.next()
+                    .ok_or("Missing initializer after type annotation")?;
+            }
+
+            // next_pair is now the initializer
+            let initializer = self.build_ast_from_expr(next_pair)?;
+
+            Ok(AstNode::LetDestructuring {
+                pattern,
+                type_annotation,
+                initializer: Box::new(initializer),
+            })
+        } else {
+            // Simple identifier let
+            let identifier = first.as_str().to_string();
+
+            // Parse optional type annotation
+            let mut type_annotation = None;
+            let mut next_pair = inner.next()
+                .ok_or("Missing initializer in let statement")?;
+
+            // Check if next element is a type annotation or the initializer
+            if next_pair.as_rule() == Rule::type_annotation {
+                type_annotation = Some(self.parse_type_annotation(next_pair)?);
+                next_pair = inner.next()
+                    .ok_or("Missing initializer after type annotation")?;
+            }
+
+            // next_pair is now the initializer
+            let initializer = self.build_ast_from_expr(next_pair)?;
+
+            Ok(AstNode::VariableDecl {
+                name: identifier,
+                type_annotation,
+                initializer: Box::new(initializer),
+            })
         }
+    }
 
-        // next_pair is now the initializer
-        let initializer = self.build_ast_from_expr(next_pair)?;
+    /// Build a destructuring pattern from a destructuring_pattern rule
+    pub(super) fn build_destructuring_pattern(&mut self, pair: Pair<Rule>) -> Result<crate::ast::Pattern, String> {
+        let inner = pair.into_inner().next()
+            .ok_or("Empty destructuring pattern")?;
 
-        Ok(AstNode::VariableDecl {
-            name: identifier,
-            type_annotation,
-            initializer: Box::new(initializer),
-        })
+        match inner.as_rule() {
+            Rule::record_pattern => self.build_record_pattern(inner),
+            Rule::vector_pattern => self.build_vector_pattern(inner),
+            _ => Err(format!("Unexpected destructuring pattern rule: {:?}", inner.as_rule()))
+        }
     }
 
     pub(super) fn build_mut_statement(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
         let mut inner = pair.into_inner();
 
         // Grammar: "mut" ~ identifier ~ (":" ~ type_annotation)? ~ "=" ~ expr
-        let identifier = inner.next()
-            .ok_or("Missing identifier in mut statement")?
-            .as_str()
-            .to_string();
+        //        | "mut" ~ destructuring_pattern ~ (":" ~ type_annotation)? ~ "=" ~ expr
+        let first = inner.next()
+            .ok_or("Missing identifier or pattern in mut statement")?;
 
-        // Parse optional type annotation
-        let mut type_annotation = None;
-        let mut next_pair = inner.next()
-            .ok_or("Missing initializer in mut statement")?;
+        // Check if it's a destructuring pattern or a simple identifier
+        if first.as_rule() == Rule::destructuring_pattern {
+            // Destructuring mut
+            let pattern = self.build_destructuring_pattern(first)?;
 
-        // Check if next element is a type annotation or the initializer
-        if next_pair.as_rule() == Rule::type_annotation {
-            type_annotation = Some(self.parse_type_annotation(next_pair)?);
-            next_pair = inner.next()
-                .ok_or("Missing initializer after type annotation")?;
+            // Parse optional type annotation
+            let mut type_annotation = None;
+            let mut next_pair = inner.next()
+                .ok_or("Missing initializer in mut statement")?;
+
+            // Check if next element is a type annotation or the initializer
+            if next_pair.as_rule() == Rule::type_annotation {
+                type_annotation = Some(self.parse_type_annotation(next_pair)?);
+                next_pair = inner.next()
+                    .ok_or("Missing initializer after type annotation")?;
+            }
+
+            // next_pair is now the initializer
+            let initializer = self.build_ast_from_expr(next_pair)?;
+
+            Ok(AstNode::MutableDestructuring {
+                pattern,
+                type_annotation,
+                initializer: Box::new(initializer),
+            })
+        } else {
+            // Simple identifier mut
+            let identifier = first.as_str().to_string();
+
+            // Parse optional type annotation
+            let mut type_annotation = None;
+            let mut next_pair = inner.next()
+                .ok_or("Missing initializer in mut statement")?;
+
+            // Check if next element is a type annotation or the initializer
+            if next_pair.as_rule() == Rule::type_annotation {
+                type_annotation = Some(self.parse_type_annotation(next_pair)?);
+                next_pair = inner.next()
+                    .ok_or("Missing initializer after type annotation")?;
+            }
+
+            // next_pair is now the initializer
+            let initializer = self.build_ast_from_expr(next_pair)?;
+
+            Ok(AstNode::MutableDecl {
+                name: identifier,
+                type_annotation,
+                initializer: Box::new(initializer),
+            })
         }
-
-        // next_pair is now the initializer
-        let initializer = self.build_ast_from_expr(next_pair)?;
-
-        Ok(AstNode::MutableDecl {
-            name: identifier,
-            type_annotation,
-            initializer: Box::new(initializer),
-        })
     }
 
     pub(super) fn build_assignment(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {

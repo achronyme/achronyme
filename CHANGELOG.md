@@ -92,6 +92,30 @@ catch (e) { e.message + " (" + e.kind + ")" }
 - Runtime type checking: `typeof(error)` returns "Error"
 - Type aliases: `type Result = Number | Error`
 
+**Destructuring Assignment**
+- Pattern-based destructuring in `let` and `mut` bindings
+- Record destructuring: `let { name, age } = person`
+- Vector destructuring with rest: `let [head, ...tail] = list`
+- Nested patterns: `let { user: { name: n } } = data`
+- Partial matching: `let { x } = { x: 1, y: 2, z: 3 }`
+- Mutable destructuring: `mut { x, y } = point`
+- Wildcard support: `let [first, _, third] = triple`
+
+**Destructuring Examples**
+```javascript
+// Extract from records
+let person = { name: "Alice", age: 30, city: "NYC" }
+let { name, age } = person
+
+// Split arrays
+let list = [1, 2, 3, 4, 5]
+let [head, ...tail] = list  // head=1, tail=[2,3,4,5]
+
+// Nested extraction
+let data = { result: { value: 42 } }
+let { result: { value: v } } = data  // v=42
+```
+
 ### Breaking Changes
 
 **Guard Clause Syntax**
