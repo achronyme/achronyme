@@ -7,10 +7,10 @@
 /// - generator.next() - Resume generator and get next value
 /// - Iterator protocol: {value: T, done: Boolean}
 ///
-/// KNOWN LIMITATION: Yields inside nested control structures (while, if) are not
-/// fully supported yet. The current implementation uses simple position tracking
-/// which doesn't preserve the execution context within nested structures.
-/// This will be improved in a future version with proper continuation support.
+/// NESTED CONTROL FLOW SUPPORT: Yields inside nested control structures (while, if, for)
+/// are now fully supported. The implementation uses a yield-counting approach that
+/// re-executes the generator from the beginning while skipping already-processed yields.
+/// This enables proper state preservation across suspensions within nested structures.
 
 use achronyme_eval::Evaluator;
 use achronyme_types::value::Value;
@@ -93,7 +93,6 @@ fn test_generator_sticky_done() {
 // ============================================================================
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_generator_with_mutable_state() {
     let result = eval(r#"
         let countdown = (n) => generate {
@@ -122,7 +121,6 @@ fn test_generator_with_mutable_state() {
 }
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_generator_preserves_state() {
     let result = eval(r#"
         let counter = () => generate {
@@ -204,7 +202,6 @@ fn test_generator_return_ends_iteration() {
 // ============================================================================
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_fibonacci_generator() {
     let result = eval(r#"
         let fibonacci = () => generate {
@@ -250,7 +247,6 @@ fn test_fibonacci_generator() {
 // ============================================================================
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_for_in_with_generator() {
     let result = eval(r#"
         let range = (n) => generate {
@@ -312,7 +308,6 @@ fn test_for_in_empty_iterator() {
 }
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_for_in_with_early_return() {
     let result = eval(r#"
         let range = (n) => generate {
@@ -342,7 +337,6 @@ fn test_for_in_with_early_return() {
 // ============================================================================
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_map_over_generator() {
     let result = eval(r#"
         let range = (n) => generate {
@@ -382,7 +376,6 @@ fn test_map_over_generator() {
 }
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_collect_generator() {
     let result = eval(r#"
         let range = (n) => generate {
@@ -446,7 +439,6 @@ fn test_generator_next_no_args() {
 // ============================================================================
 
 #[test]
-#[ignore = "yields inside while loops not yet supported - needs continuation-based execution"]
 fn test_multiple_generator_instances() {
     let result = eval(r#"
         let counter = () => generate {

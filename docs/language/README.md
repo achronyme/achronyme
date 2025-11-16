@@ -66,6 +66,14 @@ let point = {
 28. **[I/O and Persistence](27-io-persistence.md)** - File I/O, environment save/restore
 29. **[Modules](28-modules.md)** - Import/export system, code organization
 
+### Pattern Matching and Destructuring
+30. **[Pattern Matching](36-pattern-matching.md)** - Match expressions, guards, type patterns
+31. **[Destructuring](37-destructuring.md)** - Extract values from records and vectors
+
+### Iteration and Control Flow
+32. **[Generators](38-generators.md)** - Lazy iterators with yield, infinite sequences
+33. **[Loop Control](39-loop-control.md)** - break, continue, and for-in loops
+
 ## Quick Reference Card
 
 ### Literals
@@ -85,6 +93,8 @@ true, false     // Boolean
 ^               // Power
 ==, !=, <, >    // Comparison
 &&, ||, !       // Logical
++=, -=, *=, /=  // Compound assignment
+%=, ^=          // Compound assignment
 ```
 
 ### Variables
@@ -105,6 +115,12 @@ let f = x => x^2
 
 // Multiple parameters
 let add = (a, b) => a + b
+
+// Default parameters
+let greet = (name, greeting = "Hello") => '${greeting}, ${name}!'
+
+// Optional parameters
+let format = (value: Number, decimals?: Number) => value
 
 // IIFE (complex expressions)
 let process = x => (doubled => doubled + 10)(x * 2)
@@ -135,6 +151,19 @@ let validate = (x) => do {
         return false
     };
     true
+}
+
+// break and continue in loops
+mut i = 0
+while(i < 100) {
+    if(i == 10) { break }
+    i += 1
+}
+
+// for-in iteration
+for(x in [1, 2, 3, 4, 5]) {
+    if(x % 2 == 0) { continue }
+    sum += x
 }
 
 // piecewise() for multiple conditions
@@ -171,6 +200,10 @@ arr[..5]
 {x: 10, y: 20}
 point.x
 point.method()
+
+// Optional fields
+type User = {name: String, email?: String}
+let user: User = {name: "Alice"}  // OK, email is optional
 
 // Self-reference with mutable fields
 {
@@ -296,6 +329,14 @@ export   // Export from current module
 from     // Used with import
 as       // Alias in imports
 return   // Early return from functions
+break    // Exit loop early
+continue // Skip to next iteration
+yield    // Generator yield value
+generate // Create generator
+for      // For-in loop
+in       // Used with for loops
+match    // Pattern matching
+type     // Type alias declaration
 ```
 
 **Note**: `if` and `piecewise` are **built-in functions**, not keywords.

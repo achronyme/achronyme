@@ -26,6 +26,8 @@ pub(crate) fn get_value_type_name(value: &Value) -> String {
         Value::Generator(_) => "Generator".to_string(),
         Value::GeneratorYield(_) => "GeneratorYield (internal)".to_string(),
         Value::Error { .. } => "Error".to_string(),
+        Value::LoopBreak(_) => "LoopBreak (internal)".to_string(),
+        Value::LoopContinue => "LoopContinue (internal)".to_string(),
     }
 }
 
@@ -68,11 +70,12 @@ pub(crate) fn type_annotation_to_string(ty: &TypeAnnotation) -> String {
             } else {
                 let fields_str = fields
                     .iter()
-                    .map(|(name, (is_mut, ty))| {
+                    .map(|(name, (is_mut, is_optional, ty))| {
+                        let optional_marker = if *is_optional { "?" } else { "" };
                         if *is_mut {
-                            format!("mut {}: {}", name, type_annotation_to_string(ty))
+                            format!("mut {}{}: {}", name, optional_marker, type_annotation_to_string(ty))
                         } else {
-                            format!("{}: {}", name, type_annotation_to_string(ty))
+                            format!("{}{}: {}", name, optional_marker, type_annotation_to_string(ty))
                         }
                     })
                     .collect::<Vec<_>>()

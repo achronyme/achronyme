@@ -60,11 +60,47 @@ string_char = {
   | "\\" ~ ("\"" | "\\" | "n" | "t" | "r")
 }
 
+// Interpolated string: 'Hello, ${name}!'
+// Uses single quotes with ${expr} interpolation
+// Regular string content is treated as literals, ${...} evaluates expressions
+// Uses $ (compound atomic) - atomic at this level but allows whitespace inside inner rules
+interpolated_string = ${
+    "'" ~ interpolated_string_part* ~ "'"
+}
+
+// Compound atomic to prevent WHITESPACE consumption between parts
+// but still allow expression parsing
+interpolated_string_part = !{
+    interpolation_expr
+  | interpolated_text
+}
+
+// ${expr} - expression to be evaluated and converted to string
+// Non-atomic to allow whitespace in expressions
+interpolation_expr = {
+    "${" ~ expr ~ "}"
+}
+
+// Text content (not ${...})
+// Supports \$ escape for literal ${ and \' for literal '
+// This is atomic to capture the raw text without whitespace processing
+interpolated_text = @{
+    (
+        "\\$"                    // Escaped dollar: \$ -> $
+      | "\\'"                    // Escaped single quote: \' -> '
+      | "\\\\"                   // Escaped backslash: \\ -> \
+      | "\\n"                    // Newline escape
+      | "\\t"                    // Tab escape
+      | "\\r"                    // Carriage return escape
+      | (!"'" ~ !"${" ~ !"\\" ~ ANY)  // Regular character (not ', ${, or \)
+    )+
+}
+
 // Reserved keywords (use word boundaries to prevent matching prefixes)
 // Note: "if" is NOT a keyword because if() function call syntax needs to work
 // The if_expr rule uses &"{" lookahead to distinguish if(cond){block} from if(cond, then, else)
 keyword = _{
-    ("let" | "mut" | "rec" | "self" | "true" | "false" | "import" | "from" | "export" | "as" | "return" | "while" | "type" | "yield" | "generate" | "for" | "in" | "try" | "catch" | "throw" | "match") ~ !ASCII_ALPHANUMERIC
+    ("let" | "mut" | "rec" | "self" | "true" | "false" | "import" | "from" | "export" | "as" | "return" | "while" | "type" | "yield" | "generate" | "for" | "in" | "try" | "catch" | "throw" | "match" | "break" | "continue") ~ !ASCII_ALPHANUMERIC
 }
 
 // Identifiers: x, foo, my_var, PI, sin (but not keywords)
@@ -122,10 +158,20 @@ record_field = {
 // Type Annotations (Gradual Typing System)
 // ============================================================================
 
-// Type annotation: union types or simple types
+// Type annotation: union types or simple types, with optional ? suffix for nullable
+// The optional_type_suffix allows writing Type? as shorthand for Type | null
 type_annotation = {
-    union_type | simple_type_annotation
+    union_type | simple_type_with_optional
 }
+
+// Simple type followed by optional ? marker
+// Examples: String?, Number? (shorthand for String | null, Number | null)
+simple_type_with_optional = {
+    simple_type_annotation ~ optional_type_suffix?
+}
+
+// Optional type suffix: ? means "or null"
+optional_type_suffix = { "?" }
 
 // Union types (core feature): Number | String | null
 union_type = {
@@ -184,9 +230,12 @@ record_type = {
 }
 
 record_type_field = {
-    (mut_keyword ~ identifier ~ ":" ~ type_annotation)  // mut value: Number
-  | (identifier ~ ":" ~ type_annotation)                // name: String
+    (mut_keyword ~ identifier ~ optional_marker? ~ ":" ~ type_annotation)  // mut value?: Number
+  | (identifier ~ optional_marker? ~ ":" ~ type_annotation)                // name?: String
 }
+
+// Optional field marker
+optional_marker = { "?" }
 
 // Function type: (param types): return type
 // Examples: (Number): String, (Number, String): Boolean, (): Number
@@ -205,9 +254,11 @@ null_type = @{ "null" ~ !ASCII_ALPHANUMERIC }
 // Lambda Functions and Do Blocks (with Type Annotations)
 // ============================================================================
 
-// Typed parameter: x (untyped) OR x: Type (typed) - gradual typing
+// Typed parameter: x (untyped) OR x: Type (typed) OR x = default OR x: Type = default - gradual typing with defaults
+// Also supports optional parameters: x? (optional untyped) OR x?: Type (optional typed)
+// Optional parameters are equivalent to x: Type | null with default value of null
 typed_param = {
-    identifier ~ (":" ~ type_annotation)?
+    identifier ~ optional_marker? ~ (":" ~ type_annotation)? ~ ("=" ~ expr)?
 }
 
 // Lambda parameters: single or multiple, with optional types
@@ -311,7 +362,7 @@ pattern = {
 
 // Literal pattern: match exact values
 literal_pattern = {
-    boolean | string_literal | number
+    boolean | null_literal | string_literal | number
 }
 
 // Wildcard pattern: match anything, ignore value
@@ -405,6 +456,7 @@ null_literal = { "null" ~ !ASCII_ALPHANUMERIC }
 // IMPORTANT: Order matters in PEG! More specific rules must come before general ones
 primary = {
     boolean            // Boolean literals
+  | interpolated_string // Interpolated strings (single quotes) - before string_literal
   | string_literal     // String literals
   | null_literal       // Null literal (must come before identifier)
   | complex            // Must come before number (3i contains number)
@@ -570,11 +622,16 @@ type_alias_statement = {
     "type" ~ identifier ~ "=" ~ type_annotation
 }
 
-// Assignment: x = 20, obj.field = 30, arr[0] = 40
+// Compound assignment operators: +=, -=, *=, /=, %=, ^=
+compound_assignment_op = { "+=" | "-=" | "*=" | "/=" | "%=" | "^=" }
+
+// Assignment: x = 20, obj.field = 30, arr[0] = 40, x += 5
 // Uses postfix_expression as target for maximum flexibility
 // Semantic validation happens in evaluator
+// IMPORTANT: compound_assignment must come BEFORE simple assignment to handle += before + and =
 assignment = {
-    postfix_expression ~ "=" ~ expr
+    postfix_expression ~ compound_assignment_op ~ expr  // compound: x += 5
+  | postfix_expression ~ "=" ~ expr                      // simple: x = 5
 }
 
 // Return statement: return expr
@@ -598,8 +655,22 @@ throw_stmt = {
     "throw" ~ expr
 }
 
-// Statement: import, export, let, mut, type alias, return, yield, throw, assignment, or expression
-// Try import/export first, then return/yield/throw, then assignment before expr to avoid ambiguity
+// Break statement: break [expr]
+// Exits the current loop, optionally returning a value
+// Only valid inside while/for loops
+break_statement = {
+    "break" ~ expr?
+}
+
+// Continue statement: continue
+// Skips to the next iteration of the current loop
+// Only valid inside while/for loops
+continue_statement = {
+    "continue"
+}
+
+// Statement: import, export, let, mut, type alias, return, yield, throw, break, continue, assignment, or expression
+// Try import/export first, then return/yield/throw/break/continue, then assignment before expr to avoid ambiguity
 statement = {
     import_statement
   | export_statement
@@ -609,6 +680,8 @@ statement = {
   | return_statement
   | yield_statement
   | throw_stmt
+  | break_statement
+  | continue_statement
   | assignment
   | expr
 }

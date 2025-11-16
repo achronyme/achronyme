@@ -127,6 +127,16 @@ impl SerializedValue {
                 // Errors should not be persisted across sessions
                 SerializedValue::Unsupported("error".to_string())
             },
+
+            Value::LoopBreak(_) => {
+                // LoopBreak is an internal marker and should never be persisted
+                SerializedValue::Unsupported("loop break".to_string())
+            },
+
+            Value::LoopContinue => {
+                // LoopContinue is an internal marker and should never be persisted
+                SerializedValue::Unsupported("loop continue".to_string())
+            },
         }
     }
 

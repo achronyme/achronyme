@@ -1,4 +1,4 @@
-use achronyme_parser::ast::AstNode;
+use achronyme_parser::ast::{AstNode, StringPart};
 use achronyme_types::value::Value;
 use crate::handlers;
 
@@ -68,6 +68,9 @@ impl Evaluator {
             AstNode::Assignment { target, value } => {
                 handlers::assignment::evaluate_assignment(self, target, value)
             }
+            AstNode::CompoundAssignment { target, operator, value } => {
+                handlers::assignment::evaluate_compound_assignment(self, target, operator, value)
+            }
             AstNode::Return { value } => {
                 // Evaluate the return value and wrap it in EarlyReturn
                 let return_value = self.evaluate(value)?;
@@ -117,9 +120,19 @@ impl Evaluator {
                     return Err("yield can only be used inside a generator (generate { ... })".to_string());
                 }
 
-                // We're in generator context - evaluate and return yield marker
-                let yield_value = self.evaluate(value)?;
-                Ok(Value::GeneratorYield(Box::new(yield_value)))
+                // Check if we should skip this yield (already processed in previous resume)
+                if self.generator_yield_count < self.generator_yield_target {
+                    // Skip this yield - it was already processed
+                    self.generator_yield_count += 1;
+                    // Still need to evaluate the value for side effects, but don't yield it
+                    let _ = self.evaluate(value)?;
+                    Ok(Value::Null)
+                } else {
+                    // This is the yield we should stop at
+                    self.generator_yield_count += 1;
+                    let yield_value = self.evaluate(value)?;
+                    Ok(Value::GeneratorYield(Box::new(yield_value)))
+                }
             }
 
             // Operations
@@ -192,6 +205,153 @@ impl Evaluator {
             AstNode::Match { value, arms } => {
                 handlers::pattern_matching::evaluate_match(self, value, arms)
             }
+
+            // Loop control flow
+            AstNode::Break { value } => {
+                // Check if we're inside a loop
+                if self.loop_depth == 0 {
+                    return Err("'break' can only be used inside a loop (while or for)".to_string());
+                }
+                // Evaluate the optional break value
+                let break_value = match value {
+                    Some(expr) => Some(Box::new(self.evaluate(expr)?)),
+                    None => None,
+                };
+                Ok(Value::LoopBreak(break_value))
+            }
+            AstNode::Continue => {
+                // Check if we're inside a loop
+                if self.loop_depth == 0 {
+                    return Err("'continue' can only be used inside a loop (while or for)".to_string());
+                }
+                Ok(Value::LoopContinue)
+            }
+
+            // Interpolated strings
+            AstNode::InterpolatedString { parts } => {
+                self.evaluate_interpolated_string(parts)
+            }
+        }
+    }
+
+    /// Evaluate an interpolated string by processing each part
+    fn evaluate_interpolated_string(&mut self, parts: &[StringPart]) -> Result<Value, String> {
+        let mut result = String::new();
+
+        for part in parts {
+            match part {
+                StringPart::Literal(text) => {
+                    result.push_str(text);
+                }
+                StringPart::Expression(expr) => {
+                    let value = self.evaluate(expr)?;
+                    let string_repr = self.value_to_string(&value)?;
+                    result.push_str(&string_repr);
+                }
+            }
+        }
+
+        Ok(Value::String(result))
+    }
+
+    /// Convert any Value to its string representation for interpolation
+    fn value_to_string(&self, value: &Value) -> Result<String, String> {
+        match value {
+            Value::Number(n) => {
+                // Format number without unnecessary trailing zeros
+                if n.fract() == 0.0 {
+                    Ok(format!("{}", *n as i64))
+                } else {
+                    Ok(format!("{}", n))
+                }
+            }
+            Value::Boolean(b) => Ok(b.to_string()),
+            Value::String(s) => Ok(s.clone()),
+            Value::Null => Ok("null".to_string()),
+            Value::Complex(c) => {
+                let re = c.re;
+                let im = c.im;
+                if re == 0.0 {
+                    Ok(format!("{}i", im))
+                } else if im >= 0.0 {
+                    Ok(format!("{}+{}i", re, im))
+                } else {
+                    Ok(format!("{}{}i", re, im))
+                }
+            }
+            Value::Tensor(tensor) => {
+                // Format tensor as array-like string
+                let data = tensor.data();
+                let formatted: Vec<String> = data.iter()
+                    .map(|n| {
+                        if n.fract() == 0.0 {
+                            format!("{}", *n as i64)
+                        } else {
+                            format!("{}", n)
+                        }
+                    })
+                    .collect();
+                Ok(format!("[{}]", formatted.join(", ")))
+            }
+            Value::ComplexTensor(tensor) => {
+                // Format complex tensor as array-like string
+                let data = tensor.data();
+                let formatted: Vec<String> = data.iter()
+                    .map(|c| {
+                        let re = c.re;
+                        let im = c.im;
+                        if re == 0.0 {
+                            format!("{}i", im)
+                        } else if im >= 0.0 {
+                            format!("{}+{}i", re, im)
+                        } else {
+                            format!("{}{}i", re, im)
+                        }
+                    })
+                    .collect();
+                Ok(format!("[{}]", formatted.join(", ")))
+            }
+            Value::Vector(vec) => {
+                // Format vector of Values
+                let formatted: Vec<String> = vec.iter()
+                    .map(|v| self.value_to_string(v))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("[{}]", formatted.join(", ")))
+            }
+            Value::Record(map) => {
+                // Format record as { key: value, ... }
+                let formatted: Vec<String> = map.iter()
+                    .map(|(k, v)| {
+                        self.value_to_string(v).map(|vs| format!("{}: {}", k, vs))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("{{{}}}", formatted.join(", ")))
+            }
+            Value::Function(_) => Ok("<function>".to_string()),
+            Value::Edge { from, to, directed, .. } => {
+                if *directed {
+                    Ok(format!("{} -> {}", from, to))
+                } else {
+                    Ok(format!("{} -- {}", from, to))
+                }
+            }
+            Value::Generator(_) => Ok("<generator>".to_string()),
+            Value::Error { message, kind, .. } => {
+                match kind {
+                    Some(k) => Ok(format!("Error({}): {}", k, message)),
+                    None => Ok(format!("Error: {}", message)),
+                }
+            }
+            // Control flow markers shouldn't appear in user code
+            Value::EarlyReturn(v) => self.value_to_string(v),
+            Value::TailCall(_) => Err("Cannot convert tail call marker to string".to_string()),
+            Value::GeneratorYield(v) => self.value_to_string(v),
+            Value::LoopBreak(v) => match v {
+                Some(val) => self.value_to_string(val),
+                None => Ok("null".to_string()),
+            },
+            Value::LoopContinue => Err("Cannot convert continue marker to string".to_string()),
+            Value::MutableRef(_) => Err("Cannot convert mutable reference to string".to_string()),
         }
     }
 
@@ -355,13 +515,16 @@ impl Evaluator {
         for stmt in statements {
             let value = self.evaluate(stmt)?;
 
-            // Check for early return - propagate it up immediately
-            if matches!(value, Value::EarlyReturn(_)) {
-                self.env.pop_scope();
-                return Ok(value);
+            // Check for control flow markers that need to propagate
+            match value {
+                Value::EarlyReturn(_) | Value::LoopBreak(_) | Value::LoopContinue | Value::GeneratorYield(_) => {
+                    self.env.pop_scope();
+                    return Ok(value);
+                }
+                _ => {
+                    result = Some(value);
+                }
             }
-
-            result = Some(value);
         }
 
         // Pop the scope
@@ -385,13 +548,16 @@ impl Evaluator {
         for stmt in statements {
             let value = self.evaluate(stmt)?;
 
-            // Check for early return - propagate it immediately
-            if matches!(value, Value::EarlyReturn(_)) {
-                self.env.pop_scope();
-                return Ok(value);
+            // Check for control flow markers that need to propagate
+            match value {
+                Value::EarlyReturn(_) | Value::LoopBreak(_) | Value::LoopContinue | Value::GeneratorYield(_) => {
+                    self.env.pop_scope();
+                    return Ok(value);
+                }
+                _ => {
+                    result = Some(value);
+                }
             }
-
-            result = Some(value);
         }
 
         // Pop the scope
@@ -425,23 +591,26 @@ impl Evaluator {
                 );
             }
         } else {
-            // User-defined module: load from file and import exported values
-            let exports = self.load_user_module(module_path)?;
+            // User-defined module: load from file and import exported values/types
+            let (value_exports, type_exports) = self.load_user_module(module_path)?;
 
             for item in items {
                 let local_name = item.local_name();
                 let original_name = &item.name;
 
-                // Check if the value is exported from the module
-                let value = exports.get(original_name).ok_or_else(|| {
-                    format!(
-                        "'{}' is not exported from module '{}'",
+                // Check if it's a value export
+                if let Some(value) = value_exports.get(original_name) {
+                    // Add the imported value to the environment
+                    self.env.define(local_name.to_string(), value.clone())?;
+                } else if let Some(type_def) = type_exports.get(original_name) {
+                    // Add the imported type to the type registry
+                    self.register_type_alias(local_name.to_string(), type_def.clone());
+                } else {
+                    return Err(format!(
+                        "'{}' is not exported from module '{}' (neither as value nor type)",
                         original_name, module_path
-                    )
-                })?;
-
-                // Add the imported value to the environment
-                self.env.define(local_name.to_string(), value.clone())?;
+                    ));
+                }
             }
         }
 
@@ -451,24 +620,27 @@ impl Evaluator {
 
     /// Evaluate export statement
     fn evaluate_export(&mut self, items: &[achronyme_parser::ast::ImportItem]) -> Result<Value, String> {
-        // Export statement: marks variables/functions for external use
+        // Export statement: marks variables/functions/types for external use
         for item in items {
             let name = &item.name;
             let export_name = item.local_name(); // Use alias if provided
 
-            // Check if the value exists in the environment
-            if !self.env.has(name) {
+            // Check if it's a value in the environment
+            if self.env.has(name) {
+                // Get the value from environment
+                let value = self.env.get(name)?;
+                // Add to exported values
+                self.exported_values.insert(export_name.to_string(), value);
+            } else if self.type_registry.contains_key(name) {
+                // It's a type alias - export from type registry
+                let type_def = self.type_registry.get(name).unwrap().clone();
+                self.exported_types.insert(export_name.to_string(), type_def);
+            } else {
                 return Err(format!(
-                    "Cannot export '{}': not found in current scope",
+                    "Cannot export '{}': not found in current scope (neither value nor type)",
                     name
                 ));
             }
-
-            // Get the value from environment
-            let value = self.env.get(name)?;
-
-            // Add to exported values
-            self.exported_values.insert(export_name.to_string(), value);
         }
 
         // Export statements don't produce a value, return unit (true)

@@ -44,6 +44,114 @@ let user = {
 user.address.city  // "Madrid"
 ```
 
+## Optional Fields
+
+Records can have optional fields using the `?` syntax in type annotations. Optional fields may be absent from the record.
+
+### Defining Optional Fields
+
+```achronyme
+// Type with optional fields
+type User = {name: String, email?: String, age?: Number}
+
+// The field can be present or absent
+let user1: User = {name: "Alice"}  // OK - email and age are optional
+let user2: User = {name: "Bob", email: "bob@example.com"}  // OK
+let user3: User = {name: "Charlie", email: "charlie@example.com", age: 30}  // OK
+```
+
+### Optional Fields as Union Types
+
+An optional field `field?: Type` is equivalent to `field: Type | null`. The field can hold a value of the specified type or be absent (treated as `null`).
+
+```achronyme
+type Config = {
+    timeout?: Number,      // timeout is Number | null
+    retries?: Number,      // retries is Number | null
+    verbose?: Boolean      // verbose is Boolean | null
+}
+
+let defaultConfig: Config = {}  // All optional fields absent
+let customConfig: Config = {timeout: 5000, verbose: true}
+```
+
+### Working with Optional Fields
+
+Use pattern matching or conditionals to handle optional fields:
+
+```achronyme
+type User = {name: String, email?: String}
+
+let sendGreeting = (user: User) => match user.email {
+    null => 'Hello, ${user.name}!'
+    email => 'Hello, ${user.name}! We\'ll contact you at ${email}'
+}
+
+let user1 = {name: "Alice"}
+let user2 = {name: "Bob", email: "bob@example.com"}
+
+sendGreeting(user1)  // "Hello, Alice!"
+sendGreeting(user2)  // "Hello, Bob! We'll contact you at bob@example.com"
+```
+
+### Use Cases
+
+**Configuration Objects:**
+```achronyme
+type DatabaseConfig = {
+    host: String,
+    port?: Number,        // Defaults to 5432 if not provided
+    username: String,
+    password: String,
+    ssl?: Boolean         // Defaults to false if not provided
+}
+
+let config: DatabaseConfig = {
+    host: "localhost",
+    username: "admin",
+    password: "secret"
+}
+```
+
+**API Responses:**
+```achronyme
+type ApiResponse = {
+    status: Number,
+    data?: Record,
+    error?: String
+}
+
+let successResponse: ApiResponse = {
+    status: 200,
+    data: {id: 1, name: "Alice"}
+}
+
+let errorResponse: ApiResponse = {
+    status: 404,
+    error: "Not found"
+}
+```
+
+**User Profiles:**
+```achronyme
+type Profile = {
+    id: Number,
+    username: String,
+    bio?: String,
+    avatar?: String,
+    location?: String
+}
+
+let minimalProfile: Profile = {id: 1, username: "alice"}
+let fullProfile: Profile = {
+    id: 2,
+    username: "bob",
+    bio: "Software developer",
+    avatar: "https://example.com/bob.jpg",
+    location: "Madrid"
+}
+```
+
 ## Records with Methods
 
 ### Using `self` Reference
@@ -320,6 +428,7 @@ let user = {
 
 - Records are key-value structures
 - Access fields with `.` notation
+- Optional fields with `field?: Type` syntax
 - Methods use `self` to reference the record
 - Spread operator (`...`) for copying/merging
 - Support OOP patterns (inheritance, mixins)

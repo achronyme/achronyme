@@ -6,15 +6,16 @@ use std::collections::HashMap;
 
 /// Check structural typing for records
 /// A record matches if it has all required fields with correct types (extra fields are OK)
+/// Optional fields (marked with ?) are allowed to be absent
 pub(crate) fn check_record_structural_type(
-    required_fields: &HashMap<String, (bool, TypeAnnotation)>,
+    required_fields: &HashMap<String, (bool, bool, TypeAnnotation)>,
     actual_fields: &HashMap<String, Value>,
 ) -> bool {
-    required_fields.iter().all(|(field_name, (_is_mut, field_type))| {
-        actual_fields
-            .get(field_name)
-            .map(|actual_value| super::checker::matches_type(actual_value, field_type))
-            .unwrap_or(false)
+    required_fields.iter().all(|(field_name, (_is_mut, is_optional, field_type))| {
+        match actual_fields.get(field_name) {
+            Some(actual_value) => super::checker::matches_type(actual_value, field_type),
+            None => *is_optional, // Missing field is OK only if optional
+        }
     })
 }
 

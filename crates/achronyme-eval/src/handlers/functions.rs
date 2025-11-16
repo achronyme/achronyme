@@ -2,6 +2,7 @@ use achronyme_parser::ast::AstNode;
 use achronyme_parser::type_annotation::TypeAnnotation;
 use achronyme_types::function::Function;
 use achronyme_types::value::Value;
+use std::rc::Rc;
 
 use crate::evaluator::Evaluator;
 use crate::tco;
@@ -9,18 +10,29 @@ use crate::tco;
 /// Evaluate a lambda expression with typed parameters and return type
 pub fn evaluate_lambda_with_return_type(
     evaluator: &Evaluator,
-    params: &[(String, Option<TypeAnnotation>)],
+    params: &[(String, Option<TypeAnnotation>, Option<Box<AstNode>>)],
     return_type: Option<TypeAnnotation>,
     body: &AstNode,
 ) -> Result<Value, String> {
     let closure_env = evaluator.environment().to_rc();
 
-    // Extract parameter names and type annotations
-    let param_names: Vec<String> = params.iter().map(|(name, _)| name.clone()).collect();
-    let param_types: Vec<Option<TypeAnnotation>> = params.iter().map(|(_, ty)| ty.clone()).collect();
+    // Extract parameter names, type annotations, and default values
+    let param_names: Vec<String> = params.iter().map(|(name, _, _)| name.clone()).collect();
+    let param_types: Vec<Option<TypeAnnotation>> = params.iter().map(|(_, ty, _)| ty.clone()).collect();
+    let param_defaults: Vec<Option<Rc<AstNode>>> = params
+        .iter()
+        .map(|(_, _, default)| default.as_ref().map(|d| Rc::new((**d).clone())))
+        .collect();
 
-    // Create a Function value with type annotations including return type
-    let function = Function::new_typed(param_names, param_types, return_type, body.clone(), closure_env);
+    // Create a Function value with type annotations, defaults, and return type
+    let function = Function::new_typed_with_defaults(
+        param_names,
+        param_types,
+        param_defaults,
+        return_type,
+        body.clone(),
+        closure_env,
+    );
 
     Ok(Value::Function(function))
 }
@@ -32,18 +44,49 @@ pub fn apply_lambda(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match function {
-        Function::UserDefined { params, param_types, return_type, body, closure_env } => {
-            // Check arity
-            if args.len() != params.len() {
+        Function::UserDefined { params, param_types, param_defaults, return_type, body, closure_env } => {
+            // Fill in missing arguments with defaults
+            let args_len = args.len();
+            let mut final_args = args;
+
+            // Check if we have too many arguments
+            if final_args.len() > params.len() {
                 return Err(format!(
-                    "Lambda expects {} arguments, got {}",
+                    "Lambda expects at most {} arguments, got {}",
                     params.len(),
-                    args.len()
+                    final_args.len()
                 ));
             }
 
+            // Fill in missing arguments with defaults
+            if final_args.len() < params.len() {
+                // We need to evaluate default values in the closure environment
+                let saved_env = evaluator.environment().clone();
+                *evaluator.environment_mut() = closure_env.borrow().clone();
+
+                for i in final_args.len()..params.len() {
+                    if let Some(default_ast) = &param_defaults[i] {
+                        // Evaluate the default value in the closure environment
+                        let default_value = evaluator.evaluate(default_ast)?;
+                        final_args.push(default_value);
+                    } else {
+                        // Restore environment before returning error
+                        *evaluator.environment_mut() = saved_env;
+                        return Err(format!(
+                            "Lambda expects {} arguments, got {} (parameter '{}' has no default)",
+                            params.len(),
+                            args_len,
+                            params[i]
+                        ));
+                    }
+                }
+
+                // Restore environment
+                *evaluator.environment_mut() = saved_env;
+            }
+
             // Type check arguments
-            for (i, (arg, param_type)) in args.iter().zip(param_types.iter()).enumerate() {
+            for (i, (arg, param_type)) in final_args.iter().zip(param_types.iter()).enumerate() {
                 if let Some(expected_type) = param_type {
                     crate::type_checker::check_type(arg, expected_type)
                         .map_err(|_| format!(
@@ -62,10 +105,10 @@ pub fn apply_lambda(
 
             let result = if is_tail_recursive {
                 // Use iterative execution for tail-recursive functions
-                apply_lambda_tco(evaluator, function, args)
+                apply_lambda_tco(evaluator, function, final_args)
             } else {
                 // Use regular recursive execution
-                apply_lambda_regular(evaluator, params, param_types, return_type, body, closure_env, args)
+                apply_lambda_regular(evaluator, params, param_types, param_defaults, return_type, body, closure_env, final_args)
             }?;
 
             // Type check return value
@@ -117,6 +160,7 @@ fn apply_lambda_regular(
     evaluator: &mut Evaluator,
     params: &[String],
     param_types: &[Option<TypeAnnotation>],
+    _param_defaults: &[Option<Rc<AstNode>>],  // Already resolved in apply_lambda
     return_type: &Option<TypeAnnotation>,
     body: &AstNode,
     closure_env: &std::rc::Rc<std::cell::RefCell<achronyme_types::Environment>>,
@@ -136,7 +180,14 @@ fn apply_lambda_regular(
 
     // Inject the current function as 'rec' for recursive calls
     // We need to reconstruct the function for rec binding
-    let function = Function::new_typed(params.to_vec(), param_types.to_vec(), return_type.clone(), body.clone(), closure_env.clone());
+    let function = Function::new_typed_with_defaults(
+        params.to_vec(),
+        param_types.to_vec(),
+        _param_defaults.to_vec(),
+        return_type.clone(),
+        body.clone(),
+        closure_env.clone(),
+    );
     evaluator.environment_mut().define("rec".to_string(), Value::Function(function))?;
 
     // If 'self' was available in the calling context, inject it (for record methods)

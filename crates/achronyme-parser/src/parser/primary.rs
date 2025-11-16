@@ -1,5 +1,5 @@
 use pest::iterators::Pair;
-use crate::ast::AstNode;
+use crate::ast::{AstNode, StringPart};
 use crate::parser::AstParser;
 use crate::pest_parser::Rule;
 
@@ -21,6 +21,9 @@ impl AstParser {
                 // Process escape sequences
                 let processed = self.process_escape_sequences(content);
                 Ok(AstNode::StringLiteral(processed))
+            }
+            Rule::interpolated_string => {
+                self.build_interpolated_string(inner)
             }
             Rule::number => {
                 let num = inner.as_str().parse::<f64>()
@@ -58,5 +61,90 @@ impl AstParser {
             Rule::expr => self.build_ast_from_expr(inner),
             _ => Err(format!("Unexpected primary rule: {:?}", inner.as_rule()))
         }
+    }
+
+    /// Build an interpolated string AST node from parsed parts
+    pub(super) fn build_interpolated_string(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
+        let mut parts = Vec::new();
+
+        // Structure: interpolated_string = { "'" ~ interpolated_string_part* ~ "'" }
+        for part in pair.into_inner() {
+            match part.as_rule() {
+                Rule::interpolated_string_part => {
+                    let inner = part.into_inner().next()
+                        .ok_or("Empty interpolated string part")?;
+
+                    match inner.as_rule() {
+                        Rule::interpolation_expr => {
+                            // ${expr} - parse the expression
+                            let expr_pair = inner.into_inner().next()
+                                .ok_or("Empty interpolation expression")?;
+                            let expr_ast = self.build_ast_from_expr(expr_pair)?;
+                            parts.push(StringPart::Expression(Box::new(expr_ast)));
+                        }
+                        Rule::interpolated_text => {
+                            // Plain text - process escape sequences
+                            let text = inner.as_str();
+                            let processed = self.process_interpolated_escapes(text);
+                            parts.push(StringPart::Literal(processed));
+                        }
+                        _ => return Err(format!("Unexpected interpolated string part rule: {:?}", inner.as_rule())),
+                    }
+                }
+                _ => return Err(format!("Unexpected rule in interpolated string: {:?}", part.as_rule())),
+            }
+        }
+
+        Ok(AstNode::InterpolatedString { parts })
+    }
+
+    /// Process escape sequences specific to interpolated strings
+    /// Handles: \$, \', \\, \n, \t, \r
+    pub(super) fn process_interpolated_escapes(&mut self, s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(&next_ch) = chars.peek() {
+                    match next_ch {
+                        '$' => {
+                            result.push('$');
+                            chars.next();
+                        }
+                        '\'' => {
+                            result.push('\'');
+                            chars.next();
+                        }
+                        '\\' => {
+                            result.push('\\');
+                            chars.next();
+                        }
+                        'n' => {
+                            result.push('\n');
+                            chars.next();
+                        }
+                        't' => {
+                            result.push('\t');
+                            chars.next();
+                        }
+                        'r' => {
+                            result.push('\r');
+                            chars.next();
+                        }
+                        _ => {
+                            // Unknown escape sequence, keep as is
+                            result.push('\\');
+                        }
+                    }
+                } else {
+                    result.push('\\');
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
     }
 }

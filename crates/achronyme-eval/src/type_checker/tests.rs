@@ -129,8 +129,8 @@ mod tests {
     #[test]
     fn test_record_structural_typing_exact_match() {
         let mut fields = HashMap::new();
-        fields.insert("name".to_string(), (false, TypeAnnotation::String));
-        fields.insert("age".to_string(), (false, TypeAnnotation::Number));
+        fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        fields.insert("age".to_string(), (false, false, TypeAnnotation::Number));
         let record_type = TypeAnnotation::Record { fields };
 
         let mut actual_fields = HashMap::new();
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn test_record_structural_typing_extra_fields_allowed() {
         let mut required_fields = HashMap::new();
-        required_fields.insert("name".to_string(), (false, TypeAnnotation::String));
+        required_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
         let record_type = TypeAnnotation::Record {
             fields: required_fields,
         };
@@ -165,8 +165,8 @@ mod tests {
     #[test]
     fn test_record_missing_required_field() {
         let mut required_fields = HashMap::new();
-        required_fields.insert("name".to_string(), (false, TypeAnnotation::String));
-        required_fields.insert("age".to_string(), (false, TypeAnnotation::Number));
+        required_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        required_fields.insert("age".to_string(), (false, false, TypeAnnotation::Number));
         let record_type = TypeAnnotation::Record {
             fields: required_fields,
         };
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_record_wrong_field_type() {
         let mut required_fields = HashMap::new();
-        required_fields.insert("name".to_string(), (false, TypeAnnotation::String));
+        required_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
         let record_type = TypeAnnotation::Record {
             fields: required_fields,
         };
@@ -197,14 +197,14 @@ mod tests {
     #[test]
     fn test_nested_record_types() {
         let mut inner_fields = HashMap::new();
-        inner_fields.insert("street".to_string(), (false, TypeAnnotation::String));
+        inner_fields.insert("street".to_string(), (false, false, TypeAnnotation::String));
         let inner_record = TypeAnnotation::Record {
             fields: inner_fields,
         };
 
         let mut outer_fields = HashMap::new();
-        outer_fields.insert("name".to_string(), (false, TypeAnnotation::String));
-        outer_fields.insert("address".to_string(), (false, inner_record));
+        outer_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        outer_fields.insert("address".to_string(), (false, false, inner_record));
         let outer_record = TypeAnnotation::Record {
             fields: outer_fields,
         };
@@ -460,8 +460,9 @@ mod tests {
         match inferred {
             TypeAnnotation::Record { fields } => {
                 assert_eq!(fields.len(), 2);
-                assert_eq!(fields.get("name").unwrap().1, TypeAnnotation::String);
-                assert_eq!(fields.get("age").unwrap().1, TypeAnnotation::Number);
+                // Fields are now (is_mutable, is_optional, type)
+                assert_eq!(fields.get("name").unwrap().2, TypeAnnotation::String);
+                assert_eq!(fields.get("age").unwrap().2, TypeAnnotation::Number);
             }
             _ => panic!("Expected Record type annotation"),
         }
@@ -488,7 +489,7 @@ mod tests {
     #[test]
     fn test_complex_union_with_records() {
         let mut record_fields = HashMap::new();
-        record_fields.insert("value".to_string(), (false, TypeAnnotation::Number));
+        record_fields.insert("value".to_string(), (false, false, TypeAnnotation::Number));
         let record_type = TypeAnnotation::Record {
             fields: record_fields,
         };
@@ -508,5 +509,85 @@ mod tests {
 
         // Number doesn't match
         assert!(check_type(&Value::Number(42.0), &union).is_err());
+    }
+
+    #[test]
+    fn test_optional_field_present() {
+        // Test that a record with an optional field present type checks correctly
+        let mut type_fields = HashMap::new();
+        type_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        type_fields.insert("age".to_string(), (false, true, TypeAnnotation::Number)); // optional
+        let record_type = TypeAnnotation::Record { fields: type_fields };
+
+        let mut value_fields = HashMap::new();
+        value_fields.insert("name".to_string(), Value::String("Alice".into()));
+        value_fields.insert("age".to_string(), Value::Number(30.0));
+        let value = Value::Record(value_fields);
+
+        assert!(check_type(&value, &record_type).is_ok());
+    }
+
+    #[test]
+    fn test_optional_field_absent() {
+        // Test that a record with an optional field absent type checks correctly
+        let mut type_fields = HashMap::new();
+        type_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        type_fields.insert("age".to_string(), (false, true, TypeAnnotation::Number)); // optional
+        let record_type = TypeAnnotation::Record { fields: type_fields };
+
+        let mut value_fields = HashMap::new();
+        value_fields.insert("name".to_string(), Value::String("Bob".into()));
+        // age is absent
+        let value = Value::Record(value_fields);
+
+        assert!(check_type(&value, &record_type).is_ok());
+    }
+
+    #[test]
+    fn test_required_field_absent_fails() {
+        // Test that a record with a required field absent fails type check
+        let mut type_fields = HashMap::new();
+        type_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        type_fields.insert("age".to_string(), (false, false, TypeAnnotation::Number)); // required
+        let record_type = TypeAnnotation::Record { fields: type_fields };
+
+        let mut value_fields = HashMap::new();
+        value_fields.insert("name".to_string(), Value::String("Charlie".into()));
+        // age is absent but required
+        let value = Value::Record(value_fields);
+
+        assert!(check_type(&value, &record_type).is_err());
+    }
+
+    #[test]
+    fn test_optional_field_wrong_type_fails() {
+        // Test that an optional field with wrong type fails
+        let mut type_fields = HashMap::new();
+        type_fields.insert("name".to_string(), (false, false, TypeAnnotation::String));
+        type_fields.insert("age".to_string(), (false, true, TypeAnnotation::Number)); // optional Number
+        let record_type = TypeAnnotation::Record { fields: type_fields };
+
+        let mut value_fields = HashMap::new();
+        value_fields.insert("name".to_string(), Value::String("Dave".into()));
+        value_fields.insert("age".to_string(), Value::String("not a number".into())); // wrong type
+        let value = Value::Record(value_fields);
+
+        assert!(check_type(&value, &record_type).is_err());
+    }
+
+    #[test]
+    fn test_mutable_optional_field() {
+        // Test mutable optional field
+        let mut type_fields = HashMap::new();
+        type_fields.insert("id".to_string(), (false, false, TypeAnnotation::Number));
+        type_fields.insert("mut_value".to_string(), (true, true, TypeAnnotation::String)); // mutable and optional
+        let record_type = TypeAnnotation::Record { fields: type_fields };
+
+        // With mutable optional field absent
+        let mut value_fields = HashMap::new();
+        value_fields.insert("id".to_string(), Value::Number(1.0));
+        let value = Value::Record(value_fields);
+
+        assert!(check_type(&value, &record_type).is_ok());
     }
 }

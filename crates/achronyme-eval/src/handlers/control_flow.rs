@@ -35,31 +35,55 @@ pub fn evaluate_while(
 ) -> Result<Value, String> {
     let mut last_value = Value::Number(0.0);
 
-    loop {
+    // Track that we're inside a loop
+    evaluator.loop_depth += 1;
+
+    let result = loop {
         // Evaluate condition
         let cond_val = evaluator.evaluate(condition)?;
         let cond_bool = value_to_bool(&cond_val)?;
 
         // If condition is false, exit loop
         if !cond_bool {
-            break;
+            break Ok(last_value);
         }
 
         // Execute body
-        last_value = evaluator.evaluate(body)?;
+        let body_result = evaluator.evaluate(body)?;
 
-        // Check for early return - propagate it immediately
-        if matches!(last_value, Value::EarlyReturn(_)) {
-            return Ok(last_value);
+        // Check for control flow markers
+        match body_result {
+            // Break: exit the loop immediately
+            Value::LoopBreak(break_value) => {
+                last_value = break_value.map(|v| *v).unwrap_or(Value::Number(0.0));
+                break Ok(last_value);
+            }
+            // Continue: skip to next iteration
+            Value::LoopContinue => {
+                // Just continue to next iteration
+                continue;
+            }
+            // Early return: propagate it immediately
+            Value::EarlyReturn(_) => {
+                evaluator.loop_depth -= 1;
+                return Ok(body_result);
+            }
+            // Generator yield: propagate it immediately
+            Value::GeneratorYield(_) => {
+                evaluator.loop_depth -= 1;
+                return Ok(body_result);
+            }
+            // Normal value: store it
+            _ => {
+                last_value = body_result;
+            }
         }
+    };
 
-        // Check for generator yield - propagate it immediately
-        if matches!(last_value, Value::GeneratorYield(_)) {
-            return Ok(last_value);
-        }
-    }
+    // Restore loop depth
+    evaluator.loop_depth -= 1;
 
-    Ok(last_value)
+    result
 }
 
 /// Evaluate a piecewise function
@@ -106,8 +130,10 @@ pub fn evaluate_generate_block(
     // Capture current environment for the generator
     let captured_env = evaluator.environment().clone();
 
-    // Create generator state
-    let state = GeneratorState::new(captured_env, statements.to_vec());
+    // Create generator state with original environment preserved
+    let mut state = GeneratorState::new(captured_env.clone(), statements.to_vec());
+    // Store the original environment for re-execution
+    state.original_env = Some(captured_env);
 
     // Return generator value
     let gen_rc = Rc::new(RefCell::new(state));
@@ -115,7 +141,7 @@ pub fn evaluate_generate_block(
 }
 
 /// Evaluate a for-in loop: for(variable in iterable) { body }
-/// Iterates over an iterator (object with next() method)
+/// Iterates over an iterator (object with next() method), vector, or tensor
 pub fn evaluate_for_in(
     evaluator: &mut Evaluator,
     variable: &str,
@@ -125,35 +151,259 @@ pub fn evaluate_for_in(
     // Evaluate iterable expression
     let iter_value = evaluator.evaluate(iterable)?;
 
-    // Check if it has a next() method (must be a record or generator)
-    let next_fn = match &iter_value {
-        Value::Record(map) => {
-            map.get("next")
-                .cloned()
-                .ok_or_else(|| "Iterable must have a 'next' method".to_string())?
+    // Check the type of iterable and dispatch to appropriate handler
+    match &iter_value {
+        // Vector: iterate directly over elements
+        Value::Vector(elements) => {
+            return evaluate_for_in_vector(evaluator, variable, elements.clone(), body);
         }
+        // Tensor: iterate over elements (flattened for 1D, or rows for 2D+)
+        Value::Tensor(tensor) => {
+            return evaluate_for_in_tensor(evaluator, variable, tensor.clone(), body);
+        }
+        // ComplexTensor: iterate over complex elements
+        Value::ComplexTensor(tensor) => {
+            return evaluate_for_in_complex_tensor(evaluator, variable, tensor.clone(), body);
+        }
+        // Generator: use special generator iteration
         Value::Generator(gen_rc) => {
-            // For generators, we create a wrapper that calls resume_generator
-            // Return the generator itself - we'll handle .next() specially
             return evaluate_generator_for_in(evaluator, variable, gen_rc.clone(), body);
         }
-        _ => {
-            return Err("for-in requires an iterable (object with next method or generator)".to_string());
+        // Record with next() method: iterator protocol
+        Value::Record(map) => {
+            let next_fn = map.get("next")
+                .cloned()
+                .ok_or_else(|| "Record must have a 'next' method to be iterable".to_string())?;
+            return evaluate_iterator_for_in(evaluator, variable, next_fn, body);
         }
-    };
+        _ => {
+            return Err(format!(
+                "Cannot iterate over {}: expected Vector, Tensor, Generator, or iterator (object with next method)",
+                get_type_name(&iter_value)
+            ));
+        }
+    }
+}
 
+/// Helper function to get type name for error messages
+fn get_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Number(_) => "Number",
+        Value::Boolean(_) => "Boolean",
+        Value::String(_) => "String",
+        Value::Vector(_) => "Vector",
+        Value::Tensor(_) => "Tensor",
+        Value::ComplexTensor(_) => "ComplexTensor",
+        Value::Complex(_) => "Complex",
+        Value::Function(_) => "Function",
+        Value::Record(_) => "Record",
+        Value::Edge { .. } => "Edge",
+        Value::Generator(_) => "Generator",
+        Value::Null => "Null",
+        Value::Error { .. } => "Error",
+        Value::EarlyReturn(_) => "EarlyReturn",
+        Value::TailCall(_) => "TailCall",
+        Value::GeneratorYield(_) => "GeneratorYield",
+        Value::LoopBreak(_) => "LoopBreak",
+        Value::LoopContinue => "LoopContinue",
+        Value::MutableRef(_) => "MutableRef",
+    }
+}
+
+/// Evaluate for-in loop over a Vector
+fn evaluate_for_in_vector(
+    evaluator: &mut Evaluator,
+    variable: &str,
+    elements: Vec<Value>,
+    body: &AstNode,
+) -> Result<Value, String> {
     // Create new scope for loop
     evaluator.environment_mut().push_scope();
 
+    // Track that we're inside a loop
+    evaluator.loop_depth += 1;
+
     let mut last_value = Value::Null;
 
-    loop {
+    let result = 'outer: {
+        for element in elements {
+            // Bind loop variable
+            evaluator.environment_mut().define(variable.to_string(), element)?;
+
+            // Execute body
+            let body_result = evaluator.evaluate(body)?;
+
+            // Check for control flow markers
+            match body_result {
+                Value::LoopBreak(break_value) => {
+                    last_value = break_value.map(|v| *v).unwrap_or(Value::Null);
+                    break 'outer Ok(last_value);
+                }
+                Value::LoopContinue => {
+                    continue;
+                }
+                Value::EarlyReturn(_) => {
+                    evaluator.loop_depth -= 1;
+                    evaluator.environment_mut().pop_scope();
+                    return Ok(body_result);
+                }
+                Value::GeneratorYield(_) => {
+                    evaluator.loop_depth -= 1;
+                    evaluator.environment_mut().pop_scope();
+                    return Ok(body_result);
+                }
+                _ => {
+                    last_value = body_result;
+                }
+            }
+        }
+        Ok(last_value)
+    };
+
+    evaluator.loop_depth -= 1;
+    evaluator.environment_mut().pop_scope();
+    result
+}
+
+/// Evaluate for-in loop over a RealTensor
+fn evaluate_for_in_tensor(
+    evaluator: &mut Evaluator,
+    variable: &str,
+    tensor: achronyme_types::tensor::RealTensor,
+    body: &AstNode,
+) -> Result<Value, String> {
+    // Create new scope for loop
+    evaluator.environment_mut().push_scope();
+
+    // Track that we're inside a loop
+    evaluator.loop_depth += 1;
+
+    let mut last_value = Value::Null;
+
+    // Get tensor data (flattened view)
+    let data = tensor.data();
+
+    let result = 'outer: {
+        for &value in data {
+            // Bind loop variable as Number
+            evaluator.environment_mut().define(variable.to_string(), Value::Number(value))?;
+
+            // Execute body
+            let body_result = evaluator.evaluate(body)?;
+
+            // Check for control flow markers
+            match body_result {
+                Value::LoopBreak(break_value) => {
+                    last_value = break_value.map(|v| *v).unwrap_or(Value::Null);
+                    break 'outer Ok(last_value);
+                }
+                Value::LoopContinue => {
+                    continue;
+                }
+                Value::EarlyReturn(_) => {
+                    evaluator.loop_depth -= 1;
+                    evaluator.environment_mut().pop_scope();
+                    return Ok(body_result);
+                }
+                Value::GeneratorYield(_) => {
+                    evaluator.loop_depth -= 1;
+                    evaluator.environment_mut().pop_scope();
+                    return Ok(body_result);
+                }
+                _ => {
+                    last_value = body_result;
+                }
+            }
+        }
+        Ok(last_value)
+    };
+
+    evaluator.loop_depth -= 1;
+    evaluator.environment_mut().pop_scope();
+    result
+}
+
+/// Evaluate for-in loop over a ComplexTensor
+fn evaluate_for_in_complex_tensor(
+    evaluator: &mut Evaluator,
+    variable: &str,
+    tensor: achronyme_types::tensor::ComplexTensor,
+    body: &AstNode,
+) -> Result<Value, String> {
+    // Create new scope for loop
+    evaluator.environment_mut().push_scope();
+
+    // Track that we're inside a loop
+    evaluator.loop_depth += 1;
+
+    let mut last_value = Value::Null;
+
+    // Get tensor data (flattened view)
+    let data = tensor.data();
+
+    let result = 'outer: {
+        for &value in data {
+            // Bind loop variable as Complex
+            evaluator.environment_mut().define(variable.to_string(), Value::Complex(value))?;
+
+            // Execute body
+            let body_result = evaluator.evaluate(body)?;
+
+            // Check for control flow markers
+            match body_result {
+                Value::LoopBreak(break_value) => {
+                    last_value = break_value.map(|v| *v).unwrap_or(Value::Null);
+                    break 'outer Ok(last_value);
+                }
+                Value::LoopContinue => {
+                    continue;
+                }
+                Value::EarlyReturn(_) => {
+                    evaluator.loop_depth -= 1;
+                    evaluator.environment_mut().pop_scope();
+                    return Ok(body_result);
+                }
+                Value::GeneratorYield(_) => {
+                    evaluator.loop_depth -= 1;
+                    evaluator.environment_mut().pop_scope();
+                    return Ok(body_result);
+                }
+                _ => {
+                    last_value = body_result;
+                }
+            }
+        }
+        Ok(last_value)
+    };
+
+    evaluator.loop_depth -= 1;
+    evaluator.environment_mut().pop_scope();
+    result
+}
+
+/// Evaluate for-in loop with a record-based iterator (has next() method)
+fn evaluate_iterator_for_in(
+    evaluator: &mut Evaluator,
+    variable: &str,
+    next_fn: Value,
+    body: &AstNode,
+) -> Result<Value, String> {
+    // Create new scope for loop
+    evaluator.environment_mut().push_scope();
+
+    // Track that we're inside a loop
+    evaluator.loop_depth += 1;
+
+    let mut last_value = Value::Null;
+
+    let result = loop {
         // Call next() on the iterator
         let result = match &next_fn {
             Value::Function(func) => {
                 evaluator.apply_lambda(func, vec![])?
             }
             _ => {
+                evaluator.loop_depth -= 1;
                 evaluator.environment_mut().pop_scope();
                 return Err("next must be a function".to_string());
             }
@@ -163,6 +413,7 @@ pub fn evaluate_for_in(
         let result_record = match &result {
             Value::Record(map) => map,
             _ => {
+                evaluator.loop_depth -= 1;
                 evaluator.environment_mut().pop_scope();
                 return Err("next() must return {value: T, done: Boolean}".to_string());
             }
@@ -171,13 +422,14 @@ pub fn evaluate_for_in(
         let done = match result_record.get("done") {
             Some(Value::Boolean(b)) => *b,
             _ => {
+                evaluator.loop_depth -= 1;
                 evaluator.environment_mut().pop_scope();
                 return Err("next() must return {done: Boolean}".to_string());
             }
         };
 
         if done {
-            break;
+            break Ok(last_value);
         }
 
         let value = result_record
@@ -189,17 +441,36 @@ pub fn evaluate_for_in(
         evaluator.environment_mut().define(variable.to_string(), value)?;
 
         // Execute body
-        last_value = evaluator.evaluate(body)?;
+        let body_result = evaluator.evaluate(body)?;
 
-        // Check for early return - propagate it immediately
-        if matches!(last_value, Value::EarlyReturn(_)) {
-            evaluator.environment_mut().pop_scope();
-            return Ok(last_value);
+        // Check for control flow markers
+        match body_result {
+            Value::LoopBreak(break_value) => {
+                last_value = break_value.map(|v| *v).unwrap_or(Value::Null);
+                break Ok(last_value);
+            }
+            Value::LoopContinue => {
+                continue;
+            }
+            Value::EarlyReturn(_) => {
+                evaluator.loop_depth -= 1;
+                evaluator.environment_mut().pop_scope();
+                return Ok(body_result);
+            }
+            Value::GeneratorYield(_) => {
+                evaluator.loop_depth -= 1;
+                evaluator.environment_mut().pop_scope();
+                return Ok(body_result);
+            }
+            _ => {
+                last_value = body_result;
+            }
         }
-    }
+    };
 
+    evaluator.loop_depth -= 1;
     evaluator.environment_mut().pop_scope();
-    Ok(last_value)
+    result
 }
 
 /// Helper to evaluate for-in loop with a generator
@@ -212,9 +483,12 @@ fn evaluate_generator_for_in(
     // Create new scope for loop
     evaluator.environment_mut().push_scope();
 
+    // Track that we're inside a loop
+    evaluator.loop_depth += 1;
+
     let mut last_value = Value::Null;
 
-    loop {
+    let result = loop {
         // Resume the generator
         let result = resume_generator(evaluator, &gen_rc)?;
 
@@ -222,6 +496,7 @@ fn evaluate_generator_for_in(
         let result_record = match &result {
             Value::Record(map) => map,
             _ => {
+                evaluator.loop_depth -= 1;
                 evaluator.environment_mut().pop_scope();
                 return Err("Generator next() must return {value: T, done: Boolean}".to_string());
             }
@@ -230,13 +505,14 @@ fn evaluate_generator_for_in(
         let done = match result_record.get("done") {
             Some(Value::Boolean(b)) => *b,
             _ => {
+                evaluator.loop_depth -= 1;
                 evaluator.environment_mut().pop_scope();
                 return Err("Generator next() must return {done: Boolean}".to_string());
             }
         };
 
         if done {
-            break;
+            break Ok(last_value);
         }
 
         let value = result_record
@@ -248,17 +524,42 @@ fn evaluate_generator_for_in(
         evaluator.environment_mut().define(variable.to_string(), value)?;
 
         // Execute body
-        last_value = evaluator.evaluate(body)?;
+        let body_result = evaluator.evaluate(body)?;
 
-        // Check for early return
-        if matches!(last_value, Value::EarlyReturn(_)) {
-            evaluator.environment_mut().pop_scope();
-            return Ok(last_value);
+        // Check for control flow markers
+        match body_result {
+            // Break: exit the loop immediately
+            Value::LoopBreak(break_value) => {
+                last_value = break_value.map(|v| *v).unwrap_or(Value::Null);
+                break Ok(last_value);
+            }
+            // Continue: skip to next iteration
+            Value::LoopContinue => {
+                // Just continue to next iteration
+                continue;
+            }
+            // Early return: propagate it immediately
+            Value::EarlyReturn(_) => {
+                evaluator.loop_depth -= 1;
+                evaluator.environment_mut().pop_scope();
+                return Ok(body_result);
+            }
+            // Generator yield: propagate it immediately
+            Value::GeneratorYield(_) => {
+                evaluator.loop_depth -= 1;
+                evaluator.environment_mut().pop_scope();
+                return Ok(body_result);
+            }
+            // Normal value: store it
+            _ => {
+                last_value = body_result;
+            }
         }
-    }
+    };
 
+    evaluator.loop_depth -= 1;
     evaluator.environment_mut().pop_scope();
-    Ok(last_value)
+    result
 }
 
 /// Resume a generator and return the next {value, done} result
@@ -276,39 +577,65 @@ pub fn resume_generator(
         return Ok(make_iterator_result(return_val, true));
     }
 
+    // For re-execution approach: reset to original environment
+    // This allows nested control flow to work correctly
+    let env_to_use = if let Some(ref orig_env) = state.original_env {
+        orig_env.clone()
+    } else {
+        state.env.clone()
+    };
+
     // Swap environments: save evaluator's current env, use generator's env
-    let saved_env = std::mem::replace(evaluator.environment_mut(), state.env.clone());
+    let saved_env = std::mem::replace(evaluator.environment_mut(), env_to_use);
 
     // Save and set generator context
     let saved_in_generator = evaluator.in_generator;
     evaluator.in_generator = true;
 
-    // Execute until yield or end
-    let result = execute_until_yield(evaluator, &mut state);
+    // Save and set yield tracking
+    let saved_yield_count = evaluator.generator_yield_count;
+    let saved_yield_target = evaluator.generator_yield_target;
+    evaluator.generator_yield_count = 0;
+    evaluator.generator_yield_target = state.current_yield_target;
+
+    // Execute until yield or end (re-execute from start, skipping already processed yields)
+    let result = execute_until_yield_new(evaluator, &mut state);
+
+    // Update state based on result
+    if result.is_ok() {
+        // Increment target for next resume
+        state.current_yield_target += 1;
+    }
+
+    // Restore yield tracking
+    evaluator.generator_yield_count = saved_yield_count;
+    evaluator.generator_yield_target = saved_yield_target;
 
     // Restore generator context
     evaluator.in_generator = saved_in_generator;
 
-    // Restore saved environment
-    state.env = std::mem::replace(evaluator.environment_mut(), saved_env);
+    // Restore saved environment (don't save generator's env - we re-execute from original each time)
+    let _ = std::mem::replace(evaluator.environment_mut(), saved_env);
 
     result
 }
 
-/// Execute generator statements until a yield, return, or end
-fn execute_until_yield(
+/// Execute generator statements using yield counting for nested control flow support
+/// This approach re-executes the generator from the beginning each time,
+/// but skips yields that have already been processed.
+fn execute_until_yield_new(
     evaluator: &mut Evaluator,
     state: &mut GeneratorState,
 ) -> Result<Value, String> {
-    // Continue execution from current position
-    while state.position < state.statements.len() {
-        let stmt = state.statements[state.position].clone();
-        state.position += 1;
-
-        let result = evaluator.evaluate(&stmt)?;
+    // Re-execute all statements from the beginning
+    // The environment is already set up by resume_generator with the captured state
+    for stmt in state.statements.iter() {
+        let result = evaluator.evaluate(stmt)?;
 
         // Check for generator yield marker
         if let Value::GeneratorYield(yielded_value) = result {
+            // This is a yield we should stop at - save current environment state
+            state.env = evaluator.environment().clone();
             return Ok(make_iterator_result(*yielded_value, false));
         }
 

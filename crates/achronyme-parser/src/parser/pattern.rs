@@ -80,7 +80,7 @@ impl AstParser {
         }
     }
 
-    /// Build a literal pattern (number, string, boolean)
+    /// Build a literal pattern (number, string, boolean, null)
     fn build_literal_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
         let inner = pair.into_inner().next()
             .ok_or("Empty literal pattern")?;
@@ -102,6 +102,9 @@ impl AstParser {
             Rule::boolean => {
                 let value = inner.as_str() == "true";
                 LiteralPattern::Boolean(value)
+            }
+            Rule::null_literal => {
+                LiteralPattern::Null
             }
             _ => return Err(format!("Unexpected literal pattern rule: {:?}", inner.as_rule()))
         };

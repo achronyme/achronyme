@@ -107,6 +107,7 @@ fn match_literal(value: &Value, lit: &LiteralPattern) -> Result<Option<HashMap<S
         }
         (Value::String(s), LiteralPattern::String(expected)) => s == expected,
         (Value::Boolean(b), LiteralPattern::Boolean(expected)) => b == expected,
+        (Value::Null, LiteralPattern::Null) => true,
         _ => false,
     };
 

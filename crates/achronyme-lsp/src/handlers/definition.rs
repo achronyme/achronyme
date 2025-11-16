@@ -75,7 +75,7 @@ fn find_definition_location(
     // Also check for function parameters (lambda)
     for node in ast {
         if let AstNode::Lambda { params, .. } = node {
-            for (param_name, _) in params {
+            for (param_name, _, _) in params {
                 if param_name == name {
                     // Find in source where this parameter is defined
                     // This is simplified - we'd need span info for accuracy

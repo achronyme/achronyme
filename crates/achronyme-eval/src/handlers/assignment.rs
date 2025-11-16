@@ -1,8 +1,9 @@
-use achronyme_parser::ast::AstNode;
+use achronyme_parser::ast::{AstNode, CompoundOp, BinaryOp};
 use achronyme_types::value::Value;
 
 use crate::evaluator::Evaluator;
 use crate::type_checker;
+use crate::handlers::binary_ops;
 
 /// Evaluate an assignment statement
 ///
@@ -137,4 +138,75 @@ fn assign_to_index(
     // - Or only allowing assignment to mutable arrays declared with mut
 
     Err("Index assignment (arr[i] = value) is not yet supported. Use array reconstruction instead: arr = [...arr.slice(0, i), new_value, ...arr.slice(i+1)]".to_string())
+}
+
+/// Evaluate a compound assignment statement (+=, -=, *=, /=, %=, ^=)
+///
+/// Compound assignment is syntactic sugar:
+/// - `x += expr` is equivalent to `x = x + expr`
+/// - `x -= expr` is equivalent to `x = x - expr`
+/// - etc.
+///
+/// # Semantic Validation
+/// - Target must be a valid lvalue (variable, field access, or index access)
+/// - Variables must be declared with `mut` to be assignable
+/// - Type annotations are enforced on assignment (if variable was declared with a type)
+pub fn evaluate_compound_assignment(
+    evaluator: &mut Evaluator,
+    target: &AstNode,
+    operator: &CompoundOp,
+    value_node: &AstNode,
+) -> Result<Value, String> {
+    // 1. Evaluate the current value of the target
+    let current_value = evaluator.evaluate(target)?;
+
+    // 2. Evaluate the right-hand side expression
+    let rhs_value = evaluator.evaluate(value_node)?;
+
+    // 3. Apply the corresponding binary operation
+    let binary_op = match operator {
+        CompoundOp::AddAssign => BinaryOp::Add,
+        CompoundOp::SubAssign => BinaryOp::Subtract,
+        CompoundOp::MulAssign => BinaryOp::Multiply,
+        CompoundOp::DivAssign => BinaryOp::Divide,
+        CompoundOp::ModAssign => BinaryOp::Modulo,
+        CompoundOp::PowAssign => BinaryOp::Power,
+    };
+
+    let new_value = binary_ops::apply(&binary_op, current_value, rhs_value)?;
+
+    // 4. Assign the new value to the target (reuse existing assignment logic)
+    // Dispatch based on target type
+    match target {
+        // Simple variable: x += 5
+        AstNode::VariableRef(name) => {
+            // Check type annotation before assignment (if one exists)
+            if let Some(expected_type) = evaluator.environment().get_type_annotation(name) {
+                type_checker::check_type(&new_value, &expected_type).map_err(|_| {
+                    format!(
+                        "Type error: cannot assign {} to variable '{}' of type {}",
+                        type_checker::infer_type(&new_value).to_string(),
+                        name,
+                        expected_type.to_string()
+                    )
+                })?;
+            }
+
+            evaluator.environment_mut().assign(name, new_value.clone())?;
+            Ok(new_value)
+        }
+
+        // Field access: obj.field += 5
+        AstNode::FieldAccess { record, field } => {
+            assign_to_field(evaluator, record, field, new_value)
+        }
+
+        // Index access: arr[0] += 5
+        AstNode::IndexAccess { object, indices } => {
+            assign_to_index(evaluator, object, indices, new_value)
+        }
+
+        // Invalid compound assignment targets
+        _ => Err(format!("Invalid compound assignment target: {:?}", target)),
+    }
 }

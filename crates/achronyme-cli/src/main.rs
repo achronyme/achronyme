@@ -465,6 +465,12 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
                 None => format!("Error({})", message),
             }
         }
+        Value::LoopBreak(_) => {
+            "<internal:loop-break>".to_string()
+        }
+        Value::LoopContinue => {
+            "<internal:loop-continue>".to_string()
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use pest::iterators::Pair;
-use crate::ast::{AstNode, ImportItem};
+use crate::ast::{AstNode, ImportItem, CompoundOp};
 use crate::parser::AstParser;
 use crate::pest_parser::Rule;
 
@@ -17,6 +17,8 @@ impl AstParser {
             Rule::return_statement => self.build_return_statement(inner),
             Rule::yield_statement => self.build_yield_statement(inner),
             Rule::throw_stmt => self.build_throw_statement(inner),
+            Rule::break_statement => self.build_break_statement(inner),
+            Rule::continue_statement => self.build_continue_statement(inner),
             Rule::assignment => self.build_assignment(inner),
             Rule::expr => self.build_ast_from_expr(inner),
             _ => Err(format!("Unexpected statement rule: {:?}", inner.as_rule()))
@@ -249,17 +251,47 @@ impl AstParser {
     pub(super) fn build_assignment(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
         let mut inner = pair.into_inner();
 
-        // Grammar: postfix_expression ~ "=" ~ expr
+        // Grammar: postfix_expression ~ compound_assignment_op ~ expr
+        //        | postfix_expression ~ "=" ~ expr
         let target = inner.next()
             .ok_or("Missing target in assignment")?;
 
-        let value = inner.next()
-            .ok_or("Missing value in assignment")?;
+        let second = inner.next()
+            .ok_or("Missing operator or value in assignment")?;
 
-        Ok(AstNode::Assignment {
-            target: Box::new(self.build_ast_from_expr(target)?),
-            value: Box::new(self.build_ast_from_expr(value)?),
-        })
+        // Check if it's a compound assignment or simple assignment
+        if second.as_rule() == Rule::compound_assignment_op {
+            // Compound assignment: x += 5
+            let operator = self.parse_compound_op(second)?;
+            let value = inner.next()
+                .ok_or("Missing value in compound assignment")?;
+
+            Ok(AstNode::CompoundAssignment {
+                target: Box::new(self.build_ast_from_expr(target)?),
+                operator,
+                value: Box::new(self.build_ast_from_expr(value)?),
+            })
+        } else {
+            // Simple assignment: x = 5
+            // second is the value expression
+            Ok(AstNode::Assignment {
+                target: Box::new(self.build_ast_from_expr(target)?),
+                value: Box::new(self.build_ast_from_expr(second)?),
+            })
+        }
+    }
+
+    /// Parse a compound assignment operator
+    fn parse_compound_op(&self, pair: Pair<Rule>) -> Result<CompoundOp, String> {
+        match pair.as_str() {
+            "+=" => Ok(CompoundOp::AddAssign),
+            "-=" => Ok(CompoundOp::SubAssign),
+            "*=" => Ok(CompoundOp::MulAssign),
+            "/=" => Ok(CompoundOp::DivAssign),
+            "%=" => Ok(CompoundOp::ModAssign),
+            "^=" => Ok(CompoundOp::PowAssign),
+            _ => Err(format!("Unknown compound assignment operator: {}", pair.as_str())),
+        }
     }
 
     pub(super) fn build_return_statement(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
@@ -316,5 +348,23 @@ impl AstParser {
         Ok(AstNode::Throw {
             value: Box::new(self.build_ast_from_expr(value)?),
         })
+    }
+
+    pub(super) fn build_break_statement(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
+        let mut inner = pair.into_inner();
+
+        // Grammar: "break" ~ expr?
+        let value = inner.next()
+            .map(|v| self.build_ast_from_expr(v))
+            .transpose()?
+            .map(Box::new);
+
+        Ok(AstNode::Break { value })
+    }
+
+    pub(super) fn build_continue_statement(&mut self, _pair: Pair<Rule>) -> Result<AstNode, String> {
+        // Grammar: "continue"
+        // No inner elements
+        Ok(AstNode::Continue)
     }
 }

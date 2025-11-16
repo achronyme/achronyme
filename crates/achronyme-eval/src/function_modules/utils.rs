@@ -95,6 +95,8 @@ fn get_type_name(value: &Value) -> String {
         Value::Generator(_) => "Generator".to_string(),
         Value::GeneratorYield(_) => "GeneratorYield".to_string(),
         Value::Error { .. } => "Error".to_string(),
+        Value::LoopBreak(_) => "LoopBreak".to_string(),
+        Value::LoopContinue => "LoopContinue".to_string(),
     }
 }
 
@@ -219,6 +221,8 @@ fn format_value(value: &Value) -> String {
                 None => format!("Error({})", message),
             }
         }
+        Value::LoopBreak(_) => "<loop-break>".to_string(),
+        Value::LoopContinue => "<loop-continue>".to_string(),
     }
 }
 

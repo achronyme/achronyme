@@ -10,25 +10,34 @@
 Achronyme is a high-performance functional programming language designed for mathematical computing, data science, and digital signal processing. Built in Rust with a focus on expressiveness and performance, it combines the elegance of functional programming with the power of numerical computation.
 
 ```javascript
-// Variables and functions
-let square = x => x^2
-let numbers = [1, 2, 3, 4, 5]
+// Variables and functions with defaults
+let greet = (name, greeting = "Hello") => '${greeting}, ${name}!'
+greet("Alice")  // "Hello, Alice!"
+
+// String interpolation
+let user = {name: "Bob", age: 25}
+'User ${user.name} is ${user.age} years old'
 
 // Higher-order functions
+let numbers = [1, 2, 3, 4, 5]
 let doubled = map(x => x * 2, numbers)
-let evens = filter(x => x % 2 == 0, numbers)
-let sum = reduce((a, b) => a + b, 0, numbers)
 
-// Records with methods
-let point = {
-    x: 10,
-    y: 20,
-    distance: () => sqrt(self.x^2 + self.y^2)
+// For-in loops with break/continue
+mut sum = 0
+for(x in numbers) {
+    if(x % 2 == 0) { continue }
+    sum += x
 }
 
-// DSP operations
-let signal = linspace(0, 1, 1024)
-let spectrum = fft(signal)
+// Generators for lazy sequences
+let range = (n) => generate {
+    mut i = 0
+    while(i < n) { yield i; i += 1 }
+}
+
+// Records with optional fields
+type User = {name: String, email?: String}
+let user: User = {name: "Alice"}  // email is optional
 ```
 
 ---
@@ -37,9 +46,11 @@ let spectrum = fft(signal)
 
 ### 🎯 Functional Programming
 - **First-class functions**: Lambdas, closures, and higher-order functions
+- **Default and optional parameters**: `(x = 10)` and `(x?: Type)` syntax
 - **Immutability by default**: Variables are immutable unless marked with `mut`
-- **Pattern matching**: Powerful control flow with `if-else` and `piecewise()`
+- **Pattern matching**: Powerful control flow with `match`, `if-else` and `piecewise()`
 - **Recursion**: Native support with `rec` keyword for recursive functions
+- **Generators**: Lazy sequences with `yield` and `generate`
 
 ### 🔢 Rich Type System
 - **Number**: 64-bit floating point
@@ -58,6 +69,10 @@ let spectrum = fft(signal)
 
 ### 🏗️ Modern Language Features
 - **Modules**: Import/export system for code organization
+- **String interpolation**: Template strings with `'Hello, ${name}!'`
+- **Compound assignment**: `+=`, `-=`, `*=`, `/=`, `%=`, `^=` operators
+- **Loop control**: `break`, `continue`, and `for-in` loops
+- **Optional record fields**: `{field?: Type}` syntax
 - **Do Blocks**: Multi-statement blocks with early returns
 - **Mutable Variables**: Controlled mutability with `mut` keyword
 - **I/O and Persistence**: File operations and environment management
@@ -110,11 +125,12 @@ cargo build --release
 Create a file `hello.soc`:
 
 ```javascript
-// hello.soc
-let greet = name => "Hello, " + name + "!"
+// hello.soc - Using string interpolation and default parameters
+let greet = (name, greeting = "Hello") => '${greeting}, ${name}!'
 
 // Call the function
-greet("Achronyme")
+greet("Achronyme")       // "Hello, Achronyme!"
+greet("World", "Hi")     // "Hi, World!"
 ```
 
 Run it:
@@ -184,17 +200,27 @@ Try some examples:
 let x = 10
 let y = x + 5
 
-// Mutable when needed
+// Mutable with compound assignment
 mut counter = 0
-counter = counter + 1
+counter += 1    // counter = 1
+counter *= 2    // counter = 2
 
-// Lambda functions
+// Lambda functions with defaults
 let square = x => x^2
-let add = (a, b) => a + b
+let add = (a, b = 0) => a + b
+add(5)     // 5 (uses default)
+add(5, 3)  // 8
+
+// Optional parameters
+let greet = (name: String, title?: String) =>
+    match title { null => name, t => '${t} ${name}' }
+
+greet("Alice")         // "Alice"
+greet("Smith", "Dr.")  // "Dr. Smith"
 
 // Recursion with rec
-let factorial = n =>
-    if(n <= 1, 1, n * rec(n - 1))
+let factorial = (n, acc = 1) =>
+    if(n <= 1) { acc } else { rec(n - 1, acc * n) }
 
 factorial(5)  // → 120
 ```
@@ -287,11 +313,25 @@ let classify = x => {
     }
 }
 
-// Early return in do blocks
-let validate = x => do {
-    if (x < 0) { return false };
-    if (x > 100) { return false };
-    true
+// For-in loops with break/continue
+mut sum = 0
+for(x in [1, 2, 3, 4, 5]) {
+    if(x % 2 == 0) { continue }  // Skip evens
+    sum += x
+}
+sum  // 9 (1 + 3 + 5)
+
+// Break with value
+let found = while(true) {
+    let result = search()
+    if(result > 100) { break result }
+}
+
+// Pattern matching
+let describe = x => match x {
+    0 => "zero"
+    n if n < 0 => "negative"
+    _ => "positive"
 }
 
 // piecewise for multiple conditions
@@ -350,12 +390,15 @@ Complete language reference available in `/docs/language/`:
 - **[Getting Started](./docs/language/01-getting-started.md)** - Installation and first steps
 - **[Syntax Basics](./docs/language/02-syntax-basics.md)** - Core syntax rules
 - **[Data Types](./docs/language/03-data-types.md)** - Numbers, strings, arrays, records
-- **[Functions](./docs/language/06-functions.md)** - Lambdas, closures, recursion
+- **[Functions](./docs/language/06-functions.md)** - Lambdas, closures, default/optional parameters
+- **[Strings](./docs/language/20-strings.md)** - String interpolation and manipulation
+- **[Records](./docs/language/07-records.md)** - Object-oriented patterns, optional fields
+- **[Pattern Matching](./docs/language/36-pattern-matching.md)** - Match expressions and guards
+- **[Loop Control](./docs/language/39-loop-control.md)** - break, continue, and for-in loops
+- **[Generators](./docs/language/38-generators.md)** - Lazy sequences with yield
 - **[Higher-Order Functions](./docs/language/11-higher-order-functions.md)** - map, filter, reduce
-- **[Records](./docs/language/07-records.md)** - Object-oriented patterns
 - **[Modules](./docs/language/28-modules.md)** - Import/export system
 - **[Mutability](./docs/language/26-mutability.md)** - Mutable variables and fields
-- **[I/O and Persistence](./docs/language/27-io-persistence.md)** - File operations
 
 ### Examples
 
@@ -459,6 +502,16 @@ Achronyme is designed around these core principles:
 - ✅ Mutability with `mut` keyword
 - ✅ Do blocks and early returns
 - ✅ I/O and persistence
+- ✅ Pattern matching with `match` expressions
+- ✅ String interpolation (`'Hello, ${name}!'`)
+- ✅ Default parameter values (`(x = 10) => ...`)
+- ✅ Optional parameters (`(x?: Type) => ...`)
+- ✅ Optional record fields (`{field?: Type}`)
+- ✅ Compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`)
+- ✅ Loop control (`break`, `continue`)
+- ✅ For-in loops (`for(x in collection)`)
+- ✅ Generators with `yield` and `generate`
+- ✅ Destructuring assignments
 
 ### 🚧 In Progress
 
@@ -466,10 +519,10 @@ Achronyme is designed around these core principles:
 - 🚧 Advanced statistics
 - 🚧 Optimization algorithms
 - 🚧 Documentation improvements
+- 🚧 LSP server for IDE support
 
 ### 🔮 Planned
 
-- 🔮 Pattern matching
 - 🔮 Algebraic data types (enums, tagged unions)
 - 🔮 Trait system (type classes)
 - 🔮 Effect system (purity tracking)
@@ -533,7 +586,7 @@ See [LICENSE](./LICENSE) for details.
 
 ---
 
-**Current Version**: 0.4.0
+**Current Version**: 0.6.3
 
 **Questions?** Open an issue on GitHub or join the discussions.
 

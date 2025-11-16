@@ -10,7 +10,7 @@
 /// TCO converts recursive calls into loops, eliminating stack frame creation
 /// and allowing unlimited recursion depth for tail-recursive patterns.
 
-use achronyme_parser::ast::{AstNode, ArrayElement, RecordFieldOrSpread, IndexArg};
+use achronyme_parser::ast::{AstNode, ArrayElement, RecordFieldOrSpread, IndexArg, StringPart};
 
 #[cfg(test)]
 mod tests;
@@ -99,6 +99,7 @@ pub fn is_tail_position(node: &AstNode) -> bool {
         // Mutable declarations and assignments are NOT tail position
         AstNode::MutableDecl { .. } => false,
         AstNode::Assignment { .. } => false,
+        AstNode::CompoundAssignment { .. } => false,
 
         // Destructuring declarations are NOT tail position (they're statements)
         AstNode::LetDestructuring { .. } => false,
@@ -132,6 +133,13 @@ pub fn is_tail_position(node: &AstNode) -> bool {
         AstNode::Match { arms, .. } => {
             arms.iter().all(|arm| is_tail_position(&arm.body))
         }
+
+        // Break and Continue are NOT tail positions (they're control flow statements)
+        AstNode::Break { .. } => false,
+        AstNode::Continue => false,
+
+        // Interpolated string is in tail position (produces a value directly)
+        AstNode::InterpolatedString { .. } => true,
     }
 }
 
@@ -228,6 +236,8 @@ fn contains_rec(node: &AstNode) -> bool {
 
         AstNode::Assignment { value, .. } => contains_rec(value),
 
+        AstNode::CompoundAssignment { target, value, .. } => contains_rec(target) || contains_rec(value),
+
         AstNode::LetDestructuring { initializer, .. } => contains_rec(initializer.as_ref()),
 
         AstNode::MutableDestructuring { initializer, .. } => contains_rec(initializer.as_ref()),
@@ -240,6 +250,13 @@ fn contains_rec(node: &AstNode) -> bool {
             contains_rec(value) || arms.iter().any(|arm| {
                 arm.guard.as_ref().map(|g| contains_rec(g)).unwrap_or(false)
                     || contains_rec(&arm.body)
+            })
+        }
+
+        AstNode::InterpolatedString { parts } => {
+            parts.iter().any(|part| match part {
+                StringPart::Literal(_) => false,
+                StringPart::Expression(expr) => contains_rec(expr),
             })
         }
 
@@ -395,6 +412,11 @@ fn all_rec_are_tail_helper(node: &AstNode, in_tail_position: bool) -> bool {
             all_rec_are_tail_helper(value, false)
         }
 
+        // Compound assignment: target and value are NOT in tail position
+        AstNode::CompoundAssignment { target, value, .. } => {
+            all_rec_are_tail_helper(target, false) && all_rec_are_tail_helper(value, false)
+        }
+
         // Edge: metadata is NOT in tail position
         AstNode::Edge { metadata, .. } => {
             metadata.as_ref().map(|m| all_rec_are_tail_helper(m, false)).unwrap_or(true)
@@ -409,6 +431,14 @@ fn all_rec_are_tail_helper(node: &AstNode, in_tail_position: bool) -> bool {
                         .unwrap_or(true);
                     guard_ok && all_rec_are_tail_helper(&arm.body, in_tail_position)
                 })
+        }
+
+        // Interpolated string: expressions are NOT in tail position (they're evaluated first)
+        AstNode::InterpolatedString { parts } => {
+            parts.iter().all(|part| match part {
+                StringPart::Literal(_) => true,
+                StringPart::Expression(expr) => all_rec_are_tail_helper(expr, false),
+            })
         }
 
         // Literals and references don't contain rec

@@ -22,21 +22,36 @@ Achronyme source files use the `.soc` extension (Scientific Operations Calculato
 import { mean, std } from "stats"
 import { sin, cos } from "math"
 
-// Define a function
-let square = x => x^2
+// Functions with default and optional parameters
+let greet = (name, greeting = "Hello") => '${greeting}, ${name}!'
+greet("Alice")  // "Hello, Alice!"
 
-// Use higher-order functions
-let numbers = [1, 2, 3, 4, 5]
-let squared = map(square, numbers)
+// String interpolation
+let user = {name: "Bob", age: 30}
+'User ${user.name} is ${user.age} years old'
 
-// Numerical integration
-let area = integral(x => x^2, 0, 10)
+// For-in loops with break/continue
+mut sum = 0
+for(x in [1, 2, 3, 4, 5]) {
+    if(x % 2 == 0) { continue }
+    sum += x
+}
 
-// Records with mutable fields
-let counter = {
-    mut value: 0,
-    increment: () => do { self.value = self.value + 1 },
-    get: () => self.value
+// Generators for lazy sequences
+let range = (n) => generate {
+    mut i = 0
+    while(i < n) { yield i; i += 1 }
+}
+
+// Records with optional fields
+type User = {name: String, email?: String}
+let user: User = {name: "Alice"}  // email is optional
+
+// Pattern matching
+let describe = x => match x {
+    0 => "zero"
+    n if n < 0 => "negative"
+    _ => "positive"
 }
 
 // Statistical analysis
@@ -90,6 +105,13 @@ let stdDev = std(data)
 - **[28. Modules](28-modules.md)** - Import/export system, code organization
 - **[29. While Loops](29-while-loops.md)** - Iterative loops with mutable state
 - **[30. Gradual Type System](30-gradual-type-system.md)** - Type annotations, union types, type aliases
+
+### Pattern Matching and Control Flow
+- **[35. Error Handling](35-error-handling.md)** - Error types and recovery patterns
+- **[36. Pattern Matching](36-pattern-matching.md)** - Match expressions, guards, type patterns
+- **[37. Destructuring](37-destructuring.md)** - Extract values from records and vectors
+- **[38. Generators](38-generators.md)** - Lazy iterators with yield, infinite sequences
+- **[39. Loop Control](39-loop-control.md)** - break, continue, and for-in loops
 
 ## Language Philosophy
 
@@ -149,9 +171,20 @@ The language automatically infers types based on usage. Arrays of numbers become
 
 ### 🎯 Modern Syntax
 - Lambda functions: `x => x^2`
+- Default parameters: `(x = 10) => x^2`
+- Optional parameters: `(x?: Number) => x`
+- String interpolation: `'Hello, ${name}!'`
 - Higher-order functions: `map`, `filter`, `reduce`
 - Spread operator: `[...array1, ...array2]`
 - Records with methods and `self` reference
+- Optional record fields: `{field?: Type}`
+
+### 🔄 Control Flow
+- Pattern matching with `match` expressions
+- Break and continue in loops
+- For-in loops for collections
+- Generators with `yield` and `generate`
+- Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `^=`
 
 ## Community and Support
 

@@ -44,9 +44,10 @@ pub enum TypeAnnotation {
     Vector,
 
     /// Record type with structural typing
-    /// HashMap<field_name, (is_mutable, field_type)>
+    /// HashMap<field_name, (is_mutable, is_optional, field_type)>
+    /// is_optional: true means the field can be absent (uses ?)
     Record {
-        fields: HashMap<String, (bool, TypeAnnotation)>,
+        fields: HashMap<String, (bool, bool, TypeAnnotation)>,
     },
 
     /// Function type
@@ -128,11 +129,12 @@ impl TypeAnnotation {
                     "{}".to_string()
                 } else {
                     let fields_str = fields.iter()
-                        .map(|(name, (is_mut, ty))| {
+                        .map(|(name, (is_mut, is_optional, ty))| {
+                            let optional_marker = if *is_optional { "?" } else { "" };
                             if *is_mut {
-                                format!("mut {}: {}", name, ty.to_string())
+                                format!("mut {}{}: {}", name, optional_marker, ty.to_string())
                             } else {
-                                format!("{}: {}", name, ty.to_string())
+                                format!("{}{}: {}", name, optional_marker, ty.to_string())
                             }
                         })
                         .collect::<Vec<_>>()
@@ -182,10 +184,17 @@ impl TypeAnnotation {
 
             // Record structural subtyping (simplified)
             (TypeAnnotation::Record { fields: self_fields }, TypeAnnotation::Record { fields: other_fields }) => {
-                self_fields.iter().all(|(field_name, (self_mut, self_type))| {
-                    other_fields.get(field_name).map_or(false, |(other_mut, other_type)| {
-                        self_mut == other_mut && self_type.is_assignable_from(other_type)
-                    })
+                self_fields.iter().all(|(field_name, (self_mut, self_optional, self_type))| {
+                    match other_fields.get(field_name) {
+                        Some((other_mut, _other_optional, other_type)) => {
+                            // Field exists - check mutability and type
+                            self_mut == other_mut && self_type.is_assignable_from(other_type)
+                        }
+                        None => {
+                            // Field doesn't exist - only OK if self expects it to be optional
+                            *self_optional
+                        }
+                    }
                 })
             }
 

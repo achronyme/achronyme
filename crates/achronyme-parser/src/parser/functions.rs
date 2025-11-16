@@ -76,7 +76,7 @@ impl AstParser {
             // Fallback to legacy lambda_params for backward compatibility
             self.extract_lambda_params(params_pair)?
                 .into_iter()
-                .map(|name| (name, None))
+                .map(|name| (name, None, None))
                 .collect()
         };
 

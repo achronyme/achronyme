@@ -6,12 +6,17 @@ Strings in Achronyme are a fundamental data type for text processing. This guide
 
 ### Basic String Syntax
 
-String literals are enclosed in double quotes:
+Achronyme supports two types of string literals:
+
+1. **Double-quoted strings** - Literal strings (no interpolation)
+2. **Single-quoted strings** - Template strings with interpolation
 
 ```achronyme
-let greeting = "Hello"
-let name = "Achronyme"
-let empty = ""
+let greeting = "Hello"          // Literal string
+let name = "Achronyme"          // Literal string
+let empty = ""                  // Empty string
+
+let message = 'Hello, ${name}!' // Interpolated string
 ```
 
 ### Escape Sequences
@@ -23,12 +28,130 @@ Achronyme supports the following escape sequences within string literals:
 | \n | Newline | Line break |
 | \t | Tab | Horizontal tab |
 | \r | Carriage Return | Carriage return character |
-| \ | Backslash | Literal backslash character |
+| \\ | Backslash | Literal backslash character |
 | \" | Double Quote | Literal double quote character |
+| \' | Single Quote | Literal single quote character |
+| \$ | Dollar Sign | Literal $ (in single-quoted strings) |
 
 ### Unicode Support
 
 Strings fully support Unicode characters, including emoji and international characters.
+
+## String Interpolation
+
+Single-quoted strings support string interpolation using `${expression}` syntax.
+
+### Basic Interpolation
+
+```achronyme
+let name = "Alice"
+let age = 30
+
+'Hello, ${name}!'                    // "Hello, Alice!"
+'You are ${age} years old'           // "You are 30 years old"
+'Next year you will be ${age + 1}'   // "Next year you will be 31"
+```
+
+### Expressions in Interpolation
+
+You can use any valid expression inside `${}`:
+
+```achronyme
+// Arithmetic
+'Sum: ${10 + 20}'                    // "Sum: 30"
+'Product: ${5 * 7}'                  // "Product: 35"
+
+// Function calls
+'Square root: ${sqrt(16)}'           // "Square root: 4"
+'Uppercase: ${upper("hello")}'       // "Uppercase: HELLO"
+
+// Conditional expressions
+let age = 25
+'Status: ${if(age >= 18) { "adult" } else { "minor" }}'  // "Status: adult"
+```
+
+### Record Field Access
+
+```achronyme
+let point = {x: 10, y: 20}
+'Point: (${point.x}, ${point.y})'    // "Point: (10, 20)"
+
+let user = {name: "Bob", email: "bob@example.com"}
+'User ${user.name} - ${user.email}'  // "User Bob - bob@example.com"
+```
+
+### Multiple Interpolations
+
+```achronyme
+let first = "John"
+let last = "Doe"
+let age = 42
+
+'Name: ${first} ${last}, Age: ${age}'
+// "Name: John Doe, Age: 42"
+```
+
+### Escaping in Interpolated Strings
+
+To include a literal `${` in an interpolated string, escape the dollar sign:
+
+```achronyme
+'Price: \${100}'                     // "Price: ${100}"
+'Use \${variable} syntax'            // "Use ${variable} syntax"
+'It\'s working!'                     // "It's working!"
+```
+
+### Important: Double vs Single Quotes
+
+**Single quotes (`'...'`)** - Interpolation enabled:
+```achronyme
+let name = "Alice"
+'Hello, ${name}!'                    // "Hello, Alice!"
+```
+
+**Double quotes (`"..."`)** - Literal string, NO interpolation:
+```achronyme
+let name = "Alice"
+"Hello, ${name}!"                    // "Hello, ${name}!" (literal)
+```
+
+### Practical Examples
+
+**Formatting Messages:**
+```achronyme
+let formatGreeting = (name, time) => 'Good ${time}, ${name}!'
+formatGreeting("Alice", "morning")   // "Good morning, Alice!"
+```
+
+**Building URLs:**
+```achronyme
+let userId = 123
+let action = "profile"
+let url = 'https://api.com/users/${userId}/${action}'
+// "https://api.com/users/123/profile"
+```
+
+**Logging with Values:**
+```achronyme
+let value = 42
+let max = 100
+'Progress: ${value}/${max} (${(value / max) * 100}%)'
+// "Progress: 42/100 (42%)"
+```
+
+**Conditional Formatting:**
+```achronyme
+let count = 5
+'You have ${count} ${if(count == 1) { "item" } else { "items" }}'
+// "You have 5 items"
+```
+
+**Mathematical Expressions:**
+```achronyme
+let radius = 5
+'Circle area: ${PI * radius^2}'     // "Circle area: 78.53981633974483"
+'Circumference: ${2 * PI * radius}' // "Circumference: 31.41592653589793"
+```
 
 ## String Operators
 
@@ -396,14 +519,19 @@ let upper_chars = map(c => upper(c), chars)
 join(upper_chars, "")  // "HELLO"
 ```
 
-### No Printf-style Formatting
+### Printf-style Formatting
 
-There is no formatted string interpolation. Use `+` operator or `concat()` to build strings:
+While Achronyme now supports string interpolation with `'${}'`, there is no printf-style format specifiers (like `%d`, `%f`, etc.). For precise formatting:
 
 ```achronyme
 let name = "Alice"
 let age = 30
-let message = "Name: " + name + ", Age: " + pad_start(age, 2, "0")
+
+// Use string interpolation (recommended)
+let message = 'Name: ${name}, Age: ${age}'
+
+// Or concatenation with formatting functions
+let formatted = "Score: " + pad_start(age, 3, "0")
 ```
 
 ## Implementation Details
@@ -454,6 +582,10 @@ String literals are parsed by the Pest PEG parser:
 
 Achronyme provides comprehensive string manipulation capabilities:
 
+**String Literals:**
+- Double quotes (`"..."`) - Literal strings
+- Single quotes (`'...'`) - Interpolated strings with `${expression}`
+
 **Operators:**
 - `+` for concatenation
 - `==` and `!=` for comparison
@@ -468,6 +600,7 @@ Achronyme provides comprehensive string manipulation capabilities:
 
 **Features:**
 - Unicode support
+- String interpolation (`'Hello, ${name}!'`)
 - Escape sequences
 - Indexing and slicing
 - Immutable operations

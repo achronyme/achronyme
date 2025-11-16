@@ -49,9 +49,12 @@ pub struct Evaluator {
     /// Track exported values from current module (for user-defined modules)
     /// Format: name -> Value
     pub(crate) exported_values: HashMap<String, Value>,
+    /// Track exported types from current module (for user-defined modules)
+    /// Format: name -> TypeAnnotation
+    pub(crate) exported_types: HashMap<String, TypeAnnotation>,
     /// Cache of loaded user modules to avoid re-parsing
-    /// Format: module_path -> HashMap<name, Value>
-    pub(crate) module_cache: HashMap<String, HashMap<String, Value>>,
+    /// Format: module_path -> (values, types)
+    pub(crate) module_cache: HashMap<String, (HashMap<String, Value>, HashMap<String, TypeAnnotation>)>,
     /// Current file being evaluated (for relative imports)
     /// This is the directory path of the file currently being evaluated
     pub(crate) current_file_dir: Option<String>,
@@ -63,6 +66,15 @@ pub struct Evaluator {
     pub(crate) type_registry: HashMap<String, TypeAnnotation>,
     /// Track if we're currently inside a generator (for yield validation)
     pub(crate) in_generator: bool,
+    /// Track how many loops we're currently inside (for break/continue validation)
+    /// Incremented when entering while/for loops, decremented when leaving
+    pub(crate) loop_depth: usize,
+    /// Track how many yields have been encountered during current generator execution
+    /// Used for resuming generators with nested control flow
+    pub(crate) generator_yield_count: usize,
+    /// Target yield number to stop at during generator execution
+    /// When yield_count reaches this target, the generator suspends
+    pub(crate) generator_yield_target: usize,
 }
 
 impl Evaluator {
@@ -75,17 +87,32 @@ impl Evaluator {
             module_registry: create_builtin_registry(),
             imported_modules: HashMap::new(),
             exported_values: HashMap::new(),
+            exported_types: HashMap::new(),
             module_cache: HashMap::new(),
             current_file_dir: None,
             tco_mode: false,
             type_registry: HashMap::new(),
             in_generator: false,
+            loop_depth: 0,
+            generator_yield_count: 0,
+            generator_yield_target: 0,
         }
     }
 
     /// Register a type alias
     pub fn register_type_alias(&mut self, name: String, type_definition: TypeAnnotation) {
         self.type_registry.insert(name, type_definition);
+    }
+
+    /// Set the current file directory for relative imports (directly)
+    /// This is used for testing purposes
+    pub fn set_current_file_dir_direct(&mut self, dir: Option<String>) {
+        self.current_file_dir = dir;
+    }
+
+    /// Get the current file directory
+    pub fn get_current_file_dir(&self) -> Option<&String> {
+        self.current_file_dir.as_ref()
     }
 
     /// Resolve a type reference to its definition
@@ -115,8 +142,8 @@ impl Evaluator {
             }
             TypeAnnotation::Record { fields } => {
                 let resolved_fields = fields.iter()
-                    .map(|(name, (is_mut, ty))| {
-                        (name.clone(), (*is_mut, self.resolve_type(ty)))
+                    .map(|(name, (is_mut, is_optional, ty))| {
+                        (name.clone(), (*is_mut, *is_optional, self.resolve_type(ty)))
                     })
                     .collect();
                 TypeAnnotation::Record { fields: resolved_fields }

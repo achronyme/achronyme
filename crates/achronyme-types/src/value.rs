@@ -65,6 +65,14 @@ pub enum Value {
         kind: Option<String>,
         source: Option<Box<Value>>,
     },
+    /// Internal marker for break statement in loops
+    /// Contains optional value to return from the loop
+    /// This variant should never be exposed to user code
+    LoopBreak(Option<Box<Value>>),
+    /// Internal marker for continue statement in loops
+    /// Signals that the loop should skip to the next iteration
+    /// This variant should never be exposed to user code
+    LoopContinue,
 }
 
 /// State of a generator function
@@ -75,6 +83,10 @@ pub enum Value {
 pub struct GeneratorState {
     /// The generator's environment (captured scope)
     pub env: Environment,
+
+    /// Original environment captured at generator creation
+    /// Used to reset state before re-execution for nested control flow support
+    pub original_env: Option<Environment>,
 
     /// Current execution position (statement index)
     pub position: usize,
@@ -210,6 +222,7 @@ impl GeneratorState {
     pub fn new(env: Environment, statements: Vec<AstNode>) -> Self {
         Self {
             env,
+            original_env: None,
             position: 0,
             statements,
             done: false,

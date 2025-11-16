@@ -147,9 +147,48 @@ find(5)   // 5
 find(15)  // -1
 ```
 
-### Break Pattern
+### break Statement
 
-To break out of an infinite loop:
+Use `break` to exit a loop immediately:
+
+```achronyme
+mut i = 0
+while(i < 100) {
+    if(i == 10) { break }
+    i += 1
+}
+i  // 10
+```
+
+`break` can also return a value:
+
+```achronyme
+let result = while(true) {
+    let x = calculateSomething()
+    if(x > 100) { break x }
+}
+```
+
+### continue Statement
+
+Use `continue` to skip to the next iteration:
+
+```achronyme
+mut sum = 0
+mut i = 0
+while(i < 10) {
+    i += 1
+    if(i % 2 == 0) { continue }  // Skip even numbers
+    sum += i
+}
+sum  // 25 (1 + 3 + 5 + 7 + 9)
+```
+
+See **[Loop Control](39-loop-control.md)** for comprehensive documentation on `break` and `continue`.
+
+### Early Return Pattern
+
+Use `return` to exit early from a while loop inside a function:
 
 ```achronyme
 let process = () => do {
@@ -328,20 +367,23 @@ let factorial = (n) => do {
 
 Both approaches work, but `while` avoids stack overflow for large values.
 
-## Future Enhancements
+## Related Features
 
-In the future, Achronyme will support:
+Achronyme now supports comprehensive loop control:
 
-- **`for-in` loops**: Iterate over collections
-- **`break` statement**: Explicit loop exit
+- **`break` statement**: Exit loop immediately with optional value
 - **`continue` statement**: Skip to next iteration
-- **Iterators**: Lazy evaluation with `yield`
+- **`for-in` loops**: Iterate over collections (Vectors, Tensors, Generators)
+- **Generators**: Lazy evaluation with `yield`
 
-For now, use `while` with `return` for early exits.
+See:
+- **[Loop Control](39-loop-control.md)** - Comprehensive break/continue/for-in documentation
+- **[Generators](38-generators.md)** - Creating lazy sequences with yield
 
 ## See Also
 
-- [Control Flow](./control-flow.md) - Overview of if, while, and future constructs
-- [Do Blocks](./do-blocks.md) - Block expressions for multi-statement lambdas
-- [Return Statement](./return-statement.md) - Early return from functions
-- [Mutable Variables](./mutability.md) - Using `mut` for loop counters
+- [Control Flow](08-control-flow.md) - Overview of if, while, and other constructs
+- [Do Blocks](21-do-blocks.md) - Block expressions for multi-statement lambdas
+- [Mutable Variables](26-mutability.md) - Using `mut` for loop counters
+- [Loop Control](39-loop-control.md) - break, continue, and for-in loops
+- [Generators](38-generators.md) - Lazy iterators with yield

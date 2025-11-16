@@ -27,6 +27,17 @@ pub enum UnaryOp {
     Not,    // !x
 }
 
+/// Compound assignment operators: +=, -=, *=, /=, %=, ^=
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompoundOp {
+    AddAssign,  // +=
+    SubAssign,  // -=
+    MulAssign,  // *=
+    DivAssign,  // /=
+    ModAssign,  // %=
+    PowAssign,  // ^=
+}
+
 // Import TypeAnnotation from local module (avoids circular dependency)
 use crate::type_annotation::TypeAnnotation;
 
@@ -99,6 +110,12 @@ pub enum AstNode {
         target: Box<AstNode>,  // postfix_expression (variable, field access, index)
         value: Box<AstNode>,
     },
+    /// Compound assignment: x += 5, obj.field -= 3, arr[0] *= 2
+    CompoundAssignment {
+        target: Box<AstNode>,   // identifier, field access, or index
+        operator: CompoundOp,   // +=, -=, *=, /=, %=, ^=
+        value: Box<AstNode>,    // expression to apply
+    },
     Return {
         value: Box<AstNode>,  // Expression to return
     },
@@ -106,10 +123,10 @@ pub enum AstNode {
     SelfReference, // 'self' keyword for use in records
     RecReference,  // 'rec' keyword for recursive function calls
     /// Lambda with optional type annotations (gradual typing)
-    /// params: list of (param_name, optional_type_annotation)
+    /// params: list of (param_name, optional_type_annotation, optional_default_value)
     /// return_type: optional return type annotation
     Lambda {
-        params: Vec<(String, Option<TypeAnnotation>)>,
+        params: Vec<(String, Option<TypeAnnotation>, Option<Box<AstNode>>)>,
         return_type: Option<TypeAnnotation>,
         body: Box<AstNode>,
     },
@@ -195,6 +212,30 @@ pub enum AstNode {
         value: Box<AstNode>,
         arms: Vec<MatchArm>,
     },
+    // Break statement: break [expr]
+    // Exits the current loop, optionally returning a value
+    // Only valid inside while/for loops
+    Break {
+        value: Option<Box<AstNode>>,
+    },
+    // Continue statement: continue
+    // Skips to the next iteration of the current loop
+    // Only valid inside while/for loops
+    Continue,
+    // Interpolated string: 'Hello, ${name}!'
+    // Parts are literals or expressions to be evaluated
+    InterpolatedString {
+        parts: Vec<StringPart>,
+    },
+}
+
+/// Represents a part of an interpolated string
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    /// Literal text portion
+    Literal(String),
+    /// Expression to be evaluated and converted to string: ${expr}
+    Expression(Box<AstNode>),
 }
 
 /// Represents an array element - can be a single expression or a spread expression
@@ -270,6 +311,7 @@ pub enum LiteralPattern {
     Number(f64),
     String(String),
     Boolean(bool),
+    Null,
 }
 
 /// Vector pattern element: either a pattern or a rest pattern

@@ -117,6 +117,17 @@ fn describe_value(value: &Value, indent: usize) -> String {
             };
             format!("Error({}: {}){}",  kind_str, message, source_str)
         }
+
+        Value::LoopBreak(val) => {
+            match val {
+                Some(inner) => format!("LoopBreak({})", describe_value(inner, indent)),
+                None => "LoopBreak(internal marker - should not be visible)".to_string(),
+            }
+        }
+
+        Value::LoopContinue => {
+            "LoopContinue(internal marker - should not be visible)".to_string()
+        }
     }
 }
 
@@ -176,10 +187,14 @@ fn format_ast_node(node: &AstNode, indent: usize) -> String {
 
         AstNode::Lambda { params, body, .. } => {
             let params_str: String = params.iter()
-                .map(|(name, type_ann)| {
-                    match type_ann {
+                .map(|(name, type_ann, default)| {
+                    let base = match type_ann {
                         Some(ty) => format!("{}: {}", name, ty.to_string()),
                         None => name.clone(),
+                    };
+                    match default {
+                        Some(default_ast) => format!("{} = {}", base, format_ast_node(default_ast, indent)),
+                        None => base,
                     }
                 })
                 .collect::<Vec<String>>()

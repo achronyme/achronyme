@@ -54,6 +54,134 @@ let getAnswer = () => 42
 getAnswer()  // 42
 ```
 
+## Default Parameter Values
+
+Parameters can have default values that are used when arguments are not provided:
+
+### Basic Syntax
+
+```achronyme
+let greet = (name, greeting = "Hello") => '${greeting}, ${name}!'
+
+greet("Alice")           // "Hello, Alice!"
+greet("Bob", "Hi")       // "Hi, Bob!"
+```
+
+### With Type Annotations
+
+```achronyme
+let fetch = (url: String, timeout: Number = 5000): Number => timeout
+
+fetch("api.com")         // 5000
+fetch("api.com", 10000)  // 10000
+```
+
+### Multiple Defaults
+
+```achronyme
+let createPoint = (x = 0, y = 0, z = 0) => {x: x, y: y, z: z}
+
+createPoint()            // {x: 0, y: 0, z: 0}
+createPoint(1)           // {x: 1, y: 0, z: 0}
+createPoint(1, 2)        // {x: 1, y: 2, z: 0}
+createPoint(1, 2, 3)     // {x: 1, y: 2, z: 3}
+```
+
+### Practical Examples
+
+**Recursion with Accumulators:**
+```achronyme
+let factorial = (n, acc = 1) =>
+    if(n <= 1) { acc } else { rec(n - 1, acc * n) }
+
+factorial(5)      // 120
+factorial(5, 2)   // 240 (custom initial accumulator)
+```
+
+**Configuration Functions:**
+```achronyme
+let configureApi = (baseUrl, timeout = 3000, retries = 3) => {
+    url: baseUrl,
+    timeout: timeout,
+    retries: retries
+}
+
+configureApi("https://api.com")  // Uses defaults
+configureApi("https://api.com", 5000, 5)  // Custom values
+```
+
+**Mathematical Functions:**
+```achronyme
+let power = (base, exp = 2) => base ^ exp
+
+power(5)       // 25 (5^2)
+power(2, 10)   // 1024 (2^10)
+```
+
+## Optional Parameters
+
+Parameters marked with `?` are optional and receive `null` if not provided:
+
+### Basic Syntax
+
+```achronyme
+let greet = (name: String, title?: String) =>
+    match title {
+        null => name
+        _ => '${title} ${name}'
+    }
+
+greet("Alice")           // "Alice"
+greet("Bob", "Dr.")      // "Dr. Bob"
+```
+
+### Difference from Default Values
+
+- **Optional parameter (`?`)**: Value is `null` if not provided
+- **Default parameter (`=`)**: Uses specified default value if not provided
+
+```achronyme
+// Optional: value is null if not passed
+let formatOptional = (value: Number, decimals?: Number) =>
+    match decimals {
+        null => value
+        d => round(value, d)
+    }
+
+formatOptional(3.14159)      // 3.14159 (null passed)
+formatOptional(3.14159, 2)   // 3.14
+
+// Default: uses default value if not passed
+let formatDefault = (value: Number, decimals: Number = 2) =>
+    round(value, decimals)
+
+formatDefault(3.14159)       // 3.14 (uses default 2)
+formatDefault(3.14159, 4)    // 3.1416
+```
+
+### Use Cases
+
+**API Functions:**
+```achronyme
+let request = (url: String, method?: String, body?: String) => {
+    let actualMethod = match method { null => "GET", m => m }
+    // ... perform request
+    {url: url, method: actualMethod}
+}
+
+request("api.com")                    // GET request
+request("api.com", "POST", "{}")      // POST with body
+```
+
+**Formatting Functions:**
+```achronyme
+let formatDate = (date: String, format?: String) =>
+    match format {
+        null => date  // Return as-is
+        f => applyFormat(date, f)
+    }
+```
+
 ## Lambda Bodies
 
 ### Single Expression
@@ -395,6 +523,8 @@ let factorial = n =>
 
 - Functions are first-class values
 - Lambdas: `x => expr` or `(x, y) => expr`
+- Default parameters: `(x = 10) => expr`
+- Optional parameters: `(x?: Type) => expr`
 - IIFE pattern for complex expressions: `(x => expr)(value)`
 - `rec` for recursion (self-reference)
 - Closures capture variables from outer scope

@@ -179,6 +179,83 @@ double([1, 2, 3])   // [2, 4, 6]
 triple([1, 2, 3])   // [3, 6, 9]
 ```
 
+## Compound Assignment Operators
+
+Achronyme supports compound assignment operators for concise mutation of variables:
+
+### Available Operators
+
+```javascript
+mut x = 10
+x += 5    // x = 15 (equivalent to x = x + 5)
+x -= 3    // x = 12 (equivalent to x = x - 3)
+x *= 2    // x = 24 (equivalent to x = x * 2)
+x /= 4    // x = 6  (equivalent to x = x / 4)
+x %= 4    // x = 2  (equivalent to x = x % 4)
+x ^= 3    // x = 8  (equivalent to x = x ^ 3, power)
+```
+
+### With Record Fields
+
+Compound assignment also works with mutable record fields:
+
+```javascript
+mut obj = {mut value: 10}
+obj.value += 5    // obj.value = 15
+obj.value *= 2    // obj.value = 30
+
+mut counter = {
+    mut count: 0,
+    increment: () => do { self.count += 1 }
+}
+counter.increment()
+counter.count  // 1
+```
+
+### Common Use Cases
+
+**Loop Counters:**
+```javascript
+mut i = 0
+while(i < 10) {
+    i += 1  // More concise than i = i + 1
+}
+```
+
+**Accumulators:**
+```javascript
+mut sum = 0
+for(x in [1, 2, 3, 4, 5]) {
+    sum += x
+}
+sum  // 15
+```
+
+**Mathematical Computations:**
+```javascript
+mut result = 2
+result ^= 10  // result = 1024 (2^10)
+
+mut angle = 0
+angle += PI / 4  // Increment by 45 degrees
+```
+
+### Important Notes
+
+- Compound assignment requires `mut` variables
+- The operators are right-associative
+- They return the new value (like regular assignment)
+
+```javascript
+// ERROR: Cannot use compound assignment on immutable variable
+let x = 10
+// x += 5  // ERROR
+
+// CORRECT: Use mut for mutable variables
+mut y = 10
+y += 5    // OK
+```
+
 ## Constants
 
 Achronyme has built-in mathematical constants:
@@ -455,13 +532,14 @@ let y = x + 10
 ## Summary
 
 - Variables declared with `let`
-- All variables are **immutable**
+- All variables are **immutable** (use `mut` for mutable)
 - Type inference - no type annotations needed
 - Scope: top-level, function-local, closures
 - Create new values instead of mutating
+- Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `^=`
 - Use descriptive names
 - Built-in constants: `PI`, `E`
-- Reserved keywords: `let`, `true`, `false`, `self`, `rec`
+- Reserved keywords: `let`, `true`, `false`, `self`, `rec`, `break`, `continue`
 
 ---
 

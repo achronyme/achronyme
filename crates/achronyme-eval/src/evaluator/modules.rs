@@ -1,4 +1,5 @@
 use achronyme_types::value::Value;
+use achronyme_parser::type_annotation::TypeAnnotation;
 use std::collections::HashMap;
 
 use super::Evaluator;
@@ -6,8 +7,8 @@ use super::Evaluator;
 /// Module loading and management
 impl Evaluator {
     /// Load and evaluate a user module from a file path
-    /// Returns the exported values from the module
-    pub fn load_user_module(&mut self, module_path: &str) -> Result<HashMap<String, Value>, String> {
+    /// Returns the exported values and types from the module
+    pub fn load_user_module(&mut self, module_path: &str) -> Result<(HashMap<String, Value>, HashMap<String, TypeAnnotation>), String> {
         use std::fs;
         use std::path::Path;
         use achronyme_parser::parse;
@@ -59,8 +60,9 @@ impl Evaluator {
             self.evaluate(stmt)?;
         }
 
-        // Collect exported values from this module
-        let module_exports = self.exported_values.clone();
+        // Collect exported values and types from this module
+        let module_value_exports = self.exported_values.clone();
+        let module_type_exports = self.exported_types.clone();
 
         // Pop the module scope
         self.env.pop_scope();
@@ -68,12 +70,13 @@ impl Evaluator {
         // Restore the previous file directory
         self.current_file_dir = old_file_dir;
 
-        // Clear exported values (they've been captured)
+        // Clear exported values and types (they've been captured)
         self.exported_values.clear();
+        self.exported_types.clear();
 
         // Cache the module
-        self.module_cache.insert(module_path.to_string(), module_exports.clone());
+        self.module_cache.insert(module_path.to_string(), (module_value_exports.clone(), module_type_exports.clone()));
 
-        Ok(module_exports)
+        Ok((module_value_exports, module_type_exports))
     }
 }

@@ -42,7 +42,7 @@ fn enrich_function_with_type(value: Value, expected_type: &TypeAnnotation) -> Va
     // Only enrich if the expected type is a Function type
     if let TypeAnnotation::Function { params: expected_params, return_type: expected_return } = expected_type {
         if let Value::Function(ref func) = value {
-            if let Function::UserDefined { params, param_types, return_type, body, closure_env } = func {
+            if let Function::UserDefined { params, param_types, param_defaults, return_type, body, closure_env } = func {
                 // Check if we need to enrich the parameter types
                 let needs_enrichment = param_types.iter().any(|t| t.is_none()) || return_type.is_none();
 
@@ -68,9 +68,10 @@ fn enrich_function_with_type(value: Value, expected_type: &TypeAnnotation) -> Va
                     };
 
                     // Create enriched function
-                    let enriched_func = Function::new_typed(
+                    let enriched_func = Function::new_typed_with_defaults(
                         params.clone(),
                         enriched_param_types,
+                        param_defaults.clone(),
                         enriched_return_type,
                         (**body).clone(),
                         closure_env.clone(),

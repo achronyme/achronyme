@@ -477,6 +477,26 @@ Current implementation limitations:
    // This is consistent with if statements: if (condition) { ... }
    ```
 
+## Related: Destructuring Assignment
+
+Achronyme v0.6.2 introduces **destructuring assignment** in `let` and `mut` bindings, which reuses the pattern matching infrastructure. This allows you to extract values directly:
+
+```javascript
+// Record destructuring
+let { name, age } = person
+
+// Vector destructuring
+let [head, ...tail] = list
+
+// Nested destructuring
+let { user: { name: userName } } = data
+
+// Mutable destructuring
+mut { x, y } = point
+```
+
+See **[Destructuring](37-destructuring.md)** for complete documentation.
+
 ## Future Enhancements
 
 Planned improvements:
@@ -484,5 +504,4 @@ Planned improvements:
 - Exhaustiveness checking and warnings
 - Or-patterns: `match x { 1 | 2 | 3 => "small" }`
 - As-patterns: `match x { list @ [_, _, _] => len(list) }`
-- Pattern matching in let bindings: `let { x, y } = point`
 - Range patterns: `match n { 1..10 => "small" }`

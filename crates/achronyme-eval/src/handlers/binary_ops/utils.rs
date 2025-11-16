@@ -54,5 +54,7 @@ pub fn value_to_string(value: &Value) -> String {
                 None => format!("Error({})", message),
             }
         }
+        Value::LoopBreak(_) => "<loop-break>".to_string(),
+        Value::LoopContinue => "<loop-continue>".to_string(),
     }
 }

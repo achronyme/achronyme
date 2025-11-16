@@ -41,9 +41,10 @@ pub fn infer_type(value: &Value) -> TypeAnnotation {
             shape: Some(t.shape().iter().map(|&d| Some(d)).collect()),
         },
         Value::Record(fields) => {
-            let type_fields: HashMap<String, (bool, TypeAnnotation)> = fields
+            // (is_mutable, is_optional, type) - inferred fields are not mutable and not optional
+            let type_fields: HashMap<String, (bool, bool, TypeAnnotation)> = fields
                 .iter()
-                .map(|(name, value)| (name.clone(), (false, infer_type(value))))
+                .map(|(name, value)| (name.clone(), (false, false, infer_type(value))))
                 .collect();
             TypeAnnotation::Record {
                 fields: type_fields,
@@ -60,5 +61,8 @@ pub fn infer_type(value: &Value) -> TypeAnnotation {
         Value::GeneratorYield(_) => TypeAnnotation::Any,
         // Error type - represents an error value
         Value::Error { .. } => TypeAnnotation::Error,
+        // Loop control flow markers - internal, should not appear in type inference
+        Value::LoopBreak(_) => TypeAnnotation::Any,
+        Value::LoopContinue => TypeAnnotation::Any,
     }
 }
