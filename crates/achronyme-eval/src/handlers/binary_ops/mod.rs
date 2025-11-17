@@ -12,6 +12,9 @@ use arithmetic::{
 use comparison::{apply_gt, apply_lt, apply_gte, apply_lte, apply_eq, apply_neq};
 use logical::{apply_and, apply_or};
 
+// Re-export is_truthy for use in short-circuit evaluation
+pub use logical::is_truthy;
+
 /// Apply a binary operation to two values
 pub fn apply(op: &BinaryOp, left: Value, right: Value) -> Result<Value, String> {
     match op {

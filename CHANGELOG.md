@@ -17,6 +17,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.3] - 2025-11-16
+
+### New Features
+
+**For-In Loops**
+- Iterate over Vectors and Tensors: `for(item in collection) { ... }`
+- Returns the last expression value from the loop body
+- Supports nested loops
+
+**Break and Continue Statements**
+- `break` exits loops, `break value` returns a value
+- `continue` skips to next iteration
+- Works in both `while` and `for-in` loops
+
+**Optional and Nullable Parameters**
+- Optional parameters: `(param?: Type)` defaults to `null`
+- Nullable types: `Type | null` or `?Type`
+- Pattern matching for safe null handling
+
+**Type Export in Modules**
+- Export type aliases: `export { TypeName }`
+- Import types from other modules
+- Full module system support for custom types
+
+**Pattern Matching Improvements**
+- Fixed guard clause parsing with required parentheses
+- Improved pattern compilation for nested structures
+
+**Language Server Protocol (LSP) Server**
+- Initial implementation for IDE integration
+- Real-time diagnostics with parse error reporting
+- Hover information for 80+ built-in functions and 20+ keywords
+- Go to definition for variables and functions
+- Find references across document
+- Document symbols outline (variables, mutables, types)
+- Tower-LSP framework with async operation
+
+**Documentation Overhaul**
+- Migrated to Astro Content Collections format
+- Restructured docs/language/ into logical subdirectories
+- Individual changelog files per version with YAML frontmatter
+- Documentation site live at docs.achrony.me
+- Corrected language philosophy and syntax documentation
+
+### Improvements
+
+- Clarified `{ }` creates records, `do { }` creates code blocks
+- Guard clauses now require parentheses: `n if (n < 0) =>`
+- Updated installation to prioritize binary downloads
+- Fixed README links to new documentation structure
+
+---
+
 ## [0.6.2] - 2025-11-15 (Unreleased)
 
 ### New Features

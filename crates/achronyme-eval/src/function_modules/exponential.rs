@@ -33,7 +33,47 @@ fn log2(args: &[Value], _env: &mut Environment) -> Result<Value, String> {
 }
 
 fn sqrt(args: &[Value], _env: &mut Environment) -> Result<Value, String> {
-    unary_math_fn!("sqrt", f64::sqrt, &args[0])
+    match &args[0] {
+        Value::Number(x) => {
+            if *x < 0.0 {
+                // Return complex number for negative reals: sqrt(-x) = i*sqrt(x)
+                let magnitude = (-*x).sqrt();
+                Ok(Value::Complex(achronyme_types::complex::Complex::new(
+                    0.0, magnitude,
+                )))
+            } else {
+                Ok(Value::Number(x.sqrt()))
+            }
+        }
+        Value::Complex(c) => {
+            // Complex square root
+            let result = c.sqrt();
+            Ok(Value::Complex(result))
+        }
+        Value::Tensor(t) => {
+            // For tensors, apply element-wise, returning complex for negative values
+            let data: Vec<Value> = t
+                .data()
+                .iter()
+                .map(|x| {
+                    if *x < 0.0 {
+                        Value::Complex(achronyme_types::complex::Complex::new(0.0, (-*x).sqrt()))
+                    } else {
+                        Value::Number(x.sqrt())
+                    }
+                })
+                .collect();
+            Ok(Value::Vector(data))
+        }
+        Value::Vector(v) => {
+            let results: Result<Vec<Value>, String> = v
+                .iter()
+                .map(|val| sqrt(&[val.clone()], _env))
+                .collect();
+            Ok(Value::Vector(results?))
+        }
+        _ => Err("sqrt() requires a number, complex, or numeric array".to_string()),
+    }
 }
 
 fn cbrt(args: &[Value], _env: &mut Environment) -> Result<Value, String> {

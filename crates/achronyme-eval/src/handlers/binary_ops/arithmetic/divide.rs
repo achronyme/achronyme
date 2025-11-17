@@ -5,11 +5,12 @@ use achronyme_types::tensor::{RealTensor, ComplexTensor};
 pub fn apply_divide(left: Value, right: Value) -> Result<Value, String> {
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => {
-            if b == 0.0 {
-                Err("Division by zero".to_string())
-            } else {
-                Ok(Value::Number(a / b))
-            }
+            // IEEE 754 compliant division:
+            // x / 0 where x > 0 -> Infinity
+            // x / 0 where x < 0 -> -Infinity
+            // 0 / 0 -> NaN
+            // All these are handled naturally by f64 division
+            Ok(Value::Number(a / b))
         }
         (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(a / b)),
 
@@ -56,22 +57,21 @@ pub fn apply_divide(left: Value, right: Value) -> Result<Value, String> {
         }
 
         // Broadcasting: Scalar / Vector
+        // IEEE 754: division by zero elements produces Infinity/NaN
         (Value::Number(scalar), Value::Vector(ref vec)) => {
             if Value::is_numeric_vector(vec) {
-                let result: Result<Vec<Value>, String> = vec.iter().map(|v| match v {
-                    Value::Number(n) => if *n == 0.0 { Err("Division by zero".to_string()) } else { Ok(Value::Number(scalar / n)) },
-                    Value::Complex(c) => if c.re == 0.0 && c.im == 0.0 { Err("Division by zero".to_string()) } else { Ok(Value::Complex(Complex::from_real(scalar) / *c)) },
+                let result: Vec<Value> = vec.iter().map(|v| match v {
+                    Value::Number(n) => Value::Number(scalar / n),
+                    Value::Complex(c) => Value::Complex(Complex::from_real(scalar) / *c),
                     _ => unreachable!(),
                 }).collect();
-                result.map(Value::Vector)
+                Ok(Value::Vector(result))
             } else {
                 Err("Broadcasting requires numeric vector".to_string())
             }
         }
         (Value::Vector(ref vec), Value::Number(scalar)) => {
-            if scalar == 0.0 {
-                return Err("Division by zero".to_string());
-            }
+            // IEEE 754: division by zero scalar produces Infinity/NaN
             if Value::is_numeric_vector(vec) {
                 let result: Vec<Value> = vec.iter().map(|v| match v {
                     Value::Number(n) => Value::Number(n / scalar),
@@ -87,20 +87,17 @@ pub fn apply_divide(left: Value, right: Value) -> Result<Value, String> {
         // Broadcasting: Complex / Vector
         (Value::Complex(c), Value::Vector(ref vec)) => {
             if Value::is_numeric_vector(vec) {
-                let result: Result<Vec<Value>, String> = vec.iter().map(|v| match v {
-                    Value::Number(n) => if *n == 0.0 { Err("Division by zero".to_string()) } else { Ok(Value::Complex(c / Complex::from_real(*n))) },
-                    Value::Complex(cv) => if cv.re == 0.0 && cv.im == 0.0 { Err("Division by zero".to_string()) } else { Ok(Value::Complex(c / *cv)) },
+                let result: Vec<Value> = vec.iter().map(|v| match v {
+                    Value::Number(n) => Value::Complex(c / Complex::from_real(*n)),
+                    Value::Complex(cv) => Value::Complex(c / *cv),
                     _ => unreachable!(),
                 }).collect();
-                result.map(Value::Vector)
+                Ok(Value::Vector(result))
             } else {
                 Err("Broadcasting requires numeric vector".to_string())
             }
         }
         (Value::Vector(ref vec), Value::Complex(c)) => {
-            if c.re == 0.0 && c.im == 0.0 {
-                return Err("Division by zero".to_string());
-            }
             if Value::is_numeric_vector(vec) {
                 let result: Vec<Value> = vec.iter().map(|v| match v {
                     Value::Number(n) => Value::Complex(Complex::from_real(*n) / c),

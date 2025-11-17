@@ -137,9 +137,35 @@ impl Evaluator {
 
             // Operations
             AstNode::BinaryOp { op, left, right } => {
-                let left_val = self.evaluate(left)?;
-                let right_val = self.evaluate(right)?;
-                handlers::binary_ops::apply(op, left_val, right_val)
+                // Short-circuit evaluation for logical operators
+                match op {
+                    achronyme_parser::ast::BinaryOp::And => {
+                        // && : If left is falsy, return left without evaluating right
+                        let left_val = self.evaluate(left)?;
+                        if !handlers::binary_ops::is_truthy(&left_val) {
+                            Ok(left_val)
+                        } else {
+                            // Left is truthy, evaluate and return right
+                            self.evaluate(right)
+                        }
+                    }
+                    achronyme_parser::ast::BinaryOp::Or => {
+                        // || : If left is truthy, return left without evaluating right
+                        let left_val = self.evaluate(left)?;
+                        if handlers::binary_ops::is_truthy(&left_val) {
+                            Ok(left_val)
+                        } else {
+                            // Left is falsy, evaluate and return right
+                            self.evaluate(right)
+                        }
+                    }
+                    _ => {
+                        // All other operators: evaluate both sides first
+                        let left_val = self.evaluate(left)?;
+                        let right_val = self.evaluate(right)?;
+                        handlers::binary_ops::apply(op, left_val, right_val)
+                    }
+                }
             }
             AstNode::UnaryOp { op, operand } => {
                 let operand_val = self.evaluate(operand)?;

@@ -50,6 +50,14 @@ impl AstParser {
             Rule::null_literal => {
                 Ok(AstNode::Null)
             }
+            Rule::infinity_literal => {
+                // IEEE 754 Infinity literal
+                Ok(AstNode::Number(f64::INFINITY))
+            }
+            Rule::nan_literal_value => {
+                // IEEE 754 NaN literal
+                Ok(AstNode::Number(f64::NAN))
+            }
             Rule::array => self.build_array(inner),
             Rule::vector => self.build_array(inner),  // Alias for array
             Rule::matrix => self.build_array(inner),  // Alias for array

@@ -356,10 +356,24 @@ fn test_compound_division_by_zero() {
         x /= 0
         x
     "#);
-    // Achronyme returns an error for division by zero
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.contains("Division by zero") || err.contains("divide"));
+    // IEEE 754 compliant: division by zero returns Infinity, not an error
+    assert!(result.is_ok(), "Division by zero should return Infinity (IEEE 754)");
+    match result.unwrap() {
+        achronyme_types::value::Value::MutableRef(rc) => {
+            match rc.borrow().clone() {
+                achronyme_types::value::Value::Number(n) => {
+                    assert!(n.is_infinite(), "Expected Infinity for division by zero");
+                    assert!(n.is_sign_positive());
+                }
+                _ => panic!("Expected Number inside MutableRef"),
+            }
+        }
+        achronyme_types::value::Value::Number(n) => {
+            assert!(n.is_infinite(), "Expected Infinity for division by zero");
+            assert!(n.is_sign_positive());
+        }
+        other => panic!("Expected MutableRef or Number, got {:?}", other),
+    }
 }
 
 #[test]

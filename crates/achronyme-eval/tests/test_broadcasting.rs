@@ -331,7 +331,23 @@ fn test_vector_dimension_mismatch() {
 
 #[test]
 fn test_division_by_zero_scalar() {
+    // IEEE 754 compliant: division by zero returns Infinity, not an error
     let result = eval("[1, 2, 3] / 0");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Division by zero"));
+    assert!(result.is_ok(), "Division by zero should return Infinity (IEEE 754)");
+
+    // Each element should be Infinity
+    match result.unwrap() {
+        achronyme_types::value::Value::Vector(v) => {
+            assert_eq!(v.len(), 3);
+            for val in v {
+                match val {
+                    achronyme_types::value::Value::Number(n) => {
+                        assert!(n.is_infinite(), "Expected Infinity for division by zero");
+                    }
+                    _ => panic!("Expected Number"),
+                }
+            }
+        }
+        _ => panic!("Expected Vector"),
+    }
 }

@@ -18,6 +18,11 @@ pub fn register_functions(registry: &mut FunctionRegistry) {
 
     // String conversion
     registry.register("str", to_string, 1);
+
+    // IEEE 754 special value checks
+    registry.register("isnan", is_nan, 1);
+    registry.register("isinf", is_inf, 1);
+    registry.register("isfinite", is_finite, 1);
 }
 
 // ============================================================================
@@ -115,12 +120,135 @@ fn to_string(args: &[Value], _env: &mut Environment) -> Result<Value, String> {
     Ok(Value::String(format_value(&args[0])))
 }
 
+// ============================================================================
+// IEEE 754 Special Value Functions
+// ============================================================================
+
+/// Check if a value is NaN (Not a Number)
+///
+/// Returns true if the value is NaN, false otherwise.
+/// Works on numbers, vectors, and tensors (element-wise).
+///
+/// Examples:
+/// - isnan(NaN) => true
+/// - isnan(0/0) => true
+/// - isnan(42) => false
+/// - isnan(Infinity) => false
+/// - isnan([1, NaN, 3]) => [false, true, false]
+fn is_nan(args: &[Value], _env: &mut Environment) -> Result<Value, String> {
+    match &args[0] {
+        Value::Number(n) => Ok(Value::Boolean(n.is_nan())),
+        Value::Vector(vec) => {
+            let result: Result<Vec<Value>, String> = vec
+                .iter()
+                .map(|v| match v {
+                    Value::Number(n) => Ok(Value::Boolean(n.is_nan())),
+                    _ => Err("isnan() can only be applied to numeric vectors".to_string()),
+                })
+                .collect();
+            Ok(Value::Vector(result?))
+        }
+        Value::Tensor(tensor) => {
+            let result: Vec<Value> = tensor
+                .data()
+                .iter()
+                .map(|n| Value::Boolean(n.is_nan()))
+                .collect();
+            Ok(Value::Vector(result))
+        }
+        _ => Err("isnan() requires a number, vector, or tensor".to_string()),
+    }
+}
+
+/// Check if a value is infinite (positive or negative infinity)
+///
+/// Returns true if the value is Infinity or -Infinity, false otherwise.
+/// Works on numbers, vectors, and tensors (element-wise).
+///
+/// Examples:
+/// - isinf(Infinity) => true
+/// - isinf(-Infinity) => true
+/// - isinf(1/0) => true
+/// - isinf(42) => false
+/// - isinf(NaN) => false
+/// - isinf([1, Infinity, 3]) => [false, true, false]
+fn is_inf(args: &[Value], _env: &mut Environment) -> Result<Value, String> {
+    match &args[0] {
+        Value::Number(n) => Ok(Value::Boolean(n.is_infinite())),
+        Value::Vector(vec) => {
+            let result: Result<Vec<Value>, String> = vec
+                .iter()
+                .map(|v| match v {
+                    Value::Number(n) => Ok(Value::Boolean(n.is_infinite())),
+                    _ => Err("isinf() can only be applied to numeric vectors".to_string()),
+                })
+                .collect();
+            Ok(Value::Vector(result?))
+        }
+        Value::Tensor(tensor) => {
+            let result: Vec<Value> = tensor
+                .data()
+                .iter()
+                .map(|n| Value::Boolean(n.is_infinite()))
+                .collect();
+            Ok(Value::Vector(result))
+        }
+        _ => Err("isinf() requires a number, vector, or tensor".to_string()),
+    }
+}
+
+/// Check if a value is finite (not NaN and not infinite)
+///
+/// Returns true if the value is a finite number, false otherwise.
+/// Works on numbers, vectors, and tensors (element-wise).
+///
+/// Examples:
+/// - isfinite(42) => true
+/// - isfinite(3.14) => true
+/// - isfinite(Infinity) => false
+/// - isfinite(-Infinity) => false
+/// - isfinite(NaN) => false
+/// - isfinite([1, Infinity, NaN]) => [true, false, false]
+fn is_finite(args: &[Value], _env: &mut Environment) -> Result<Value, String> {
+    match &args[0] {
+        Value::Number(n) => Ok(Value::Boolean(n.is_finite())),
+        Value::Vector(vec) => {
+            let result: Result<Vec<Value>, String> = vec
+                .iter()
+                .map(|v| match v {
+                    Value::Number(n) => Ok(Value::Boolean(n.is_finite())),
+                    _ => Err("isfinite() can only be applied to numeric vectors".to_string()),
+                })
+                .collect();
+            Ok(Value::Vector(result?))
+        }
+        Value::Tensor(tensor) => {
+            let result: Vec<Value> = tensor
+                .data()
+                .iter()
+                .map(|n| Value::Boolean(n.is_finite()))
+                .collect();
+            Ok(Value::Vector(result))
+        }
+        _ => Err("isfinite() requires a number, vector, or tensor".to_string()),
+    }
+}
+
 /// Format a value for display
 fn format_value(value: &Value) -> String {
     match value {
         Value::Number(n) => {
-            // Format numbers nicely (remove .0 for integers)
-            if n.fract() == 0.0 && n.is_finite() {
+            // Handle IEEE 754 special values first
+            if n.is_nan() {
+                "NaN".to_string()
+            } else if n.is_infinite() {
+                if n.is_sign_positive() {
+                    "Infinity".to_string()
+                } else {
+                    "-Infinity".to_string()
+                }
+            } else if n.fract() == 0.0 {
+                // Format integers nicely (remove .0)
                 format!("{}", *n as i64)
             } else {
                 format!("{}", n)
@@ -148,7 +276,15 @@ fn format_value(value: &Value) -> String {
                     .data()
                     .iter()
                     .map(|&n| {
-                        if n.fract() == 0.0 && n.is_finite() {
+                        if n.is_nan() {
+                            "NaN".to_string()
+                        } else if n.is_infinite() {
+                            if n.is_sign_positive() {
+                                "Infinity".to_string()
+                            } else {
+                                "-Infinity".to_string()
+                            }
+                        } else if n.fract() == 0.0 {
                             format!("{}", n as i64)
                         } else {
                             format!("{}", n)

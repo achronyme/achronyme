@@ -360,7 +360,20 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
     use achronyme_types::value::Value;
 
     match value {
-        Value::Number(n) => format!("{}", n),
+        Value::Number(n) => {
+            // Handle IEEE 754 special values
+            if n.is_nan() {
+                "NaN".to_string()
+            } else if n.is_infinite() {
+                if n.is_sign_positive() {
+                    "Infinity".to_string()
+                } else {
+                    "-Infinity".to_string()
+                }
+            } else {
+                format!("{}", n)
+            }
+        }
         Value::Boolean(b) => format!("{}", b),
         Value::String(s) => format!("\"{}\"", s),
         Value::Complex(c) => {
@@ -379,11 +392,36 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
         Value::Tensor(t) => {
             // Format tensor based on rank
             match t.rank() {
-                0 => format!("{}", t.data()[0]),  // Scalar
+                0 => {
+                    let val = t.data()[0];
+                    if val.is_nan() {
+                        "NaN".to_string()
+                    } else if val.is_infinite() {
+                        if val.is_sign_positive() {
+                            "Infinity".to_string()
+                        } else {
+                            "-Infinity".to_string()
+                        }
+                    } else {
+                        format!("{}", val)
+                    }
+                }
                 1 => {
                     // Vector
                     let elements: Vec<String> = t.data().iter()
-                        .map(|&x| format!("{}", x))
+                        .map(|&x| {
+                            if x.is_nan() {
+                                "NaN".to_string()
+                            } else if x.is_infinite() {
+                                if x.is_sign_positive() {
+                                    "Infinity".to_string()
+                                } else {
+                                    "-Infinity".to_string()
+                                }
+                            } else {
+                                format!("{}", x)
+                            }
+                        })
                         .collect();
                     format!("[{}]", elements.join(", "))
                 }

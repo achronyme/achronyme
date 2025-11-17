@@ -79,6 +79,15 @@ impl AstParser {
                     .ok_or("Empty type reference")?
                     .as_str()
                     .to_string();
+
+                // Block IEEE 754 special values from being used as types
+                if name == "Infinity" {
+                    return Err("'Infinity' is a value of type Number, not a type. Use 'Number' instead.".to_string());
+                }
+                if name == "NaN" {
+                    return Err("'NaN' is a value of type Number, not a type. Use 'Number' instead.".to_string());
+                }
+
                 Ok(TypeAnnotation::TypeReference(name))
             }
             _ => Err(format!("Unexpected type annotation rule: {:?}", pair.as_rule()))

@@ -10,6 +10,11 @@ pub const SQRT3: f64 = 1.7320508075688772;
 pub const LN2: f64 = consts::LN_2;
 pub const LN10: f64 = consts::LN_10;
 
+/// IEEE 754 special values
+pub const INFINITY: f64 = f64::INFINITY;
+pub const NEG_INFINITY: f64 = f64::NEG_INFINITY;
+pub const NAN: f64 = f64::NAN;
+
 /// Registry for mathematical constants
 ///
 /// Provides case-insensitive lookup of mathematical constants.
@@ -43,6 +48,10 @@ impl ConstantsRegistry {
 
         // Common aliases
         constants.insert("goldenratio".to_string(), PHI);
+
+        // IEEE 754 special values
+        constants.insert("infinity".to_string(), INFINITY);
+        constants.insert("nan".to_string(), NAN);
 
         Self { constants }
     }
@@ -128,5 +137,19 @@ mod tests {
         let registry = ConstantsRegistry::new();
         let result = registry.get("UNKNOWN");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_infinity() {
+        let registry = ConstantsRegistry::new();
+        let inf = registry.get("Infinity").unwrap();
+        assert!(inf.is_infinite() && inf.is_sign_positive());
+    }
+
+    #[test]
+    fn test_nan() {
+        let registry = ConstantsRegistry::new();
+        let nan = registry.get("NaN").unwrap();
+        assert!(nan.is_nan());
     }
 }

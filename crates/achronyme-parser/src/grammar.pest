@@ -39,6 +39,11 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 // Boolean literals: true, false
 boolean = { "true" | "false" }
 
+// IEEE 754 special literals: Infinity, NaN
+// These are parsed as special numeric values (f64::INFINITY, f64::NAN)
+infinity_literal = @{ "Infinity" ~ !ASCII_ALPHANUMERIC }
+nan_literal_value = @{ "NaN" ~ !ASCII_ALPHANUMERIC }
+
 // Numbers: 123, 3.14, -42, 1.5e-10, 2.5E+3
 // Use negative lookahead to prevent matching "5." when followed by another "." (for ranges like "5..")
 number = @{
@@ -459,6 +464,8 @@ primary = {
   | interpolated_string // Interpolated strings (single quotes) - before string_literal
   | string_literal     // String literals
   | null_literal       // Null literal (must come before identifier)
+  | infinity_literal   // IEEE 754 Infinity (must come before identifier)
+  | nan_literal_value  // IEEE 754 NaN (must come before identifier)
   | complex            // Must come before number (3i contains number)
   | number
   | control_flow_expr  // Control flow (if, match, etc.) - before record to avoid ambiguity
