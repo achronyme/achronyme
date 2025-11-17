@@ -140,6 +140,9 @@ pub fn is_tail_position(node: &AstNode) -> bool {
 
         // Interpolated string is in tail position (produces a value directly)
         AstNode::InterpolatedString { .. } => true,
+
+        // Range expression is in tail position (produces a value directly)
+        AstNode::RangeExpr { .. } => true,
     }
 }
 
@@ -258,6 +261,10 @@ fn contains_rec(node: &AstNode) -> bool {
                 StringPart::Literal(_) => false,
                 StringPart::Expression(expr) => contains_rec(expr),
             })
+        }
+
+        AstNode::RangeExpr { start, end, .. } => {
+            contains_rec(start) || contains_rec(end)
         }
 
         _ => false,
@@ -439,6 +446,11 @@ fn all_rec_are_tail_helper(node: &AstNode, in_tail_position: bool) -> bool {
                 StringPart::Literal(_) => true,
                 StringPart::Expression(expr) => all_rec_are_tail_helper(expr, false),
             })
+        }
+
+        // Range expression: start and end are NOT in tail position (evaluated first)
+        AstNode::RangeExpr { start, end, .. } => {
+            all_rec_are_tail_helper(start, false) && all_rec_are_tail_helper(end, false)
         }
 
         // Literals and references don't contain rec

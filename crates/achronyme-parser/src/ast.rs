@@ -227,6 +227,14 @@ pub enum AstNode {
     InterpolatedString {
         parts: Vec<StringPart>,
     },
+    // Range expression: 1..5 (exclusive) or 1..=5 (inclusive)
+    // Generates a vector of integers from start to end
+    // Only valid for integer ranges (floats will be truncated)
+    RangeExpr {
+        start: Box<AstNode>,
+        end: Box<AstNode>,
+        inclusive: bool,  // true for ..=, false for ..
+    },
 }
 
 /// Represents a part of an interpolated string

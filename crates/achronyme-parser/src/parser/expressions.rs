@@ -12,6 +12,7 @@ impl AstParser {
                     .ok_or("Empty expression")?;
                 self.build_ast_from_expr(inner)
             }
+            Rule::standalone_range => self.build_standalone_range(pair),
             Rule::logical_or => self.build_binary_op(pair),
             Rule::logical_and => self.build_binary_op(pair),
             Rule::comparison => self.build_comparison(pair),
@@ -24,6 +25,42 @@ impl AstParser {
             Rule::primary => self.build_primary(pair),
             _ => Err(format!("Unexpected expression rule: {:?} in {}", rule, pair.as_str()))
         }
+    }
+
+    pub(super) fn build_standalone_range(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
+        let pairs: Vec<_> = pair.into_inner().collect();
+
+        if pairs.len() == 1 {
+            // No range operator, just the logical_or expression
+            return self.build_ast_from_expr(pairs[0].clone());
+        }
+
+        // Should have exactly 3 pairs: left, range_op, right
+        if pairs.len() != 3 {
+            return Err(format!("Expected 3 pairs for range, got {}", pairs.len()));
+        }
+
+        let start = self.build_ast_from_expr(pairs[0].clone())?;
+
+        // Extract the range operator
+        let inclusive = match pairs[1].as_rule() {
+            Rule::range_op => {
+                match pairs[1].as_str() {
+                    "..=" => true,
+                    ".." => false,
+                    _ => return Err(format!("Unknown range operator: {}", pairs[1].as_str()))
+                }
+            }
+            _ => return Err(format!("Expected range_op, got: {:?}", pairs[1].as_rule()))
+        };
+
+        let end = self.build_ast_from_expr(pairs[2].clone())?;
+
+        Ok(AstNode::RangeExpr {
+            start: Box::new(start),
+            end: Box::new(end),
+            inclusive,
+        })
     }
 
     pub(super) fn build_edge(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {

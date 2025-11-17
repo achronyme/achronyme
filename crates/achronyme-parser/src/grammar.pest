@@ -481,10 +481,12 @@ primary = {
 
 // Range expression for slicing: start..end, start.., ..end, ..
 // We need to be explicit to avoid ambiguity with the greedy PEG parser
+// IMPORTANT: Use logical_or instead of expr to avoid circular reference with standalone_range
+// This means slicing ranges cannot contain range operators themselves, which is the correct behavior
 range_expr = {
-    expr ~ ".." ~ expr  // start..end
-  | expr ~ ".."          // start..
-  | ".." ~ expr          // ..end
+    logical_or ~ ".." ~ logical_or  // start..end
+  | logical_or ~ ".."          // start..
+  | ".." ~ logical_or          // ..end
   | ".."                 // ..
 }
 
@@ -560,8 +562,17 @@ logical_or = {
     logical_and ~ (logical_or_op ~ logical_and)*
 }
 
+// Range operators (lowest precedence)
+// Syntax: start..end (exclusive), start..=end (inclusive)
+// Examples: 1..5 -> [1,2,3,4], 1..=5 -> [1,2,3,4,5]
+// These have the lowest precedence so 1+2..5 = (1+2)..5 = 3..5
+range_op = { "..=" | ".." }
+standalone_range = {
+    logical_or ~ (range_op ~ logical_or)?
+}
+
 // Expression (entry point for expressions)
-expr = { logical_or }
+expr = { standalone_range }
 
 // ============================================================================
 // Import/Export Statements

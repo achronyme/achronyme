@@ -257,7 +257,55 @@ impl Evaluator {
             AstNode::InterpolatedString { parts } => {
                 self.evaluate_interpolated_string(parts)
             }
+
+            // Range expressions (1..5 or 1..=5)
+            AstNode::RangeExpr { start, end, inclusive } => {
+                self.evaluate_range_expr(start, end, *inclusive)
+            }
         }
+    }
+
+    /// Evaluate a range expression and return a Vector of integers
+    fn evaluate_range_expr(
+        &mut self,
+        start: &AstNode,
+        end: &AstNode,
+        inclusive: bool,
+    ) -> Result<Value, String> {
+        let start_val = self.evaluate(start)?;
+        let end_val = self.evaluate(end)?;
+
+        // Extract integer values
+        let start_num = match start_val {
+            Value::Number(n) => n as i64,
+            _ => return Err(format!("Range start must be a number, got {:?}", start_val)),
+        };
+
+        let end_num = match end_val {
+            Value::Number(n) => n as i64,
+            _ => return Err(format!("Range end must be a number, got {:?}", end_val)),
+        };
+
+        // Generate the range
+        let range_vec: Vec<Value> = if inclusive {
+            // Inclusive range: 1..=5 -> [1, 2, 3, 4, 5]
+            if start_num <= end_num {
+                (start_num..=end_num).map(|i| Value::Number(i as f64)).collect()
+            } else {
+                // Empty range if start > end
+                Vec::new()
+            }
+        } else {
+            // Exclusive range: 1..5 -> [1, 2, 3, 4]
+            if start_num < end_num {
+                (start_num..end_num).map(|i| Value::Number(i as f64)).collect()
+            } else {
+                // Empty range if start >= end
+                Vec::new()
+            }
+        };
+
+        Ok(Value::Vector(range_vec))
     }
 
     /// Evaluate an interpolated string by processing each part
