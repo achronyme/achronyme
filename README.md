@@ -303,14 +303,12 @@ circle.area()  // → 78.539...
 let sign = x => if(x > 0, 1, if(x < 0, -1, 0))
 
 // if-else statement (block style)
-let classify = x => {
-    if (x < 0) {
-        "negative"
-    } else if (x > 0) {
-        "positive"
-    } else {
-        "zero"
-    }
+let classify = x => if (x < 0) {
+    "negative"
+} else if (x > 0) {
+    "positive"
+} else {
+    "zero"
 }
 
 // For-in loops with break/continue
@@ -323,14 +321,14 @@ sum  // 9 (1 + 3 + 5)
 
 // Break with value
 let found = while(true) {
-    let result = search()
+    let result = search();
     if(result > 100) { break result }
 }
 
 // Pattern matching
 let describe = x => match x {
     0 => "zero"
-    n if n < 0 => "negative"
+    n if (n < 0) => "negative"
     _ => "positive"
 }
 
@@ -386,19 +384,21 @@ export { myFunction }
 
 Complete language reference available in `/docs/language/`:
 
-- **[Overview](./docs/language/README.md)** - Quick reference and feature overview
-- **[Getting Started](./docs/language/01-getting-started.md)** - Installation and first steps
-- **[Syntax Basics](./docs/language/02-syntax-basics.md)** - Core syntax rules
-- **[Data Types](./docs/language/03-data-types.md)** - Numbers, strings, arrays, records
-- **[Functions](./docs/language/06-functions.md)** - Lambdas, closures, default/optional parameters
-- **[Strings](./docs/language/20-strings.md)** - String interpolation and manipulation
-- **[Records](./docs/language/07-records.md)** - Object-oriented patterns, optional fields
-- **[Pattern Matching](./docs/language/36-pattern-matching.md)** - Match expressions and guards
-- **[Loop Control](./docs/language/39-loop-control.md)** - break, continue, and for-in loops
-- **[Generators](./docs/language/38-generators.md)** - Lazy sequences with yield
-- **[Higher-Order Functions](./docs/language/11-higher-order-functions.md)** - map, filter, reduce
-- **[Modules](./docs/language/28-modules.md)** - Import/export system
-- **[Mutability](./docs/language/26-mutability.md)** - Mutable variables and fields
+- **[Introduction](./docs/language/getting-started/introduction.md)** - Language overview and philosophy
+- **[Installation](./docs/language/getting-started/installation.md)** - Installation and first steps
+- **[Syntax Basics](./docs/language/getting-started/syntax-basics.md)** - Core syntax rules
+- **[Data Types](./docs/language/core-language/data-types.md)** - Numbers, strings, arrays, records
+- **[Functions](./docs/language/core-language/functions.md)** - Lambdas, closures, default/optional parameters
+- **[Control Flow](./docs/language/core-language/control-flow.md)** - if-else, while, for-in loops
+- **[Strings](./docs/language/data-structures/strings.md)** - String interpolation and manipulation
+- **[Records](./docs/language/data-structures/records.md)** - Object-oriented patterns, optional fields
+- **[Pattern Matching](./docs/language/advanced-topics/pattern-matching.md)** - Match expressions and guards
+- **[Loop Control](./docs/language/advanced-topics/loop-control.md)** - break, continue, and for-in loops
+- **[Generators](./docs/language/advanced-topics/generators.md)** - Lazy sequences with yield
+- **[Higher-Order Functions](./docs/language/functional-programming/higher-order-functions.md)** - map, filter, reduce
+- **[Do Blocks](./docs/language/functional-programming/do-blocks.md)** - Multi-statement blocks
+- **[Modules](./docs/language/advanced-topics/modules.md)** - Import/export system
+- **[Mutability](./docs/language/advanced-topics/mutability.md)** - Mutable variables and fields
 
 ### Examples
 
@@ -479,11 +479,12 @@ Achronyme is designed around these core principles:
 
 ### Design Decisions
 
-- **No null/undefined**: All values are concrete types
-- **Expression-oriented**: Everything is an expression that returns a value
+- **Optional null support**: Null is available for optional types (`Number | null`)
+- **Expression-oriented with statements**: Most constructs return values, but also supports if-else blocks, loops, and error handling
 - **Type inference**: Types are inferred where possible
 - **Lexical scoping**: Closures capture their environment
 - **Tensors vs Vectors**: Homogeneous tensors for math, heterogeneous vectors for data structures
+- **Gradual typing**: Mix of static and dynamic typing with optional type annotations
 
 ---
 
