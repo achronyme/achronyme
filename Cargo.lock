@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "achronyme-cli"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-eval",
  "achronyme-lsp-core",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "achronyme-dsp"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-types",
  "approx",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "achronyme-env"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-types",
  "byteorder",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "achronyme-eval"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-dsp",
  "achronyme-env",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "achronyme-linalg"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-types",
  "approx",
@@ -94,14 +94,14 @@ dependencies = [
 
 [[package]]
 name = "achronyme-numerical"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-types",
 ]
 
 [[package]]
 name = "achronyme-parser"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "pest",
  "pest_derive",
@@ -109,14 +109,14 @@ dependencies = [
 
 [[package]]
 name = "achronyme-solver"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-types",
 ]
 
 [[package]]
 name = "achronyme-types"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "achronyme-parser",
 ]

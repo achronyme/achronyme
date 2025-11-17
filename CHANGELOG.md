@@ -50,6 +50,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Type patterns validate types at runtime, default only used when field is missing (not as fallback)
 - 55 tests verify complete implementation
 
+**LSP Code Completion**
+- 151 completion items (110 functions, 19 keywords, 9 constants, 14 types)
+- Context-aware suggestions (after `let`, `import`, etc.)
+- Fuzzy matching with Jaro-Winkler similarity
+- Rich documentation and parameter snippets
+- 13 tests
+
+**LSP Code Formatting**
+- Automatic code formatting with consistent style rules
+- Operator spacing, comma normalization, brace formatting
+- String-aware parsing (preserves string contents)
+- 24 tests
+
+**LSP Signature Help**
+- 56+ function signatures with parameter documentation
+- Active parameter highlighting
+- Nested call support
+- 19 tests
+
+**CLI Format Command**
+- `achronyme format file.ach` - Format source files
+- `--check` flag for CI/CD pipelines
+- `--diff` flag for reviewing changes
+
+**CLI Lint Command**
+- `achronyme lint file.ach` - Check for syntax errors
+- `--json` flag for tooling integration
+
+**CLI Symbols Command**
+- `achronyme symbols file.ach` - List document symbols
+- `--json` flag for programmatic access
+
+**Enhanced REPL**
+- Fuzzy code completion with 151 items
+- Inline signature help showing active parameter
+- Real-time error detection distinguishing incomplete vs invalid input
+- 28 tests
+
+**LSP-Core Shared Library**
+- New `achronyme-lsp-core` crate
+- Shared completion and signature data between LSP and CLI
+- Eliminates ~1000 lines of code duplication
+
+**LSP Documentation**
+- 14 documentation files in `docs/lsp/`
+- Installation, editor setup, features, and advanced topics
+- 5,675 lines of comprehensive documentation
+
 ### Bug Fixes
 
 - **Type patterns in destructuring now correctly bind variables**: Previously `let {x: String = "Hi"} = {}` would not create variable `x`; now properly binds `x` to the default value when field is missing
@@ -61,6 +109,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Operator precedence updated for range operators
 - Falsy value semantics clarified
 - Type pattern validation-first behavior documented clearly
+- 59 LSP tests, 28 REPL helper tests added
+- Total test suite: 700+ tests all passing
 
 ---
 

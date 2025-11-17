@@ -712,6 +712,7 @@ pub fn normalize_braces(line: &str) -> String {
 }
 
 /// Format a record literal for better readability
+#[allow(dead_code)]
 pub fn format_record_literal(text: &str) -> String {
     // Simple implementation - just ensure spacing
     let text = text.trim();
@@ -728,6 +729,7 @@ pub fn format_record_literal(text: &str) -> String {
 }
 
 /// Format a vector/array literal for better readability
+#[allow(dead_code)]
 pub fn format_vector_literal(text: &str) -> String {
     // Simple implementation - just ensure spacing
     let text = text.trim();
@@ -744,6 +746,7 @@ pub fn format_vector_literal(text: &str) -> String {
 }
 
 /// Trim trailing whitespace from a line
+#[allow(dead_code)]
 pub fn trim_trailing_whitespace(line: &str) -> String {
     line.trim_end().to_string()
 }

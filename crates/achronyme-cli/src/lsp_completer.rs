@@ -1,29 +1,7 @@
-use achronyme_lsp_core::{get_all_completions, CompletionEntry as CoreCompletionEntry};
+use achronyme_lsp_core::{get_all_completions, CompletionEntry};
 use rustyline::completion::{Completer, Pair};
 use rustyline::hint::Hinter;
 use rustyline::Context;
-
-/// Wrapper struct that holds a reference to the shared completion data
-#[derive(Clone, Debug)]
-pub struct CompletionEntry {
-    pub label: String,
-    pub kind: String,
-    pub detail: String,
-    pub documentation: String,
-    pub insert_text: String,
-}
-
-impl From<&CoreCompletionEntry> for CompletionEntry {
-    fn from(entry: &CoreCompletionEntry) -> Self {
-        CompletionEntry {
-            label: entry.label.clone(),
-            kind: entry.kind.as_str().to_string(),
-            detail: entry.detail.clone(),
-            documentation: entry.documentation.clone(),
-            insert_text: entry.insert_text.clone(),
-        }
-    }
-}
 
 pub struct LspCompleter;
 
@@ -34,13 +12,13 @@ impl LspCompleter {
         Self
     }
 
-    pub fn fuzzy_complete(&self, word: &str) -> Vec<CompletionEntry> {
+    pub fn fuzzy_complete(&self, word: &str) -> Vec<&'static CompletionEntry> {
         if word.is_empty() {
             return vec![];
         }
 
         let word_lower = word.to_lowercase();
-        let mut matches: Vec<(f64, &CoreCompletionEntry)> = get_all_completions()
+        let mut matches: Vec<(f64, &'static CompletionEntry)> = get_all_completions()
             .iter()
             .filter_map(|item| {
                 let label_lower = item.label.to_lowercase();
@@ -66,7 +44,7 @@ impl LspCompleter {
         matches
             .into_iter()
             .take(15)
-            .map(|(_, e)| CompletionEntry::from(e))
+            .map(|(_, e)| e)
             .collect()
     }
 }
@@ -117,7 +95,7 @@ impl Hinter for LspCompleter {
                 // Show remaining part of the completion in gray
                 let remaining = &entry.label[word.len()..];
                 if !remaining.is_empty() {
-                    Some(format!("{} ({})", remaining, entry.detail))
+                    Some(format!("{} ({})", remaining, &entry.detail))
                 } else {
                     None
                 }
