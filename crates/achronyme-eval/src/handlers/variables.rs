@@ -181,6 +181,7 @@ fn is_special_form(name: &str) -> bool {
 
 /// Evaluate a let destructuring statement (let { x, y } = value)
 /// Uses pattern matching to bind variables from the destructured value
+/// Now supports default values: let { x, y = 0 } = value
 pub fn evaluate_let_destructuring(
     evaluator: &mut Evaluator,
     pattern: &achronyme_parser::ast::Pattern,
@@ -200,8 +201,8 @@ pub fn evaluate_let_destructuring(
         })?;
     }
 
-    // Use pattern matching to extract bindings
-    let bindings = crate::handlers::pattern_matching::match_pattern(&value, pattern)?
+    // Use pattern matching with default support to extract bindings
+    let bindings = crate::handlers::pattern_matching::match_pattern_with_defaults(evaluator, &value, pattern)?
         .ok_or_else(|| "Destructuring pattern does not match value".to_string())?;
 
     // Bind all variables in the environment (immutable)
@@ -214,6 +215,7 @@ pub fn evaluate_let_destructuring(
 
 /// Evaluate a mutable destructuring statement (mut { x, y } = value)
 /// Uses pattern matching to bind mutable variables from the destructured value
+/// Now supports default values: mut { x, y = 0 } = value
 pub fn evaluate_mutable_destructuring(
     evaluator: &mut Evaluator,
     pattern: &achronyme_parser::ast::Pattern,
@@ -233,8 +235,8 @@ pub fn evaluate_mutable_destructuring(
         })?;
     }
 
-    // Use pattern matching to extract bindings
-    let bindings = crate::handlers::pattern_matching::match_pattern(&value, pattern)?
+    // Use pattern matching with default support to extract bindings
+    let bindings = crate::handlers::pattern_matching::match_pattern_with_defaults(evaluator, &value, pattern)?
         .ok_or_else(|| "Destructuring pattern does not match value".to_string())?;
 
     // Bind all variables in the environment (mutable)

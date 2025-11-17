@@ -125,31 +125,49 @@ impl AstParser {
 
         for field_pair in pair.into_inner() {
             if field_pair.as_rule() == Rule::record_pattern_field {
-                let (name, pattern) = self.build_record_pattern_field(field_pair)?;
-                fields.push((name, pattern));
+                let (name, pattern, default) = self.build_record_pattern_field(field_pair)?;
+                fields.push((name, pattern, default));
             }
         }
 
         Ok(Pattern::Record { fields })
     }
 
-    /// Build a single record pattern field: name: pattern OR name (shorthand)
-    fn build_record_pattern_field(&mut self, pair: Pair<Rule>) -> Result<(String, Pattern), String> {
+    /// Build a single record pattern field: name: pattern = default OR name = default OR name (shorthand)
+    fn build_record_pattern_field(&mut self, pair: Pair<Rule>) -> Result<(String, Pattern, Option<Box<AstNode>>), String> {
         let mut inner = pair.into_inner();
 
         let name_pair = inner.next()
             .ok_or("Missing field name in record pattern")?;
         let name = name_pair.as_str().to_string();
 
-        // Check if there's a pattern (name: pattern) or just name (shorthand)
-        let pattern = if let Some(pattern_pair) = inner.next() {
-            self.build_pattern(pattern_pair)?
-        } else {
-            // Shorthand: { name } means { name: name }
-            Pattern::Variable(name.clone())
-        };
+        // Check what comes next: pattern, default expr, or nothing
+        let mut pattern = Pattern::Variable(name.clone()); // Default to shorthand
+        let mut default_expr = None;
 
-        Ok((name, pattern))
+        if let Some(next_pair) = inner.next() {
+            match next_pair.as_rule() {
+                Rule::pattern => {
+                    // We have a pattern, check for optional default
+                    pattern = self.build_pattern(next_pair)?;
+                    // Check if there's a default expression
+                    if let Some(expr_pair) = inner.next() {
+                        default_expr = Some(Box::new(self.build_ast_from_expr(expr_pair)?));
+                    }
+                }
+                Rule::expr => {
+                    // No pattern, but we have a default expression
+                    // Pattern remains as Variable(name), but we have a default
+                    default_expr = Some(Box::new(self.build_ast_from_expr(next_pair)?));
+                }
+                _ => {
+                    return Err(format!("Unexpected rule in record pattern field: {:?}", next_pair.as_rule()));
+                }
+            }
+        }
+        // If nothing comes next, pattern is Variable(name) with no default (already set)
+
+        Ok((name, pattern, default_expr))
     }
 
     /// Build a vector pattern: [x, y, ...rest]
@@ -165,7 +183,7 @@ impl AstParser {
         Ok(Pattern::Vector { elements })
     }
 
-    /// Build a vector pattern element: pattern or ...rest
+    /// Build a vector pattern element: pattern = default or ...rest
     fn build_vector_pattern_element(&mut self, pair: Pair<Rule>) -> Result<VectorPatternElement, String> {
         let inner = pair.into_inner().next()
             .ok_or("Empty vector pattern element")?;
@@ -176,9 +194,26 @@ impl AstParser {
                     .ok_or("Missing identifier in rest pattern")?;
                 Ok(VectorPatternElement::Rest(ident.as_str().to_string()))
             }
+            Rule::pattern_with_default => {
+                // Parse pattern with optional default
+                let mut pattern_inner = inner.into_inner();
+                let pattern_pair = pattern_inner.next()
+                    .ok_or("Missing pattern in pattern_with_default")?;
+                let pattern = self.build_pattern(pattern_pair)?;
+
+                // Check for optional default expression
+                let default_expr = if let Some(expr_pair) = pattern_inner.next() {
+                    Some(Box::new(self.build_ast_from_expr(expr_pair)?))
+                } else {
+                    None
+                };
+
+                Ok(VectorPatternElement::Pattern(pattern, default_expr))
+            }
             Rule::pattern => {
+                // Legacy support (shouldn't be reached with new grammar)
                 let pattern = self.build_pattern(inner)?;
-                Ok(VectorPatternElement::Pattern(pattern))
+                Ok(VectorPatternElement::Pattern(pattern, None))
             }
             _ => Err(format!("Unexpected vector pattern element rule: {:?}", inner.as_rule()))
         }

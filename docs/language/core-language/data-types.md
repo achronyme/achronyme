@@ -26,7 +26,7 @@ Achronyme has a rich type system designed for mathematical computing.
 
 ## Numbers
 
-All numbers are 64-bit floating point (IEEE 754).
+All numbers are 64-bit floating point (IEEE 754 compliant).
 
 ```javascript
 42            // Integer (stored as float)
@@ -41,9 +41,64 @@ All numbers are 64-bit floating point (IEEE 754).
 // Available constants
 PI            // 3.14159...
 E             // 2.71828...
+
+// IEEE 754 special values
+Infinity      // Positive infinity
+1/0           // Infinity
+-Infinity     // Negative infinity
+-1/0          // -Infinity
+NaN           // Not a Number
+0/0           // NaN
 ```
 
-**Note**: Division by zero currently produces an error. Support for special IEEE 754 values (Infinity, -Infinity, NaN) may be added in a future update.
+### Special Floating-Point Values
+
+Achronyme supports IEEE 754 special values: `Infinity`, `-Infinity`, and `NaN`.
+
+```javascript
+// Infinity values
+1 / 0         // Infinity
+-1 / 0        // -Infinity
+Infinity + 1  // Infinity
+Infinity - Infinity  // NaN
+
+// NaN (Not a Number)
+0 / 0         // NaN
+sqrt(-1) in real numbers  // NaN (complex returns 0+1i instead)
+NaN == NaN    // false (NaN is not equal to anything, including itself)
+NaN != NaN    // true
+
+// NaN from invalid operations
+Infinity / Infinity  // NaN
+Infinity - Infinity  // NaN
+```
+
+### Testing for Special Values
+
+Use built-in functions to test for these special values:
+
+```javascript
+// Check for NaN
+isnan(0/0)      // true
+isnan(5)        // false
+
+// Check for infinity
+isinf(1/0)      // true
+isinf(-1/0)     // true
+isinf(42)       // false
+
+// Check if value is finite
+isfinite(42)    // true
+isfinite(1/0)   // false
+isfinite(NaN)   // false
+```
+
+### Important Notes
+
+- **Complex numbers preserve mathematical meaning**: `sqrt(-1)` returns `0+1i` (complex) rather than `NaN`
+- **Propagation**: Operations with `NaN` and `Infinity` follow IEEE 754 standard behavior
+- **Falsy value**: `NaN` is a falsy value in boolean contexts: `if(!NaN)` is true
+- **Equality**: `NaN` is the only value that is not equal to itself: `NaN == NaN` is `false`
 
 ## Booleans
 

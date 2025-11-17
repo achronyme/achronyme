@@ -392,9 +392,10 @@ record_pattern = {
 }
 
 // Record pattern field: name: pattern OR just name (shorthand for name: name)
+// Now supports default values: name = default OR name: pattern = default
 record_pattern_field = {
-    identifier ~ ":" ~ pattern
-  | identifier  // shorthand: { name } means { name: name }
+    identifier ~ ":" ~ pattern ~ ("=" ~ expr)?  // with pattern and optional default
+  | identifier ~ ("=" ~ expr)?                   // shorthand: { name } or { name = default }
 }
 
 // Vector pattern: match array structure
@@ -406,8 +407,14 @@ vector_pattern = {
 }
 
 // Vector pattern element: pattern or rest pattern (...name)
+// Now supports default values: pattern = default
 vector_pattern_element = {
-    rest_pattern | pattern
+    rest_pattern | pattern_with_default
+}
+
+// Pattern with optional default value for vector destructuring
+pattern_with_default = {
+    pattern ~ ("=" ~ expr)?
 }
 
 // Rest pattern: ...identifier (captures remaining elements)

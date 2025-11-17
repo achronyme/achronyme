@@ -780,6 +780,46 @@ let processUser = user =>
         {...user, processed: true})))
 ```
 
+### Null Coalescing and Safe Navigation
+
+Use short-circuit operators for safe handling of nullable values:
+
+```javascript
+// ✅ Good: Null coalescing with ||
+let name = userInput || "Anonymous"
+let config = customConfig || defaultConfig
+let timeout = userTimeout || 30000
+
+// ✅ Good: Safe navigation with &&
+let email = user && user.email
+let profile = user && user.profile && user.profile.name
+let status = record && record.meta && record.meta.status
+
+// ✅ Good: Combining patterns for defaults
+let getName = user =>
+    (user && user.name) || "Unknown User"
+
+let getUserEmail = user =>
+    (user && user.contact && user.contact.email) || "no-email@example.com"
+
+// ✅ Good: Conditional execution
+let sendNotification = user =>
+    (user && user.email) && send_email(user.email, "Hello!")
+    // send_email only called if user.email is truthy
+
+// ✅ Good: Falsy value semantics
+// Falsy: false, null, 0, NaN, ""
+let value = input || default_value
+// Truthy: everything else (including "0", [], {}, etc)
+let zero_allowed = input || 0     // Will skip if input is 0
+let zero_safe = input != null ? input : 0  // Better for zero
+
+// ✅ Good: With ranges
+let processRange = n =>
+    n && process(1..n)
+    // process not called if n is falsy or 0
+```
+
 ## Anti-Patterns to Avoid
 
 ### Don't Use Magic Numbers

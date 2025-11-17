@@ -18,21 +18,23 @@ greet("Alice")  // "Hello, Alice!"
 let user = {name: "Bob", age: 25}
 'User ${user.name} is ${user.age} years old'
 
-// Higher-order functions
-let numbers = [1, 2, 3, 4, 5]
-let doubled = map(x => x * 2, numbers)
+// Range operator for easy iteration
+for(i in 1..10) { print(i) }     // 1 to 9
+let nums = 1..=5                  // [1, 2, 3, 4, 5]
+
+// Short-circuit operators with defaults
+let name = userInput || "Anonymous"
+let profile = user && user.profile
+
+// IEEE 754 support: Infinity and NaN
+let ratio = safe_divide(10, 0)    // Infinity
+isfinite(ratio)                   // false
 
 // For-in loops with break/continue
 mut sum = 0
 for(x in numbers) {
     if(x % 2 == 0) { continue }
     sum += x
-}
-
-// Generators for lazy sequences
-let range = (n) => generate {
-    mut i = 0
-    while(i < n) { yield i; i += 1 }
 }
 
 // Records with optional fields
@@ -70,7 +72,11 @@ let user: User = {name: "Alice"}  // email is optional
 ### 🏗️ Modern Language Features
 - **Modules**: Import/export system for code organization
 - **String interpolation**: Template strings with `'Hello, ${name}!'`
+- **Operators**: Arithmetic, logical (with short-circuit), comparison, range (`..` and `..=`)
 - **Compound assignment**: `+=`, `-=`, `*=`, `/=`, `%=`, `^=` operators
+- **Range operator**: Create sequences with `1..10` and `1..=10`
+- **Short-circuit operators**: Safe defaults with `||` and `&&`
+- **IEEE 754 support**: `Infinity`, `NaN`, with `isnan()`, `isinf()`, `isfinite()`
 - **Loop control**: `break`, `continue`, and `for-in` loops
 - **Optional record fields**: `{field?: Type}` syntax
 - **Do Blocks**: Multi-statement blocks with early returns

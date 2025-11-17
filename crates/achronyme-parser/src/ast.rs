@@ -300,11 +300,13 @@ pub enum Pattern {
     Wildcard,
 
     /// Record pattern: destructures record fields ({ name: n, age: a })
+    /// Now with optional default values: { name, age = 25 }
     Record {
-        fields: Vec<(String, Pattern)>,  // (field_name, pattern)
+        fields: Vec<(String, Pattern, Option<Box<AstNode>>)>,  // (field_name, pattern, optional_default)
     },
 
     /// Vector pattern: matches array structure ([x, y, ...rest])
+    /// Now with optional default values: [first = 0, second = 0]
     Vector {
         elements: Vec<VectorPatternElement>,
     },
@@ -323,10 +325,11 @@ pub enum LiteralPattern {
 }
 
 /// Vector pattern element: either a pattern or a rest pattern
+/// Now with optional default values: [first = 0, second = 0]
 #[derive(Debug, Clone, PartialEq)]
 pub enum VectorPatternElement {
-    /// Regular pattern element
-    Pattern(Pattern),
+    /// Regular pattern element with optional default value
+    Pattern(Pattern, Option<Box<AstNode>>),
     /// Rest pattern: ...identifier (captures remaining elements)
     Rest(String),
 }

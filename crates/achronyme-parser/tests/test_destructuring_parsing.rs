@@ -84,8 +84,9 @@ fn test_parse_vector_destructuring_with_rest() {
                 Pattern::Vector { elements } => {
                     assert_eq!(elements.len(), 2);
                     match &elements[0] {
-                        VectorPatternElement::Pattern(Pattern::Variable(name)) => {
+                        VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
                             assert_eq!(name, "head");
+                            assert!(default.is_none()); // No default
                         }
                         _ => panic!("Expected Variable pattern for head"),
                     }
@@ -114,7 +115,9 @@ fn test_parse_vector_destructuring_with_wildcard() {
                 Pattern::Vector { elements } => {
                     assert_eq!(elements.len(), 3);
                     match &elements[1] {
-                        VectorPatternElement::Pattern(Pattern::Wildcard) => {}
+                        VectorPatternElement::Pattern(Pattern::Wildcard, default) => {
+                            assert!(default.is_none()); // No default
+                        }
                         _ => panic!("Expected Wildcard pattern"),
                     }
                 }
@@ -330,5 +333,115 @@ fn test_parse_multiple_statements_with_destructuring() {
             }
         }
         _ => panic!("Expected Sequence node"),
+    }
+}
+
+// ==================== Default Value Parsing Tests ====================
+
+#[test]
+fn test_parse_record_destructuring_with_default() {
+    let result = parse("let { name, age = 25 } = user").unwrap();
+    assert_eq!(result.len(), 1);
+
+    match &result[0] {
+        AstNode::LetDestructuring { pattern, .. } => {
+            match pattern {
+                Pattern::Record { fields } => {
+                    assert_eq!(fields.len(), 2);
+                    // First field: no default
+                    assert_eq!(fields[0].0, "name");
+                    assert!(fields[0].2.is_none());
+                    // Second field: has default
+                    assert_eq!(fields[1].0, "age");
+                    assert!(fields[1].2.is_some());
+                    match fields[1].2.as_ref().unwrap().as_ref() {
+                        AstNode::Number(n) => assert_eq!(*n, 25.0),
+                        _ => panic!("Expected Number as default"),
+                    }
+                }
+                _ => panic!("Expected Record pattern"),
+            }
+        }
+        _ => panic!("Expected LetDestructuring"),
+    }
+}
+
+#[test]
+fn test_parse_vector_destructuring_with_default() {
+    let result = parse("let [first = 0, second = 0] = arr").unwrap();
+    assert_eq!(result.len(), 1);
+
+    match &result[0] {
+        AstNode::LetDestructuring { pattern, .. } => {
+            match pattern {
+                Pattern::Vector { elements } => {
+                    assert_eq!(elements.len(), 2);
+                    match &elements[0] {
+                        VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
+                            assert_eq!(name, "first");
+                            assert!(default.is_some());
+                        }
+                        _ => panic!("Expected Variable pattern with default"),
+                    }
+                    match &elements[1] {
+                        VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
+                            assert_eq!(name, "second");
+                            assert!(default.is_some());
+                        }
+                        _ => panic!("Expected Variable pattern with default"),
+                    }
+                }
+                _ => panic!("Expected Vector pattern"),
+            }
+        }
+        _ => panic!("Expected LetDestructuring"),
+    }
+}
+
+#[test]
+fn test_parse_record_destructuring_string_default() {
+    let result = parse("let { name = \"Anonymous\" } = data").unwrap();
+    assert_eq!(result.len(), 1);
+
+    match &result[0] {
+        AstNode::LetDestructuring { pattern, .. } => {
+            match pattern {
+                Pattern::Record { fields } => {
+                    assert_eq!(fields.len(), 1);
+                    assert_eq!(fields[0].0, "name");
+                    assert!(fields[0].2.is_some());
+                    match fields[0].2.as_ref().unwrap().as_ref() {
+                        AstNode::StringLiteral(s) => assert_eq!(s, "Anonymous"),
+                        _ => panic!("Expected StringLiteral as default"),
+                    }
+                }
+                _ => panic!("Expected Record pattern"),
+            }
+        }
+        _ => panic!("Expected LetDestructuring"),
+    }
+}
+
+#[test]
+fn test_parse_record_destructuring_expression_default() {
+    let result = parse("let { value = 10 * 2 } = data").unwrap();
+    assert_eq!(result.len(), 1);
+
+    match &result[0] {
+        AstNode::LetDestructuring { pattern, .. } => {
+            match pattern {
+                Pattern::Record { fields } => {
+                    assert_eq!(fields.len(), 1);
+                    assert!(fields[0].2.is_some());
+                    // Check that default is a BinaryOp (expression)
+                    match fields[0].2.as_ref().unwrap().as_ref() {
+                        AstNode::BinaryOp { .. } => {}
+                        _ => panic!("Expected BinaryOp as default expression"),
+                    }
+                }
+                _ => panic!("Expected Record pattern"),
+            }
+        }
+        _ => panic!("Expected LetDestructuring"),
     }
 }

@@ -42,10 +42,10 @@ for(x in [1, 2, 3, 4, 5]) {
     sum += x
 }
 
-// Generators for lazy sequences
-let range = (n) => generate {
-    mut i = 0
-    while(i < n) { yield i; i += 1 }
+// Range operator for sequences
+let numbers = 1..=10        // [1, 2, 3, ..., 10] (inclusive)
+for(i in 1..10) {           // 1 to 9 (exclusive)
+    print(i)
 }
 
 // Records with optional fields
@@ -58,6 +58,18 @@ let describe = x => match x {
     n if (n < 0) => "negative"
     _ => "positive"
 }
+
+// Short-circuit operators with default values
+let name = userInput || "Anonymous"
+let profile = user && user.profile    // Safe navigation
+
+// IEEE 754 special values
+Infinity                    // Positive infinity
+1 / 0                       // Also Infinity
+0 / 0                       // NaN (Not a Number)
+isnan(0/0)                  // true
+isinf(1/0)                  // true
+isfinite(42)                // true
 
 // Statistical analysis
 let data = [10, 20, 30, 40, 50]

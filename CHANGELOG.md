@@ -17,6 +17,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.4] - 2025-11-17
+
+### New Features
+
+**IEEE 754 Compliance**
+- Special values: `Infinity`, `-Infinity`, `NaN`
+- `1/0` → `Infinity`, `0/0` → `NaN`
+- `sqrt(-1)` → `0+1i` (complex, not NaN)
+- Functions: `isnan()`, `isinf()`, `isfinite()`
+- `NaN` is falsy and `NaN == NaN` → `false`
+
+**Short-Circuit Logical Operators**
+- `||` returns first truthy or last falsy value
+- `&&` returns first falsy or last truthy value
+- Falsy values: `false`, `null`, `0`, `NaN`, `""`
+- Patterns: `value || default`, `condition && action`
+
+**Range Operator**
+- `1..5` → `[1, 2, 3, 4]` (exclusive)
+- `1..=5` → `[1, 2, 3, 4, 5]` (inclusive)
+- Works with variables: `0..n`
+- In for-in loops: `for(i in 0..10) { }`
+
+**Default Values in Destructuring**
+- Record defaults: `let { name, age = 25 } = user`
+- Vector defaults: `let [a, b, c = 100] = list`
+- Type patterns with defaults: `let { x: Number = 10 } = data` (validation-first semantics)
+- Lazy evaluation: defaults only computed when needed
+- Outer scope access: defaults can use surrounding variables
+- Works with `let` and `mut` bindings
+- Type patterns validate types at runtime, default only used when field is missing (not as fallback)
+- 55 tests verify complete implementation
+
+### Bug Fixes
+
+- **Type patterns in destructuring now correctly bind variables**: Previously `let {x: String = "Hi"} = {}` would not create variable `x`; now properly binds `x` to the default value when field is missing
+
+### Improvements
+
+- Enhanced operator documentation with short-circuit semantics
+- Added IEEE 754 special values section to data types
+- Operator precedence updated for range operators
+- Falsy value semantics clarified
+- Type pattern validation-first behavior documented clearly
+
+---
+
 ## [0.6.3] - 2025-11-16
 
 ### New Features

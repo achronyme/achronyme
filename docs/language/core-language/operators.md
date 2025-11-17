@@ -90,13 +90,27 @@ All comparison operators return boolean values.
 
 ### AND Operator (&&)
 
-Returns `true` only if both operands are `true`.
+Short-circuit AND operator: returns the first falsy value or the last value if all are truthy.
+
+**Falsy values**: `false`, `null`, `0`, `NaN`, `""`
 
 ```javascript
+// Boolean values
 true && true      // true
 true && false     // false
 false && true     // false
 false && false    // false
+
+// Short-circuit with non-boolean values
+5 && 10           // 10 (both truthy, returns last)
+0 && 10           // 0 (first is falsy, returns first)
+"hello" && ""     // "" (first is truthy, second is falsy, returns second)
+null && 42        // null (first is falsy, returns first)
+
+// Common pattern: conditional action
+let result = user && user.name
+// If user is null/false, returns null/false
+// If user is truthy, returns user.name
 
 // With expressions
 (x > 0) && (y > 0)        // Both must be positive
@@ -105,13 +119,27 @@ false && false    // false
 
 ### OR Operator (||)
 
-Returns `true` if at least one operand is `true`.
+Short-circuit OR operator: returns the first truthy value or the last value if all are falsy.
 
 ```javascript
+// Boolean values
 true || false     // true
 false || true     // true
 true || true      // true
 false || false    // false
+
+// Short-circuit with non-boolean values
+5 || 10           // 5 (first is truthy, returns first)
+0 || 10           // 10 (first is falsy, continues to second)
+"" || "default"   // "default" (first is falsy, returns second)
+null || 42        // 42 (first is falsy, returns second)
+
+// Common pattern: default values
+let name = userInput || "Anonymous"
+// If userInput is truthy, use it; otherwise use "Anonymous"
+
+let config = customConfig || defaultConfig
+// Fallback to default if custom is null/false
 
 // With expressions
 (x < 0) || (x > 100)      // Outside range [0, 100]
@@ -128,21 +156,29 @@ Negates a boolean value.
 !(5 > 3)       // false
 !(x < 0)       // true if x >= 0
 
-// Double negation
+// Double negation (converts to boolean)
 !!true         // true
 !!false        // false
+!!5            // true (5 is truthy)
+!!0            // false (0 is falsy)
 ```
 
 ### Short-Circuit Evaluation
 
-Logical operators use short-circuit evaluation:
+Logical operators use short-circuit evaluation - they stop evaluating as soon as the result is determined:
 
 ```javascript
 // AND: if first is false, second is not evaluated
 false && (1/0)    // false (no division by zero error)
+true && (println("evaluated"), 5)  // Prints, then returns 5
 
 // OR: if first is true, second is not evaluated
 true || (1/0)     // true (no division by zero error)
+false || (println("evaluated"), 5) // Prints, then returns 5
+
+// Falsy values short-circuit OR and return from AND
+let result = 0 && expensive_function()  // function not called
+let result = null || get_default()       // get_default() is called
 ```
 
 ## Operator Precedence
@@ -156,10 +192,11 @@ From highest to lowest precedence:
 | 3 | `-` `!` | Unary minus, logical NOT | Right |
 | 4 | `*` `/` `%` | Multiplication, division, modulo | Left |
 | 5 | `+` `-` | Addition, subtraction | Left |
-| 6 | `->` `<>` | Graph edges | Left |
-| 7 | `==` `!=` `<` `>` `<=` `>=` | Comparison | Left |
-| 8 | `&&` | Logical AND | Left |
-| 9 | `||` | Logical OR | Left |
+| 6 | `..` `..=` | Exclusive and inclusive range | Left |
+| 7 | `->` `<>` | Graph edges | Left |
+| 8 | `==` `!=` `<` `>` `<=` `>=` | Comparison | Left |
+| 9 | `&&` | Logical AND (short-circuit) | Left |
+| 10 | `||` | Logical OR (short-circuit) | Left |
 
 ### Precedence Examples
 
@@ -319,10 +356,47 @@ let matrix = [[1, 2], [3, 4]]
 matrix[0, 0]       // 1
 matrix[1, 1]       // 4
 
-// Slicing
+// Slicing with ranges
 arr[1..3]          // [20, 30]
 arr[..2]           // [10, 20]
 arr[2..]           // [30, 40]
+```
+
+### Range Operator (.. and ..=)
+
+Create ranges of numbers, useful for iteration and slicing.
+
+```javascript
+// Exclusive range (end is not included)
+1..5               // [1, 2, 3, 4]
+0..10              // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+// Inclusive range (end is included)
+1..=5              // [1, 2, 3, 4, 5]
+0..=10             // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+// With variables
+let n = 5
+1..n               // [1, 2, 3, 4]
+1..=n              // [1, 2, 3, 4, 5]
+
+// In slicing
+let arr = [10, 20, 30, 40, 50]
+arr[1..4]          // [20, 30, 40]
+arr[1..=4]         // [20, 30, 40, 50]
+
+// In for-in loops
+for(i in 0..5) {
+    print(i)       // 0, 1, 2, 3, 4
+}
+
+for(i in 1..=5) {
+    print(i)       // 1, 2, 3, 4, 5
+}
+
+// Creating sequences
+let numbers = 1..10        // [1, 2, 3, 4, 5, 6, 7, 8, 9]
+let inclusive = 0..=100    // [0, 1, 2, ..., 100]
 ```
 
 ### Function Call (())
