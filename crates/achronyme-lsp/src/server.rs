@@ -168,4 +168,57 @@ impl LanguageServer for Backend {
             Ok(None)
         }
     }
+
+    async fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        self.log_debug(&format!("Completion request at {:?}", position))
+            .await;
+
+        if let Some(doc) = self.documents.get(uri) {
+            let items = handlers::completion::get_completions(&doc, position);
+            Ok(Some(CompletionResponse::Array(items)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+
+        self.log_debug(&format!("Formatting request for: {}", uri))
+            .await;
+
+        if let Some(doc) = self.documents.get(uri) {
+            let edits = handlers::formatting::format_document(&doc, &params.options);
+            Ok(Some(edits))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> Result<Option<SignatureHelp>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        self.log_debug(&format!("Signature help request at {:?}", position))
+            .await;
+
+        if let Some(doc) = self.documents.get(uri) {
+            Ok(handlers::signature_help::get_signature_help(&doc, position))
+        } else {
+            Ok(None)
+        }
+    }
 }
+

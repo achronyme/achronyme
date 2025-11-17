@@ -5,7 +5,11 @@ use rustyline::{Editor, Config};
 use std::fs;
 
 mod highlighter;
+mod lsp_completer;
 mod repl_helper;
+mod formatting;
+mod symbols;
+mod lint;
 
 use repl_helper::ReplHelper;
 
@@ -51,6 +55,33 @@ enum Commands {
         /// File to check
         file: String,
     },
+    /// Format Achronyme source files
+    Format {
+        /// File to format
+        file: String,
+        /// Check if file is properly formatted (don't modify)
+        #[arg(long)]
+        check: bool,
+        /// Show diff instead of modifying file
+        #[arg(long)]
+        diff: bool,
+    },
+    /// Check for parse errors
+    Lint {
+        /// File to lint
+        file: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List symbols in a file
+    Symbols {
+        /// File to scan
+        file: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -63,6 +94,9 @@ fn main() {
             Commands::Run { file } => run_file(&file),
             Commands::Eval { expression } => run_expression(&expression),
             Commands::Check { file } => check_syntax(&file),
+            Commands::Format { file, check, diff } => format_command(&file, check, diff),
+            Commands::Lint { file, json } => lint_command(&file, json),
+            Commands::Symbols { file, json } => symbols_command(&file, json),
         }
         return;
     }
@@ -534,4 +568,159 @@ fn print_help() {
     println!("  {}  - Numerical derivative", Color::Yellow.paint("diff(f, 2, 1e-5)"));
     println!("  {}  - Numerical integration", Color::Yellow.paint("integral(sin, 0, 3.14159, 100)"));
     println!("  {}  - FFT magnitude", Color::Yellow.paint("fft_mag([1, 2, 3, 4])"));
+}
+
+// ============================================================================
+// FORMAT COMMAND
+// ============================================================================
+
+fn format_command(filename: &str, check_only: bool, show_diff: bool) {
+    let contents = match fs::read_to_string(filename) {
+        Ok(contents) => contents,
+        Err(err) => {
+            eprintln!("Error reading file '{}': {}", filename, err);
+            std::process::exit(1);
+        }
+    };
+
+    // Format the content
+    let formatted = formatting::format_code(&contents);
+
+    if check_only {
+        if contents == formatted {
+            println!("File is properly formatted: {}", filename);
+        } else {
+            eprintln!("File is not properly formatted: {}", filename);
+            std::process::exit(1);
+        }
+    } else if show_diff {
+        show_diff_output(&contents, &formatted, filename);
+    } else {
+        // Write the formatted content back
+        match fs::write(filename, &formatted) {
+            Ok(_) => println!("Formatted: {}", filename),
+            Err(err) => {
+                eprintln!("Error writing file '{}': {}", filename, err);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn show_diff_output(original: &str, formatted: &str, filename: &str) {
+    let original_lines: Vec<&str> = original.lines().collect();
+    let formatted_lines: Vec<&str> = formatted.lines().collect();
+
+    println!("--- a/{}", filename);
+    println!("+++ b/{}", filename);
+
+    let mut orig_idx = 0;
+    let mut fmt_idx = 0;
+
+    while orig_idx < original_lines.len() || fmt_idx < formatted_lines.len() {
+        let orig_line = original_lines.get(orig_idx).copied().unwrap_or("");
+        let fmt_line = formatted_lines.get(fmt_idx).copied().unwrap_or("");
+
+        if orig_line == fmt_line {
+            println!(" {}", orig_line);
+            orig_idx += 1;
+            fmt_idx += 1;
+        } else {
+            if !orig_line.is_empty() || orig_idx < original_lines.len() {
+                println!("-{}", orig_line);
+                orig_idx += 1;
+            }
+            if !fmt_line.is_empty() || fmt_idx < formatted_lines.len() {
+                println!("+{}", fmt_line);
+                fmt_idx += 1;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// LINT COMMAND
+// ============================================================================
+
+fn lint_command(filename: &str, json_output: bool) {
+    let contents = match fs::read_to_string(filename) {
+        Ok(contents) => contents,
+        Err(err) => {
+            eprintln!("Error reading file '{}': {}", filename, err);
+            std::process::exit(1);
+        }
+    };
+
+    let errors = lint::check_errors(&contents);
+
+    if json_output {
+        // Output as JSON
+        match serde_json::to_string_pretty(&errors) {
+            Ok(json) => println!("{}", json),
+            Err(err) => {
+                eprintln!("Error serializing JSON: {}", err);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        if errors.is_empty() {
+            println!("No parse errors found: {}", filename);
+        } else {
+            eprintln!("Parse errors in '{}':", filename);
+            for error in &errors {
+                eprintln!(
+                    "  {}:{}:{}: {} [{}]",
+                    filename, error.line, error.column, error.message, error.severity
+                );
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+// ============================================================================
+// SYMBOLS COMMAND
+// ============================================================================
+
+fn symbols_command(filename: &str, json_output: bool) {
+    let contents = match fs::read_to_string(filename) {
+        Ok(contents) => contents,
+        Err(err) => {
+            eprintln!("Error reading file '{}': {}", filename, err);
+            std::process::exit(1);
+        }
+    };
+
+    // Parse the file
+    match achronyme_parser::parse(&contents) {
+        Ok(ast) => {
+            let symbols = symbols::extract_symbols(&ast, &contents);
+
+            if json_output {
+                match serde_json::to_string_pretty(&symbols) {
+                    Ok(json) => println!("{}", json),
+                    Err(err) => {
+                        eprintln!("Error serializing JSON: {}", err);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                if symbols.is_empty() {
+                    println!("No symbols found in: {}", filename);
+                } else {
+                    println!("Symbols in '{}':", filename);
+                    for symbol in &symbols {
+                        println!(
+                            "  {} {} (line {})",
+                            symbol.kind, symbol.name, symbol.line
+                        );
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!("Parse error in '{}': {}", filename, err);
+            std::process::exit(1);
+        }
+    }
 }

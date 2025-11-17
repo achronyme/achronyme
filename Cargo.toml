@@ -11,6 +11,7 @@ members = [
     "crates/achronyme-solver",
     "crates/achronyme-env",
     "crates/achronyme-lsp",
+    "crates/achronyme-lsp-core",
 ]
 default-members = [
     "crates/achronyme-parser",

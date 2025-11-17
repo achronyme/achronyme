@@ -15,4 +15,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 dashmap = "5.5"
+once_cell = "1.18"
 achronyme-parser = { path = "../achronyme-parser" }
+achronyme-lsp-core = { path = "../achronyme-lsp-core" }
