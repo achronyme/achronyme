@@ -24,9 +24,10 @@ impl ValueOperations {
     pub(crate) fn add_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+            (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
             _ => Err(VmError::TypeError {
                 operation: "addition".to_string(),
-                expected: "Number".to_string(),
+                expected: "Number or String".to_string(),
                 got: format!("{:?} + {:?}", left, right),
             }),
         }

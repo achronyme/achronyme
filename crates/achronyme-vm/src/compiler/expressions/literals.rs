@@ -37,6 +37,13 @@ impl Compiler {
                 Ok(RegResult::temp(reg))
             }
 
+            AstNode::StringLiteral(s) => {
+                let reg = self.registers.allocate()?;
+                let const_idx = self.add_constant(Value::String(s.clone()))?;
+                self.emit_load_const(reg, const_idx);
+                Ok(RegResult::temp(reg))
+            }
+
             _ => unreachable!("Non-literal node in literal compiler"),
         }
     }

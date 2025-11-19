@@ -19,7 +19,7 @@ impl Compiler {
     pub(crate) fn compile_expression(&mut self, node: &AstNode) -> Result<RegResult, CompileError> {
         match node {
             // Literals
-            AstNode::Number(_) | AstNode::Boolean(_) | AstNode::Null => {
+            AstNode::Number(_) | AstNode::Boolean(_) | AstNode::Null | AstNode::StringLiteral(_) => {
                 self.compile_literal(node)
             }
 
@@ -50,6 +50,10 @@ impl Compiler {
 
             AstNode::WhileLoop { condition, body } => {
                 self.compile_while(condition, body)
+            }
+
+            AstNode::ForInLoop { variable, iterable, body } => {
+                self.compile_for_in(variable, iterable, body)
             }
 
             AstNode::Match { value, arms } => {
@@ -97,6 +101,14 @@ impl Compiler {
             }
 
             // Sequences
+            AstNode::Break { value } => {
+                self.compile_break(value.as_deref())
+            }
+
+            AstNode::Continue => {
+                self.compile_continue()
+            }
+
             AstNode::Sequence { statements } | AstNode::DoBlock { statements } => {
                 let mut last_res: Option<RegResult> = None;
                 for stmt in statements {

@@ -195,6 +195,15 @@ impl Compiler {
         ))
     }
 
+    /// Emit JUMP_IF_TRUE instruction
+    pub(crate) fn emit_jump_if_true(&mut self, cond_reg: u8, offset: i16) -> usize {
+        self.emit(encode_abx(
+            OpCode::JumpIfTrue.as_u8(),
+            cond_reg,
+            offset as u16,
+        ))
+    }
+
     /// Emit JUMP_IF_NULL instruction
     pub(crate) fn emit_jump_if_null(&mut self, value_reg: u8, offset: i16) -> usize {
         self.emit(encode_abx(

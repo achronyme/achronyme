@@ -6,6 +6,7 @@ use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 // Module structure
 mod execution;
@@ -115,10 +116,16 @@ impl VM {
                                 state.frame = saved_frame;
                                 drop(state);
 
-                                // Put yielded value in the caller's return register
+                                // Create iterator result object: {value: <yielded>, done: false}
+                                let mut result_map = std::collections::HashMap::new();
+                                result_map.insert("value".to_string(), value);
+                                result_map.insert("done".to_string(), Value::Boolean(false));
+                                let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+
+                                // Put iterator result record in the caller's return register
                                 if let Some(return_reg) = gen_frame.return_register {
                                     if let Some(caller_frame) = self.frames.last_mut() {
-                                        caller_frame.registers.set(return_reg, value)?;
+                                        caller_frame.registers.set(return_reg, result_record)?;
                                     }
                                 }
 
@@ -181,7 +188,7 @@ impl VM {
             }
 
             // Generators
-            OpCode::CreateGen | OpCode::Yield | OpCode::ResumeGen => {
+            OpCode::CreateGen | OpCode::Yield | OpCode::ResumeGen | OpCode::MakeIterator => {
                 self.execute_generators(opcode, instruction)
             }
 
@@ -237,6 +244,34 @@ impl VM {
     fn do_return(&mut self, value: Value) -> Result<(), VmError> {
         let frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
 
+        // Check if this is a generator frame
+        if let Some(ref gen_value) = frame.generator {
+            if let Value::Generator(any_ref) = gen_value {
+                if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
+                    let mut state = state_rc.borrow_mut();
+                    // Mark generator as done
+                    state.complete(Some(value.clone()));
+                    drop(state);
+
+                    // Create iterator result object: {value: null, done: true}
+                    let mut result_map = HashMap::new();
+                    result_map.insert("value".to_string(), Value::Null);
+                    result_map.insert("done".to_string(), Value::Boolean(true));
+                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+
+                    // If there's a return register in caller, set it with the iterator result
+                    if let Some(return_reg) = frame.return_register {
+                        if let Some(caller_frame) = self.frames.last_mut() {
+                            caller_frame.registers.set(return_reg, result_record)?;
+                        }
+                    }
+
+                    return Ok(());
+                }
+            }
+        }
+
+        // Normal function return (not a generator)
         // If there's a return register in caller, set it
         if let Some(return_reg) = frame.return_register {
             if let Some(caller_frame) = self.frames.last_mut() {
