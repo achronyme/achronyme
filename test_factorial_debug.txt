@@ -1,0 +1,2 @@
+let factorial = (n) => if (n <= 1) { 1 } else { n * rec(n - 1) }
+factorial(5)

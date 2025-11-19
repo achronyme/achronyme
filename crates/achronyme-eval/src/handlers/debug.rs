@@ -151,6 +151,9 @@ fn describe_function(func: &Function, indent: usize) -> String {
         Function::Builtin(name) => {
             format!("Function(Builtin: {})", name)
         }
+        Function::VmClosure(_) => {
+            format!("Function(VmClosure: <bytecode>)")
+        }
     }
 }
 

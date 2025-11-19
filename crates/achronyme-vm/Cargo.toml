@@ -1,0 +1,15 @@
+[package]
+name = "achronyme-vm"
+version = "0.6.5"
+edition = "2021"
+authors = ["Achronyme Team"]
+description = "Bytecode Virtual Machine for the Achronyme programming language"
+license = "MIT"
+
+[dependencies]
+# Core dependencies
+achronyme-parser = { path = "../achronyme-parser" }
+achronyme-types = { path = "../achronyme-types" }
+
+[dev-dependencies]
+criterion = "0.5"

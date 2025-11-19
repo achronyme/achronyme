@@ -3,6 +3,7 @@ use achronyme_parser::type_annotation::TypeAnnotation;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::any::Any;
 use crate::environment::Environment;
 
 /// Function representation - can be either a user-defined lambda or a built-in function
@@ -26,7 +27,7 @@ use crate::environment::Environment;
 /// recursive functions and deeply nested scopes.
 ///
 /// The RefCell wrapper allows mutation of captured variables declared with `mut`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Function {
     /// User-defined lambda with closure
     UserDefined {
@@ -45,6 +46,21 @@ pub enum Function {
     },
     /// Built-in function by name
     Builtin(String),
+    /// VM-compiled closure (bytecode)
+    /// Uses Rc<dyn Any> to avoid circular dependency with achronyme-vm
+    VmClosure(Rc<dyn Any>),
+}
+
+impl std::fmt::Debug for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Function::UserDefined { params, .. } => {
+                write!(f, "UserDefined {{ params: {:?}, ... }}", params)
+            }
+            Function::Builtin(name) => write!(f, "Builtin({:?})", name),
+            Function::VmClosure(_) => write!(f, "VmClosure(..)"),
+        }
+    }
 }
 
 impl Function {
@@ -142,6 +158,7 @@ impl Function {
         match self {
             Function::UserDefined { params, .. } => params.len(),
             Function::Builtin(_) => 0, // Built-in functions handle their own arity checking
+            Function::VmClosure(_) => 0, // VM closures handle their own arity checking
         }
     }
 
@@ -167,6 +184,7 @@ impl PartialEq for Function {
                 p1 == p2 && pt1 == pt2 && pd1.len() == pd2.len() && rt1 == rt2 && Rc::ptr_eq(b1, b2) && Rc::ptr_eq(e1, e2)
             }
             (Function::Builtin(n1), Function::Builtin(n2)) => n1 == n2,
+            (Function::VmClosure(c1), Function::VmClosure(c2)) => Rc::ptr_eq(c1, c2),
             _ => false,
         }
     }

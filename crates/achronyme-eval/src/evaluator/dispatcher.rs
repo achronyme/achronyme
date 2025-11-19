@@ -569,6 +569,9 @@ impl Evaluator {
                         // Built-in function - dispatch without evaluating args (let handler do it)
                         handlers::function_call::dispatch(self, name, args)
                     }
+                    achronyme_types::function::Function::VmClosure(_) => {
+                        Err("Cannot call VM closures from tree-walker evaluator".to_string())
+                    }
                 }
             }
             _ => Err("CallExpression requires a function, got non-function value".to_string()),

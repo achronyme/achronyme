@@ -1,0 +1,150 @@
+   Compiling achronyme-vm v0.6.5 (C:\apache\htdocs\achronyme-core\crates\achronyme-vm)
+warning: unused import: `UpvalueDescriptor`
+ --> crates\achronyme-vm\src\vm.rs:3:67
+  |
+3 | use crate::bytecode::{BytecodeModule, Closure, FunctionPrototype, UpvalueDescriptor};
+  |                                                                   ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `module_name`
+   --> crates\achronyme-vm\src\compiler.rs:175:16
+    |
+175 |     pub fn new(module_name: String) -> Self {
+    |                ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_module_name`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `globals`, `generators`, and `next_generator_id` are never read
+   --> crates\achronyme-vm\src\vm.rs:146:5
+    |
+141 | pub struct VM {
+    |            -- fields in this struct
+...
+146 |     globals: HashMap<String, Value>,
+    |     ^^^^^^^
+...
+149 |     generators: HashMap<usize, SuspendedFrame>,
+    |     ^^^^^^^^^^
+...
+152 |     next_generator_id: usize,
+    |     ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Yield` is never constructed
+   --> crates\achronyme-vm\src\vm.rs:688:5
+    |
+682 | enum ExecutionResult {
+    |      --------------- variant in this enum
+...
+688 |     Yield(Value),
+    |     ^^^^^
+    |
+    = note: `ExecutionResult` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: method `has_register` is never used
+   --> crates\achronyme-vm\src\compiler.rs:140:8
+    |
+101 | impl SymbolTable {
+    | ---------------- method in this implementation
+...
+140 |     fn has_register(&self, reg: u8) -> bool {
+    |        ^^^^^^^^^^^^
+
+warning: field `start` is never read
+   --> crates\achronyme-vm\src\compiler.rs:149:5
+    |
+147 | struct LoopContext {
+    |        ----------- field in this struct
+148 |     /// Start of loop (for continue)
+149 |     start: usize,
+    |     ^^^^^
+    |
+    = note: `LoopContext` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `parent` is never read
+   --> crates\achronyme-vm\src\compiler.rs:170:5
+    |
+156 | pub struct Compiler {
+    |            -------- field in this struct
+...
+170 |     parent: Option<Box<Compiler>>,
+    |     ^^^^^^
+
+warning: `achronyme-vm` (lib test) generated 7 warnings (run `cargo fix --lib -p achronyme-vm --tests` to apply 1 suggestion)
+warning: `achronyme-vm` (lib) generated 7 warnings (7 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.25s
+     Running unittests src\lib.rs (target\debug\deps\achronyme_vm-ecc9abbd89a89a17.exe)
+
+running 37 tests
+test bytecode::tests::test_constant_pool ... ok
+test compiler::tests::test_register_allocator ... ok
+test bytecode::tests::test_string_interning ... ok
+test opcode::tests::test_instruction_encoding ... ok
+test opcode::tests::test_opcode_conversion ... ok
+test opcode::tests::test_instruction_encoding_abx ... ok
+test bytecode::tests::test_function_prototype ... ok
+test compiler::tests::test_symbol_table ... ok
+test tests::test_arithmetic_combination ... ok
+test tests::test_boolean_literal ... ok
+test tests::test_addition ... ok
+test tests::test_closure_capture ... ok
+test tests::test_division ... ok
+test tests::test_closure_multiple_captures ... ok
+test tests::test_comparison ... ok
+test tests::test_multiplication ... ok
+test tests::test_negation ... ok
+test tests::test_number_literal ... ok
+test tests::test_lambda_simple ... ok
+test tests::test_null_literal ... ok
+test tests::test_higher_order_function ... ok
+test tests::test_closure_mutation ... ok
+test tests::test_multiple_variables ... ok
+test tests::test_lambda_with_multiple_params ... ok
+test tests::test_lambda_immediate_call ... ok
+test tests::test_nested_closures ... ok
+test tests::test_subtraction ... ok
+test vm::tests::test_call_frame ... ok
+test tests::test_if_expression ... ok
+test vm::tests::test_register_window ... ok
+test tests::test_variable_assignment ... ok
+test tests::test_variable_declaration ... ok
+test tests::test_if_with_condition ... ok
+test tests::test_recursive_factorial ... FAILED
+test tests::test_while_loop ... FAILED
+test tests::test_recursive_fibonacci ... FAILED
+test tests::test_nested_if ... ok
+
+failures:
+
+---- tests::test_recursive_factorial stdout ----
+Factorial result: Number(24.0)
+
+thread 'tests::test_recursive_factorial' (17192) panicked at crates\achronyme-vm\src\tests.rs:236:5:
+assertion `left == right` failed
+  left: Number(24.0)
+ right: Number(120.0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::test_while_loop stdout ----
+
+thread 'tests::test_while_loop' (31000) panicked at crates\achronyme-vm\src\tests.rs:160:34:
+called `Result::unwrap()` on an `Err` value: "Runtime error: Type error in comparison: expected Number, got Number(1.0) < Null"
+
+---- tests::test_recursive_fibonacci stdout ----
+
+thread 'tests::test_recursive_fibonacci' (13072) panicked at crates\achronyme-vm\src\tests.rs:246:5:
+assertion `left == right` failed
+  left: Number(6.0)
+ right: Number(55.0)
+
+
+failures:
+    tests::test_recursive_factorial
+    tests::test_recursive_fibonacci
+    tests::test_while_loop
+
+test result: FAILED. 34 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p achronyme-vm --lib`

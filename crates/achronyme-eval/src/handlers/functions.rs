@@ -151,6 +151,9 @@ pub fn apply_lambda(
                 Err(format!("Unknown built-in function: {}", name))
             }
         }
+        Function::VmClosure(_) => {
+            Err("Cannot call VM closures from tree-walker evaluator".to_string())
+        }
     }
 }
 
