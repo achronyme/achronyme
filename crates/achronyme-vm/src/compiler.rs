@@ -517,11 +517,6 @@ impl Compiler {
                 // to avoid allocating a register that conflicts with argument positions
                 let result_reg = self.registers.allocate()?;
 
-                #[cfg(debug_assertions)]
-                eprintln!("COMPILE CALL: func_reg={}, argc={}, result_reg={}, args at {:?}",
-                          func_reg, args.len(), result_reg,
-                          arg_results.iter().map(|r| r.reg()).collect::<Vec<_>>());
-
                 // Emit CALL opcode
                 if args.len() > 255 {
                     return Err(CompileError::Error("Too many arguments".to_string()));
@@ -783,7 +778,10 @@ impl Compiler {
         }
 
         // Jump back to start
-        let offset = -(self.current_position() as i16 - loop_start as i16);
+        // CRITICAL FIX: Compensate for IP advancement after reading JUMP instruction
+        // When VM reads JUMP, IP advances +1, then applies offset to that advanced IP
+        // Without the +1, we land one instruction AFTER loop_start, skipping condition reload
+        let offset = -(self.current_position() as i16 - loop_start as i16 + 1);
         self.emit_jump(offset);
 
         // Patch end jump

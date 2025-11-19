@@ -277,10 +277,6 @@ impl VM {
             OpCode::Sub => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-
-                #[cfg(debug_assertions)]
-                eprintln!("SUB DEBUG: R{} = R{} - R{} ({:?} - {:?})", a, b, c, left, right);
-
                 let result = self.sub_values(left, right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
@@ -289,14 +285,6 @@ impl VM {
             OpCode::Mul => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-
-                #[cfg(debug_assertions)]
-                {
-                    let r0 = self.get_register(0).ok();
-                    eprintln!("MUL DEBUG: frame_depth={}, R{} = R{} * R{} ({:?} * {:?}), R0={:?}",
-                              self.frames.len(), a, b, c, left, right, r0);
-                }
-
                 let result = self.mul_values(left, right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
@@ -337,10 +325,6 @@ impl VM {
             OpCode::Le => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-
-                #[cfg(debug_assertions)]
-                eprintln!("LE DEBUG: R{} = R{} <= R{} ({:?} <= {:?})", a, b, c, left, right);
-
                 let result = self.le_values(left, right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
@@ -398,14 +382,6 @@ impl VM {
             // ===== Return =====
             OpCode::Return => {
                 let value = self.get_register(a)?.clone();
-
-                #[cfg(debug_assertions)]
-                {
-                    let frame = self.current_frame()?;
-                    eprintln!("RETURN DEBUG: IP={}, returning {:?} from R{}, will write to caller's R{:?}",
-                              frame.ip, value, a, frame.return_register);
-                }
-
                 Ok(ExecutionResult::Return(value))
             }
 
@@ -464,20 +440,10 @@ impl VM {
                             Some(result_reg),
                         );
 
-                        // DEBUG: Verify frame setup
-                        #[cfg(debug_assertions)]
-                        eprintln!("CALL DEBUG: depth={}, func_reg={}, argc={}, result_reg={}, frame_size={}",
-                                  self.frames.len() + 1, func_reg, argc, result_reg, new_frame.registers.registers.len());
-
                         // Copy arguments to new frame's registers
                         for i in 0..argc {
                             let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
                             let arg = self.get_register(arg_reg)?.clone();
-
-                            #[cfg(debug_assertions)]
-                            eprintln!("  Copying arg{}: R{} = {:?} -> new_frame.R{}",
-                                      i, arg_reg, arg, i);
-
                             new_frame.registers.set(i, arg)?;
                         }
 
@@ -485,9 +451,6 @@ impl VM {
                         new_frame.upvalues = closure.upvalues.clone();
 
                         // Set register 255 to the closure itself for recursion
-                        #[cfg(debug_assertions)]
-                        eprintln!("  Setting R255 for recursion");
-
                         new_frame.registers.set(
                             255,
                             Value::Function(Function::VmClosure(Rc::new(closure.clone()) as Rc<dyn std::any::Any>)),

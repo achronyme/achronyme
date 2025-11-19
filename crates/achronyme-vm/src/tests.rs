@@ -232,7 +232,6 @@ fn test_recursive_factorial() {
         factorial(5)
     "#;
     let result = execute(source).unwrap();
-    eprintln!("Factorial result: {:?}", result);
     assert_eq!(result, Value::Number(120.0));
 }
 
