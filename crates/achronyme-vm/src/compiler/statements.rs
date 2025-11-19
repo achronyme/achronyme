@@ -36,6 +36,32 @@ impl Compiler {
                 Ok(())
             }
 
+            AstNode::LetDestructuring {
+                pattern,
+                initializer,
+                ..
+            }
+            | AstNode::MutableDestructuring {
+                pattern,
+                initializer,
+                ..
+            } => {
+                use crate::compiler::patterns::PatternMode;
+
+                // Compile the initializer expression
+                let value_res = self.compile_expression(initializer)?;
+
+                // Compile the pattern in irrefutable mode (let binding)
+                self.compile_pattern(pattern, value_res.reg(), PatternMode::Irrefutable)?;
+
+                // Free value ONLY if temporary
+                if value_res.is_temp() {
+                    self.registers.free(value_res.reg());
+                }
+
+                Ok(())
+            }
+
             AstNode::Assignment { target, value } => {
                 let value_res = self.compile_expression(value)?;
 

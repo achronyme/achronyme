@@ -73,6 +73,29 @@ impl RegisterAllocator {
         }
     }
 
+    /// Allocate multiple consecutive registers
+    /// Returns the first register in the sequence
+    pub(crate) fn allocate_many(&mut self, count: usize) -> Result<u8, CompileError> {
+        if count == 0 {
+            return Err(CompileError::Error("Cannot allocate 0 registers".to_string()));
+        }
+
+        // For simplicity, always allocate from next_free (don't use free_list for consecutive allocations)
+        // This ensures registers are consecutive
+        let start_reg = self.next_free;
+
+        // Check if we have enough space
+        if start_reg as usize + count > 255 {
+            return Err(CompileError::TooManyRegisters);
+        }
+
+        // Allocate all registers
+        self.next_free = start_reg + count as u8;
+        self.max_used = self.max_used.max(self.next_free);
+
+        Ok(start_reg)
+    }
+
     /// Free a register for reuse
     pub(crate) fn free(&mut self, reg: u8) {
         // Never free R255 (reserved for recursion)

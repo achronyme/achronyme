@@ -95,6 +95,8 @@ impl Compiler {
                         stmt,
                         AstNode::VariableDecl { .. }
                             | AstNode::MutableDecl { .. }
+                            | AstNode::LetDestructuring { .. }
+                            | AstNode::MutableDestructuring { .. }
                             | AstNode::Assignment { .. }
                             | AstNode::Import { .. }
                             | AstNode::Export { .. }

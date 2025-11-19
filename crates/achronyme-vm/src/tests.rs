@@ -479,3 +479,88 @@ fn test_record_with_functions() {
     let result = execute(source).unwrap();
     assert_eq!(result, Value::Number(10.0));
 }
+
+// ===== Phase 4 Tests: Pattern Matching & Destructuring =====
+
+#[test]
+fn test_vector_destructuring_basic() {
+    let source = r#"
+        let v = [10, 20]
+        let [x, y] = v
+        x + y
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(30.0));
+}
+
+#[test]
+fn test_vector_destructuring_three_elements() {
+    let source = r#"
+        let arr = [1, 2, 3]
+        let [a, b, c] = arr
+        a + b + c
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(6.0));
+}
+
+#[test]
+fn test_vector_destructuring_nested() {
+    let source = r#"
+        let v = [[1, 2], [3, 4]]
+        let [first, second] = v
+        first[0] + second[1]
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(5.0));
+}
+
+#[test]
+fn test_record_destructuring_basic() {
+    let source = r#"
+        let r = {a: 1, b: 2}
+        let {a, b} = r
+        a + b
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(3.0));
+}
+
+#[test]
+fn test_record_destructuring_three_fields() {
+    let source = r#"
+        let person = {name: "Alice", age: 30, score: 95}
+        let {age, score} = person
+        age + score
+    "#;
+    // Note: For now we'll use numbers since strings aren't fully implemented in VM
+    let source = r#"
+        let obj = {x: 10, y: 20, z: 30}
+        let {x, z} = obj
+        x + z
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(40.0));
+}
+
+#[test]
+fn test_record_destructuring_nested() {
+    let source = r#"
+        let data = {outer: {inner: 42}}
+        let {outer} = data
+        outer.inner
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_destructuring_wildcard() {
+    let source = r#"
+        let v = [1, 2, 3]
+        let [x, _, z] = v
+        x + z
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(4.0));
+}

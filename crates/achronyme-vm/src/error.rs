@@ -105,6 +105,12 @@ pub enum CompileError {
     /// Code too large (instruction offset overflow)
     CodeTooLarge,
 
+    /// Invalid pattern in this context
+    InvalidPattern(String),
+
+    /// Feature not yet implemented
+    NotYetImplemented(String),
+
     /// Compiler error with message
     Error(String),
 }
@@ -144,6 +150,12 @@ impl fmt::Display for CompileError {
             }
             CompileError::CodeTooLarge => {
                 write!(f, "Code too large (instruction offset overflow)")
+            }
+            CompileError::InvalidPattern(msg) => {
+                write!(f, "Invalid pattern: {}", msg)
+            }
+            CompileError::NotYetImplemented(feature) => {
+                write!(f, "Not yet implemented: {}", feature)
             }
             CompileError::Error(msg) => write!(f, "Compiler error: {}", msg),
         }

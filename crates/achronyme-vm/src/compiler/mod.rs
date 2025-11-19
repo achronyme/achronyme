@@ -10,6 +10,7 @@ use std::rc::Rc;
 // Module structure
 mod context;
 mod expressions;
+mod patterns;
 pub(crate) mod registers;
 mod statements;
 pub(crate) mod symbols;
@@ -62,6 +63,8 @@ impl Compiler {
                 node,
                 AstNode::VariableDecl { .. }
                     | AstNode::MutableDecl { .. }
+                    | AstNode::LetDestructuring { .. }
+                    | AstNode::MutableDestructuring { .. }
                     | AstNode::Assignment { .. }
                     | AstNode::Import { .. }
                     | AstNode::Export { .. }

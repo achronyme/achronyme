@@ -146,6 +146,11 @@ impl VM {
                 self.execute_records(opcode, instruction)
             }
 
+            // Pattern Matching
+            OpCode::MatchType | OpCode::MatchLit | OpCode::DestructureVec | OpCode::DestructureRec => {
+                self.execute_matching(opcode, instruction)
+            }
+
             // Not yet implemented
             _ => Err(VmError::Runtime(format!(
                 "Opcode {} not yet implemented",

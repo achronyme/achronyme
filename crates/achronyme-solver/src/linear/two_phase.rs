@@ -118,7 +118,7 @@ pub fn solve(c: &[f64], a: &RealTensor, b: &[f64], sense: f64) -> Result<Vec<f64
     // Extraer la solución básica de Fase 1 (sin variables artificiales)
     // y construir tableau de Fase 2 con la función objetivo original
 
-    let phase2_tableau = build_phase2_tableau(&phase1_tableau, c, sense, n, m)?;
+    let phase2_tableau = build_phase2_tableau(phase1_tableau, c, sense, n, m)?;
 
     // Resolver Fase 2 con Simplex estándar
     let mut tableau = phase2_tableau;
@@ -232,43 +232,116 @@ fn build_phase1_tableau(
 }
 
 /// Construir tableau para Fase 2 a partir del resultado de Fase 1
+///
+/// Maneja casos degenerados donde variables artificiales permanecen en la base con valor 0.
 fn build_phase2_tableau(
-    phase1: &Tableau,
+    mut phase1: Tableau, // Recibimos ownership para poder pivotar
     c: &[f64],
     sense: f64,
     n: usize,
     m: usize,
 ) -> Result<Tableau, String> {
-    // Copiar estructura de Fase 1 pero cambiar función objetivo
-    let total_cols = n + m + 1;
-    let mut data = vec![vec![0.0; total_cols]; m + 1];
+    let num_artificials = phase1.data[0].len() - (n + m) - 1;
+    let total_cols_phase1 = phase1.data[0].len();
 
-    // Copiar restricciones (sin artificiales)
+    // 1. LIMPIEZA DE BASE (Handling Degeneracy)
+    // Si hay artificiales en la base con valor 0, intentamos pivotarlas fuera.
+    for i in 0..m {
+        let basic_var = phase1.basis[i];
+        let is_artificial = basic_var >= n + m;
+
+        if is_artificial {
+            // Verificar si es realmente 0 (debería serlo si Phase 1 fue exitosa)
+            let rhs_val = phase1.data[i][total_cols_phase1 - 1];
+            if rhs_val.abs() > 1e-8 {
+                return Err("Infeasible: Artificial variable in basis with positive value".to_string());
+            }
+
+            // Buscar una variable NO artificial (original o holgura) para pivotar
+            let mut pivot_col = None;
+            for j in 0..n + m {
+                let val = phase1.data[i][j];
+                if val.abs() > 1e-8 {
+                    pivot_col = Some(j);
+                    break;
+                }
+            }
+
+            match pivot_col {
+                Some(col) => {
+                    // Pivotar para meter una variable real y sacar la artificial
+                    phase1.pivot(col, i);
+                }
+                None => {
+                    // Si toda la fila (para vars reales) es 0, la restricción es REDUNDANTE.
+                    // Estrategia: Dejar la artificial en la base pero tratarla como una holgura dummy.
+                    // No hacemos nada aquí, se filtrará sola en la construcción de abajo
+                    // porque la columna artificial no se copia.
+                }
+            }
+        }
+    }
+
+    // 2. Construcción del Tableau Fase 2
+    let total_cols_phase2 = n + m + 1;
+    let mut data = vec![vec![0.0; total_cols_phase2]; m + 1];
+
+    // Copiar datos (excluyendo columnas artificiales)
     for i in 0..m {
         for j in 0..n + m {
             data[i][j] = phase1.data[i][j];
         }
-        data[i][n + m] = phase1.data[i][phase1.data[i].len() - 1]; // RHS
+        // RHS
+        data[i][n + m] = phase1.data[i][total_cols_phase1 - 1];
     }
 
-    // Nueva fila objetivo con coeficientes originales
+    // Restaurar función objetivo original
     for j in 0..n {
         data[m][j] = -sense * c[j];
     }
-    // Holguras tienen coeficiente 0
-    for j in n..n + m {
-        data[m][j] = 0.0;
-    }
-    data[m][n + m] = 0.0; // RHS
+    data[m][n + m] = 0.0; // El valor Z se recalculará con el pricing out
 
-    // Base: copiar de Fase 1 (pero ignorar artificiales)
+    // 3. Reconstruir la base
+    // Nota: Si quedó una restricción redundante (artificial en base), 
+    // la base apuntará a un índice fuera de rango para el nuevo tableau.
+    // Debemos manejar eso.
     let mut basis = Vec::new();
-    for &b in &phase1.basis {
-        if b < n + m {
-            basis.push(b);
+    let mut redundant_rows = Vec::new();
+
+    for (r, &b_idx) in phase1.basis.iter().enumerate() {
+        if b_idx < n + m {
+            basis.push(b_idx);
         } else {
-            // Artificial en base, error (no debería pasar)
-            return Err("Phase 1 ended with artificial in basis".to_string());
+            // Si todavía hay artificial, es una restricción redundante (0 = 0).
+            // La marcamos para "ignorarla" matemáticamente.
+            // Truco: Asignamos la base a la columna de holgura de esta fila 'r' (n + r),
+            // aunque matemáticamente esa columna puede no ser canónica perfecta, 
+            // en la práctica forzamos a que esa fila no afecte.
+            // O mejor: Para este ejercicio simple, dejamos la holgura correspondiente.
+            basis.push(n + r); 
+            redundant_rows.push(r);
+        }
+    }
+
+    // Si hubo filas redundantes, asegúrate de que sean 0=0 en el nuevo tableau
+    for &r in &redundant_rows {
+        for c_idx in 0..total_cols_phase2 {
+            data[r][c_idx] = 0.0;
+        }
+    }
+
+    // 4. Pricing Out (Restaurar forma canónica)
+    for i in 0..m {
+        let basic_col_idx = basis[i];
+        
+        // Si la fila es redundante, basic_col_idx puede apuntar a algo sucio, saltar
+        if redundant_rows.contains(&i) { continue; }
+
+        let current_obj_coeff = data[m][basic_col_idx];
+        if current_obj_coeff.abs() > 1e-10 {
+            for j in 0..total_cols_phase2 {
+                data[m][j] -= current_obj_coeff * data[i][j];
+            }
         }
     }
 
