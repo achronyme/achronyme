@@ -1143,3 +1143,201 @@ fn test_for_in_nested() {
     let result = execute(source).unwrap();
     assert_eq!(result, Value::Number(10.0)); // 1 + 2 + 3 + 4
 }
+
+// ===== Phase 6 Week 15 Tests: Exception Runtime =====
+
+/// Test throwing an uncaught exception
+#[test]
+fn test_throw_simple() {
+    use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
+    use crate::opcode::{instruction::*, OpCode};
+    use crate::error::VmError;
+    use std::rc::Rc;
+
+    // Build bytecode manually:
+    // R[0] = "Error message"
+    // THROW R[0]
+    let mut constants = ConstantPool::new();
+    let err_const_idx = constants.add_constant(Value::String("Test error".to_string()));
+    let constants = Rc::new(constants);
+
+    let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
+    main.register_count = 255;
+
+    // LOAD_CONST R[0], K[err_const_idx]
+    main.add_instruction(encode_abx(OpCode::LoadConst.as_u8(), 0, err_const_idx as u16));
+    // THROW R[0]
+    main.add_instruction(encode_abc(OpCode::Throw.as_u8(), 0, 0, 0));
+
+    let module = BytecodeModule {
+        name: "test".to_string(),
+        main,
+        constants,
+    };
+
+    let mut vm = VM::new();
+    let result = vm.execute(module);
+
+    // Should return UncaughtException error
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        VmError::UncaughtException(val) => {
+            assert_eq!(val, Value::String("Test error".to_string()));
+        }
+        e => panic!("Expected UncaughtException, got {:?}", e),
+    }
+}
+
+/// Test pushing and popping exception handlers
+#[test]
+fn test_push_pop_handler() {
+    use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
+    use crate::opcode::{instruction::*, OpCode};
+    use std::rc::Rc;
+
+    // Build bytecode:
+    // PUSH_HANDLER R[1], offset=5 (points to catch block)
+    // R[0] = 42 (some safe code)
+    // POP_HANDLER
+    // RETURN R[0]
+    let constants = Rc::new(ConstantPool::new());
+    let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
+    main.register_count = 255;
+
+    // PUSH_HANDLER R[1], offset=5
+    main.add_instruction(encode_abx(OpCode::PushHandler.as_u8(), 1, 5));
+    // LOAD_IMM_I8 R[0], 42
+    main.add_instruction(encode_abx(OpCode::LoadImmI8.as_u8(), 0, 42));
+    // POP_HANDLER
+    main.add_instruction(encode_abc(OpCode::PopHandler.as_u8(), 0, 0, 0));
+    // RETURN R[0]
+    main.add_instruction(encode_abc(OpCode::Return.as_u8(), 0, 0, 0));
+
+    let module = BytecodeModule {
+        name: "test".to_string(),
+        main,
+        constants,
+    };
+
+    let mut vm = VM::new();
+    let result = vm.execute(module);
+
+    // Should succeed and return 42
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), Value::Number(42.0));
+}
+
+/// Test catching an exception
+#[test]
+fn test_catch_exception() {
+    use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
+    use crate::opcode::{instruction::*, OpCode};
+    use std::rc::Rc;
+
+    // Build bytecode:
+    // PUSH_HANDLER R[1], offset=3 (points to catch block at IP 4)
+    // R[0] = "Error"
+    // THROW R[0]
+    // POP_HANDLER  (skipped due to throw)
+    // Catch block (IP 4):
+    // RETURN R[1]  (error value stored in R[1])
+    let mut constants = ConstantPool::new();
+    let err_const_idx = constants.add_constant(Value::String("Caught!".to_string()));
+    let constants = Rc::new(constants);
+
+    let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
+    main.register_count = 255;
+
+    // IP 0: PUSH_HANDLER R[1], offset=3 (catch block at IP 0 + 3 + 1 = 4)
+    main.add_instruction(encode_abx(OpCode::PushHandler.as_u8(), 1, 3));
+    // IP 1: LOAD_CONST R[0], K[err_const_idx]
+    main.add_instruction(encode_abx(OpCode::LoadConst.as_u8(), 0, err_const_idx as u16));
+    // IP 2: THROW R[0]
+    main.add_instruction(encode_abc(OpCode::Throw.as_u8(), 0, 0, 0));
+    // IP 3: POP_HANDLER (never reached)
+    main.add_instruction(encode_abc(OpCode::PopHandler.as_u8(), 0, 0, 0));
+    // IP 4: Catch block - RETURN R[1]
+    main.add_instruction(encode_abc(OpCode::Return.as_u8(), 1, 0, 0));
+
+    let module = BytecodeModule {
+        name: "test".to_string(),
+        main,
+        constants,
+    };
+
+    let mut vm = VM::new();
+    let result = vm.execute(module);
+
+    // Should return the caught error value
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), Value::String("Caught!".to_string()));
+}
+
+/// Test unwinding through multiple call frames
+#[test]
+fn test_unwinding_through_frames() {
+    use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
+    use crate::opcode::{instruction::*, OpCode};
+    use std::rc::Rc;
+
+    // Setup: Main calls function A, A calls function B, B throws, A catches
+    let mut constants = ConstantPool::new();
+    let err_const = constants.add_constant(Value::String("B error".to_string()));
+    let constants = Rc::new(constants);
+
+    // Function B (throws error)
+    let mut func_b = FunctionPrototype::new("func_b".to_string(), constants.clone());
+    func_b.register_count = 255; // Use 256 registers for recursion support
+    func_b.param_count = 0;
+    // LOAD_CONST R[0], K[err_const]
+    func_b.add_instruction(encode_abx(OpCode::LoadConst.as_u8(), 0, err_const as u16));
+    // THROW R[0]
+    func_b.add_instruction(encode_abc(OpCode::Throw.as_u8(), 0, 0, 0));
+
+    // Function A (calls B with handler)
+    let mut func_a = FunctionPrototype::new("func_a".to_string(), constants.clone());
+    func_a.register_count = 255; // Use 256 registers for recursion support
+    func_a.param_count = 0;
+    // PUSH_HANDLER R[2], offset=5 (catch at IP 6)
+    func_a.add_instruction(encode_abx(OpCode::PushHandler.as_u8(), 2, 5));
+    // CLOSURE R[0], 0 (func_b is at index 0)
+    func_a.add_instruction(encode_abx(OpCode::Closure.as_u8(), 0, 0));
+    // CALL R[1] = R[0]() (0 args)
+    func_a.add_instruction(encode_abc(OpCode::Call.as_u8(), 1, 0, 0));
+    // POP_HANDLER (never reached)
+    func_a.add_instruction(encode_abc(OpCode::PopHandler.as_u8(), 0, 0, 0));
+    // RETURN_NULL (never reached)
+    func_a.add_instruction(encode_abc(OpCode::ReturnNull.as_u8(), 0, 0, 0));
+    // Catch block (IP 6): RETURN R[2]
+    func_a.add_instruction(encode_abc(OpCode::Return.as_u8(), 2, 0, 0));
+    // Add func_b as nested function
+    func_a.functions.push(func_b);
+
+    // Main (calls A)
+    let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
+    main.register_count = 255; // Use 256 registers for recursion support
+    // CLOSURE R[0], 0 (func_a is at index 0)
+    main.add_instruction(encode_abx(OpCode::Closure.as_u8(), 0, 0));
+    // CALL R[1] = R[0]()
+    main.add_instruction(encode_abc(OpCode::Call.as_u8(), 1, 0, 0));
+    // RETURN R[1]
+    main.add_instruction(encode_abc(OpCode::Return.as_u8(), 1, 0, 0));
+    // Add func_a as nested function
+    main.functions.push(func_a);
+
+    let module = BytecodeModule {
+        name: "test".to_string(),
+        main,
+        constants,
+    };
+
+    let mut vm = VM::new();
+    let result = vm.execute(module);
+
+    // Should return the caught error from function B
+    if let Err(e) = &result {
+        eprintln!("Error: {:?}", e);
+    }
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), Value::String("B error".to_string()));
+}

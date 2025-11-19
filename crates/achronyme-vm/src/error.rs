@@ -1,6 +1,7 @@
 //! Error types for the VM and compiler
 
 use std::fmt;
+use crate::value::Value;
 
 /// VM runtime errors
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +41,7 @@ pub enum VmError {
     GeneratorExhausted,
 
     /// Uncaught exception
-    UncaughtException(String),
+    UncaughtException(Value),
 
     /// Runtime error with message
     Runtime(String),
@@ -61,7 +62,7 @@ impl fmt::Display for VmError {
             VmError::InvalidOpcode(op) => write!(f, "Invalid opcode: {}", op),
             VmError::InvalidGenerator => write!(f, "Invalid generator"),
             VmError::GeneratorExhausted => write!(f, "Generator exhausted"),
-            VmError::UncaughtException(msg) => write!(f, "Uncaught exception: {}", msg),
+            VmError::UncaughtException(value) => write!(f, "Uncaught exception: {:?}", value),
             VmError::Runtime(msg) => write!(f, "Runtime error: {}", msg),
         }
     }

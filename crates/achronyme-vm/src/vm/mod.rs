@@ -101,6 +101,52 @@ impl VM {
                     }
                     self.do_return(value)?;
                 }
+                ExecutionResult::Exception(error) => {
+                    // Start unwinding
+                    loop {
+                        // Get current frame
+                        let frame = match self.frames.last_mut() {
+                            Some(f) => f,
+                            None => {
+                                // No more frames - uncaught exception
+                                return Err(VmError::UncaughtException(error));
+                            }
+                        };
+
+                        // Check if this frame has handlers
+                        if let Some(handler) = frame.handlers.pop() {
+                            // Found a handler!
+                            // 1. Store error in the designated register
+                            frame.registers.set(handler.error_reg, error.clone())?;
+                            // 2. Jump to catch block
+                            frame.jump_to(handler.catch_ip);
+                            // 3. Resume execution
+                            break;
+                        }
+
+                        // No handler in this frame
+                        // Check if this is a generator frame and mark it as done
+                        let is_generator = self.frames.last()
+                            .and_then(|f| f.generator.as_ref())
+                            .is_some();
+
+                        if is_generator {
+                            let gen_frame = self.frames.last().unwrap();
+                            if let Some(ref gen_value) = gen_frame.generator {
+                                if let Value::Generator(any_ref) = gen_value {
+                                    if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
+                                        let mut state = state_rc.borrow_mut();
+                                        state.complete(None);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Pop frame and continue unwinding
+                        self.frames.pop();
+                    }
+                    continue;
+                }
                 ExecutionResult::Yield(value) => {
                     // Pop the generator's frame and save it back
                     let gen_frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
@@ -190,6 +236,11 @@ impl VM {
             // Generators
             OpCode::CreateGen | OpCode::Yield | OpCode::ResumeGen | OpCode::MakeIterator => {
                 self.execute_generators(opcode, instruction)
+            }
+
+            // Exception Handling
+            OpCode::Throw | OpCode::PushHandler | OpCode::PopHandler => {
+                self.execute_exceptions(opcode, instruction)
             }
 
             // Not yet implemented

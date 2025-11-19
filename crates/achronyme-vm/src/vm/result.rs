@@ -11,4 +11,6 @@ pub(crate) enum ExecutionResult {
     Return(Value),
     /// Yield from generator
     Yield(Value),
+    /// Exception thrown (starts unwinding)
+    Exception(Value),
 }

@@ -9,6 +9,15 @@ use std::rc::Rc;
 /// Maximum number of registers per function (8-bit addressing)
 pub const MAX_REGISTERS: usize = 256;
 
+/// Exception handler entry
+#[derive(Debug, Clone)]
+pub struct ExceptionHandler {
+    /// Instruction pointer to jump to (catch block start)
+    pub catch_ip: usize,
+    /// Register to store the error value
+    pub error_reg: u8,
+}
+
 /// Register window for a call frame
 #[derive(Debug, Clone)]
 pub struct RegisterWindow {
@@ -73,6 +82,9 @@ pub struct CallFrame {
     /// Generator reference (if this frame belongs to a generator)
     /// When this frame yields, it updates the generator state
     pub generator: Option<Value>,
+
+    /// Exception handlers active in this frame
+    pub handlers: Vec<ExceptionHandler>,
 }
 
 impl CallFrame {
@@ -95,6 +107,7 @@ impl CallFrame {
             upvalues: Vec::new(),
             return_register,
             generator: None,
+            handlers: Vec::new(),
         }
     }
 

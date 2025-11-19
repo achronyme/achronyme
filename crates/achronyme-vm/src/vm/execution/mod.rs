@@ -3,6 +3,7 @@
 mod arithmetic;
 mod comparison;
 mod control;
+mod exceptions;
 mod functions;
 mod generators;
 mod iterators;
