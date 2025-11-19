@@ -274,11 +274,11 @@ mod tests {
 
     #[test]
     fn test_serialize_vector() {
-        let value = Value::Vector(vec![
+        let value = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
-        ]);
+        ])));
         let bytes = serialize_value(&value).unwrap();
         let restored = deserialize_value(&bytes).unwrap();
         assert_eq!(value, restored);
@@ -299,7 +299,7 @@ mod tests {
         map.insert("x".to_string(), Value::Number(10.0));
         map.insert("name".to_string(), Value::String("test".to_string()));
 
-        let value = Value::Record(map);
+        let value = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(map)));
         let bytes = serialize_value(&value).unwrap();
         let restored = deserialize_value(&bytes).unwrap();
         assert_eq!(value, restored);
@@ -311,10 +311,10 @@ mod tests {
         inner.insert("a".to_string(), Value::Number(1.0));
 
         let mut outer = HashMap::new();
-        outer.insert("inner".to_string(), Value::Record(inner));
+        outer.insert("inner".to_string(), Value::Record(std::rc::Rc::new(std::cell::RefCell::new(inner))));
         outer.insert("value".to_string(), Value::Boolean(true));
 
-        let value = Value::Record(outer);
+        let value = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(outer)));
         let bytes = serialize_value(&value).unwrap();
         let restored = deserialize_value(&bytes).unwrap();
         assert_eq!(value, restored);

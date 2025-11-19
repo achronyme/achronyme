@@ -33,10 +33,10 @@ impl VM {
                 let key_idx = c as usize;
 
                 let rec_value = self.get_register(rec_reg)?.clone();
-                let key = self.get_constant(key_idx)?.clone();
+                let field_name = self.get_string(key_idx)?;
 
-                match (&rec_value, &key) {
-                    (Value::Record(rec_rc), Value::String(field_name)) => {
+                match &rec_value {
+                    Value::Record(rec_rc) => {
                         let rec_borrowed = rec_rc.borrow();
                         let value = rec_borrowed
                             .get(field_name)
@@ -48,11 +48,6 @@ impl VM {
                         self.set_register(dst, value)?;
                         Ok(ExecutionResult::Continue)
                     }
-                    (Value::Record(_), _) => Err(VmError::TypeError {
-                        operation: "record field access".to_string(),
-                        expected: "String".to_string(),
-                        got: format!("{:?}", key),
-                    }),
                     _ => Err(VmError::TypeError {
                         operation: "record field access".to_string(),
                         expected: "Record".to_string(),
@@ -68,20 +63,15 @@ impl VM {
                 let val_reg = c;
 
                 let rec_value = self.get_register(rec_reg)?.clone();
-                let key = self.get_constant(key_idx)?.clone();
+                let field_name = self.get_string(key_idx)?;
                 let new_value = self.get_register(val_reg)?.clone();
 
-                match (&rec_value, &key) {
-                    (Value::Record(rec_rc), Value::String(field_name)) => {
+                match &rec_value {
+                    Value::Record(rec_rc) => {
                         let mut rec_borrowed = rec_rc.borrow_mut();
-                        rec_borrowed.insert(field_name.clone(), new_value);
+                        rec_borrowed.insert(field_name.to_string(), new_value);
                         Ok(ExecutionResult::Continue)
                     }
-                    (Value::Record(_), _) => Err(VmError::TypeError {
-                        operation: "record field assignment".to_string(),
-                        expected: "String".to_string(),
-                        got: format!("{:?}", key),
-                    }),
                     _ => Err(VmError::TypeError {
                         operation: "record field assignment".to_string(),
                         expected: "Record".to_string(),

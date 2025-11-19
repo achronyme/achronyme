@@ -52,6 +52,69 @@ impl Compiler {
                             return Err(CompileError::UndefinedVariable(name.clone()));
                         }
                     }
+
+                    AstNode::IndexAccess { object, indices } => {
+                        use achronyme_parser::ast::IndexArg;
+
+                        // For Phase 3, only support single index access
+                        if indices.len() != 1 {
+                            return Err(CompileError::Error(
+                                "Multi-dimensional indexing not yet supported".to_string(),
+                            ));
+                        }
+
+                        // Extract the single index
+                        let index_node = match &indices[0] {
+                            IndexArg::Single(node) => node,
+                            IndexArg::Range { .. } => {
+                                return Err(CompileError::Error(
+                                    "Range slicing not yet supported".to_string(),
+                                ));
+                            }
+                        };
+
+                        // Vector/array element assignment: arr[idx] = value
+                        let obj_res = self.compile_expression(object)?;
+                        let idx_res = self.compile_expression(index_node)?;
+
+                        // Emit VecSet: obj[idx] = value
+                        self.emit(encode_abc(
+                            OpCode::VecSet.as_u8(),
+                            obj_res.reg(),
+                            idx_res.reg(),
+                            value_res.reg(),
+                        ));
+
+                        // Free temporaries
+                        if obj_res.is_temp() {
+                            self.registers.free(obj_res.reg());
+                        }
+                        if idx_res.is_temp() {
+                            self.registers.free(idx_res.reg());
+                        }
+                    }
+
+                    AstNode::FieldAccess { record, field } => {
+                        // Record field assignment: rec.field = value
+                        let rec_res = self.compile_expression(record)?;
+
+                        // Add field name to constant pool
+                        let field_idx = self.add_string(field.clone())?;
+
+                        // Emit SetField: rec[field] = value
+                        self.emit(encode_abc(
+                            OpCode::SetField.as_u8(),
+                            rec_res.reg(),
+                            field_idx as u8,
+                            value_res.reg(),
+                        ));
+
+                        // Free temporary
+                        if rec_res.is_temp() {
+                            self.registers.free(rec_res.reg());
+                        }
+                    }
+
                     _ => {
                         return Err(CompileError::InvalidAssignmentTarget);
                     }

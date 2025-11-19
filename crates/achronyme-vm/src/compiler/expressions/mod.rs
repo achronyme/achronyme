@@ -6,6 +6,7 @@ use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use achronyme_parser::ast::AstNode;
 
+mod access;
 mod control;
 mod functions;
 mod literals;
@@ -65,6 +66,24 @@ impl Compiler {
 
             AstNode::CallExpression { callee, args } => {
                 self.compile_call_expression(callee, args)
+            }
+
+            // Array and Record literals
+            AstNode::ArrayLiteral(elements) => {
+                self.compile_array_literal(elements)
+            }
+
+            AstNode::RecordLiteral(fields) => {
+                self.compile_record_literal(fields)
+            }
+
+            // Access expressions
+            AstNode::IndexAccess { object, indices } => {
+                self.compile_index_access(object, indices)
+            }
+
+            AstNode::FieldAccess { record, field } => {
+                self.compile_field_access(record, field)
             }
 
             // Sequences

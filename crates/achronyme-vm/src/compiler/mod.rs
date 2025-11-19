@@ -128,6 +128,37 @@ impl Compiler {
         }
     }
 
+    /// Add string to constant pool (for field names, etc.)
+    pub(crate) fn add_string(&mut self, s: String) -> Result<usize, CompileError> {
+        // Try to get mutable access to the constant pool
+        if let Some(pool) = Rc::get_mut(&mut self.function.constants) {
+            let idx = pool.add_string(s);
+
+            if idx > u8::MAX as usize {
+                return Err(CompileError::Error("Too many strings in constant pool".to_string()));
+            }
+
+            Ok(idx)
+        } else {
+            // Constant pool is shared, we need to make a copy
+            // This can happen with nested lambdas
+            let pool_clone = (*self.function.constants).clone();
+            self.function.constants = Rc::new(pool_clone);
+
+            // Now we can get mutable access
+            let pool = Rc::get_mut(&mut self.function.constants)
+                .expect("Just created new Rc, should be unique");
+
+            let idx = pool.add_string(s);
+
+            if idx > u8::MAX as usize {
+                return Err(CompileError::Error("Too many strings in constant pool".to_string()));
+            }
+
+            Ok(idx)
+        }
+    }
+
     /// Emit instruction
     pub(crate) fn emit(&mut self, instruction: u32) -> usize {
         self.function.add_instruction(instruction)

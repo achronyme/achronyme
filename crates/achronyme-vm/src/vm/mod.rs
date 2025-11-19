@@ -185,6 +185,15 @@ impl VM {
             .ok_or(VmError::InvalidConstant(idx))
     }
 
+    /// Get string from constant pool
+    pub(crate) fn get_string(&self, idx: usize) -> Result<&str, VmError> {
+        self.current_frame()?
+            .function
+            .constants
+            .get_string(idx)
+            .ok_or(VmError::InvalidConstant(idx))
+    }
+
     /// Perform return from function
     fn do_return(&mut self, value: Value) -> Result<(), VmError> {
         let frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;

@@ -46,19 +46,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "achronyme-eval"
-version = "0.6.4"
-dependencies = [
- "achronyme-dsp",
- "achronyme-env",
- "achronyme-linalg",
- "achronyme-numerical",
- "achronyme-parser",
- "achronyme-solver",
- "achronyme-types",
-]
-
-[[package]]
 name = "achronyme-linalg"
 version = "0.6.4"
 dependencies = [
