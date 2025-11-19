@@ -10,11 +10,13 @@ use std::rc::Rc;
 // Module structure
 mod execution;
 mod frame;
+mod generator;
 mod ops;
 mod result;
 
 // Re-export public types
 pub use frame::{CallFrame, RegisterWindow, SuspendedFrame, MAX_REGISTERS};
+pub use generator::{VmGeneratorRef, VmGeneratorState};
 
 // Internal imports
 use frame::CallFrame as InternalCallFrame;
@@ -149,6 +151,11 @@ impl VM {
             // Pattern Matching
             OpCode::MatchType | OpCode::MatchLit | OpCode::DestructureVec | OpCode::DestructureRec => {
                 self.execute_matching(opcode, instruction)
+            }
+
+            // Generators
+            OpCode::CreateGen | OpCode::Yield | OpCode::ResumeGen => {
+                self.execute_generators(opcode, instruction)
             }
 
             // Not yet implemented

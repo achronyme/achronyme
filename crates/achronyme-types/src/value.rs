@@ -6,6 +6,7 @@ use achronyme_parser::ast::AstNode;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::any::Any;
 
 #[derive(Debug)]
 pub enum TypeError {
@@ -56,8 +57,10 @@ pub enum Value {
     /// Used in union types like `Number | null` for optional values
     Null,
     /// Generator: suspended function that can be resumed
-    /// Contains state for yield/resume semantics
-    Generator(Rc<RefCell<GeneratorState>>),
+    /// Uses Rc<dyn Any> for type erasure to avoid circular dependencies
+    /// In the VM, this contains Rc<RefCell<VmGeneratorState>>
+    /// In other backends, it can contain their own generator state
+    Generator(Rc<dyn Any>),
     /// Internal marker for yield in generators
     /// Contains the value to yield and signals that generator should suspend
     /// This variant should never be exposed to user code
@@ -79,37 +82,6 @@ pub enum Value {
     LoopContinue,
 }
 
-/// State of a generator function
-///
-/// A generator is a function that can be suspended (yield) and resumed (next()).
-/// It maintains its execution state between calls.
-#[derive(Debug, Clone)]
-pub struct GeneratorState {
-    /// The generator's environment (captured scope)
-    pub env: Environment,
-
-    /// Original environment captured at generator creation
-    /// Used to reset state before re-execution for nested control flow support
-    pub original_env: Option<Environment>,
-
-    /// Current execution position (statement index)
-    pub position: usize,
-
-    /// Statements in the generator body
-    pub statements: Vec<AstNode>,
-
-    /// Is the generator exhausted?
-    pub done: bool,
-
-    /// Value returned by last `return` statement (sticky)
-    pub return_value: Option<Box<Value>>,
-
-    /// Track how many yields have occurred (for resuming)
-    pub yield_count: usize,
-
-    /// Current yield target (for resuming after nested yields)
-    pub current_yield_target: usize,
-}
 
 // Conversiones automáticas con From/Into
 impl From<f64> for Value {
@@ -217,7 +189,8 @@ impl Value {
     }
 
     /// Get the generator state if this value is a generator
-    pub fn as_generator(&self) -> Option<&Rc<RefCell<GeneratorState>>> {
+    /// Returns the opaque Any reference - caller must downcast to their concrete type
+    pub fn as_generator(&self) -> Option<&Rc<dyn Any>> {
         match self {
             Value::Generator(g) => Some(g),
             _ => None,
@@ -225,45 +198,6 @@ impl Value {
     }
 }
 
-impl GeneratorState {
-    /// Create a new generator state
-    pub fn new(env: Environment, statements: Vec<AstNode>) -> Self {
-        Self {
-            env,
-            original_env: None,
-            position: 0,
-            statements,
-            done: false,
-            return_value: None,
-            yield_count: 0,
-            current_yield_target: 0,
-        }
-    }
-
-    /// Check if the generator is exhausted
-    pub fn is_done(&self) -> bool {
-        self.done
-    }
-
-    /// Mark the generator as done with an optional return value
-    pub fn mark_done(&mut self, value: Option<Value>) {
-        self.done = true;
-        self.return_value = value.map(Box::new);
-    }
-}
-
-/// Generators are compared by reference identity (pointer equality)
-/// Two generators are equal only if they are the exact same instance
-impl PartialEq for GeneratorState {
-    fn eq(&self, other: &Self) -> bool {
-        // For generators, we use structural equality of position and done state
-        // This is reasonable since generators with same state are "equivalent"
-        // But in practice, comparing generators is rare
-        self.position == other.position
-            && self.done == other.done
-            && self.statements.len() == other.statements.len()
-    }
-}
 
 // Operadores sobrecargados de forma segura
 impl std::ops::Add for Value {
