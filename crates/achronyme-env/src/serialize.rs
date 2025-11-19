@@ -40,6 +40,7 @@ impl SerializedValue {
 
             Value::Vector(vec) => {
                 let serialized: Vec<SerializedValue> = vec
+                    .borrow()
                     .iter()
                     .map(SerializedValue::from_value)
                     .collect();
@@ -65,6 +66,7 @@ impl SerializedValue {
 
             Value::Record(map) => {
                 let serialized: HashMap<String, SerializedValue> = map
+                    .borrow()
                     .iter()
                     .map(|(k, v)| (k.clone(), SerializedValue::from_value(v)))
                     .collect();
@@ -156,7 +158,7 @@ impl SerializedValue {
                     .iter()
                     .map(|sv| sv.to_value())
                     .collect();
-                Ok(Value::Vector(values?))
+                Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(values?))))
             },
 
             SerializedValue::Tensor(shape, data) => {
@@ -185,7 +187,7 @@ impl SerializedValue {
                 for (k, v) in map {
                     record.insert(k.clone(), v.to_value()?);
                 }
-                Ok(Value::Record(record))
+                Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(record))))
             },
 
             SerializedValue::Edge(from, to, directed, properties) => {

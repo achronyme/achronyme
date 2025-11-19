@@ -6,7 +6,6 @@ version = 4
 name = "achronyme-cli"
 version = "0.6.4"
 dependencies = [
- "achronyme-eval",
  "achronyme-lsp-core",
  "achronyme-parser",
  "achronyme-types",

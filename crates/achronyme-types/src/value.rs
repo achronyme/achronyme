@@ -25,12 +25,16 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     Complex(Complex),
-    Vector(Vec<Value>),  // Generic vector - can hold any Value type (strings, records, etc.)
+    /// Vector with shared mutable ownership - allows mutation and sharing
+    /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
+    Vector(Rc<RefCell<Vec<Value>>>),
     Tensor(RealTensor),  // Optimized N-dimensional array of real numbers
     ComplexTensor(ComplexTensor),  // Optimized N-dimensional array of complex numbers
     Function(Function),  // Both user-defined lambdas and built-in functions
     String(String),
-    Record(HashMap<String, Value>),
+    /// Record (object/map) with shared mutable ownership
+    /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
+    Record(Rc<RefCell<HashMap<String, Value>>>),
     Edge {
         from: String,
         to: String,
@@ -117,13 +121,14 @@ impl From<f64> for Value {
 // Helper functions for vector operations
 impl Value {
     /// Check if a vector is numeric (contains only Number or Complex values)
-    pub fn is_numeric_vector(vec: &[Value]) -> bool {
-        vec.iter().all(|v| matches!(v, Value::Number(_) | Value::Complex(_)))
+    pub fn is_numeric_vector(vec: &Rc<RefCell<Vec<Value>>>) -> bool {
+        vec.borrow().iter().all(|v| matches!(v, Value::Number(_) | Value::Complex(_)))
     }
 
     /// Convert a generic vector to a RealTensor (rank 1)
-    pub fn to_real_tensor(vec: &[Value]) -> Result<RealTensor, TypeError> {
-        let nums: Result<Vec<f64>, _> = vec.iter().map(|v| match v {
+    pub fn to_real_tensor(vec: &Rc<RefCell<Vec<Value>>>) -> Result<RealTensor, TypeError> {
+        let vec_borrowed = vec.borrow();
+        let nums: Result<Vec<f64>, _> = vec_borrowed.iter().map(|v| match v {
             Value::Number(n) => Ok(*n),
             _ => Err(TypeError::IncompatibleTypes),
         }).collect();
@@ -135,8 +140,9 @@ impl Value {
     }
 
     /// Convert a generic vector to a ComplexTensor (rank 1)
-    pub fn to_complex_tensor(vec: &[Value]) -> Result<ComplexTensor, TypeError> {
-        let complexes: Result<Vec<Complex>, _> = vec.iter().map(|v| match v {
+    pub fn to_complex_tensor(vec: &Rc<RefCell<Vec<Value>>>) -> Result<ComplexTensor, TypeError> {
+        let vec_borrowed = vec.borrow();
+        let complexes: Result<Vec<Complex>, _> = vec_borrowed.iter().map(|v| match v {
             Value::Number(n) => Ok(Complex::new(*n, 0.0)),
             Value::Complex(c) => Ok(*c),
             _ => Err(TypeError::IncompatibleTypes),
@@ -151,7 +157,8 @@ impl Value {
     /// Convert a RealTensor to a generic vector (if rank 1)
     pub fn from_real_tensor(tensor: RealTensor) -> Value {
         if tensor.is_vector() {
-            Value::Vector(tensor.data().iter().map(|&n| Value::Number(n)).collect())
+            let vec_data: Vec<Value> = tensor.data().iter().map(|&n| Value::Number(n)).collect();
+            Value::Vector(Rc::new(RefCell::new(vec_data)))
         } else {
             Value::Tensor(tensor)
         }
@@ -160,7 +167,8 @@ impl Value {
     /// Convert a ComplexTensor to a generic vector (if rank 1) or keep as ComplexTensor
     pub fn from_complex_tensor(tensor: ComplexTensor) -> Value {
         if tensor.is_vector() {
-            Value::Vector(tensor.data().iter().map(|&c| Value::Complex(c)).collect())
+            let vec_data: Vec<Value> = tensor.data().iter().map(|&c| Value::Complex(c)).collect();
+            Value::Vector(Rc::new(RefCell::new(vec_data)))
         } else {
             Value::ComplexTensor(tensor)
         }
@@ -268,8 +276,8 @@ impl std::ops::Add for Value {
                 // Check if both vectors are numeric
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
                     // Check if any element is complex
-                    let has_complex_a = a.iter().any(|v| matches!(v, Value::Complex(_)));
-                    let has_complex_b = b.iter().any(|v| matches!(v, Value::Complex(_)));
+                    let has_complex_a = a.borrow().iter().any(|v| matches!(v, Value::Complex(_)));
+                    let has_complex_b = b.borrow().iter().any(|v| matches!(v, Value::Complex(_)));
 
                     if has_complex_a || has_complex_b {
                         // Complex tensor addition

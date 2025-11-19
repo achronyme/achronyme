@@ -14,7 +14,8 @@ cli = ["dep:rustyline", "dep:nu-ansi-term", "dep:pest", "dep:dirs"]
 
 [dependencies]
 achronyme-parser = { path = "../achronyme-parser" }
-achronyme-eval = { path = "../achronyme-eval" }
+# TEMPORARILY DISABLED: Tree-walker evaluator being replaced by VM
+# achronyme-eval = { path = "../achronyme-eval" }
 achronyme-types = { path = "../achronyme-types" }
 achronyme-lsp-core = { path = "../achronyme-lsp-core" }
 rustyline = { version = "14.0", optional = true }
