@@ -501,6 +501,202 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            // ===== Vectors =====
+            OpCode::NewVector => {
+                // R[A] = [] (new empty vector)
+                let dst = a;
+                let vector = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())));
+                self.set_register(dst, vector)?;
+                Ok(ExecutionResult::Continue)
+            }
+
+            OpCode::VecPush => {
+                // R[A].push(R[B])
+                let vec_reg = a;
+                let val_reg = b;
+
+                let vec_value = self.get_register(vec_reg)?.clone();
+                let push_value = self.get_register(val_reg)?.clone();
+
+                match vec_value {
+                    Value::Vector(ref vec_rc) => {
+                        vec_rc.borrow_mut().push(push_value);
+                        Ok(ExecutionResult::Continue)
+                    }
+                    _ => Err(VmError::TypeError {
+                        operation: "vector push".to_string(),
+                        expected: "Vector".to_string(),
+                        got: format!("{:?}", vec_value),
+                    }),
+                }
+            }
+
+            OpCode::VecGet => {
+                // R[A] = R[B][R[C]]
+                let dst = a;
+                let vec_reg = b;
+                let idx_reg = c;
+
+                let vec_value = self.get_register(vec_reg)?.clone();
+                let idx_value = self.get_register(idx_reg)?.clone();
+
+                match (&vec_value, &idx_value) {
+                    (Value::Vector(vec_rc), Value::Number(idx)) => {
+                        let vec_borrowed = vec_rc.borrow();
+                        let index = *idx as isize;
+
+                        // Handle negative indices (Python-style)
+                        let actual_idx = if index < 0 {
+                            (vec_borrowed.len() as isize + index) as usize
+                        } else {
+                            index as usize
+                        };
+
+                        if actual_idx >= vec_borrowed.len() {
+                            return Err(VmError::Runtime(format!(
+                                "Index out of bounds: {} (length: {})",
+                                index,
+                                vec_borrowed.len()
+                            )));
+                        }
+
+                        let value = vec_borrowed[actual_idx].clone();
+                        drop(vec_borrowed); // Explicitly drop the borrow
+                        self.set_register(dst, value)?;
+                        Ok(ExecutionResult::Continue)
+                    }
+                    (Value::Vector(_), _) => Err(VmError::TypeError {
+                        operation: "vector indexing".to_string(),
+                        expected: "Number".to_string(),
+                        got: format!("{:?}", idx_value),
+                    }),
+                    _ => Err(VmError::TypeError {
+                        operation: "vector indexing".to_string(),
+                        expected: "Vector".to_string(),
+                        got: format!("{:?}", vec_value),
+                    }),
+                }
+            }
+
+            OpCode::VecSet => {
+                // R[A][R[B]] = R[C]
+                let vec_reg = a;
+                let idx_reg = b;
+                let val_reg = c;
+
+                let vec_value = self.get_register(vec_reg)?.clone();
+                let idx_value = self.get_register(idx_reg)?.clone();
+                let new_value = self.get_register(val_reg)?.clone();
+
+                match (&vec_value, &idx_value) {
+                    (Value::Vector(vec_rc), Value::Number(idx)) => {
+                        let mut vec_borrowed = vec_rc.borrow_mut();
+                        let index = *idx as isize;
+
+                        // Handle negative indices (Python-style)
+                        let actual_idx = if index < 0 {
+                            (vec_borrowed.len() as isize + index) as usize
+                        } else {
+                            index as usize
+                        };
+
+                        if actual_idx >= vec_borrowed.len() {
+                            return Err(VmError::Runtime(format!(
+                                "Index out of bounds: {} (length: {})",
+                                index,
+                                vec_borrowed.len()
+                            )));
+                        }
+
+                        vec_borrowed[actual_idx] = new_value;
+                        Ok(ExecutionResult::Continue)
+                    }
+                    (Value::Vector(_), _) => Err(VmError::TypeError {
+                        operation: "vector indexing".to_string(),
+                        expected: "Number".to_string(),
+                        got: format!("{:?}", idx_value),
+                    }),
+                    _ => Err(VmError::TypeError {
+                        operation: "vector indexing".to_string(),
+                        expected: "Vector".to_string(),
+                        got: format!("{:?}", vec_value),
+                    }),
+                }
+            }
+
+            // ===== Records =====
+            OpCode::NewRecord => {
+                // R[A] = {} (new empty record)
+                let dst = a;
+                let record = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())));
+                self.set_register(dst, record)?;
+                Ok(ExecutionResult::Continue)
+            }
+
+            OpCode::GetField => {
+                // R[A] = R[B][K[C]]
+                let dst = a;
+                let rec_reg = b;
+                let key_idx = c as usize;
+
+                let rec_value = self.get_register(rec_reg)?.clone();
+                let key = self.get_constant(key_idx)?.clone();
+
+                match (&rec_value, &key) {
+                    (Value::Record(rec_rc), Value::String(field_name)) => {
+                        let rec_borrowed = rec_rc.borrow();
+                        let value = rec_borrowed
+                            .get(field_name)
+                            .ok_or_else(|| {
+                                VmError::Runtime(format!("Field '{}' not found in record", field_name))
+                            })?
+                            .clone();
+                        drop(rec_borrowed); // Explicitly drop the borrow
+                        self.set_register(dst, value)?;
+                        Ok(ExecutionResult::Continue)
+                    }
+                    (Value::Record(_), _) => Err(VmError::TypeError {
+                        operation: "record field access".to_string(),
+                        expected: "String".to_string(),
+                        got: format!("{:?}", key),
+                    }),
+                    _ => Err(VmError::TypeError {
+                        operation: "record field access".to_string(),
+                        expected: "Record".to_string(),
+                        got: format!("{:?}", rec_value),
+                    }),
+                }
+            }
+
+            OpCode::SetField => {
+                // R[A][K[B]] = R[C]
+                let rec_reg = a;
+                let key_idx = b as usize;
+                let val_reg = c;
+
+                let rec_value = self.get_register(rec_reg)?.clone();
+                let key = self.get_constant(key_idx)?.clone();
+                let new_value = self.get_register(val_reg)?.clone();
+
+                match (&rec_value, &key) {
+                    (Value::Record(rec_rc), Value::String(field_name)) => {
+                        let mut rec_borrowed = rec_rc.borrow_mut();
+                        rec_borrowed.insert(field_name.clone(), new_value);
+                        Ok(ExecutionResult::Continue)
+                    }
+                    (Value::Record(_), _) => Err(VmError::TypeError {
+                        operation: "record field assignment".to_string(),
+                        expected: "String".to_string(),
+                        got: format!("{:?}", key),
+                    }),
+                    _ => Err(VmError::TypeError {
+                        operation: "record field assignment".to_string(),
+                        expected: "Record".to_string(),
+                        got: format!("{:?}", rec_value),
+                    }),
+                }
+            }
+
             // ===== Not yet implemented =====
             _ => Err(VmError::Runtime(format!(
                 "Opcode {} not yet implemented",
