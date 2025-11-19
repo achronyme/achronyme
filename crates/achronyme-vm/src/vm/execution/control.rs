@@ -40,6 +40,15 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::JumpIfNull => {
+                let value = self.get_register(a)?;
+                if matches!(value, crate::value::Value::Null) {
+                    let offset = decode_sbx(instruction);
+                    self.current_frame_mut()?.jump(offset);
+                }
+                Ok(ExecutionResult::Continue)
+            }
+
             OpCode::Return => {
                 let value = self.get_register(a)?.clone();
                 Ok(ExecutionResult::Return(value))

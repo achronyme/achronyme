@@ -144,22 +144,16 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         // Count regular pattern elements (not rest patterns)
         let mut element_count = 0;
-        let mut has_rest = false;
+        let mut rest_name: Option<&String> = None;
 
-        for elem in elements {
+        for elem in elements.iter() {
             match elem {
                 VectorPatternElement::Pattern(_, _) => element_count += 1,
-                VectorPatternElement::Rest(_) => {
-                    has_rest = true;
+                VectorPatternElement::Rest(name) => {
+                    rest_name = Some(name);
                     break; // Rest pattern must be last
                 }
             }
-        }
-
-        if has_rest {
-            return Err(CompileError::NotYetImplemented(
-                "Rest patterns in vector destructuring".to_string()
-            ));
         }
 
         // Create pattern descriptor (number of elements to extract)
@@ -167,9 +161,13 @@ impl Compiler {
         let pattern_idx = self.add_constant(pattern_desc)?;
 
         // Allocate registers for extracted elements
-        let dst_start = self.registers.allocate_many(element_count)?;
+        let mut registers_to_allocate = element_count;
+        if rest_name.is_some() {
+            registers_to_allocate += 1; // +1 for the rest vector
+        }
+        let dst_start = self.registers.allocate_many(registers_to_allocate)?;
 
-        // Emit DestructureVec instruction
+        // Emit DestructureVec instruction for regular elements
         self.emit(encode_abc(
             OpCode::DestructureVec.as_u8(),
             dst_start,
@@ -179,21 +177,77 @@ impl Compiler {
 
         // Now bind the pattern variables to the extracted values
         let mut reg_idx = dst_start;
-        for elem in elements {
+        for elem in elements.iter() {
             match elem {
                 VectorPatternElement::Pattern(pattern, default_value) => {
-                    if default_value.is_some() {
-                        return Err(CompileError::NotYetImplemented(
-                            "Default values in vector patterns".to_string()
-                        ));
+                    // If there's a default value, we need to handle the case where
+                    // the vector is too short and the element doesn't exist
+                    if let Some(default_expr) = default_value {
+                        // Strategy: Check if we successfully extracted this element
+                        // DestructureVec will have put something in the register
+                        // We rely on the runtime to handle out-of-bounds gracefully
+                        // For now, we'll use a simpler approach: unconditionally use the extracted value
+                        // TODO: In a future version, check vector length and conditionally use default
+
+                        // For Phase 4D, we'll implement a simplified version:
+                        // If the pattern variable is meant to bind to a value that might not exist,
+                        // we check if the register contains null and use default if so
+
+                        // Compile the default value expression
+                        let default_res = self.compile_expression(default_expr)?;
+
+                        // Check if extracted value is null (simplified approach)
+                        // JumpIfNull: if R[reg_idx] is null, use default, otherwise keep extracted value
+                        let use_default_jump = self.emit_jump_if_null(reg_idx, 0);
+
+                        // Value exists, skip default assignment
+                        let skip_default_jump = self.emit_jump(0);
+
+                        // Patch use_default_jump to here
+                        self.patch_jump(use_default_jump);
+
+                        // Use default value
+                        self.emit_move(reg_idx, default_res.reg());
+                        if default_res.is_temp() {
+                            self.registers.free(default_res.reg());
+                        }
+
+                        // Patch skip_default_jump
+                        self.patch_jump(skip_default_jump);
                     }
 
                     // Recursively compile the nested pattern
                     self.compile_pattern(pattern, reg_idx, PatternMode::Irrefutable)?;
                     reg_idx += 1;
                 }
-                VectorPatternElement::Rest(_) => {
-                    // Already handled above
+                VectorPatternElement::Rest(name) => {
+                    // Handle rest pattern: create a slice from element_count to end
+                    // R[rest_reg] = R[target_reg][element_count..end]
+                    let rest_reg = reg_idx;
+
+                    // Load start index as a constant
+                    let start_idx = Value::Number(element_count as f64);
+                    let start_idx_const = self.add_constant(start_idx)?;
+                    let start_reg = self.registers.allocate()?;
+                    self.emit(encode_abx(
+                        OpCode::LoadConst.as_u8(),
+                        start_reg,
+                        start_idx_const as u16,
+                    ));
+
+                    // Emit VecSlice: R[rest_reg] = R[target_reg][start_reg..end]
+                    self.emit(encode_abc(
+                        OpCode::VecSlice.as_u8(),
+                        rest_reg,
+                        target_reg,
+                        start_reg,
+                    ));
+
+                    // Free the temp start register
+                    self.registers.free(start_reg);
+
+                    // Bind the rest variable
+                    self.symbols.define(name.clone(), rest_reg)?;
                     break;
                 }
             }
@@ -211,12 +265,7 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         // Extract field names and create pattern descriptor
         let mut field_names = Vec::new();
-        for (field_name, _, default_value) in fields {
-            if default_value.is_some() {
-                return Err(CompileError::NotYetImplemented(
-                    "Default values in record patterns".to_string()
-                ));
-            }
+        for (field_name, _, _) in fields {
             field_names.push(Value::String(field_name.clone()));
         }
 
@@ -238,7 +287,31 @@ impl Compiler {
 
         // Now bind the pattern variables to the extracted values
         let mut reg_idx = dst_start;
-        for (_, pattern, _) in fields {
+        for (_, pattern, default_value) in fields {
+            // If there's a default value, handle missing fields
+            if let Some(default_expr) = default_value {
+                // Compile the default value expression
+                let default_res = self.compile_expression(default_expr)?;
+
+                // Check if extracted value is null (field doesn't exist)
+                let use_default_jump = self.emit_jump_if_null(reg_idx, 0);
+
+                // Value exists, skip default assignment
+                let skip_default_jump = self.emit_jump(0);
+
+                // Patch use_default_jump to here
+                self.patch_jump(use_default_jump);
+
+                // Use default value
+                self.emit_move(reg_idx, default_res.reg());
+                if default_res.is_temp() {
+                    self.registers.free(default_res.reg());
+                }
+
+                // Patch skip_default_jump
+                self.patch_jump(skip_default_jump);
+            }
+
             // Recursively compile the nested pattern
             self.compile_pattern(pattern, reg_idx, PatternMode::Irrefutable)?;
             reg_idx += 1;

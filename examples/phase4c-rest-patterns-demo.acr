@@ -1,0 +1,73 @@
+// Phase 4C Demo: Rest Patterns in Destructuring
+
+// Basic rest pattern - capture remaining elements
+let numbers = [1, 2, 3, 4, 5]
+let [first, ...rest] = numbers
+print("First:", first)
+print("Rest[0]:", rest[0])
+print("Rest[1]:", rest[1])
+
+// Rest pattern with two elements before
+let data = [10, 20, 30, 40, 50]
+let [a, b, ...remaining] = data
+print("First two:", a, b)
+print("Remaining:", remaining[0], remaining[1], remaining[2])
+
+// Rest pattern with three elements before
+let values = [1, 2, 3, 4, 5, 6]
+let [x, y, z, ...others] = values
+print("First three:", x, y, z)
+print("Others:", others[0], others[1], others[2])
+
+// Using rest in operations
+let coords = [100, 200, 300, 400]
+let [x0, ...tail] = coords
+let sum = x0 + tail[0] + tail[1] + tail[2]
+print("Sum of all:", sum)
+
+// Rest pattern with single element before
+let items = [5, 10, 15, 20, 25]
+let [head, ...tail] = items
+print("Head:", head)
+print("Tail length: 4 elements")
+
+// Empty rest (when all elements are captured)
+let short = [42]
+let [only, ...empty] = short
+print("Only element:", only)
+// empty is now an empty vector []
+
+// Rest pattern with computation
+let sequence = [2, 4, 6, 8, 10]
+let [first, ...rest] = sequence
+let doubled_first = first * 2
+let rest_sum = rest[0] + rest[1] + rest[2] + rest[3]
+print("Doubled first:", doubled_first)
+print("Sum of rest:", rest_sum)
+
+// Nested vectors with rest
+let matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+let [first_row, ...other_rows] = matrix
+print("First row[0]:", first_row[0])
+print("Other rows[0][0]:", other_rows[0][0])
+print("Other rows[1][0]:", other_rows[1][0])
+
+// Using rest in function-like pattern
+let fibonacci = [0, 1, 1, 2, 3, 5, 8, 13]
+let [f0, f1, ...rest_fib] = fibonacci
+print("First two fibonacci:", f0, f1)
+print("Next fibonacci:", rest_fib[0], rest_fib[1], rest_fib[2])
+
+// Practical example: skip header
+let csv_like = ["Name", "Age", "Score", "Alice", "30", "95"]
+let [h1, h2, h3, ...data_rows] = csv_like
+print("Headers:", h1, h2, h3)
+// Note: In real Achronyme with strings, data_rows would contain the actual data
+
+// Multiple rest patterns in nested structure
+let complex = [1, 2, [3, 4, 5, 6]]
+let [a, b, nested] = complex
+let [n1, ...n_rest] = nested
+print("Outer:", a, b)
+print("Nested first:", n1)
+print("Nested rest:", n_rest[0], n_rest[1], n_rest[2])

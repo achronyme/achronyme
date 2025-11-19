@@ -51,6 +51,10 @@ impl Compiler {
                 self.compile_while(condition, body)
             }
 
+            AstNode::Match { value, arms } => {
+                self.compile_match(value, arms)
+            }
+
             // Functions
             AstNode::Lambda {
                 params,

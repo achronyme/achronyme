@@ -130,14 +130,14 @@ impl VM {
             }
 
             // Control flow
-            OpCode::Jump | OpCode::JumpIfTrue | OpCode::JumpIfFalse | OpCode::Return
-            | OpCode::ReturnNull => self.execute_control(opcode, instruction),
+            OpCode::Jump | OpCode::JumpIfTrue | OpCode::JumpIfFalse | OpCode::JumpIfNull
+            | OpCode::Return | OpCode::ReturnNull => self.execute_control(opcode, instruction),
 
             // Functions and closures
             OpCode::Closure | OpCode::Call => self.execute_functions(opcode, instruction),
 
             // Vectors
-            OpCode::NewVector | OpCode::VecPush | OpCode::VecGet | OpCode::VecSet => {
+            OpCode::NewVector | OpCode::VecPush | OpCode::VecGet | OpCode::VecSet | OpCode::VecSlice => {
                 self.execute_vectors(opcode, instruction)
             }
 

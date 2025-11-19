@@ -195,6 +195,15 @@ impl Compiler {
         ))
     }
 
+    /// Emit JUMP_IF_NULL instruction
+    pub(crate) fn emit_jump_if_null(&mut self, value_reg: u8, offset: i16) -> usize {
+        self.emit(encode_abx(
+            OpCode::JumpIfNull.as_u8(),
+            value_reg,
+            offset as u16,
+        ))
+    }
+
     /// Emit RETURN_NULL instruction
     pub(crate) fn emit_return_null(&mut self) {
         self.emit(encode_abc(OpCode::ReturnNull.as_u8(), 0, 0, 0));

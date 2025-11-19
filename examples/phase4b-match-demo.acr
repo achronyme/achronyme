@@ -1,0 +1,111 @@
+// Phase 4B Demo: Match Expressions with Guard Clauses
+
+// Basic literal matching
+let x = 2
+let result1 = match x {
+    1 => "one",
+    2 => "two",
+    3 => "three",
+    _ => "other"
+}
+print("Match literal:", result1)
+
+// Wildcard catch-all
+let y = 42
+let result2 = match y {
+    1 => 10,
+    2 => 20,
+    _ => 99
+}
+print("Wildcard match:", result2)
+
+// Variable binding in patterns
+let z = 100
+let result3 = match z {
+    x => x * 2
+}
+print("Variable binding:", result3)
+
+// Type pattern matching
+let vec = [1, 2, 3]
+let result4 = match vec {
+    Vector => "It's a vector!",
+    Number => "It's a number",
+    _ => "Something else"
+}
+print("Type match:", result4)
+
+// Boolean patterns
+let flag = true
+let result5 = match flag {
+    true => 1,
+    false => 0
+}
+print("Boolean match:", result5)
+
+// Null pattern
+let nullable = null
+let result6 = match nullable {
+    null => "Nothing here",
+    _ => "Has value"
+}
+print("Null match:", result6)
+
+// Guard clauses - pattern with condition
+let score = 85
+let grade = match score {
+    x if (x >= 90) => "A",
+    x if (x >= 80) => "B",
+    x if (x >= 70) => "C",
+    x if (x >= 60) => "D",
+    _ => "F"
+}
+print("Grade with guards:", grade)
+
+// Guard on literal pattern
+let value = 10
+let result7 = match value {
+    10 if (value > 5) => "High ten",
+    10 => "Low ten",
+    _ => "Not ten"
+}
+print("Literal with guard:", result7)
+
+// Guard that fails, falls through
+let value2 = 10
+let result8 = match value2 {
+    10 if (value2 > 20) => "Too high",
+    10 => "Just right",
+    _ => "Other"
+}
+print("Guard fails, falls through:", result8)
+
+// Complex guard conditions
+let temperature = 25
+let weather = match temperature {
+    t if (t > 30) => "Hot",
+    t if (t > 20) => "Warm",
+    t if (t > 10) => "Cool",
+    t if (t > 0) => "Cold",
+    _ => "Freezing"
+}
+print("Temperature:", temperature, "->", weather)
+
+// Multiple conditions with guards
+let num = 15
+let category = match num {
+    n if (n < 0) => "Negative",
+    n if (n == 0) => "Zero",
+    n if (n > 0 && n < 10) => "Small positive",
+    n if (n >= 10 && n < 100) => "Medium positive",
+    _ => "Large positive"
+}
+print("Number category:", category)
+
+// Guard with variable binding
+let input = 42
+let doubled = match input {
+    x if (x > 10) => x * 2,
+    x => x
+}
+print("Conditional doubling:", doubled)

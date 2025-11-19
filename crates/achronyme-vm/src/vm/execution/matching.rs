@@ -72,23 +72,13 @@ impl VM {
                         // Borrow the vector to extract elements
                         let vec_borrowed = vec_rc.borrow();
 
-                        // Check if we have enough elements
-                        if vec_borrowed.len() < element_count {
-                            return Err(VmError::Runtime(format!(
-                                "Cannot destructure vector: expected {} elements, got {}",
-                                element_count,
-                                vec_borrowed.len()
-                            )));
-                        }
-
                         // Extract all values at once while we have the borrow
+                        // If vector is too short, use null for missing elements (for default value support)
                         let mut values = Vec::new();
                         for i in 0..element_count {
                             let value = vec_borrowed.get(i)
-                                .ok_or_else(|| VmError::Runtime(format!(
-                                    "Vector index {} out of bounds", i
-                                )))?
-                                .clone();
+                                .cloned()
+                                .unwrap_or(Value::Null); // Use null if element doesn't exist
                             values.push(value);
                         }
 
@@ -147,16 +137,14 @@ impl VM {
                         };
 
                         // Extract all fields at once while we have the borrow
+                        // If a field doesn't exist, use null (for default value support)
                         let rec_borrowed = rec_rc.borrow();
                         let mut values = Vec::new();
                         for field_name in field_names.iter() {
                             let value = rec_borrowed
                                 .get(field_name)
-                                .ok_or_else(|| VmError::Runtime(format!(
-                                    "Field '{}' not found in record during destructuring",
-                                    field_name
-                                )))?
-                                .clone();
+                                .cloned()
+                                .unwrap_or(Value::Null); // Use null if field doesn't exist
                             values.push(value);
                         }
 

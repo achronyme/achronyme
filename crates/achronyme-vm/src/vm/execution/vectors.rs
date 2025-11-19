@@ -140,6 +140,51 @@ impl VM {
                 }
             }
 
+            OpCode::VecSlice => {
+                // R[A] = R[B][R[C]..end]
+                // Creates a new vector with elements from index R[C] to the end
+                let dst = a;
+                let vec_reg = b;
+                let start_reg = c;
+
+                let vec_value = self.get_register(vec_reg)?.clone();
+                let start_value = self.get_register(start_reg)?.clone();
+
+                match (&vec_value, &start_value) {
+                    (Value::Vector(vec_rc), Value::Number(start_idx)) => {
+                        let vec_borrowed = vec_rc.borrow();
+                        let start = *start_idx as usize;
+
+                        // Check bounds
+                        if start > vec_borrowed.len() {
+                            return Err(VmError::Runtime(format!(
+                                "Slice start index out of bounds: {} (length: {})",
+                                start,
+                                vec_borrowed.len()
+                            )));
+                        }
+
+                        // Create slice from start to end
+                        let slice: Vec<Value> = vec_borrowed[start..].to_vec();
+                        let slice_vec = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(slice)));
+
+                        drop(vec_borrowed);
+                        self.set_register(dst, slice_vec)?;
+                        Ok(ExecutionResult::Continue)
+                    }
+                    (Value::Vector(_), _) => Err(VmError::TypeError {
+                        operation: "vector slicing".to_string(),
+                        expected: "Number".to_string(),
+                        got: format!("{:?}", start_value),
+                    }),
+                    _ => Err(VmError::TypeError {
+                        operation: "vector slicing".to_string(),
+                        expected: "Vector".to_string(),
+                        got: format!("{:?}", vec_value),
+                    }),
+                }
+            }
+
             _ => unreachable!("Non-vector opcode in vector handler"),
         }
     }

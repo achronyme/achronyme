@@ -1,0 +1,96 @@
+// Phase 4D Demo: Default Values in Patterns
+
+// Vector destructuring with defaults - basic case
+let v1 = [10]
+let [a = 0, b = 0] = v1
+print("Vector with one element:")
+print("  a =", a, "(from vector)")
+print("  b =", b, "(default)")
+
+// All elements present - defaults not used
+let v2 = [20, 30]
+let [x = 0, y = 0] = v2
+print("All elements present:")
+print("  x =", x, ", y =", y)
+
+// Empty vector - all defaults used
+let empty = []
+let [p = 100, q = 200] = empty
+print("Empty vector:")
+print("  p =", p, ", q =", q, "(both defaults)")
+
+// Mixed: some present, some missing
+let partial = [5]
+let [first = 1, second = 2, third = 3] = partial
+print("Partial vector:")
+print("  Result:", first + second + third, "= 5 + 2 + 3")
+
+// Default values with expressions
+let nums = [10]
+let [n1 = 5, n2 = 10 * 2] = nums
+print("Defaults with expressions:")
+print("  n1 =", n1, ", n2 =", n2, "(default 10*2)")
+
+// Record destructuring with defaults
+let rec1 = {a: 100}
+let {a = 0, b = 0} = rec1
+print("Record with one field:")
+print("  a =", a, "(from record)")
+print("  b =", b, "(default)")
+
+// All fields present
+let rec2 = {x: 50, y: 75}
+let {x = 0, y = 0} = rec2
+print("All fields present:")
+print("  x =", x, ", y =", y)
+
+// Empty record - all defaults
+let empty_rec = {}
+let {m = 1000, n = 2000} = empty_rec
+print("Empty record:")
+print("  m =", m, ", n =", n, "(both defaults)")
+
+// Record with default expressions
+let config = {enabled: 1}
+let {enabled = 0, timeout = 30} = config
+print("Config with defaults:")
+print("  enabled =", enabled)
+print("  timeout =", timeout, "(default)")
+
+// Combining vector destructuring with defaults
+let data = [1, 2]
+let [val1 = 10, val2 = 20, val3 = 30, val4 = 40] = data
+print("Extended destructuring:")
+print("  Values:", val1, val2, val3, val4)
+print("  Sum:", val1 + val2 + val3 + val4)
+
+// Practical example: configuration with defaults
+let user_config = {port: 8080}
+let {
+    host = "localhost",
+    port = 3000,
+    ssl = 0,
+    timeout = 60
+} = user_config
+print("Server configuration:")
+print("  host:", host, "(default)")
+print("  port:", port)
+print("  ssl:", ssl, "(default)")
+print("  timeout:", timeout, "(default)")
+
+// Nested structures with defaults
+let point = {x: 10}
+let {x = 0, y = 0, z = 0} = point
+print("3D Point:")
+print("  x =", x, ", y =", y, ", z =", z)
+
+// Default values ensure robustness
+let optional_data = []
+let [required = 42] = optional_data
+print("Optional data with fallback:", required)
+
+// Multiple defaults in sequence
+let sparse = [100]
+let [a1 = 1, a2 = 2, a3 = 3, a4 = 4, a5 = 5] = sparse
+print("Sparse array:")
+print("  Sum =", a1 + a2 + a3 + a4 + a5, "= 100 + 2 + 3 + 4 + 5")
