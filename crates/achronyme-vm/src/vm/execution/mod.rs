@@ -4,6 +4,7 @@ mod arithmetic;
 mod comparison;
 mod control;
 mod functions;
+mod generators;
 mod matching;
 mod records;
 mod variables;

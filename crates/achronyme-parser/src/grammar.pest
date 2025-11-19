@@ -479,6 +479,7 @@ primary = {
   | record             // Record literals { key: value }
   | array              // Arrays/tensors (vectors, matrices, and higher-dimensional)
   | do_block           // Do blocks (must come before lambda to avoid ambiguity)
+  | generate_block     // Generator blocks (must come before lambda)
   | lambda
   | self_ref           // Self-reference in records
   | rec_ref            // Rec-reference for recursive calls

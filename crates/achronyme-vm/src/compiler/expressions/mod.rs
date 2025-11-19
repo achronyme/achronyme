@@ -9,6 +9,7 @@ use achronyme_parser::ast::AstNode;
 mod access;
 mod control;
 mod functions;
+mod generators;
 mod literals;
 mod operators;
 mod variables;
@@ -88,6 +89,11 @@ impl Compiler {
 
             AstNode::FieldAccess { record, field } => {
                 self.compile_field_access(record, field)
+            }
+
+            // Generators
+            AstNode::GenerateBlock { statements } => {
+                self.compile_generate_block(statements)
             }
 
             // Sequences

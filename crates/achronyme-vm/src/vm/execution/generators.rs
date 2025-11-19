@@ -30,13 +30,13 @@ impl VM {
                 // Get the function prototype
                 let proto = self.current_frame()?
                     .function
-                    .prototypes
+                    .functions
                     .get(proto_idx)
                     .ok_or(VmError::InvalidFunction(proto_idx))?
                     .clone();
 
                 // Create initial call frame for the generator (but don't execute it)
-                let gen_frame = crate::vm::frame::CallFrame::new(proto, None);
+                let gen_frame = crate::vm::frame::CallFrame::new(Rc::new(proto), None);
 
                 // TODO: Capture upvalues like in Closure
 
@@ -74,10 +74,10 @@ impl VM {
                 let gen_value = self.get_register(gen_reg)?.clone();
 
                 // Extract generator from Value
-                if let Value::Generator(any_ref) = gen_value {
+                if let Value::Generator(any_ref) = &gen_value {
                     // Downcast from Rc<dyn Any> to Rc<RefCell<VmGeneratorState>>
                     if let Some(state_rc) = any_ref.downcast_ref::<RefCell<VmGeneratorState>>() {
-                        let mut state = state_rc.borrow_mut();
+                        let state = state_rc.borrow();
 
                         // Check if generator is already exhausted
                         if state.is_done() {
@@ -94,8 +94,10 @@ impl VM {
 
                         // Push the generator's frame onto the stack
                         // Set return register so the yielded value goes to R[A]
+                        // Set generator reference so Yield knows which generator to update
                         let mut frame = gen_frame;
                         frame.return_register = Some(dst);
+                        frame.generator = Some(gen_value.clone());
                         self.frames.push(frame);
 
                         Ok(ExecutionResult::Continue)

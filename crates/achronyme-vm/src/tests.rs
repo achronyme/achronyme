@@ -890,3 +890,63 @@ fn test_record_default_with_expression() {
     let result = execute(source).unwrap();
     assert_eq!(result, Value::Number(20.0)); // 10 + 10
 }
+
+// ===== Phase 5: Generators =====
+
+#[test]
+fn test_generator_creation() {
+    let source = r#"
+        let gen = generate {
+            yield 1
+        }
+        gen
+    "#;
+    let result = execute(source).unwrap();
+    assert!(result.is_generator());
+}
+
+#[test]
+fn test_generator_simple_yield() {
+    let source = r#"
+        let gen = generate {
+            yield 1
+            yield 2
+            yield 3
+        }
+        gen.next()
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(1.0));
+}
+
+#[test]
+fn test_generator_multiple_next() {
+    let source = r#"
+        let gen = generate {
+            yield 10
+            yield 20
+            yield 30
+        }
+        let a = gen.next()
+        let b = gen.next()
+        let c = gen.next()
+        a + b + c
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(60.0)); // 10 + 20 + 30
+}
+
+#[test]
+fn test_generator_exhausted() {
+    let source = r#"
+        let gen = generate {
+            yield 42
+        }
+        gen.next()
+        gen.next()
+        gen.next()
+    "#;
+    let result = execute(source).unwrap();
+    // Should return null when exhausted
+    assert_eq!(result, Value::Null);
+}

@@ -101,7 +101,33 @@ impl VM {
                     self.do_return(value)?;
                 }
                 ExecutionResult::Yield(value) => {
-                    // For generators, we'll handle this later
+                    // Pop the generator's frame and save it back
+                    let gen_frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
+
+                    // If this frame has a generator reference, update the generator state
+                    if let Some(ref gen_value) = gen_frame.generator {
+                        if let Value::Generator(any_ref) = gen_value {
+                            if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
+                                let mut state = state_rc.borrow_mut();
+                                // Save the frame state (clone before modifying to avoid borrow issues)
+                                let mut saved_frame = gen_frame.clone();
+                                saved_frame.generator = None; // Clear to avoid circular reference
+                                state.frame = saved_frame;
+                                drop(state);
+
+                                // Put yielded value in the caller's return register
+                                if let Some(return_reg) = gen_frame.return_register {
+                                    if let Some(caller_frame) = self.frames.last_mut() {
+                                        caller_frame.registers.set(return_reg, value)?;
+                                    }
+                                }
+
+                                return Ok(Value::Null); // Execution continues in caller
+                            }
+                        }
+                    }
+
+                    // No generator context - just return (shouldn't happen in normal execution)
                     return Ok(value);
                 }
             }

@@ -153,6 +153,11 @@ impl Compiler {
                 Ok(())
             }
 
+            // Yield statement
+            AstNode::Yield { value } => {
+                self.compile_yield(value)
+            }
+
             // Expression statement (evaluate and discard result)
             _ => {
                 let res = self.compile_expression(node)?;

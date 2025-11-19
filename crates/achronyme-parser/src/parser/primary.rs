@@ -64,6 +64,7 @@ impl AstParser {
             Rule::record => self.build_record(inner),
             Rule::control_flow_expr => self.build_control_flow_expr(inner),
             Rule::do_block => self.build_do_block(inner),
+            Rule::generate_block => self.build_generate_block(inner),
             Rule::lambda => self.build_lambda(inner),
 
             Rule::expr => self.build_ast_from_expr(inner),

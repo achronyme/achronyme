@@ -69,6 +69,10 @@ pub struct CallFrame {
 
     /// Return register in caller's frame
     pub return_register: Option<u8>,
+
+    /// Generator reference (if this frame belongs to a generator)
+    /// When this frame yields, it updates the generator state
+    pub generator: Option<Value>,
 }
 
 impl CallFrame {
@@ -90,6 +94,7 @@ impl CallFrame {
             registers,
             upvalues: Vec::new(),
             return_register,
+            generator: None,
         }
     }
 

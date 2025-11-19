@@ -1,8 +1,6 @@
 use crate::complex::Complex;
 use crate::tensor::{RealTensor, ComplexTensor};
 use crate::function::Function;
-use crate::environment::Environment;
-use achronyme_parser::ast::AstNode;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -21,7 +19,7 @@ impl std::fmt::Display for TypeError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Number(f64),
     Boolean(bool),
@@ -198,6 +196,45 @@ impl Value {
     }
 }
 
+// Manual PartialEq implementation (Generator uses Rc<dyn Any> which doesn't impl PartialEq)
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Complex(a), Value::Complex(b)) => a == b,
+            (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b), // Reference equality
+            (Value::Tensor(a), Value::Tensor(b)) => a == b,
+            (Value::ComplexTensor(a), Value::ComplexTensor(b)) => a == b,
+            (Value::Function(a), Value::Function(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Record(a), Value::Record(b)) => Rc::ptr_eq(a, b), // Reference equality
+            (Value::Edge { from: f1, to: t1, directed: d1, properties: p1 },
+             Value::Edge { from: f2, to: t2, directed: d2, properties: p2 }) => {
+                f1 == f2 && t1 == t2 && d1 == d2 && p1 == p2
+            }
+            (Value::TailCall(a), Value::TailCall(b)) => a == b,
+            (Value::EarlyReturn(a), Value::EarlyReturn(b)) => a == b,
+            (Value::MutableRef(a), Value::MutableRef(b)) => Rc::ptr_eq(a, b), // Reference equality
+            (Value::Null, Value::Null) => true,
+            (Value::Generator(a), Value::Generator(b)) => {
+                // Generators are compared by pointer equality (same instance)
+                std::ptr::eq(
+                    a.as_ref() as *const dyn Any,
+                    b.as_ref() as *const dyn Any
+                )
+            }
+            (Value::GeneratorYield(a), Value::GeneratorYield(b)) => a == b,
+            (Value::Error { message: m1, kind: k1, source: s1 },
+             Value::Error { message: m2, kind: k2, source: s2 }) => {
+                m1 == m2 && k1 == k2 && s1 == s2
+            }
+            (Value::LoopBreak(a), Value::LoopBreak(b)) => a == b,
+            (Value::LoopContinue, Value::LoopContinue) => true,
+            _ => false,
+        }
+    }
+}
 
 // Operadores sobrecargados de forma segura
 impl std::ops::Add for Value {
