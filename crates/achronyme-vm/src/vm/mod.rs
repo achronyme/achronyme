@@ -122,7 +122,8 @@ impl VM {
                                     }
                                 }
 
-                                return Ok(Value::Null); // Execution continues in caller
+                                // Continue execution in caller frame
+                                continue;
                             }
                         }
                     }
