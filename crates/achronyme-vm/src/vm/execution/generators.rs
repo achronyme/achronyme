@@ -36,10 +36,20 @@ impl VM {
                     .ok_or(VmError::InvalidFunction(proto_idx))?
                     .clone();
 
-                // Create initial call frame for the generator (but don't execute it)
-                let gen_frame = crate::vm::frame::CallFrame::new(Rc::new(proto), None);
+                // Capture upvalues from current frame (same as Closure)
+                let mut upvalues = Vec::new();
+                for upvalue_desc in &proto.upvalues {
+                    // Capture from current frame's registers
+                    let value = self.get_register(upvalue_desc.register)?.clone();
+                    upvalues.push(std::rc::Rc::new(std::cell::RefCell::new(value)));
+                }
 
-                // TODO: Capture upvalues like in Closure
+                // Create initial call frame for the generator
+                let proto_rc = std::rc::Rc::new(proto);
+                let mut gen_frame = crate::vm::frame::CallFrame::new(proto_rc, None);
+
+                // Set captured upvalues
+                gen_frame.upvalues = upvalues;
 
                 // Create VM-specific generator state
                 let state = VmGeneratorState::new(gen_frame);

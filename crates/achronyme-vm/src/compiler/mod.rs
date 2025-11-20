@@ -71,6 +71,7 @@ impl Compiler {
         let mut last_res: Option<RegResult> = None;
         for node in nodes {
             // Check if it's the last statement that returns a value
+            // Yield can be both statement and expression, but we treat it as expression
             let is_expression = !matches!(
                 node,
                 AstNode::VariableDecl { .. }

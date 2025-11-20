@@ -117,6 +117,10 @@ impl Compiler {
                 self.compile_generate_block(statements)
             }
 
+            AstNode::Yield { value } => {
+                self.compile_yield_expr(value)
+            }
+
             // Ranges
             AstNode::RangeExpr { start, end, inclusive } => {
                 self.compile_range(start, end, *inclusive)
@@ -142,6 +146,7 @@ impl Compiler {
 
                 for (idx, stmt) in statements.iter().enumerate() {
                     // Check if statement is an expression
+                    // Note: Yield can be both statement and expression, but we treat it as expression here
                     let is_expression = !matches!(
                         stmt,
                         AstNode::VariableDecl { .. }

@@ -321,7 +321,7 @@ impl Compiler {
     }
 
     /// Recursively collect variable references
-    fn collect_variable_refs(
+    pub(crate) fn collect_variable_refs(
         &self,
         node: &AstNode,
         vars: &mut HashSet<String>,

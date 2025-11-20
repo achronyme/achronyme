@@ -147,28 +147,23 @@ let area = (p2.x - p1.x) * (p1.y + p2.y) / 2 + (p3.x - p2.x) * (p2.y + p3.y) / 2
 print("Approximate area: " + str(area))
 
 // -----------------------------------------------------------------------------
-// Part 6: For-In Loop with Manual Iterator
+// Part 6: For-In Loop with Custom Generator
 // -----------------------------------------------------------------------------
-print("\n=== Part 6: For-In Loop with Manual Iterator ===")
+print("\n=== Part 6: For-In Loop with Custom Generator ===")
 
-// Create an iterator using a record with next() method
-// This simulates a range iterator
-mut iterState = { mut current: 0, max: 5 }
-let rangeIterator = {
-    next: () => do {
-        if(iterState.current >= iterState.max) {
-            { value: null, done: true }
-        } else {
-            let val = iterState.current
-            iterState.current = iterState.current + 1
-            { value: val, done: false }
-        }
+// Create a custom range iterator factory using a generator
+// This is the safe way to create custom iterators with parameters
+let makeRangeIterator = (start: Number, end: Number) => generate {
+    mut current = start
+    while(current < end) {
+        yield current
+        current = current + 1
     }
 }
 
 print("Iterating over range [0, 5):")
 mut sum = 0
-for(x in rangeIterator) {
+for(x in makeRangeIterator(0, 5)) {
     print("  x = " + str(x))
     sum = sum + x
 }
@@ -177,28 +172,29 @@ print("Sum: " + str(sum))
 // -----------------------------------------------------------------------------
 // Part 7: Combining Types and Iterators
 // -----------------------------------------------------------------------------
-print("\n=== Part 7: Typed Iterator Pattern ===")
+print("\n=== Part 7: Typed Generator Pattern ===")
 
 // Type definitions for iterator protocol
 type IteratorResult = { value: Number | null, done: Boolean }
 
-// Create a typed iterator factory
-let createCounter: (Number): { next: (): IteratorResult } = (limit) => do {
+// Create a typed generator that counts from 1 to limit
+let createCounter = (limit: Number) => generate {
     mut count = 0
-    {
-        next: () => do {
-            if(count >= limit) {
-                { value: null, done: true }
-            } else {
-                count = count + 1
-                { value: count, done: false }
-            }
-        }
+    while(count < limit) {
+        count = count + 1
+        yield count
     }
 }
 
+// Using the generator with for-in loop
+print("Typed counter generator with for-in:")
+for(num in createCounter(3)) {
+    print("  Count: " + str(num))
+}
+
+// Manual iteration with .next() for demonstration
+print("Manual iteration with .next():")
 let counter = createCounter(3)
-print("Typed counter iterator:")
 print(counter.next())
 print(counter.next())
 print(counter.next())
@@ -254,8 +250,9 @@ print("4. typeof() for runtime type checking")
 print("5. Simple generators with yield keyword")
 print("6. Generator return values")
 print("7. Generators yielding complex records")
-print("8. For-in loops with manual iterators")
-print("9. Combining types and iterators for type-safe iteration")
+print("8. For-in loops with custom generators")
+print("9. Combining types and generators for type-safe iteration")
 print("10. Real-world pattern: typed sensor data streams")
+print("11. Manual iteration using generator.next() method")
 
 print("\nAchronyme: La robustez es opcional, la simplicidad es el default.")
