@@ -105,14 +105,9 @@ impl Compiler {
         is_tail: bool,
     ) -> Result<RegResult, CompileError> {
         // Check if this is a built-in function call
-        eprintln!("DEBUG: Compiling function call to '{}'", name);
-        eprintln!("DEBUG: Builtins registry has {} functions", self.builtins.len());
-        eprintln!("DEBUG: Looking up '{}' -> {:?}", name, self.builtins.get_id(name));
         if let Some(builtin_idx) = self.builtins.get_id(name) {
-            eprintln!("DEBUG: Found built-in at index {}", builtin_idx);
             return self.compile_builtin_call(builtin_idx, args);
         }
-        eprintln!("DEBUG: Not a built-in, compiling as regular function call");
 
         // For FunctionCall, lookup the function by name and copy to a fresh register
         // This ensures the function value won't be overwritten when compiling arguments
