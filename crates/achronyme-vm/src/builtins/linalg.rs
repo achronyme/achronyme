@@ -9,20 +9,25 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Calculate dot product of two vectors
 pub fn vm_dot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
-        return Err(VmError::ArityMismatch {
-            expected: 2,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "dot() expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     match (&args[0], &args[1]) {
-        (Value::Vector(v1), Value::Vector(v2)) => {
+        (Value::Vector(rc1), Value::Vector(rc2)) => {
+            let v1 = rc1.borrow();
+            let v2 = rc2.borrow();
+
             if v1.len() != v2.len() {
-                return Err(VmError::RuntimeError(format!(
+                return Err(VmError::Runtime(format!(
                     "dot() requires vectors of same length, got {} and {}",
                     v1.len(),
                     v2.len()
@@ -55,16 +60,19 @@ pub fn vm_dot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Calculate cross product of two 3D vectors
 pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
-        return Err(VmError::ArityMismatch {
-            expected: 2,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "cross() expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     match (&args[0], &args[1]) {
-        (Value::Vector(v1), Value::Vector(v2)) => {
+        (Value::Vector(rc1), Value::Vector(rc2)) => {
+            let v1 = rc1.borrow();
+            let v2 = rc2.borrow();
+
             if v1.len() != 3 || v2.len() != 3 {
-                return Err(VmError::RuntimeError(
+                return Err(VmError::Runtime(
                     "cross() requires 3D vectors".to_string(),
                 ));
             }
@@ -97,7 +105,7 @@ pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 Value::Number(x1 * y2 - y1 * x2),
             ];
 
-            Ok(Value::Vector(result))
+            Ok(Value::Vector(Rc::new(RefCell::new(result))))
         }
         _ => Err(VmError::TypeError {
             operation: "cross".to_string(),
@@ -110,14 +118,15 @@ pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Calculate Euclidean norm (magnitude) of a vector
 pub fn vm_norm(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "norm() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut sum_sq = 0.0;
             for val in vec.iter() {
                 match val {
@@ -144,28 +153,29 @@ pub fn vm_norm(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Normalize a vector to unit length
 pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "normalize() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
             // Calculate norm
             let norm_result = vm_norm(_vm, args)?;
             let norm = match norm_result {
                 Value::Number(n) => n,
-                _ => return Err(VmError::RuntimeError("norm() returned non-numeric value".to_string())),
+                _ => return Err(VmError::Runtime("norm() returned non-numeric value".to_string())),
             };
 
             if norm == 0.0 {
-                return Err(VmError::RuntimeError(
+                return Err(VmError::Runtime(
                     "Cannot normalize zero vector".to_string(),
                 ));
             }
 
             // Divide each element by norm
+            let vec = rc.borrow();
             let mut normalized = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -180,7 +190,7 @@ pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
 
-            Ok(Value::Vector(normalized))
+            Ok(Value::Vector(Rc::new(RefCell::new(normalized))))
         }
         _ => Err(VmError::TypeError {
             operation: "normalize".to_string(),
@@ -203,7 +213,10 @@ mod tests {
         let mut vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
-        let result = vm_dot(&mut vm, &[Value::Vector(v1), Value::Vector(v2)]).unwrap();
+        let result = vm_dot(&mut vm, &[
+            Value::Vector(Rc::new(RefCell::new(v1))),
+            Value::Vector(Rc::new(RefCell::new(v2)))
+        ]).unwrap();
         // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
         assert_eq!(result, Value::Number(32.0));
     }
@@ -213,10 +226,14 @@ mod tests {
         let mut vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(0.0), Value::Number(0.0)];
         let v2 = vec![Value::Number(0.0), Value::Number(1.0), Value::Number(0.0)];
-        let result = vm_cross(&mut vm, &[Value::Vector(v1), Value::Vector(v2)]).unwrap();
+        let result = vm_cross(&mut vm, &[
+            Value::Vector(Rc::new(RefCell::new(v1))),
+            Value::Vector(Rc::new(RefCell::new(v2)))
+        ]).unwrap();
         // i × j = k = [0, 0, 1]
         match result {
-            Value::Vector(v) => {
+            Value::Vector(rc) => {
+                let v = rc.borrow();
                 assert_eq!(v.len(), 3);
                 assert_eq!(v[0], Value::Number(0.0));
                 assert_eq!(v[1], Value::Number(0.0));
@@ -230,7 +247,7 @@ mod tests {
     fn test_norm_basic() {
         let mut vm = setup_vm();
         let v = vec![Value::Number(3.0), Value::Number(4.0)];
-        let result = vm_norm(&mut vm, &[Value::Vector(v)]).unwrap();
+        let result = vm_norm(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
         // sqrt(3^2 + 4^2) = sqrt(9 + 16) = sqrt(25) = 5
         assert_eq!(result, Value::Number(5.0));
     }
@@ -239,9 +256,10 @@ mod tests {
     fn test_normalize_basic() {
         let mut vm = setup_vm();
         let v = vec![Value::Number(3.0), Value::Number(4.0)];
-        let result = vm_normalize(&mut vm, &[Value::Vector(v)]).unwrap();
+        let result = vm_normalize(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
         match result {
-            Value::Vector(normalized) => {
+            Value::Vector(rc) => {
+                let normalized = rc.borrow();
                 assert_eq!(normalized.len(), 2);
                 // Should be [3/5, 4/5] = [0.6, 0.8]
                 if let Value::Number(n) = normalized[0] {

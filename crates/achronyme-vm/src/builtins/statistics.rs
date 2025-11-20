@@ -148,6 +148,9 @@ mod tests {
         VM::new()
     }
 
+    use std::rc::Rc;
+    use std::cell::RefCell;
+
     #[test]
     fn test_sum_basic() {
         let mut vm = setup_vm();
@@ -158,7 +161,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_sum(&mut vm, &[Value::Vector(vec)]).unwrap();
+        let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         assert_eq!(result, Value::Number(15.0));
     }
 
@@ -166,7 +169,7 @@ mod tests {
     fn test_sum_empty() {
         let mut vm = setup_vm();
         let vec: Vec<Value> = vec![];
-        let result = vm_sum(&mut vm, &[Value::Vector(vec)]).unwrap();
+        let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
@@ -180,7 +183,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_mean(&mut vm, &[Value::Vector(vec)]).unwrap();
+        let result = vm_mean(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
 
@@ -188,7 +191,7 @@ mod tests {
     fn test_std_basic() {
         let mut vm = setup_vm();
         let vec = vec![Value::Number(2.0), Value::Number(4.0), Value::Number(4.0), Value::Number(4.0), Value::Number(5.0), Value::Number(5.0), Value::Number(7.0), Value::Number(9.0)];
-        let result = vm_std(&mut vm, &[Value::Vector(vec)]).unwrap();
+        let result = vm_std(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         // Expected std dev ≈ 2.138
         if let Value::Number(n) = result {
             assert!((n - 2.138).abs() < 0.01);
