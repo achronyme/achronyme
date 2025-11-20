@@ -1,0 +1,14 @@
+// Debug version with explicit prints
+print("Defining add function...")
+let add = (a, b) => a + b
+print("Add function defined")
+print(add)
+
+print("Defining multiply function...")
+let multiply = (a, b) => a * b
+print("Multiply function defined")
+print(multiply)
+
+print("Exporting functions...")
+export { add, multiply }
+print("Export complete")

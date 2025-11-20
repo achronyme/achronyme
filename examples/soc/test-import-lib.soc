@@ -1,0 +1,4 @@
+// Simple library for testing imports
+let add = (a: Number, b: Number ) => a + b
+
+export { add }

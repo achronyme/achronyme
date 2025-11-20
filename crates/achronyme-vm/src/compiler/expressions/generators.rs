@@ -34,6 +34,8 @@ impl Compiler {
             parent: None,
             builtins: self.builtins.clone(),
             type_registry: self.type_registry.clone(),  // Share the type registry
+            exported_values: std::collections::HashMap::new(),
+            exported_types: std::collections::HashMap::new(),
         };
 
         // Mark the function as a generator

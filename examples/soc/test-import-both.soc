@@ -1,0 +1,9 @@
+// Test importing both functions
+let add = (a, b) => a + b
+let multiply = (a, b) => a * b
+
+print("Defined add and multiply")
+print("add type: " + typeof(add))
+print("multiply type: " + typeof(multiply))
+
+export { add, multiply }

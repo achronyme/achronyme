@@ -82,6 +82,32 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::GetGlobal => {
+                // R[A] = globals[K[Bx]]
+                let dst = a;
+                let name_idx = bx as usize;
+
+                let name = self.get_string(name_idx)?;
+                let value = self.globals.get(name)
+                    .ok_or_else(|| VmError::Runtime(format!("Undefined global variable: {}", name)))?
+                    .clone();
+
+                self.set_register(dst, value)?;
+                Ok(ExecutionResult::Continue)
+            }
+
+            OpCode::SetGlobal => {
+                // globals[K[Bx]] = R[A]
+                let src = a;
+                let name_idx = bx as usize;
+
+                let name = self.get_string(name_idx)?;
+                let value = self.get_register(src)?.clone();
+
+                self.globals.insert(name.to_string(), value);
+                Ok(ExecutionResult::Continue)
+            }
+
             _ => unreachable!("Non-variable opcode in variable handler"),
         }
     }

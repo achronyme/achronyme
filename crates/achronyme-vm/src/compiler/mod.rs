@@ -46,6 +46,12 @@ pub struct Compiler {
 
     /// Type registry for storing type aliases
     pub(crate) type_registry: HashMap<String, TypeAnnotation>,
+
+    /// Exported values (name -> register index)
+    pub(crate) exported_values: HashMap<String, u8>,
+
+    /// Exported types (name -> type definition)
+    pub(crate) exported_types: HashMap<String, TypeAnnotation>,
 }
 
 impl Compiler {
@@ -62,6 +68,8 @@ impl Compiler {
             parent: None,
             builtins: Rc::new(crate::builtins::create_builtin_registry()),
             type_registry: HashMap::new(),
+            exported_values: HashMap::new(),
+            exported_types: HashMap::new(),
         }
     }
 

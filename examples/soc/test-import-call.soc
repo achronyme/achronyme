@@ -1,0 +1,6 @@
+// Test importing and calling
+import { add } from "examples/soc/test-import-lib"
+
+print("About to call add(5, 3)")
+let result = add(5, 3)
+print("Result: " + str(result))

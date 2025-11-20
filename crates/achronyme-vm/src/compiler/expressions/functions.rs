@@ -26,6 +26,8 @@ impl Compiler {
             parent: None,  // We don't need parent for simple compilation
             builtins: self.builtins.clone(),  // Share the built-ins registry
             type_registry: self.type_registry.clone(),  // Share the type registry
+            exported_values: std::collections::HashMap::new(),
+            exported_types: std::collections::HashMap::new(),
         };
 
         // Set parameter count

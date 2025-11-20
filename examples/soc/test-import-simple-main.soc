@@ -1,0 +1,7 @@
+// Very simple test - just import and print
+import { add } from "examples/soc/test-import-lib"
+
+print("Imported add:")
+print(add)
+print("Type of add:")
+print(typeof(add))
