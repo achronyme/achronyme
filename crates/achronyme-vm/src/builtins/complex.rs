@@ -10,20 +10,22 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use num_complex::Complex64;
+use achronyme_types::complex::Complex;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Create a complex number from real and imaginary parts
 pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
-        return Err(VmError::ArityMismatch {
-            expected: 2,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "complex() expects 2 arguments, got {}",
+            args.len()
+        )));
     }
 
     match (&args[0], &args[1]) {
         (Value::Number(re), Value::Number(im)) => {
-            Ok(Value::Complex(Complex64::new(*re, *im)))
+            Ok(Value::Complex(Complex::new(*re, *im)))
         }
         _ => Err(VmError::TypeError {
             operation: "complex".to_string(),
@@ -36,16 +38,17 @@ pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Extract real part of a number or complex number
 pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "real() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
         Value::Number(n) => Ok(Value::Number(*n)),
         Value::Complex(c) => Ok(Value::Number(c.re)),
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut real_parts = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -60,7 +63,7 @@ pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(real_parts))
+            Ok(Value::Vector(Rc::new(RefCell::new(real_parts))))
         }
         _ => Err(VmError::TypeError {
             operation: "real".to_string(),
@@ -73,16 +76,17 @@ pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Extract imaginary part of a number or complex number
 pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "imag() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
         Value::Number(_) => Ok(Value::Number(0.0)),
         Value::Complex(c) => Ok(Value::Number(c.im)),
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut imag_parts = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -97,7 +101,7 @@ pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(imag_parts))
+            Ok(Value::Vector(Rc::new(RefCell::new(imag_parts))))
         }
         _ => Err(VmError::TypeError {
             operation: "imag".to_string(),
@@ -110,21 +114,22 @@ pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Calculate complex conjugate
 pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "conj() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
         Value::Number(n) => Ok(Value::Number(*n)),
-        Value::Complex(c) => Ok(Value::Complex(c.conj())),
-        Value::Vector(vec) => {
+        Value::Complex(c) => Ok(Value::Complex(c.conjugate())),
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut conjugates = Vec::new();
             for val in vec.iter() {
                 match val {
                     Value::Number(n) => conjugates.push(Value::Number(*n)),
-                    Value::Complex(c) => conjugates.push(Value::Complex(c.conj())),
+                    Value::Complex(c) => conjugates.push(Value::Complex(c.conjugate())),
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "conj".to_string(),
@@ -134,7 +139,7 @@ pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(conjugates))
+            Ok(Value::Vector(Rc::new(RefCell::new(conjugates))))
         }
         _ => Err(VmError::TypeError {
             operation: "conj".to_string(),
@@ -147,10 +152,10 @@ pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Calculate argument (phase angle) of a complex number
 pub fn vm_arg(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "arg() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
@@ -162,7 +167,7 @@ pub fn vm_arg(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 Ok(Value::Number(std::f64::consts::PI))
             }
         }
-        Value::Complex(c) => Ok(Value::Number(c.arg())),
+        Value::Complex(c) => Ok(Value::Number(c.phase())),
         _ => Err(VmError::TypeError {
             operation: "arg".to_string(),
             expected: "Number or Complex".to_string(),
@@ -202,7 +207,7 @@ mod tests {
     #[test]
     fn test_real_complex() {
         let mut vm = setup_vm();
-        let c = Complex64::new(3.0, 4.0);
+        let c = Complex::new(3.0, 4.0);
         let result = vm_real(&mut vm, &[Value::Complex(c)]).unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
@@ -217,7 +222,7 @@ mod tests {
     #[test]
     fn test_imag_complex() {
         let mut vm = setup_vm();
-        let c = Complex64::new(3.0, 4.0);
+        let c = Complex::new(3.0, 4.0);
         let result = vm_imag(&mut vm, &[Value::Complex(c)]).unwrap();
         assert_eq!(result, Value::Number(4.0));
     }
@@ -232,7 +237,7 @@ mod tests {
     #[test]
     fn test_conj_complex() {
         let mut vm = setup_vm();
-        let c = Complex64::new(3.0, 4.0);
+        let c = Complex::new(3.0, 4.0);
         let result = vm_conj(&mut vm, &[Value::Complex(c)]).unwrap();
         match result {
             Value::Complex(conj) => {
@@ -260,7 +265,7 @@ mod tests {
     #[test]
     fn test_arg_complex() {
         let mut vm = setup_vm();
-        let c = Complex64::new(1.0, 1.0);
+        let c = Complex::new(1.0, 1.0);
         let result = vm_arg(&mut vm, &[Value::Complex(c)]).unwrap();
         // arg(1+i) = π/4 ≈ 0.7854
         if let Value::Number(n) = result {

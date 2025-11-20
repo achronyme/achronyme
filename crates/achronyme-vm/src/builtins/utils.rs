@@ -10,14 +10,16 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Get the type name of a value
 pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "typeof() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let type_name = match &args[0] {
@@ -28,6 +30,18 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Complex(_) => "Complex",
         Value::Function(_) => "Function",
         Value::Null => "Null",
+        Value::Tensor(_) => "Tensor",
+        Value::ComplexTensor(_) => "ComplexTensor",
+        Value::Record(_) => "Record",
+        Value::Edge { .. } => "Edge",
+        Value::TailCall(_) => "TailCall",
+        Value::EarlyReturn(_) => "EarlyReturn",
+        Value::MutableRef(_) => "MutableRef",
+        Value::Generator(_) => "Generator",
+        Value::GeneratorYield(_) => "GeneratorYield",
+        Value::Error { .. } => "Error",
+        Value::LoopBreak(_) => "LoopBreak",
+        Value::LoopContinue => "LoopContinue",
     };
 
     Ok(Value::String(type_name.to_string()))
@@ -36,10 +50,10 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Convert a value to its string representation
 pub fn vm_str(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "str() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     let string_repr = format_value(&args[0]);
@@ -49,15 +63,16 @@ pub fn vm_str(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Check if a value is NaN
 pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "isnan() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
         Value::Number(n) => Ok(Value::Boolean(n.is_nan())),
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut results = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -71,7 +86,7 @@ pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(results))
+            Ok(Value::Vector(Rc::new(RefCell::new(results))))
         }
         _ => Err(VmError::TypeError {
             operation: "isnan".to_string(),
@@ -84,15 +99,16 @@ pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Check if a value is infinite
 pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "isinf() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
         Value::Number(n) => Ok(Value::Boolean(n.is_infinite())),
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut results = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -106,7 +122,7 @@ pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(results))
+            Ok(Value::Vector(Rc::new(RefCell::new(results))))
         }
         _ => Err(VmError::TypeError {
             operation: "isinf".to_string(),
@@ -119,15 +135,16 @@ pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Check if a value is finite
 pub fn vm_isfinite(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "isfinite() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
         Value::Number(n) => Ok(Value::Boolean(n.is_finite())),
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let mut results = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -141,7 +158,7 @@ pub fn vm_isfinite(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(results))
+            Ok(Value::Vector(Rc::new(RefCell::new(results))))
         }
         _ => Err(VmError::TypeError {
             operation: "isfinite".to_string(),
@@ -171,7 +188,8 @@ fn format_value(value: &Value) -> String {
         }
         Value::Boolean(b) => format!("{}", b),
         Value::String(s) => s.clone(),
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             let elements: Vec<String> = vec.iter().map(format_value).collect();
             format!("[{}]", elements.join(", "))
         }
@@ -184,6 +202,29 @@ fn format_value(value: &Value) -> String {
         }
         Value::Function(_) => "<function>".to_string(),
         Value::Null => "null".to_string(),
+        Value::Tensor(_) => "<tensor>".to_string(),
+        Value::ComplexTensor(_) => "<complex-tensor>".to_string(),
+        Value::Record(rc) => {
+            let map = rc.borrow();
+            if map.is_empty() {
+                "{}".to_string()
+            } else {
+                let pairs: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, format_value(v)))
+                    .collect();
+                format!("{{{}}}", pairs.join(", "))
+            }
+        }
+        Value::Edge { .. } => "<edge>".to_string(),
+        Value::TailCall(_) => "<tail-call>".to_string(),
+        Value::EarlyReturn(_) => "<early-return>".to_string(),
+        Value::MutableRef(_) => "<mutable-ref>".to_string(),
+        Value::Generator(_) => "<generator>".to_string(),
+        Value::GeneratorYield(_) => "<generator-yield>".to_string(),
+        Value::Error { .. } => "<error>".to_string(),
+        Value::LoopBreak(_) => "<loop-break>".to_string(),
+        Value::LoopContinue => "<loop-continue>".to_string(),
     }
 }
 
