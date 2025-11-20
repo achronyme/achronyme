@@ -253,3 +253,14 @@ fn test_for_in_nested() {
     let result = execute(source).unwrap();
     assert_eq!(result, Value::Number(10.0)); // 1 + 2 + 3 + 4
 }
+
+#[test]
+fn test_for_in_simple_expression_body() {
+    // Test for-in with simple expression body (no prior variables)
+    // Regression test for register allocation bug where builtin calls didn't allocate arg registers
+    let source = r#"
+        for(x in [1,2,3]) { print(x) }
+    "#;
+    let result = execute(source);
+    assert!(result.is_ok(), "for-in with simple body should work: {:?}", result);
+}

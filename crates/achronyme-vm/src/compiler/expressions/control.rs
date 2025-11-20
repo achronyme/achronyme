@@ -476,10 +476,8 @@ impl Compiler {
             value_field_idx as u8,
         ));
 
-        // Free result register if temporary
-        if result_res.is_temp() {
-            self.registers.free(result_reg);
-        }
+        // Free result register (always temporary since we allocated it)
+        self.registers.free(result_reg);
 
         // Bind the value to the loop variable
         // Allocate a register for the loop variable

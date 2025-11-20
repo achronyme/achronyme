@@ -430,8 +430,16 @@ impl Compiler {
         builtin_idx: u16,
         args: &[AstNode],
     ) -> Result<RegResult, CompileError> {
-        // Allocate result register first
-        let result_reg = self.registers.allocate()?;
+        // Allocate consecutive registers: result_reg + arg registers
+        // This ensures all needed registers exist in the call frame
+        let result_reg = if args.is_empty() {
+            // No arguments, just need result register
+            self.registers.allocate()?
+        } else {
+            // Need result + arg count registers
+            let base = self.registers.allocate_many(1 + args.len())?;
+            base
+        };
 
         // Compile arguments into consecutive registers starting at result_reg + 1
         let mut arg_results = Vec::new();

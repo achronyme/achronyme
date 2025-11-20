@@ -62,6 +62,8 @@ impl RegisterAllocator {
             if reg == 255 {
                 return Err(CompileError::TooManyRegisters);
             }
+            // Update max_used if this register is higher
+            self.max_used = self.max_used.max(reg + 1);
             Ok(reg)
         } else if self.next_free < 255 {
             let reg = self.next_free;
