@@ -1733,14 +1733,14 @@ fn test_tail_call_expression() {
 #[test]
 fn test_accumulator_pattern() {
     let source = r#"
-        let sum = (n, acc) => do {
+        let ac = (n, acc) => do {
             if (n == 0) {
                 acc
             } else {
                 rec(n - 1, acc + n)
             }
         }
-        sum(100, 0)
+        ac(100, 0)
     "#;
     let result = execute(source).unwrap();
     // Sum of 1 to 100 = 5050
