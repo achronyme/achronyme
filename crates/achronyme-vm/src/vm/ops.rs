@@ -25,9 +25,18 @@ impl ValueOperations {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
+            (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a + *b)),
+            (Value::Number(a), Value::Complex(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(Complex::new(*a, 0.0) + *b))
+            }
+            (Value::Complex(a), Value::Number(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(*a + Complex::new(*b, 0.0)))
+            }
             _ => Err(VmError::TypeError {
                 operation: "addition".to_string(),
-                expected: "Number or String".to_string(),
+                expected: "Number, Complex, or String".to_string(),
                 got: format!("{:?} + {:?}", left, right),
             }),
         }
@@ -36,9 +45,18 @@ impl ValueOperations {
     pub(crate) fn sub_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+            (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a - *b)),
+            (Value::Number(a), Value::Complex(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(Complex::new(*a, 0.0) - *b))
+            }
+            (Value::Complex(a), Value::Number(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(*a - Complex::new(*b, 0.0)))
+            }
             _ => Err(VmError::TypeError {
                 operation: "subtraction".to_string(),
-                expected: "Number".to_string(),
+                expected: "Number or Complex".to_string(),
                 got: format!("{:?} - {:?}", left, right),
             }),
         }
@@ -47,9 +65,18 @@ impl ValueOperations {
     pub(crate) fn mul_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+            (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a * *b)),
+            (Value::Number(a), Value::Complex(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(Complex::new(*a, 0.0) * *b))
+            }
+            (Value::Complex(a), Value::Number(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(*a * Complex::new(*b, 0.0)))
+            }
             _ => Err(VmError::TypeError {
                 operation: "multiplication".to_string(),
-                expected: "Number".to_string(),
+                expected: "Number or Complex".to_string(),
                 got: format!("{:?} * {:?}", left, right),
             }),
         }
@@ -64,9 +91,22 @@ impl ValueOperations {
                     Ok(Value::Number(a / b))
                 }
             }
+            (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a / *b)),
+            (Value::Number(a), Value::Complex(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(Complex::new(*a, 0.0) / *b))
+            }
+            (Value::Complex(a), Value::Number(b)) => {
+                use achronyme_types::complex::Complex;
+                if *b == 0.0 {
+                    Err(VmError::DivisionByZero)
+                } else {
+                    Ok(Value::Complex(*a / Complex::new(*b, 0.0)))
+                }
+            }
             _ => Err(VmError::TypeError {
                 operation: "division".to_string(),
-                expected: "Number".to_string(),
+                expected: "Number or Complex".to_string(),
                 got: format!("{:?} / {:?}", left, right),
             }),
         }
@@ -75,9 +115,17 @@ impl ValueOperations {
     pub(crate) fn pow_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
+            (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(a.pow_complex(b))),
+            (Value::Number(a), Value::Complex(b)) => {
+                use achronyme_types::complex::Complex;
+                Ok(Value::Complex(Complex::new(*a, 0.0).pow_complex(b)))
+            }
+            (Value::Complex(a), Value::Number(b)) => {
+                Ok(Value::Complex(a.pow(*b)))
+            }
             _ => Err(VmError::TypeError {
                 operation: "exponentiation".to_string(),
-                expected: "Number".to_string(),
+                expected: "Number or Complex".to_string(),
                 got: format!("{:?} ^ {:?}", left, right),
             }),
         }
@@ -86,9 +134,10 @@ impl ValueOperations {
     pub(crate) fn neg_value(value: &Value) -> Result<Value, VmError> {
         match value {
             Value::Number(n) => Ok(Value::Number(-n)),
+            Value::Complex(c) => Ok(Value::Complex(-*c)),
             _ => Err(VmError::TypeError {
                 operation: "negation".to_string(),
-                expected: "Number".to_string(),
+                expected: "Number or Complex".to_string(),
                 got: format!("-{:?}", value),
             }),
         }

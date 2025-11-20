@@ -9,6 +9,7 @@ use achronyme_parser::ast::AstNode;
 use std::rc::Rc;
 
 // Module structure
+mod constants;
 mod context;
 mod expressions;
 mod patterns;

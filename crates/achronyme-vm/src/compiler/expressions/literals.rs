@@ -6,6 +6,7 @@ use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use achronyme_parser::ast::{AstNode, ArrayElement, RecordFieldOrSpread};
+use achronyme_types::complex::Complex;
 
 impl Compiler {
     /// Compile literal expressions
@@ -40,6 +41,14 @@ impl Compiler {
             AstNode::StringLiteral(s) => {
                 let reg = self.registers.allocate()?;
                 let const_idx = self.add_constant(Value::String(s.clone()))?;
+                self.emit_load_const(reg, const_idx);
+                Ok(RegResult::temp(reg))
+            }
+
+            AstNode::ComplexLiteral { re, im } => {
+                let reg = self.registers.allocate()?;
+                let complex = Complex::new(*re, *im);
+                let const_idx = self.add_constant(Value::Complex(complex))?;
                 self.emit_load_const(reg, const_idx);
                 Ok(RegResult::temp(reg))
             }

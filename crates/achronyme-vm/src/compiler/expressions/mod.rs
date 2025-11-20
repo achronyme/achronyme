@@ -25,7 +25,7 @@ impl Compiler {
     pub(crate) fn compile_expression_with_tail(&mut self, node: &AstNode, is_tail: bool) -> Result<RegResult, CompileError> {
         match node {
             // Literals
-            AstNode::Number(_) | AstNode::Boolean(_) | AstNode::Null | AstNode::StringLiteral(_) => {
+            AstNode::Number(_) | AstNode::Boolean(_) | AstNode::Null | AstNode::StringLiteral(_) | AstNode::ComplexLiteral { .. } => {
                 self.compile_literal(node)
             }
 

@@ -1,5 +1,6 @@
 //! Variable expression compilation
 
+use crate::compiler::constants;
 use crate::compiler::registers::RegResult;
 use crate::compiler::Compiler;
 use crate::error::CompileError;
@@ -11,7 +12,15 @@ impl Compiler {
         &mut self,
         name: &str,
     ) -> Result<RegResult, CompileError> {
-        // Check if this is an upvalue first
+        // Check if this is a predefined constant first
+        if let Some(const_value) = constants::get_constant(name) {
+            let reg = self.registers.allocate()?;
+            let const_idx = self.add_constant(const_value)?;
+            self.emit_load_const(reg, const_idx);
+            return Ok(RegResult::temp(reg));
+        }
+
+        // Check if this is an upvalue
         if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
             // Emit GET_UPVALUE instruction (this creates a copy, so it's temp)
             let dst = self.registers.allocate()?;
