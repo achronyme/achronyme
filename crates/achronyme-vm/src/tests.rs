@@ -1639,22 +1639,34 @@ fn test_non_tail_recursive_call() {
 }
 
 /// Test 6: Tail call with multiple arguments
-/// FIXME: This test is currently causing an infinite loop
-/// The issue is likely in how arguments are being passed in TailCall
+/// Tests that TailCall correctly copies multiple arguments
 #[test]
-#[ignore] // Temporarily disabled due to infinite loop
 fn test_tail_call_multiple_args() {
+    // First, test the simplest case: single iteration
     let source = r#"
-        let sum_helper = (a, b, c) => do {
-            if (a <= 0) {
-                b + c
-            } else {
-                rec(a - 1, b + 1, c + 2)
-            }
-        }
+        let simple = (a, b) => if (a <= 0) { b } else { rec(a - 1, b + 1) }
+        simple(1, 0)
+    "#;
+    let result = execute(source).unwrap();
+    println!("simple(1, 0) = {:?}", result);
+    assert_eq!(result, Value::Number(1.0));
+
+    // Now test with more iterations
+    let source = r#"
+        let sum_two = (a, b) => if (a <= 0) { b } else { rec(a - 1, b + 1) }
+        sum_two(3, 0)
+    "#;
+    let result = execute(source).unwrap();
+    println!("sum_two(3, 0) = {:?}", result);
+    assert_eq!(result, Value::Number(3.0));
+
+    // Now test with 3 arguments
+    let source = r#"
+        let sum_helper = (a, b, c) => if (a <= 0) { b + c } else { rec(a - 1, b + 1, c + 2) }
         sum_helper(3, 0, 0)
     "#;
     let result = execute(source).unwrap();
+    println!("sum_helper(3, 0, 0) = {:?}", result);
     // b increases by 3, c increases by 6, total = 9
     assert_eq!(result, Value::Number(9.0));
 }

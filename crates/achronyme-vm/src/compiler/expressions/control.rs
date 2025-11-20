@@ -37,40 +37,85 @@ impl Compiler {
             self.registers.free(cond_res.reg());
         }
 
-        // Compile then branch (inherits tail position)
-        let then_res = self.compile_expression_with_tail(then_expr, is_tail)?;
-        let result_reg = self.registers.allocate()?;
-        self.emit_move(result_reg, then_res.reg());
+        // Special handling for tail position
+        if is_tail {
+            // In tail position, branches must either:
+            // 1. Do a TailCall (which acts as implicit return), or
+            // 2. Explicitly return a value
 
-        // Free then result ONLY if temporary
-        if then_res.is_temp() {
-            self.registers.free(then_res.reg());
-        }
-
-        // Jump over else
-        let end_jump = self.emit_jump(0);
-
-        // Patch else jump
-        self.patch_jump(else_jump);
-
-        // Compile else branch (inherits tail position)
-        if let Some(else_node) = else_expr {
-            let else_res = self.compile_expression_with_tail(else_node, is_tail)?;
-            self.emit_move(result_reg, else_res.reg());
-
-            // Free else result ONLY if temporary
-            if else_res.is_temp() {
-                self.registers.free(else_res.reg());
+            // Compile then branch (inherits tail position)
+            let then_res = self.compile_expression_with_tail(then_expr, is_tail)?;
+            // If the then branch didn't do a TailCall, we need to explicitly return
+            // We need to emit a Return instruction
+            self.emit(encode_abc(OpCode::Return.as_u8(), then_res.reg(), 0, 0));
+            if then_res.is_temp() {
+                self.registers.free(then_res.reg());
             }
+
+            // Jump over else
+            let end_jump = self.emit_jump(0);
+
+            // Patch else jump
+            self.patch_jump(else_jump);
+
+            // Compile else branch (inherits tail position)
+            if let Some(else_node) = else_expr {
+                let else_res = self.compile_expression_with_tail(else_node, is_tail)?;
+                // If the else branch didn't do a TailCall, we need to explicitly return
+                self.emit(encode_abc(OpCode::Return.as_u8(), else_res.reg(), 0, 0));
+                if else_res.is_temp() {
+                    self.registers.free(else_res.reg());
+                }
+            } else {
+                // No else branch, return null
+                let null_reg = self.registers.allocate()?;
+                self.emit(encode_abc(OpCode::LoadNull.as_u8(), null_reg, 0, 0));
+                self.emit(encode_abc(OpCode::Return.as_u8(), null_reg, 0, 0));
+                self.registers.free(null_reg);
+            }
+
+            // Patch end jump
+            self.patch_jump(end_jump);
+
+            // Return a dummy register (will never be used since we returned)
+            Ok(RegResult::temp(0))
         } else {
-            // No else branch, result is null
-            self.emit(encode_abc(OpCode::LoadNull.as_u8(), result_reg, 0, 0));
+            // Non-tail position: normal if-else with result register
+            // Compile then branch
+            let then_res = self.compile_expression_with_tail(then_expr, is_tail)?;
+            let result_reg = self.registers.allocate()?;
+            self.emit_move(result_reg, then_res.reg());
+
+            // Free then result ONLY if temporary
+            if then_res.is_temp() {
+                self.registers.free(then_res.reg());
+            }
+
+            // Jump over else
+            let end_jump = self.emit_jump(0);
+
+            // Patch else jump
+            self.patch_jump(else_jump);
+
+            // Compile else branch
+            if let Some(else_node) = else_expr {
+                let else_res = self.compile_expression_with_tail(else_node, is_tail)?;
+                self.emit_move(result_reg, else_res.reg());
+
+                // Free else result ONLY if temporary
+                if else_res.is_temp() {
+                    self.registers.free(else_res.reg());
+                }
+            } else {
+                // No else branch, result is null
+                self.emit(encode_abc(OpCode::LoadNull.as_u8(), result_reg, 0, 0));
+            }
+
+            // Patch end jump
+            self.patch_jump(end_jump);
+
+            Ok(RegResult::temp(result_reg))
         }
-
-        // Patch end jump
-        self.patch_jump(end_jump);
-
-        Ok(RegResult::temp(result_reg))
     }
 
     /// Compile match expression
