@@ -60,6 +60,17 @@ impl Compiler {
                 self.compile_match(value, arms)
             }
 
+            // Exception handling
+            AstNode::TryCatch {
+                try_block,
+                error_param,
+                catch_block,
+            } => self.compile_try_catch(try_block, error_param, catch_block),
+
+            AstNode::Throw { value } => {
+                self.compile_throw(value)
+            }
+
             // Functions
             AstNode::Lambda {
                 params,

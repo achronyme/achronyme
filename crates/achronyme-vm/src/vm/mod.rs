@@ -243,6 +243,11 @@ impl VM {
                 self.execute_exceptions(opcode, instruction)
             }
 
+            // Type System
+            OpCode::TypeCheck | OpCode::TypeAssert => {
+                self.execute_types(opcode, instruction)
+            }
+
             // Not yet implemented
             _ => Err(VmError::Runtime(format!(
                 "Opcode {} not yet implemented",

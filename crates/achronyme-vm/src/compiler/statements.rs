@@ -11,19 +11,29 @@ impl Compiler {
         match node {
             AstNode::VariableDecl {
                 name,
+                type_annotation,
                 initializer,
-                ..
             }
             | AstNode::MutableDecl {
                 name,
+                type_annotation,
                 initializer,
-                ..
             } => {
                 let value_res = self.compile_expression(initializer)?;
                 let var_reg = self.registers.allocate()?;
 
                 // Move value to variable register
                 self.emit_move(var_reg, value_res.reg());
+
+                // If type annotation exists, emit TYPE_ASSERT
+                if let Some(ref type_ann) = type_annotation {
+                    let type_name = self.type_annotation_to_string(type_ann);
+                    let type_idx = self.add_string(type_name)?;
+
+                    // TYPE_ASSERT R[var_reg], K[type_idx]
+                    // Uses ABx format: A = value register, Bx = type constant index
+                    self.emit(encode_abx(OpCode::TypeAssert.as_u8(), var_reg, type_idx as u16));
+                }
 
                 // Free value ONLY if temporary
                 if value_res.is_temp() {

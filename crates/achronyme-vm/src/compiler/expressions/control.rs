@@ -560,4 +560,96 @@ impl Compiler {
 
         Ok(RegResult::temp(result_reg))
     }
+
+    /// Compile try-catch expression
+    /// Syntax: try { try_block } catch(error_param) { catch_block }
+    /// Both try and catch blocks write to the same result register
+    pub(crate) fn compile_try_catch(
+        &mut self,
+        try_block: &AstNode,
+        error_param: &str,
+        catch_block: &AstNode,
+    ) -> Result<RegResult, CompileError> {
+        // Allocate result register first (both branches write here)
+        let result_reg = self.registers.allocate()?;
+
+        // Allocate error register (will hold exception value in catch block)
+        let err_reg = self.registers.allocate()?;
+
+        // Emit PUSH_HANDLER (will patch offset later)
+        // PUSH_HANDLER uses ABx format: A = error_reg, Bx = offset
+        let push_pos = self.current_position();
+        self.emit(encode_abx(OpCode::PushHandler.as_u8(), err_reg, 0));
+
+        // Compile try block (result goes to result_reg)
+        let try_res = self.compile_expression(try_block)?;
+        if try_res.reg() != result_reg {
+            self.emit_move(result_reg, try_res.reg());
+        }
+        if try_res.is_temp() && try_res.reg() != result_reg {
+            self.registers.free(try_res.reg());
+        }
+
+        // Pop handler (try succeeded)
+        self.emit(encode_abc(OpCode::PopHandler.as_u8(), 0, 0, 0));
+
+        // Jump over catch block
+        let jump_pos = self.current_position();
+        self.emit_jump(0);
+
+        // CATCH BLOCK STARTS HERE
+        let catch_start = self.current_position();
+
+        // Patch PUSH_HANDLER offset to point to catch block
+        // Offset calculation: catch_start = push_pos + 1 + offset
+        // So: offset = catch_start - push_pos - 1
+        let offset = (catch_start - push_pos - 1) as u16;
+        self.function.code[push_pos] = encode_abx(OpCode::PushHandler.as_u8(), err_reg, offset);
+
+        // Define error variable (err_reg already has the error value from VM)
+        // Note: This binding is local to the catch block, but we don't have explicit
+        // scope management in the SymbolTable. The register will be reused after this block.
+        self.symbols.define(error_param.to_string(), err_reg)?;
+
+        // Compile catch block
+        let catch_res = self.compile_expression(catch_block)?;
+        if catch_res.reg() != result_reg {
+            self.emit_move(result_reg, catch_res.reg());
+        }
+        if catch_res.is_temp() && catch_res.reg() != result_reg {
+            self.registers.free(catch_res.reg());
+        }
+
+        // CATCH BLOCK ENDS HERE
+        // Patch jump over catch block
+        self.patch_jump(jump_pos);
+
+        // Free error register
+        self.registers.free(err_reg);
+
+        Ok(RegResult::temp(result_reg))
+    }
+
+    /// Compile throw expression
+    /// Syntax: throw value
+    /// Throws an exception that can be caught by try-catch
+    pub(crate) fn compile_throw(&mut self, value: &AstNode) -> Result<RegResult, CompileError> {
+        // Compile the value to throw
+        let val_res = self.compile_expression(value)?;
+
+        // Emit THROW instruction
+        self.emit(encode_abc(OpCode::Throw.as_u8(), val_res.reg(), 0, 0));
+
+        // Free the value register if temporary
+        if val_res.is_temp() {
+            self.registers.free(val_res.reg());
+        }
+
+        // Throw never returns normally, but we need to return something for type checking
+        // Allocate a dummy register with null value
+        let dummy_reg = self.registers.allocate()?;
+        self.emit(encode_abc(OpCode::LoadNull.as_u8(), dummy_reg, 0, 0));
+
+        Ok(RegResult::temp(dummy_reg))
+    }
 }

@@ -1298,8 +1298,8 @@ fn test_unwinding_through_frames() {
     let mut func_a = FunctionPrototype::new("func_a".to_string(), constants.clone());
     func_a.register_count = 255; // Use 256 registers for recursion support
     func_a.param_count = 0;
-    // PUSH_HANDLER R[2], offset=5 (catch at IP 6)
-    func_a.add_instruction(encode_abx(OpCode::PushHandler.as_u8(), 2, 5));
+    // PUSH_HANDLER R[2], offset=4 (catch at IP 5)
+    func_a.add_instruction(encode_abx(OpCode::PushHandler.as_u8(), 2, 4));
     // CLOSURE R[0], 0 (func_b is at index 0)
     func_a.add_instruction(encode_abx(OpCode::Closure.as_u8(), 0, 0));
     // CALL R[1] = R[0]() (0 args)
@@ -1335,9 +1335,196 @@ fn test_unwinding_through_frames() {
     let result = vm.execute(module);
 
     // Should return the caught error from function B
-    if let Err(e) = &result {
-        eprintln!("Error: {:?}", e);
-    }
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), Value::String("B error".to_string()));
+}
+
+// ============================================================================
+// WEEK 16: TRY-CATCH COMPILATION TESTS
+// ============================================================================
+
+#[test]
+fn test_try_catch_basic() {
+    let source = r#"
+        try {
+            throw "error"
+        } catch(e) {
+            e
+        }
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("error".to_string()));
+}
+
+#[test]
+fn test_try_catch_no_error() {
+    let source = r#"
+        try {
+            42
+        } catch(e) {
+            0
+        }
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_nested_try_catch() {
+    let source = r#"
+        try {
+            try {
+                throw "inner"
+            } catch(e1) {
+                throw "outer"
+            }
+        } catch(e2) {
+            e2
+        }
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("outer".to_string()));
+}
+
+#[test]
+fn test_try_catch_in_function() {
+    let source = r#"
+        let f = () => do {
+            try {
+                throw "func_error"
+            } catch(e) {
+                e
+            }
+        }
+        f()
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("func_error".to_string()));
+}
+
+#[test]
+fn test_try_catch_with_computation() {
+    let source = r#"
+        let x = 10
+        try {
+            let y = x + 5
+            throw y
+        } catch(e) {
+            e * 2
+        }
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(30.0));
+}
+
+#[test]
+fn test_throw_from_nested_call() {
+    let source = r#"
+        let inner = () => do {
+            throw "deep_error"
+        }
+        let outer = () => do {
+            inner()
+        }
+        try {
+            outer()
+        } catch(e) {
+            e
+        }
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("deep_error".to_string()));
+}
+
+// ============================================================================
+// WEEK 17: GRADUAL TYPE SYSTEM TESTS
+// ============================================================================
+
+#[test]
+fn test_type_check_number() {
+    let source = r#"
+        let x: Number = 42
+        x
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_type_assert_fails() {
+    let source = r#"
+        let x: Number = "string"
+    "#;
+    let result = execute(source);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err();
+    assert!(err_msg.contains("Type assertion failed"));
+    assert!(err_msg.contains("expected Number"));
+}
+
+#[test]
+fn test_type_with_try_catch() {
+    let source = r#"
+        try {
+            let x: Number = "wrong"
+            x
+        } catch(e) {
+            42
+        }
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_vector_type() {
+    let source = r#"
+        let arr: Vector = [1, 2, 3]
+        arr[0]
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(1.0));
+}
+
+#[test]
+fn test_function_type() {
+    let source = r#"
+        let f: Function = () => 42
+        f()
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(42.0));
+}
+
+#[test]
+fn test_string_type() {
+    let source = r#"
+        let s: String = "hello"
+        s
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("hello".to_string()));
+}
+
+#[test]
+fn test_boolean_type() {
+    let source = r#"
+        let b: Boolean = true
+        b
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_type_assert_boolean_fails() {
+    let source = r#"
+        let b: Boolean = 123
+    "#;
+    let result = execute(source);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err();
+    assert!(err_msg.contains("Type assertion failed"));
+    assert!(err_msg.contains("expected Boolean"));
+    assert!(err_msg.contains("got Number"));
 }

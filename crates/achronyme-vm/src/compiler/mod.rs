@@ -233,4 +233,28 @@ impl Compiler {
         let patched = encode_abx(opcode, a, offset as u16);
         self.function.patch_instruction(pos, patched);
     }
+
+    /// Convert type annotation to string for type checking
+    pub(crate) fn type_annotation_to_string(&self, type_ann: &achronyme_parser::TypeAnnotation) -> String {
+        use achronyme_parser::TypeAnnotation;
+
+        match type_ann {
+            TypeAnnotation::Number => "Number".to_string(),
+            TypeAnnotation::Boolean => "Boolean".to_string(),
+            TypeAnnotation::String => "String".to_string(),
+            TypeAnnotation::Complex => "Complex".to_string(),
+            TypeAnnotation::Vector => "Vector".to_string(),
+            TypeAnnotation::Tensor { .. } => "Tensor".to_string(),
+            TypeAnnotation::Record { .. } => "Record".to_string(),
+            TypeAnnotation::Function { .. } => "Function".to_string(),
+            TypeAnnotation::Edge => "Edge".to_string(),
+            TypeAnnotation::Generator => "Generator".to_string(),
+            TypeAnnotation::Error => "Error".to_string(),
+            TypeAnnotation::AnyFunction => "Function".to_string(),
+            TypeAnnotation::Union { .. } => "Any".to_string(), // For now, union types are treated as Any
+            TypeAnnotation::Null => "Null".to_string(),
+            TypeAnnotation::Any => "Any".to_string(),
+            TypeAnnotation::TypeReference(_) => "Any".to_string(), // Type aliases not yet implemented
+        }
+    }
 }
