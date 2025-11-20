@@ -154,6 +154,9 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("cross", linalg::vm_cross, 2);
     registry.register("norm", linalg::vm_norm, 1);
     registry.register("normalize", linalg::vm_normalize, 1);
+    registry.register("transpose", linalg::vm_transpose, 1);
+    registry.register("det", linalg::vm_det, 1);
+    registry.register("trace", linalg::vm_trace, 1);
 
     // ========================================================================
     // Complex Number Functions
@@ -218,9 +221,9 @@ mod tests {
 
         // Verify we have a good number of functions
         // Original: 56 functions
-        // Added: 3 math (deg, rad, cbrt) + 3 stats + 4 linalg + 5 complex + 5 utils + 3 records + 8 array_advanced = 31
-        // Total: 87+ functions
-        assert!(registry.len() > 85);
+        // Added: 3 math (deg, rad, cbrt) + 3 stats + 7 linalg + 5 complex + 5 utils + 3 records + 8 array_advanced = 34
+        // Total: 90+ functions
+        assert!(registry.len() > 88);
     }
 
     #[test]
