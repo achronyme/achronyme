@@ -1,5 +1,6 @@
 //! Virtual Machine implementation
 
+use crate::builtins::registry::BuiltinRegistry;
 use crate::bytecode::BytecodeModule;
 use crate::error::VmError;
 use crate::opcode::{instruction::*, OpCode};
@@ -39,6 +40,9 @@ pub struct VM {
 
     /// Next generator ID
     next_generator_id: usize,
+
+    /// Built-in function registry
+    pub(crate) builtins: BuiltinRegistry,
 }
 
 impl VM {
@@ -49,6 +53,7 @@ impl VM {
             globals: HashMap::new(),
             generators: HashMap::new(),
             next_generator_id: 0,
+            builtins: crate::builtins::create_builtin_registry(),
         }
     }
 
@@ -246,6 +251,11 @@ impl VM {
             // Type System
             OpCode::TypeCheck | OpCode::TypeAssert => {
                 self.execute_types(opcode, instruction)
+            }
+
+            // Built-in Functions
+            OpCode::CallBuiltin => {
+                self.execute_call_builtin(instruction)
             }
 
             // Not yet implemented

@@ -1,6 +1,7 @@
 //! Instruction execution handlers
 
 mod arithmetic;
+mod builtins;
 mod comparison;
 mod control;
 mod exceptions;

@@ -1,0 +1,167 @@
+//! Built-in functions module
+//!
+//! This module provides all built-in functions for the VM, organized by category:
+//! - Math: Trigonometric, exponential, rounding, etc.
+//! - String: Case conversion, trimming, searching, manipulation
+//! - Vector: Modification, slicing, transformation
+//! - I/O: Print, input
+
+pub mod io;
+pub mod math;
+pub mod registry;
+pub mod string;
+pub mod vector;
+
+use registry::BuiltinRegistry;
+
+/// Create and populate the built-in function registry
+///
+/// This function registers all built-in functions and returns a ready-to-use registry.
+/// The registry provides O(1) lookup by both name (for compiler) and index (for VM).
+pub fn create_builtin_registry() -> BuiltinRegistry {
+    let mut registry = BuiltinRegistry::new();
+
+    // ========================================================================
+    // Math Functions
+    // ========================================================================
+
+    // Trigonometric
+    registry.register("sin", math::vm_sin(), 1);
+    registry.register("cos", math::vm_cos(), 1);
+    registry.register("tan", math::vm_tan(), 1);
+    registry.register("asin", math::vm_asin(), 1);
+    registry.register("acos", math::vm_acos(), 1);
+    registry.register("atan", math::vm_atan(), 1);
+    registry.register("atan2", math::vm_atan2, 2);
+
+    // Hyperbolic
+    registry.register("sinh", math::vm_sinh(), 1);
+    registry.register("cosh", math::vm_cosh(), 1);
+    registry.register("tanh", math::vm_tanh(), 1);
+
+    // Exponential and Logarithmic
+    registry.register("exp", math::vm_exp(), 1);
+    registry.register("ln", math::vm_ln(), 1);
+    registry.register("log", math::vm_log(), 2);
+    registry.register("log10", math::vm_log10(), 1);
+    registry.register("log2", math::vm_log2(), 1);
+
+    // Rounding
+    registry.register("floor", math::vm_floor(), 1);
+    registry.register("ceil", math::vm_ceil(), 1);
+    registry.register("round", math::vm_round(), 1);
+    registry.register("trunc", math::vm_trunc(), 1);
+
+    // Other Math
+    registry.register("sqrt", math::vm_sqrt(), 1);
+    registry.register("abs", math::vm_abs(), 1);
+    registry.register("pow", math::vm_pow(), 2);
+    registry.register("min", math::vm_min, -1); // variadic
+    registry.register("max", math::vm_max, -1); // variadic
+    registry.register("sign", math::vm_sign(), 1);
+
+    // Constants
+    registry.register("pi", math::vm_pi, 0);
+    registry.register("e", math::vm_e, 0);
+
+    // ========================================================================
+    // String Functions
+    // ========================================================================
+
+    // Length and access
+    registry.register("len", string::vm_len, 1);
+    registry.register("char_at", string::vm_char_at, 2);
+
+    // Case conversion
+    registry.register("upper", string::vm_upper, 1);
+    registry.register("lower", string::vm_lower, 1);
+
+    // Whitespace
+    registry.register("trim", string::vm_trim, 1);
+    registry.register("trim_start", string::vm_trim_start, 1);
+    registry.register("trim_end", string::vm_trim_end, 1);
+
+    // Search
+    registry.register("contains", string::vm_contains, 2);
+    registry.register("starts_with", string::vm_starts_with, 2);
+    registry.register("ends_with", string::vm_ends_with, 2);
+
+    // Manipulation
+    registry.register("replace", string::vm_replace, 3);
+    registry.register("split", string::vm_split, 2);
+    registry.register("join", string::vm_join, 2);
+    registry.register("substring", string::vm_substring, 3);
+    registry.register("concat", string::vm_concat, 2);
+
+    // ========================================================================
+    // Vector Functions
+    // ========================================================================
+
+    // Modification
+    registry.register("push", vector::vm_push, 2);
+    registry.register("pop", vector::vm_pop, 1);
+    registry.register("insert", vector::vm_insert, 3);
+    registry.register("remove", vector::vm_remove, 2);
+
+    // Slicing
+    registry.register("slice", vector::vm_slice, 3);
+    registry.register("concat_vec", vector::vm_concat_vec, 2);
+
+    // Transformation
+    registry.register("reverse", vector::vm_reverse, 1);
+    registry.register("sort", vector::vm_sort, 1);
+
+    // Query
+    registry.register("first", vector::vm_first, 1);
+    registry.register("last", vector::vm_last, 1);
+    registry.register("is_empty", vector::vm_is_empty, 1);
+
+    // ========================================================================
+    // I/O Functions
+    // ========================================================================
+
+    registry.register("print", io::vm_print, -1); // variadic
+    registry.register("println", io::vm_println, -1); // variadic
+    registry.register("input", io::vm_input, -1); // 0 or 1 args
+
+    registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_registry_creation() {
+        let registry = create_builtin_registry();
+
+        // Check some functions are registered
+        assert!(registry.get_id("sin").is_some());
+        assert!(registry.get_id("cos").is_some());
+        assert!(registry.get_id("print").is_some());
+        assert!(registry.get_id("len").is_some());
+
+        // Check non-existent function
+        assert!(registry.get_id("nonexistent").is_none());
+
+        // Verify we have a good number of functions
+        assert!(registry.len() > 50);
+    }
+
+    #[test]
+    fn test_function_metadata() {
+        let registry = create_builtin_registry();
+
+        // Check sin metadata
+        let sin_id = registry.get_id("sin").unwrap();
+        let sin_meta = registry.get_metadata(sin_id).unwrap();
+        assert_eq!(sin_meta.name, "sin");
+        assert_eq!(sin_meta.arity, 1);
+
+        // Check variadic function
+        let print_id = registry.get_id("print").unwrap();
+        let print_meta = registry.get_metadata(print_id).unwrap();
+        assert_eq!(print_meta.name, "print");
+        assert_eq!(print_meta.arity, -1);
+    }
+}

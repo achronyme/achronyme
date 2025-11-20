@@ -21,13 +21,15 @@
 //! - `compiler`: AST to bytecode compiler
 //! - `bytecode`: Bytecode format and serialization
 //! - `error`: Error types for VM and compiler
+//! - `builtins`: Built-in function registry and implementations
 
+pub mod builtins;
+pub mod bytecode;
+pub mod compiler;
+pub mod error;
 pub mod opcode;
 pub mod value;
 pub mod vm;
-pub mod compiler;
-pub mod bytecode;
-pub mod error;
 
 // Re-export main types
 pub use vm::VM;

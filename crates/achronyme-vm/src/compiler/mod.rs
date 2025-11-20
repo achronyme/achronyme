@@ -1,5 +1,6 @@
 //! Bytecode compiler (AST to bytecode)
 
+use crate::builtins::registry::BuiltinRegistry;
 use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
 use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
@@ -36,6 +37,9 @@ pub struct Compiler {
 
     /// Parent compiler (for nested functions)
     parent: Option<Box<Compiler>>,
+
+    /// Built-in function registry (shared across all compilers)
+    pub(crate) builtins: Rc<BuiltinRegistry>,
 }
 
 impl Compiler {
@@ -50,6 +54,7 @@ impl Compiler {
             symbols: SymbolTable::new(),
             loops: Vec::new(),
             parent: None,
+            builtins: Rc::new(crate::builtins::create_builtin_registry()),
         }
     }
 

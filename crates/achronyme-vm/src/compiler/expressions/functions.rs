@@ -24,6 +24,7 @@ impl Compiler {
             symbols: SymbolTable::new(),
             loops: Vec::new(),
             parent: None,  // We don't need parent for simple compilation
+            builtins: self.builtins.clone(),  // Share the built-ins registry
         };
 
         // Set parameter count
@@ -103,6 +104,16 @@ impl Compiler {
         args: &[AstNode],
         is_tail: bool,
     ) -> Result<RegResult, CompileError> {
+        // Check if this is a built-in function call
+        eprintln!("DEBUG: Compiling function call to '{}'", name);
+        eprintln!("DEBUG: Builtins registry has {} functions", self.builtins.len());
+        eprintln!("DEBUG: Looking up '{}' -> {:?}", name, self.builtins.get_id(name));
+        if let Some(builtin_idx) = self.builtins.get_id(name) {
+            eprintln!("DEBUG: Found built-in at index {}", builtin_idx);
+            return self.compile_builtin_call(builtin_idx, args);
+        }
+        eprintln!("DEBUG: Not a built-in, compiling as regular function call");
+
         // For FunctionCall, lookup the function by name and copy to a fresh register
         // This ensures the function value won't be overwritten when compiling arguments
         let func_reg = if name == "rec" {
@@ -200,6 +211,15 @@ impl Compiler {
         args: &[AstNode],
         is_tail: bool,
     ) -> Result<RegResult, CompileError> {
+        // Check if this is a built-in function call FIRST
+        // (before trying to compile callee as variable)
+        if let AstNode::VariableRef(name) = callee {
+            if let Some(builtin_idx) = self.builtins.get_id(name) {
+                // This is a built-in function call - use specialized compilation
+                return self.compile_builtin_call(builtin_idx, args);
+            }
+        }
+
         // TODO: This is temporary sugar syntax for generator.next()
         // The proper architectural solution is to implement .next() as an intrinsic method
         // that works uniformly for both generators and user-defined objects with a 'next' field.
@@ -405,5 +425,66 @@ impl Compiler {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Compile built-in function call
+    ///
+    /// Emits a CallBuiltin opcode with arguments in consecutive registers
+    pub(crate) fn compile_builtin_call(
+        &mut self,
+        builtin_idx: u16,
+        args: &[AstNode],
+    ) -> Result<RegResult, CompileError> {
+        // Allocate result register first
+        let result_reg = self.registers.allocate()?;
+
+        // Compile arguments into consecutive registers starting at result_reg + 1
+        let mut arg_results = Vec::new();
+        for arg in args {
+            let arg_res = self.compile_expression(arg)?;
+            arg_results.push(arg_res);
+        }
+
+        // Move arguments to consecutive registers if needed
+        // IMPORTANT: Move in reverse order to avoid overwriting
+        for i in (0..arg_results.len()).rev() {
+            let arg_reg = arg_results[i].reg();
+            let target_reg = result_reg.wrapping_add(1).wrapping_add(i as u8);
+            if arg_reg != target_reg {
+                self.emit_move(target_reg, arg_reg);
+            }
+        }
+
+        // Check argument count
+        if args.len() > 255 {
+            return Err(CompileError::Error("Too many arguments for built-in function".to_string()));
+        }
+
+        // Check builtin_idx fits in u8 (we support max 256 built-ins)
+        if builtin_idx > 255 {
+            return Err(CompileError::Error(
+                format!("Built-in function index {} exceeds maximum of 255", builtin_idx)
+            ));
+        }
+
+        // Emit CallBuiltin opcode using ABC format:
+        // A = result_reg (destination)
+        // B = argc (argument count)
+        // C = builtin_idx (function index, limited to 256)
+        self.emit(encode_abc(
+            OpCode::CallBuiltin.as_u8(),
+            result_reg,
+            args.len() as u8,
+            builtin_idx as u8,
+        ));
+
+        // Free temporary argument registers
+        for arg_res in arg_results {
+            if arg_res.is_temp() {
+                self.registers.free(arg_res.reg());
+            }
+        }
+
+        Ok(RegResult::temp(result_reg))
     }
 }

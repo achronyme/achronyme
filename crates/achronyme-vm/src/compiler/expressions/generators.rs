@@ -32,6 +32,7 @@ impl Compiler {
             symbols: SymbolTable::new(),
             loops: Vec::new(),
             parent: None,
+            builtins: self.builtins.clone(),
         };
 
         // Mark the function as a generator
