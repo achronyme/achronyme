@@ -86,28 +86,31 @@ pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Calculate standard deviation
 pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "std() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             if vec.len() < 2 {
-                return Err(VmError::RuntimeError(
+                return Err(VmError::Runtime(
                     "std() requires a vector with at least 2 elements".to_string(),
                 ));
             }
 
             // Calculate mean
+            drop(vec);
             let mean_result = vm_mean(_vm, args)?;
             let mean = match mean_result {
                 Value::Number(n) => n,
-                _ => return Err(VmError::RuntimeError("mean() returned non-numeric value".to_string())),
+                _ => return Err(VmError::Runtime("mean() returned non-numeric value".to_string())),
             };
 
             // Calculate variance
+            let vec = rc.borrow();
             let mut variance_sum = 0.0;
             for val in vec.iter() {
                 match val {
@@ -125,7 +128,8 @@ pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
 
-            let variance = variance_sum / (vec.len() - 1) as f64;
+            let count = vec.len();
+            let variance = variance_sum / (count - 1) as f64;
             Ok(Value::Number(variance.sqrt()))
         }
         _ => Err(VmError::TypeError {
