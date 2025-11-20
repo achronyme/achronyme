@@ -287,6 +287,18 @@ pub fn vm_sign() -> fn(&mut VM, &[Value]) -> Result<Value, VmError> {
     })
 }
 
+pub fn vm_deg() -> fn(&mut VM, &[Value]) -> Result<Value, VmError> {
+    unary_math_fn!("deg", f64::to_degrees)
+}
+
+pub fn vm_rad() -> fn(&mut VM, &[Value]) -> Result<Value, VmError> {
+    unary_math_fn!("rad", f64::to_radians)
+}
+
+pub fn vm_cbrt() -> fn(&mut VM, &[Value]) -> Result<Value, VmError> {
+    unary_math_fn!("cbrt", f64::cbrt)
+}
+
 // ============================================================================
 // Constants
 // ============================================================================

@@ -5,11 +5,21 @@
 //! - String: Case conversion, trimming, searching, manipulation
 //! - Vector: Modification, slicing, transformation
 //! - I/O: Print, input
+//! - Statistics: Sum, mean, standard deviation
+//! - Linear Algebra: Dot, cross, norm, normalize
+//! - Complex: Complex number operations
+//! - Utils: Type inspection, conversion, special value checks
+//! - Records: Object/map operations
 
+pub mod complex;
 pub mod io;
+pub mod linalg;
 pub mod math;
+pub mod records;
 pub mod registry;
+pub mod statistics;
 pub mod string;
+pub mod utils;
 pub mod vector;
 
 use registry::BuiltinRegistry;
@@ -59,6 +69,9 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("min", math::vm_min, -1); // variadic
     registry.register("max", math::vm_max, -1); // variadic
     registry.register("sign", math::vm_sign(), 1);
+    registry.register("deg", math::vm_deg(), 1);
+    registry.register("rad", math::vm_rad(), 1);
+    registry.register("cbrt", math::vm_cbrt(), 1);
 
     // Constants
     registry.register("pi", math::vm_pi, 0);
@@ -124,6 +137,51 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("println", io::vm_println, -1); // variadic
     registry.register("input", io::vm_input, -1); // 0 or 1 args
 
+    // ========================================================================
+    // Statistics Functions
+    // ========================================================================
+
+    registry.register("sum", statistics::vm_sum, 1);
+    registry.register("mean", statistics::vm_mean, 1);
+    registry.register("std", statistics::vm_std, 1);
+
+    // ========================================================================
+    // Linear Algebra Functions
+    // ========================================================================
+
+    registry.register("dot", linalg::vm_dot, 2);
+    registry.register("cross", linalg::vm_cross, 2);
+    registry.register("norm", linalg::vm_norm, 1);
+    registry.register("normalize", linalg::vm_normalize, 1);
+
+    // ========================================================================
+    // Complex Number Functions
+    // ========================================================================
+
+    registry.register("complex", complex::vm_complex, 2);
+    registry.register("real", complex::vm_real, 1);
+    registry.register("imag", complex::vm_imag, 1);
+    registry.register("conj", complex::vm_conj, 1);
+    registry.register("arg", complex::vm_arg, 1);
+
+    // ========================================================================
+    // Utility Functions
+    // ========================================================================
+
+    registry.register("typeof", utils::vm_typeof, 1);
+    registry.register("str", utils::vm_str, 1);
+    registry.register("isnan", utils::vm_isnan, 1);
+    registry.register("isinf", utils::vm_isinf, 1);
+    registry.register("isfinite", utils::vm_isfinite, 1);
+
+    // ========================================================================
+    // Record Functions
+    // ========================================================================
+
+    registry.register("keys", records::vm_keys, 1);
+    registry.register("values", records::vm_values, 1);
+    registry.register("has_field", records::vm_has_field, 2);
+
     registry
 }
 
@@ -145,7 +203,10 @@ mod tests {
         assert!(registry.get_id("nonexistent").is_none());
 
         // Verify we have a good number of functions
-        assert!(registry.len() > 50);
+        // Original: 56 functions
+        // Added: 3 math (deg, rad, cbrt) + 3 stats + 4 linalg + 5 complex + 5 utils + 3 records = 23
+        // Total: 79+ functions
+        assert!(registry.len() > 75);
     }
 
     #[test]
