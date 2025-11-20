@@ -147,4 +147,79 @@ impl Compiler {
 
         Ok(RegResult::temp(rec_reg))
     }
+
+    /// Compile range expression (0..5 or 0..=5)
+    /// Ranges are expanded into vectors at compile time for simplicity
+    pub(crate) fn compile_range(
+        &mut self,
+        start: &AstNode,
+        end: &AstNode,
+        inclusive: bool,
+    ) -> Result<RegResult, CompileError> {
+        use crate::value::Value;
+
+        // Try to evaluate start and end as constants
+        let start_val = match start {
+            AstNode::Number(n) => *n,
+            AstNode::UnaryOp { op: achronyme_parser::ast::UnaryOp::Negate, operand } => {
+                match operand.as_ref() {
+                    AstNode::Number(n) => -*n,
+                    _ => return Err(CompileError::Error(
+                        "Range start must be a number literal".to_string()
+                    )),
+                }
+            }
+            _ => return Err(CompileError::Error(
+                "Range start must be a number literal".to_string()
+            )),
+        };
+
+        let end_val = match end {
+            AstNode::Number(n) => *n,
+            AstNode::UnaryOp { op: achronyme_parser::ast::UnaryOp::Negate, operand } => {
+                match operand.as_ref() {
+                    AstNode::Number(n) => -*n,
+                    _ => return Err(CompileError::Error(
+                        "Range end must be a number literal".to_string()
+                    )),
+                }
+            }
+            _ => return Err(CompileError::Error(
+                "Range end must be a number literal".to_string()
+            )),
+        };
+
+        // Generate the range values
+        let start_int = start_val as i64;
+        let end_int = end_val as i64;
+
+        // Create vector register
+        let vec_reg = self.registers.allocate()?;
+
+        // Emit NewVector instruction
+        self.emit(encode_abc(OpCode::NewVector.as_u8(), vec_reg, 0, 0));
+
+        // Push each value in the range
+        let range_end = if inclusive { end_int + 1 } else { end_int };
+
+        for i in start_int..range_end {
+            // Load the number as a constant
+            let val_reg = self.registers.allocate()?;
+            let const_idx = self.add_constant(Value::Number(i as f64))?;
+            self.emit_load_const(val_reg, const_idx);
+
+            // Push to vector
+            self.emit(encode_abc(
+                OpCode::VecPush.as_u8(),
+                vec_reg,
+                val_reg,
+                0,
+            ));
+
+            // Free temporary register
+            self.registers.free(val_reg);
+        }
+
+        Ok(RegResult::temp(vec_reg))
+    }
 }

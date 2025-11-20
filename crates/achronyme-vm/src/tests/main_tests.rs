@@ -2004,3 +2004,69 @@ fn test_complex_with_map() {
         _ => panic!("Expected Vector"),
     }
 }
+
+// ===== Range Expression Tests =====
+
+#[test]
+fn test_range_exclusive() {
+    let result = execute("0..5").unwrap();
+    match result {
+        Value::Vector(vec) => {
+            let vec_borrow = vec.borrow();
+            assert_eq!(vec_borrow.len(), 5);
+            assert_eq!(vec_borrow[0], Value::Number(0.0));
+            assert_eq!(vec_borrow[4], Value::Number(4.0));
+        }
+        _ => panic!("Expected Vector"),
+    }
+}
+
+#[test]
+fn test_range_inclusive() {
+    let result = execute("0..=5").unwrap();
+    match result {
+        Value::Vector(vec) => {
+            let vec_borrow = vec.borrow();
+            assert_eq!(vec_borrow.len(), 6);
+            assert_eq!(vec_borrow[0], Value::Number(0.0));
+            assert_eq!(vec_borrow[5], Value::Number(5.0));
+        }
+        _ => panic!("Expected Vector"),
+    }
+}
+
+#[test]
+fn test_range_with_map() {
+    let result = execute("map((x) => x * 2, 1..4)").unwrap();
+    match result {
+        Value::Vector(vec) => {
+            let vec_borrow = vec.borrow();
+            assert_eq!(vec_borrow.len(), 3);
+            assert_eq!(vec_borrow[0], Value::Number(2.0));
+            assert_eq!(vec_borrow[1], Value::Number(4.0));
+            assert_eq!(vec_borrow[2], Value::Number(6.0));
+        }
+        _ => panic!("Expected Vector"),
+    }
+}
+
+#[test]
+fn test_range_negative() {
+    let result = execute("-5..-1").unwrap();
+    match result {
+        Value::Vector(vec) => {
+            let vec_borrow = vec.borrow();
+            assert_eq!(vec_borrow.len(), 4);
+            assert_eq!(vec_borrow[0], Value::Number(-5.0));
+            assert_eq!(vec_borrow[3], Value::Number(-2.0));
+        }
+        _ => panic!("Expected Vector"),
+    }
+}
+
+#[test]
+fn test_range_with_reduce() {
+    // Sum of 1..=10 = 55
+    let result = execute("reduce((acc, x) => acc + x, 0, 1..=10)").unwrap();
+    assert_eq!(result, Value::Number(55.0));
+}

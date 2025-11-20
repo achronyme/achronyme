@@ -429,6 +429,16 @@ impl VM {
         }
     }
 
+    /// Set a global variable (for REPL)
+    pub fn set_global(&mut self, name: String, value: Value) {
+        self.globals.insert(name, value);
+    }
+
+    /// Get a global variable (for REPL)
+    pub fn get_global(&self, name: &str) -> Option<&Value> {
+        self.globals.get(name)
+    }
+
     /// Perform return from function
     fn do_return(&mut self, value: Value) -> Result<(), VmError> {
         let frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;

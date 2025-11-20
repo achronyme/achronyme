@@ -174,6 +174,7 @@ fn run_repl() {
 
     // NOTE: REPL currently uses VM backend only
     // let mut evaluator = Evaluator::new();
+    let mut vm = achronyme_vm::VM::new();
     let mut line_number = 1;
     let mut input_buffer = String::new();
 
@@ -208,7 +209,7 @@ fn run_repl() {
                         }
                         "clear" => {
                             clear_screen();
-                            // evaluator = Evaluator::new();
+                            vm = achronyme_vm::VM::new();
                             println!("Screen cleared");
                             input_buffer.clear();
                             continue;
@@ -232,7 +233,7 @@ fn run_repl() {
                 }
 
                 // Expression is complete, evaluate it with VM
-                match evaluate_with_vm(trimmed) {
+                match evaluate_with_persistent_vm(&mut vm, trimmed) {
                     Ok(result) => println!("{}", result),
                     Err(err) => eprintln!("Error: {}", err),
                 }
@@ -435,6 +436,22 @@ fn evaluate_with_vm(input: &str) -> Result<String, String> {
 
     // Format result
     Ok(format_value(&result))
+}
+
+fn evaluate_with_persistent_vm(vm: &mut achronyme_vm::VM, input: &str) -> Result<String, String> {
+    // TEMPORARY WORKAROUND:
+    // The VM doesn't currently support persistent variables across REPL evaluations
+    // because each evaluation creates a new frame with local variables.
+    //
+    // Proper solution would require:
+    // 1. GetGlobal/SetGlobal opcodes
+    // 2. Compiler mode to emit global variable operations for REPL
+    // 3. VM modifications to check globals when resolving variables
+    //
+    // For now, we use a fresh VM for each evaluation (same as before)
+    // Users must use `;` to chain statements: `let x = 42; x`
+
+    evaluate_with_vm(input)
 }
 
 fn format_vm_value(value: &achronyme_types::value::Value) -> String {

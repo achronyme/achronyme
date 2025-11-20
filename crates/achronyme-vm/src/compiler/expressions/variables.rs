@@ -12,7 +12,21 @@ impl Compiler {
         &mut self,
         name: &str,
     ) -> Result<RegResult, CompileError> {
-        // Check if this is a predefined constant first
+        // Check if this is an upvalue first
+        if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
+            // Emit GET_UPVALUE instruction (this creates a copy, so it's temp)
+            let dst = self.registers.allocate()?;
+            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), dst, upvalue_idx, 0));
+            return Ok(RegResult::temp(dst));
+        }
+
+        // Check if this is a local variable
+        if let Ok(var_reg) = self.symbols.get(name) {
+            // Regular local variable (not a temp, it's the variable itself)
+            return Ok(RegResult::var(var_reg));
+        }
+
+        // If not a local variable or upvalue, check if it's a predefined constant
         if let Some(const_value) = constants::get_constant(name) {
             let reg = self.registers.allocate()?;
             let const_idx = self.add_constant(const_value)?;
@@ -20,17 +34,8 @@ impl Compiler {
             return Ok(RegResult::temp(reg));
         }
 
-        // Check if this is an upvalue
-        if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
-            // Emit GET_UPVALUE instruction (this creates a copy, so it's temp)
-            let dst = self.registers.allocate()?;
-            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), dst, upvalue_idx, 0));
-            Ok(RegResult::temp(dst))
-        } else {
-            // Regular local variable (not a temp, it's the variable itself)
-            let var_reg = self.symbols.get(name)?;
-            Ok(RegResult::var(var_reg))
-        }
+        // Variable not found
+        Err(CompileError::Error(format!("Undefined variable: {}", name)))
     }
 
     /// Compile recursive reference

@@ -117,6 +117,11 @@ impl Compiler {
                 self.compile_generate_block(statements)
             }
 
+            // Ranges
+            AstNode::RangeExpr { start, end, inclusive } => {
+                self.compile_range(start, end, *inclusive)
+            }
+
             // Sequences
             AstNode::Break { value } => {
                 self.compile_break(value.as_deref())
