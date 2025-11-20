@@ -12,14 +12,15 @@ use crate::vm::VM;
 /// Sum all elements in a vector or tensor
 pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "sum() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             if vec.is_empty() {
                 return Ok(Value::Number(0.0));
             }
@@ -50,26 +51,28 @@ pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Calculate mean (average) of elements
 pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::ArityMismatch {
-            expected: 1,
-            got: args.len(),
-        });
+        return Err(VmError::Runtime(format!(
+            "mean() expects 1 argument, got {}",
+            args.len()
+        )));
     }
 
     match &args[0] {
-        Value::Vector(vec) => {
+        Value::Vector(rc) => {
+            let vec = rc.borrow();
             if vec.is_empty() {
-                return Err(VmError::RuntimeError(
+                return Err(VmError::Runtime(
                     "mean() requires a non-empty vector".to_string(),
                 ));
             }
+            let count = vec.len() as f64;
+            drop(vec);
 
             let sum_result = vm_sum(_vm, args)?;
             if let Value::Number(sum) = sum_result {
-                let count = vec.len() as f64;
                 Ok(Value::Number(sum / count))
             } else {
-                Err(VmError::RuntimeError("sum() returned non-numeric value".to_string()))
+                Err(VmError::Runtime("sum() returned non-numeric value".to_string()))
             }
         }
         _ => Err(VmError::TypeError {
