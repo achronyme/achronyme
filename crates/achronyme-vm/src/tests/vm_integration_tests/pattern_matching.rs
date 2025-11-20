@@ -411,3 +411,61 @@ fn test_record_default_with_expression() {
     let result = execute(source).unwrap();
     assert_eq!(result, Value::Number(20.0)); // 10 + 10
 }
+
+// ===== Type Patterns in Record Destructuring =====
+
+#[test]
+fn test_record_type_pattern_matching() {
+    // Type pattern should check type and bind field name to value
+    let source = r#"
+        let {x: Number, y} = {x: 10, y: 20}
+        x + y
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(30.0));
+}
+
+#[test]
+fn test_record_type_pattern_mismatch() {
+    // Type pattern should throw error when type doesn't match
+    let source = r#"
+        let {x: Number, y} = {x: "String", y: 20}
+        x
+    "#;
+    let result = execute(source);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Type mismatch"));
+}
+
+#[test]
+fn test_record_type_pattern_multiple() {
+    // Multiple type patterns in same record
+    let source = r#"
+        let {x: Number, y: String} = {x: 42, y: "hello"}
+        y
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("hello".to_string()));
+}
+
+#[test]
+fn test_record_wildcard_pattern() {
+    // Wildcard pattern should bind field name to value
+    let source = r#"
+        let {x: _, y: Number} = {x: "anything", y: 42}
+        x
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("anything".to_string()));
+}
+
+#[test]
+fn test_record_type_pattern_with_variable() {
+    // Mix of type pattern and variable pattern
+    let source = r#"
+        let {x: Number, y: z} = {x: 10, y: 20}
+        x + z
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(30.0));
+}

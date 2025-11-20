@@ -115,11 +115,39 @@ impl Compiler {
 
         match mode {
             PatternMode::Irrefutable => {
-                // Type patterns in irrefutable contexts don't make sense
-                // because we can't guarantee the type at compile time
-                Err(CompileError::InvalidPattern(
-                    "Type patterns are not allowed in irrefutable contexts (let bindings)".to_string()
-                ))
+                // In irrefutable contexts (let bindings), type patterns act as runtime type checks
+                // If the type doesn't match, we throw an error at runtime
+                // This matches the tree-walker behavior
+
+                // Emit MatchType instruction: R[result] = typeof(R[target]) == K[type_idx]
+                let result_reg = self.registers.allocate()?;
+                self.emit(encode_abc(
+                    OpCode::MatchType.as_u8(),
+                    result_reg,
+                    target_reg,
+                    type_idx as u8,
+                ));
+
+                // Check if type matches, throw error if not
+                // We use JumpIfTrue to skip the error if type matches
+                let skip_error = self.emit_jump_if_true(result_reg, 0);
+
+                // Type doesn't match - throw error
+                // Create error message as a string constant
+                let error_msg = format!("Type mismatch: expected {}", type_name);
+                let error_idx = self.add_constant(crate::value::Value::String(error_msg))?;
+                let error_reg = self.registers.allocate()?;
+                self.emit_load_const(error_reg, error_idx);
+                self.emit(encode_abc(OpCode::Throw.as_u8(), error_reg, 0, 0));
+                self.registers.free(error_reg);
+
+                // Patch the skip jump
+                self.patch_jump(skip_error);
+
+                // Free the result register
+                self.registers.free(result_reg);
+
+                Ok(())
             }
             PatternMode::Refutable => {
                 // Emit MatchType instruction: R[result] = typeof(R[target]) == K[type_idx]
@@ -287,7 +315,7 @@ impl Compiler {
 
         // Now bind the pattern variables to the extracted values
         let mut reg_idx = dst_start;
-        for (_, pattern, default_value) in fields {
+        for (field_name, pattern, default_value) in fields {
             // If there's a default value, handle missing fields
             if let Some(default_expr) = default_value {
                 // Compile the default value expression
@@ -314,6 +342,15 @@ impl Compiler {
 
             // Recursively compile the nested pattern
             self.compile_pattern(pattern, reg_idx, PatternMode::Irrefutable)?;
+
+            // Check if this is a non-binding pattern (Type, Wildcard, Literal)
+            // In that case, we need to bind the field name to the value
+            let needs_field_binding = matches!(pattern, Pattern::Type(_) | Pattern::Wildcard | Pattern::Literal(_));
+            if needs_field_binding {
+                // Bind the field name to the extracted value
+                self.symbols.define(field_name.clone(), reg_idx)?;
+            }
+
             reg_idx += 1;
         }
 
