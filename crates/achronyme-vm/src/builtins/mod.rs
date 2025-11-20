@@ -11,6 +11,7 @@
 //! - Utils: Type inspection, conversion, special value checks
 //! - Records: Object/map operations
 
+pub mod array_advanced;
 pub mod complex;
 pub mod io;
 pub mod linalg;
@@ -182,6 +183,19 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("values", records::vm_values, 1);
     registry.register("has_field", records::vm_has_field, 2);
 
+    // ========================================================================
+    // Advanced Array Functions (Phase 4E)
+    // ========================================================================
+
+    registry.register("range", array_advanced::vm_range, -1); // 2-3 args
+    registry.register("product", array_advanced::vm_product, 1);
+    registry.register("zip", array_advanced::vm_zip, 2);
+    registry.register("flatten", array_advanced::vm_flatten, -1); // 1-2 args
+    registry.register("take", array_advanced::vm_take, 2);
+    registry.register("drop", array_advanced::vm_drop, 2);
+    registry.register("unique", array_advanced::vm_unique, 1);
+    registry.register("chunk", array_advanced::vm_chunk, 2);
+
     registry
 }
 
@@ -204,9 +218,9 @@ mod tests {
 
         // Verify we have a good number of functions
         // Original: 56 functions
-        // Added: 3 math (deg, rad, cbrt) + 3 stats + 4 linalg + 5 complex + 5 utils + 3 records = 23
-        // Total: 79+ functions
-        assert!(registry.len() > 75);
+        // Added: 3 math (deg, rad, cbrt) + 3 stats + 4 linalg + 5 complex + 5 utils + 3 records + 8 array_advanced = 31
+        // Total: 87+ functions
+        assert!(registry.len() > 85);
     }
 
     #[test]
