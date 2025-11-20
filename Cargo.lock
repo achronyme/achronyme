@@ -9,6 +9,7 @@ dependencies = [
  "achronyme-lsp-core",
  "achronyme-parser",
  "achronyme-types",
+ "achronyme-vm",
  "clap",
  "dirs",
  "nu-ansi-term",

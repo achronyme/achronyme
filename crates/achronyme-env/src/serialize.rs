@@ -139,6 +139,16 @@ impl SerializedValue {
                 // LoopContinue is an internal marker and should never be persisted
                 SerializedValue::Unsupported("loop continue".to_string())
             },
+
+            Value::Iterator(_) => {
+                // Iterators cannot be serialized as they contain runtime state
+                SerializedValue::Unsupported("iterator".to_string())
+            },
+
+            Value::Builder(_) => {
+                // Builders cannot be serialized as they contain runtime state
+                SerializedValue::Unsupported("builder".to_string())
+            },
         }
     }
 

@@ -1,0 +1,3 @@
+let abs_value = (x) => if (x < 0) (-x) else x
+
+abs_value(-42) + abs_value(13)

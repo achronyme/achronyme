@@ -50,6 +50,14 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::Pow => {
+                let left = self.get_register(b)?;
+                let right = self.get_register(c)?;
+                let result = ValueOperations::pow_values(left, right)?;
+                self.set_register(a, result)?;
+                Ok(ExecutionResult::Continue)
+            }
+
             OpCode::Neg => {
                 let value = self.get_register(b)?;
                 let result = ValueOperations::neg_value(value)?;

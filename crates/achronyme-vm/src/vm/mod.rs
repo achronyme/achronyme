@@ -209,7 +209,7 @@ impl VM {
             }
 
             // Arithmetic operations
-            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Neg => {
+            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Pow | OpCode::Neg => {
                 self.execute_arithmetic(opcode, instruction)
             }
 

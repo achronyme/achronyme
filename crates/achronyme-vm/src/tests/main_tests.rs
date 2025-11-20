@@ -1746,3 +1746,80 @@ fn test_accumulator_pattern() {
     // Sum of 1 to 100 = 5050
     assert_eq!(result, Value::Number(5050.0));
 }
+
+// ============================================================================
+// POW Operator Tests
+// ============================================================================
+
+#[test]
+fn test_pow_basic() {
+    let result = execute("2 ^ 10").unwrap();
+    assert_eq!(result, Value::Number(1024.0));
+}
+
+#[test]
+fn test_pow_cube() {
+    let result = execute("3 ^ 3").unwrap();
+    assert_eq!(result, Value::Number(27.0));
+}
+
+#[test]
+fn test_pow_square() {
+    let result = execute("5 ^ 2").unwrap();
+    assert_eq!(result, Value::Number(25.0));
+}
+
+#[test]
+fn test_pow_fractional() {
+    // 10 ^ 0.5 = sqrt(10)
+    let result = execute("10 ^ 0.5").unwrap();
+    match result {
+        Value::Number(n) => {
+            assert!((n - 3.16227766).abs() < 0.0001, "Expected ~3.16227766, got {}", n);
+        }
+        _ => panic!("Expected Number"),
+    }
+}
+
+#[test]
+fn test_pow_negative_base() {
+    let result = execute("(-2) ^ 3").unwrap();
+    assert_eq!(result, Value::Number(-8.0));
+}
+
+#[test]
+fn test_pow_zero_exponent() {
+    let result = execute("5 ^ 0").unwrap();
+    assert_eq!(result, Value::Number(1.0));
+}
+
+#[test]
+fn test_pow_with_map() {
+    let source = r#"map((x) => x ^ 2, [1, 2, 3, 4, 5])"#;
+    let result = execute(source).unwrap();
+    match result {
+        Value::Vector(vec_rc) => {
+            let vec = vec_rc.borrow();
+            assert_eq!(vec.len(), 5);
+            assert_eq!(vec[0], Value::Number(1.0));
+            assert_eq!(vec[1], Value::Number(4.0));
+            assert_eq!(vec[2], Value::Number(9.0));
+            assert_eq!(vec[3], Value::Number(16.0));
+            assert_eq!(vec[4], Value::Number(25.0));
+        }
+        _ => panic!("Expected Vector"),
+    }
+}
+
+#[test]
+fn test_pow_in_expression() {
+    let result = execute("2 ^ 3 + 1").unwrap();
+    assert_eq!(result, Value::Number(9.0)); // 8 + 1
+}
+
+#[test]
+fn test_pow_chained() {
+    // Right associative: 2 ^ (3 ^ 2) = 2 ^ 9 = 512
+    let result = execute("2 ^ 3 ^ 2").unwrap();
+    assert_eq!(result, Value::Number(512.0));
+}

@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/achronyme-parser",
-    # DISABLED: Tree-walker evaluator being replaced by VM
+    # NOTE: achronyme-eval temporarily disabled due to API changes in Value type
     # "crates/achronyme-eval",
     "crates/achronyme-types",
     "crates/achronyme-linalg",
@@ -17,7 +17,7 @@ members = [
 ]
 default-members = [
     "crates/achronyme-parser",
-    # DISABLED: Tree-walker evaluator being replaced by VM
+    # NOTE: achronyme-eval temporarily disabled due to API changes in Value type
     # "crates/achronyme-eval",
     "crates/achronyme-types",
     "crates/achronyme-linalg",

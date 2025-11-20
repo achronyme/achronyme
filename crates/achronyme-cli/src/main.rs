@@ -1,4 +1,5 @@
-use achronyme_eval::Evaluator;
+// NOTE: Tree-walker evaluator temporarily disabled due to API changes
+// use achronyme_eval::Evaluator;
 use clap::{Parser, Subcommand};
 use rustyline::error::ReadlineError;
 use rustyline::{Editor, Config};
@@ -171,7 +172,8 @@ fn run_repl() {
         let _ = rl.load_history(path);
     }
 
-    let mut evaluator = Evaluator::new();
+    // NOTE: REPL currently uses VM backend only
+    // let mut evaluator = Evaluator::new();
     let mut line_number = 1;
     let mut input_buffer = String::new();
 
@@ -206,8 +208,8 @@ fn run_repl() {
                         }
                         "clear" => {
                             clear_screen();
-                            evaluator = Evaluator::new();
-                            println!("Screen cleared and environment reset");
+                            // evaluator = Evaluator::new();
+                            println!("Screen cleared");
                             input_buffer.clear();
                             continue;
                         }
@@ -229,8 +231,8 @@ fn run_repl() {
                     continue; // Wait for more input
                 }
 
-                // Expression is complete, evaluate it
-                match evaluate_expression(&mut evaluator, trimmed) {
+                // Expression is complete, evaluate it with VM
+                match evaluate_with_vm(trimmed) {
                     Ok(result) => println!("{}", result),
                     Err(err) => eprintln!("Error: {}", err),
                 }
@@ -355,39 +357,89 @@ fn run_file(filename: &str) {
         }
     };
 
-    let mut evaluator = Evaluator::new();
-
-    // Set the current file directory for relative imports
-    evaluator.set_current_file_dir(filename);
-
-    // Parse and evaluate the entire file using Pest
-    match evaluate_expression(&mut evaluator, &contents) {
-        Ok(result) => println!("{}", result),
+    // Parse
+    let ast = match achronyme_parser::parse(&contents) {
+        Ok(ast) => ast,
         Err(err) => {
-            eprintln!("Error: {}", err);
+            eprintln!("Parse error: {:?}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Compile
+    let mut compiler = achronyme_vm::Compiler::new(filename.to_string());
+    let module = match compiler.compile(&ast) {
+        Ok(module) => module,
+        Err(err) => {
+            eprintln!("Compile error: {}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Execute
+    let mut vm = achronyme_vm::VM::new();
+    match vm.execute(module) {
+        Ok(result) => println!("{}", format_vm_value(&result)),
+        Err(err) => {
+            eprintln!("Runtime error: {}", err);
             std::process::exit(1);
         }
     }
 }
 
 fn run_expression(expr: &str) {
-    let mut evaluator = Evaluator::new();
-
-    match evaluate_expression(&mut evaluator, expr) {
-        Ok(result) => println!("{}", result),
+    // Parse
+    let ast = match achronyme_parser::parse(expr) {
+        Ok(ast) => ast,
         Err(err) => {
-            eprintln!("Error: {}", err);
+            eprintln!("Parse error: {:?}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Compile
+    let mut compiler = achronyme_vm::Compiler::new("<eval>".to_string());
+    let module = match compiler.compile(&ast) {
+        Ok(module) => module,
+        Err(err) => {
+            eprintln!("Compile error: {}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Execute
+    let mut vm = achronyme_vm::VM::new();
+    match vm.execute(module) {
+        Ok(result) => println!("{}", format_vm_value(&result)),
+        Err(err) => {
+            eprintln!("Runtime error: {}", err);
             std::process::exit(1);
         }
     }
 }
 
-fn evaluate_expression(evaluator: &mut Evaluator, input: &str) -> Result<String, String> {
-    // Parse and evaluate using Pest
-    let result = evaluator.eval_str(input)?;
+fn evaluate_with_vm(input: &str) -> Result<String, String> {
+    // Parse
+    let ast = achronyme_parser::parse(input)
+        .map_err(|e| format!("Parse error: {:?}", e))?;
+
+    // Compile
+    let mut compiler = achronyme_vm::Compiler::new("<repl>".to_string());
+    let module = compiler.compile(&ast)
+        .map_err(|e| format!("Compile error: {}", e))?;
+
+    // Execute
+    let mut vm = achronyme_vm::VM::new();
+    let result = vm.execute(module)
+        .map_err(|e| format!("Runtime error: {}", e))?;
 
     // Format result
     Ok(format_value(&result))
+}
+
+fn format_vm_value(value: &achronyme_types::value::Value) -> String {
+    // VM values use the same type, so we can reuse format_value
+    format_value(value)
 }
 
 fn format_value(value: &achronyme_types::value::Value) -> String {
@@ -418,7 +470,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             }
         }
         Value::Vector(v) => {
-            let elements: Vec<String> = v.iter()
+            let elements: Vec<String> = v.borrow().iter()
                 .map(|val| format_value(val))
                 .collect();
             format!("[{}]", elements.join(", "))
@@ -486,7 +538,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             format!("{}", ct)
         }
         Value::Record(map) => {
-            let mut fields: Vec<String> = map.iter()
+            let mut fields: Vec<String> = map.borrow().iter()
                 .map(|(k, v)| format!("{}: {}", k, format_value(v)))
                 .collect();
             fields.sort(); // Sort for consistent output
@@ -519,13 +571,9 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             format_value(&rc.borrow())
         }
         Value::Null => "null".to_string(),
-        Value::Generator(gen_rc) => {
-            let state = gen_rc.borrow();
-            if state.done {
-                "<generator:exhausted>".to_string()
-            } else {
-                "<generator>".to_string()
-            }
+        Value::Generator(_) => {
+            // Generators are opaque type-erased handles, can't inspect internal state
+            "<generator>".to_string()
         }
         Value::GeneratorYield(_) => {
             // GeneratorYield is an internal marker that should never reach the REPL
@@ -542,6 +590,12 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
         }
         Value::LoopContinue => {
             "<internal:loop-continue>".to_string()
+        }
+        Value::Iterator(_) => {
+            "<iterator>".to_string()
+        }
+        Value::Builder(_) => {
+            "<builder>".to_string()
         }
     }
 }

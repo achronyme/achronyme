@@ -72,6 +72,17 @@ impl ValueOperations {
         }
     }
 
+    pub(crate) fn pow_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        match (left, right) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
+            _ => Err(VmError::TypeError {
+                operation: "exponentiation".to_string(),
+                expected: "Number".to_string(),
+                got: format!("{:?} ^ {:?}", left, right),
+            }),
+        }
+    }
+
     pub(crate) fn neg_value(value: &Value) -> Result<Value, VmError> {
         match value {
             Value::Number(n) => Ok(Value::Number(-n)),
