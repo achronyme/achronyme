@@ -13,6 +13,7 @@
 
 pub mod array_advanced;
 pub mod complex;
+pub mod hof;
 pub mod io;
 pub mod linalg;
 pub mod math;
@@ -198,6 +199,20 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("drop", array_advanced::vm_drop, 2);
     registry.register("unique", array_advanced::vm_unique, 1);
     registry.register("chunk", array_advanced::vm_chunk, 2);
+
+    // ========================================================================
+    // Higher-Order Functions (HOF)
+    // ========================================================================
+
+    registry.register("map", hof::vm_map, 2);
+    registry.register("filter", hof::vm_filter, 2);
+    registry.register("reduce", hof::vm_reduce, 3);
+    registry.register("pipe", hof::vm_pipe, -1); // variadic
+    registry.register("any", hof::vm_any, 2);
+    registry.register("all", hof::vm_all, 2);
+    registry.register("find", hof::vm_find, 2);
+    registry.register("findIndex", hof::vm_find_index, 2);
+    registry.register("count", hof::vm_count, 2);
 
     registry
 }

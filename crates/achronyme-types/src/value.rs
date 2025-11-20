@@ -78,6 +78,14 @@ pub enum Value {
     /// Signals that the loop should skip to the next iteration
     /// This variant should never be exposed to user code
     LoopContinue,
+    /// Iterator (opaque handle for HOF operations)
+    /// Uses Rc<dyn Any> for type erasure similar to Generator
+    /// In the VM, this contains VmIterator
+    Iterator(Rc<dyn Any>),
+    /// Builder (opaque handle for HOF operations)
+    /// Uses Rc<dyn Any> for type erasure similar to Generator
+    /// In the VM, this contains VmBuilder
+    Builder(Rc<dyn Any>),
 }
 
 
@@ -231,6 +239,20 @@ impl PartialEq for Value {
             }
             (Value::LoopBreak(a), Value::LoopBreak(b)) => a == b,
             (Value::LoopContinue, Value::LoopContinue) => true,
+            (Value::Iterator(a), Value::Iterator(b)) => {
+                // Iterators are compared by pointer equality (same instance)
+                std::ptr::eq(
+                    a.as_ref() as *const dyn Any,
+                    b.as_ref() as *const dyn Any
+                )
+            }
+            (Value::Builder(a), Value::Builder(b)) => {
+                // Builders are compared by pointer equality (same instance)
+                std::ptr::eq(
+                    a.as_ref() as *const dyn Any,
+                    b.as_ref() as *const dyn Any
+                )
+            }
             _ => false,
         }
     }

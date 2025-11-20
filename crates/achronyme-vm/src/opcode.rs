@@ -205,6 +205,18 @@ pub enum OpCode {
     /// Call built-in: R[A] = builtin[Bx](R[B], ..., R[B+C])
     CallBuiltin = 170,
 
+    // ===== Higher-Order Functions (HOF) =====
+    /// Initialize iterator: R[A] = Iterator(R[B])
+    IterInit = 200,
+    /// Get next from iterator: R[A] = R[B].next(), jump if exhausted
+    IterNext = 201,
+    /// Initialize builder: R[A] = Builder(hint: R[B])
+    BuildInit = 202,
+    /// Push to builder: R[A].push(R[B])
+    BuildPush = 203,
+    /// Finalize builder: R[A] = R[B].finalize()
+    BuildEnd = 204,
+
     // ===== Type Operations =====
     /// Type check: R[A] = check_type(R[B], K[C])
     TypeCheck = 180,
@@ -311,6 +323,11 @@ impl OpCode {
             170 => Some(OpCode::CallBuiltin),
             180 => Some(OpCode::TypeCheck),
             181 => Some(OpCode::TypeAssert),
+            200 => Some(OpCode::IterInit),
+            201 => Some(OpCode::IterNext),
+            202 => Some(OpCode::BuildInit),
+            203 => Some(OpCode::BuildPush),
+            204 => Some(OpCode::BuildEnd),
             190 => Some(OpCode::StrConcat),
             191 => Some(OpCode::StrInterp),
             250 => Some(OpCode::DebugPrint),
@@ -406,6 +423,11 @@ impl OpCode {
             OpCode::RangeEx => "RANGE_EX",
             OpCode::RangeIn => "RANGE_IN",
             OpCode::CallBuiltin => "CALL_BUILTIN",
+            OpCode::IterInit => "ITER_INIT",
+            OpCode::IterNext => "ITER_NEXT",
+            OpCode::BuildInit => "BUILD_INIT",
+            OpCode::BuildPush => "BUILD_PUSH",
+            OpCode::BuildEnd => "BUILD_END",
             OpCode::TypeCheck => "TYPE_CHECK",
             OpCode::TypeAssert => "TYPE_ASSERT",
             OpCode::StrConcat => "STR_CONCAT",
@@ -483,7 +505,8 @@ mod tests {
     fn test_opcode_conversion() {
         assert_eq!(OpCode::Add.as_u8(), 10);
         assert_eq!(OpCode::from_u8(10), Some(OpCode::Add));
-        assert_eq!(OpCode::from_u8(200), None);
+        assert_eq!(OpCode::from_u8(200), Some(OpCode::IterInit)); // 200 is now assigned
+        assert_eq!(OpCode::from_u8(205), None); // 205 is not assigned
     }
 
     #[test]

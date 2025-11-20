@@ -13,12 +13,14 @@ use std::cell::RefCell;
 mod execution;
 mod frame;
 mod generator;
+mod iterator;
 mod ops;
 mod result;
 
 // Re-export public types
 pub use frame::{CallFrame, RegisterWindow, SuspendedFrame, MAX_REGISTERS};
 pub use generator::{VmGeneratorRef, VmGeneratorState};
+pub use iterator::{VmIterator, VmBuilder};
 
 // Internal imports
 use frame::CallFrame as InternalCallFrame;
@@ -258,6 +260,13 @@ impl VM {
                 self.execute_call_builtin(instruction)
             }
 
+            // Higher-Order Functions
+            OpCode::IterInit => self.execute_iter_init(instruction),
+            OpCode::IterNext => self.execute_iter_next(instruction),
+            OpCode::BuildInit => self.execute_build_init(instruction),
+            OpCode::BuildPush => self.execute_build_push(instruction),
+            OpCode::BuildEnd => self.execute_build_end(instruction),
+
             // Not yet implemented
             _ => Err(VmError::Runtime(format!(
                 "Opcode {} not yet implemented",
@@ -304,6 +313,120 @@ impl VM {
             .constants
             .get_string(idx)
             .ok_or(VmError::InvalidConstant(idx))
+    }
+
+    /// Call a Value as a function with given arguments
+    ///
+    /// This is a helper method for HOF operations that need to call user-provided
+    /// functions. It handles both VM closures and potentially other callable types.
+    ///
+    /// # Arguments
+    /// * `func` - The function value to call
+    /// * `args` - Slice of argument values
+    ///
+    /// # Returns
+    /// * `Ok(Value)` - The return value from the function
+    /// * `Err(VmError)` - If the call fails
+    pub fn call_value(&mut self, func: &Value, args: &[Value]) -> Result<Value, VmError> {
+        use crate::bytecode::Closure;
+        use achronyme_types::function::Function;
+
+        match func {
+            Value::Function(Function::VmClosure(closure_any)) => {
+                // Downcast from Rc<dyn Any> to Closure
+                let closure = closure_any
+                    .downcast_ref::<Closure>()
+                    .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?;
+
+                // Create new CallFrame (no return register needed for internal calls)
+                let mut new_frame = CallFrame::new(closure.prototype.clone(), None);
+
+                // Copy arguments to new frame's registers
+                for (i, arg) in args.iter().enumerate() {
+                    if i >= 256 {
+                        return Err(VmError::Runtime("Too many arguments (max 256)".into()));
+                    }
+                    new_frame.registers.set(i as u8, arg.clone())?;
+                }
+
+                // Set upvalues
+                new_frame.upvalues = closure.upvalues.clone();
+
+                // Set register 255 to the closure itself for recursion
+                new_frame.registers.set(
+                    255,
+                    Value::Function(Function::VmClosure(
+                        Rc::new(closure.clone()) as Rc<dyn std::any::Any>
+                    )),
+                )?;
+
+                // Push frame
+                self.frames.push(new_frame);
+
+                // Execute until this frame returns
+                loop {
+                    // Check if we're still in the function we called
+                    let frame_depth = self.frames.len();
+
+                    // Get current frame
+                    let frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+
+                    // Fetch instruction
+                    let instruction = match frame.fetch() {
+                        Some(inst) => inst,
+                        None => {
+                            // End of function, return null
+                            if self.frames.len() == frame_depth {
+                                self.frames.pop();
+                                return Ok(Value::Null);
+                            }
+                            break;
+                        }
+                    };
+
+                    // Decode and dispatch
+                    let opcode_byte = decode_opcode(instruction);
+                    let opcode = OpCode::from_u8(opcode_byte)
+                        .ok_or(VmError::InvalidOpcode(opcode_byte))?;
+
+                    // Execute instruction
+                    match self.execute_instruction(opcode, instruction)? {
+                        ExecutionResult::Continue => {
+                            // If we've returned from the function we called, extract the result
+                            if self.frames.len() < frame_depth {
+                                // The function returned, but we didn't capture the return value
+                                // For HOF calls, we need to handle returns differently
+                                return Ok(Value::Null);
+                            }
+                            continue;
+                        }
+                        ExecutionResult::Return(value) => {
+                            // Pop the frame we created
+                            if self.frames.len() >= frame_depth {
+                                self.frames.pop();
+                            }
+                            return Ok(value);
+                        }
+                        ExecutionResult::Exception(error) => {
+                            // Propagate exception
+                            return Err(VmError::UncaughtException(error));
+                        }
+                        ExecutionResult::Yield(_) => {
+                            return Err(VmError::Runtime(
+                                "Cannot yield from function called via call_value".into(),
+                            ));
+                        }
+                    }
+                }
+
+                Ok(Value::Null)
+            }
+            _ => Err(VmError::TypeError {
+                operation: "function call".to_string(),
+                expected: "Function or Closure".to_string(),
+                got: format!("{:?}", func),
+            }),
+        }
     }
 
     /// Perform return from function

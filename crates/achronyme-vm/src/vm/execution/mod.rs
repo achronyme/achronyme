@@ -7,6 +7,7 @@ mod control;
 mod exceptions;
 mod functions;
 mod generators;
+mod hof;
 mod iterators;
 mod matching;
 mod records;

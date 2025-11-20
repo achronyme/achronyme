@@ -42,6 +42,8 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Error { .. } => "Error",
         Value::LoopBreak(_) => "LoopBreak",
         Value::LoopContinue => "LoopContinue",
+        Value::Iterator(_) => "Iterator",
+        Value::Builder(_) => "Builder",
     };
 
     Ok(Value::String(type_name.to_string()))
@@ -225,6 +227,8 @@ fn format_value(value: &Value) -> String {
         Value::Error { .. } => "<error>".to_string(),
         Value::LoopBreak(_) => "<loop-break>".to_string(),
         Value::LoopContinue => "<loop-continue>".to_string(),
+        Value::Iterator(_) => "<iterator>".to_string(),
+        Value::Builder(_) => "<builder>".to_string(),
     }
 }
 

@@ -96,6 +96,8 @@ impl VM {
             Value::LoopBreak(_) => "LoopBreak",
             Value::MutableRef(_) => "MutableRef",
             Value::LoopContinue => "LoopContinue",
+            Value::Iterator(_) => "Iterator",
+            Value::Builder(_) => "Builder",
         }
     }
 }
