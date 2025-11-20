@@ -33,6 +33,7 @@ impl Compiler {
             loops: Vec::new(),
             parent: None,
             builtins: self.builtins.clone(),
+            type_registry: self.type_registry.clone(),  // Share the type registry
         };
 
         // Mark the function as a generator

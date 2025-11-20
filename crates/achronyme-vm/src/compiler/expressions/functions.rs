@@ -25,6 +25,7 @@ impl Compiler {
             loops: Vec::new(),
             parent: None,  // We don't need parent for simple compilation
             builtins: self.builtins.clone(),  // Share the built-ins registry
+            type_registry: self.type_registry.clone(),  // Share the type registry
         };
 
         // Set parameter count
@@ -411,12 +412,117 @@ impl Compiler {
                     self.collect_variable_refs(arg, vars)?;
                 }
             }
+            AstNode::FieldAccess { record, .. } => {
+                self.collect_variable_refs(record, vars)?;
+            }
+            AstNode::IndexAccess { object, indices } => {
+                self.collect_variable_refs(object, vars)?;
+                for index_arg in indices {
+                    match index_arg {
+                        achronyme_parser::ast::IndexArg::Single(node) => {
+                            self.collect_variable_refs(node, vars)?;
+                        }
+                        achronyme_parser::ast::IndexArg::Range { start, end } => {
+                            if let Some(start_node) = start {
+                                self.collect_variable_refs(start_node, vars)?;
+                            }
+                            if let Some(end_node) = end {
+                                self.collect_variable_refs(end_node, vars)?;
+                            }
+                        }
+                    }
+                }
+            }
+            AstNode::RecordLiteral(fields) => {
+                use achronyme_parser::ast::RecordFieldOrSpread;
+                for field in fields {
+                    match field {
+                        RecordFieldOrSpread::Field { value, .. } |
+                        RecordFieldOrSpread::MutableField { value, .. } => {
+                            self.collect_variable_refs(value, vars)?;
+                        }
+                        RecordFieldOrSpread::Spread(expr) => {
+                            self.collect_variable_refs(expr, vars)?;
+                        }
+                    }
+                }
+            }
+            AstNode::ArrayLiteral(elements) => {
+                use achronyme_parser::ast::ArrayElement;
+                for element in elements {
+                    match element {
+                        ArrayElement::Single(node) => {
+                            self.collect_variable_refs(node, vars)?;
+                        }
+                        ArrayElement::Spread(node) => {
+                            self.collect_variable_refs(node, vars)?;
+                        }
+                    }
+                }
+            }
+            AstNode::Return { value } => {
+                self.collect_variable_refs(value, vars)?;
+            }
+            AstNode::Yield { value } => {
+                self.collect_variable_refs(value, vars)?;
+            }
+            AstNode::TryCatch { try_block, catch_block, .. } => {
+                self.collect_variable_refs(try_block, vars)?;
+                self.collect_variable_refs(catch_block, vars)?;
+            }
+            AstNode::Throw { value } => {
+                self.collect_variable_refs(value, vars)?;
+            }
+            AstNode::Match { value, arms } => {
+                self.collect_variable_refs(value, vars)?;
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.collect_variable_refs(guard, vars)?;
+                    }
+                    self.collect_variable_refs(&arm.body, vars)?;
+                }
+            }
+            AstNode::ForInLoop { iterable, body, .. } => {
+                self.collect_variable_refs(iterable, vars)?;
+                self.collect_variable_refs(body, vars)?;
+            }
+            AstNode::RangeExpr { start, end, .. } => {
+                self.collect_variable_refs(start, vars)?;
+                self.collect_variable_refs(end, vars)?;
+            }
+            AstNode::InterpolatedString { parts } => {
+                use achronyme_parser::ast::StringPart;
+                for part in parts {
+                    match part {
+                        StringPart::Literal(_) => {}
+                        StringPart::Expression(expr) => {
+                            self.collect_variable_refs(expr, vars)?;
+                        }
+                    }
+                }
+            }
+            AstNode::Break { value } => {
+                if let Some(val) = value {
+                    self.collect_variable_refs(val, vars)?;
+                }
+            }
+            AstNode::Continue => {}
+            AstNode::GenerateBlock { statements } => {
+                for stmt in statements {
+                    self.collect_variable_refs(stmt, vars)?;
+                }
+            }
+            AstNode::LetDestructuring { initializer, .. } |
+            AstNode::MutableDestructuring { initializer, .. } => {
+                self.collect_variable_refs(initializer, vars)?;
+            }
+            AstNode::ComplexLiteral { .. } => {}
             // Literals don't reference variables
             AstNode::Number(_)
             | AstNode::Boolean(_)
             | AstNode::Null
             | AstNode::StringLiteral(_) => {}
-            // Skip other node types for now
+            // Skip other node types
             _ => {}
         }
         Ok(())

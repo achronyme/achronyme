@@ -217,3 +217,62 @@ fn test_logical_with_comparisons() {
     assert_eq!(result, Value::Boolean(false));
 }
 
+// ============================================================================
+// Interpolated Strings
+// ============================================================================
+
+#[test]
+fn test_interpolated_string_with_number() {
+    let result = execute(r#"let x = 42; 'Value: ${x}'"#).unwrap();
+    assert_eq!(result, Value::String("Value: 42".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_with_expression() {
+    let result = execute(r#"'Result: ${2 + 3}'"#).unwrap();
+    assert_eq!(result, Value::String("Result: 5".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_multiple_parts() {
+    let result = execute(r#"let x = 10; let y = 20; 'x=${x}, y=${y}, sum=${x+y}'"#).unwrap();
+    assert_eq!(result, Value::String("x=10, y=20, sum=30".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_with_string() {
+    let result = execute(r#"let name = "Alice"; 'Hello, ${name}!'"#).unwrap();
+    assert_eq!(result, Value::String("Hello, Alice!".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_only_literal() {
+    let result = execute(r#"'Just a plain string'"#).unwrap();
+    assert_eq!(result, Value::String("Just a plain string".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_only_expression() {
+    let result = execute(r#"'${42}'"#).unwrap();
+    assert_eq!(result, Value::String("42".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_with_boolean() {
+    let result = execute(r#"'Boolean: ${true}'"#).unwrap();
+    assert_eq!(result, Value::String("Boolean: true".to_string()));
+}
+
+#[test]
+fn test_interpolated_string_in_loop() {
+    let source = r#"
+        mut result = ""
+        for(x in [1,2,3]) {
+            result = result + '-${x}'
+        }
+        result
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::String("-1-2-3".to_string()));
+}
+

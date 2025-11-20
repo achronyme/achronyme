@@ -168,6 +168,24 @@ impl Compiler {
                 self.compile_yield(value)
             }
 
+            // Return statement
+            AstNode::Return { value } => {
+                let value_res = self.compile_expression(value)?;
+                self.emit(encode_abc(OpCode::Return.as_u8(), value_res.reg(), 0, 0));
+                if value_res.is_temp() {
+                    self.registers.free(value_res.reg());
+                }
+                Ok(())
+            }
+
+            // Type alias - register in type registry (no code generation)
+            AstNode::TypeAlias { name, type_definition } => {
+                // Store the type alias in the compiler's type registry
+                self.type_registry.insert(name.clone(), type_definition.clone());
+                // Type aliases don't generate any bytecode
+                Ok(())
+            }
+
             // Expression statement (evaluate and discard result)
             _ => {
                 let res = self.compile_expression(node)?;

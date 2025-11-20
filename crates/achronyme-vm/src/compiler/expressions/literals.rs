@@ -5,7 +5,7 @@ use crate::compiler::Compiler;
 use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
-use achronyme_parser::ast::{AstNode, ArrayElement, RecordFieldOrSpread};
+use achronyme_parser::ast::{AstNode, ArrayElement, RecordFieldOrSpread, StringPart};
 use achronyme_types::complex::Complex;
 
 impl Compiler {
@@ -221,5 +221,105 @@ impl Compiler {
         }
 
         Ok(RegResult::temp(vec_reg))
+    }
+
+    /// Compile interpolated string expression
+    /// Converts `'Hello ${name}!'` into string concatenation
+    pub(crate) fn compile_interpolated_string(
+        &mut self,
+        parts: &[StringPart],
+    ) -> Result<RegResult, CompileError> {
+        // For empty interpolated string, return empty string
+        if parts.is_empty() {
+            let reg = self.registers.allocate()?;
+            let const_idx = self.add_constant(Value::String(String::new()))?;
+            self.emit_load_const(reg, const_idx);
+            return Ok(RegResult::temp(reg));
+        }
+
+        // Compile first part to initialize the result
+        let mut result_reg = None;
+
+        for part in parts {
+            match part {
+                StringPart::Literal(text) => {
+                    // Load literal string as constant
+                    let str_reg = self.registers.allocate()?;
+                    let const_idx = self.add_constant(Value::String(text.clone()))?;
+                    self.emit_load_const(str_reg, const_idx);
+
+                    if let Some(prev_reg) = result_reg {
+                        // Concatenate with previous result using Add opcode
+                        let new_reg = self.registers.allocate()?;
+                        self.emit(encode_abc(
+                            OpCode::Add.as_u8(),
+                            new_reg,
+                            prev_reg,
+                            str_reg,
+                        ));
+
+                        // Free old registers
+                        self.registers.free(prev_reg);
+                        self.registers.free(str_reg);
+
+                        result_reg = Some(new_reg);
+                    } else {
+                        // First part
+                        result_reg = Some(str_reg);
+                    }
+                }
+                StringPart::Expression(expr) => {
+                    // Compile the expression
+                    let expr_res = self.compile_expression(expr)?;
+
+                    // Convert value to string by calling to_string builtin
+                    // For now, we'll use a simplified approach: assume values can be concatenated with strings
+                    // The VM's Add opcode should handle this conversion
+
+                    if let Some(prev_reg) = result_reg {
+                        // Concatenate expression result with previous string
+                        let new_reg = self.registers.allocate()?;
+                        self.emit(encode_abc(
+                            OpCode::Add.as_u8(),
+                            new_reg,
+                            prev_reg,
+                            expr_res.reg(),
+                        ));
+
+                        // Free old registers
+                        self.registers.free(prev_reg);
+                        if expr_res.is_temp() {
+                            self.registers.free(expr_res.reg());
+                        }
+
+                        result_reg = Some(new_reg);
+                    } else {
+                        // First part is an expression - convert to string first
+                        // We need to convert this value to string
+                        // For now, create an empty string and concatenate
+                        let empty_str_reg = self.registers.allocate()?;
+                        let const_idx = self.add_constant(Value::String(String::new()))?;
+                        self.emit_load_const(empty_str_reg, const_idx);
+
+                        let new_reg = self.registers.allocate()?;
+                        self.emit(encode_abc(
+                            OpCode::Add.as_u8(),
+                            new_reg,
+                            empty_str_reg,
+                            expr_res.reg(),
+                        ));
+
+                        self.registers.free(empty_str_reg);
+                        if expr_res.is_temp() {
+                            self.registers.free(expr_res.reg());
+                        }
+
+                        result_reg = Some(new_reg);
+                    }
+                }
+            }
+        }
+
+        Ok(RegResult::temp(result_reg.unwrap()))
     }
 }

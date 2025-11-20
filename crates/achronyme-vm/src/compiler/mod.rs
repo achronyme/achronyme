@@ -6,6 +6,8 @@ use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use achronyme_parser::ast::AstNode;
+use achronyme_parser::type_annotation::TypeAnnotation;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 // Module structure
@@ -41,6 +43,9 @@ pub struct Compiler {
 
     /// Built-in function registry (shared across all compilers)
     pub(crate) builtins: Rc<BuiltinRegistry>,
+
+    /// Type registry for storing type aliases
+    pub(crate) type_registry: HashMap<String, TypeAnnotation>,
 }
 
 impl Compiler {
@@ -56,6 +61,7 @@ impl Compiler {
             loops: Vec::new(),
             parent: None,
             builtins: Rc::new(crate::builtins::create_builtin_registry()),
+            type_registry: HashMap::new(),
         }
     }
 
@@ -74,6 +80,8 @@ impl Compiler {
                     | AstNode::Assignment { .. }
                     | AstNode::Import { .. }
                     | AstNode::Export { .. }
+                    | AstNode::TypeAlias { .. }
+                    | AstNode::Return { .. }
             );
 
             if is_expression {

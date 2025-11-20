@@ -34,6 +34,15 @@ impl ValueOperations {
                 use achronyme_types::complex::Complex;
                 Ok(Value::Complex(*a + Complex::new(*b, 0.0)))
             }
+            // String concatenation with automatic conversion
+            (Value::String(s), other) => {
+                let other_str = Self::value_to_string(other);
+                Ok(Value::String(format!("{}{}", s, other_str)))
+            }
+            (other, Value::String(s)) => {
+                let other_str = Self::value_to_string(other);
+                Ok(Value::String(format!("{}{}", other_str, s)))
+            }
             _ => Err(VmError::TypeError {
                 operation: "addition".to_string(),
                 expected: "Number, Complex, or String".to_string(),
@@ -195,5 +204,59 @@ impl ValueOperations {
 
     pub(crate) fn not_value(value: &Value) -> Result<Value, VmError> {
         Ok(Value::Boolean(!Self::is_truthy(value)))
+    }
+
+    /// Convert a value to its string representation (for interpolated strings)
+    pub(crate) fn value_to_string(value: &Value) -> String {
+        match value {
+            Value::Number(n) => {
+                // Format number without unnecessary trailing zeros
+                if n.fract() == 0.0 && n.is_finite() {
+                    format!("{}", *n as i64)
+                } else {
+                    format!("{}", n)
+                }
+            }
+            Value::Boolean(b) => b.to_string(),
+            Value::String(s) => s.clone(),
+            Value::Null => "null".to_string(),
+            Value::Complex(c) => {
+                let re = c.re;
+                let im = c.im;
+                if re == 0.0 {
+                    format!("{}i", im)
+                } else if im >= 0.0 {
+                    format!("{}+{}i", re, im)
+                } else {
+                    format!("{}{}i", re, im)
+                }
+            }
+            Value::Vector(vec) => {
+                let vec_borrow = vec.borrow();
+                let elements: Vec<String> = vec_borrow
+                    .iter()
+                    .map(|v| Self::value_to_string(v))
+                    .collect();
+                format!("[{}]", elements.join(", "))
+            }
+            Value::Record(map) => {
+                let map_borrow = map.borrow();
+                let fields: Vec<String> = map_borrow
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, Self::value_to_string(v)))
+                    .collect();
+                format!("{{{}}}", fields.join(", "))
+            }
+            Value::Function(_) => "[Function]".to_string(),
+            Value::Generator(_) => "[Generator]".to_string(),
+            Value::Error { message, kind, .. } => {
+                if let Some(k) = kind {
+                    format!("Error({}): {}", k, message)
+                } else {
+                    format!("Error: {}", message)
+                }
+            }
+            _ => format!("{:?}", value),
+        }
     }
 }

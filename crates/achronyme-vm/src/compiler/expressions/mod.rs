@@ -122,6 +122,11 @@ impl Compiler {
                 self.compile_range(start, end, *inclusive)
             }
 
+            // Interpolated strings
+            AstNode::InterpolatedString { parts } => {
+                self.compile_interpolated_string(parts)
+            }
+
             // Sequences
             AstNode::Break { value } => {
                 self.compile_break(value.as_deref())
@@ -146,6 +151,8 @@ impl Compiler {
                             | AstNode::Assignment { .. }
                             | AstNode::Import { .. }
                             | AstNode::Export { .. }
+                            | AstNode::TypeAlias { .. }
+                            | AstNode::Return { .. }
                     );
 
                     if is_expression {
