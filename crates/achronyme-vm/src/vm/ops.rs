@@ -85,11 +85,11 @@ impl ValueOperations {
     pub(crate) fn div_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => {
-                if *b == 0.0 {
-                    Err(VmError::DivisionByZero)
-                } else {
-                    Ok(Value::Number(a / b))
-                }
+                // IEEE 754 semantics: division by zero produces Infinity or NaN
+                // a / 0 = Infinity (if a > 0)
+                // a / 0 = -Infinity (if a < 0)
+                // 0 / 0 = NaN
+                Ok(Value::Number(a / b))
             }
             (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a / *b)),
             (Value::Number(a), Value::Complex(b)) => {
@@ -98,11 +98,8 @@ impl ValueOperations {
             }
             (Value::Complex(a), Value::Number(b)) => {
                 use achronyme_types::complex::Complex;
-                if *b == 0.0 {
-                    Err(VmError::DivisionByZero)
-                } else {
-                    Ok(Value::Complex(*a / Complex::new(*b, 0.0)))
-                }
+                // IEEE 754: division by zero is allowed, produces Infinity/NaN components
+                Ok(Value::Complex(*a / Complex::new(*b, 0.0)))
             }
             _ => Err(VmError::TypeError {
                 operation: "division".to_string(),

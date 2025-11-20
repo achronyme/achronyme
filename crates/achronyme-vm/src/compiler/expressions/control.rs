@@ -441,34 +441,14 @@ impl Compiler {
         let loop_start = self.current_position();
 
         // Call .next() on the iterator
-        // This uses the existing sugar: FieldAccess + CallExpression -> ResumeGen
-        // Build AST nodes for: iter.next()
-        let next_call = AstNode::CallExpression {
-            callee: Box::new(AstNode::FieldAccess {
-                record: Box::new(AstNode::VariableRef("$iter".to_string())),
-                field: "next".to_string(),
-            }),
-            args: vec![],
-        };
-
-        // Create a temporary symbol for the iterator so .next() can reference it
-        let saved_iter = if iter_res.is_temp() {
-            // If it's temporary, we need to keep it alive
-            None
-        } else {
-            // It's already in a register, save the binding
-            self.symbols.get("$iter").ok()
-        };
-
-        // Define $iter temporarily
-        if saved_iter.is_none() {
-            // Only define if not already defined
-            self.symbols.define("$iter".to_string(), iter_reg)?;
-        }
-
-        // Compile the .next() call
-        let result_res = self.compile_expression(&next_call)?;
-        let result_reg = result_res.reg();
+        // Directly emit ResumeGen bytecode: R[result] = iter.next()
+        let result_reg = self.registers.allocate()?;
+        self.emit(encode_abc(
+            OpCode::ResumeGen.as_u8(),
+            result_reg,
+            iter_reg,
+            0,
+        ));
 
         // Extract the 'done' field: $result.done
         let done_reg = self.registers.allocate()?;

@@ -143,3 +143,86 @@ fn test_range_with_reduce() {
     let result = execute("reduce((acc, x) => acc + x, 0, 1..=10)").unwrap();
     assert_eq!(result, Value::Number(55.0));
 }
+
+// ===== IEEE 754 Special Values Tests =====
+
+#[test]
+fn test_ieee754_division_by_zero_positive() {
+    let result = execute("1 / 0").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_infinite() && n.is_sign_positive()),
+        _ => panic!("Expected Number(Infinity)"),
+    }
+}
+
+#[test]
+fn test_ieee754_division_by_zero_negative() {
+    let result = execute("(-1) / 0").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_infinite() && n.is_sign_negative()),
+        _ => panic!("Expected Number(-Infinity)"),
+    }
+}
+
+#[test]
+fn test_ieee754_zero_divided_by_zero() {
+    let result = execute("0 / 0").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_nan()),
+        _ => panic!("Expected Number(NaN)"),
+    }
+}
+
+#[test]
+fn test_ieee754_infinity_plus_one() {
+    let result = execute("Infinity + 1").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_infinite() && n.is_sign_positive()),
+        _ => panic!("Expected Number(Infinity)"),
+    }
+}
+
+#[test]
+fn test_ieee754_infinity_minus_infinity() {
+    let result = execute("Infinity - Infinity").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_nan()),
+        _ => panic!("Expected Number(NaN)"),
+    }
+}
+
+#[test]
+fn test_ieee754_infinity_times_zero() {
+    let result = execute("Infinity * 0").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_nan()),
+        _ => panic!("Expected Number(NaN)"),
+    }
+}
+
+#[test]
+fn test_ieee754_infinity_divided_by_infinity() {
+    let result = execute("Infinity / Infinity").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_nan()),
+        _ => panic!("Expected Number(NaN)"),
+    }
+}
+
+#[test]
+fn test_ieee754_nan_propagation() {
+    let result = execute("NaN + 42").unwrap();
+    match result {
+        Value::Number(n) => assert!(n.is_nan()),
+        _ => panic!("Expected Number(NaN)"),
+    }
+}
+
+#[test]
+fn test_ieee754_finite_divided_by_infinity() {
+    let result = execute("42 / Infinity").unwrap();
+    match result {
+        Value::Number(n) => assert_eq!(n, 0.0),
+        _ => panic!("Expected Number(0)"),
+    }
+}
