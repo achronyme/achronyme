@@ -1,0 +1,4 @@
+// Muy simple - solo exportar un número
+let x = 42
+
+export { x }

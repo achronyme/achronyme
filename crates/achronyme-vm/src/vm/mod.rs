@@ -80,16 +80,6 @@ impl VM {
         self.run()
     }
 
-    /// Get a register value from the current/main frame (for module exports)
-    /// This is used during module compilation to extract exported values
-    pub(crate) fn get_main_register(&self, idx: u8) -> Result<Value, VmError> {
-        if let Some(frame) = self.frames.first() {
-            frame.registers.get(idx).cloned()
-        } else {
-            Err(VmError::InvalidRegister(idx))
-        }
-    }
-
     /// Main execution loop
     fn run(&mut self) -> Result<Value, VmError> {
         loop {
@@ -225,8 +215,7 @@ impl VM {
         match opcode {
             // Variable and constant operations
             OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadTrue | OpCode::LoadFalse
-            | OpCode::LoadImmI8 | OpCode::Move | OpCode::GetUpvalue | OpCode::SetUpvalue
-            | OpCode::GetGlobal | OpCode::SetGlobal => {
+            | OpCode::LoadImmI8 | OpCode::Move | OpCode::GetUpvalue | OpCode::SetUpvalue => {
                 self.execute_variables(opcode, instruction)
             }
 

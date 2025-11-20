@@ -17,6 +17,7 @@ pub mod hof;
 pub mod io;
 pub mod linalg;
 pub mod math;
+pub mod module_system;
 pub mod records;
 pub mod registry;
 pub mod statistics;
@@ -213,6 +214,12 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("find", hof::vm_find, 2);
     registry.register("findIndex", hof::vm_find_index, 2);
     registry.register("count", hof::vm_count, 2);
+
+    // ========================================================================
+    // Module System
+    // ========================================================================
+
+    registry.register("import", module_system::vm_import, 1);
 
     registry
 }

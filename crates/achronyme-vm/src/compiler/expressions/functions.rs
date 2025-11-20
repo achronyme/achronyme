@@ -28,6 +28,7 @@ impl Compiler {
             type_registry: self.type_registry.clone(),  // Share the type registry
             exported_values: std::collections::HashMap::new(),
             exported_types: std::collections::HashMap::new(),
+            exports_reg: None,  // Lambdas don't have exports
         };
 
         // Set parameter count

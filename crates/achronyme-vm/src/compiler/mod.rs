@@ -52,6 +52,9 @@ pub struct Compiler {
 
     /// Exported types (name -> type definition)
     pub(crate) exported_types: HashMap<String, TypeAnnotation>,
+
+    /// Register holding the exports Record (only for modules with exports)
+    pub(crate) exports_reg: Option<u8>,
 }
 
 impl Compiler {
@@ -70,11 +73,22 @@ impl Compiler {
             type_registry: HashMap::new(),
             exported_values: HashMap::new(),
             exported_types: HashMap::new(),
+            exports_reg: None,
         }
     }
 
     /// Compile AST nodes to bytecode module
     pub fn compile(&mut self, nodes: &[AstNode]) -> Result<BytecodeModule, CompileError> {
+        // Check if this is a module with exports by scanning for Export nodes recursively
+        let has_exports = Self::contains_export(nodes);
+
+        // If this is a module with exports, create the exports Record
+        if has_exports {
+            let exports_reg = self.registers.allocate()?;
+            self.emit(encode_abc(OpCode::NewRecord.as_u8(), exports_reg, 0, 0));
+            self.exports_reg = Some(exports_reg);
+        }
+
         // Compile all nodes (usually just one Sequence node)
         let mut last_res: Option<RegResult> = None;
         for node in nodes {
@@ -101,10 +115,15 @@ impl Compiler {
             }
         }
 
-        // Emit return with last value or null
-        if let Some(res) = last_res {
+        // Emit return
+        if let Some(exports_reg) = self.exports_reg {
+            // Module with exports: return the exports Record
+            self.emit(encode_abc(OpCode::Return.as_u8(), exports_reg, 0, 0));
+        } else if let Some(res) = last_res {
+            // Regular script: return last value
             self.emit(encode_abc(OpCode::Return.as_u8(), res.reg(), 0, 0));
         } else {
+            // No value to return: return null
             self.emit_return_null();
         }
 
@@ -255,6 +274,21 @@ impl Compiler {
 
         let patched = encode_abx(opcode, a, offset as u16);
         self.function.patch_instruction(pos, patched);
+    }
+
+    /// Check if AST contains any Export nodes (recursively)
+    fn contains_export(nodes: &[AstNode]) -> bool {
+        nodes.iter().any(|node| Self::node_contains_export(node))
+    }
+
+    /// Recursively check if a node contains Export
+    fn node_contains_export(node: &AstNode) -> bool {
+        match node {
+            AstNode::Export { .. } => true,
+            AstNode::Sequence { statements } => Self::contains_export(statements),
+            AstNode::DoBlock { statements } => Self::contains_export(statements),
+            _ => false,
+        }
     }
 
     /// Convert type annotation to string for type checking

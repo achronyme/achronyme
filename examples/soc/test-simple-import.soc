@@ -1,0 +1,5 @@
+// Very simple import test
+import { add } from "examples/soc/test-import-lib"
+
+let result1 = add(5, 3)
+result1

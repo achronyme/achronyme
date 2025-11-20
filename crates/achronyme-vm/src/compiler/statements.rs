@@ -3,7 +3,9 @@
 use crate::compiler::Compiler;
 use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
+use crate::value::Value;
 use achronyme_parser::ast::AstNode;
+use std::rc::Rc;
 
 impl Compiler {
     /// Compile a statement
@@ -188,6 +190,11 @@ impl Compiler {
 
             // Export - mark values/types for export
             AstNode::Export { items } => {
+                // Check if we're in a module (has exports_reg)
+                let exports_reg = self.exports_reg.ok_or_else(|| {
+                    CompileError::Error("Export statements can only be used in modules".to_string())
+                })?;
+
                 for item in items {
                     let name = &item.name;
                     let export_name = if let Some(alias) = &item.alias {
@@ -197,19 +204,22 @@ impl Compiler {
                     };
 
                     // Check if it's a value in the symbol table
-                    if let Ok(reg) = self.symbols.get(name) {
-                        // Export the value: store it as a global with a special prefix
-                        // This ensures the value is preserved after module execution
-                        let global_name = format!("__export__{}", export_name);
-                        let global_idx = self.add_string(global_name)?;
+                    if let Ok(value_reg) = self.symbols.get(name) {
+                        // Add field name to constant pool
+                        let field_idx = self.add_string(export_name.clone())?;
 
-                        // Emit SET_GLOBAL instruction to save the value
-                        self.emit(encode_abx(OpCode::SetGlobal.as_u8(), reg, global_idx as u16));
+                        // Emit SetField: exports_rec[field_name] = value
+                        self.emit(encode_abc(
+                            OpCode::SetField.as_u8(),
+                            exports_reg,
+                            field_idx as u8,
+                            value_reg,
+                        ));
 
                         // Track the exported value's register for reference
-                        self.exported_values.insert(export_name, reg);
+                        self.exported_values.insert(export_name, value_reg);
                     } else if self.type_registry.contains_key(name) {
-                        // It's a type alias - export from type registry
+                        // It's a type alias - export from type registry (no bytecode)
                         let type_def = self.type_registry.get(name).unwrap().clone();
                         self.exported_types.insert(export_name, type_def);
                     } else {
@@ -241,89 +251,69 @@ impl Compiler {
 
     /// Compile an import statement
     ///
-    /// This loads a user module from a file, compiles it, executes it,
-    /// and imports the exported values/types into the current scope
+    /// This generates bytecode that calls the builtin 'import' function
+    /// at runtime to load and execute a module, then extracts the requested exports
     fn compile_import(
         &mut self,
         items: &[achronyme_parser::ast::ImportItem],
         module_path: &str,
     ) -> Result<(), CompileError> {
-        use std::fs;
+        // 1. Call builtin import(module_path) to get the module's exports Record
+        // Add module path as a string constant
+        let mod_name_value = Value::String(module_path.to_string());
+        let mod_name_idx = self.add_constant(mod_name_value)?;
 
-        // Resolve module path relative to current working directory
-        // Convert "src/funcion1" to "src/funcion1.soc"
-        let file_path = if module_path.ends_with(".soc") {
-            module_path.to_string()
-        } else {
-            format!("{}.soc", module_path)
-        };
+        // Allocate dest + args registers consecutively
+        // We need 2 registers: dest (result) + 1 arg
+        let module_res_reg = self.registers.allocate_many(2)?;
+        let arg_reg = module_res_reg + 1;
 
-        // Read the module file
-        let source = fs::read_to_string(&file_path)
-            .map_err(|e| CompileError::Error(format!("Failed to read module '{}': {}", file_path, e)))?;
+        // Load module path string constant into arg register
+        self.emit_load_const(arg_reg, mod_name_idx);
 
-        // Parse the module
-        let ast = achronyme_parser::parse(&source)
-            .map_err(|e| CompileError::Error(format!("Failed to parse module '{}': {:?}", file_path, e)))?;
+        // CallBuiltin import(arg_reg) -> module_res_reg
+        let import_idx = self.builtins.get_id("import")
+            .ok_or_else(|| CompileError::Error("Builtin 'import' not found".to_string()))?;
 
-        // Compile the module
-        let mut module_compiler = Compiler::new(file_path.clone());
-        let module_bytecode = module_compiler.compile(&ast)
-            .map_err(|e| CompileError::Error(format!("Failed to compile module '{}': {:?}", file_path, e)))?;
+        self.emit(encode_abc(
+            OpCode::CallBuiltin.as_u8(),
+            module_res_reg,  // A = dest
+            1,               // B = argc (1 argument)
+            import_idx as u8 // C = builtin_idx
+        ));
 
-        // Execute the module to get exported values
-        let mut vm = crate::vm::VM::new();
-        let _result = vm.execute(module_bytecode.clone())
-            .map_err(|e| CompileError::Error(format!("Failed to execute module '{}': {:?}", file_path, e)))?;
-
-        // Get the module's exported values and types
-        let value_exports = &module_compiler.exported_values;
-        let type_exports = &module_compiler.exported_types;
-
-        // Extract runtime values from VM's globals
-        // Exported values are stored as globals with __export__ prefix
-        let mut runtime_exports = std::collections::HashMap::new();
-
-        for (name, _) in value_exports.iter() {
-            let global_name = format!("__export__{}", name);
-            if let Some(value) = vm.get_global(&global_name) {
-                eprintln!("DEBUG: Importing '{}' from global '{}': {:?}", name, global_name, value);
-                runtime_exports.insert(name.clone(), value.clone());
-            } else {
-                eprintln!("DEBUG: Global '{}' not found for export '{}'", global_name, name);
-            }
-        }
-
-        // Import each requested item
+        // 2. Extract each requested export from the module Record
         for item in items {
             let original_name = &item.name;
-            let local_name = if let Some(alias) = &item.alias {
-                alias.clone()
-            } else {
-                original_name.clone()
-            };
+            let local_name = item.alias.as_ref().unwrap_or(original_name);
 
-            // Check if it's a value export
-            if let Some(value) = runtime_exports.get(original_name) {
-                // Add the value as a constant
-                let const_idx = self.add_constant(value.clone())?;
-
-                // Allocate a register and load the constant
-                let reg = self.registers.allocate()?;
-                self.emit_load_const(reg, const_idx);
-
-                // Define in symbol table
-                self.symbols.define(local_name, reg)?;
-            } else if let Some(type_def) = type_exports.get(original_name) {
-                // Import the type into the current compiler's type registry
-                self.type_registry.insert(local_name, type_def.clone());
-            } else {
+            // Check for name collision
+            if self.symbols.get(local_name).is_ok() {
                 return Err(CompileError::Error(format!(
-                    "'{}' is not exported from module '{}' (neither as value nor type)",
-                    original_name, file_path
+                    "Variable '{}' already defined", local_name
                 )));
             }
+
+            // Add field name to constant pool
+            let field_idx = self.add_string(original_name.clone())?;
+
+            // Allocate register for the imported value
+            let var_reg = self.registers.allocate()?;
+
+            // Emit GetField: var_reg = module_res_reg[original_name]
+            self.emit(encode_abc(
+                OpCode::GetField.as_u8(),
+                var_reg,
+                module_res_reg,
+                field_idx as u8
+            ));
+
+            // Define in symbol table
+            self.symbols.define(local_name.clone(), var_reg)?;
         }
+
+        // The arg_reg and module_res_reg are now part of the bytecode and shouldn't be freed
+        // They will be managed by the VM's register allocation during execution
 
         Ok(())
     }
