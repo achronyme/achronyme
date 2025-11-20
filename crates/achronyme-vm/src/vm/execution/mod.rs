@@ -8,7 +8,7 @@ mod exceptions;
 mod functions;
 mod generators;
 mod hof;
-mod iterators;
+pub(crate) mod iterators;
 mod matching;
 mod records;
 mod types;

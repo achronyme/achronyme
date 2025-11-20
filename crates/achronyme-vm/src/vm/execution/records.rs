@@ -35,6 +35,25 @@ impl VM {
                 let rec_value = self.get_register(rec_reg)?.clone();
                 let field_name = self.get_string(key_idx)?;
 
+                // FIRST: For non-Record types, check if this is an intrinsic method lookup
+                // Records get normal field access (user-defined fields take precedence)
+                if !matches!(rec_value, Value::Record(_)) {
+                    if let Some(type_disc) = crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value) {
+                        if let Some(intrinsic_fn) = self.intrinsics.lookup(&type_disc, field_name) {
+                            // Found an intrinsic method!
+                            // Store the receiver and intrinsic function for later Call execution
+                            self.pending_intrinsic_calls.insert(dst, (rec_value.clone(), intrinsic_fn));
+
+                            // Put a marker value in the register
+                            // We use Null as a placeholder - the Call opcode will check pending_intrinsic_calls
+                            // This is safe because real intrinsic methods can't be Null
+                            self.set_register(dst, Value::Null)?;
+                            return Ok(ExecutionResult::Continue);
+                        }
+                    }
+                }
+
+                // SECOND: Fall back to normal record field access
                 match &rec_value {
                     Value::Record(rec_rc) => {
                         let rec_borrowed = rec_rc.borrow();

@@ -13,6 +13,7 @@ use std::cell::RefCell;
 mod execution;
 mod frame;
 mod generator;
+mod intrinsics;
 mod iterator;
 mod ops;
 mod result;
@@ -24,6 +25,7 @@ pub use iterator::{VmIterator, VmBuilder};
 
 // Internal imports
 use frame::CallFrame as InternalCallFrame;
+use intrinsics::{IntrinsicFn, IntrinsicRegistry};
 use result::ExecutionResult;
 
 /// Maximum call stack depth
@@ -45,6 +47,13 @@ pub struct VM {
 
     /// Built-in function registry
     pub(crate) builtins: BuiltinRegistry,
+
+    /// Intrinsic method registry
+    pub(crate) intrinsics: IntrinsicRegistry,
+
+    /// Pending intrinsic calls (register -> (receiver, intrinsic_fn))
+    /// Used to bind intrinsic methods to their receivers
+    pub(crate) pending_intrinsic_calls: HashMap<u8, (Value, IntrinsicFn)>,
 }
 
 impl VM {
@@ -56,6 +65,8 @@ impl VM {
             generators: HashMap::new(),
             next_generator_id: 0,
             builtins: crate::builtins::create_builtin_registry(),
+            intrinsics: IntrinsicRegistry::new(),
+            pending_intrinsic_calls: HashMap::new(),
         }
     }
 
@@ -437,6 +448,85 @@ impl VM {
     /// Get a global variable (for REPL)
     pub fn get_global(&self, name: &str) -> Option<&Value> {
         self.globals.get(name)
+    }
+
+    /// Resume a generator by pushing its frame and continuing execution
+    ///
+    /// This is the core generator resume logic, extracted so it can be called
+    /// from both the ResumeGen opcode and intrinsic dispatch.
+    ///
+    /// Returns ExecutionResult to indicate whether to continue, yield, etc.
+    /// The yielded/returned value will be placed in the specified result_reg.
+    pub(crate) fn resume_generator_internal(
+        &mut self,
+        gen_value: &Value,
+        result_reg: u8,
+    ) -> Result<ExecutionResult, VmError> {
+        use crate::vm::execution::iterators::NativeIterator;
+
+        // Extract generator from Value
+        if let Value::Generator(any_ref) = gen_value {
+            // First, try to downcast to native iterator
+            if let Some(iter_rc) = any_ref.downcast_ref::<RefCell<NativeIterator>>() {
+                // Handle native iterator
+                let mut iter = iter_rc.borrow_mut();
+
+                if let Some(value) = iter.next() {
+                    // More elements available: {value: X, done: false}
+                    drop(iter); // Release borrow
+                    let mut result_map = HashMap::new();
+                    result_map.insert("value".to_string(), value);
+                    result_map.insert("done".to_string(), Value::Boolean(false));
+                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    self.set_register(result_reg, result_record)?;
+                    return Ok(ExecutionResult::Continue);
+                } else {
+                    // Iterator exhausted: {value: null, done: true}
+                    drop(iter); // Release borrow
+                    let mut result_map = HashMap::new();
+                    result_map.insert("value".to_string(), Value::Null);
+                    result_map.insert("done".to_string(), Value::Boolean(true));
+                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    self.set_register(result_reg, result_record)?;
+                    return Ok(ExecutionResult::Continue);
+                }
+            }
+
+            // Downcast from Rc<dyn Any> to Rc<RefCell<VmGeneratorState>>
+            if let Some(state_rc) = any_ref.downcast_ref::<RefCell<VmGeneratorState>>() {
+                let state = state_rc.borrow();
+
+                // Check if generator is already exhausted
+                if state.is_done() {
+                    // Return iterator result object: {value: null, done: true}
+                    drop(state); // Release borrow
+                    let mut result_map = HashMap::new();
+                    result_map.insert("value".to_string(), Value::Null);
+                    result_map.insert("done".to_string(), Value::Boolean(true));
+                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    self.set_register(result_reg, result_record)?;
+                    return Ok(ExecutionResult::Continue);
+                }
+
+                // Take the frame (clone it since we need to restore it later)
+                let gen_frame = state.frame.clone();
+                drop(state); // Release borrow before pushing frame
+
+                // Push the generator's frame onto the stack
+                // Set return register so the yielded value goes to result_reg
+                // Set generator reference so Yield knows which generator to update
+                let mut frame = gen_frame;
+                frame.return_register = Some(result_reg);
+                frame.generator = Some(gen_value.clone());
+                self.frames.push(frame);
+
+                return Ok(ExecutionResult::Continue);
+            } else {
+                return Err(VmError::Runtime("Invalid generator type (expected VM generator or native iterator)".to_string()));
+            }
+        } else {
+            return Err(VmError::Runtime(format!("Cannot resume non-generator value: {:?}", gen_value)));
+        }
     }
 
     /// Perform return from function

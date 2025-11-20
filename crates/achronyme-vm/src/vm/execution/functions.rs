@@ -61,7 +61,39 @@ impl VM {
                 let func_reg = b;
                 let argc = c;
 
+                // Get the function value first
                 let func_value = self.get_register(func_reg)?.clone();
+
+                // FIRST: Check if this is a pending intrinsic call
+                // We check if func_value is Null (our marker) AND there's a pending intrinsic entry
+                if matches!(func_value, Value::Null) {
+                    if let Some((receiver, intrinsic_fn)) = self.pending_intrinsic_calls.remove(&func_reg) {
+                        // This is an intrinsic method call!
+                        // Special handling for generator.next() which needs to resume the generator
+
+                        // Check if this is a Generator.next() call specifically
+                        if let Some(type_disc) = crate::vm::intrinsics::TypeDiscriminant::from_value(&receiver) {
+                            if type_disc == crate::vm::intrinsics::TypeDiscriminant::Generator {
+                                // This is generator.next() - use special resume logic
+                                return self.resume_generator_internal(&receiver, result_reg);
+                            }
+                        }
+
+                        // For other intrinsics (future expansion), collect arguments and call the function
+                        let mut args = Vec::new();
+                        for i in 0..argc {
+                            let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
+                            args.push(self.get_register(arg_reg)?.clone());
+                        }
+
+                        // Call the intrinsic function
+                        let result = intrinsic_fn(self, &receiver, &args)?;
+                        self.set_register(result_reg, result)?;
+                        return Ok(ExecutionResult::Continue);
+                    }
+                }
+
+                // SECOND: Normal function call
 
                 match func_value {
                     Value::Function(Function::VmClosure(closure_any)) => {

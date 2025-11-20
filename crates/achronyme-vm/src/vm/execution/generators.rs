@@ -74,69 +74,8 @@ impl VM {
 
                 let gen_value = self.get_register(gen_reg)?.clone();
 
-                // Extract generator from Value
-                if let Value::Generator(any_ref) = &gen_value {
-                    // First, try to downcast to native iterator
-                    if let Some(iter_rc) = any_ref.downcast_ref::<RefCell<NativeIterator>>() {
-                        // Handle native iterator
-                        let mut iter = iter_rc.borrow_mut();
-
-                        if let Some(value) = iter.next() {
-                            // More elements available: {value: X, done: false}
-                            drop(iter); // Release borrow
-                            let mut result_map = std::collections::HashMap::new();
-                            result_map.insert("value".to_string(), value);
-                            result_map.insert("done".to_string(), Value::Boolean(false));
-                            let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
-                            self.set_register(dst, result_record)?;
-                            return Ok(ExecutionResult::Continue);
-                        } else {
-                            // Iterator exhausted: {value: null, done: true}
-                            drop(iter); // Release borrow
-                            let mut result_map = std::collections::HashMap::new();
-                            result_map.insert("value".to_string(), Value::Null);
-                            result_map.insert("done".to_string(), Value::Boolean(true));
-                            let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
-                            self.set_register(dst, result_record)?;
-                            return Ok(ExecutionResult::Continue);
-                        }
-                    }
-
-                    // Downcast from Rc<dyn Any> to Rc<RefCell<VmGeneratorState>>
-                    if let Some(state_rc) = any_ref.downcast_ref::<RefCell<VmGeneratorState>>() {
-                        let state = state_rc.borrow();
-
-                        // Check if generator is already exhausted
-                        if state.is_done() {
-                            // Return iterator result object: {value: null, done: true}
-                            drop(state); // Release borrow
-                            let mut result_map = std::collections::HashMap::new();
-                            result_map.insert("value".to_string(), Value::Null);
-                            result_map.insert("done".to_string(), Value::Boolean(true));
-                            let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
-                            self.set_register(dst, result_record)?;
-                            return Ok(ExecutionResult::Continue);
-                        }
-
-                        // Take the frame (clone it since we need to restore it later)
-                        let gen_frame = state.frame.clone();
-                        drop(state); // Release borrow before pushing frame
-
-                        // Push the generator's frame onto the stack
-                        // Set return register so the yielded value goes to R[A]
-                        // Set generator reference so Yield knows which generator to update
-                        let mut frame = gen_frame;
-                        frame.return_register = Some(dst);
-                        frame.generator = Some(gen_value.clone());
-                        self.frames.push(frame);
-
-                        Ok(ExecutionResult::Continue)
-                    } else {
-                        Err(VmError::Runtime("Invalid generator type (expected VM generator or native iterator)".to_string()))
-                    }
-                } else {
-                    Err(VmError::Runtime(format!("Cannot resume non-generator value: {:?}", gen_value)))
-                }
+                // Use the shared resume logic
+                self.resume_generator_internal(&gen_value, dst)
             }
 
             OpCode::MakeIterator => {

@@ -216,38 +216,6 @@ impl Compiler {
             }
         }
 
-        // TODO: This is temporary sugar syntax for generator.next()
-        // The proper architectural solution is to implement .next() as an intrinsic method
-        // that works uniformly for both generators and user-defined objects with a 'next' field.
-        // For now, we special-case generator.next() calls to compile to ResumeGen opcode.
-        //
-        // Proper solution (future):
-        // - Implement intrinsic methods in the VM (like JavaScript)
-        // - GetField on Generator with field "next" returns a bound method closure
-        // - That closure internally calls ResumeGen when invoked
-        // This way user code like `let obj = {next: () => 42}; obj.next()` works uniformly
-        if let AstNode::FieldAccess { record, field } = callee {
-            if field == "next" && args.is_empty() {
-                // This is potentially generator.next() - compile as ResumeGen
-                let gen_res = self.compile_expression(record)?;
-                let result_reg = self.registers.allocate()?;
-
-                // Emit RESUME_GEN: R[result] = R[gen].next()
-                self.emit(encode_abc(
-                    OpCode::ResumeGen.as_u8(),
-                    result_reg,
-                    gen_res.reg(),
-                    0,
-                ));
-
-                if gen_res.is_temp() {
-                    self.registers.free(gen_res.reg());
-                }
-
-                return Ok(RegResult::temp(result_reg));
-            }
-        }
-
         // Compile the callee expression (can be any expression returning a function)
         let func_res = self.compile_expression(callee)?;
 
