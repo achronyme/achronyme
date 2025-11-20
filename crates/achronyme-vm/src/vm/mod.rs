@@ -54,6 +54,9 @@ pub struct VM {
     /// Pending intrinsic calls (register -> (receiver, intrinsic_fn))
     /// Used to bind intrinsic methods to their receivers
     pub(crate) pending_intrinsic_calls: HashMap<u8, (Value, IntrinsicFn)>,
+
+    /// Current module file path (for resolving relative imports)
+    pub(crate) current_module: Option<String>,
 }
 
 impl VM {
@@ -67,11 +70,15 @@ impl VM {
             builtins: crate::builtins::create_builtin_registry(),
             intrinsics: IntrinsicRegistry::new(),
             pending_intrinsic_calls: HashMap::new(),
+            current_module: None,
         }
     }
 
     /// Execute a bytecode module
     pub fn execute(&mut self, module: BytecodeModule) -> Result<Value, VmError> {
+        // Set current module for import resolution
+        self.current_module = Some(module.name.clone());
+
         // Create main frame
         let main_frame = InternalCallFrame::new(Rc::new(module.main), None);
         self.frames.push(main_frame);

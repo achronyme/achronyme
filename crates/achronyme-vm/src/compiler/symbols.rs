@@ -55,6 +55,11 @@ impl SymbolTable {
     pub(crate) fn has_register(&self, reg: u8) -> bool {
         self.symbols.values().any(|&r| r == reg)
     }
+
+    /// Remove a variable from the symbol table
+    pub(crate) fn undefine(&mut self, name: &str) {
+        self.symbols.remove(name);
+    }
 }
 
 #[cfg(test)]

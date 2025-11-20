@@ -1,0 +1,29 @@
+// Advanced test for self reference
+
+// Test 1: Simple counter
+let counter = {
+    mut count: 0,
+    increment: () => do { self.count = self.count + 1 },
+    get: () => self.count
+}
+
+counter.increment()
+counter.increment()
+print(counter.get())  // Should print 2
+
+// Test 2: Nested record with factory function
+let createPerson = (name, age) => {
+    name: name,
+    age: age,
+    greet: () => do {
+        print(self.name)
+    },
+    haveBirthday: () => do {
+        self.age = self.age + 1
+    },
+    getAge: () => self.age
+}
+
+let alice = createPerson("Alice", 30)
+alice.haveBirthday()
+print(alice.getAge())  // Should print 31

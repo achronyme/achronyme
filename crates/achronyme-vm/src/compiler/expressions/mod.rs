@@ -38,6 +38,10 @@ impl Compiler {
                 self.compile_rec_reference()
             }
 
+            AstNode::SelfReference => {
+                self.compile_self_reference()
+            }
+
             // Operators
             AstNode::BinaryOp { op, left, right } => {
                 self.compile_binary_op(op, left, right)
@@ -103,6 +107,11 @@ impl Compiler {
                 self.compile_record_literal(fields)
             }
 
+            // Edge literals (graph edges)
+            AstNode::Edge { from, to, directed, metadata } => {
+                self.compile_edge_literal(from, to, *directed, metadata)
+            }
+
             // Access expressions
             AstNode::IndexAccess { object, indices } => {
                 self.compile_index_access(object, indices)
@@ -154,6 +163,7 @@ impl Compiler {
                             | AstNode::LetDestructuring { .. }
                             | AstNode::MutableDestructuring { .. }
                             | AstNode::Assignment { .. }
+                            | AstNode::CompoundAssignment { .. }
                             | AstNode::Import { .. }
                             | AstNode::Export { .. }
                             | AstNode::TypeAlias { .. }

@@ -27,6 +27,7 @@ impl Compiler {
         // Create a nested function prototype for the generator
         let gen_name = format!("<generator@{}>", self.current_position());
         let mut child_compiler = Compiler {
+            module_name: self.module_name.clone(),  // Inherit module name from parent
             function: FunctionPrototype::new(gen_name, self.function.constants.clone()),
             registers: RegisterAllocator::new(),
             symbols: SymbolTable::new(),

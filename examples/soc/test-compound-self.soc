@@ -1,0 +1,10 @@
+let obj = {
+    mut value: 10,
+    inc: () => do {
+        self.value += 5
+    }
+}
+
+print("Initial value:", obj.value)
+obj.inc()
+print("After inc:", obj.value)

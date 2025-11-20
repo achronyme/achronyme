@@ -45,4 +45,26 @@ impl Compiler {
         // This is a special variable, not a temp
         Ok(RegResult::var(255))
     }
+
+    /// Compile self reference
+    pub(crate) fn compile_self_reference(&mut self) -> Result<RegResult, CompileError> {
+        // Check if 'self' is an upvalue first
+        if let Some(upvalue_idx) = self.symbols.get_upvalue("self") {
+            // Emit GET_UPVALUE instruction (this creates a copy, so it's temp)
+            let dst = self.registers.allocate()?;
+            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), dst, upvalue_idx, 0));
+            return Ok(RegResult::temp(dst));
+        }
+
+        // Check if 'self' is a local variable
+        if let Ok(var_reg) = self.symbols.get("self") {
+            // Regular local variable (not a temp, it's the variable itself)
+            return Ok(RegResult::var(var_reg));
+        }
+
+        // 'self' not found
+        Err(CompileError::Error(
+            "'self' can only be used inside record methods".to_string()
+        ))
+    }
 }

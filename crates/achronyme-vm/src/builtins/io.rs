@@ -13,7 +13,7 @@ use std::io::{self, Write};
 // Output Functions
 // ============================================================================
 
-/// Print value to stdout without newline
+/// Print value to stdout with newline
 pub fn vm_print(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime("print() requires at least 1 argument".to_string()));
@@ -26,10 +26,7 @@ pub fn vm_print(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
         print!("{}", format_value(arg));
     }
-
-    io::stdout()
-        .flush()
-        .map_err(|e| VmError::Runtime(format!("print() failed: {}", e)))?;
+    println!();
 
     Ok(Value::Null)
 }

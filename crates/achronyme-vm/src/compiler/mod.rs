@@ -26,6 +26,9 @@ use symbols::SymbolTable;
 
 /// Bytecode compiler
 pub struct Compiler {
+    /// Module name / file path
+    pub(crate) module_name: String,
+
     /// Current function being compiled
     pub(crate) function: FunctionPrototype,
 
@@ -59,11 +62,12 @@ pub struct Compiler {
 
 impl Compiler {
     /// Create a new compiler for a module
-    pub fn new(_module_name: String) -> Self {
+    pub fn new(module_name: String) -> Self {
         let constants = Rc::new(ConstantPool::new());
         let function = FunctionPrototype::new("<main>".to_string(), constants);
 
         Self {
+            module_name,
             function,
             registers: RegisterAllocator::new(),
             symbols: SymbolTable::new(),
@@ -132,7 +136,7 @@ impl Compiler {
 
         // Create module
         let module = BytecodeModule {
-            name: "<main>".to_string(),
+            name: self.module_name.clone(),
             main: self.function.clone(),
             constants: self.function.constants.clone(),
         };

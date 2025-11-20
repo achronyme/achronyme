@@ -13,6 +13,7 @@
 
 pub mod array_advanced;
 pub mod complex;
+pub mod debug;
 pub mod hof;
 pub mod io;
 pub mod linalg;
@@ -179,6 +180,12 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("isnan", utils::vm_isnan, 1);
     registry.register("isinf", utils::vm_isinf, 1);
     registry.register("isfinite", utils::vm_isfinite, 1);
+
+    // ========================================================================
+    // Debug/Introspection Functions
+    // ========================================================================
+
+    registry.register("describe", debug::vm_describe, 1);
 
     // ========================================================================
     // Record Functions

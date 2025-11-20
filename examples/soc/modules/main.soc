@@ -1,8 +1,8 @@
-import { funcion1 } from "src/funcion1"
-import { funcion2 } from "src/funcion2"
-import { createCounter } from "src/contador"
-import { makeAdder } from "src/makeAdder"
-import { semaforo } from "src/semaforo"
+import { funcion1 } from "./src/funcion1"
+import { funcion2 } from "./src/funcion2"
+import { createCounter } from "./src/contador"
+import { makeAdder } from "./src/makeAdder"
+import { semaforo } from "./src/semaforo"
 let a = 10
 let b = 20
 
@@ -24,7 +24,7 @@ print(funcion2(a,b))
 describe(contadorPrueba)
 print(contadorPrueba.ejeDirigido)
 print(contadorPrueba.ejeNoDirigido)
-print("Operaciones con complejos nativas asi es", E^(i*PI) + 1)
+print("Operaciones con complejos nativas asi es", e^(i*pi) + 1)
 
 print("Estado inicial del semaforo", semaforo.luz)
 semaforo.next()

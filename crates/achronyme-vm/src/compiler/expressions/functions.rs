@@ -19,6 +19,7 @@ impl Compiler {
         // Create a nested function compiler
         let lambda_name = format!("<lambda@{}>", self.current_position());
         let mut child_compiler = Compiler {
+            module_name: self.module_name.clone(),  // Inherit module name from parent
             function: FunctionPrototype::new(lambda_name, self.function.constants.clone()),
             registers: RegisterAllocator::new(),
             symbols: SymbolTable::new(),
@@ -371,6 +372,10 @@ impl Compiler {
                 self.collect_variable_refs(target, vars)?;
                 self.collect_variable_refs(value, vars)?;
             }
+            AstNode::CompoundAssignment { target, value, .. } => {
+                self.collect_variable_refs(target, vars)?;
+                self.collect_variable_refs(value, vars)?;
+            }
             AstNode::FunctionCall { name, args } => {
                 vars.insert(name.clone());
                 for arg in args {
@@ -478,6 +483,9 @@ impl Compiler {
                 }
             }
             AstNode::Continue => {}
+            AstNode::SelfReference => {
+                vars.insert("self".to_string());
+            }
             AstNode::GenerateBlock { statements } => {
                 for stmt in statements {
                     self.collect_variable_refs(stmt, vars)?;

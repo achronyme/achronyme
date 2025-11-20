@@ -22,18 +22,126 @@ pub(crate) struct ValueOperations;
 
 impl ValueOperations {
     pub(crate) fn add_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        use achronyme_types::complex::Complex;
+        use std::rc::Rc;
+        use std::cell::RefCell;
+
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
             (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a + *b)),
             (Value::Number(a), Value::Complex(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(Complex::new(*a, 0.0) + *b))
             }
             (Value::Complex(a), Value::Number(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(*a + Complex::new(*b, 0.0)))
             }
+
+            // Vector + Vector
+            (Value::Vector(ref a), Value::Vector(ref b)) => {
+                if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
+                    let a_borrow = a.borrow();
+                    let b_borrow = b.borrow();
+
+                    if a_borrow.len() != b_borrow.len() {
+                        return Err(VmError::TypeError {
+                            operation: "addition".to_string(),
+                            expected: "vectors of same length".to_string(),
+                            got: format!("vectors of length {} and {}", a_borrow.len(), b_borrow.len()),
+                        });
+                    }
+
+                    let result: Vec<Value> = a_borrow.iter().zip(b_borrow.iter()).map(|(av, bv)| {
+                        match (av, bv) {
+                            (Value::Number(an), Value::Number(bn)) => Value::Number(an + bn),
+                            (Value::Number(an), Value::Complex(bc)) => Value::Complex(Complex::from_real(*an) + *bc),
+                            (Value::Complex(ac), Value::Number(bn)) => Value::Complex(*ac + Complex::from_real(*bn)),
+                            (Value::Complex(ac), Value::Complex(bc)) => Value::Complex(*ac + *bc),
+                            _ => unreachable!(),
+                        }
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "addition".to_string(),
+                        expected: "numeric vectors".to_string(),
+                        got: format!("{:?} + {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Number + Vector
+            (Value::Number(scalar), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n + scalar),
+                        Value::Complex(c) => Value::Complex(*c + Complex::from_real(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "addition".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} + {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Number(scalar)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n + scalar),
+                        Value::Complex(c) => Value::Complex(*c + Complex::from_real(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "addition".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} + {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Complex + Vector
+            (Value::Complex(c), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n) + *c),
+                        Value::Complex(cv) => Value::Complex(*cv + *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "addition".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} + {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Complex(c)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n) + *c),
+                        Value::Complex(cv) => Value::Complex(*cv + *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "addition".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} + {:?}", left, right),
+                    })
+                }
+            }
+
             // String concatenation with automatic conversion
             (Value::String(s), other) => {
                 let other_str = Self::value_to_string(other);
@@ -45,53 +153,311 @@ impl ValueOperations {
             }
             _ => Err(VmError::TypeError {
                 operation: "addition".to_string(),
-                expected: "Number, Complex, or String".to_string(),
+                expected: "Number, Complex, String, or Vector".to_string(),
                 got: format!("{:?} + {:?}", left, right),
             }),
         }
     }
 
     pub(crate) fn sub_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        use achronyme_types::complex::Complex;
+        use std::rc::Rc;
+        use std::cell::RefCell;
+
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
             (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a - *b)),
             (Value::Number(a), Value::Complex(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(Complex::new(*a, 0.0) - *b))
             }
             (Value::Complex(a), Value::Number(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(*a - Complex::new(*b, 0.0)))
             }
+
+            // Vector - Vector
+            (Value::Vector(ref a), Value::Vector(ref b)) => {
+                if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
+                    let a_borrow = a.borrow();
+                    let b_borrow = b.borrow();
+
+                    if a_borrow.len() != b_borrow.len() {
+                        return Err(VmError::TypeError {
+                            operation: "subtraction".to_string(),
+                            expected: "vectors of same length".to_string(),
+                            got: format!("vectors of length {} and {}", a_borrow.len(), b_borrow.len()),
+                        });
+                    }
+
+                    let result: Vec<Value> = a_borrow.iter().zip(b_borrow.iter()).map(|(av, bv)| {
+                        match (av, bv) {
+                            (Value::Number(an), Value::Number(bn)) => Value::Number(an - bn),
+                            (Value::Number(an), Value::Complex(bc)) => Value::Complex(Complex::from_real(*an) - *bc),
+                            (Value::Complex(ac), Value::Number(bn)) => Value::Complex(*ac - Complex::from_real(*bn)),
+                            (Value::Complex(ac), Value::Complex(bc)) => Value::Complex(*ac - *bc),
+                            _ => unreachable!(),
+                        }
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "subtraction".to_string(),
+                        expected: "numeric vectors".to_string(),
+                        got: format!("{:?} - {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Number - Vector
+            (Value::Number(scalar), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(scalar - n),
+                        Value::Complex(c) => Value::Complex(Complex::from_real(*scalar) - *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "subtraction".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} - {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Number(scalar)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n - scalar),
+                        Value::Complex(c) => Value::Complex(*c - Complex::from_real(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "subtraction".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} - {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Complex - Vector
+            (Value::Complex(c), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(*c - Complex::from_real(*n)),
+                        Value::Complex(cv) => Value::Complex(*c - *cv),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "subtraction".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} - {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Complex(c)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n) - *c),
+                        Value::Complex(cv) => Value::Complex(*cv - *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "subtraction".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} - {:?}", left, right),
+                    })
+                }
+            }
+
             _ => Err(VmError::TypeError {
                 operation: "subtraction".to_string(),
-                expected: "Number or Complex".to_string(),
+                expected: "Number, Complex, or Vector".to_string(),
                 got: format!("{:?} - {:?}", left, right),
             }),
         }
     }
 
     pub(crate) fn mul_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        use achronyme_types::complex::Complex;
+        use std::rc::Rc;
+        use std::cell::RefCell;
+
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
             (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a * *b)),
             (Value::Number(a), Value::Complex(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(Complex::new(*a, 0.0) * *b))
             }
             (Value::Complex(a), Value::Number(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(*a * Complex::new(*b, 0.0)))
             }
+
+            // Vector * Vector (element-wise)
+            (Value::Vector(ref a), Value::Vector(ref b)) => {
+                if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
+                    let a_borrow = a.borrow();
+                    let b_borrow = b.borrow();
+
+                    if a_borrow.len() != b_borrow.len() {
+                        return Err(VmError::TypeError {
+                            operation: "multiplication".to_string(),
+                            expected: "vectors of same length".to_string(),
+                            got: format!("vectors of length {} and {}", a_borrow.len(), b_borrow.len()),
+                        });
+                    }
+
+                    let result: Vec<Value> = a_borrow.iter().zip(b_borrow.iter()).map(|(av, bv)| {
+                        match (av, bv) {
+                            (Value::Number(an), Value::Number(bn)) => Value::Number(an * bn),
+                            (Value::Number(an), Value::Complex(bc)) => Value::Complex(Complex::from_real(*an) * *bc),
+                            (Value::Complex(ac), Value::Number(bn)) => Value::Complex(*ac * Complex::from_real(*bn)),
+                            (Value::Complex(ac), Value::Complex(bc)) => Value::Complex(*ac * *bc),
+                            _ => unreachable!(),
+                        }
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "multiplication".to_string(),
+                        expected: "numeric vectors".to_string(),
+                        got: format!("{:?} * {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Number * Vector
+            (Value::Number(scalar), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n * scalar),
+                        Value::Complex(c) => Value::Complex(*c * Complex::from_real(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "multiplication".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} * {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Number(scalar)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n * scalar),
+                        Value::Complex(c) => Value::Complex(*c * Complex::from_real(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "multiplication".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} * {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Complex * Vector
+            (Value::Complex(c), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n) * *c),
+                        Value::Complex(cv) => Value::Complex(*cv * *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "multiplication".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} * {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Complex(c)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n) * *c),
+                        Value::Complex(cv) => Value::Complex(*cv * *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "multiplication".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} * {:?}", left, right),
+                    })
+                }
+            }
+
+            // String repetition: String * Number
+            (Value::String(s), Value::Number(n)) => {
+                if *n < 0.0 {
+                    Err(VmError::TypeError {
+                        operation: "string repetition".to_string(),
+                        expected: "non-negative number".to_string(),
+                        got: format!("negative count: {}", n),
+                    })
+                } else if !n.is_finite() {
+                    Err(VmError::TypeError {
+                        operation: "string repetition".to_string(),
+                        expected: "finite number".to_string(),
+                        got: "infinite count".to_string(),
+                    })
+                } else {
+                    let count = *n as usize;
+                    Ok(Value::String(s.repeat(count)))
+                }
+            }
+            (Value::Number(n), Value::String(s)) => {
+                if *n < 0.0 {
+                    Err(VmError::TypeError {
+                        operation: "string repetition".to_string(),
+                        expected: "non-negative number".to_string(),
+                        got: format!("negative count: {}", n),
+                    })
+                } else if !n.is_finite() {
+                    Err(VmError::TypeError {
+                        operation: "string repetition".to_string(),
+                        expected: "finite number".to_string(),
+                        got: "infinite count".to_string(),
+                    })
+                } else {
+                    let count = *n as usize;
+                    Ok(Value::String(s.repeat(count)))
+                }
+            }
+
             _ => Err(VmError::TypeError {
                 operation: "multiplication".to_string(),
-                expected: "Number or Complex".to_string(),
+                expected: "Number, Complex, String, or Vector".to_string(),
                 got: format!("{:?} * {:?}", left, right),
             }),
         }
     }
 
     pub(crate) fn div_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        use achronyme_types::complex::Complex;
+        use std::rc::Rc;
+        use std::cell::RefCell;
+
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => {
                 // IEEE 754 semantics: division by zero produces Infinity or NaN
@@ -102,36 +468,249 @@ impl ValueOperations {
             }
             (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(*a / *b)),
             (Value::Number(a), Value::Complex(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(Complex::new(*a, 0.0) / *b))
             }
             (Value::Complex(a), Value::Number(b)) => {
-                use achronyme_types::complex::Complex;
                 // IEEE 754: division by zero is allowed, produces Infinity/NaN components
                 Ok(Value::Complex(*a / Complex::new(*b, 0.0)))
             }
+
+            // Vector / Vector (element-wise)
+            (Value::Vector(ref a), Value::Vector(ref b)) => {
+                if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
+                    let a_borrow = a.borrow();
+                    let b_borrow = b.borrow();
+
+                    if a_borrow.len() != b_borrow.len() {
+                        return Err(VmError::TypeError {
+                            operation: "division".to_string(),
+                            expected: "vectors of same length".to_string(),
+                            got: format!("vectors of length {} and {}", a_borrow.len(), b_borrow.len()),
+                        });
+                    }
+
+                    let result: Vec<Value> = a_borrow.iter().zip(b_borrow.iter()).map(|(av, bv)| {
+                        match (av, bv) {
+                            (Value::Number(an), Value::Number(bn)) => Value::Number(an / bn),
+                            (Value::Number(an), Value::Complex(bc)) => Value::Complex(Complex::from_real(*an) / *bc),
+                            (Value::Complex(ac), Value::Number(bn)) => Value::Complex(*ac / Complex::from_real(*bn)),
+                            (Value::Complex(ac), Value::Complex(bc)) => Value::Complex(*ac / *bc),
+                            _ => unreachable!(),
+                        }
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "division".to_string(),
+                        expected: "numeric vectors".to_string(),
+                        got: format!("{:?} / {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Number / Vector
+            (Value::Number(scalar), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(scalar / n),
+                        Value::Complex(c) => Value::Complex(Complex::from_real(*scalar) / *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "division".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} / {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Number(scalar)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n / scalar),
+                        Value::Complex(c) => Value::Complex(*c / Complex::from_real(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "division".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} / {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Complex / Vector
+            (Value::Complex(c), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(*c / Complex::from_real(*n)),
+                        Value::Complex(cv) => Value::Complex(*c / *cv),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "division".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} / {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Complex(c)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n) / *c),
+                        Value::Complex(cv) => Value::Complex(*cv / *c),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "division".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} / {:?}", left, right),
+                    })
+                }
+            }
+
             _ => Err(VmError::TypeError {
                 operation: "division".to_string(),
-                expected: "Number or Complex".to_string(),
+                expected: "Number, Complex, or Vector".to_string(),
                 got: format!("{:?} / {:?}", left, right),
             }),
         }
     }
 
     pub(crate) fn pow_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        use achronyme_types::complex::Complex;
+        use std::rc::Rc;
+        use std::cell::RefCell;
+
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
             (Value::Complex(a), Value::Complex(b)) => Ok(Value::Complex(a.pow_complex(b))),
             (Value::Number(a), Value::Complex(b)) => {
-                use achronyme_types::complex::Complex;
                 Ok(Value::Complex(Complex::new(*a, 0.0).pow_complex(b)))
             }
             (Value::Complex(a), Value::Number(b)) => {
                 Ok(Value::Complex(a.pow(*b)))
             }
+
+            // Vector ^ Vector (element-wise)
+            (Value::Vector(ref a), Value::Vector(ref b)) => {
+                if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
+                    let a_borrow = a.borrow();
+                    let b_borrow = b.borrow();
+
+                    if a_borrow.len() != b_borrow.len() {
+                        return Err(VmError::TypeError {
+                            operation: "exponentiation".to_string(),
+                            expected: "vectors of same length".to_string(),
+                            got: format!("vectors of length {} and {}", a_borrow.len(), b_borrow.len()),
+                        });
+                    }
+
+                    let result: Vec<Value> = a_borrow.iter().zip(b_borrow.iter()).map(|(av, bv)| {
+                        match (av, bv) {
+                            (Value::Number(an), Value::Number(bn)) => Value::Number(an.powf(*bn)),
+                            (Value::Number(an), Value::Complex(bc)) => Value::Complex(Complex::from_real(*an).pow_complex(bc)),
+                            (Value::Complex(ac), Value::Number(bn)) => Value::Complex(ac.pow(*bn)),
+                            (Value::Complex(ac), Value::Complex(bc)) => Value::Complex(ac.pow_complex(bc)),
+                            _ => unreachable!(),
+                        }
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "exponentiation".to_string(),
+                        expected: "numeric vectors".to_string(),
+                        got: format!("{:?} ^ {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Number ^ Vector
+            (Value::Number(scalar), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(scalar.powf(*n)),
+                        Value::Complex(c) => Value::Complex(Complex::from_real(*scalar).pow_complex(c)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "exponentiation".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} ^ {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Number(scalar)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Number(n.powf(*scalar)),
+                        Value::Complex(c) => Value::Complex(c.pow(*scalar)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "exponentiation".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} ^ {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Complex ^ Vector
+            (Value::Complex(c), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(c.pow(*n)),
+                        Value::Complex(cv) => Value::Complex(c.pow_complex(cv)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "exponentiation".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} ^ {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Complex(c)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+                    let result: Vec<Value> = vec_borrow.iter().map(|v| match v {
+                        Value::Number(n) => Value::Complex(Complex::from_real(*n).pow_complex(c)),
+                        Value::Complex(cv) => Value::Complex(cv.pow_complex(c)),
+                        _ => unreachable!(),
+                    }).collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "exponentiation".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} ^ {:?}", left, right),
+                    })
+                }
+            }
+
             _ => Err(VmError::TypeError {
                 operation: "exponentiation".to_string(),
-                expected: "Number or Complex".to_string(),
+                expected: "Number, Complex, or Vector".to_string(),
                 got: format!("{:?} ^ {:?}", left, right),
             }),
         }

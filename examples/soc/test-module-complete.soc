@@ -1,0 +1,13 @@
+import { createCounter } from "./modules/src/contador"
+
+let counter = createCounter([1, 2, 3])
+
+print("Estado inicial:", counter.value)
+
+counter.inc()
+print("Después de inc:", counter.value)
+
+counter.dec()
+print("Después de dec:", counter.value)
+
+print("¡Todo funciona correctamente!")

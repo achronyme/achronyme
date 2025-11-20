@@ -1,12 +1,12 @@
 let semaforo = {
     mut luz: "Verde",
     next: () => do{
-        piecewise
-        (
-            [self.luz == "Verde", do {self.luz = "Rojo"}],
-            [self.luz == "Rojo", do {self.luz = "Amarillo"}],
-            do { self.luz = "Verde"}
-        )
+        match self.luz {
+            "Verde" => do { self.luz = "Rojo" },
+            "Rojo" => do { self.luz = "Amarillo" },
+            "Amarillo" => do { self.luz = "Verde" },
+            _ => do { self.luz = "Verde" },
+        }
     }
 }
 

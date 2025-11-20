@@ -22,7 +22,7 @@ use crate::vm::VM;
 /// # Returns
 /// * `Ok(Value::Record)` - The module's exports Record
 /// * `Err(VmError)` - If the module cannot be loaded
-pub fn vm_import(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     // Validate argument count
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
@@ -44,11 +44,24 @@ pub fn vm_import(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     };
 
     // Convert path to file path (add .soc extension if missing)
-    let file_path = if module_path.ends_with(".soc") {
+    let mut file_path = if module_path.ends_with(".soc") {
         module_path.to_string()
     } else {
         format!("{}.soc", module_path)
     };
+
+    // Resolve relative paths based on current module
+    use std::path::Path;
+    if let Some(current_module) = &vm.current_module {
+        // If the path starts with ./ or ../, it's relative to the current module
+        if file_path.starts_with("./") || file_path.starts_with("../") {
+            if let Some(parent) = Path::new(current_module).parent() {
+                let resolved = parent.join(&file_path);
+                file_path = resolved.to_string_lossy().to_string();
+            }
+        }
+        // Otherwise, if it's not an absolute path, leave it as-is (relative to CWD)
+    }
 
     // Load and compile the module
     use std::fs;

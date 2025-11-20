@@ -165,6 +165,129 @@ impl Compiler {
                 Ok(())
             }
 
+            // Compound assignment (+=, -=, *=, /=, %=, ^=)
+            AstNode::CompoundAssignment { target, operator, value } => {
+                use achronyme_parser::ast::CompoundOp;
+
+                // 1. Read the current value of the target
+                let current_res = self.compile_expression(target)?;
+
+                // 2. Compile the RHS value
+                let rhs_res = self.compile_expression(value)?;
+
+                // 3. Apply the binary operation
+                let result_reg = self.registers.allocate()?;
+                let opcode = match operator {
+                    CompoundOp::AddAssign => OpCode::Add,
+                    CompoundOp::SubAssign => OpCode::Sub,
+                    CompoundOp::MulAssign => OpCode::Mul,
+                    CompoundOp::DivAssign => OpCode::Div,
+                    CompoundOp::ModAssign => OpCode::Mod,
+                    CompoundOp::PowAssign => OpCode::Pow,
+                };
+
+                self.emit(encode_abc(
+                    opcode.as_u8(),
+                    result_reg,
+                    current_res.reg(),
+                    rhs_res.reg(),
+                ));
+
+                // Free temporary registers
+                if current_res.is_temp() {
+                    self.registers.free(current_res.reg());
+                }
+                if rhs_res.is_temp() {
+                    self.registers.free(rhs_res.reg());
+                }
+
+                // 4. Assign the result back to the target
+                match target.as_ref() {
+                    AstNode::VariableRef(name) => {
+                        // Check if it's a local variable or an upvalue
+                        if let Ok(var_reg) = self.symbols.get(name) {
+                            // Local variable
+                            self.emit_move(var_reg, result_reg);
+                        } else if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
+                            // Upvalue (captured variable)
+                            self.emit(encode_abc(OpCode::SetUpvalue.as_u8(), upvalue_idx, result_reg, 0));
+                        } else {
+                            return Err(CompileError::UndefinedVariable(name.clone()));
+                        }
+                    }
+
+                    AstNode::FieldAccess { record, field } => {
+                        // Compile record expression
+                        let rec_res = self.compile_expression(record)?;
+
+                        // Get field name index
+                        let field_idx = self.add_string(field.clone())?;
+
+                        // Emit SetField instruction
+                        self.emit(encode_abc(
+                            OpCode::SetField.as_u8(),
+                            rec_res.reg(),
+                            field_idx as u8,
+                            result_reg,
+                        ));
+
+                        // Free temporary
+                        if rec_res.is_temp() {
+                            self.registers.free(rec_res.reg());
+                        }
+                    }
+
+                    AstNode::IndexAccess { object, indices } => {
+                        use achronyme_parser::ast::IndexArg;
+
+                        // For Phase 3, only support single index access
+                        if indices.len() != 1 {
+                            return Err(CompileError::Error(
+                                "Multi-dimensional indexing not yet supported".to_string(),
+                            ));
+                        }
+
+                        // Extract the single index
+                        let index_node = match &indices[0] {
+                            IndexArg::Single(node) => node,
+                            IndexArg::Range { .. } => {
+                                return Err(CompileError::Error(
+                                    "Range slicing not yet supported".to_string(),
+                                ));
+                            }
+                        };
+
+                        // Compile object and index
+                        let obj_res = self.compile_expression(object)?;
+                        let idx_res = self.compile_expression(index_node)?;
+
+                        // Emit VecSet instruction: R[A][R[B]] = R[C]
+                        self.emit(encode_abc(
+                            OpCode::VecSet.as_u8(),
+                            obj_res.reg(),
+                            idx_res.reg(),
+                            result_reg,
+                        ));
+
+                        // Free temporaries
+                        if obj_res.is_temp() {
+                            self.registers.free(obj_res.reg());
+                        }
+                        if idx_res.is_temp() {
+                            self.registers.free(idx_res.reg());
+                        }
+                    }
+
+                    _ => {
+                        return Err(CompileError::InvalidAssignmentTarget);
+                    }
+                }
+
+                // Free result register
+                self.registers.free(result_reg);
+                Ok(())
+            }
+
             // Yield statement
             AstNode::Yield { value } => {
                 self.compile_yield(value)

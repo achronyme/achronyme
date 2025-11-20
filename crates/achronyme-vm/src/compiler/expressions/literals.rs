@@ -112,6 +112,9 @@ impl Compiler {
         // Emit NewRecord instruction
         self.emit(encode_abc(OpCode::NewRecord.as_u8(), rec_reg, 0, 0));
 
+        // Bind 'self' to the record register so that lambdas in field values can capture it
+        self.symbols.define("self".to_string(), rec_reg)?;
+
         // Set each field one by one
         for field in fields {
             match field {
@@ -144,6 +147,9 @@ impl Compiler {
                 }
             }
         }
+
+        // Clean up the 'self' binding from the symbol table
+        self.symbols.undefine("self");
 
         Ok(RegResult::temp(rec_reg))
     }
@@ -321,5 +327,51 @@ impl Compiler {
         }
 
         Ok(RegResult::temp(result_reg.unwrap()))
+    }
+
+    /// Compile edge literal (graph edge)
+    ///
+    /// Edges can be directed (A -> B) or undirected (A <> B),
+    /// and can optionally have metadata properties.
+    pub(crate) fn compile_edge_literal(
+        &mut self,
+        from: &str,
+        to: &str,
+        directed: bool,
+        metadata: &Option<Box<AstNode>>,
+    ) -> Result<RegResult, CompileError> {
+        use std::collections::HashMap;
+
+        // Evaluate metadata if provided
+        let properties = if let Some(metadata_node) = metadata {
+            // Compile the metadata expression (should be a record)
+            let metadata_res = self.compile_expression(metadata_node)?;
+
+            // For now, we'll create an empty HashMap since we need to evaluate at runtime
+            // This is a limitation - metadata should be a constant record for now
+            // TODO: Support runtime metadata evaluation
+            if metadata_res.is_temp() {
+                self.registers.free(metadata_res.reg());
+            }
+
+            HashMap::new()
+        } else {
+            HashMap::new()
+        };
+
+        // Create the Edge value
+        let edge_value = Value::Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            directed,
+            properties,
+        };
+
+        // Add to constant pool and load
+        let reg = self.registers.allocate()?;
+        let const_idx = self.add_constant(edge_value)?;
+        self.emit_load_const(reg, const_idx);
+
+        Ok(RegResult::temp(reg))
     }
 }
