@@ -17,6 +17,12 @@ mod variables;
 impl Compiler {
     /// Compile an expression (returns register holding result)
     pub(crate) fn compile_expression(&mut self, node: &AstNode) -> Result<RegResult, CompileError> {
+        // Default: not in tail position
+        self.compile_expression_with_tail(node, false)
+    }
+
+    /// Compile an expression with tail position awareness
+    pub(crate) fn compile_expression_with_tail(&mut self, node: &AstNode, is_tail: bool) -> Result<RegResult, CompileError> {
         match node {
             // Literals
             AstNode::Number(_) | AstNode::Boolean(_) | AstNode::Null | AstNode::StringLiteral(_) => {
@@ -46,7 +52,7 @@ impl Compiler {
                 condition,
                 then_expr,
                 else_expr,
-            } => self.compile_if(condition, then_expr, Some(else_expr.as_ref())),
+            } => self.compile_if_with_tail(condition, then_expr, Some(else_expr.as_ref()), is_tail),
 
             AstNode::WhileLoop { condition, body } => {
                 self.compile_while(condition, body)
@@ -81,11 +87,11 @@ impl Compiler {
             }
 
             AstNode::FunctionCall { name, args } => {
-                self.compile_function_call(name, args)
+                self.compile_function_call(name, args, is_tail)
             }
 
             AstNode::CallExpression { callee, args } => {
-                self.compile_call_expression(callee, args)
+                self.compile_call_expression(callee, args, is_tail)
             }
 
             // Array and Record literals
@@ -122,7 +128,9 @@ impl Compiler {
 
             AstNode::Sequence { statements } | AstNode::DoBlock { statements } => {
                 let mut last_res: Option<RegResult> = None;
-                for stmt in statements {
+                let num_statements = statements.len();
+
+                for (idx, stmt) in statements.iter().enumerate() {
                     // Check if statement is an expression
                     let is_expression = !matches!(
                         stmt,
@@ -142,7 +150,10 @@ impl Compiler {
                                 self.registers.free(old_res.reg());
                             }
                         }
-                        last_res = Some(self.compile_expression(stmt)?);
+                        // Last expression inherits tail position from parent
+                        let is_last = idx == num_statements - 1;
+                        let expr_is_tail = is_tail && is_last;
+                        last_res = Some(self.compile_expression_with_tail(stmt, expr_is_tail)?);
                     } else {
                         self.compile_statement(stmt)?;
                     }

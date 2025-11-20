@@ -216,7 +216,7 @@ impl VM {
             | OpCode::Return | OpCode::ReturnNull => self.execute_control(opcode, instruction),
 
             // Functions and closures
-            OpCode::Closure | OpCode::Call => self.execute_functions(opcode, instruction),
+            OpCode::Closure | OpCode::Call | OpCode::TailCall => self.execute_functions(opcode, instruction),
 
             // Vectors
             OpCode::NewVector | OpCode::VecPush | OpCode::VecGet | OpCode::VecSet | OpCode::VecSlice => {

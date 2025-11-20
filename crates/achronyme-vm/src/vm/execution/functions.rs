@@ -105,6 +105,96 @@ impl VM {
                 }
             }
 
+            OpCode::TailCall => {
+                let func_reg = b;
+                let argc = c;
+
+                // 1. Get callee function from register
+                let func_value = self.get_register(func_reg)?.clone();
+
+                let closure = match func_value {
+                    Value::Function(Function::VmClosure(closure_any)) => {
+                        closure_any
+                            .downcast_ref::<Closure>()
+                            .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?
+                            .clone()
+                    }
+                    _ => {
+                        return Err(VmError::TypeError {
+                            operation: "tail call".to_string(),
+                            expected: "Function".to_string(),
+                            got: format!("{:?}", func_value),
+                        })
+                    }
+                };
+
+                // 2. Validate arity (optional - for now we allow arity mismatch like regular CALL)
+                // In production, you might want to enable this for safety
+                // if argc != closure.prototype.param_count {
+                //     return Err(VmError::Runtime(format!(
+                //         "Arity mismatch: expected {} arguments, got {}",
+                //         closure.prototype.param_count, argc
+                //     )));
+                // }
+
+                // 3. CRITICAL: Close upvalues before recycling frame
+                // Note: In a full implementation, this would close upvalues that point
+                // to registers in the current frame. Since our current implementation
+                // captures upvalues by value (not by reference to stack slots), we don't
+                // need to do anything here. But in a future optimization where upvalues
+                // point to stack locations, this would be critical.
+                // self.close_upvalues(current_frame_base);
+
+                // 4. CRITICAL: Safe argument copying - use temporary buffer to avoid overlap
+                // Arguments are currently in registers func_reg+1, func_reg+2, ..., func_reg+argc
+                // We need to move them to R0, R1, ..., R(argc-1)
+                let mut args = Vec::with_capacity(argc as usize);
+                for i in 0..argc {
+                    let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
+                    args.push(self.get_register(arg_reg)?.clone());
+                }
+
+                // 5. Get current frame and recycle it
+                let current_frame = self.current_frame_mut()?;
+
+                // Replace function
+                current_frame.function = closure.prototype.clone();
+
+                // Reset IP to 0
+                current_frame.ip = 0;
+
+                // Set upvalues
+                current_frame.upvalues = closure.upvalues.clone();
+
+                // Ensure register window is large enough for new function
+                // Note: We don't resize the register window in this implementation
+                // because it would be complex. The current frame's register window
+                // should already be large enough (255 registers for recursion).
+                // If needed in the future, we can add resize logic here.
+
+                // 6. Write arguments to frame base (R0, R1, ...)
+                for (i, arg) in args.into_iter().enumerate() {
+                    current_frame.registers.set(i as u8, arg)?;
+                }
+
+                // 7. Clear registers beyond the arguments to avoid stale values
+                // This is important for correctness when the new function has fewer parameters
+                for i in argc..current_frame.function.register_count {
+                    current_frame.registers.set(i, Value::Null)?;
+                }
+
+                // 8. Set register 255 to the closure itself for recursion
+                current_frame.registers.set(
+                    255,
+                    Value::Function(Function::VmClosure(Rc::new(closure) as Rc<dyn std::any::Any>)),
+                )?;
+
+                // 8. Clear remaining registers (optional but recommended for GC)
+                // Skip this for now as it's just an optimization
+
+                Ok(ExecutionResult::Continue)
+            }
+
             _ => unreachable!("Non-function opcode in function handler"),
         }
     }

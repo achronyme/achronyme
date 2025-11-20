@@ -71,8 +71,8 @@ impl Compiler {
 
         child_compiler.function.upvalues = upvalues;
 
-        // Compile lambda body
-        let body_res = child_compiler.compile_expression(body)?;
+        // Compile lambda body (always in tail position within the lambda)
+        let body_res = child_compiler.compile_expression_with_tail(body, true)?;
         child_compiler.emit(encode_abc(OpCode::Return.as_u8(), body_res.reg(), 0, 0));
 
         // Set register count (need to allocate enough for rec register 255)
@@ -101,6 +101,7 @@ impl Compiler {
         &mut self,
         name: &str,
         args: &[AstNode],
+        is_tail: bool,
     ) -> Result<RegResult, CompileError> {
         // For FunctionCall, lookup the function by name and copy to a fresh register
         // This ensures the function value won't be overwritten when compiling arguments
@@ -141,30 +142,55 @@ impl Compiler {
             }
         }
 
-        // Now allocate result register - this must happen AFTER args are positioned
-        // to avoid allocating a register that conflicts with argument positions
-        let result_reg = self.registers.allocate()?;
-
-        // Emit CALL opcode
+        // Check argument count
         if args.len() > 255 {
             return Err(CompileError::Error("Too many arguments".to_string()));
         }
-        self.emit(encode_abc(
-            OpCode::Call.as_u8(),
-            result_reg,
-            func_reg,
-            args.len() as u8,
-        ));
 
-        // Free temporary registers ONLY if they are temps
-        for arg_res in arg_results {
-            if arg_res.is_temp() {
-                self.registers.free(arg_res.reg());
+        // Emit CALL or TAIL_CALL depending on tail position
+        if is_tail {
+            // TAIL_CALL: Replace current frame with callee
+            // TailCall doesn't use a result register - it acts as an implicit return
+            self.emit(encode_abc(
+                OpCode::TailCall.as_u8(),
+                0,  // unused
+                func_reg,
+                args.len() as u8,
+            ));
+
+            // Free temporary registers ONLY if they are temps
+            for arg_res in arg_results {
+                if arg_res.is_temp() {
+                    self.registers.free(arg_res.reg());
+                }
             }
-        }
-        self.registers.free(func_reg);
+            self.registers.free(func_reg);
 
-        Ok(RegResult::temp(result_reg))
+            // Tail call acts as return, but we need to return a register for type checking
+            // Use a dummy register (caller won't use it)
+            let dummy_reg = self.registers.allocate()?;
+            Ok(RegResult::temp(dummy_reg))
+        } else {
+            // Regular CALL: Allocate result register
+            let result_reg = self.registers.allocate()?;
+
+            self.emit(encode_abc(
+                OpCode::Call.as_u8(),
+                result_reg,
+                func_reg,
+                args.len() as u8,
+            ));
+
+            // Free temporary registers ONLY if they are temps
+            for arg_res in arg_results {
+                if arg_res.is_temp() {
+                    self.registers.free(arg_res.reg());
+                }
+            }
+            self.registers.free(func_reg);
+
+            Ok(RegResult::temp(result_reg))
+        }
     }
 
     /// Compile call expression (arbitrary callee)
@@ -172,6 +198,7 @@ impl Compiler {
         &mut self,
         callee: &AstNode,
         args: &[AstNode],
+        is_tail: bool,
     ) -> Result<RegResult, CompileError> {
         // TODO: This is temporary sugar syntax for generator.next()
         // The proper architectural solution is to implement .next() as an intrinsic method
@@ -239,36 +266,67 @@ impl Compiler {
             }
         }
 
-        // Now allocate result register - this must happen AFTER args are positioned
-        // to avoid allocating a register that conflicts with argument positions
-        let result_reg = self.registers.allocate()?;
-
-        // Emit CALL opcode
+        // Check argument count
         if args.len() > 255 {
             return Err(CompileError::Error("Too many arguments".to_string()));
         }
-        self.emit(encode_abc(
-            OpCode::Call.as_u8(),
-            result_reg,
-            func_reg,
-            args.len() as u8,
-        ));
 
-        // Free temporary registers ONLY if they are temps
-        for arg_res in arg_results {
-            if arg_res.is_temp() {
-                self.registers.free(arg_res.reg());
+        // Emit CALL or TAIL_CALL depending on tail position
+        if is_tail {
+            // TAIL_CALL: Replace current frame with callee
+            // TailCall doesn't use a result register - it acts as an implicit return
+            self.emit(encode_abc(
+                OpCode::TailCall.as_u8(),
+                0,  // unused
+                func_reg,
+                args.len() as u8,
+            ));
+
+            // Free temporary registers ONLY if they are temps
+            for arg_res in arg_results {
+                if arg_res.is_temp() {
+                    self.registers.free(arg_res.reg());
+                }
             }
-        }
-        if func_res.is_temp() {
-            self.registers.free(func_res.reg());
-        }
-        // Also free the copied func_reg if we allocated it
-        if func_res.reg() == 255 {
-            self.registers.free(func_reg);
-        }
+            if func_res.is_temp() {
+                self.registers.free(func_res.reg());
+            }
+            // Also free the copied func_reg if we allocated it
+            if func_res.reg() == 255 {
+                self.registers.free(func_reg);
+            }
 
-        Ok(RegResult::temp(result_reg))
+            // Tail call acts as return, but we need to return a register for type checking
+            // Use a dummy register (caller won't use it)
+            let dummy_reg = self.registers.allocate()?;
+            Ok(RegResult::temp(dummy_reg))
+        } else {
+            // Regular CALL: Allocate result register
+            let result_reg = self.registers.allocate()?;
+
+            self.emit(encode_abc(
+                OpCode::Call.as_u8(),
+                result_reg,
+                func_reg,
+                args.len() as u8,
+            ));
+
+            // Free temporary registers ONLY if they are temps
+            for arg_res in arg_results {
+                if arg_res.is_temp() {
+                    self.registers.free(arg_res.reg());
+                }
+            }
+            if func_res.is_temp() {
+                self.registers.free(func_res.reg());
+            }
+            // Also free the copied func_reg if we allocated it
+            if func_res.reg() == 255 {
+                self.registers.free(func_reg);
+            }
+
+            Ok(RegResult::temp(result_reg))
+        }
     }
 
     /// Find all variable references in an AST subtree

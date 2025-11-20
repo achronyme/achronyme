@@ -8,12 +8,23 @@ use crate::opcode::{instruction::*, OpCode};
 use achronyme_parser::ast::AstNode;
 
 impl Compiler {
-    /// Compile if expression
+    /// Compile if expression (default: not in tail position)
     pub(crate) fn compile_if(
         &mut self,
         condition: &AstNode,
         then_expr: &AstNode,
         else_expr: Option<&AstNode>,
+    ) -> Result<RegResult, CompileError> {
+        self.compile_if_with_tail(condition, then_expr, else_expr, false)
+    }
+
+    /// Compile if expression with tail position awareness
+    pub(crate) fn compile_if_with_tail(
+        &mut self,
+        condition: &AstNode,
+        then_expr: &AstNode,
+        else_expr: Option<&AstNode>,
+        is_tail: bool,
     ) -> Result<RegResult, CompileError> {
         // Compile condition
         let cond_res = self.compile_expression(condition)?;
@@ -26,8 +37,8 @@ impl Compiler {
             self.registers.free(cond_res.reg());
         }
 
-        // Compile then branch
-        let then_res = self.compile_expression(then_expr)?;
+        // Compile then branch (inherits tail position)
+        let then_res = self.compile_expression_with_tail(then_expr, is_tail)?;
         let result_reg = self.registers.allocate()?;
         self.emit_move(result_reg, then_res.reg());
 
@@ -42,9 +53,9 @@ impl Compiler {
         // Patch else jump
         self.patch_jump(else_jump);
 
-        // Compile else branch
+        // Compile else branch (inherits tail position)
         if let Some(else_node) = else_expr {
-            let else_res = self.compile_expression(else_node)?;
+            let else_res = self.compile_expression_with_tail(else_node, is_tail)?;
             self.emit_move(result_reg, else_res.reg());
 
             // Free else result ONLY if temporary
