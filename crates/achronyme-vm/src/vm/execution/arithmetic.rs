@@ -65,6 +65,13 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::Not => {
+                let value = self.get_register(b)?;
+                let result = ValueOperations::not_value(value)?;
+                self.set_register(a, result)?;
+                Ok(ExecutionResult::Continue)
+            }
+
             _ => unreachable!("Non-arithmetic opcode in arithmetic handler"),
         }
     }

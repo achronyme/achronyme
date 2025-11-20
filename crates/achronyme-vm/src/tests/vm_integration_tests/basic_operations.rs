@@ -88,3 +88,132 @@ fn test_multiple_variables() {
     assert_eq!(result, Value::Number(15.0));
 }
 
+// ============================================================================
+// Logical Operators with Short-Circuit Evaluation
+// ============================================================================
+
+#[test]
+fn test_and_both_true() {
+    let result = execute("true && true").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_and_first_false() {
+    let result = execute("false && true").unwrap();
+    assert_eq!(result, Value::Boolean(false));
+}
+
+#[test]
+fn test_and_second_false() {
+    let result = execute("true && false").unwrap();
+    assert_eq!(result, Value::Boolean(false));
+}
+
+#[test]
+fn test_and_both_false() {
+    let result = execute("false && false").unwrap();
+    assert_eq!(result, Value::Boolean(false));
+}
+
+#[test]
+fn test_or_both_true() {
+    let result = execute("true || true").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_or_first_true() {
+    let result = execute("true || false").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_or_second_true() {
+    let result = execute("false || true").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_or_both_false() {
+    let result = execute("false || false").unwrap();
+    assert_eq!(result, Value::Boolean(false));
+}
+
+#[test]
+fn test_not_operator() {
+    let result = execute("!true").unwrap();
+    assert_eq!(result, Value::Boolean(false));
+
+    let result = execute("!false").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn test_and_short_circuit() {
+    // If first operand is false, second should not be evaluated
+    // This test uses a side effect to verify: if second is evaluated, x would be assigned
+    let source = r#"
+        mut x = 0
+        false && do { x = 1; true }
+        x
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(0.0), "Second operand should not be evaluated");
+}
+
+#[test]
+fn test_or_short_circuit() {
+    // If first operand is true, second should not be evaluated
+    let source = r#"
+        mut x = 0
+        true || do { x = 1; false }
+        x
+    "#;
+    let result = execute(source).unwrap();
+    assert_eq!(result, Value::Number(0.0), "Second operand should not be evaluated");
+}
+
+#[test]
+fn test_and_with_numbers() {
+    // Numbers are truthy if non-zero
+    let result = execute("5 && 10").unwrap();
+    assert_eq!(result, Value::Number(10.0), "Should return second value when both truthy");
+
+    let result = execute("0 && 10").unwrap();
+    assert_eq!(result, Value::Number(0.0), "Should return first value when first is falsy");
+
+    let result = execute("5 && 0").unwrap();
+    assert_eq!(result, Value::Number(0.0), "Should return second value even if falsy");
+}
+
+#[test]
+fn test_or_with_numbers() {
+    let result = execute("0 || 10").unwrap();
+    assert_eq!(result, Value::Number(10.0), "Should return second value when first is falsy");
+
+    let result = execute("5 || 10").unwrap();
+    assert_eq!(result, Value::Number(5.0), "Should return first value when first is truthy");
+}
+
+#[test]
+fn test_complex_logical_expression() {
+    let result = execute("true && false || true").unwrap();
+    assert_eq!(result, Value::Boolean(true), "(true && false) || true = false || true = true");
+
+    let result = execute("false || true && false").unwrap();
+    assert_eq!(result, Value::Boolean(false), "false || (true && false) = false || false = false");
+}
+
+#[test]
+fn test_logical_with_comparisons() {
+    let result = execute("5 > 3 && 10 < 20").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+
+    let result = execute("5 > 10 || 3 < 8").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+
+    let result = execute("5 > 3 && 10 > 20").unwrap();
+    assert_eq!(result, Value::Boolean(false));
+}
+

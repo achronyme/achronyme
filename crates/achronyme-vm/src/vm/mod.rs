@@ -208,8 +208,8 @@ impl VM {
                 self.execute_variables(opcode, instruction)
             }
 
-            // Arithmetic operations
-            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Pow | OpCode::Neg => {
+            // Arithmetic and logical operations
+            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Pow | OpCode::Neg | OpCode::Not => {
                 self.execute_arithmetic(opcode, instruction)
             }
 

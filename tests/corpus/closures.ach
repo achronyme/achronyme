@@ -1,6 +1,12 @@
-let make_counter = () => (let count = 0; (increment) => (count = count + increment; count))
+let make_counter = () => do { 
+    mut count = 0
+    (increment) => do {
+        count = count + increment 
+        count
+    }
+}
 
 let counter = make_counter()
-counter(1);
-counter(5);
+counter(1)
+counter(5)
 counter(10)

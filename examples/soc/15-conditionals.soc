@@ -105,10 +105,10 @@ heaviside(0)   // 1
 // ============================================================================
 
 // Check if value is in range [min, max]
-let in_range = (x, min, max) => if(x >= min && x <= max, 1, 0)
-in_range(5, 0, 10)    // 1
-in_range(15, 0, 10)   // 0
-in_range(-5, 0, 10)   // 0
+let n_range = (x, min, max) => if(x >= min && x <= max, 1, 0)
+n_range(5, 0, 10)    // 1
+n_range(15, 0, 10)   // 0
+n_range(-5, 0, 10)   // 0
 
 // XOR (exclusive or) using logical operators
 let xor = (a, b) => if((a || b) && !(a && b), 1, 0)
@@ -121,13 +121,7 @@ xor(false, false)  // 0
 // ============================================================================
 
 // Grading system (using numbers: 4=A, 3=B, 2=C, 1=D, 0=F)
-let grade_num = score => if(score >= 90,
-                            4,
-                            if(score >= 80,
-                               3,
-                               if(score >= 70,
-                                  2,
-                                  if(score >= 60, 1, 0))))
+let grade_num = score => if(score >= 90, 4, if(score >= 80, 3, if(score >= 70, 2, if(score >= 60, 1, 0))))
 grade_num(95)  // 4 (A)
 grade_num(75)  // 2 (C)
 grade_num(50)  // 0 (F)
@@ -145,9 +139,7 @@ let positive2 = v => filter(x => x > 0, v)
 positive2([1, -2, 3, -4, 5])  // [1, 3, 5]
 
 // Clamp values to range [min, max]
-let clamp = (v, min_val, max_val) => map(x => if(x < min_val,
-                                                   min_val,
-                                                   if(x > max_val, max_val, x)), v)
+let clamp = (v, min_val, max_val) => map(x => if(x < min_val, min_val, if(x > max_val, max_val, x)), v)
 clamp([1, 5, 10, 15, 20], 5, 15)  // [5, 5, 10, 15, 15]
 
 // Apply ReLU to entire vector

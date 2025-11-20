@@ -14,6 +14,14 @@ impl Compiler {
         left: &AstNode,
         right: &AstNode,
     ) -> Result<RegResult, CompileError> {
+        // Handle short-circuit operators separately
+        match op {
+            BinaryOp::And => return self.compile_and(left, right),
+            BinaryOp::Or => return self.compile_or(left, right),
+            _ => {}
+        }
+
+        // Regular binary operations
         let left_res = self.compile_expression(left)?;
         let right_res = self.compile_expression(right)?;
         let result_reg = self.registers.allocate()?;
@@ -31,12 +39,7 @@ impl Compiler {
             BinaryOp::Lte => OpCode::Le,
             BinaryOp::Gt => OpCode::Gt,
             BinaryOp::Gte => OpCode::Ge,
-            BinaryOp::And | BinaryOp::Or => {
-                return Err(CompileError::Error(format!(
-                    "Binary operation {:?} requires short-circuit evaluation",
-                    op
-                )))
-            }
+            BinaryOp::And | BinaryOp::Or => unreachable!("Handled above"),
         };
 
         self.emit(encode_abc(
@@ -53,6 +56,84 @@ impl Compiler {
         if right_res.is_temp() {
             self.registers.free(right_res.reg());
         }
+
+        Ok(RegResult::temp(result_reg))
+    }
+
+    /// Compile AND with short-circuit evaluation
+    /// Pattern: left && right
+    /// - If left is falsy, return left (don't evaluate right)
+    /// - If left is truthy, return right
+    fn compile_and(
+        &mut self,
+        left: &AstNode,
+        right: &AstNode,
+    ) -> Result<RegResult, CompileError> {
+        // Compile left operand
+        let left_res = self.compile_expression(left)?;
+
+        // Allocate result register and move left value to it
+        let result_reg = self.registers.allocate()?;
+        self.emit_move(result_reg, left_res.reg());
+
+        // Jump to end if left is falsy (short-circuit)
+        let skip_jump = self.emit_jump_if_false(result_reg, 0);
+
+        // Free left register if temporary
+        if left_res.is_temp() {
+            self.registers.free(left_res.reg());
+        }
+
+        // Left was truthy, evaluate right and store in result
+        let right_res = self.compile_expression(right)?;
+        self.emit_move(result_reg, right_res.reg());
+
+        // Free right register if temporary
+        if right_res.is_temp() {
+            self.registers.free(right_res.reg());
+        }
+
+        // Patch the skip jump
+        self.patch_jump(skip_jump);
+
+        Ok(RegResult::temp(result_reg))
+    }
+
+    /// Compile OR with short-circuit evaluation
+    /// Pattern: left || right
+    /// - If left is truthy, return left (don't evaluate right)
+    /// - If left is falsy, return right
+    fn compile_or(
+        &mut self,
+        left: &AstNode,
+        right: &AstNode,
+    ) -> Result<RegResult, CompileError> {
+        // Compile left operand
+        let left_res = self.compile_expression(left)?;
+
+        // Allocate result register and move left value to it
+        let result_reg = self.registers.allocate()?;
+        self.emit_move(result_reg, left_res.reg());
+
+        // Jump to end if left is truthy (short-circuit)
+        let skip_jump = self.emit_jump_if_true(result_reg, 0);
+
+        // Free left register if temporary
+        if left_res.is_temp() {
+            self.registers.free(left_res.reg());
+        }
+
+        // Left was falsy, evaluate right and store in result
+        let right_res = self.compile_expression(right)?;
+        self.emit_move(result_reg, right_res.reg());
+
+        // Free right register if temporary
+        if right_res.is_temp() {
+            self.registers.free(right_res.reg());
+        }
+
+        // Patch the skip jump
+        self.patch_jump(skip_jump);
 
         Ok(RegResult::temp(result_reg))
     }

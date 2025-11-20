@@ -2,15 +2,14 @@
 
 // Declare a vector
 let v = [1, 2, 3, 4, 5]
+print("Original vector: ", v)
 
 // Square every element using map
 let v_squared = map(x => x^2, v)
-
+print("Squared vector: ", v_squared)
 // Filter for elements greater than 10
 let v_filtered = filter(x => x > 10, v_squared)
-
+print("Filtered vector (elements > 10): ", v_filtered)
 // Sum the remaining elements
 let final_sum = reduce((acc, x) => acc + x, 0, v_filtered)
-
-// The result of the last expression is final_sum
-final_sum
+print("Sum of filtered elements: ", final_sum)

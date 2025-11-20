@@ -192,4 +192,8 @@ impl ValueOperations {
             _ => true,
         }
     }
+
+    pub(crate) fn not_value(value: &Value) -> Result<Value, VmError> {
+        Ok(Value::Boolean(!Self::is_truthy(value)))
+    }
 }
