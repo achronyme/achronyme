@@ -1,5 +1,5 @@
 // --- Full DSP Pipeline in SOC ---
-
+set_precision(5)  // Round results to 5 decimal places
 // Define parameters
 let num_samples = 1024
 let sample_rate = 1024
@@ -7,11 +7,11 @@ let freq = 50
 
 // Generate time vector and signal
 let t = linspace(0, 1, num_samples)
-let signal = map(x => sin(2 * PI * freq * x), t)
+let signal = map(x => sin(2 * pi * freq * x), t)
 
 // Apply window
 let windowed_signal = signal * hanning(num_samples)
 
 // Compute FFT magnitude spectrum
 // This will be the final returned value from the script
-fft_mag(windowed_signal)
+print(fft_mag(windowed_signal))

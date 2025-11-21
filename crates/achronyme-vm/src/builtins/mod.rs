@@ -20,6 +20,7 @@ pub mod io;
 pub mod linalg;
 pub mod math;
 pub mod module_system;
+pub mod numerical;
 pub mod records;
 pub mod registry;
 pub mod statistics;
@@ -174,6 +175,10 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("imag", complex::vm_imag, 1);
     registry.register("conj", complex::vm_conj, 1);
     registry.register("arg", complex::vm_arg, 1);
+    registry.register("magnitude", complex::vm_magnitude, 1);
+    registry.register("phase", complex::vm_phase, 1);
+    registry.register("polar", complex::vm_polar, 2);
+    registry.register("to_polar", complex::vm_to_polar, 1);
 
     // ========================================================================
     // Utility Functions
@@ -255,6 +260,27 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     // Utility Functions
     registry.register("linspace", dsp::vm_linspace, 3);
 
+    // ========================================================================
+    // Numerical Analysis Functions (Phase 4I)
+    // ========================================================================
+
+    // Differentiation
+    registry.register("diff", numerical::vm_diff, -1); // 2-3 args
+    registry.register("diff2", numerical::vm_diff2, -1); // 2-3 args
+    registry.register("diff3", numerical::vm_diff3, -1); // 2-3 args
+    registry.register("gradient", numerical::vm_gradient, -1); // 2-3 args
+
+    // Integration
+    registry.register("integral", numerical::vm_integral, -1); // 3-4 args
+    registry.register("simpson", numerical::vm_simpson, -1); // 3-4 args
+    registry.register("romberg", numerical::vm_romberg, -1); // 3-4 args
+    registry.register("quad", numerical::vm_quad, -1); // 3-4 args
+
+    // Root Finding
+    registry.register("solve", numerical::vm_solve, -1); // 3-4 args
+    registry.register("newton", numerical::vm_newton, -1); // 2-4 args
+    registry.register("secant", numerical::vm_secant, -1); // 3-4 args
+
     registry
 }
 
@@ -277,9 +303,9 @@ mod tests {
 
         // Verify we have a good number of functions
         // Original: 56 functions
-        // Added: 3 math (deg, rad, cbrt) + 3 stats + 7 linalg + 5 complex + 5 utils + 3 records + 8 array_advanced + 9 hof + 1 module + 11 dsp = 47
-        // Total: 103+ functions
-        assert!(registry.len() > 100);
+        // Added: 3 math (deg, rad, cbrt) + 3 stats + 7 linalg + 9 complex (incl. new ones) + 5 utils + 3 records + 8 array_advanced + 9 hof + 1 module + 11 dsp + 11 numerical = 62
+        // Total: 118+ functions
+        assert!(registry.len() > 115);
     }
 
     #[test]

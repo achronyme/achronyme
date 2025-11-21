@@ -1,0 +1,138 @@
+// ============================================================================
+// Phase 4I: Complex Number Enhancements - Tests
+// ============================================================================
+
+println("=== COMPLEX NUMBER ENHANCEMENTS TESTS ===")
+println("")
+
+// ============================================================================
+// POLAR FORM CREATION
+// ============================================================================
+
+println("--- POLAR FORM CREATION ---")
+
+// Test 1: Create complex number from polar coordinates r=5, θ=0
+let c1 = polar(5, 0)
+println("polar(5, 0) =", c1, " (expected: 5+0i)")
+
+// Test 2: Create complex from polar with phase π/4
+let c2 = polar(1, pi() / 4)
+println("polar(1, π/4) =", c2, " (expected: ~0.707+0.707i)")
+
+// Test 3: Create complex with r=10, θ=π/2 (should be pure imaginary)
+let c3 = polar(10, pi() / 2)
+println("polar(10, π/2) =", c3, " (expected: ~0+10i)")
+
+// Test 4: Create complex with r=1, θ=π (should be -1+0i)
+let c4 = polar(1, pi())
+println("polar(1, π) =", c4, " (expected: ~-1+0i)")
+
+println("")
+
+// ============================================================================
+// POLAR FORM CONVERSION
+// ============================================================================
+
+println("--- POLAR FORM CONVERSION ---")
+
+// Test 5: Convert complex 3+4i to polar form [5, θ]
+let c5 = complex(3, 4)
+let polar5 = to_polar(c5)
+println("to_polar(3+4i) =", polar5, " (expected: [5, ~0.927])")
+
+// Test 6: Convert complex 1+1i to polar form
+let c6 = complex(1, 1)
+let polar6 = to_polar(c6)
+println("to_polar(1+1i) =", polar6, " (expected: [~1.414, ~0.785])")
+
+// Test 7: Convert real number to polar
+let polar7 = to_polar(5)
+println("to_polar(5) =", polar7, " (expected: [5, 0])")
+
+// Test 8: Convert negative real number to polar
+let polar8 = to_polar(-5)
+println("to_polar(-5) =", polar8, " (expected: [5, π])")
+
+println("")
+
+// ============================================================================
+// MAGNITUDE AND PHASE
+// ============================================================================
+
+println("--- MAGNITUDE AND PHASE ---")
+
+// Test 9: Get magnitude of complex 3+4i
+let mag1 = magnitude(c5)
+println("magnitude(3+4i) =", mag1, " (expected: 5)")
+
+// Test 10: Get phase of complex 3+4i
+let ph1 = phase(c5)
+println("phase(3+4i) =", ph1, " (expected: ~0.927)")
+
+// Test 11: Magnitude of real number
+let mag2 = magnitude(5)
+println("magnitude(5) =", mag2, " (expected: 5)")
+
+// Test 12: Magnitude of negative real number
+let mag3 = magnitude(-5)
+println("magnitude(-5) =", mag3, " (expected: 5)")
+
+// Test 13: Phase of positive real number
+let ph2 = phase(5)
+println("phase(5) =", ph2, " (expected: 0)")
+
+// Test 14: Phase of negative real number
+let ph3 = phase(-5)
+println("phase(-5) =", ph3, " (expected: π)")
+
+println("")
+
+// ============================================================================
+// ROUNDTRIP CONVERSIONS
+// ============================================================================
+
+println("--- ROUNDTRIP CONVERSIONS ---")
+
+// Test 15: Roundtrip: complex -> polar -> complex
+let original = complex(3, 4)
+let polar_rep = to_polar(original)
+let r = polar_rep[0]
+let theta = polar_rep[1]
+let reconstructed = polar(r, theta)
+println("Original: 3+4i")
+println("Polar:   ", polar_rep)
+println("Reconstructed:", reconstructed)
+
+// Test 16: Another roundtrip with 1+1i
+let orig2 = complex(1, 1)
+let polar2 = to_polar(orig2)
+let r2 = polar2[0]
+let theta2 = polar2[1]
+let recon2 = polar(r2, theta2)
+println("Original: 1+1i")
+println("Polar:   ", polar2)
+println("Reconstructed:", recon2)
+
+println("")
+
+// ============================================================================
+// EULER'S FORMULA VERIFICATION
+// ============================================================================
+
+println("--- EULER'S FORMULA VERIFICATION ---")
+
+// Test 17: e^(iπ) = -1 (Euler's identity)
+// Using polar(1, π) should give approximately -1+0i
+let euler = polar(1, pi())
+println("e^(iπ) = polar(1, π) =", euler, " (expected: ~-1+0i)")
+
+// Test 18: e^(iπ/2) = i
+let euler_90 = polar(1, pi() / 2)
+println("e^(iπ/2) = polar(1, π/2) =", euler_90, " (expected: ~0+1i)")
+
+// Test 19: e^(i·0) = 1
+let euler_0 = polar(1, 0)
+println("e^(i·0) = polar(1, 0) =", euler_0, " (expected: 1+0i)")
+
+println("")
+println("=== COMPLEX NUMBER ENHANCEMENTS TESTS COMPLETED ===")

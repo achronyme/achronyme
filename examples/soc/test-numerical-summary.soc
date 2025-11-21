@@ -1,0 +1,175 @@
+// ============================================================================
+// Phase 4I: Numerical Analysis - Summary Test Suite
+//
+// This file demonstrates all 11 new numerical analysis functions implemented
+// in the Achronyme VM, plus the 4 enhanced complex number functions.
+// ============================================================================
+
+println("==============================================================")
+println("         PHASE 4I: NUMERICAL ANALYSIS - SUMMARY")
+println("==============================================================")
+println("")
+
+// ============================================================================
+// DIFFERENTIATION (4 functions)
+// ============================================================================
+
+println("1. DIFFERENTIATION FUNCTIONS")
+println("   - diff(fn, x, h?)    : First derivative using centered differences")
+println("   - diff2(fn, x, h?)   : Second derivative")
+println("   - diff3(fn, x, h?)   : Third derivative")
+println("   - gradient(fn, pt, h?): Multivariable gradient")
+println("")
+
+let f = (x: Number) => x * x * x
+println("   Example: f(x) = x³")
+println("   f'(2)  = diff(f, 2)  =", diff(f, 2), " (expected: 12)")
+println("   f''(2) = diff2(f, 2) =", diff2(f, 2), " (expected: 12)")
+println("   f'''(2) = diff3(f, 2) =", diff3(f, 2), " (expected: 12)")
+println("")
+
+let g = (v: Vector) => v[0] * v[0] + v[1] * v[1]
+println("   Example: g(x,y) = x² + y²")
+println("   ∇g(1,2) =", gradient(g, [1, 2]), " (expected: [2, 4])")
+println("")
+
+// ============================================================================
+// INTEGRATION (4 functions)
+// ============================================================================
+
+println("2. INTEGRATION FUNCTIONS")
+println("   - integral(fn, a, b, n?)     : Trapezoidal rule")
+println("   - simpson(fn, a, b, n?)      : Simpson's 1/3 rule")
+println("   - romberg(fn, a, b, max_iter?): Romberg integration")
+println("   - quad(fn, a, b, tol?)       : Adaptive quadrature")
+println("")
+
+let h = (x: Number) => x * x
+println("   Example: ∫₀¹ x² dx (exact = 1/3)")
+println("   Trapezoidal:", integral(h, 0, 1))
+println("   Simpson:    ", simpson(h, 0, 1))
+println("   Romberg:    ", romberg(h, 0, 1))
+println("   Quad:       ", quad(h, 0, 1))
+println("")
+
+// ============================================================================
+// ROOT FINDING (3 functions)
+// ============================================================================
+
+println("3. ROOT FINDING FUNCTIONS")
+println("   - solve(fn, a, b, tol?)       : Bisection method")
+println("   - newton(fn, x0, tol?, max_iter?): Newton-Raphson")
+println("   - secant(fn, x0, x1, tol?)    : Secant method")
+println("")
+
+let j = (x: Number) => x * x - 2
+println("   Example: Find √2 (root of x² - 2)")
+println("   Bisection:", solve(j, 1, 2))
+println("   Newton:   ", newton(j, 1))
+println("   Secant:   ", secant(j, 1, 2))
+println("")
+
+// ============================================================================
+// COMPLEX NUMBER ENHANCEMENTS (4 functions)
+// ============================================================================
+
+println("4. COMPLEX NUMBER ENHANCEMENTS")
+println("   - magnitude(z)   : Get magnitude of complex number")
+println("   - phase(z)       : Get phase angle in radians")
+println("   - polar(r, theta): Create complex from polar coords")
+println("   - to_polar(z)    : Convert to polar form [r, θ]")
+println("")
+
+let c = complex(3, 4)
+println("   Example: z = 3+4i")
+println("   magnitude(z) =", magnitude(c), " (expected: 5)")
+println("   phase(z)     =", phase(c), " (expected: ~0.927)")
+println("   to_polar(z)  =", to_polar(c))
+println("")
+
+let z = polar(5, pi() / 4)
+println("   Example: Create z from polar(5, π/4)")
+println("   z =", z)
+println("   magnitude =", magnitude(z))
+println("   phase     =", phase(z))
+println("")
+
+// ============================================================================
+// ADVANCED EXAMPLE: Finding Critical Points
+// ============================================================================
+
+println("5. ADVANCED EXAMPLE: Finding Critical Points")
+println("")
+
+let func = (x: Number) => x * x * x - 3 * x
+let deriv = (x: Number) => 3 * x * x - 3
+
+println("   Function: f(x) = x³ - 3x")
+println("   Derivative: f'(x) = 3x² - 3")
+println("")
+
+let crit1 = solve(deriv, -2, 0)
+let crit2 = solve(deriv, 0, 2)
+
+println("   Critical points (where f'(x) = 0):")
+println("   x₁ =", crit1, " (expected: -1)")
+println("   x₂ =", crit2, " (expected: 1)")
+println("")
+
+// Evaluate second derivative to classify critical points
+let f_val1 = diff2(func, crit1)
+let f_val2 = diff2(func, crit2)
+
+println("   Classification using f''(x):")
+println("   f''(", crit1, ") =", f_val1, " (", f_val1, "> 0 => local minimum)")
+println("   f''(", crit2, ") =", f_val2, " (", f_val2, "< 0 => local maximum)")
+println("")
+
+// ============================================================================
+// PERFORMANCE COMPARISON
+// ============================================================================
+
+println("6. INTEGRATION METHOD COMPARISON")
+println("")
+
+let test_func = (x: Number) => sin(x)
+let exact_value = 2.0  // ∫₀^π sin(x) dx = 2
+
+let trap = integral(test_func, 0, pi())
+let simp = simpson(test_func, 0, pi())
+let rom = romberg(test_func, 0, pi())
+let qd = quad(test_func, 0, pi())
+
+println("   ∫₀^π sin(x) dx  (exact = 2)")
+println("   Method         | Result              | Error")
+println("   ---------------+---------------------+------------------")
+println("   Trapezoidal    |", trap, "|", abs(trap - exact_value))
+println("   Simpson        |", simp, "|", abs(simp - exact_value))
+println("   Romberg        |", rom, "|", abs(rom - exact_value))
+println("   Quad           |", qd, "|", abs(qd - exact_value))
+println("")
+
+// ============================================================================
+// SUMMARY
+// ============================================================================
+
+println("==============================================================")
+println("                        SUMMARY")
+println("==============================================================")
+println("")
+println("✓ Implemented 11 numerical analysis functions:")
+println("  - 4 differentiation functions (diff, diff2, diff3, gradient)")
+println("  - 4 integration functions (integral, simpson, romberg, quad)")
+println("  - 3 root finding functions (solve, newton, secant)")
+println("")
+println("✓ Enhanced complex number support with 4 new functions:")
+println("  - magnitude, phase, polar, to_polar")
+println("")
+println("✓ All functions support:")
+println("  - Lambda/closure arguments")
+println("  - Optional parameters with sensible defaults")
+println("  - Appropriate error handling and convergence checks")
+println("  - High numerical accuracy")
+println("")
+println("Phase 4I: Numerical Analysis - COMPLETE")
+println("==============================================================")

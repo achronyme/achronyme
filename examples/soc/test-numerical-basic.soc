@@ -1,0 +1,61 @@
+// ============================================================================
+// Phase 4I: Numerical Analysis - Basic Tests
+// ============================================================================
+
+println("=== NUMERICAL ANALYSIS - BASIC TESTS ===")
+println("")
+
+// ============================================================================
+// DIFFERENTIATION TESTS
+// ============================================================================
+
+println("--- DIFFERENTIATION ---")
+
+// Test 1: First derivative of x^2 at x=3 should be 6
+let f1 = (x: Number) => x * x
+let df1 = diff(f1, 3)
+println("diff(x², 3) =", df1, " (expected: 6)")
+
+// Test 2: First derivative of x^3 at x=2 should be 12
+let f2 = (x: Number) => x * x * x
+let df2 = diff(f2, 2)
+println("diff(x³, 2) =", df2, " (expected: 12)")
+
+// Test 3: First derivative of sin(x) at x=0 should be 1
+let f3 = (x: Number) => sin(x)
+let df3 = diff(f3, 0)
+println("diff(sin(x), 0) =", df3, " (expected: 1)")
+
+// Test 4: Second derivative of x^3 at x=2 should be 12
+let d2f2 = diff2(f2, 2)
+println("diff2(x³, 2) =", d2f2, " (expected: 12)")
+
+// Test 5: Second derivative of x^2 at x=5 should be 2
+let d2f1 = diff2(f1, 5)
+println("diff2(x², 5) =", d2f1, " (expected: 2)")
+
+// Test 6: Third derivative of x^4 at x=2 should be 48
+let f4 = (x: Number) => x * x * x * x
+let d3f4 = diff3(f4, 2)
+println("diff3(x⁴, 2) =", d3f4, " (expected: 48)")
+
+println("")
+
+// ============================================================================
+// GRADIENT TESTS
+// ============================================================================
+
+println("--- GRADIENT ---")
+
+// Test 7: Gradient of f(x,y) = x^2 + y^2 at [1, 2] should be [2, 4]
+let f_grad = (v: Vector) => v[0] * v[0] + v[1] * v[1]
+let grad = gradient(f_grad, [1, 2])
+println("gradient(x² + y², [1, 2]) =", grad, " (expected: [2, 4])")
+
+// Test 8: Gradient of f(x,y) = x*y at [3, 4] should be [4, 3]
+let f_grad2 = (v: Vector) => v[0] * v[1]
+let grad2 = gradient(f_grad2, [3, 4])
+println("gradient(x*y, [3, 4]) =", grad2, " (expected: [4, 3])")
+
+println("")
+println("=== DIFFERENTIATION TESTS COMPLETED ===")

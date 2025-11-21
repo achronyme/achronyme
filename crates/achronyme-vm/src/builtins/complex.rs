@@ -176,6 +176,145 @@ pub fn vm_arg(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
+/// magnitude(z) -> Number
+///
+/// Returns the magnitude (absolute value) of a complex number or real number.
+/// Also known as modulus or norm.
+///
+/// # Examples
+/// ```achronyme
+/// magnitude(complex(3, 4))  // 5.0
+/// magnitude(5)              // 5.0
+/// ```
+pub fn vm_magnitude(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::Runtime(format!(
+            "magnitude() expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+
+    match &args[0] {
+        Value::Number(n) => Ok(Value::Number(n.abs())),
+        Value::Complex(c) => Ok(Value::Number(c.magnitude())),
+        _ => Err(VmError::TypeError {
+            operation: "magnitude".to_string(),
+            expected: "Number or Complex".to_string(),
+            got: format!("{:?}", args[0]),
+        }),
+    }
+}
+
+/// phase(z) -> Number
+///
+/// Returns the phase (argument) of a complex number in radians.
+/// For real numbers: 0 if x >= 0, π if x < 0.
+///
+/// # Examples
+/// ```achronyme
+/// phase(complex(1, 1))  // π/4 ≈ 0.7854
+/// phase(-1)             // π ≈ 3.1416
+/// ```
+pub fn vm_phase(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::Runtime(format!(
+            "phase() expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+
+    match &args[0] {
+        Value::Number(n) => {
+            if *n >= 0.0 {
+                Ok(Value::Number(0.0))
+            } else {
+                Ok(Value::Number(std::f64::consts::PI))
+            }
+        }
+        Value::Complex(c) => Ok(Value::Number(c.phase())),
+        _ => Err(VmError::TypeError {
+            operation: "phase".to_string(),
+            expected: "Number or Complex".to_string(),
+            got: format!("{:?}", args[0]),
+        }),
+    }
+}
+
+/// polar(r, theta) -> Complex
+///
+/// Creates a complex number from polar coordinates.
+/// r is the magnitude, theta is the phase in radians.
+///
+/// # Examples
+/// ```achronyme
+/// polar(1, pi/4)  // complex(0.7071, 0.7071) ≈ 1∠45°
+/// polar(5, 0)     // complex(5, 0)
+/// ```
+pub fn vm_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::Runtime(format!(
+            "polar() expects 2 arguments (r, theta), got {}",
+            args.len()
+        )));
+    }
+
+    match (&args[0], &args[1]) {
+        (Value::Number(r), Value::Number(theta)) => {
+            let re = r * theta.cos();
+            let im = r * theta.sin();
+            Ok(Value::Complex(Complex::new(re, im)))
+        }
+        _ => Err(VmError::TypeError {
+            operation: "polar".to_string(),
+            expected: "two Numbers (r, theta)".to_string(),
+            got: format!("{:?}, {:?}", args[0], args[1]),
+        }),
+    }
+}
+
+/// to_polar(z) -> Vector
+///
+/// Converts a complex number to polar form [r, theta].
+/// Returns a vector with magnitude and phase.
+///
+/// # Examples
+/// ```achronyme
+/// to_polar(complex(1, 1))   // [1.4142, 0.7854] ≈ [√2, π/4]
+/// to_polar(complex(3, 4))   // [5, 0.9273]
+/// ```
+pub fn vm_to_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::Runtime(format!(
+            "to_polar() expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+
+    match &args[0] {
+        Value::Number(n) => {
+            let r = n.abs();
+            let theta = if *n >= 0.0 { 0.0 } else { std::f64::consts::PI };
+            Ok(Value::Vector(Rc::new(RefCell::new(vec![
+                Value::Number(r),
+                Value::Number(theta),
+            ]))))
+        }
+        Value::Complex(c) => {
+            let r = c.magnitude();
+            let theta = c.phase();
+            Ok(Value::Vector(Rc::new(RefCell::new(vec![
+                Value::Number(r),
+                Value::Number(theta),
+            ]))))
+        }
+        _ => Err(VmError::TypeError {
+            operation: "to_polar".to_string(),
+            expected: "Number or Complex".to_string(),
+            got: format!("{:?}", args[0]),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

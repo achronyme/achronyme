@@ -198,94 +198,80 @@ impl Compiler {
             return self.compile_builtin_call(builtin_idx, args);
         }
 
-        // For FunctionCall, lookup the function by name and copy to a fresh register
-        // This ensures the function value won't be overwritten when compiling arguments
-        let func_reg = if let Ok(source_reg) = self.symbols.get(name) {
-            // Variable in current scope (local or parameter)
-            let func_reg = self.registers.allocate()?;
+        // ARREGLO CRÍTICO:
+        // La VM requiere que los argumentos sean contiguos al registro de la función (func_reg + 1...N).
+        // No podemos confiar en 'allocate()' simple porque podría devolver un registro (ej. R2)
+        // que es "vecino" de una variable local viva (ej. R1), causando que el argumento sobrescriba
+        // la siguiente variable local.
+        // Usamos allocate_many para reservar un bloque SEGURO al final del stack.
+
+        // 1. Reservar registros consecutivos: 1 para la función + N para argumentos
+        // allocate_many garantiza que están en la cima del stack (next_free) y no colisionan con locales.
+        let call_frame_start = self.registers.allocate_many(1 + args.len())?;
+        let func_reg = call_frame_start;
+
+        // 2. Mover la función al inicio del frame reservado
+        if let Ok(source_reg) = self.symbols.get(name) {
             self.emit_move(func_reg, source_reg);
-            func_reg
         } else if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
-            // Variable from parent scope (including 'rec' which is always upvalue 0)
-            let reg = self.registers.allocate()?;
-            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), reg, upvalue_idx, 0));
-            reg
+            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), func_reg, upvalue_idx, 0));
         } else {
             return Err(CompileError::UndefinedVariable(name.to_string()));
-        };
-
-        // Allocate temporary registers for arguments (consecutive)
-        let mut arg_results = Vec::new();
-        for arg in args {
-            let arg_res = self.compile_expression(arg)?;
-            arg_results.push(arg_res);
         }
 
-        // Check argument count
+        // 3. Compilar argumentos y moverlos a sus posiciones fijas (func_reg + 1 + i)
+        // Nota: Al haber reservado el bloque con allocate_many, next_free está POR ENCIMA de este frame,
+        // así que los temporales usados para calcular los argumentos no sobrescribirán nada.
+        for (i, arg) in args.iter().enumerate() {
+            let arg_res = self.compile_expression(arg)?;
+            let target_reg = func_reg + 1 + (i as u8);
+
+            if arg_res.reg() != target_reg {
+                self.emit_move(target_reg, arg_res.reg());
+            }
+
+            if arg_res.is_temp() {
+                self.registers.free(arg_res.reg());
+            }
+        }
+
+        // Check argument count limit
         if args.len() > 255 {
             return Err(CompileError::Error("Too many arguments".to_string()));
         }
 
-        // Arguments must be in consecutive registers starting from func_reg + 1
-        // Move them FIRST before allocating result register
-        // IMPORTANT: Move in reverse order to avoid overwriting source registers
-        // that are needed for later moves
-        for i in (0..arg_results.len()).rev() {
-            let arg_reg = arg_results[i].reg();
-            // Calculate target register, checking for overflow
-            let target_offset = 1u16 + i as u16;
-            let target_calc = func_reg as u16 + target_offset;
-            if target_calc > 255 {
-                return Err(CompileError::TooManyRegisters);
-            }
-            let target_reg = target_calc as u8;
-            if arg_reg != target_reg {
-                self.emit_move(target_reg, arg_reg);
-            }
-        }
-
-        // NOW allocate result register AFTER moving arguments (non-tail only)
-        // This ensures result_reg doesn't collide with argument positions [func_reg+1, func_reg+argc]
+        // 4. Preparar resultado y emitir CALL
         let result_reg = if !is_tail {
-            let mut candidate = self.registers.allocate()?;
-            // Check if candidate collides with argument positions
-            let arg_start = func_reg.wrapping_add(1);
-            let arg_end = func_reg.wrapping_add(args.len() as u8);
-            while candidate >= arg_start && candidate <= arg_end {
-                // Collision detected - allocate another register
-                candidate = self.registers.allocate()?;
-            }
-            Some(candidate)
+            // Si no es tail call, necesitamos un registro para el resultado.
+            // allocate() buscará un hueco libre o uno nuevo encima de los args.
+            Some(self.registers.allocate()?)
         } else {
             None
         };
 
-        // Emit CALL or TAIL_CALL depending on tail position
         if is_tail {
-            // TAIL_CALL: Replace current frame with callee
-            // TailCall doesn't use a result register - it acts as an implicit return
             self.emit(encode_abc(
                 OpCode::TailCall.as_u8(),
-                0,  // unused
+                0,
                 func_reg,
                 args.len() as u8,
             ));
 
-            // Free temporary registers ONLY if they are temps
-            for arg_res in arg_results {
-                if arg_res.is_temp() {
-                    self.registers.free(arg_res.reg());
-                }
+            // En tail call, liberamos todo el frame reservado inmediatamente
+            // Nota: en un sistema de registros real, esto es complejo, pero aquí liberamos
+            // los que asignamos con allocate_many. Como allocate_many solo mueve el puntero,
+            // liberar individualmente está bien si la implementación de free lo soporta.
+            // Simplificación: en tail call el frame actual muere, así que no importa mucho el free,
+            // pero por corrección del allocator:
+            for i in 0..=(args.len()) {
+                self.registers.free(func_reg + (i as u8));
             }
-            self.registers.free(func_reg);
 
-            // Tail call acts as return, but we need to return a register for type checking
-            // Use a dummy register (caller won't use it)
+            // Dummy register for type check flow
             let dummy_reg = self.registers.allocate()?;
             Ok(RegResult::temp(dummy_reg))
         } else {
-            // Regular CALL: Use pre-allocated result register
-            let result_reg = result_reg.unwrap(); // Safe because we checked !is_tail
+            let result_reg = result_reg.unwrap();
 
             self.emit(encode_abc(
                 OpCode::Call.as_u8(),
@@ -294,13 +280,11 @@ impl Compiler {
                 args.len() as u8,
             ));
 
-            // Free temporary registers ONLY if they are temps
-            for arg_res in arg_results {
-                if arg_res.is_temp() {
-                    self.registers.free(arg_res.reg());
-                }
+            // Liberar los registros del Call Frame (función + args) pues ya se consumieron
+            // El resultado queda en result_reg
+            for i in 0..=(args.len()) {
+                self.registers.free(func_reg + (i as u8));
             }
-            self.registers.free(func_reg);
 
             Ok(RegResult::temp(result_reg))
         }
@@ -313,104 +297,67 @@ impl Compiler {
         args: &[AstNode],
         is_tail: bool,
     ) -> Result<RegResult, CompileError> {
-        // Check if this is a built-in function call FIRST
-        // (before trying to compile callee as variable)
+        // Check built-ins first
         if let AstNode::VariableRef(name) = callee {
             if let Some(builtin_idx) = self.builtins.get_id(name) {
-                // This is a built-in function call - use specialized compilation
                 return self.compile_builtin_call(builtin_idx, args);
             }
         }
 
-        // Compile the callee expression (can be any expression returning a function)
-        let func_res = self.compile_expression(callee)?;
-        let mut func_reg = func_res.reg();
+        // 1. Compilar el callee (la expresión que resulta en la función)
+        let func_expr_res = self.compile_expression(callee)?;
 
-        // Check if there's enough space for arguments after func_reg
-        // If func_reg + 1 + args.len() > 256, we need to move func_reg to a lower register
-        if (func_reg as usize) + 1 + args.len() > 256 {
-            let new_func_reg = self.registers.allocate()?;
-            self.emit_move(new_func_reg, func_reg);
-            if func_res.is_temp() {
-                self.registers.free(func_reg);
-            }
-            func_reg = new_func_reg;
+        // 2. Reservar Call Frame Seguro (Func + Args)
+        let call_frame_start = self.registers.allocate_many(1 + args.len())?;
+        let func_reg = call_frame_start;
+
+        // Mover el resultado del callee a la posición 0 del frame
+        self.emit_move(func_reg, func_expr_res.reg());
+        if func_expr_res.is_temp() {
+            self.registers.free(func_expr_res.reg());
         }
 
-        // Allocate temporary registers for arguments (consecutive)
-        let mut arg_results = Vec::new();
-        for arg in args {
+        // 3. Compilar y colocar argumentos
+        for (i, arg) in args.iter().enumerate() {
             let arg_res = self.compile_expression(arg)?;
-            arg_results.push(arg_res);
+            let target_reg = func_reg + 1 + (i as u8);
+
+            if arg_res.reg() != target_reg {
+                self.emit_move(target_reg, arg_res.reg());
+            }
+
+            if arg_res.is_temp() {
+                self.registers.free(arg_res.reg());
+            }
         }
 
-        // Check argument count
         if args.len() > 255 {
             return Err(CompileError::Error("Too many arguments".to_string()));
         }
 
-        // Arguments must be in consecutive registers starting from func_reg + 1
-        // Move them FIRST before allocating result register
-        // IMPORTANT: Move in reverse order to avoid overwriting source registers
-        // that are needed for later moves
-        for i in (0..arg_results.len()).rev() {
-            let arg_reg = arg_results[i].reg();
-            // Calculate target register, checking for overflow
-            let target_offset = 1u16 + i as u16;
-            let target_calc = func_reg as u16 + target_offset;
-            if target_calc > 255 {
-                return Err(CompileError::TooManyRegisters);
-            }
-            let target_reg = target_calc as u8;
-            if arg_reg != target_reg {
-                self.emit_move(target_reg, arg_reg);
-            }
-        }
-
-        // NOW allocate result register AFTER moving arguments (non-tail only)
-        // This ensures result_reg doesn't collide with argument positions [func_reg+1, func_reg+argc]
+        // 4. Emitir Call/TailCall (Idéntico a compile_function_call)
         let result_reg = if !is_tail {
-            let mut candidate = self.registers.allocate()?;
-            // Check if candidate collides with argument positions
-            let arg_start = func_reg.wrapping_add(1);
-            let arg_end = func_reg.wrapping_add(args.len() as u8);
-            while candidate >= arg_start && candidate <= arg_end {
-                // Collision detected - allocate another register
-                candidate = self.registers.allocate()?;
-            }
-            Some(candidate)
+            Some(self.registers.allocate()?)
         } else {
             None
         };
 
-        // Emit CALL or TAIL_CALL depending on tail position
         if is_tail {
-            // TAIL_CALL: Replace current frame with callee
-            // TailCall doesn't use a result register - it acts as an implicit return
             self.emit(encode_abc(
                 OpCode::TailCall.as_u8(),
-                0,  // unused
+                0,
                 func_reg,
                 args.len() as u8,
             ));
 
-            // Free temporary registers ONLY if they are temps
-            for arg_res in arg_results {
-                if arg_res.is_temp() {
-                    self.registers.free(arg_res.reg());
-                }
-            }
-            if func_res.is_temp() {
-                self.registers.free(func_res.reg());
+            for i in 0..=(args.len()) {
+                self.registers.free(func_reg + (i as u8));
             }
 
-            // Tail call acts as return, but we need to return a register for type checking
-            // Use a dummy register (caller won't use it)
             let dummy_reg = self.registers.allocate()?;
             Ok(RegResult::temp(dummy_reg))
         } else {
-            // Regular CALL: Use pre-allocated result register
-            let result_reg = result_reg.unwrap(); // Safe because we checked !is_tail
+            let result_reg = result_reg.unwrap();
 
             self.emit(encode_abc(
                 OpCode::Call.as_u8(),
@@ -419,21 +366,8 @@ impl Compiler {
                 args.len() as u8,
             ));
 
-            // Free temporary registers ONLY if they are temps
-            for arg_res in arg_results {
-                if arg_res.is_temp() {
-                    // Only free if it's NOT one of the argument positions (func_reg+1...)
-                    let arg_reg = arg_res.reg();
-                    let is_arg_position = (1..=args.len()).any(|i| {
-                        arg_reg == func_reg.wrapping_add(i as u8)
-                    });
-                    if !is_arg_position {
-                        self.registers.free(arg_reg);
-                    }
-                }
-            }
-            if func_res.is_temp() && func_res.reg() != func_reg {
-                self.registers.free(func_res.reg());
+            for i in 0..=(args.len()) {
+                self.registers.free(func_reg + (i as u8));
             }
 
             Ok(RegResult::temp(result_reg))

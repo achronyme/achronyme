@@ -1,0 +1,100 @@
+// ============================================================================
+// Phase 4I: Numerical Analysis - Root Finding Tests
+// ============================================================================
+
+println("=== NUMERICAL ANALYSIS - ROOT FINDING TESTS ===")
+println("")
+
+// Define test functions
+let g1 = (x: Number) => x * x - 4
+let g2 = (x: Number) => x * x * x - 8
+let g3 = (x: Number) => x * x - 2
+
+// ============================================================================
+// BISECTION METHOD
+// ============================================================================
+
+println("--- BISECTION METHOD (solve) ---")
+
+// Test 1: Find root of x^2 - 4 between 0 and 3 (should be 2)
+let root1 = solve(g1, 0, 3)
+println("solve(x² - 4, 0, 3) =", root1, " (expected: 2)")
+
+// Test 2: Find root of x^3 - 8 between 0 and 5 (should be 2)
+let root2 = solve(g2, 0, 5)
+println("solve(x³ - 8, 0, 5) =", root2, " (expected: 2)")
+
+// Test 3: Find root of x^2 - 2 between 1 and 2 (should be √2 ≈ 1.414...)
+let root3 = solve(g3, 1, 2)
+println("solve(x² - 2, 1, 2) =", root3, " (expected: 1.414...)")
+
+println("")
+
+// ============================================================================
+// NEWTON-RAPHSON METHOD
+// ============================================================================
+
+println("--- NEWTON-RAPHSON METHOD ---")
+
+// Test 4: Newton's method for x^2 - 4 with initial guess 1 (should be 2)
+let root4 = newton(g1, 1)
+println("newton(x² - 4, 1) =", root4, " (expected: 2)")
+
+// Test 5: Newton's method for x^3 - 8 with initial guess 1 (should be 2)
+let root5 = newton(g2, 1)
+println("newton(x³ - 8, 1) =", root5, " (expected: 2)")
+
+// Test 6: Newton's method for x^2 - 2 with initial guess 1 (should be √2)
+let root6 = newton(g3, 1)
+println("newton(x² - 2, 1) =", root6, " (expected: 1.414...)")
+
+println("")
+
+// ============================================================================
+// SECANT METHOD
+// ============================================================================
+
+println("--- SECANT METHOD ---")
+
+// Test 7: Secant method for x^2 - 4 with initial guesses 1 and 3 (should be 2)
+let root7 = secant(g1, 1, 3)
+println("secant(x² - 4, 1, 3) =", root7, " (expected: 2)")
+
+// Test 8: Secant method for x^3 - 8 with initial guesses 1 and 3 (should be 2)
+let root8 = secant(g2, 1, 3)
+println("secant(x³ - 8, 1, 3) =", root8, " (expected: 2)")
+
+// Test 9: Secant method for x^2 - 2 with initial guesses 1 and 2 (should be √2)
+let root9 = secant(g3, 1, 2)
+println("secant(x² - 2, 1, 2) =", root9, " (expected: 1.414...)")
+
+println("")
+
+// ============================================================================
+// ADVANCED ROOT FINDING
+// ============================================================================
+
+println("--- ADVANCED ROOT FINDING ---")
+
+// Test 10: Find critical points using derivatives
+// f(x) = x^3 - 3x, f'(x) = 3x^2 - 3
+// Critical points where f'(x) = 0: x = ±1
+let df_crit = (x: Number) => 3 * x * x - 3
+let crit1 = solve(df_crit, -2, 0)
+let crit2 = solve(df_crit, 0, 2)
+println("Critical points of x³-3x:")
+println("  x =", crit1, " (expected: -1)")
+println("  x =", crit2, " (expected: 1)")
+
+// Test 11: Find intersection of two curves
+// Find x where x^2 = 2x + 3, i.e., x^2 - 2x - 3 = 0
+// Solutions: x = 3, x = -1
+let intersect1 = (x: Number) => x * x - 2 * x - 3
+let int1 = solve(intersect1, -2, 0)
+let int2 = solve(intersect1, 2, 4)
+println("Intersections of x² and 2x+3:")
+println("  x =", int1, " (expected: -1)")
+println("  x =", int2, " (expected: 3)")
+
+println("")
+println("=== ROOT FINDING TESTS COMPLETED ===")
