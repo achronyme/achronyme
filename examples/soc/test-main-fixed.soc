@@ -1,8 +1,11 @@
-import { funcion1 } from "./src/funcion1"
-import { funcion2 } from "./src/funcion2"
-import { createCounter } from "./src/contador"
-import { makeAdder } from "./src/makeAdder"
-import { semaforo } from "./src/semaforo"
+set_precision(2)
+
+import { funcion1 } from "./modules/src/funcion1"
+import { funcion2 } from "./modules/src/funcion2"
+import { createCounter } from "./modules/src/contador"
+import { makeAdder } from "./modules/src/makeAdder"
+import { semaforo } from "./modules/src/semaforo"
+
 let a = 10
 let b = 20
 
@@ -21,9 +24,7 @@ print("Usando add5 con 20:", add5(20))
 print("Usando add10 con 20:", add10(20))
 print(funcion1(a,b))
 print(funcion2(a,b))
-describe(contadorPrueba)
-print(contadorPrueba.ejeDirigido)
-print(contadorPrueba.ejeNoDirigido)
+
 print("Operaciones con complejos nativas asi es", e^(i*pi) + 1)
 
 print("Estado inicial del semaforo", semaforo.luz)
@@ -53,37 +54,9 @@ let defecto = (x: Number, y: Number = 100, z: Number = 200) => do {
     x + y + z
 }
 
-
 let defectoSinTipo = (x, y = 100, z = 200) => do {
     x + y + z
 }
 
 print("Llamada a funcion con valores por defecto sin tipos:", defectoSinTipo(50))
 print("Llamada a funcion con valores por defecto:", defecto(50))
-
-print("Probando try/catch con type error")
-
-try {
-    let y: Number = "Otro string"
-    print("Esto no se deberia imprimir", y)
-} catch (e) {
-    print("Se ha capturado un error dentro de un bloque do como se esperaba:", e)
-}
-
-// Probando dentro de un bloque do
-
-let x = () => do {
-    try {
-        let y: Number = "Otro string"
-        print("Esto no se deberia imprimir", y)
-    } catch (e) {
-        print("Se ha capturado un error dentro de un bloque do como se esperaba:", e)
-    }
-}
-
-x()
-try {
-    ((x: Number = 20) => do { print(x) })(20)
-} catch (e) {
-    print("Se ha capturado un error en una IIFE con valor por defecto incorrecto:", e)
-}

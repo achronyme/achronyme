@@ -1,0 +1,18 @@
+print("=== Test de valores por defecto ===")
+
+let defecto = (x: Number, y: Number = 100, z: Number = 200) => do {
+    x + y + z
+}
+
+print("Con 1 argumento:", defecto(50))
+print("Con 2 argumentos:", defecto(50, 25))
+print("Con 3 argumentos:", defecto(50, 25, 10))
+
+let defectoSinTipo = (x, y = 100, z = 200) => do {
+    x + y + z
+}
+
+print("\nSin tipos:")
+print("Con 1 argumento:", defectoSinTipo(50))
+print("Con 2 argumentos:", defectoSinTipo(50, 25))
+print("Con 3 argumentos:", defectoSinTipo(50, 25, 10))

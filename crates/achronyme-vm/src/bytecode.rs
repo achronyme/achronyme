@@ -99,6 +99,11 @@ pub struct FunctionPrototype {
 
     /// Debug information
     pub debug_info: Option<DebugInfo>,
+
+    /// Default value expressions for parameters (stored as nested function indices)
+    /// Each entry is Option<func_idx> where func_idx points to a zero-parameter
+    /// function that computes the default value
+    pub param_defaults: Vec<Option<usize>>,
 }
 
 impl FunctionPrototype {
@@ -114,6 +119,7 @@ impl FunctionPrototype {
             constants,
             is_generator: false,
             debug_info: None,
+            param_defaults: Vec::new(),
         }
     }
 

@@ -7,6 +7,7 @@ let semaforo = {
             "Amarillo" => do { self.luz = "Verde" },
             _ => do { self.luz = "Verde" },
         }
+        self.luz
     }
 }
 

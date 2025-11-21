@@ -109,10 +109,19 @@ impl VM {
                         );
 
                         // Copy arguments to new frame's registers
-                        for i in 0..argc {
-                            let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
-                            let arg = self.get_register(arg_reg)?.clone();
-                            new_frame.registers.set(i, arg)?;
+                        // For missing arguments (argc < param_count), set to Null
+                        // The function prologue will check for Null and fill in defaults
+                        let param_count = closure.prototype.param_count;
+                        for i in 0..param_count {
+                            if i < argc {
+                                // Copy provided argument
+                                let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
+                                let arg = self.get_register(arg_reg)?.clone();
+                                new_frame.registers.set(i, arg)?;
+                            } else {
+                                // Set to Null for missing arguments
+                                new_frame.registers.set(i, Value::Null)?;
+                            }
                         }
 
                         // Set upvalues
@@ -205,13 +214,19 @@ impl VM {
                 // If needed in the future, we can add resize logic here.
 
                 // 6. Write arguments to frame base (R0, R1, ...)
-                for (i, arg) in args.into_iter().enumerate() {
-                    current_frame.registers.set(i as u8, arg)?;
+                // For missing arguments, set to Null (function prologue will fill defaults)
+                let param_count = current_frame.function.param_count;
+                for i in 0..param_count {
+                    if (i as usize) < args.len() {
+                        current_frame.registers.set(i, args[i as usize].clone())?;
+                    } else {
+                        current_frame.registers.set(i, Value::Null)?;
+                    }
                 }
 
-                // 7. Clear registers beyond the arguments to avoid stale values
+                // 7. Clear registers beyond the parameters to avoid stale values
                 // This is important for correctness when the new function has fewer parameters
-                for i in argc..current_frame.function.register_count {
+                for i in param_count..current_frame.function.register_count {
                     current_frame.registers.set(i, Value::Null)?;
                 }
 

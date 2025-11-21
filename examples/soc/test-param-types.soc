@@ -1,0 +1,45 @@
+// Test parameter type checking in lambdas
+
+// Test 1: Basic type checking
+let typed = (x: Number, y: Number) => x + y
+
+print("Test 1: Basic type checking")
+print("  Correct types:", typed(10, 20))    // Expected: 30
+
+// This should throw a type error
+print("  Wrong type (string):", typed("10", 20))  // Expected: Type error
+
+// Test 2: Type checking with String
+let stringOp = (s: String, n: Number) => s + " is " + n
+
+print("\nTest 2: String type checking")
+print("  Correct types:", stringOp("Answer", 42))  // Expected: "Answer is 42"
+
+// This should throw a type error
+print("  Wrong type (number):", stringOp(42, 42))  // Expected: Type error
+
+// Test 3: Type checking with defaults
+let typedDefaults = (x: Number, y: Number = 100) => x + y
+
+print("\nTest 3: Type checking with defaults")
+print("  Correct type:", typedDefaults(50))     // Expected: 150
+print("  Both args:", typedDefaults(50, 25))    // Expected: 75
+
+// This should throw a type error
+print("  Wrong type:", typedDefaults("50"))     // Expected: Type error
+
+// Test 4: Multiple type annotations
+let multiType = (a: Number, b: String, c: Boolean) => a + b
+
+print("\nTest 4: Multiple type annotations")
+print("  All correct:", multiType(42, "hello", true))  // Expected: "42hello"
+
+// This should throw a type error
+print("  Wrong type for c:", multiType(42, "hello", "yes"))  // Expected: Type error
+
+// Test 5: Type checking with default that has wrong type
+// This tests that type checking happens AFTER defaults are applied
+let defaultTypeCheck = (x: Number = "wrong") => x + 10
+
+print("\nTest 5: Default with wrong type")
+print("  Using default:", defaultTypeCheck())  // Expected: Type error on default value

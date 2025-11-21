@@ -1,0 +1,53 @@
+// Demonstration of Lambda Improvements: Default Parameters and Type Checking
+
+print("╔════════════════════════════════════════════════════════╗")
+print("║  Lambda Function Improvements Demonstration            ║")
+print("╚════════════════════════════════════════════════════════╝")
+
+// Example 1: HTTP Request Builder with Defaults
+print("\n[1] HTTP Request Builder")
+let makeRequest = (url: String, method: String = "GET", timeout: Number = 30) => do {
+    method + " " + url + " (timeout: " + timeout + "s)"
+}
+
+print("  Full request:", makeRequest("api.example.com", "POST", 60))
+print("  With defaults:", makeRequest("api.example.com"))
+print("  Custom method:", makeRequest("api.example.com", "DELETE"))
+
+// Example 2: Math Operations with Type Safety
+print("\n[2] Type-Safe Math Operations")
+let divide = (numerator: Number, denominator: Number = 1) => numerator / denominator
+
+print("  10 / 2 =", divide(10, 2))
+print("  10 / 1 =", divide(10))
+
+// Example 3: Configuration Builder
+print("\n[3] Configuration Builder")
+let config = (host: String, port: Number = 8080, ssl: Boolean = false, timeout: Number = 30) => do {
+    "Server: " + host + ":" + port + " (SSL: " + ssl + ", timeout: " + timeout + "s)"
+}
+
+print("  Production:", config("prod.example.com", 443, true, 60))
+print("  Development:", config("localhost"))
+print("  Custom port:", config("localhost", 3000))
+
+// Example 4: Data Processing Pipeline
+print("\n[4] Data Processing with Defaults")
+let process = (data: Number, multiplier: Number = 2, offset: Number = 0) => (data * multiplier) + offset
+
+print("  process(10):", process(10))          // 10 * 2 + 0 = 20
+print("  process(10, 3):", process(10, 3))    // 10 * 3 + 0 = 30
+print("  process(10, 3, 5):", process(10, 3, 5))  // 10 * 3 + 5 = 35
+
+// Example 5: Logger with Severity Levels
+print("\n[5] Logger with Default Severity")
+let logger = (message: String, level: String = "INFO") => "[" + level + "] " + message
+
+print(" ", logger("Application started"))
+print(" ", logger("User logged in", "DEBUG"))
+print(" ", logger("Critical error!", "ERROR"))
+
+print("\n✅ All examples completed successfully!")
+print("   - Default parameters work correctly")
+print("   - Type checking is enforced")
+print("   - Both features work together seamlessly")

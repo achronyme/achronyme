@@ -50,6 +50,82 @@ impl Compiler {
             child_compiler.symbols.define(param_name.clone(), reg)?;
         }
 
+        // Emit default value handling and type assertions for each parameter
+        // This must happen BEFORE analyzing upvalues, because we might reference parent variables
+        for (i, (param_name, type_ann, default_expr)) in params.iter().enumerate() {
+            let param_reg = i as u8;
+
+            // If parameter has default value, emit code to check if it's Null and fill it
+            if let Some(default_expr) = default_expr {
+                // Emit: if R[param] != null then skip default assignment
+                // Logic: JumpIfNull jumps if null, so we need the opposite - skip if NOT null
+                // We'll use: if param is null, don't jump (fall through to default), else jump over default
+
+                // Actually, we need to use a different approach:
+                // Check if null, and if so, fill with default
+                // Use JumpIfNull: if null, don't jump (execute default code), else jump over it
+
+                // Emit JumpIfNull - if param is null, jump to the default code; if not null, skip it
+                // Wait, JumpIfNull jumps if the value IS null. So:
+                // - If param is NOT null (value was provided), jump over the default assignment
+                // - If param IS null (no value provided), fall through to execute default assignment
+
+                // We need a "JumpIfNotNull" which doesn't exist. So we do:
+                // 1. Check if null
+                // 2. If null, don't jump (fall through to compute default)
+                // 3. If not null, jump over default code
+
+                // Since JumpIfNull jumps when value IS null, we need to:
+                // - First check if NOT null and jump over default
+                // But we don't have JumpIfNotNull. Workaround:
+                // - Load null into a temp register
+                // - Compare with Ne (not equal)
+                // - JumpIfTrue if they're not equal (i.e., param is not null)
+
+                let temp_reg = child_compiler.registers.allocate()?;
+                child_compiler.emit(encode_abc(OpCode::LoadNull.as_u8(), temp_reg, 0, 0));
+
+                let cmp_reg = child_compiler.registers.allocate()?;
+                child_compiler.emit(encode_abc(OpCode::Ne.as_u8(), cmp_reg, param_reg, temp_reg));
+                child_compiler.registers.free(temp_reg);
+
+                // Jump over default code if param is not null (i.e., if cmp_reg is true)
+                let jump_pos = child_compiler.emit_jump_if_true(cmp_reg, 0);
+
+                // Compile default expression
+                let default_res = child_compiler.compile_expression(default_expr)?;
+
+                // Move default value to parameter register if needed
+                if default_res.reg() != param_reg {
+                    child_compiler.emit_move(param_reg, default_res.reg());
+                }
+                if default_res.is_temp() {
+                    child_compiler.registers.free(default_res.reg());
+                }
+                child_compiler.registers.free(cmp_reg);
+
+                // Patch the jump - jump over the default code if value was provided
+                let current_pos = child_compiler.function.code.len();
+                let offset = (current_pos - jump_pos - 1) as i16;
+                child_compiler.function.patch_instruction(
+                    jump_pos,
+                    encode_abx(OpCode::JumpIfTrue.as_u8(), cmp_reg, offset as u16)
+                );
+
+                // Mark that this parameter has a default (for metadata)
+                child_compiler.function.param_defaults.push(Some(0)); // 0 is placeholder
+            } else {
+                child_compiler.function.param_defaults.push(None);
+            }
+
+            // Emit type assertion if parameter has type annotation
+            if let Some(type_ann) = type_ann {
+                let type_name = child_compiler.type_annotation_to_string(type_ann);
+                let type_idx = child_compiler.add_string(type_name)?;
+                child_compiler.emit(encode_abx(OpCode::TypeAssert.as_u8(), param_reg, type_idx as u16));
+            }
+        }
+
         // Analyze upvalues by finding variables used but not defined in lambda
         let used_vars = self.find_used_variables(body)?;
         let mut upvalues = Vec::new();

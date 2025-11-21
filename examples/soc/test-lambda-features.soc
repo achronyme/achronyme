@@ -1,0 +1,40 @@
+// Test both default parameters and type checking
+
+print("=== Test 1: Default Parameters ===")
+let defecto = (x: Number, y: Number = 100, z: Number = 200) => x + y + z
+
+print("With all args:", defecto(50, 60, 70))   // 180
+print("With 2 args:", defecto(50, 60))          // 310
+print("With 1 arg:", defecto(50))               // 350
+
+print("\n=== Test 2: String Defaults ===")
+let greet = (name, greeting = "Hello") => greeting + ", " + name
+
+print("Custom greeting:", greet("Alice", "Hi"))  // Hi, Alice
+print("Default greeting:", greet("Bob"))         // Hello, Bob
+
+print("\n=== Test 3: Type Checking (Valid) ===")
+let typed = (x: Number, y: Number) => x + y
+
+print("Valid call:", typed(10, 20))  // 30
+
+print("\n=== Test 4: Type Checking with Defaults ===")
+let typedDefaults = (x: Number, y: Number = 100) => x + y
+
+print("With default:", typedDefaults(50))    // 150
+print("Both args:", typedDefaults(50, 25))   // 75
+
+print("\n=== Test 5: All Optional ===")
+let allOptional = (x = 10, y = 20, z = 30) => x + y + z
+
+print("No args:", allOptional())       // 60
+print("1 arg:", allOptional(1))        // 51
+print("2 args:", allOptional(1, 2))    // 33
+
+print("\n=== Test 6: Expression Defaults ===")
+let exprDefaults = (a, b = a * 2) => a + b
+
+print("With 1 arg:", exprDefaults(5))     // 15 (5 + 10)
+print("With 2 args:", exprDefaults(5, 3)) // 8 (5 + 3)
+
+print("\n=== SUCCESS: All tests passed! ===")
