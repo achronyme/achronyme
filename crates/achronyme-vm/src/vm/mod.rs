@@ -57,6 +57,13 @@ pub struct VM {
 
     /// Current module file path (for resolving relative imports)
     pub(crate) current_module: Option<String>,
+
+    /// Global precision configuration
+    /// None = full precision, Some(n) = round to n decimal places
+    precision: Option<i32>,
+
+    /// Epsilon threshold for considering values as zero
+    epsilon: f64,
 }
 
 impl VM {
@@ -71,6 +78,8 @@ impl VM {
             intrinsics: IntrinsicRegistry::new(),
             pending_intrinsic_calls: HashMap::new(),
             current_module: None,
+            precision: None,  // Full precision by default
+            epsilon: 1e-10,   // Default epsilon threshold
         }
     }
 
@@ -534,6 +543,40 @@ impl VM {
         } else {
             return Err(VmError::Runtime(format!("Cannot resume non-generator value: {:?}", gen_value)));
         }
+    }
+
+    /// Set the global precision for number formatting and rounding
+    pub fn set_precision(&mut self, decimals: i32) {
+        if decimals < 0 {
+            self.precision = None;  // Full precision
+        } else {
+            self.precision = Some(decimals);
+        }
+    }
+
+    /// Get the current precision setting
+    pub fn get_precision(&self) -> Option<i32> {
+        self.precision
+    }
+
+    /// Get the epsilon threshold
+    pub fn get_epsilon(&self) -> f64 {
+        self.epsilon
+    }
+
+    /// Apply precision rounding to a number
+    pub fn apply_precision(&self, n: f64) -> f64 {
+        if let Some(decimals) = self.precision {
+            let factor = 10_f64.powi(decimals);
+            (n * factor).round() / factor
+        } else {
+            n
+        }
+    }
+
+    /// Check if a number is effectively zero (within epsilon)
+    pub fn is_effectively_zero(&self, n: f64) -> bool {
+        n.abs() < self.epsilon
     }
 
     /// Perform return from function

@@ -1,0 +1,18 @@
+print("=== Sin configurar precisión ===")
+print("e^(i*pi) + 1 =", e^(i*pi) + 1)
+
+print("\n=== Con precisión 2 ===")
+set_precision(2)
+print("e^(i*pi) + 1 =", e^(i*pi) + 1)
+
+print("\n=== Otros ejemplos de complejos ===")
+print("0 + 3i =", 0 + 3i)
+print("0 + 1i =", 0 + 1i)
+print("0 - 1i =", 0 - 1i)
+print("5 + 0i =", 5 + 0i)
+print("2 + 3i =", 2 + 3i)
+print("2 - 3i =", 2 - 3i)
+
+print("\n=== Con precisión 10 ===")
+set_precision(10)
+print("e^(i*pi) + 1 =", e^(i*pi) + 1)

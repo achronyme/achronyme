@@ -1,0 +1,17 @@
+set_precision(2)
+
+import { createCounter } from "./modules/src/contador"
+
+let counter = createCounter([1, 2, 3])
+
+print("Estado inicial:", counter.value)
+counter.inc()
+print("Después de inc:", counter.value)
+counter.dec()
+print("Después de dec:", counter.value)
+
+print("\nOperaciones con complejos:")
+print("e^(i*pi) + 1 =", e^(i*pi) + 1)
+print("2 + 3i =", 2 + 3i)
+print("0 + 1i =", 0 + 1i)
+print("5 + 0i =", 5 + 0i)

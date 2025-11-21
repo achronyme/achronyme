@@ -14,7 +14,7 @@ use std::io::{self, Write};
 // ============================================================================
 
 /// Print value to stdout with newline
-pub fn vm_print(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_print(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime("print() requires at least 1 argument".to_string()));
     }
@@ -24,7 +24,7 @@ pub fn vm_print(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         if i > 0 {
             print!(" ");
         }
-        print!("{}", format_value(arg));
+        print!("{}", format_value(arg, vm));
     }
     println!();
 
@@ -32,7 +32,7 @@ pub fn vm_print(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Print value to stdout with newline
-pub fn vm_println(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_println(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         // Just print newline
         println!();
@@ -44,7 +44,7 @@ pub fn vm_println(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         if i > 0 {
             print!(" ");
         }
-        print!("{}", format_value(arg));
+        print!("{}", format_value(arg, vm));
     }
     println!();
 
@@ -98,30 +98,93 @@ pub fn vm_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // Helper Functions
 // ============================================================================
 
+/// Format a number according to VM precision settings
+fn format_number(n: f64, vm: &VM) -> String {
+    let rounded = vm.apply_precision(n);
+
+    if vm.is_effectively_zero(rounded) {
+        return "0".to_string();
+    }
+
+    if let Some(decimals) = vm.get_precision() {
+        if decimals == 0 {
+            format!("{:.0}", rounded)
+        } else {
+            format!("{:.prec$}", rounded, prec = decimals as usize)
+        }
+    } else {
+        // Full precision
+        if rounded.fract() == 0.0 && rounded.is_finite() {
+            format!("{:.0}", rounded)
+        } else {
+            rounded.to_string()
+        }
+    }
+}
+
+/// Format a complex number with smart formatting
+fn format_complex(c: &achronyme_types::complex::Complex, vm: &VM) -> String {
+    let re = vm.apply_precision(c.re);
+    let im = vm.apply_precision(c.im);
+
+    let re_is_zero = vm.is_effectively_zero(re);
+    let im_is_zero = vm.is_effectively_zero(im);
+    let epsilon = vm.get_epsilon();
+
+    match (re_is_zero, im_is_zero) {
+        (true, true) => "0".to_string(),
+        (true, false) => {
+            // Pure imaginary: 0 + Xi -> Xi
+            if (im - 1.0).abs() < epsilon {
+                "i".to_string()
+            } else if (im + 1.0).abs() < epsilon {
+                "-i".to_string()
+            } else {
+                format!("{}i", format_number(im, vm))
+            }
+        }
+        (false, true) => {
+            // Pure real: X + 0i -> X
+            format_number(re, vm)
+        }
+        (false, false) => {
+            // Both parts present: X + Yi or X - Yi
+            let re_str = format_number(re, vm);
+
+            // Handle special cases for imaginary coefficient
+            let im_str = if (im.abs() - 1.0).abs() < epsilon {
+                "i".to_string()
+            } else {
+                format!("{}i", format_number(im.abs(), vm))
+            };
+
+            if im > 0.0 {
+                format!("{} + {}", re_str, im_str)
+            } else {
+                format!("{} - {}", re_str, im_str)
+            }
+        }
+    }
+}
+
 /// Format a value for display
-fn format_value(value: &Value) -> String {
+fn format_value(value: &Value, vm: &VM) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Boolean(b) => b.to_string(),
-        Value::Number(n) => {
-            // Format numbers nicely
-            if n.fract() == 0.0 && n.is_finite() {
-                format!("{:.0}", n)
-            } else {
-                n.to_string()
-            }
-        }
+        Value::Number(n) => format_number(*n, vm),
+        Value::Complex(c) => format_complex(c, vm),
         Value::String(s) => s.clone(),
         Value::Vector(vec) => {
             let borrowed = vec.borrow();
-            let items: Vec<String> = borrowed.iter().map(format_value).collect();
+            let items: Vec<String> = borrowed.iter().map(|v| format_value(v, vm)).collect();
             format!("[{}]", items.join(", "))
         }
         Value::Record(map) => {
             let map = map.borrow();
             let items: Vec<String> = map
                 .iter()
-                .map(|(k, v)| format!("{}: {}", k, format_value(v)))
+                .map(|(k, v)| format!("{}: {}", k, format_value(v, vm)))
                 .collect();
             format!("{{{}}}", items.join(", "))
         }

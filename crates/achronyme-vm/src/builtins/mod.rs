@@ -81,6 +81,9 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("pi", math::vm_pi, 0);
     registry.register("e", math::vm_e, 0);
 
+    // Precision Control
+    registry.register("set_precision", math::vm_set_precision, 1);
+
     // ========================================================================
     // String Functions
     // ========================================================================

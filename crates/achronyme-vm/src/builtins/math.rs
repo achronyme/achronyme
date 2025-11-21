@@ -322,3 +322,30 @@ pub fn vm_e(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
     Ok(Value::Number(std::f64::consts::E))
 }
+
+// ============================================================================
+// Precision Control
+// ============================================================================
+
+/// Set global precision for number formatting and rounding
+pub fn vm_set_precision(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::Runtime(format!(
+            "set_precision() expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+
+    match &args[0] {
+        Value::Number(n) => {
+            let decimals = *n as i32;
+            vm.set_precision(decimals);
+            Ok(Value::Null)
+        }
+        _ => Err(VmError::TypeError {
+            operation: "set_precision".to_string(),
+            expected: "Number".to_string(),
+            got: format!("{:?}", args[0]),
+        }),
+    }
+}
