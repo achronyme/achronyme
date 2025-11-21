@@ -221,8 +221,13 @@ impl Compiler {
             arg_results.push(arg_res);
         }
 
+        // Check argument count
+        if args.len() > 255 {
+            return Err(CompileError::Error("Too many arguments".to_string()));
+        }
+
         // Arguments must be in consecutive registers starting from func_reg + 1
-        // Move them if necessary BEFORE allocating result register
+        // Move them FIRST before allocating result register
         // IMPORTANT: Move in reverse order to avoid overwriting source registers
         // that are needed for later moves
         for i in (0..arg_results.len()).rev() {
@@ -239,10 +244,21 @@ impl Compiler {
             }
         }
 
-        // Check argument count
-        if args.len() > 255 {
-            return Err(CompileError::Error("Too many arguments".to_string()));
-        }
+        // NOW allocate result register AFTER moving arguments (non-tail only)
+        // This ensures result_reg doesn't collide with argument positions [func_reg+1, func_reg+argc]
+        let result_reg = if !is_tail {
+            let mut candidate = self.registers.allocate()?;
+            // Check if candidate collides with argument positions
+            let arg_start = func_reg.wrapping_add(1);
+            let arg_end = func_reg.wrapping_add(args.len() as u8);
+            while candidate >= arg_start && candidate <= arg_end {
+                // Collision detected - allocate another register
+                candidate = self.registers.allocate()?;
+            }
+            Some(candidate)
+        } else {
+            None
+        };
 
         // Emit CALL or TAIL_CALL depending on tail position
         if is_tail {
@@ -268,8 +284,8 @@ impl Compiler {
             let dummy_reg = self.registers.allocate()?;
             Ok(RegResult::temp(dummy_reg))
         } else {
-            // Regular CALL: Allocate result register
-            let result_reg = self.registers.allocate()?;
+            // Regular CALL: Use pre-allocated result register
+            let result_reg = result_reg.unwrap(); // Safe because we checked !is_tail
 
             self.emit(encode_abc(
                 OpCode::Call.as_u8(),
@@ -328,8 +344,13 @@ impl Compiler {
             arg_results.push(arg_res);
         }
 
+        // Check argument count
+        if args.len() > 255 {
+            return Err(CompileError::Error("Too many arguments".to_string()));
+        }
+
         // Arguments must be in consecutive registers starting from func_reg + 1
-        // Move them if necessary BEFORE allocating result register
+        // Move them FIRST before allocating result register
         // IMPORTANT: Move in reverse order to avoid overwriting source registers
         // that are needed for later moves
         for i in (0..arg_results.len()).rev() {
@@ -346,10 +367,21 @@ impl Compiler {
             }
         }
 
-        // Check argument count
-        if args.len() > 255 {
-            return Err(CompileError::Error("Too many arguments".to_string()));
-        }
+        // NOW allocate result register AFTER moving arguments (non-tail only)
+        // This ensures result_reg doesn't collide with argument positions [func_reg+1, func_reg+argc]
+        let result_reg = if !is_tail {
+            let mut candidate = self.registers.allocate()?;
+            // Check if candidate collides with argument positions
+            let arg_start = func_reg.wrapping_add(1);
+            let arg_end = func_reg.wrapping_add(args.len() as u8);
+            while candidate >= arg_start && candidate <= arg_end {
+                // Collision detected - allocate another register
+                candidate = self.registers.allocate()?;
+            }
+            Some(candidate)
+        } else {
+            None
+        };
 
         // Emit CALL or TAIL_CALL depending on tail position
         if is_tail {
@@ -377,8 +409,8 @@ impl Compiler {
             let dummy_reg = self.registers.allocate()?;
             Ok(RegResult::temp(dummy_reg))
         } else {
-            // Regular CALL: Allocate result register
-            let result_reg = self.registers.allocate()?;
+            // Regular CALL: Use pre-allocated result register
+            let result_reg = result_reg.unwrap(); // Safe because we checked !is_tail
 
             self.emit(encode_abc(
                 OpCode::Call.as_u8(),
@@ -390,10 +422,17 @@ impl Compiler {
             // Free temporary registers ONLY if they are temps
             for arg_res in arg_results {
                 if arg_res.is_temp() {
-                    self.registers.free(arg_res.reg());
+                    // Only free if it's NOT one of the argument positions (func_reg+1...)
+                    let arg_reg = arg_res.reg();
+                    let is_arg_position = (1..=args.len()).any(|i| {
+                        arg_reg == func_reg.wrapping_add(i as u8)
+                    });
+                    if !is_arg_position {
+                        self.registers.free(arg_reg);
+                    }
                 }
             }
-            if func_res.is_temp() {
+            if func_res.is_temp() && func_res.reg() != func_reg {
                 self.registers.free(func_res.reg());
             }
 

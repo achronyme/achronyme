@@ -1,0 +1,28 @@
+// Test file to verify register allocation fix in function calls
+// The issue was that result_reg could collide with argument positions
+
+// Simple recursive function to test
+let fibonacci = (n: Number): Number => do{
+    if (n <= 1) {
+        n
+    } else {
+        rec(n - 1) + rec(n - 2)
+    }
+}
+
+// Test case 1: Simple function call with one argument
+let result1 = fibonacci(10)
+print("fibonacci(10) =", result1)
+
+// Test case 2: Function that takes multiple arguments
+let add3 = (a: Number, b: Number, c: Number): Number => a + b + c
+let result2 = add3(1, 2, 3)
+print("add3(1, 2, 3) =", result2)
+
+// Test case 3: Nested function calls
+let result3 = fibonacci(fibonacci(5))
+print("fibonacci(fibonacci(5)) =", result3)
+
+// Test case 4: Function call with expressions as arguments
+let result4 = add3(fibonacci(3), fibonacci(4), fibonacci(5))
+print("add3(fibonacci(3), fibonacci(4), fibonacci(5)) =", result4)
