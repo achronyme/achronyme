@@ -2,8 +2,7 @@
 // Demonstrates using CPM to find the critical path and project duration
 
 // Software Development Project
-let project = network(
-    [
+let project = network([
         Planning -> Design,
         Design -> Frontend,
         Design -> Backend,
@@ -11,8 +10,7 @@ let project = network(
         Backend -> Integration,
         Integration -> Testing,
         Testing -> Deployment
-    ],
-    {
+    ],{
         Planning: {duration: 5},
         Design: {duration: 8},
         Frontend: {duration: 12},
@@ -20,30 +18,33 @@ let project = network(
         Integration: {duration: 6},
         Testing: {duration: 4},
         Deployment: {duration: 2}
-    }
-)
+    })
 
 // Calculate total project duration
 let duration = project_duration(project)
 duration
+print("Total project duration (days):", duration)
 // Expected: 40 days (Planning -> Design -> Backend -> Integration -> Testing -> Deployment)
 
 // Forward pass: Calculate Early Start (ES) and Early Finish (EF)
 let with_es_ef = forward_pass(project)
 with_es_ef.nodes.Backend
 // Should show: {duration: 15, ES: 13, EF: 28}
-
+print("Backend duration:", with_es_ef.nodes.Backend.duration)
+print("Backend ES:", with_es_ef.nodes.Backend.ES)
+print("Backend EF:", with_es_ef.nodes.Backend.EF)
 // Backward pass: Calculate Late Start (LS) and Late Finish (LF)
 let with_ls_lf = backward_pass(with_es_ef)
 with_ls_lf.nodes.Frontend
 // Should show LS and LF values
-
+print("Frontend LS:", with_ls_lf.nodes.Frontend.LS)
+print("Frontend LF:", with_ls_lf.nodes.Frontend.LF)
 // Calculate slack (float) for all tasks
 let with_slack = calculate_slack(with_ls_lf)
 with_slack.nodes.Frontend.slack
 // Frontend has slack since Backend is on critical path
-
+print("Frontend slack:", with_slack.nodes.Frontend.slack)
 // Find the critical path (tasks with zero slack)
 let critical = critical_path(with_slack)
-critical
+print("Critical path:", critical)
 // Result: ["Planning", "Design", "Backend", "Integration", "Testing", "Deployment"]

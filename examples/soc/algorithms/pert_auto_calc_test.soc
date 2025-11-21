@@ -1,14 +1,13 @@
 // Test: Auto-calculation of prerequisites in PERT functions
 
-let proyecto = network(
-    [A -> B, A -> C, B -> D, C -> D],
-    {
+let proyecto = network([
+    A -> B, A -> C, B -> D, C -> D
+    ],{
         A: {op: 2, mo: 3, pe: 5},
         B: {op: 4, mo: 6, pe: 10},
         C: {op: 3, mo: 4, pe: 6},
         D: {op: 1, mo: 2, pe: 3}
-    }
-)
+    })
 
 // Test 1: backward_pass auto-calculates forward_pass
 let con_backward = backward_pass(proyecto)
@@ -42,7 +41,7 @@ let manual_critical = critical_path(manual_slack)
 
 // Compare auto vs manual
 let auto_critical = critical_path(proyecto)
-auto_critical
-manual_critical
+print("Auto-calculated critical path:", auto_critical)
+print("Manually calculated critical path:", manual_critical)
 
 // Both should be identical!
