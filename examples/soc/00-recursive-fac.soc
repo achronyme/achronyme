@@ -16,5 +16,4 @@ let fibbonacci = (n: Number): Number => do{
 
 print("Factorial of 5 is:", factorial(5))  // Expected output: 120
 print("Factorial of 20 is:", factorial(10))
-print("Fibbonacci of 10 is:", fibbonacci(10))  // Expected output: 55
-print("Fibbonacci of 20 is:", fibbonacci(20))
+print("Fibbonacci of 10 is:", factorial(1000) - 1)
