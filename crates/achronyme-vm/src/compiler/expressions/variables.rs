@@ -40,10 +40,14 @@ impl Compiler {
 
     /// Compile recursive reference
     pub(crate) fn compile_rec_reference(&mut self) -> Result<RegResult, CompileError> {
-        // 'rec' refers to the current function being defined
-        // Register 255 is reserved for this purpose
-        // This is a special variable, not a temp
-        Ok(RegResult::var(255))
+        // 'rec' is now an upvalue (index 0) that captures the current function
+        if let Some(upvalue_idx) = self.symbols.get_upvalue("rec") {
+            let dst = self.registers.allocate()?;
+            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), dst, upvalue_idx, 0));
+            return Ok(RegResult::temp(dst));
+        }
+
+        Err(CompileError::Error("'rec' can only be used inside functions".to_string()))
     }
 
     /// Compile self reference

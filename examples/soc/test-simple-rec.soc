@@ -1,0 +1,9 @@
+let factorial = (n: Number): Number => do{
+    if (n <= 1) {
+        1
+    } else {
+        n * rec(n - 1)
+    }
+}
+
+print("Factorial of 3 is:", factorial(3))

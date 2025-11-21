@@ -10,6 +10,7 @@ license = "MIT"
 # Core dependencies
 achronyme-parser = { path = "../achronyme-parser" }
 achronyme-types = { path = "../achronyme-types" }
+achronyme-dsp = { path = "../achronyme-dsp" }
 
 [dev-dependencies]
 criterion = "0.5"

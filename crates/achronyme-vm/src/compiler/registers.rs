@@ -58,10 +58,6 @@ impl RegisterAllocator {
     /// Allocate a new register
     pub(crate) fn allocate(&mut self) -> Result<u8, CompileError> {
         if let Some(reg) = self.free_list.pop() {
-            // Make sure we never allocate R255 (reserved for recursion)
-            if reg == 255 {
-                return Err(CompileError::TooManyRegisters);
-            }
             // Update max_used if this register is higher
             self.max_used = self.max_used.max(reg + 1);
             Ok(reg)
@@ -100,8 +96,7 @@ impl RegisterAllocator {
 
     /// Free a register for reuse
     pub(crate) fn free(&mut self, reg: u8) {
-        // Never free R255 (reserved for recursion)
-        if reg != 255 && !self.free_list.contains(&reg) {
+        if !self.free_list.contains(&reg) {
             self.free_list.push(reg);
         }
     }

@@ -112,6 +112,7 @@ dependencies = [
 name = "achronyme-vm"
 version = "0.6.5"
 dependencies = [
+ "achronyme-dsp",
  "achronyme-parser",
  "achronyme-types",
  "criterion",

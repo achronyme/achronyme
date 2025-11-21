@@ -14,6 +14,7 @@
 pub mod array_advanced;
 pub mod complex;
 pub mod debug;
+pub mod dsp;
 pub mod hof;
 pub mod io;
 pub mod linalg;
@@ -231,6 +232,29 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
 
     registry.register("import", module_system::vm_import, 1);
 
+    // ========================================================================
+    // Digital Signal Processing (DSP) Functions
+    // ========================================================================
+
+    // FFT Functions
+    registry.register("fft", dsp::vm_fft, 1);
+    registry.register("ifft", dsp::vm_ifft, 1);
+    registry.register("fft_mag", dsp::vm_fft_mag, 1);
+    registry.register("fft_phase", dsp::vm_fft_phase, 1);
+
+    // Convolution
+    registry.register("conv", dsp::vm_conv, 2);
+    registry.register("conv_fft", dsp::vm_conv_fft, 2);
+
+    // Window Functions
+    registry.register("hanning", dsp::vm_hanning, 1);
+    registry.register("hamming", dsp::vm_hamming, 1);
+    registry.register("blackman", dsp::vm_blackman, 1);
+    registry.register("rectangular", dsp::vm_rectangular, 1);
+
+    // Utility Functions
+    registry.register("linspace", dsp::vm_linspace, 3);
+
     registry
 }
 
@@ -253,9 +277,9 @@ mod tests {
 
         // Verify we have a good number of functions
         // Original: 56 functions
-        // Added: 3 math (deg, rad, cbrt) + 3 stats + 7 linalg + 5 complex + 5 utils + 3 records + 8 array_advanced = 34
-        // Total: 90+ functions
-        assert!(registry.len() > 88);
+        // Added: 3 math (deg, rad, cbrt) + 3 stats + 7 linalg + 5 complex + 5 utils + 3 records + 8 array_advanced + 9 hof + 1 module + 11 dsp = 47
+        // Total: 103+ functions
+        assert!(registry.len() > 100);
     }
 
     #[test]

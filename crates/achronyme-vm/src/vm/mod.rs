@@ -379,13 +379,8 @@ impl VM {
                 // Set upvalues
                 new_frame.upvalues = closure.upvalues.clone();
 
-                // Set register 255 to the closure itself for recursion
-                new_frame.registers.set(
-                    255,
-                    Value::Function(Function::VmClosure(
-                        Rc::new(closure.clone()) as Rc<dyn std::any::Any>
-                    )),
-                )?;
+                // Note: The 'rec' upvalue (index 0) is already set in new_frame.upvalues
+                // No need to set register 255 anymore - 'rec' is accessed via GetUpvalue
 
                 // Push frame
                 self.frames.push(new_frame);

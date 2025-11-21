@@ -36,6 +36,9 @@ impl RegisterWindow {
     /// Get register value
     #[inline]
     pub fn get(&self, idx: u8) -> Result<&Value, VmError> {
+        if idx as usize >= self.registers.len() {
+            eprintln!("ERROR: Trying to get R{} but only {} registers available", idx, self.registers.len());
+        }
         self.registers
             .get(idx as usize)
             .ok_or(VmError::InvalidRegister(idx))
@@ -46,6 +49,8 @@ impl RegisterWindow {
     pub fn set(&mut self, idx: u8, value: Value) -> Result<(), VmError> {
         let idx = idx as usize;
         if idx >= self.registers.len() {
+            eprintln!("ERROR: Trying to set R{} but only {} registers available", idx, self.registers.len());
+            eprintln!("       Value: {:?}", value);
             return Err(VmError::InvalidRegister(idx as u8));
         }
         self.registers[idx] = value;
@@ -91,7 +96,6 @@ impl CallFrame {
     /// Create a new call frame
     pub fn new(function: Rc<FunctionPrototype>, return_register: Option<u8>) -> Self {
         // register_count is the number of registers needed
-        // If register_count is 255, we need 256 registers (0-255) for recursion support
         // Since u8 can't represent 256, we use 255 to mean "all 256 registers"
         let size = if function.register_count == 255 {
             256

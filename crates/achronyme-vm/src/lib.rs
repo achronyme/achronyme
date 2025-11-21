@@ -25,6 +25,7 @@
 
 pub mod builtins;
 pub mod bytecode;
+pub mod bytecode_debug;
 pub mod compiler;
 pub mod error;
 pub mod opcode;
@@ -36,6 +37,7 @@ pub use vm::VM;
 pub use compiler::Compiler;
 pub use opcode::OpCode;
 pub use error::{VmError, CompileError};
+pub use bytecode_debug::disassemble_function;
 
 #[cfg(test)]
 mod tests;

@@ -39,18 +39,33 @@ impl VM {
 
                 // Capture upvalues from current frame
                 let mut upvalues = Vec::new();
-                for upvalue_desc in &prototype.upvalues {
-                    // For now, capture from current frame's registers
-                    // TODO: Handle nested upvalues (upvalues from parent closure)
-                    let value = self.get_register(upvalue_desc.register)?.clone();
-                    upvalues.push(Rc::new(RefCell::new(value)));
+
+                // IMPORTANT: Upvalue 0 is reserved for 'rec' (self-reference)
+                // We'll fill it with Null temporarily and update it after creating the closure
+                for (idx, upvalue_desc) in prototype.upvalues.iter().enumerate() {
+                    if idx == 0 {
+                        // Reserve slot for 'rec' - will be filled with the closure itself below
+                        upvalues.push(Rc::new(RefCell::new(Value::Null)));
+                    } else {
+                        // Capture from current frame's registers
+                        // TODO: Handle nested upvalues (upvalues from parent closure)
+                        let value = self.get_register(upvalue_desc.register)?.clone();
+                        upvalues.push(Rc::new(RefCell::new(value)));
+                    }
                 }
 
                 // Create closure
-                let closure = Closure::with_upvalues(Rc::new(prototype), upvalues);
+                let closure = Closure::with_upvalues(Rc::new(prototype), upvalues.clone());
 
                 // Store as Function value using Rc<dyn Any>
-                let func_value = Value::Function(Function::VmClosure(Rc::new(closure) as Rc<dyn std::any::Any>));
+                let closure_rc = Rc::new(closure);
+                let func_value = Value::Function(Function::VmClosure(closure_rc.clone() as Rc<dyn std::any::Any>));
+
+                // NOW fill upvalue 0 with the closure itself (for recursive calls via 'rec')
+                if !upvalues.is_empty() {
+                    *upvalues[0].borrow_mut() = func_value.clone();
+                }
+
                 self.set_register(dst, func_value)?;
 
                 Ok(ExecutionResult::Continue)
@@ -127,11 +142,8 @@ impl VM {
                         // Set upvalues
                         new_frame.upvalues = closure.upvalues.clone();
 
-                        // Set register 255 to the closure itself for recursion
-                        new_frame.registers.set(
-                            255,
-                            Value::Function(Function::VmClosure(Rc::new(closure.clone()) as Rc<dyn std::any::Any>)),
-                        )?;
+                        // Note: The 'rec' upvalue (index 0) is already set in the closure.upvalues
+                        // No need to set register 255 anymore - 'rec' is accessed via GetUpvalue
 
                         // Push frame
                         self.frames.push(new_frame);
@@ -230,13 +242,10 @@ impl VM {
                     current_frame.registers.set(i, Value::Null)?;
                 }
 
-                // 8. Set register 255 to the closure itself for recursion
-                current_frame.registers.set(
-                    255,
-                    Value::Function(Function::VmClosure(Rc::new(closure) as Rc<dyn std::any::Any>)),
-                )?;
+                // Note: The 'rec' upvalue (index 0) is already set in current_frame.upvalues
+                // No need to set register 255 anymore - 'rec' is accessed via GetUpvalue
 
-                // 8. Clear remaining registers (optional but recommended for GC)
+                // Clear remaining registers (optional but recommended for GC)
                 // Skip this for now as it's just an optimization
 
                 Ok(ExecutionResult::Continue)

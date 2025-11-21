@@ -130,9 +130,20 @@ impl Compiler {
         let used_vars = self.find_used_variables(body)?;
         let mut upvalues = Vec::new();
 
+        // IMPORTANT: Reserve upvalue index 0 for 'rec' (self-reference)
+        // This is a special upvalue that will be filled at closure creation time
+        // with the closure itself, enabling recursive calls
+        upvalues.push(UpvalueDescriptor {
+            depth: 0,  // Will be filled at closure creation
+            register: 0,  // Placeholder - will be set to the closure itself at runtime
+            is_mutable: false,  // The function reference itself is immutable
+        });
+        child_compiler.symbols.define_upvalue("rec".to_string(), 0)?;
+
         for var in used_vars {
-            if !child_compiler.symbols.has(&var) {
+            if !child_compiler.symbols.has(&var) && var != "rec" {
                 // This variable is captured from parent scope
+                // Skip 'rec' since it's already handled above
                 if let Ok(parent_reg) = self.symbols.get(&var) {
                     let upvalue_idx = upvalues.len();
                     if upvalue_idx >= 256 {
@@ -157,11 +168,8 @@ impl Compiler {
         let body_res = child_compiler.compile_expression_with_tail(body, true)?;
         child_compiler.emit(encode_abc(OpCode::Return.as_u8(), body_res.reg(), 0, 0));
 
-        // Set register count (need to allocate enough for rec register 255)
-        // Since we use register 255 for recursion, we need at least 256 registers (0-255)
-        // But register_count is u8, so the max is 255, meaning 0-254
-        // We'll use a workaround: always allocate all 256 registers for functions
-        child_compiler.function.register_count = 255;
+        // Set register count based on actual usage
+        child_compiler.function.register_count = child_compiler.registers.max_used();
 
         // Add nested function to parent's function list
         let func_idx = self.function.functions.len();
@@ -192,16 +200,13 @@ impl Compiler {
 
         // For FunctionCall, lookup the function by name and copy to a fresh register
         // This ensures the function value won't be overwritten when compiling arguments
-        let func_reg = if name == "rec" {
-            // Special case: 'rec' refers to register 255 (current function for recursion)
-            let func_reg = self.registers.allocate()?;
-            self.emit_move(func_reg, 255);
-            func_reg
-        } else if let Ok(source_reg) = self.symbols.get(name) {
+        let func_reg = if let Ok(source_reg) = self.symbols.get(name) {
+            // Variable in current scope (local or parameter)
             let func_reg = self.registers.allocate()?;
             self.emit_move(func_reg, source_reg);
             func_reg
         } else if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
+            // Variable from parent scope (including 'rec' which is always upvalue 0)
             let reg = self.registers.allocate()?;
             self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), reg, upvalue_idx, 0));
             reg
@@ -222,8 +227,13 @@ impl Compiler {
         // that are needed for later moves
         for i in (0..arg_results.len()).rev() {
             let arg_reg = arg_results[i].reg();
-            // Use wrapping arithmetic to handle func_reg + 1 + i safely
-            let target_reg = func_reg.wrapping_add(1).wrapping_add(i as u8);
+            // Calculate target register, checking for overflow
+            let target_offset = 1u16 + i as u16;
+            let target_calc = func_reg as u16 + target_offset;
+            if target_calc > 255 {
+                return Err(CompileError::TooManyRegisters);
+            }
+            let target_reg = target_calc as u8;
             if arg_reg != target_reg {
                 self.emit_move(target_reg, arg_reg);
             }
@@ -298,17 +308,18 @@ impl Compiler {
 
         // Compile the callee expression (can be any expression returning a function)
         let func_res = self.compile_expression(callee)?;
+        let mut func_reg = func_res.reg();
 
-        // CRITICAL FIX: R255 is reserved for recursion and cannot be used as func_reg
-        // in CALL instructions because arguments would wrap to R0, overwriting parameters.
-        // Always copy the function value to a fresh register before calling.
-        let func_reg = if func_res.reg() == 255 {
-            let reg = self.registers.allocate()?;
-            self.emit_move(reg, 255);
-            reg
-        } else {
-            func_res.reg()
-        };
+        // Check if there's enough space for arguments after func_reg
+        // If func_reg + 1 + args.len() > 256, we need to move func_reg to a lower register
+        if (func_reg as usize) + 1 + args.len() > 256 {
+            let new_func_reg = self.registers.allocate()?;
+            self.emit_move(new_func_reg, func_reg);
+            if func_res.is_temp() {
+                self.registers.free(func_reg);
+            }
+            func_reg = new_func_reg;
+        }
 
         // Allocate temporary registers for arguments (consecutive)
         let mut arg_results = Vec::new();
@@ -323,8 +334,13 @@ impl Compiler {
         // that are needed for later moves
         for i in (0..arg_results.len()).rev() {
             let arg_reg = arg_results[i].reg();
-            // Use wrapping arithmetic to handle func_reg + 1 + i safely
-            let target_reg = func_reg.wrapping_add(1).wrapping_add(i as u8);
+            // Calculate target register, checking for overflow
+            let target_offset = 1u16 + i as u16;
+            let target_calc = func_reg as u16 + target_offset;
+            if target_calc > 255 {
+                return Err(CompileError::TooManyRegisters);
+            }
+            let target_reg = target_calc as u8;
             if arg_reg != target_reg {
                 self.emit_move(target_reg, arg_reg);
             }
@@ -355,10 +371,6 @@ impl Compiler {
             if func_res.is_temp() {
                 self.registers.free(func_res.reg());
             }
-            // Also free the copied func_reg if we allocated it
-            if func_res.reg() == 255 {
-                self.registers.free(func_reg);
-            }
 
             // Tail call acts as return, but we need to return a register for type checking
             // Use a dummy register (caller won't use it)
@@ -383,10 +395,6 @@ impl Compiler {
             }
             if func_res.is_temp() {
                 self.registers.free(func_res.reg());
-            }
-            // Also free the copied func_reg if we allocated it
-            if func_res.reg() == 255 {
-                self.registers.free(func_reg);
             }
 
             Ok(RegResult::temp(result_reg))

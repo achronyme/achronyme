@@ -1,0 +1,20 @@
+let factorial = (n: Number): Number => do{
+    if (n <= 1) {
+        1
+    } else {
+        n * rec(n - 1)
+    }
+}
+
+let fibbonacci = (n: Number): Number => do{
+    if (n <= 1) {
+        n
+    } else {
+        rec(n - 1) + rec(n - 2)
+    }
+}
+
+print("Factorial of 5 is:", factorial(5))  // Expected output: 120
+print("Factorial of 50 is:", factorial(50))
+print("Fibbonacci of 10 is:", fibbonacci(10))  // Expected output: 55
+print("Fibbonacci of 50 is:", fibbonacci(20))

@@ -33,6 +33,10 @@ struct Cli {
     #[arg(short, long)]
     interactive: bool,
 
+    /// Show disassembled bytecode
+    #[arg(long)]
+    debug_bytecode: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -88,11 +92,13 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
+    let debug_bytecode = cli.debug_bytecode;
+
     // Handle subcommands first
     if let Some(command) = cli.command {
         match command {
             Commands::Repl => run_repl(),
-            Commands::Run { file } => run_file(&file),
+            Commands::Run { file } => run_file(&file, debug_bytecode),
             Commands::Eval { expression } => run_expression(&expression),
             Commands::Check { file } => check_syntax(&file),
             Commands::Format { file, check, diff } => format_command(&file, check, diff),
@@ -119,7 +125,7 @@ fn main() {
         None => run_repl(),
         Some(input) => {
             if input.ends_with(".ach") || input.ends_with(".soc") {
-                run_file(&input);
+                run_file(&input, debug_bytecode);
             } else {
                 run_expression(&input);
             }
@@ -349,7 +355,7 @@ fn clear_screen() {
     print!("\x1B[2J\x1B[1;1H");
 }
 
-fn run_file(filename: &str) {
+fn run_file(filename: &str, debug_bytecode: bool) {
     let contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(err) => {
@@ -376,6 +382,11 @@ fn run_file(filename: &str) {
             std::process::exit(1);
         }
     };
+
+    // Debug: Print bytecode if requested
+    if debug_bytecode {
+        achronyme_vm::disassemble_function(&module.main, filename);
+    }
 
     // Execute
     let mut vm = achronyme_vm::VM::new();

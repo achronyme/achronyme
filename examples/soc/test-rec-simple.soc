@@ -1,0 +1,16 @@
+let factorial = (n: Number): Number => do{
+    if (n <= 1) {
+        1
+    } else {
+        n * rec(n - 1)
+    }
+}
+
+let x = 5
+print("Test 1:", factorial(x))
+
+let y = 20
+print("Test 2:", factorial(y))
+
+let z = 5
+print("Test 3:", factorial(z))
