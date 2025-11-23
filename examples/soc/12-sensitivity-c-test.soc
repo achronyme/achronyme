@@ -1,7 +1,0 @@
-// Sensitivity analysis for objective coefficients
-let c = [40, 30]
-let A = [[1, 0], [0, 1], [1, 1]]
-let b = [40, 50, 70]
-
-// Range for c[0] (coefficient of x2)
-sensitivity_c(c, A, b, 1)

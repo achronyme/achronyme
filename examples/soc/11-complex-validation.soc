@@ -108,3 +108,4 @@ let rotados = map(p => p * i, puntos)
 // ============================================================================
 
 producto
+print("Validation Results:", i_cuadrado, i_cubico, i_cuarta, omega_cubo, producto, division, magnitudes_cuadrado, suma_vectorial, uno_mas_i_cubo, raiz_i, rotados);

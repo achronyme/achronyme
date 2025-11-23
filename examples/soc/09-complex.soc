@@ -33,4 +33,4 @@ let suma = v1 + v2
 let mult = [1+i, 2+2i] * [1-i, 1+i]
 // Resultado: [2+0i, 0+4i]
 
-prueba4
+print("Complex Number and Vector Tests:", unidad_imaginaria, prueba1, prueba2, prueba3, prueba4, vec_complejo, suma, mult);

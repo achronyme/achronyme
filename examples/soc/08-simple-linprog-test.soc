@@ -1,5 +1,0 @@
-let c = [800, 500]
-let A = [[270, 200], [1, 0], [0, 1]]
-let b = [40000, 100, 120]
-let solution = linprog(c, A, b, 1)
-objective_value(c, solution)

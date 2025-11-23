@@ -15,7 +15,7 @@ print("--- Part 1: Basic Generator Type ---")
 type NumberSequence = Generator
 
 // Function that returns a generator
-let createCounter: () => Generator = () => generate {
+let createCounter: (): Generator = () => generate {
     yield 1
     yield 2
     yield 3
