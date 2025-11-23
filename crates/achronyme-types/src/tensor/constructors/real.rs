@@ -79,7 +79,7 @@ impl RealTensor {
                 got: self.shape.clone(),
             });
         }
-        self.get(&[row, col]).map(|&v| v)
+        self.get(&[row, col]).copied()
     }
 
     /// Set matrix element at (row, col) - convenience method for rank-2 tensors

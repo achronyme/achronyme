@@ -94,57 +94,53 @@ pub enum TypeAnnotation {
     TypeReference(String),
 }
 
-impl TypeAnnotation {
-    /// Get a human-readable string representation of this type
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for TypeAnnotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeAnnotation::Number => "Number".to_string(),
-            TypeAnnotation::Boolean => "Boolean".to_string(),
-            TypeAnnotation::String => "String".to_string(),
-            TypeAnnotation::Complex => "Complex".to_string(),
-            TypeAnnotation::Vector => "Vector".to_string(),
-            TypeAnnotation::Edge => "Edge".to_string(),
-            TypeAnnotation::Generator => "Generator".to_string(),
-            TypeAnnotation::Error => "Error".to_string(),
-            TypeAnnotation::AnyFunction => "Function".to_string(),
-            TypeAnnotation::Null => "null".to_string(),
-            TypeAnnotation::Any => "Any".to_string(),
+            TypeAnnotation::Number => write!(f, "Number"),
+            TypeAnnotation::Boolean => write!(f, "Boolean"),
+            TypeAnnotation::String => write!(f, "String"),
+            TypeAnnotation::Complex => write!(f, "Complex"),
+            TypeAnnotation::Vector => write!(f, "Vector"),
+            TypeAnnotation::Edge => write!(f, "Edge"),
+            TypeAnnotation::Generator => write!(f, "Generator"),
+            TypeAnnotation::Error => write!(f, "Error"),
+            TypeAnnotation::AnyFunction => write!(f, "Function"),
+            TypeAnnotation::Null => write!(f, "null"),
+            TypeAnnotation::Any => write!(f, "Any"),
 
             TypeAnnotation::Tensor {
                 element_type,
                 shape,
-            } => {
-                let elem_str = element_type.to_string();
-                match shape {
-                    None => format!("Tensor<{}>", elem_str),
-                    Some(dims) => {
-                        let dims_str = dims
-                            .iter()
-                            .map(|d| d.map_or("_".to_string(), |n| n.to_string()))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        format!("Tensor<{}, [{}]>", elem_str, dims_str)
-                    }
+            } => match shape {
+                None => write!(f, "Tensor<{}>", element_type),
+                Some(dims) => {
+                    let dims_str = dims
+                        .iter()
+                        .map(|d| d.map_or("_".to_string(), |n| n.to_string()))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(f, "Tensor<{}, [{}]>", element_type, dims_str)
                 }
-            }
+            },
 
             TypeAnnotation::Record { fields } => {
                 if fields.is_empty() {
-                    "{}".to_string()
+                    write!(f, "{{}}")
                 } else {
                     let fields_str = fields
                         .iter()
                         .map(|(name, (is_mut, is_optional, ty))| {
                             let optional_marker = if *is_optional { "?" } else { "" };
                             if *is_mut {
-                                format!("mut {}{}: {}", name, optional_marker, ty.to_string())
+                                format!("mut {}{}: {}", name, optional_marker, ty)
                             } else {
-                                format!("{}{}: {}", name, optional_marker, ty.to_string())
+                                format!("{}{}: {}", name, optional_marker, ty)
                             }
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("{{{}}}", fields_str)
+                    write!(f, "{{{}}}", fields_str)
                 }
             }
 
@@ -157,19 +153,24 @@ impl TypeAnnotation {
                     .map(|p| p.as_ref().map_or("Any".to_string(), |t| t.to_string()))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("({}) => {}", params_str, return_type.to_string())
+                write!(f, "({}) => {}", params_str, return_type)
             }
 
-            TypeAnnotation::Union(types) => types
-                .iter()
-                .map(|t| t.to_string())
-                .collect::<Vec<_>>()
-                .join(" | "),
+            TypeAnnotation::Union(types) => {
+                let types_str = types
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "{}", types_str)
+            }
 
-            TypeAnnotation::TypeReference(name) => name.clone(),
+            TypeAnnotation::TypeReference(name) => write!(f, "{}", name),
         }
     }
+}
 
+impl TypeAnnotation {
     /// Check if this type is assignable from another type (for type checking)
     /// This is a simplified version - full checking happens in the evaluator
     pub fn is_assignable_from(&self, other: &TypeAnnotation) -> bool {

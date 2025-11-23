@@ -16,6 +16,10 @@ use crate::type_annotation::TypeAnnotation;
 use pest::iterators::Pair;
 use std::collections::HashMap;
 
+// Type alias for parameter parsing result
+type ParsedParam = (String, Option<TypeAnnotation>, Option<Box<AstNode>>);
+type ParsedParams = Vec<ParsedParam>;
+
 impl AstParser {
     /// Parse a type annotation from a Pest pair
     /// Entry point for all type annotation parsing
@@ -295,10 +299,7 @@ impl AstParser {
     /// Also supports optional parameters: x? (optional untyped) OR x?: Type (optional typed)
     /// Optional parameters are equivalent to having a default value of null, and their type
     /// becomes Type | null (or just null if untyped)
-    pub(super) fn parse_typed_param(
-        &mut self,
-        pair: Pair<Rule>,
-    ) -> Result<(String, Option<TypeAnnotation>, Option<Box<AstNode>>), String> {
+    pub(super) fn parse_typed_param(&mut self, pair: Pair<Rule>) -> Result<ParsedParam, String> {
         let mut inner = pair.into_inner();
 
         // First is always the identifier
@@ -374,7 +375,7 @@ impl AstParser {
     pub(super) fn parse_typed_lambda_params(
         &mut self,
         pair: Pair<Rule>,
-    ) -> Result<Vec<(String, Option<TypeAnnotation>, Option<Box<AstNode>>)>, String> {
+    ) -> Result<ParsedParams, String> {
         let mut params = Vec::new();
         let mut had_default = false;
 

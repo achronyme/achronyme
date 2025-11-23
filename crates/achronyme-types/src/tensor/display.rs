@@ -81,7 +81,7 @@ fn format_nd_tensor(
             if i > 0 {
                 write!(f, ",")?;
                 // Add newline and indentation for readability
-                write!(f, "\n")?;
+                writeln!(f)?;
                 for _ in 0..=depth {
                     write!(f, " ")?;
                 }
@@ -171,7 +171,7 @@ fn format_nd_complex_tensor(
             if i > 0 {
                 write!(f, ",")?;
                 // Add newline and indentation for readability
-                write!(f, "\n")?;
+                writeln!(f)?;
                 for _ in 0..=depth {
                     write!(f, " ")?;
                 }

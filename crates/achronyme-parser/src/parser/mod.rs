@@ -60,11 +60,8 @@ impl AstParser {
         let mut statements = Vec::new();
 
         for inner_pair in pair.into_inner() {
-            match inner_pair.as_rule() {
-                Rule::statement => {
-                    statements.push(self.build_ast_from_statement(inner_pair)?);
-                }
-                _ => {}
+            if inner_pair.as_rule() == Rule::statement {
+                statements.push(self.build_ast_from_statement(inner_pair)?);
             }
         }
 
