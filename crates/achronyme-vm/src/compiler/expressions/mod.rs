@@ -22,34 +22,30 @@ impl Compiler {
     }
 
     /// Compile an expression with tail position awareness
-    pub(crate) fn compile_expression_with_tail(&mut self, node: &AstNode, is_tail: bool) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_expression_with_tail(
+        &mut self,
+        node: &AstNode,
+        is_tail: bool,
+    ) -> Result<RegResult, CompileError> {
         match node {
             // Literals
-            AstNode::Number(_) | AstNode::Boolean(_) | AstNode::Null | AstNode::StringLiteral(_) | AstNode::ComplexLiteral { .. } => {
-                self.compile_literal(node)
-            }
+            AstNode::Number(_)
+            | AstNode::Boolean(_)
+            | AstNode::Null
+            | AstNode::StringLiteral(_)
+            | AstNode::ComplexLiteral { .. } => self.compile_literal(node),
 
             // Variables
-            AstNode::VariableRef(name) => {
-                self.compile_variable_ref(name)
-            }
+            AstNode::VariableRef(name) => self.compile_variable_ref(name),
 
-            AstNode::RecReference => {
-                self.compile_rec_reference()
-            }
+            AstNode::RecReference => self.compile_rec_reference(),
 
-            AstNode::SelfReference => {
-                self.compile_self_reference()
-            }
+            AstNode::SelfReference => self.compile_self_reference(),
 
             // Operators
-            AstNode::BinaryOp { op, left, right } => {
-                self.compile_binary_op(op, left, right)
-            }
+            AstNode::BinaryOp { op, left, right } => self.compile_binary_op(op, left, right),
 
-            AstNode::UnaryOp { op, operand } => {
-                self.compile_unary_op(op, operand)
-            }
+            AstNode::UnaryOp { op, operand } => self.compile_unary_op(op, operand),
 
             // Control flow
             AstNode::If {
@@ -58,17 +54,15 @@ impl Compiler {
                 else_expr,
             } => self.compile_if_with_tail(condition, then_expr, Some(else_expr.as_ref()), is_tail),
 
-            AstNode::WhileLoop { condition, body } => {
-                self.compile_while(condition, body)
-            }
+            AstNode::WhileLoop { condition, body } => self.compile_while(condition, body),
 
-            AstNode::ForInLoop { variable, iterable, body } => {
-                self.compile_for_in(variable, iterable, body)
-            }
+            AstNode::ForInLoop {
+                variable,
+                iterable,
+                body,
+            } => self.compile_for_in(variable, iterable, body),
 
-            AstNode::Match { value, arms } => {
-                self.compile_match(value, arms)
-            }
+            AstNode::Match { value, arms } => self.compile_match(value, arms),
 
             // Exception handling
             AstNode::TryCatch {
@@ -77,77 +71,58 @@ impl Compiler {
                 catch_block,
             } => self.compile_try_catch(try_block, error_param, catch_block),
 
-            AstNode::Throw { value } => {
-                self.compile_throw(value)
-            }
+            AstNode::Throw { value } => self.compile_throw(value),
 
             // Functions
             AstNode::Lambda {
                 params,
                 return_type: _,
                 body,
-            } => {
-                self.compile_lambda(params, body)
-            }
+            } => self.compile_lambda(params, body),
 
-            AstNode::FunctionCall { name, args } => {
-                self.compile_function_call(name, args, is_tail)
-            }
+            AstNode::FunctionCall { name, args } => self.compile_function_call(name, args, is_tail),
 
             AstNode::CallExpression { callee, args } => {
                 self.compile_call_expression(callee, args, is_tail)
             }
 
             // Array and Record literals
-            AstNode::ArrayLiteral(elements) => {
-                self.compile_array_literal(elements)
-            }
+            AstNode::ArrayLiteral(elements) => self.compile_array_literal(elements),
 
-            AstNode::RecordLiteral(fields) => {
-                self.compile_record_literal(fields)
-            }
+            AstNode::RecordLiteral(fields) => self.compile_record_literal(fields),
 
             // Edge literals (graph edges)
-            AstNode::Edge { from, to, directed, metadata } => {
-                self.compile_edge_literal(from, to, *directed, metadata)
-            }
+            AstNode::Edge {
+                from,
+                to,
+                directed,
+                metadata,
+            } => self.compile_edge_literal(from, to, *directed, metadata),
 
             // Access expressions
-            AstNode::IndexAccess { object, indices } => {
-                self.compile_index_access(object, indices)
-            }
+            AstNode::IndexAccess { object, indices } => self.compile_index_access(object, indices),
 
-            AstNode::FieldAccess { record, field } => {
-                self.compile_field_access(record, field)
-            }
+            AstNode::FieldAccess { record, field } => self.compile_field_access(record, field),
 
             // Generators
-            AstNode::GenerateBlock { statements } => {
-                self.compile_generate_block(statements)
-            }
+            AstNode::GenerateBlock { statements } => self.compile_generate_block(statements),
 
-            AstNode::Yield { value } => {
-                self.compile_yield_expr(value)
-            }
+            AstNode::Yield { value } => self.compile_yield_expr(value),
 
             // Ranges
-            AstNode::RangeExpr { start, end, inclusive } => {
-                self.compile_range(start, end, *inclusive)
-            }
+            AstNode::RangeExpr {
+                start,
+                end,
+                inclusive,
+            } => self.compile_range(start, end, *inclusive),
 
             // Interpolated strings
-            AstNode::InterpolatedString { parts } => {
-                self.compile_interpolated_string(parts)
-            }
+            AstNode::InterpolatedString { parts } => self.compile_interpolated_string(parts),
 
             // Sequences
-            AstNode::Break { value } => {
-                self.compile_break(value.as_deref())
-            }
+            AstNode::Break { value } => self.compile_break(value.as_deref()),
 
-            AstNode::Continue => {
-                self.compile_continue()
-            }
+            AstNode::Continue => self.compile_continue(),
 
             AstNode::Sequence { statements } | AstNode::DoBlock { statements } => {
                 let mut last_res: Option<RegResult> = None;

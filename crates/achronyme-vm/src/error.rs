@@ -1,7 +1,7 @@
 //! Error types for the VM and compiler
 
-use std::fmt;
 use crate::value::Value;
+use std::fmt;
 
 /// VM runtime errors
 #[derive(Debug, Clone, PartialEq)]
@@ -55,8 +55,16 @@ impl fmt::Display for VmError {
             VmError::InvalidRegister(reg) => write!(f, "Invalid register: R{}", reg),
             VmError::InvalidConstant(idx) => write!(f, "Invalid constant index: {}", idx),
             VmError::InvalidFunction(idx) => write!(f, "Invalid function index: {}", idx),
-            VmError::TypeError { operation, expected, got } => {
-                write!(f, "Type error in {}: expected {}, got {}", operation, expected, got)
+            VmError::TypeError {
+                operation,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "Type error in {}: expected {}, got {}",
+                    operation, expected, got
+                )
             }
             VmError::DivisionByZero => write!(f, "Division by zero"),
             VmError::InvalidOpcode(op) => write!(f, "Invalid opcode: {}", op),

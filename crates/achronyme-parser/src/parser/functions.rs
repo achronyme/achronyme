@@ -1,14 +1,15 @@
-use pest::iterators::Pair;
 use crate::ast::{AstNode, IndexArg};
 use crate::parser::AstParser;
 use crate::pest_parser::Rule;
+use pest::iterators::Pair;
 
 impl AstParser {
     pub(super) fn build_postfix_expression(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
         let mut inner = pair.into_inner();
         let mut ast = self.build_primary(inner.next().ok_or("Expected a primary expression")?)?;
 
-        for op_pair in inner { // These are postfix_op
+        for op_pair in inner {
+            // These are postfix_op
             let op_inner = op_pair.into_inner().next().unwrap();
             match op_inner.as_rule() {
                 Rule::field_op => {
@@ -37,7 +38,10 @@ impl AstParser {
                     if let AstNode::VariableRef(ref name) = ast {
                         if name == "if" {
                             if args.len() != 3 {
-                                return Err(format!("if() requires 3 arguments, got {}", args.len()));
+                                return Err(format!(
+                                    "if() requires 3 arguments, got {}",
+                                    args.len()
+                                ));
                             }
                             ast = AstNode::If {
                                 condition: Box::new(args[0].clone()),
@@ -86,7 +90,9 @@ impl AstParser {
 
         if next_pair.as_rule() == Rule::type_annotation {
             return_type = Some(self.parse_type_annotation(next_pair)?);
-            next_pair = inner.next().ok_or("Missing lambda body after return type")?;
+            next_pair = inner
+                .next()
+                .ok_or("Missing lambda body after return type")?;
         }
 
         // Parse lambda body
@@ -97,10 +103,20 @@ impl AstParser {
                     Rule::generate_block => self.build_generate_block(inner_body)?,
                     Rule::do_block => self.build_do_block(inner_body)?,
                     Rule::expr => self.build_ast_from_expr(inner_body)?,
-                    _ => return Err(format!("Unexpected lambda body rule: {:?}", inner_body.as_rule()))
+                    _ => {
+                        return Err(format!(
+                            "Unexpected lambda body rule: {:?}",
+                            inner_body.as_rule()
+                        ))
+                    }
                 }
             }
-            _ => return Err(format!("Expected lambda_body, got {:?}", next_pair.as_rule()))
+            _ => {
+                return Err(format!(
+                    "Expected lambda_body, got {:?}",
+                    next_pair.as_rule()
+                ))
+            }
         };
 
         Ok(AstNode::Lambda {
@@ -112,17 +128,22 @@ impl AstParser {
 
     pub(super) fn build_generate_block(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
         // Grammar: "generate" ~ block
-        let block_pair = pair.into_inner().next()
+        let block_pair = pair
+            .into_inner()
+            .next()
             .ok_or("Missing block in generate statement")?;
 
         // block contains sequence | statement
-        let inner = block_pair.into_inner().next()
+        let inner = block_pair
+            .into_inner()
+            .next()
             .ok_or("Empty generate block")?;
 
         let statements = match inner.as_rule() {
             Rule::sequence => {
                 // Multiple statements
-                inner.into_inner()
+                inner
+                    .into_inner()
                     .map(|stmt_pair| self.build_ast_from_statement(stmt_pair))
                     .collect::<Result<Vec<_>, _>>()?
             }
@@ -130,25 +151,30 @@ impl AstParser {
                 // Single statement
                 vec![self.build_ast_from_statement(inner)?]
             }
-            _ => return Err(format!("Unexpected rule in generate block: {:?}", inner.as_rule()))
+            _ => {
+                return Err(format!(
+                    "Unexpected rule in generate block: {:?}",
+                    inner.as_rule()
+                ))
+            }
         };
 
         Ok(AstNode::GenerateBlock { statements })
     }
 
-    pub(super) fn extract_lambda_params(&mut self, pair: Pair<Rule>) -> Result<Vec<String>, String> {
+    pub(super) fn extract_lambda_params(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<Vec<String>, String> {
         let inner = pair.into_inner();
-        let params: Vec<String> = inner
-            .map(|p| p.as_str().to_string())
-            .collect();
+        let params: Vec<String> = inner.map(|p| p.as_str().to_string()).collect();
 
         // Allow empty parameter lists for lambdas like () => expr
         Ok(params)
     }
 
     pub(super) fn build_access_arg(&mut self, pair: Pair<Rule>) -> Result<IndexArg, String> {
-        let inner = pair.into_inner().next()
-            .ok_or("Empty access_arg")?;
+        let inner = pair.into_inner().next().ok_or("Empty access_arg")?;
 
         match inner.as_rule() {
             Rule::range_expr => {
@@ -163,14 +189,20 @@ impl AstParser {
                 let (start, end) = if inner_str.starts_with("..") && !inner_str.ends_with("..") {
                     // "..end" case
                     if exprs.len() == 1 {
-                        (None, Some(Box::new(self.build_ast_from_expr(exprs[0].clone())?)))
+                        (
+                            None,
+                            Some(Box::new(self.build_ast_from_expr(exprs[0].clone())?)),
+                        )
                     } else {
                         return Err("Invalid range expression".to_string());
                     }
                 } else if inner_str.ends_with("..") && !inner_str.starts_with("..") {
                     // "start.." case
                     if exprs.len() == 1 {
-                        (Some(Box::new(self.build_ast_from_expr(exprs[0].clone())?)), None)
+                        (
+                            Some(Box::new(self.build_ast_from_expr(exprs[0].clone())?)),
+                            None,
+                        )
                     } else {
                         return Err("Invalid range expression".to_string());
                     }
@@ -182,7 +214,7 @@ impl AstParser {
                     if exprs.len() == 2 {
                         (
                             Some(Box::new(self.build_ast_from_expr(exprs[0].clone())?)),
-                            Some(Box::new(self.build_ast_from_expr(exprs[1].clone())?))
+                            Some(Box::new(self.build_ast_from_expr(exprs[1].clone())?)),
                         )
                     } else {
                         return Err("Invalid range expression".to_string());
@@ -195,7 +227,7 @@ impl AstParser {
                 // Single index expression
                 Ok(IndexArg::Single(Box::new(self.build_ast_from_expr(inner)?)))
             }
-            _ => Err(format!("Unexpected access_arg rule: {:?}", inner.as_rule()))
+            _ => Err(format!("Unexpected access_arg rule: {:?}", inner.as_rule())),
         }
     }
 
@@ -222,14 +254,18 @@ impl AstParser {
                     let first = match &elems[0] {
                         ArrayElement::Single(node) => node.clone(),
                         ArrayElement::Spread(_) => {
-                            return Err("piecewise() does not support spread in case arrays".to_string());
+                            return Err(
+                                "piecewise() does not support spread in case arrays".to_string()
+                            );
                         }
                     };
 
                     let second = match &elems[1] {
                         ArrayElement::Single(node) => node.clone(),
                         ArrayElement::Spread(_) => {
-                            return Err("piecewise() does not support spread in case arrays".to_string());
+                            return Err(
+                                "piecewise() does not support spread in case arrays".to_string()
+                            );
                         }
                     };
 

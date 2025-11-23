@@ -60,7 +60,11 @@ fn test_vector_reference_semantics() {
         arr1[0]
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::Number(99.0), "Vectors should have reference semantics");
+    assert_eq!(
+        result,
+        Value::Number(99.0),
+        "Vectors should have reference semantics"
+    );
 }
 
 #[test]
@@ -135,7 +139,11 @@ fn test_record_reference_semantics() {
         p1.x
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::Number(99.0), "Records should have reference semantics");
+    assert_eq!(
+        result,
+        Value::Number(99.0),
+        "Records should have reference semantics"
+    );
 }
 
 #[test]

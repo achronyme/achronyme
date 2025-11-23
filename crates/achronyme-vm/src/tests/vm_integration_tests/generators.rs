@@ -262,5 +262,9 @@ fn test_for_in_simple_expression_body() {
         for(x in [1,2,3]) { print(x) }
     "#;
     let result = execute(source);
-    assert!(result.is_ok(), "for-in with simple body should work: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "for-in with simple body should work: {:?}",
+        result
+    );
 }

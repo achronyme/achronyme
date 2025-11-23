@@ -72,10 +72,7 @@ fn test_eye() {
 
 #[test]
 fn test_complex_tensor() {
-    let data = vec![
-        Complex::new(1.0, 2.0),
-        Complex::new(3.0, 4.0),
-    ];
+    let data = vec![Complex::new(1.0, 2.0), Complex::new(3.0, 4.0)];
     let ct = ComplexTensor::vector(data);
     assert_eq!(ct.rank(), 1);
     assert_eq!(ct.size(), 2);
@@ -87,11 +84,11 @@ fn test_complex_tensor() {
 
 #[test]
 fn test_broadcast_compatibility() {
-    assert!(RealTensor::can_broadcast(&[3, 4], &[3, 4]));  // Same shape
-    assert!(RealTensor::can_broadcast(&[3, 1], &[3, 4]));  // One dimension is 1
-    assert!(RealTensor::can_broadcast(&[3, 4], &[1, 4]));  // One dimension is 1
-    assert!(RealTensor::can_broadcast(&[5, 3, 4], &[3, 4]));  // Different ranks
-    assert!(!RealTensor::can_broadcast(&[3, 4], &[2, 4]));  // Incompatible
+    assert!(RealTensor::can_broadcast(&[3, 4], &[3, 4])); // Same shape
+    assert!(RealTensor::can_broadcast(&[3, 1], &[3, 4])); // One dimension is 1
+    assert!(RealTensor::can_broadcast(&[3, 4], &[1, 4])); // One dimension is 1
+    assert!(RealTensor::can_broadcast(&[5, 3, 4], &[3, 4])); // Different ranks
+    assert!(!RealTensor::can_broadcast(&[3, 4], &[2, 4])); // Incompatible
 }
 
 #[test]
@@ -166,14 +163,8 @@ fn test_scalar_operations() {
 
 #[test]
 fn test_complex_arithmetic() {
-    let a = ComplexTensor::vector(vec![
-        Complex::new(1.0, 2.0),
-        Complex::new(3.0, 4.0),
-    ]);
-    let b = ComplexTensor::vector(vec![
-        Complex::new(5.0, 6.0),
-        Complex::new(7.0, 8.0),
-    ]);
+    let a = ComplexTensor::vector(vec![Complex::new(1.0, 2.0), Complex::new(3.0, 4.0)]);
+    let b = ComplexTensor::vector(vec![Complex::new(5.0, 6.0), Complex::new(7.0, 8.0)]);
 
     let c = a.add(&b).unwrap();
     assert_eq!(c.data[0], Complex::new(6.0, 8.0));
@@ -190,7 +181,7 @@ fn test_dot_product() {
     let b = RealTensor::vector(vec![4.0, 5.0, 6.0]);
 
     let result = a.dot(&b).unwrap();
-    assert_eq!(result, 32.0);  // 1*4 + 2*5 + 3*6 = 32
+    assert_eq!(result, 32.0); // 1*4 + 2*5 + 3*6 = 32
 }
 
 #[test]
@@ -205,7 +196,7 @@ fn test_cross_product() {
 #[test]
 fn test_norm() {
     let v = RealTensor::vector(vec![3.0, 4.0]);
-    assert_eq!(v.norm(), 5.0);  // 3-4-5 triangle
+    assert_eq!(v.norm(), 5.0); // 3-4-5 triangle
 
     let v2 = RealTensor::vector(vec![1.0, 2.0, 2.0]);
     assert_eq!(v2.norm(), 3.0);
@@ -233,14 +224,8 @@ fn test_statistics() {
 
 #[test]
 fn test_complex_dot() {
-    let a = ComplexTensor::vector(vec![
-        Complex::new(1.0, 0.0),
-        Complex::new(0.0, 1.0),
-    ]);
-    let b = ComplexTensor::vector(vec![
-        Complex::new(1.0, 0.0),
-        Complex::new(0.0, 1.0),
-    ]);
+    let a = ComplexTensor::vector(vec![Complex::new(1.0, 0.0), Complex::new(0.0, 1.0)]);
+    let b = ComplexTensor::vector(vec![Complex::new(1.0, 0.0), Complex::new(0.0, 1.0)]);
 
     let result = a.dot(&b).unwrap();
     // Hermitian: conj(a[0])*b[0] + conj(a[1])*b[1]
@@ -251,10 +236,7 @@ fn test_complex_dot() {
 
 #[test]
 fn test_complex_norm() {
-    let v = ComplexTensor::vector(vec![
-        Complex::new(3.0, 0.0),
-        Complex::new(0.0, 4.0),
-    ]);
+    let v = ComplexTensor::vector(vec![Complex::new(3.0, 0.0), Complex::new(0.0, 4.0)]);
     assert_eq!(v.norm(), 5.0);
 }
 
@@ -264,10 +246,7 @@ fn test_complex_norm() {
 
 #[test]
 fn test_transpose() {
-    let m = RealTensor::matrix(2, 3, vec![
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 
     let mt = m.transpose().unwrap();
     assert_eq!(mt.shape(), &[3, 2]);
@@ -279,28 +258,17 @@ fn test_transpose() {
 
 #[test]
 fn test_trace() {
-    let m = RealTensor::matrix(3, 3, vec![
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0,
-        7.0, 8.0, 9.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(3, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]).unwrap();
 
     let tr = m.trace().unwrap();
-    assert_eq!(tr, 15.0);  // 1 + 5 + 9
+    assert_eq!(tr, 15.0); // 1 + 5 + 9
 }
 
 #[test]
 fn test_matrix_multiplication() {
-    let a = RealTensor::matrix(2, 3, vec![
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0,
-    ]).unwrap();
+    let a = RealTensor::matrix(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 
-    let b = RealTensor::matrix(3, 2, vec![
-        7.0, 8.0,
-        9.0, 10.0,
-        11.0, 12.0,
-    ]).unwrap();
+    let b = RealTensor::matrix(3, 2, vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]).unwrap();
 
     let c = a.matmul(&b).unwrap();
     assert_eq!(c.shape(), &[2, 2]);
@@ -344,14 +312,11 @@ fn test_real_to_complex() {
 
 #[test]
 fn test_complex_abs() {
-    let c = ComplexTensor::vector(vec![
-        Complex::new(3.0, 4.0),
-        Complex::new(5.0, 12.0),
-    ]);
+    let c = ComplexTensor::vector(vec![Complex::new(3.0, 4.0), Complex::new(5.0, 12.0)]);
 
     let abs_tensor = c.abs();
-    assert_eq!(abs_tensor.data()[0], 5.0);   // sqrt(3^2 + 4^2)
-    assert_eq!(abs_tensor.data()[1], 13.0);  // sqrt(5^2 + 12^2)
+    assert_eq!(abs_tensor.data()[0], 5.0); // sqrt(3^2 + 4^2)
+    assert_eq!(abs_tensor.data()[1], 13.0); // sqrt(5^2 + 12^2)
 }
 
 // ========================================================================
@@ -361,10 +326,7 @@ fn test_complex_abs() {
 #[test]
 fn test_broadcast_vector_to_matrix() {
     // Matrix [2, 3] + Vector [3] → broadcast to [2, 3]
-    let m = RealTensor::matrix(2, 3, vec![
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 
     let v = RealTensor::vector(vec![10.0, 20.0, 30.0]);
 
@@ -384,10 +346,7 @@ fn test_broadcast_vector_to_matrix() {
 #[test]
 fn test_broadcast_column_to_matrix() {
     // Matrix [2, 3] + Column [2, 1] → broadcast to [2, 3]
-    let m = RealTensor::matrix(2, 3, vec![
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 
     let col = RealTensor::matrix(2, 1, vec![100.0, 200.0]).unwrap();
 
@@ -424,83 +383,74 @@ fn test_broadcast_3d_tensor() {
 #[test]
 fn test_broadcast_subtraction() {
     // Test broadcasting with subtraction
-    let m = RealTensor::matrix(3, 2, vec![
-        10.0, 20.0,
-        30.0, 40.0,
-        50.0, 60.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(3, 2, vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0]).unwrap();
 
     let v = RealTensor::vector(vec![1.0, 2.0]);
 
     let result = m.sub(&v).unwrap();
 
     assert_eq!(result.shape(), &[3, 2]);
-    assert_eq!(*result.get(&[0, 0]).unwrap(), 9.0);   // 10 - 1
-    assert_eq!(*result.get(&[0, 1]).unwrap(), 18.0);  // 20 - 2
-    assert_eq!(*result.get(&[1, 0]).unwrap(), 29.0);  // 30 - 1
-    assert_eq!(*result.get(&[1, 1]).unwrap(), 38.0);  // 40 - 2
+    assert_eq!(*result.get(&[0, 0]).unwrap(), 9.0); // 10 - 1
+    assert_eq!(*result.get(&[0, 1]).unwrap(), 18.0); // 20 - 2
+    assert_eq!(*result.get(&[1, 0]).unwrap(), 29.0); // 30 - 1
+    assert_eq!(*result.get(&[1, 1]).unwrap(), 38.0); // 40 - 2
 }
 
 #[test]
 fn test_broadcast_multiplication() {
     // Test broadcasting with multiplication
-    let m = RealTensor::matrix(2, 3, vec![
-        1.0, 2.0, 3.0,
-        4.0, 5.0, 6.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
 
     let v = RealTensor::vector(vec![10.0, 100.0, 1000.0]);
 
     let result = m.mul(&v).unwrap();
 
     assert_eq!(result.shape(), &[2, 3]);
-    assert_eq!(*result.get(&[0, 0]).unwrap(), 10.0);    // 1 * 10
-    assert_eq!(*result.get(&[0, 1]).unwrap(), 200.0);   // 2 * 100
-    assert_eq!(*result.get(&[0, 2]).unwrap(), 3000.0);  // 3 * 1000
-    assert_eq!(*result.get(&[1, 0]).unwrap(), 40.0);    // 4 * 10
-    assert_eq!(*result.get(&[1, 1]).unwrap(), 500.0);   // 5 * 100
-    assert_eq!(*result.get(&[1, 2]).unwrap(), 6000.0);  // 6 * 1000
+    assert_eq!(*result.get(&[0, 0]).unwrap(), 10.0); // 1 * 10
+    assert_eq!(*result.get(&[0, 1]).unwrap(), 200.0); // 2 * 100
+    assert_eq!(*result.get(&[0, 2]).unwrap(), 3000.0); // 3 * 1000
+    assert_eq!(*result.get(&[1, 0]).unwrap(), 40.0); // 4 * 10
+    assert_eq!(*result.get(&[1, 1]).unwrap(), 500.0); // 5 * 100
+    assert_eq!(*result.get(&[1, 2]).unwrap(), 6000.0); // 6 * 1000
 }
 
 #[test]
 fn test_broadcast_division() {
     // Test broadcasting with division
-    let m = RealTensor::matrix(2, 2, vec![
-        100.0, 200.0,
-        300.0, 400.0,
-    ]).unwrap();
+    let m = RealTensor::matrix(2, 2, vec![100.0, 200.0, 300.0, 400.0]).unwrap();
 
     let v = RealTensor::vector(vec![10.0, 20.0]);
 
     let result = m.div(&v).unwrap();
 
     assert_eq!(result.shape(), &[2, 2]);
-    assert_eq!(*result.get(&[0, 0]).unwrap(), 10.0);  // 100 / 10
-    assert_eq!(*result.get(&[0, 1]).unwrap(), 10.0);  // 200 / 20
-    assert_eq!(*result.get(&[1, 0]).unwrap(), 30.0);  // 300 / 10
-    assert_eq!(*result.get(&[1, 1]).unwrap(), 20.0);  // 400 / 20
+    assert_eq!(*result.get(&[0, 0]).unwrap(), 10.0); // 100 / 10
+    assert_eq!(*result.get(&[0, 1]).unwrap(), 10.0); // 200 / 20
+    assert_eq!(*result.get(&[1, 0]).unwrap(), 30.0); // 300 / 10
+    assert_eq!(*result.get(&[1, 1]).unwrap(), 20.0); // 400 / 20
 }
 
 #[test]
 fn test_broadcast_complex_tensors() {
     // Test broadcasting with complex tensors
-    let m = ComplexTensor::new(vec![
-        Complex::new(1.0, 1.0),
-        Complex::new(2.0, 2.0),
-        Complex::new(3.0, 3.0),
-        Complex::new(4.0, 4.0),
-    ], vec![2, 2]).unwrap();
+    let m = ComplexTensor::new(
+        vec![
+            Complex::new(1.0, 1.0),
+            Complex::new(2.0, 2.0),
+            Complex::new(3.0, 3.0),
+            Complex::new(4.0, 4.0),
+        ],
+        vec![2, 2],
+    )
+    .unwrap();
 
-    let v = ComplexTensor::vector(vec![
-        Complex::new(10.0, 0.0),
-        Complex::new(20.0, 0.0),
-    ]);
+    let v = ComplexTensor::vector(vec![Complex::new(10.0, 0.0), Complex::new(20.0, 0.0)]);
 
     let result = m.add(&v).unwrap();
 
     assert_eq!(result.shape(), &[2, 2]);
-    assert_eq!(*result.get(&[0, 0]).unwrap(), Complex::new(11.0, 1.0));  // (1+1i) + 10
-    assert_eq!(*result.get(&[0, 1]).unwrap(), Complex::new(22.0, 2.0));  // (2+2i) + 20
+    assert_eq!(*result.get(&[0, 0]).unwrap(), Complex::new(11.0, 1.0)); // (1+1i) + 10
+    assert_eq!(*result.get(&[0, 1]).unwrap(), Complex::new(22.0, 2.0)); // (2+2i) + 20
 }
 
 #[test]
@@ -525,9 +475,9 @@ fn test_broadcast_higher_rank() {
     assert_eq!(result.shape(), &[3, 4, 5]);
 
     // Every element in the last dimension should be offset by the vector
-    assert_eq!(*result.get(&[0, 0, 0]).unwrap(), 2.0);  // 1 + 1
-    assert_eq!(*result.get(&[0, 0, 1]).unwrap(), 3.0);  // 1 + 2
-    assert_eq!(*result.get(&[0, 0, 2]).unwrap(), 4.0);  // 1 + 3
-    assert_eq!(*result.get(&[0, 0, 3]).unwrap(), 5.0);  // 1 + 4
-    assert_eq!(*result.get(&[0, 0, 4]).unwrap(), 6.0);  // 1 + 5
+    assert_eq!(*result.get(&[0, 0, 0]).unwrap(), 2.0); // 1 + 1
+    assert_eq!(*result.get(&[0, 0, 1]).unwrap(), 3.0); // 1 + 2
+    assert_eq!(*result.get(&[0, 0, 2]).unwrap(), 4.0); // 1 + 3
+    assert_eq!(*result.get(&[0, 0, 3]).unwrap(), 5.0); // 1 + 4
+    assert_eq!(*result.get(&[0, 0, 4]).unwrap(), 6.0); // 1 + 5
 }

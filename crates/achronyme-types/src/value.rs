@@ -1,10 +1,10 @@
 use crate::complex::Complex;
-use crate::tensor::{RealTensor, ComplexTensor};
 use crate::function::Function;
+use crate::tensor::{ComplexTensor, RealTensor};
+use std::any::Any;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::any::Any;
 
 #[derive(Debug)]
 pub enum TypeError {
@@ -27,9 +27,9 @@ pub enum Value {
     /// Vector with shared mutable ownership - allows mutation and sharing
     /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
     Vector(Rc<RefCell<Vec<Value>>>),
-    Tensor(RealTensor),  // Optimized N-dimensional array of real numbers
-    ComplexTensor(ComplexTensor),  // Optimized N-dimensional array of complex numbers
-    Function(Function),  // Both user-defined lambdas and built-in functions
+    Tensor(RealTensor),           // Optimized N-dimensional array of real numbers
+    ComplexTensor(ComplexTensor), // Optimized N-dimensional array of complex numbers
+    Function(Function),           // Both user-defined lambdas and built-in functions
     String(String),
     /// Record (object/map) with shared mutable ownership
     /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
@@ -88,7 +88,6 @@ pub enum Value {
     Builder(Rc<dyn Any>),
 }
 
-
 // Conversiones automáticas con From/Into
 impl From<f64> for Value {
     fn from(n: f64) -> Self {
@@ -100,16 +99,21 @@ impl From<f64> for Value {
 impl Value {
     /// Check if a vector is numeric (contains only Number or Complex values)
     pub fn is_numeric_vector(vec: &Rc<RefCell<Vec<Value>>>) -> bool {
-        vec.borrow().iter().all(|v| matches!(v, Value::Number(_) | Value::Complex(_)))
+        vec.borrow()
+            .iter()
+            .all(|v| matches!(v, Value::Number(_) | Value::Complex(_)))
     }
 
     /// Convert a generic vector to a RealTensor (rank 1)
     pub fn to_real_tensor(vec: &Rc<RefCell<Vec<Value>>>) -> Result<RealTensor, TypeError> {
         let vec_borrowed = vec.borrow();
-        let nums: Result<Vec<f64>, _> = vec_borrowed.iter().map(|v| match v {
-            Value::Number(n) => Ok(*n),
-            _ => Err(TypeError::IncompatibleTypes),
-        }).collect();
+        let nums: Result<Vec<f64>, _> = vec_borrowed
+            .iter()
+            .map(|v| match v {
+                Value::Number(n) => Ok(*n),
+                _ => Err(TypeError::IncompatibleTypes),
+            })
+            .collect();
 
         nums.and_then(|data| {
             let len = data.len();
@@ -120,11 +124,14 @@ impl Value {
     /// Convert a generic vector to a ComplexTensor (rank 1)
     pub fn to_complex_tensor(vec: &Rc<RefCell<Vec<Value>>>) -> Result<ComplexTensor, TypeError> {
         let vec_borrowed = vec.borrow();
-        let complexes: Result<Vec<Complex>, _> = vec_borrowed.iter().map(|v| match v {
-            Value::Number(n) => Ok(Complex::new(*n, 0.0)),
-            Value::Complex(c) => Ok(*c),
-            _ => Err(TypeError::IncompatibleTypes),
-        }).collect();
+        let complexes: Result<Vec<Complex>, _> = vec_borrowed
+            .iter()
+            .map(|v| match v {
+                Value::Number(n) => Ok(Complex::new(*n, 0.0)),
+                Value::Complex(c) => Ok(*c),
+                _ => Err(TypeError::IncompatibleTypes),
+            })
+            .collect();
 
         complexes.and_then(|data| {
             let len = data.len();
@@ -170,9 +177,7 @@ impl Value {
     /// Si no es mutable, retorna una copia del valor mismo
     pub fn deref(&self) -> Result<Value, String> {
         match self {
-            Value::MutableRef(rc) => {
-                Ok(rc.borrow().clone())
-            }
+            Value::MutableRef(rc) => Ok(rc.borrow().clone()),
             _ => Ok(self.clone()),
         }
     }
@@ -217,41 +222,50 @@ impl PartialEq for Value {
             (Value::Function(a), Value::Function(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Record(a), Value::Record(b)) => Rc::ptr_eq(a, b), // Reference equality
-            (Value::Edge { from: f1, to: t1, directed: d1, properties: p1 },
-             Value::Edge { from: f2, to: t2, directed: d2, properties: p2 }) => {
-                f1 == f2 && t1 == t2 && d1 == d2 && p1 == p2
-            }
+            (
+                Value::Edge {
+                    from: f1,
+                    to: t1,
+                    directed: d1,
+                    properties: p1,
+                },
+                Value::Edge {
+                    from: f2,
+                    to: t2,
+                    directed: d2,
+                    properties: p2,
+                },
+            ) => f1 == f2 && t1 == t2 && d1 == d2 && p1 == p2,
             (Value::TailCall(a), Value::TailCall(b)) => a == b,
             (Value::EarlyReturn(a), Value::EarlyReturn(b)) => a == b,
             (Value::MutableRef(a), Value::MutableRef(b)) => Rc::ptr_eq(a, b), // Reference equality
             (Value::Null, Value::Null) => true,
             (Value::Generator(a), Value::Generator(b)) => {
                 // Generators are compared by pointer equality (same instance)
-                std::ptr::eq(
-                    a.as_ref() as *const dyn Any,
-                    b.as_ref() as *const dyn Any
-                )
+                std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
             }
             (Value::GeneratorYield(a), Value::GeneratorYield(b)) => a == b,
-            (Value::Error { message: m1, kind: k1, source: s1 },
-             Value::Error { message: m2, kind: k2, source: s2 }) => {
-                m1 == m2 && k1 == k2 && s1 == s2
-            }
+            (
+                Value::Error {
+                    message: m1,
+                    kind: k1,
+                    source: s1,
+                },
+                Value::Error {
+                    message: m2,
+                    kind: k2,
+                    source: s2,
+                },
+            ) => m1 == m2 && k1 == k2 && s1 == s2,
             (Value::LoopBreak(a), Value::LoopBreak(b)) => a == b,
             (Value::LoopContinue, Value::LoopContinue) => true,
             (Value::Iterator(a), Value::Iterator(b)) => {
                 // Iterators are compared by pointer equality (same instance)
-                std::ptr::eq(
-                    a.as_ref() as *const dyn Any,
-                    b.as_ref() as *const dyn Any
-                )
+                std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
             }
             (Value::Builder(a), Value::Builder(b)) => {
                 // Builders are compared by pointer equality (same instance)
-                std::ptr::eq(
-                    a.as_ref() as *const dyn Any,
-                    b.as_ref() as *const dyn Any
-                )
+                std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
             }
             _ => false,
         }
@@ -276,13 +290,17 @@ impl std::ops::Add for Value {
                         // Complex tensor addition
                         let tensor_a = Value::to_complex_tensor(a)?;
                         let tensor_b = Value::to_complex_tensor(b)?;
-                        let result = tensor_a.add(&tensor_b).map_err(|_| TypeError::IncompatibleTypes)?;
+                        let result = tensor_a
+                            .add(&tensor_b)
+                            .map_err(|_| TypeError::IncompatibleTypes)?;
                         Ok(Value::ComplexTensor(result))
                     } else {
                         // Real tensor addition
                         let tensor_a = Value::to_real_tensor(a)?;
                         let tensor_b = Value::to_real_tensor(b)?;
-                        let result = tensor_a.add(&tensor_b).map_err(|_| TypeError::IncompatibleTypes)?;
+                        let result = tensor_a
+                            .add(&tensor_b)
+                            .map_err(|_| TypeError::IncompatibleTypes)?;
                         Ok(Value::Tensor(result))
                     }
                 } else {
@@ -290,9 +308,7 @@ impl std::ops::Add for Value {
                 }
             }
             // Type promotion
-            (Value::Number(a), Value::Complex(b)) => {
-                Ok(Value::Complex(Complex::new(a, 0.0) + b))
-            }
+            (Value::Number(a), Value::Complex(b)) => Ok(Value::Complex(Complex::new(a, 0.0) + b)),
             _ => Err(TypeError::IncompatibleTypes),
         }
     }

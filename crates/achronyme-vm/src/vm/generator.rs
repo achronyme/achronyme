@@ -1,7 +1,7 @@
 //! Generator state management for stackless coroutines
 
-use crate::vm::frame::CallFrame;
 use crate::value::Value;
+use crate::vm::frame::CallFrame;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -48,8 +48,8 @@ impl VmGeneratorState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::FunctionPrototype;
     use crate::bytecode::ConstantPool;
+    use crate::bytecode::FunctionPrototype;
     use std::rc::Rc;
 
     #[test]

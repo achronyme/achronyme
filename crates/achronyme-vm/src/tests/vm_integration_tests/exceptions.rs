@@ -7,8 +7,8 @@ use crate::value::Value;
 #[test]
 fn test_throw_simple() {
     use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
-    use crate::opcode::{instruction::*, OpCode};
     use crate::error::VmError;
+    use crate::opcode::{instruction::*, OpCode};
     use std::rc::Rc;
 
     // Build bytecode manually:
@@ -22,7 +22,11 @@ fn test_throw_simple() {
     main.register_count = 255;
 
     // LOAD_CONST R[0], K[err_const_idx]
-    main.add_instruction(encode_abx(OpCode::LoadConst.as_u8(), 0, err_const_idx as u16));
+    main.add_instruction(encode_abx(
+        OpCode::LoadConst.as_u8(),
+        0,
+        err_const_idx as u16,
+    ));
     // THROW R[0]
     main.add_instruction(encode_abc(OpCode::Throw.as_u8(), 0, 0, 0));
 
@@ -108,7 +112,11 @@ fn test_catch_exception() {
     // IP 0: PUSH_HANDLER R[1], offset=3 (catch block at IP 0 + 3 + 1 = 4)
     main.add_instruction(encode_abx(OpCode::PushHandler.as_u8(), 1, 3));
     // IP 1: LOAD_CONST R[0], K[err_const_idx]
-    main.add_instruction(encode_abx(OpCode::LoadConst.as_u8(), 0, err_const_idx as u16));
+    main.add_instruction(encode_abx(
+        OpCode::LoadConst.as_u8(),
+        0,
+        err_const_idx as u16,
+    ));
     // IP 2: THROW R[0]
     main.add_instruction(encode_abc(OpCode::Throw.as_u8(), 0, 0, 0));
     // IP 3: POP_HANDLER (never reached)
@@ -173,7 +181,7 @@ fn test_unwinding_through_frames() {
     // Main (calls A)
     let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
     main.register_count = 255; // Use 256 registers for recursion support
-    // CLOSURE R[0], 0 (func_a is at index 0)
+                               // CLOSURE R[0], 0 (func_a is at index 0)
     main.add_instruction(encode_abx(OpCode::Closure.as_u8(), 0, 0));
     // CALL R[1] = R[0]()
     main.add_instruction(encode_abc(OpCode::Call.as_u8(), 1, 0, 0));

@@ -108,11 +108,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
                 }
 
                 let more = if map.len() > 10 {
-                    format!(
-                        "\n{}  ... and {} more fields",
-                        indent_str,
-                        map.len() - 10
-                    )
+                    format!("\n{}  ... and {} more fields", indent_str, map.len() - 10)
                 } else {
                     String::new()
                 };
@@ -127,11 +123,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
             directed,
             properties,
         } => {
-            let dir = if *directed {
-                "directed"
-            } else {
-                "undirected"
-            };
+            let dir = if *directed { "directed" } else { "undirected" };
             if properties.is_empty() {
                 format!("Edge({} -> {}, {})", from, to, dir)
             } else {
@@ -189,9 +181,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
             None => "LoopBreak(internal marker - should not be visible)".to_string(),
         },
 
-        Value::LoopContinue => {
-            "LoopContinue(internal marker - should not be visible)".to_string()
-        }
+        Value::LoopContinue => "LoopContinue(internal marker - should not be visible)".to_string(),
 
         Value::Iterator(_) => {
             // Iterator state is opaque (Rc<dyn Any>), so we can't introspect it

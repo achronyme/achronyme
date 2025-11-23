@@ -9,7 +9,9 @@ impl RealTensor {
     pub fn add(&self, other: &RealTensor) -> Result<RealTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<f64> = self.data.iter()
+            let data: Vec<f64> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| a + b)
                 .collect();
@@ -24,9 +26,12 @@ impl RealTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
@@ -40,7 +45,9 @@ impl RealTensor {
     pub fn sub(&self, other: &RealTensor) -> Result<RealTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<f64> = self.data.iter()
+            let data: Vec<f64> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| a - b)
                 .collect();
@@ -55,9 +62,12 @@ impl RealTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
@@ -71,7 +81,9 @@ impl RealTensor {
     pub fn mul(&self, other: &RealTensor) -> Result<RealTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<f64> = self.data.iter()
+            let data: Vec<f64> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| a * b)
                 .collect();
@@ -86,9 +98,12 @@ impl RealTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
@@ -102,7 +117,9 @@ impl RealTensor {
     pub fn div(&self, other: &RealTensor) -> Result<RealTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<f64> = self.data.iter()
+            let data: Vec<f64> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| a / b)
                 .collect();
@@ -117,9 +134,12 @@ impl RealTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<f64>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<f64>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;

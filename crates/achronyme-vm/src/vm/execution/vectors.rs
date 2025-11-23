@@ -166,7 +166,8 @@ impl VM {
 
                         // Create slice from start to end
                         let slice: Vec<Value> = vec_borrowed[start..].to_vec();
-                        let slice_vec = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(slice)));
+                        let slice_vec =
+                            Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(slice)));
 
                         drop(vec_borrowed);
                         self.set_register(dst, slice_vec)?;

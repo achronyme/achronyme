@@ -13,23 +13,27 @@ impl Compiler {
     /// Compile lambda expression
     pub(crate) fn compile_lambda(
         &mut self,
-        params: &[(String, Option<achronyme_parser::TypeAnnotation>, Option<Box<AstNode>>)],
+        params: &[(
+            String,
+            Option<achronyme_parser::TypeAnnotation>,
+            Option<Box<AstNode>>,
+        )],
         body: &AstNode,
     ) -> Result<RegResult, CompileError> {
         // Create a nested function compiler
         let lambda_name = format!("<lambda@{}>", self.current_position());
         let mut child_compiler = Compiler {
-            module_name: self.module_name.clone(),  // Inherit module name from parent
+            module_name: self.module_name.clone(), // Inherit module name from parent
             function: FunctionPrototype::new(lambda_name, self.function.constants.clone()),
             registers: RegisterAllocator::new(),
             symbols: SymbolTable::new(),
             loops: Vec::new(),
-            parent: None,  // We don't need parent for simple compilation
-            builtins: self.builtins.clone(),  // Share the built-ins registry
-            type_registry: self.type_registry.clone(),  // Share the type registry
+            parent: None, // We don't need parent for simple compilation
+            builtins: self.builtins.clone(), // Share the built-ins registry
+            type_registry: self.type_registry.clone(), // Share the type registry
             exported_values: std::collections::HashMap::new(),
             exported_types: std::collections::HashMap::new(),
-            exports_reg: None,  // Lambdas don't have exports
+            exports_reg: None, // Lambdas don't have exports
         };
 
         // Set parameter count
@@ -44,7 +48,7 @@ impl Compiler {
             if reg != i as u8 {
                 // Parameters must be in registers 0..param_count
                 return Err(CompileError::Error(
-                    "Parameter register mismatch".to_string()
+                    "Parameter register mismatch".to_string(),
                 ));
             }
             child_compiler.symbols.define(param_name.clone(), reg)?;
@@ -109,7 +113,7 @@ impl Compiler {
                 let offset = (current_pos - jump_pos - 1) as i16;
                 child_compiler.function.patch_instruction(
                     jump_pos,
-                    encode_abx(OpCode::JumpIfTrue.as_u8(), cmp_reg, offset as u16)
+                    encode_abx(OpCode::JumpIfTrue.as_u8(), cmp_reg, offset as u16),
                 );
 
                 // Mark that this parameter has a default (for metadata)
@@ -122,7 +126,11 @@ impl Compiler {
             if let Some(type_ann) = type_ann {
                 let type_name = child_compiler.type_annotation_to_string(type_ann);
                 let type_idx = child_compiler.add_string(type_name)?;
-                child_compiler.emit(encode_abx(OpCode::TypeAssert.as_u8(), param_reg, type_idx as u16));
+                child_compiler.emit(encode_abx(
+                    OpCode::TypeAssert.as_u8(),
+                    param_reg,
+                    type_idx as u16,
+                ));
             }
         }
 
@@ -134,11 +142,13 @@ impl Compiler {
         // This is a special upvalue that will be filled at closure creation time
         // with the closure itself, enabling recursive calls
         upvalues.push(UpvalueDescriptor {
-            depth: 0,  // Will be filled at closure creation
-            register: 0,  // Placeholder - will be set to the closure itself at runtime
-            is_mutable: false,  // The function reference itself is immutable
+            depth: 0,          // Will be filled at closure creation
+            register: 0,       // Placeholder - will be set to the closure itself at runtime
+            is_mutable: false, // The function reference itself is immutable
         });
-        child_compiler.symbols.define_upvalue("rec".to_string(), 0)?;
+        child_compiler
+            .symbols
+            .define_upvalue("rec".to_string(), 0)?;
 
         for var in used_vars {
             if !child_compiler.symbols.has(&var) && var != "rec" {
@@ -151,13 +161,15 @@ impl Compiler {
                     }
 
                     upvalues.push(UpvalueDescriptor {
-                        depth: 0,  // Immediate parent
+                        depth: 0, // Immediate parent
                         register: parent_reg,
-                        is_mutable: true,  // Assume mutable for now
+                        is_mutable: true, // Assume mutable for now
                     });
 
                     // Map variable to upvalue in child's symbol table
-                    child_compiler.symbols.define_upvalue(var.clone(), upvalue_idx as u8)?;
+                    child_compiler
+                        .symbols
+                        .define_upvalue(var.clone(), upvalue_idx as u8)?;
                 }
             }
         }
@@ -214,7 +226,12 @@ impl Compiler {
         if let Ok(source_reg) = self.symbols.get(name) {
             self.emit_move(func_reg, source_reg);
         } else if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
-            self.emit(encode_abc(OpCode::GetUpvalue.as_u8(), func_reg, upvalue_idx, 0));
+            self.emit(encode_abc(
+                OpCode::GetUpvalue.as_u8(),
+                func_reg,
+                upvalue_idx,
+                0,
+            ));
         } else {
             return Err(CompileError::UndefinedVariable(name.to_string()));
         }
@@ -375,7 +392,10 @@ impl Compiler {
     }
 
     /// Find all variable references in an AST subtree
-    pub(crate) fn find_used_variables(&self, node: &AstNode) -> Result<HashSet<String>, CompileError> {
+    pub(crate) fn find_used_variables(
+        &self,
+        node: &AstNode,
+    ) -> Result<HashSet<String>, CompileError> {
         let mut vars = HashSet::new();
         self.collect_variable_refs(node, &mut vars)?;
         Ok(vars)
@@ -470,8 +490,8 @@ impl Compiler {
                 use achronyme_parser::ast::RecordFieldOrSpread;
                 for field in fields {
                     match field {
-                        RecordFieldOrSpread::Field { value, .. } |
-                        RecordFieldOrSpread::MutableField { value, .. } => {
+                        RecordFieldOrSpread::Field { value, .. }
+                        | RecordFieldOrSpread::MutableField { value, .. } => {
                             self.collect_variable_refs(value, vars)?;
                         }
                         RecordFieldOrSpread::Spread(expr) => {
@@ -499,7 +519,11 @@ impl Compiler {
             AstNode::Yield { value } => {
                 self.collect_variable_refs(value, vars)?;
             }
-            AstNode::TryCatch { try_block, catch_block, .. } => {
+            AstNode::TryCatch {
+                try_block,
+                catch_block,
+                ..
+            } => {
                 self.collect_variable_refs(try_block, vars)?;
                 self.collect_variable_refs(catch_block, vars)?;
             }
@@ -548,8 +572,8 @@ impl Compiler {
                     self.collect_variable_refs(stmt, vars)?;
                 }
             }
-            AstNode::LetDestructuring { initializer, .. } |
-            AstNode::MutableDestructuring { initializer, .. } => {
+            AstNode::LetDestructuring { initializer, .. }
+            | AstNode::MutableDestructuring { initializer, .. } => {
                 self.collect_variable_refs(initializer, vars)?;
             }
             AstNode::ComplexLiteral { .. } => {}
@@ -602,14 +626,17 @@ impl Compiler {
 
         // Check argument count
         if args.len() > 255 {
-            return Err(CompileError::Error("Too many arguments for built-in function".to_string()));
+            return Err(CompileError::Error(
+                "Too many arguments for built-in function".to_string(),
+            ));
         }
 
         // Check builtin_idx fits in u8 (we support max 256 built-ins)
         if builtin_idx > 255 {
-            return Err(CompileError::Error(
-                format!("Built-in function index {} exceeds maximum of 255", builtin_idx)
-            ));
+            return Err(CompileError::Error(format!(
+                "Built-in function index {} exceeds maximum of 255",
+                builtin_idx
+            )));
         }
 
         // Emit CallBuiltin opcode using ABC format:

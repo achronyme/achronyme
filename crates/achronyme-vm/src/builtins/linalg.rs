@@ -76,9 +76,7 @@ pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             let v2 = rc2.borrow();
 
             if v1.len() != 3 || v2.len() != 3 {
-                return Err(VmError::Runtime(
-                    "cross() requires 3D vectors".to_string(),
-                ));
+                return Err(VmError::Runtime("cross() requires 3D vectors".to_string()));
             }
 
             let (x1, y1, z1) = match (&v1[0], &v1[1], &v1[2]) {
@@ -169,13 +167,15 @@ pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             let norm_result = vm_norm(_vm, args)?;
             let norm = match norm_result {
                 Value::Number(n) => n,
-                _ => return Err(VmError::Runtime("norm() returned non-numeric value".to_string())),
+                _ => {
+                    return Err(VmError::Runtime(
+                        "norm() returned non-numeric value".to_string(),
+                    ))
+                }
             };
 
             if norm == 0.0 {
-                return Err(VmError::Runtime(
-                    "Cannot normalize zero vector".to_string(),
-                ));
+                return Err(VmError::Runtime("Cannot normalize zero vector".to_string()));
             }
 
             // Divide each element by norm
@@ -238,7 +238,10 @@ pub fn vm_transpose(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             // Create new tensor with swapped dimensions
             match RealTensor::new(transposed, vec![cols, rows]) {
                 Ok(result) => Ok(Value::Tensor(result)),
-                Err(e) => Err(VmError::Runtime(format!("Failed to create transposed tensor: {}", e))),
+                Err(e) => Err(VmError::Runtime(format!(
+                    "Failed to create transposed tensor: {}",
+                    e
+                ))),
             }
         }
         _ => Err(VmError::TypeError {
@@ -285,7 +288,9 @@ pub fn vm_det(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             // Calculate determinant based on size
             let det = match n {
                 0 => {
-                    return Err(VmError::Runtime("det() cannot compute determinant of 0x0 matrix".to_string()));
+                    return Err(VmError::Runtime(
+                        "det() cannot compute determinant of 0x0 matrix".to_string(),
+                    ));
                 }
                 1 => data[0],
                 2 => {
@@ -392,10 +397,14 @@ mod tests {
         let mut vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
-        let result = vm_dot(&mut vm, &[
-            Value::Vector(Rc::new(RefCell::new(v1))),
-            Value::Vector(Rc::new(RefCell::new(v2)))
-        ]).unwrap();
+        let result = vm_dot(
+            &mut vm,
+            &[
+                Value::Vector(Rc::new(RefCell::new(v1))),
+                Value::Vector(Rc::new(RefCell::new(v2))),
+            ],
+        )
+        .unwrap();
         // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
         assert_eq!(result, Value::Number(32.0));
     }
@@ -405,10 +414,14 @@ mod tests {
         let mut vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(0.0), Value::Number(0.0)];
         let v2 = vec![Value::Number(0.0), Value::Number(1.0), Value::Number(0.0)];
-        let result = vm_cross(&mut vm, &[
-            Value::Vector(Rc::new(RefCell::new(v1))),
-            Value::Vector(Rc::new(RefCell::new(v2)))
-        ]).unwrap();
+        let result = vm_cross(
+            &mut vm,
+            &[
+                Value::Vector(Rc::new(RefCell::new(v1))),
+                Value::Vector(Rc::new(RefCell::new(v2))),
+            ],
+        )
+        .unwrap();
         // i × j = k = [0, 0, 1]
         match result {
             Value::Vector(rc) => {

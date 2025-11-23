@@ -8,10 +8,7 @@ use crate::opcode::{instruction::*, OpCode};
 
 impl Compiler {
     /// Compile variable reference
-    pub(crate) fn compile_variable_ref(
-        &mut self,
-        name: &str,
-    ) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_variable_ref(&mut self, name: &str) -> Result<RegResult, CompileError> {
         // Check if this is an upvalue first
         if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
             // Emit GET_UPVALUE instruction (this creates a copy, so it's temp)
@@ -47,7 +44,9 @@ impl Compiler {
             return Ok(RegResult::temp(dst));
         }
 
-        Err(CompileError::Error("'rec' can only be used inside functions".to_string()))
+        Err(CompileError::Error(
+            "'rec' can only be used inside functions".to_string(),
+        ))
     }
 
     /// Compile self reference
@@ -68,7 +67,7 @@ impl Compiler {
 
         // 'self' not found
         Err(CompileError::Error(
-            "'self' can only be used inside record methods".to_string()
+            "'self' can only be used inside record methods".to_string(),
         ))
     }
 }

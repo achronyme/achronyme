@@ -16,7 +16,9 @@ use std::io::{self, Write};
 /// Print value to stdout with newline
 pub fn vm_print(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
-        return Err(VmError::Runtime("print() requires at least 1 argument".to_string()));
+        return Err(VmError::Runtime(
+            "print() requires at least 1 argument".to_string(),
+        ));
     }
 
     // Print all arguments separated by spaces

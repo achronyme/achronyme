@@ -9,29 +9,30 @@
 // - Function types: (Number, Number) => Number
 // - Any and null types
 
-use pest::iterators::Pair;
+use crate::ast::AstNode;
+use crate::parser::AstParser;
 use crate::pest_parser::Rule;
 use crate::type_annotation::TypeAnnotation;
-use crate::parser::AstParser;
-use crate::ast::AstNode;
+use pest::iterators::Pair;
 use std::collections::HashMap;
 
 impl AstParser {
     /// Parse a type annotation from a Pest pair
     /// Entry point for all type annotation parsing
-    pub(super) fn parse_type_annotation(&mut self, pair: Pair<Rule>) -> Result<TypeAnnotation, String> {
+    pub(super) fn parse_type_annotation(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<TypeAnnotation, String> {
         match pair.as_rule() {
             Rule::type_annotation => {
                 // type_annotation can be either union_type or simple_type_with_optional
-                let inner = pair.into_inner().next()
-                    .ok_or("Empty type annotation")?;
+                let inner = pair.into_inner().next().ok_or("Empty type annotation")?;
                 self.parse_type_annotation(inner)
             }
             Rule::simple_type_with_optional => {
                 // simple_type_annotation optionally followed by ?
                 let mut inner = pair.into_inner();
-                let base_type_pair = inner.next()
-                    .ok_or("Empty simple_type_with_optional")?;
+                let base_type_pair = inner.next().ok_or("Empty simple_type_with_optional")?;
                 let base_type = self.parse_type_annotation(base_type_pair)?;
 
                 // Check if there's an optional_type_suffix (?)
@@ -56,7 +57,9 @@ impl AstParser {
             }
             Rule::union_type => self.parse_union_type(pair),
             Rule::simple_type_annotation => {
-                let inner = pair.into_inner().next()
+                let inner = pair
+                    .into_inner()
+                    .next()
                     .ok_or("Empty simple type annotation")?;
                 self.parse_type_annotation(inner)
             }
@@ -67,30 +70,40 @@ impl AstParser {
             Rule::function_type => self.parse_function_type(pair),
             Rule::grouped_type => {
                 // Grouped type just unwraps: ((Number) => String) -> (Number) => String
-                let inner = pair.into_inner().next()
-                    .ok_or("Empty grouped type")?;
+                let inner = pair.into_inner().next().ok_or("Empty grouped type")?;
                 self.parse_type_annotation(inner)
             }
             Rule::any_type => Ok(TypeAnnotation::Any),
             Rule::null_type => Ok(TypeAnnotation::Null),
             Rule::type_reference => {
                 // Type reference: identifier for type aliases (e.g., Point, Result, ApiResponse)
-                let name = pair.into_inner().next()
+                let name = pair
+                    .into_inner()
+                    .next()
                     .ok_or("Empty type reference")?
                     .as_str()
                     .to_string();
 
                 // Block IEEE 754 special values from being used as types
                 if name == "Infinity" {
-                    return Err("'Infinity' is a value of type Number, not a type. Use 'Number' instead.".to_string());
+                    return Err(
+                        "'Infinity' is a value of type Number, not a type. Use 'Number' instead."
+                            .to_string(),
+                    );
                 }
                 if name == "NaN" {
-                    return Err("'NaN' is a value of type Number, not a type. Use 'Number' instead.".to_string());
+                    return Err(
+                        "'NaN' is a value of type Number, not a type. Use 'Number' instead."
+                            .to_string(),
+                    );
                 }
 
                 Ok(TypeAnnotation::TypeReference(name))
             }
-            _ => Err(format!("Unexpected type annotation rule: {:?}", pair.as_rule()))
+            _ => Err(format!(
+                "Unexpected type annotation rule: {:?}",
+                pair.as_rule()
+            )),
         }
     }
 
@@ -106,7 +119,7 @@ impl AstParser {
             "Function" => Ok(TypeAnnotation::AnyFunction),
             "Error" => Ok(TypeAnnotation::Error),
             "Edge" => Ok(TypeAnnotation::Edge),
-            _ => Err(format!("Unknown simple type: {}", type_str))
+            _ => Err(format!("Unknown simple type: {}", type_str)),
         }
     }
 
@@ -136,8 +149,7 @@ impl AstParser {
         let mut inner = pair.into_inner();
 
         // First element is the element type
-        let element_type = inner.next()
-            .ok_or("Missing element type in Tensor")?;
+        let element_type = inner.next().ok_or("Missing element type in Tensor")?;
         let element_type = Box::new(self.parse_type_annotation(element_type)?);
 
         // Optional shape specification
@@ -170,10 +182,11 @@ impl AstParser {
         let dim_str = pair.as_str();
 
         if dim_str == "_" {
-            Ok(None)  // Unknown dimension
+            Ok(None) // Unknown dimension
         } else {
             // Parse as number
-            dim_str.parse::<usize>()
+            dim_str
+                .parse::<usize>()
                 .map(Some)
                 .map_err(|e| format!("Invalid dimension '{}': {}", dim_str, e))
         }
@@ -191,21 +204,25 @@ impl AstParser {
             let mut field_inner = field_pair.into_inner();
 
             // Check for mut keyword
-            let first = field_inner.next()
-                .ok_or("Empty record field")?;
+            let first = field_inner.next().ok_or("Empty record field")?;
 
-            let (is_mutable, field_name, is_optional, field_type) = if first.as_rule() == Rule::mut_keyword {
+            let (is_mutable, field_name, is_optional, field_type) = if first.as_rule()
+                == Rule::mut_keyword
+            {
                 // Mutable field: mut name?: Type
-                let name = field_inner.next()
+                let name = field_inner
+                    .next()
                     .ok_or("Missing field name after mut")?
                     .as_str()
                     .to_string();
 
                 // Check for optional marker
-                let next = field_inner.next()
+                let next = field_inner
+                    .next()
                     .ok_or("Missing field type or optional marker")?;
                 let (is_optional, type_annotation) = if next.as_rule() == Rule::optional_marker {
-                    let ta = field_inner.next()
+                    let ta = field_inner
+                        .next()
                         .ok_or("Missing field type after optional marker")?;
                     (true, ta)
                 } else {
@@ -219,10 +236,12 @@ impl AstParser {
                 let name = first.as_str().to_string();
 
                 // Check for optional marker
-                let next = field_inner.next()
+                let next = field_inner
+                    .next()
                     .ok_or("Missing field type or optional marker")?;
                 let (is_optional, type_annotation) = if next.as_rule() == Rule::optional_marker {
-                    let ta = field_inner.next()
+                    let ta = field_inner
+                        .next()
                         .ok_or("Missing field type after optional marker")?;
                     (true, ta)
                 } else {
@@ -276,11 +295,15 @@ impl AstParser {
     /// Also supports optional parameters: x? (optional untyped) OR x?: Type (optional typed)
     /// Optional parameters are equivalent to having a default value of null, and their type
     /// becomes Type | null (or just null if untyped)
-    pub(super) fn parse_typed_param(&mut self, pair: Pair<Rule>) -> Result<(String, Option<TypeAnnotation>, Option<Box<AstNode>>), String> {
+    pub(super) fn parse_typed_param(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<(String, Option<TypeAnnotation>, Option<Box<AstNode>>), String> {
         let mut inner = pair.into_inner();
 
         // First is always the identifier
-        let identifier = inner.next()
+        let identifier = inner
+            .next()
             .ok_or("Missing identifier in typed parameter")?
             .as_str()
             .to_string();
@@ -348,7 +371,10 @@ impl AstParser {
 
     /// Parse typed lambda parameters: x, (x, y), or (x: Number, y: String)
     /// Now supports default values: (x: Number = 10, y = "hello")
-    pub(super) fn parse_typed_lambda_params(&mut self, pair: Pair<Rule>) -> Result<Vec<(String, Option<TypeAnnotation>, Option<Box<AstNode>>)>, String> {
+    pub(super) fn parse_typed_lambda_params(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<Vec<(String, Option<TypeAnnotation>, Option<Box<AstNode>>)>, String> {
         let mut params = Vec::new();
         let mut had_default = false;
 
@@ -385,11 +411,15 @@ mod tests {
         let mut parser = AstParser::new();
 
         let pairs = SOCParser::parse(Rule::type_annotation, "Number").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
         assert_eq!(ty, TypeAnnotation::Number);
 
         let pairs = SOCParser::parse(Rule::type_annotation, "Boolean").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
         assert_eq!(ty, TypeAnnotation::Boolean);
     }
 
@@ -398,7 +428,9 @@ mod tests {
         let mut parser = AstParser::new();
 
         let pairs = SOCParser::parse(Rule::type_annotation, "Number | String").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
             TypeAnnotation::Union(types) => {
@@ -406,7 +438,7 @@ mod tests {
                 assert_eq!(types[0], TypeAnnotation::Number);
                 assert_eq!(types[1], TypeAnnotation::String);
             }
-            _ => panic!("Expected Union type, got {:?}", ty)
+            _ => panic!("Expected Union type, got {:?}", ty),
         }
     }
 
@@ -416,26 +448,36 @@ mod tests {
 
         // Tensor<Number>
         let pairs = SOCParser::parse(Rule::type_annotation, "Tensor<Number>").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
-            TypeAnnotation::Tensor { element_type, shape } => {
+            TypeAnnotation::Tensor {
+                element_type,
+                shape,
+            } => {
                 assert_eq!(*element_type, TypeAnnotation::Number);
                 assert!(shape.is_none());
             }
-            _ => panic!("Expected Tensor type, got {:?}", ty)
+            _ => panic!("Expected Tensor type, got {:?}", ty),
         }
 
         // Tensor<Number, [2, 3]>
         let pairs = SOCParser::parse(Rule::type_annotation, "Tensor<Number, [2, 3]>").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
-            TypeAnnotation::Tensor { element_type, shape } => {
+            TypeAnnotation::Tensor {
+                element_type,
+                shape,
+            } => {
                 assert_eq!(*element_type, TypeAnnotation::Number);
                 assert_eq!(shape, Some(vec![Some(2), Some(3)]));
             }
-            _ => panic!("Expected Tensor type, got {:?}", ty)
+            _ => panic!("Expected Tensor type, got {:?}", ty),
         }
     }
 
@@ -444,16 +486,24 @@ mod tests {
         let mut parser = AstParser::new();
 
         let pairs = SOCParser::parse(Rule::type_annotation, "{name: String, age: Number}").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
             TypeAnnotation::Record { fields } => {
                 assert_eq!(fields.len(), 2);
                 // Fields are now (is_mutable, is_optional, type)
-                assert_eq!(fields.get("name"), Some(&(false, false, TypeAnnotation::String)));
-                assert_eq!(fields.get("age"), Some(&(false, false, TypeAnnotation::Number)));
+                assert_eq!(
+                    fields.get("name"),
+                    Some(&(false, false, TypeAnnotation::String))
+                );
+                assert_eq!(
+                    fields.get("age"),
+                    Some(&(false, false, TypeAnnotation::Number))
+                );
             }
-            _ => panic!("Expected Record type, got {:?}", ty)
+            _ => panic!("Expected Record type, got {:?}", ty),
         }
     }
 
@@ -462,11 +512,15 @@ mod tests {
         let mut parser = AstParser::new();
 
         let pairs = SOCParser::parse(Rule::type_annotation, "null").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
         assert_eq!(ty, TypeAnnotation::Null);
 
         let pairs = SOCParser::parse(Rule::type_annotation, "Any").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
         assert_eq!(ty, TypeAnnotation::Any);
     }
 
@@ -475,17 +529,26 @@ mod tests {
         let mut parser = AstParser::new();
 
         // Test optional field with ?
-        let pairs = SOCParser::parse(Rule::type_annotation, "{name: String, age?: Number}").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let pairs =
+            SOCParser::parse(Rule::type_annotation, "{name: String, age?: Number}").unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
             TypeAnnotation::Record { fields } => {
                 assert_eq!(fields.len(), 2);
                 // Fields are (is_mutable, is_optional, type)
-                assert_eq!(fields.get("name"), Some(&(false, false, TypeAnnotation::String)));
-                assert_eq!(fields.get("age"), Some(&(false, true, TypeAnnotation::Number)));
+                assert_eq!(
+                    fields.get("name"),
+                    Some(&(false, false, TypeAnnotation::String))
+                );
+                assert_eq!(
+                    fields.get("age"),
+                    Some(&(false, true, TypeAnnotation::Number))
+                );
             }
-            _ => panic!("Expected Record type, got {:?}", ty)
+            _ => panic!("Expected Record type, got {:?}", ty),
         }
     }
 
@@ -495,15 +558,20 @@ mod tests {
 
         // Test mutable optional field
         let pairs = SOCParser::parse(Rule::type_annotation, "{mut value?: Number}").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
             TypeAnnotation::Record { fields } => {
                 assert_eq!(fields.len(), 1);
                 // Fields are (is_mutable, is_optional, type)
-                assert_eq!(fields.get("value"), Some(&(true, true, TypeAnnotation::Number)));
+                assert_eq!(
+                    fields.get("value"),
+                    Some(&(true, true, TypeAnnotation::Number))
+                );
             }
-            _ => panic!("Expected Record type, got {:?}", ty)
+            _ => panic!("Expected Record type, got {:?}", ty),
         }
     }
 
@@ -512,17 +580,32 @@ mod tests {
         let mut parser = AstParser::new();
 
         // Test mixed fields: required, optional, mutable optional
-        let pairs = SOCParser::parse(Rule::type_annotation, "{id: Number, name?: String, mut count?: Number}").unwrap();
-        let ty = parser.parse_type_annotation(pairs.into_iter().next().unwrap()).unwrap();
+        let pairs = SOCParser::parse(
+            Rule::type_annotation,
+            "{id: Number, name?: String, mut count?: Number}",
+        )
+        .unwrap();
+        let ty = parser
+            .parse_type_annotation(pairs.into_iter().next().unwrap())
+            .unwrap();
 
         match ty {
             TypeAnnotation::Record { fields } => {
                 assert_eq!(fields.len(), 3);
-                assert_eq!(fields.get("id"), Some(&(false, false, TypeAnnotation::Number)));
-                assert_eq!(fields.get("name"), Some(&(false, true, TypeAnnotation::String)));
-                assert_eq!(fields.get("count"), Some(&(true, true, TypeAnnotation::Number)));
+                assert_eq!(
+                    fields.get("id"),
+                    Some(&(false, false, TypeAnnotation::Number))
+                );
+                assert_eq!(
+                    fields.get("name"),
+                    Some(&(false, true, TypeAnnotation::String))
+                );
+                assert_eq!(
+                    fields.get("count"),
+                    Some(&(true, true, TypeAnnotation::Number))
+                );
             }
-            _ => panic!("Expected Record type, got {:?}", ty)
+            _ => panic!("Expected Record type, got {:?}", ty),
         }
     }
 }

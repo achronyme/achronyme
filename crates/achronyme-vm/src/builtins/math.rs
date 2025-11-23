@@ -45,7 +45,9 @@ macro_rules! unary_math_fn {
                         }
                     }
                     drop(vec_borrowed);
-                    Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(result))))
+                    Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
+                        result,
+                    ))))
                 }
                 _ => Err(VmError::TypeError {
                     operation: $name.to_string(),
@@ -205,7 +207,9 @@ pub fn vm_pow() -> fn(&mut VM, &[Value]) -> Result<Value, VmError> {
 
 pub fn vm_min(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
-        return Err(VmError::Runtime("min() requires at least 1 argument".to_string()));
+        return Err(VmError::Runtime(
+            "min() requires at least 1 argument".to_string(),
+        ));
     }
 
     let mut min_val = match &args[0] {
@@ -241,7 +245,9 @@ pub fn vm_min(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 pub fn vm_max(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
-        return Err(VmError::Runtime("max() requires at least 1 argument".to_string()));
+        return Err(VmError::Runtime(
+            "max() requires at least 1 argument".to_string(),
+        ));
     }
 
     let mut max_val = match &args[0] {

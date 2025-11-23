@@ -35,9 +35,7 @@ impl Compiler {
         mode: PatternMode,
     ) -> Result<(), CompileError> {
         match pattern {
-            Pattern::Literal(lit) => {
-                self.compile_literal_pattern(lit, target_reg, mode)
-            }
+            Pattern::Literal(lit) => self.compile_literal_pattern(lit, target_reg, mode),
 
             Pattern::Variable(name) => {
                 // Bind the target value to the variable name
@@ -50,17 +48,11 @@ impl Compiler {
                 Ok(())
             }
 
-            Pattern::Vector { elements } => {
-                self.compile_vector_pattern(elements, target_reg, mode)
-            }
+            Pattern::Vector { elements } => self.compile_vector_pattern(elements, target_reg, mode),
 
-            Pattern::Record { fields } => {
-                self.compile_record_pattern(fields, target_reg, mode)
-            }
+            Pattern::Record { fields } => self.compile_record_pattern(fields, target_reg, mode),
 
-            Pattern::Type(type_name) => {
-                self.compile_type_pattern(type_name, target_reg, mode)
-            }
+            Pattern::Type(type_name) => self.compile_type_pattern(type_name, target_reg, mode),
         }
     }
 
@@ -87,7 +79,8 @@ impl Compiler {
                 // The semantics assume the pattern always matches
                 // This is used in let bindings like: let 42 = x (which would be a type error)
                 Err(CompileError::InvalidPattern(
-                    "Literal patterns are not allowed in irrefutable contexts (let bindings)".to_string()
+                    "Literal patterns are not allowed in irrefutable contexts (let bindings)"
+                        .to_string(),
                 ))
             }
             PatternMode::Refutable => {
@@ -346,7 +339,10 @@ impl Compiler {
 
             // Check if this is a non-binding pattern (Type, Wildcard, Literal)
             // In that case, we need to bind the field name to the value
-            let needs_field_binding = matches!(pattern, Pattern::Type(_) | Pattern::Wildcard | Pattern::Literal(_));
+            let needs_field_binding = matches!(
+                pattern,
+                Pattern::Type(_) | Pattern::Wildcard | Pattern::Literal(_)
+            );
             if needs_field_binding {
                 // Bind the field name to the extracted value
                 self.symbols.define(field_name.clone(), reg_idx)?;

@@ -21,7 +21,9 @@ impl VM {
             OpCode::NewRecord => {
                 // R[A] = {} (new empty record)
                 let dst = a;
-                let record = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())));
+                let record = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+                    std::collections::HashMap::new(),
+                )));
                 self.set_register(dst, record)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -38,11 +40,14 @@ impl VM {
                 // FIRST: For non-Record types, check if this is an intrinsic method lookup
                 // Records get normal field access (user-defined fields take precedence)
                 if !matches!(rec_value, Value::Record(_)) {
-                    if let Some(type_disc) = crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value) {
+                    if let Some(type_disc) =
+                        crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value)
+                    {
                         if let Some(intrinsic_fn) = self.intrinsics.lookup(&type_disc, field_name) {
                             // Found an intrinsic method!
                             // Store the receiver and intrinsic function for later Call execution
-                            self.pending_intrinsic_calls.insert(dst, (rec_value.clone(), intrinsic_fn));
+                            self.pending_intrinsic_calls
+                                .insert(dst, (rec_value.clone(), intrinsic_fn));
 
                             // Put a marker value in the register
                             // We use Null as a placeholder - the Call opcode will check pending_intrinsic_calls
@@ -60,7 +65,10 @@ impl VM {
                         let value = rec_borrowed
                             .get(field_name)
                             .ok_or_else(|| {
-                                VmError::Runtime(format!("Field '{}' not found in record", field_name))
+                                VmError::Runtime(format!(
+                                    "Field '{}' not found in record",
+                                    field_name
+                                ))
                             })?
                             .clone();
                         drop(rec_borrowed); // Explicitly drop the borrow

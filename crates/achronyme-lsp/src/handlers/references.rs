@@ -68,7 +68,14 @@ mod tests {
     fn test_find_references() {
         let doc = Document::new("let x = 1\nlet y = x + 2\nlet z = x * y".to_string());
         let uri = Url::parse("file:///test.acr").unwrap();
-        let refs = find_references(&doc, Position { line: 0, character: 4 }, uri);
+        let refs = find_references(
+            &doc,
+            Position {
+                line: 0,
+                character: 4,
+            },
+            uri,
+        );
         assert!(refs.is_some());
         let refs = refs.unwrap();
         assert_eq!(refs.len(), 3); // x appears 3 times

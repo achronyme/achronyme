@@ -159,7 +159,11 @@ fn test_and_short_circuit() {
         x
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::Number(0.0), "Second operand should not be evaluated");
+    assert_eq!(
+        result,
+        Value::Number(0.0),
+        "Second operand should not be evaluated"
+    );
 }
 
 #[test]
@@ -171,38 +175,70 @@ fn test_or_short_circuit() {
         x
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::Number(0.0), "Second operand should not be evaluated");
+    assert_eq!(
+        result,
+        Value::Number(0.0),
+        "Second operand should not be evaluated"
+    );
 }
 
 #[test]
 fn test_and_with_numbers() {
     // Numbers are truthy if non-zero
     let result = execute("5 && 10").unwrap();
-    assert_eq!(result, Value::Number(10.0), "Should return second value when both truthy");
+    assert_eq!(
+        result,
+        Value::Number(10.0),
+        "Should return second value when both truthy"
+    );
 
     let result = execute("0 && 10").unwrap();
-    assert_eq!(result, Value::Number(0.0), "Should return first value when first is falsy");
+    assert_eq!(
+        result,
+        Value::Number(0.0),
+        "Should return first value when first is falsy"
+    );
 
     let result = execute("5 && 0").unwrap();
-    assert_eq!(result, Value::Number(0.0), "Should return second value even if falsy");
+    assert_eq!(
+        result,
+        Value::Number(0.0),
+        "Should return second value even if falsy"
+    );
 }
 
 #[test]
 fn test_or_with_numbers() {
     let result = execute("0 || 10").unwrap();
-    assert_eq!(result, Value::Number(10.0), "Should return second value when first is falsy");
+    assert_eq!(
+        result,
+        Value::Number(10.0),
+        "Should return second value when first is falsy"
+    );
 
     let result = execute("5 || 10").unwrap();
-    assert_eq!(result, Value::Number(5.0), "Should return first value when first is truthy");
+    assert_eq!(
+        result,
+        Value::Number(5.0),
+        "Should return first value when first is truthy"
+    );
 }
 
 #[test]
 fn test_complex_logical_expression() {
     let result = execute("true && false || true").unwrap();
-    assert_eq!(result, Value::Boolean(true), "(true && false) || true = false || true = true");
+    assert_eq!(
+        result,
+        Value::Boolean(true),
+        "(true && false) || true = false || true = true"
+    );
 
     let result = execute("false || true && false").unwrap();
-    assert_eq!(result, Value::Boolean(false), "false || (true && false) = false || false = false");
+    assert_eq!(
+        result,
+        Value::Boolean(false),
+        "false || (true && false) = false || false = false"
+    );
 }
 
 #[test]
@@ -275,4 +311,3 @@ fn test_interpolated_string_in_loop() {
     let result = execute(source).unwrap();
     assert_eq!(result, Value::String("-1-2-3".to_string()));
 }
-

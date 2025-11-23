@@ -1,15 +1,14 @@
-use pest::iterators::Pair;
 use crate::ast::{AstNode, BinaryOp, UnaryOp};
 use crate::parser::AstParser;
 use crate::pest_parser::Rule;
+use pest::iterators::Pair;
 
 impl AstParser {
     pub(super) fn build_ast_from_expr(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
         let rule = pair.as_rule();
         match rule {
             Rule::expr => {
-                let inner = pair.into_inner().next()
-                    .ok_or("Empty expression")?;
+                let inner = pair.into_inner().next().ok_or("Empty expression")?;
                 self.build_ast_from_expr(inner)
             }
             Rule::standalone_range => self.build_standalone_range(pair),
@@ -23,7 +22,11 @@ impl AstParser {
             Rule::power => self.build_power(pair),
             Rule::postfix_expression => self.build_postfix_expression(pair),
             Rule::primary => self.build_primary(pair),
-            _ => Err(format!("Unexpected expression rule: {:?} in {}", rule, pair.as_str()))
+            _ => Err(format!(
+                "Unexpected expression rule: {:?} in {}",
+                rule,
+                pair.as_str()
+            )),
         }
     }
 
@@ -44,14 +47,12 @@ impl AstParser {
 
         // Extract the range operator
         let inclusive = match pairs[1].as_rule() {
-            Rule::range_op => {
-                match pairs[1].as_str() {
-                    "..=" => true,
-                    ".." => false,
-                    _ => return Err(format!("Unknown range operator: {}", pairs[1].as_str()))
-                }
-            }
-            _ => return Err(format!("Expected range_op, got: {:?}", pairs[1].as_rule()))
+            Rule::range_op => match pairs[1].as_str() {
+                "..=" => true,
+                ".." => false,
+                _ => return Err(format!("Unknown range operator: {}", pairs[1].as_str())),
+            },
+            _ => return Err(format!("Expected range_op, got: {:?}", pairs[1].as_rule())),
         };
 
         let end = self.build_ast_from_expr(pairs[2].clone())?;
@@ -75,7 +76,10 @@ impl AstParser {
         // pairs can be: [left, edge_op, right] or [left, edge_op, right, metadata]
 
         if pairs.len() < 3 {
-            return Err(format!("Edge requires at least 3 pairs (from, op, to), got {}", pairs.len()));
+            return Err(format!(
+                "Edge requires at least 3 pairs (from, op, to), got {}",
+                pairs.len()
+            ));
         }
 
         // Extract 'from' identifier - must be a single identifier
@@ -83,14 +87,12 @@ impl AstParser {
 
         // Extract edge operator
         let directed = match pairs[1].as_rule() {
-            Rule::edge_op => {
-                match pairs[1].as_str() {
-                    "->" => true,
-                    "<>" => false,
-                    _ => return Err(format!("Unknown edge operator: {}", pairs[1].as_str()))
-                }
-            }
-            _ => return Err(format!("Expected edge_op, got: {:?}", pairs[1].as_rule()))
+            Rule::edge_op => match pairs[1].as_str() {
+                "->" => true,
+                "<>" => false,
+                _ => return Err(format!("Unknown edge operator: {}", pairs[1].as_str())),
+            },
+            _ => return Err(format!("Expected edge_op, got: {:?}", pairs[1].as_rule())),
         };
 
         // Extract 'to' identifier - must be a single identifier
@@ -121,25 +123,31 @@ impl AstParser {
 
         // Should have exactly 3 pairs: left, operator, right
         if pairs.len() != 3 {
-            return Err(format!("Expected 3 pairs for comparison, got {}", pairs.len()));
+            return Err(format!(
+                "Expected 3 pairs for comparison, got {}",
+                pairs.len()
+            ));
         }
 
         let left = self.build_ast_from_expr(pairs[0].clone())?;
 
         // The operator should be a cmp_op rule
         let op = match pairs[1].as_rule() {
-            Rule::cmp_op => {
-                match pairs[1].as_str() {
-                    ">" => BinaryOp::Gt,
-                    "<" => BinaryOp::Lt,
-                    ">=" => BinaryOp::Gte,
-                    "<=" => BinaryOp::Lte,
-                    "==" => BinaryOp::Eq,
-                    "!=" => BinaryOp::Neq,
-                    _ => return Err(format!("Unknown comparison operator: {}", pairs[1].as_str()))
+            Rule::cmp_op => match pairs[1].as_str() {
+                ">" => BinaryOp::Gt,
+                "<" => BinaryOp::Lt,
+                ">=" => BinaryOp::Gte,
+                "<=" => BinaryOp::Lte,
+                "==" => BinaryOp::Eq,
+                "!=" => BinaryOp::Neq,
+                _ => {
+                    return Err(format!(
+                        "Unknown comparison operator: {}",
+                        pairs[1].as_str()
+                    ))
                 }
-            }
-            _ => return Err(format!("Expected cmp_op, got: {:?}", pairs[1].as_rule()))
+            },
+            _ => return Err(format!("Expected cmp_op, got: {:?}", pairs[1].as_rule())),
         };
 
         let right = self.build_ast_from_expr(pairs[2].clone())?;
@@ -178,7 +186,7 @@ impl AstParser {
                         "%" => BinaryOp::Modulo,
                         "&&" => BinaryOp::And,
                         "||" => BinaryOp::Or,
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     };
                     operators.push(op);
                 }
@@ -231,7 +239,7 @@ impl AstParser {
                 })
             }
             Rule::power => self.build_power(first),
-            _ => Err(format!("Unexpected unary rule: {:?}", first.as_rule()))
+            _ => Err(format!("Unexpected unary rule: {:?}", first.as_rule())),
         }
     }
 

@@ -1,8 +1,7 @@
 /// Symbol extraction module for Achronyme code
 /// Extracts let/mut/type declarations and other symbols from AST
-
 use achronyme_parser::AstNode;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Symbol {
@@ -126,7 +125,11 @@ fn collect_symbols(node: &AstNode, symbols: &mut Vec<Symbol>, lines: &[&str]) {
             collect_symbols(operand, symbols, lines);
         }
 
-        AstNode::If { condition, then_expr, else_expr } => {
+        AstNode::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_symbols(condition, symbols, lines);
             collect_symbols(then_expr, symbols, lines);
             collect_symbols(else_expr, symbols, lines);
@@ -227,7 +230,11 @@ fn collect_symbols(node: &AstNode, symbols: &mut Vec<Symbol>, lines: &[&str]) {
             collect_symbols(value, symbols, lines);
         }
 
-        AstNode::TryCatch { try_block, catch_block, .. } => {
+        AstNode::TryCatch {
+            try_block,
+            catch_block,
+            ..
+        } => {
             collect_symbols(try_block, symbols, lines);
             collect_symbols(catch_block, symbols, lines);
         }
@@ -309,7 +316,9 @@ fn extract_names_from_pattern(pattern: &achronyme_parser::Pattern) -> Vec<String
         achronyme_parser::Pattern::Variable(name) => {
             names.push(name.clone());
         }
-        achronyme_parser::Pattern::Wildcard | achronyme_parser::Pattern::Literal(_) | achronyme_parser::Pattern::Type(_) => {
+        achronyme_parser::Pattern::Wildcard
+        | achronyme_parser::Pattern::Literal(_)
+        | achronyme_parser::Pattern::Type(_) => {
             // Skip wildcards, literals, and type patterns
         }
     }

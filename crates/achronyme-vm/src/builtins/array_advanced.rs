@@ -347,9 +347,7 @@ pub fn vm_range(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     };
 
     if step == 0.0 {
-        return Err(VmError::Runtime(
-            "range() step cannot be zero".to_string(),
-        ));
+        return Err(VmError::Runtime("range() step cannot be zero".to_string()));
     }
 
     let mut result = Vec::new();
@@ -385,11 +383,7 @@ mod tests {
     #[test]
     fn test_product_basic() {
         let mut vm = setup_vm();
-        let vec = vec![
-            Value::Number(2.0),
-            Value::Number(3.0),
-            Value::Number(4.0),
-        ];
+        let vec = vec![Value::Number(2.0), Value::Number(3.0), Value::Number(4.0)];
         let result = vm_product(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         assert_eq!(result, Value::Number(24.0));
     }
@@ -447,11 +441,7 @@ mod tests {
     fn test_zip_different_lengths() {
         let mut vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0)];
-        let v2 = vec![
-            Value::Number(4.0),
-            Value::Number(5.0),
-            Value::Number(6.0),
-        ];
+        let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
         let result = vm_zip(
             &mut vm,
             &[
@@ -486,8 +476,7 @@ mod tests {
             Value::Number(4.0),
         ])));
         let outer = vec![inner1, inner2];
-        let result =
-            vm_flatten(&mut vm, &[Value::Vector(Rc::new(RefCell::new(outer)))]).unwrap();
+        let result = vm_flatten(&mut vm, &[Value::Vector(Rc::new(RefCell::new(outer)))]).unwrap();
 
         match result {
             Value::Vector(rc) => {

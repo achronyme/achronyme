@@ -60,7 +60,7 @@ fn test_nested_scopes() {
     env.define("y".to_string(), Value::Number(20.0)).unwrap();
     assert_eq!(env.get("x").unwrap(), Value::Number(10.0)); // From level 1
     assert_eq!(env.get("y").unwrap(), Value::Number(20.0)); // Current level
-    assert_eq!(env.get("z").unwrap(), Value::Number(3.0));  // From level 1
+    assert_eq!(env.get("z").unwrap(), Value::Number(3.0)); // From level 1
 
     // Pop to level 1
     env.pop_scope();

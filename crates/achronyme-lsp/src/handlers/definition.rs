@@ -3,7 +3,11 @@ use tower_lsp::lsp_types::*;
 use crate::document::Document;
 
 /// Get the definition location for a symbol at the given position
-pub fn get_definition(doc: &Document, position: Position, uri: Url) -> Option<GotoDefinitionResponse> {
+pub fn get_definition(
+    doc: &Document,
+    position: Position,
+    uri: Url,
+) -> Option<GotoDefinitionResponse> {
     let word = doc.word_at_position(position.line, position.character)?;
 
     // Search for variable definition in the AST

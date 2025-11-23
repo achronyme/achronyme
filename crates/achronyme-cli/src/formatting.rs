@@ -316,8 +316,7 @@ fn normalize_operators(line: &str) -> String {
                     || result.trim().is_empty();
 
                 if is_unary {
-                    if i + 1 < chars.len()
-                        && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.')
+                    if i + 1 < chars.len() && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.')
                     {
                         result.push('-');
                         i += 1;

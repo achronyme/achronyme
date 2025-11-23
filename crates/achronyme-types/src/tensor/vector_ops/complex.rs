@@ -18,15 +18,21 @@ impl ComplexTensor {
             });
         }
 
-        Ok(self.data.iter()
+        Ok(self
+            .data
+            .iter()
             .zip(other.data.iter())
-            .map(|(a, b)| a.conjugate() * *b)  // Hermitian inner product
+            .map(|(a, b)| a.conjugate() * *b) // Hermitian inner product
             .fold(Complex::new(0.0, 0.0), |acc, x| acc + x))
     }
 
     /// Norm of complex vector
     pub fn norm(&self) -> f64 {
-        self.data.iter().map(|c| c.magnitude() * c.magnitude()).sum::<f64>().sqrt()
+        self.data
+            .iter()
+            .map(|c| c.magnitude() * c.magnitude())
+            .sum::<f64>()
+            .sqrt()
     }
 
     /// Normalize complex vector
@@ -40,7 +46,9 @@ impl ComplexTensor {
 
     /// Sum of all complex elements
     pub fn sum(&self) -> Complex {
-        self.data.iter().fold(Complex::new(0.0, 0.0), |acc, &x| acc + x)
+        self.data
+            .iter()
+            .fold(Complex::new(0.0, 0.0), |acc, &x| acc + x)
     }
 
     /// Mean of all complex elements
@@ -59,7 +67,9 @@ impl ComplexTensor {
             return Err(TensorError::EmptyTensor);
         }
         let mean = self.mean()?;
-        let sum_squared_diff: f64 = self.data.iter()
+        let sum_squared_diff: f64 = self
+            .data
+            .iter()
             .map(|x| (*x - mean).magnitude().powi(2))
             .sum();
         Ok((sum_squared_diff / (self.size() - 1) as f64).sqrt())

@@ -1,4 +1,7 @@
-use achronyme_parser::{parse, ast::{AstNode, ImportItem}};
+use achronyme_parser::{
+    ast::{AstNode, ImportItem},
+    parse,
+};
 
 #[test]
 fn test_simple_import() {
@@ -19,7 +22,7 @@ fn test_simple_import() {
             assert_eq!(items[1].name, "cos");
             assert_eq!(items[1].alias, None);
         }
-        _ => panic!("Expected Import node, got {:?}", statements[0])
+        _ => panic!("Expected Import node, got {:?}", statements[0]),
     }
 }
 
@@ -42,7 +45,7 @@ fn test_import_with_alias() {
             assert_eq!(items[1].name, "std");
             assert_eq!(items[1].alias, None);
         }
-        _ => panic!("Expected Import node")
+        _ => panic!("Expected Import node"),
     }
 }
 
@@ -58,7 +61,7 @@ fn test_import_from_relative_path() {
         AstNode::Import { module_path, .. } => {
             assert_eq!(module_path, "./utils");
         }
-        _ => panic!("Expected Import node")
+        _ => panic!("Expected Import node"),
     }
 }
 
@@ -78,7 +81,7 @@ fn test_export_statement() {
             assert_eq!(items[0].name, "foo");
             assert_eq!(items[1].name, "bar");
         }
-        _ => panic!("Expected Export node")
+        _ => panic!("Expected Export node"),
     }
 }
 
@@ -106,7 +109,7 @@ fn test_import_with_usage() {
                     assert_eq!(module_path, "stats");
                     assert_eq!(items[0].name, "mean");
                 }
-                _ => panic!("Expected Import node as first statement")
+                _ => panic!("Expected Import node as first statement"),
             }
 
             // Second statement should be let
@@ -114,10 +117,10 @@ fn test_import_with_usage() {
                 AstNode::VariableDecl { name, .. } => {
                     assert_eq!(name, "result");
                 }
-                _ => panic!("Expected VariableDecl node as second statement")
+                _ => panic!("Expected VariableDecl node as second statement"),
             }
         }
-        _ => panic!("Expected Sequence node at top level")
+        _ => panic!("Expected Sequence node at top level"),
     }
 }
 
@@ -145,7 +148,7 @@ fn test_multiple_imports() {
                 AstNode::Import { module_path, .. } => {
                     assert_eq!(module_path, "math");
                 }
-                _ => panic!("Expected first Import node")
+                _ => panic!("Expected first Import node"),
             }
 
             // Check second import
@@ -153,10 +156,10 @@ fn test_multiple_imports() {
                 AstNode::Import { module_path, .. } => {
                     assert_eq!(module_path, "stats");
                 }
-                _ => panic!("Expected second Import node")
+                _ => panic!("Expected second Import node"),
             }
         }
-        _ => panic!("Expected Sequence node at top level")
+        _ => panic!("Expected Sequence node at top level"),
     }
 }
 

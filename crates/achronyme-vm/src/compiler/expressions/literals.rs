@@ -5,15 +5,12 @@ use crate::compiler::Compiler;
 use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
-use achronyme_parser::ast::{AstNode, ArrayElement, RecordFieldOrSpread, StringPart};
+use achronyme_parser::ast::{ArrayElement, AstNode, RecordFieldOrSpread, StringPart};
 use achronyme_types::complex::Complex;
 
 impl Compiler {
     /// Compile literal expressions
-    pub(crate) fn compile_literal(
-        &mut self,
-        node: &AstNode,
-    ) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_literal(&mut self, node: &AstNode) -> Result<RegResult, CompileError> {
         match node {
             AstNode::Number(n) => {
                 let reg = self.registers.allocate()?;
@@ -118,8 +115,8 @@ impl Compiler {
         // Set each field one by one
         for field in fields {
             match field {
-                RecordFieldOrSpread::Field { name, value } |
-                RecordFieldOrSpread::MutableField { name, value } => {
+                RecordFieldOrSpread::Field { name, value }
+                | RecordFieldOrSpread::MutableField { name, value } => {
                     // Compile the value expression
                     let val_res = self.compile_expression(value)?;
 
@@ -167,32 +164,42 @@ impl Compiler {
         // Try to evaluate start and end as constants
         let start_val = match start {
             AstNode::Number(n) => *n,
-            AstNode::UnaryOp { op: achronyme_parser::ast::UnaryOp::Negate, operand } => {
-                match operand.as_ref() {
-                    AstNode::Number(n) => -*n,
-                    _ => return Err(CompileError::Error(
-                        "Range start must be a number literal".to_string()
-                    )),
+            AstNode::UnaryOp {
+                op: achronyme_parser::ast::UnaryOp::Negate,
+                operand,
+            } => match operand.as_ref() {
+                AstNode::Number(n) => -*n,
+                _ => {
+                    return Err(CompileError::Error(
+                        "Range start must be a number literal".to_string(),
+                    ))
                 }
+            },
+            _ => {
+                return Err(CompileError::Error(
+                    "Range start must be a number literal".to_string(),
+                ))
             }
-            _ => return Err(CompileError::Error(
-                "Range start must be a number literal".to_string()
-            )),
         };
 
         let end_val = match end {
             AstNode::Number(n) => *n,
-            AstNode::UnaryOp { op: achronyme_parser::ast::UnaryOp::Negate, operand } => {
-                match operand.as_ref() {
-                    AstNode::Number(n) => -*n,
-                    _ => return Err(CompileError::Error(
-                        "Range end must be a number literal".to_string()
-                    )),
+            AstNode::UnaryOp {
+                op: achronyme_parser::ast::UnaryOp::Negate,
+                operand,
+            } => match operand.as_ref() {
+                AstNode::Number(n) => -*n,
+                _ => {
+                    return Err(CompileError::Error(
+                        "Range end must be a number literal".to_string(),
+                    ))
                 }
+            },
+            _ => {
+                return Err(CompileError::Error(
+                    "Range end must be a number literal".to_string(),
+                ))
             }
-            _ => return Err(CompileError::Error(
-                "Range end must be a number literal".to_string()
-            )),
         };
 
         // Generate the range values
@@ -215,12 +222,7 @@ impl Compiler {
             self.emit_load_const(val_reg, const_idx);
 
             // Push to vector
-            self.emit(encode_abc(
-                OpCode::VecPush.as_u8(),
-                vec_reg,
-                val_reg,
-                0,
-            ));
+            self.emit(encode_abc(OpCode::VecPush.as_u8(), vec_reg, val_reg, 0));
 
             // Free temporary register
             self.registers.free(val_reg);
@@ -257,12 +259,7 @@ impl Compiler {
                     if let Some(prev_reg) = result_reg {
                         // Concatenate with previous result using Add opcode
                         let new_reg = self.registers.allocate()?;
-                        self.emit(encode_abc(
-                            OpCode::Add.as_u8(),
-                            new_reg,
-                            prev_reg,
-                            str_reg,
-                        ));
+                        self.emit(encode_abc(OpCode::Add.as_u8(), new_reg, prev_reg, str_reg));
 
                         // Free old registers
                         self.registers.free(prev_reg);

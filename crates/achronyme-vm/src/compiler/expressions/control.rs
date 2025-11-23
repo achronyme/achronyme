@@ -184,9 +184,15 @@ impl Compiler {
                 achronyme_parser::ast::Pattern::Literal(lit) => {
                     // Compile literal pattern matching
                     let lit_value = match lit {
-                        achronyme_parser::ast::LiteralPattern::Number(n) => crate::value::Value::Number(*n),
-                        achronyme_parser::ast::LiteralPattern::Boolean(b) => crate::value::Value::Boolean(*b),
-                        achronyme_parser::ast::LiteralPattern::String(s) => crate::value::Value::String(s.clone()),
+                        achronyme_parser::ast::LiteralPattern::Number(n) => {
+                            crate::value::Value::Number(*n)
+                        }
+                        achronyme_parser::ast::LiteralPattern::Boolean(b) => {
+                            crate::value::Value::Boolean(*b)
+                        }
+                        achronyme_parser::ast::LiteralPattern::String(s) => {
+                            crate::value::Value::String(s.clone())
+                        }
                         achronyme_parser::ast::LiteralPattern::Null => crate::value::Value::Null,
                     };
 
@@ -321,7 +327,8 @@ impl Compiler {
                     }
                 }
 
-                achronyme_parser::ast::Pattern::Vector { .. } | achronyme_parser::ast::Pattern::Record { .. } => {
+                achronyme_parser::ast::Pattern::Vector { .. }
+                | achronyme_parser::ast::Pattern::Record { .. } => {
                     // For complex patterns (Vector/Record), we need to:
                     // 1. Destructure into temp registers
                     // 2. Check if destructuring succeeded (for now, assume it does)
@@ -331,7 +338,7 @@ impl Compiler {
                     // This is simplified for Phase 4B - full implementation would need
                     // runtime checks for destructuring validity
                     return Err(CompileError::NotYetImplemented(
-                        "Vector/Record patterns in match expressions".to_string()
+                        "Vector/Record patterns in match expressions".to_string(),
                     ));
                 }
             }
@@ -351,7 +358,11 @@ impl Compiler {
     }
 
     /// Compile while loop
-    pub(crate) fn compile_while(&mut self, condition: &AstNode, body: &AstNode) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_while(
+        &mut self,
+        condition: &AstNode,
+        body: &AstNode,
+    ) -> Result<RegResult, CompileError> {
         let loop_start = self.current_position();
 
         // Compile condition
@@ -548,16 +559,23 @@ impl Compiler {
     }
 
     /// Compile break statement
-    pub(crate) fn compile_break(&mut self, value: Option<&AstNode>) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_break(
+        &mut self,
+        value: Option<&AstNode>,
+    ) -> Result<RegResult, CompileError> {
         // Check if we're inside a loop
         if self.loops.is_empty() {
-            return Err(CompileError::Error("break statement outside loop".to_string()));
+            return Err(CompileError::Error(
+                "break statement outside loop".to_string(),
+            ));
         }
 
         // For now, ignore the optional value (break value feature)
         // Future enhancement: support break with value
         if value.is_some() {
-            return Err(CompileError::NotYetImplemented("break with value".to_string()));
+            return Err(CompileError::NotYetImplemented(
+                "break with value".to_string(),
+            ));
         }
 
         // Emit jump to end of loop (will be patched later)
@@ -578,7 +596,9 @@ impl Compiler {
     pub(crate) fn compile_continue(&mut self) -> Result<RegResult, CompileError> {
         // Check if we're inside a loop
         if self.loops.is_empty() {
-            return Err(CompileError::Error("continue statement outside loop".to_string()));
+            return Err(CompileError::Error(
+                "continue statement outside loop".to_string(),
+            ));
         }
 
         // Get the loop start position

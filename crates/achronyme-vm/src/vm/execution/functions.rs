@@ -59,7 +59,9 @@ impl VM {
 
                 // Store as Function value using Rc<dyn Any>
                 let closure_rc = Rc::new(closure);
-                let func_value = Value::Function(Function::VmClosure(closure_rc.clone() as Rc<dyn std::any::Any>));
+                let func_value = Value::Function(Function::VmClosure(
+                    closure_rc.clone() as Rc<dyn std::any::Any>
+                ));
 
                 // NOW fill upvalue 0 with the closure itself (for recursive calls via 'rec')
                 if !upvalues.is_empty() {
@@ -82,12 +84,16 @@ impl VM {
                 // FIRST: Check if this is a pending intrinsic call
                 // We check if func_value is Null (our marker) AND there's a pending intrinsic entry
                 if matches!(func_value, Value::Null) {
-                    if let Some((receiver, intrinsic_fn)) = self.pending_intrinsic_calls.remove(&func_reg) {
+                    if let Some((receiver, intrinsic_fn)) =
+                        self.pending_intrinsic_calls.remove(&func_reg)
+                    {
                         // This is an intrinsic method call!
                         // Special handling for generator.next() which needs to resume the generator
 
                         // Check if this is a Generator.next() call specifically
-                        if let Some(type_disc) = crate::vm::intrinsics::TypeDiscriminant::from_value(&receiver) {
+                        if let Some(type_disc) =
+                            crate::vm::intrinsics::TypeDiscriminant::from_value(&receiver)
+                        {
                             if type_disc == crate::vm::intrinsics::TypeDiscriminant::Generator {
                                 // This is generator.next() - use special resume logic
                                 return self.resume_generator_internal(&receiver, result_reg);
@@ -118,10 +124,8 @@ impl VM {
                             .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?;
 
                         // Create new CallFrame
-                        let mut new_frame = CallFrame::new(
-                            closure.prototype.clone(),
-                            Some(result_reg),
-                        );
+                        let mut new_frame =
+                            CallFrame::new(closure.prototype.clone(), Some(result_reg));
 
                         // Copy arguments to new frame's registers
                         // For missing arguments (argc < param_count), set to Null
@@ -166,12 +170,10 @@ impl VM {
                 let func_value = self.get_register(func_reg)?.clone();
 
                 let closure = match func_value {
-                    Value::Function(Function::VmClosure(closure_any)) => {
-                        closure_any
-                            .downcast_ref::<Closure>()
-                            .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?
-                            .clone()
-                    }
+                    Value::Function(Function::VmClosure(closure_any)) => closure_any
+                        .downcast_ref::<Closure>()
+                        .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?
+                        .clone(),
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "tail call".to_string(),

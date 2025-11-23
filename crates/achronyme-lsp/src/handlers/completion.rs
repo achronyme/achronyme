@@ -73,7 +73,10 @@ fn format_documentation(doc: &str, kind: &CompletionKind) -> String {
     match kind {
         CompletionKind::Function => {
             // Function docs already contain signature and examples
-            format!("```\n{}\n```", doc.replace("Example:", "```\n\n**Example:**\n```achronyme"))
+            format!(
+                "```\n{}\n```",
+                doc.replace("Example:", "```\n\n**Example:**\n```achronyme")
+            )
         }
         _ => doc.to_string(),
     }

@@ -33,7 +33,11 @@ impl Compiler {
 
                     // TYPE_ASSERT R[var_reg], K[type_idx]
                     // Uses ABx format: A = value register, Bx = type constant index
-                    self.emit(encode_abx(OpCode::TypeAssert.as_u8(), var_reg, type_idx as u16));
+                    self.emit(encode_abx(
+                        OpCode::TypeAssert.as_u8(),
+                        var_reg,
+                        type_idx as u16,
+                    ));
                 }
 
                 // Free value ONLY if temporary
@@ -84,7 +88,12 @@ impl Compiler {
                             self.emit_move(var_reg, value_res.reg());
                         } else if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
                             // Upvalue (captured variable)
-                            self.emit(encode_abc(OpCode::SetUpvalue.as_u8(), upvalue_idx, value_res.reg(), 0));
+                            self.emit(encode_abc(
+                                OpCode::SetUpvalue.as_u8(),
+                                upvalue_idx,
+                                value_res.reg(),
+                                0,
+                            ));
                         } else {
                             return Err(CompileError::UndefinedVariable(name.clone()));
                         }
@@ -165,7 +174,11 @@ impl Compiler {
             }
 
             // Compound assignment (+=, -=, *=, /=, %=, ^=)
-            AstNode::CompoundAssignment { target, operator, value } => {
+            AstNode::CompoundAssignment {
+                target,
+                operator,
+                value,
+            } => {
                 use achronyme_parser::ast::CompoundOp;
 
                 // 1. Read the current value of the target
@@ -209,7 +222,12 @@ impl Compiler {
                             self.emit_move(var_reg, result_reg);
                         } else if let Some(upvalue_idx) = self.symbols.get_upvalue(name) {
                             // Upvalue (captured variable)
-                            self.emit(encode_abc(OpCode::SetUpvalue.as_u8(), upvalue_idx, result_reg, 0));
+                            self.emit(encode_abc(
+                                OpCode::SetUpvalue.as_u8(),
+                                upvalue_idx,
+                                result_reg,
+                                0,
+                            ));
                         } else {
                             return Err(CompileError::UndefinedVariable(name.clone()));
                         }
@@ -288,9 +306,7 @@ impl Compiler {
             }
 
             // Yield statement
-            AstNode::Yield { value } => {
-                self.compile_yield(value)
-            }
+            AstNode::Yield { value } => self.compile_yield(value),
 
             // Return statement
             AstNode::Return { value } => {
@@ -303,9 +319,13 @@ impl Compiler {
             }
 
             // Type alias - register in type registry (no code generation)
-            AstNode::TypeAlias { name, type_definition } => {
+            AstNode::TypeAlias {
+                name,
+                type_definition,
+            } => {
                 // Store the type alias in the compiler's type registry
-                self.type_registry.insert(name.clone(), type_definition.clone());
+                self.type_registry
+                    .insert(name.clone(), type_definition.clone());
                 // Type aliases don't generate any bytecode
                 Ok(())
             }
@@ -355,9 +375,7 @@ impl Compiler {
             }
 
             // Import - load module and import exported values/types
-            AstNode::Import { items, module_path } => {
-                self.compile_import(items, module_path)
-            }
+            AstNode::Import { items, module_path } => self.compile_import(items, module_path),
 
             // Expression statement (evaluate and discard result)
             _ => {
@@ -394,14 +412,16 @@ impl Compiler {
         self.emit_load_const(arg_reg, mod_name_idx);
 
         // CallBuiltin import(arg_reg) -> module_res_reg
-        let import_idx = self.builtins.get_id("import")
+        let import_idx = self
+            .builtins
+            .get_id("import")
             .ok_or_else(|| CompileError::Error("Builtin 'import' not found".to_string()))?;
 
         self.emit(encode_abc(
             OpCode::CallBuiltin.as_u8(),
-            module_res_reg,  // A = dest
-            1,               // B = argc (1 argument)
-            import_idx as u8 // C = builtin_idx
+            module_res_reg,   // A = dest
+            1,                // B = argc (1 argument)
+            import_idx as u8, // C = builtin_idx
         ));
 
         // 2. Extract each requested export from the module Record
@@ -412,7 +432,8 @@ impl Compiler {
             // Check for name collision
             if self.symbols.get(local_name).is_ok() {
                 return Err(CompileError::Error(format!(
-                    "Variable '{}' already defined", local_name
+                    "Variable '{}' already defined",
+                    local_name
                 )));
             }
 
@@ -427,7 +448,7 @@ impl Compiler {
                 OpCode::GetField.as_u8(),
                 var_reg,
                 module_res_reg,
-                field_idx as u8
+                field_idx as u8,
             ));
 
             // Define in symbol table

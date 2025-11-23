@@ -9,8 +9,8 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 // ============================================================================
 // Modification Functions
@@ -50,7 +50,9 @@ pub fn vm_pop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Vector(vec) => {
             let borrowed = vec.borrow();
             if borrowed.is_empty() {
-                return Err(VmError::Runtime("pop(): cannot pop from empty vector".to_string()));
+                return Err(VmError::Runtime(
+                    "pop(): cannot pop from empty vector".to_string(),
+                ));
             }
             let mut new_vec = borrowed.clone();
             drop(borrowed);
@@ -229,14 +231,12 @@ pub fn vm_sort(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             let mut sorted = vec.borrow().clone();
 
             // Simple sort for numbers and strings
-            sorted.sort_by(|a, b| {
-                match (a, b) {
-                    (Value::Number(n1), Value::Number(n2)) => {
-                        n1.partial_cmp(n2).unwrap_or(std::cmp::Ordering::Equal)
-                    }
-                    (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
-                    _ => std::cmp::Ordering::Equal,
+            sorted.sort_by(|a, b| match (a, b) {
+                (Value::Number(n1), Value::Number(n2)) => {
+                    n1.partial_cmp(n2).unwrap_or(std::cmp::Ordering::Equal)
                 }
+                (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
+                _ => std::cmp::Ordering::Equal,
             });
 
             Ok(Value::Vector(Rc::new(RefCell::new(sorted))))

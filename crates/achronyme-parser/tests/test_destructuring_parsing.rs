@@ -1,5 +1,5 @@
+use achronyme_parser::ast::{LiteralPattern, Pattern, VectorPatternElement};
 use achronyme_parser::{parse, AstNode};
-use achronyme_parser::ast::{Pattern, LiteralPattern, VectorPatternElement};
 
 #[test]
 fn test_parse_simple_record_destructuring() {
@@ -7,7 +7,11 @@ fn test_parse_simple_record_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, type_annotation, initializer } => {
+        AstNode::LetDestructuring {
+            pattern,
+            type_annotation,
+            initializer,
+        } => {
             assert!(type_annotation.is_none());
             match pattern {
                 Pattern::Record { fields } => {
@@ -61,14 +65,12 @@ fn test_parse_simple_vector_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Vector { elements } => {
-                    assert_eq!(elements.len(), 3);
-                }
-                _ => panic!("Expected Vector pattern"),
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Vector { elements } => {
+                assert_eq!(elements.len(), 3);
             }
-        }
+            _ => panic!("Expected Vector pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }
@@ -134,14 +136,12 @@ fn test_parse_mutable_record_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::MutableDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Record { fields } => {
-                    assert_eq!(fields.len(), 2);
-                }
-                _ => panic!("Expected Record pattern"),
+        AstNode::MutableDestructuring { pattern, .. } => match pattern {
+            Pattern::Record { fields } => {
+                assert_eq!(fields.len(), 2);
             }
-        }
+            _ => panic!("Expected Record pattern"),
+        },
         _ => panic!("Expected MutableDestructuring"),
     }
 }
@@ -152,14 +152,12 @@ fn test_parse_mutable_vector_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::MutableDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Vector { elements } => {
-                    assert_eq!(elements.len(), 2);
-                }
-                _ => panic!("Expected Vector pattern"),
+        AstNode::MutableDestructuring { pattern, .. } => match pattern {
+            Pattern::Vector { elements } => {
+                assert_eq!(elements.len(), 2);
             }
-        }
+            _ => panic!("Expected Vector pattern"),
+        },
         _ => panic!("Expected MutableDestructuring"),
     }
 }
@@ -170,26 +168,26 @@ fn test_parse_nested_record_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Record { fields } => {
-                    assert_eq!(fields.len(), 1);
-                    assert_eq!(fields[0].0, "user");
-                    match &fields[0].1 {
-                        Pattern::Record { fields: inner_fields } => {
-                            assert_eq!(inner_fields.len(), 1);
-                            assert_eq!(inner_fields[0].0, "name");
-                            match &inner_fields[0].1 {
-                                Pattern::Variable(name) => assert_eq!(name, "n"),
-                                _ => panic!("Expected Variable pattern"),
-                            }
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Record { fields } => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "user");
+                match &fields[0].1 {
+                    Pattern::Record {
+                        fields: inner_fields,
+                    } => {
+                        assert_eq!(inner_fields.len(), 1);
+                        assert_eq!(inner_fields[0].0, "name");
+                        match &inner_fields[0].1 {
+                            Pattern::Variable(name) => assert_eq!(name, "n"),
+                            _ => panic!("Expected Variable pattern"),
                         }
-                        _ => panic!("Expected nested Record pattern"),
                     }
+                    _ => panic!("Expected nested Record pattern"),
                 }
-                _ => panic!("Expected Record pattern"),
             }
-        }
+            _ => panic!("Expected Record pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }
@@ -201,26 +199,24 @@ fn test_parse_destructuring_with_literal_pattern() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Record { fields } => {
-                    assert_eq!(fields.len(), 2);
-                    match &fields[0].1 {
-                        Pattern::Literal(LiteralPattern::String(s)) => {
-                            assert_eq!(s, "ok");
-                        }
-                        _ => panic!("Expected String literal pattern"),
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Record { fields } => {
+                assert_eq!(fields.len(), 2);
+                match &fields[0].1 {
+                    Pattern::Literal(LiteralPattern::String(s)) => {
+                        assert_eq!(s, "ok");
                     }
-                    match &fields[1].1 {
-                        Pattern::Variable(name) => {
-                            assert_eq!(name, "v");
-                        }
-                        _ => panic!("Expected Variable pattern"),
-                    }
+                    _ => panic!("Expected String literal pattern"),
                 }
-                _ => panic!("Expected Record pattern"),
+                match &fields[1].1 {
+                    Pattern::Variable(name) => {
+                        assert_eq!(name, "v");
+                    }
+                    _ => panic!("Expected Variable pattern"),
+                }
             }
-        }
+            _ => panic!("Expected Record pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }
@@ -231,14 +227,12 @@ fn test_parse_empty_record_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Record { fields } => {
-                    assert_eq!(fields.len(), 0);
-                }
-                _ => panic!("Expected Record pattern"),
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Record { fields } => {
+                assert_eq!(fields.len(), 0);
             }
-        }
+            _ => panic!("Expected Record pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }
@@ -249,14 +243,12 @@ fn test_parse_empty_vector_destructuring() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Vector { elements } => {
-                    assert_eq!(elements.len(), 0);
-                }
-                _ => panic!("Expected Vector pattern"),
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Vector { elements } => {
+                assert_eq!(elements.len(), 0);
             }
-        }
+            _ => panic!("Expected Vector pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }
@@ -268,7 +260,11 @@ fn test_parse_simple_let_still_works() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::VariableDecl { name, type_annotation, .. } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "x");
             assert!(type_annotation.is_none());
         }
@@ -283,7 +279,11 @@ fn test_parse_simple_mut_still_works() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::MutableDecl { name, type_annotation, .. } => {
+        AstNode::MutableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "y");
             assert!(type_annotation.is_none());
         }
@@ -297,7 +297,11 @@ fn test_parse_let_with_type_annotation_still_works() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::VariableDecl { name, type_annotation, .. } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "x");
             assert!(type_annotation.is_some());
         }
@@ -307,11 +311,14 @@ fn test_parse_let_with_type_annotation_still_works() {
 
 #[test]
 fn test_parse_multiple_statements_with_destructuring() {
-    let result = parse(r#"
+    let result = parse(
+        r#"
         let person = { name: "Alice", age: 30 }
         let { name, age } = person
         name
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
 
     // Parser wraps multiple statements in a Sequence node
     assert_eq!(result.len(), 1);
@@ -372,28 +379,26 @@ fn test_parse_vector_destructuring_with_default() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Vector { elements } => {
-                    assert_eq!(elements.len(), 2);
-                    match &elements[0] {
-                        VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
-                            assert_eq!(name, "first");
-                            assert!(default.is_some());
-                        }
-                        _ => panic!("Expected Variable pattern with default"),
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Vector { elements } => {
+                assert_eq!(elements.len(), 2);
+                match &elements[0] {
+                    VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
+                        assert_eq!(name, "first");
+                        assert!(default.is_some());
                     }
-                    match &elements[1] {
-                        VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
-                            assert_eq!(name, "second");
-                            assert!(default.is_some());
-                        }
-                        _ => panic!("Expected Variable pattern with default"),
-                    }
+                    _ => panic!("Expected Variable pattern with default"),
                 }
-                _ => panic!("Expected Vector pattern"),
+                match &elements[1] {
+                    VectorPatternElement::Pattern(Pattern::Variable(name), default) => {
+                        assert_eq!(name, "second");
+                        assert!(default.is_some());
+                    }
+                    _ => panic!("Expected Variable pattern with default"),
+                }
             }
-        }
+            _ => panic!("Expected Vector pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }
@@ -404,20 +409,18 @@ fn test_parse_record_destructuring_string_default() {
     assert_eq!(result.len(), 1);
 
     match &result[0] {
-        AstNode::LetDestructuring { pattern, .. } => {
-            match pattern {
-                Pattern::Record { fields } => {
-                    assert_eq!(fields.len(), 1);
-                    assert_eq!(fields[0].0, "name");
-                    assert!(fields[0].2.is_some());
-                    match fields[0].2.as_ref().unwrap().as_ref() {
-                        AstNode::StringLiteral(s) => assert_eq!(s, "Anonymous"),
-                        _ => panic!("Expected StringLiteral as default"),
-                    }
+        AstNode::LetDestructuring { pattern, .. } => match pattern {
+            Pattern::Record { fields } => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "name");
+                assert!(fields[0].2.is_some());
+                match fields[0].2.as_ref().unwrap().as_ref() {
+                    AstNode::StringLiteral(s) => assert_eq!(s, "Anonymous"),
+                    _ => panic!("Expected StringLiteral as default"),
                 }
-                _ => panic!("Expected Record pattern"),
             }
-        }
+            _ => panic!("Expected Record pattern"),
+        },
         _ => panic!("Expected LetDestructuring"),
     }
 }

@@ -5,8 +5,8 @@
 //! work seamlessly with the existing generator infrastructure.
 
 use crate::value::Value;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Iterator for Vector values
 /// Iterates over elements of a vector in order

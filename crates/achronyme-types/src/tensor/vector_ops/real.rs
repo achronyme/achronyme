@@ -21,7 +21,12 @@ impl RealTensor {
             });
         }
 
-        Ok(self.data.iter().zip(other.data.iter()).map(|(a, b)| a * b).sum())
+        Ok(self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .map(|(a, b)| a * b)
+            .sum())
     }
 
     /// Cross product of two 3D vectors
@@ -86,7 +91,8 @@ impl RealTensor {
 
     /// Maximum element
     pub fn max(&self) -> Result<f64, TensorError> {
-        self.data.iter()
+        self.data
+            .iter()
             .copied()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .ok_or(TensorError::EmptyTensor)
@@ -94,7 +100,8 @@ impl RealTensor {
 
     /// Minimum element
     pub fn min(&self) -> Result<f64, TensorError> {
-        self.data.iter()
+        self.data
+            .iter()
             .copied()
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .ok_or(TensorError::EmptyTensor)
@@ -106,9 +113,7 @@ impl RealTensor {
             return Err(TensorError::EmptyTensor);
         }
         let mean = self.mean()?;
-        let sum_squared_diff: f64 = self.data.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum();
+        let sum_squared_diff: f64 = self.data.iter().map(|x| (x - mean).powi(2)).sum();
         Ok(sum_squared_diff / (self.size() - 1) as f64)
     }
 

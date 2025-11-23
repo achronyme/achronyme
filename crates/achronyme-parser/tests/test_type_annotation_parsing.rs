@@ -1,4 +1,4 @@
-use achronyme_parser::{parse, ast::*, type_annotation::TypeAnnotation};
+use achronyme_parser::{ast::*, parse, type_annotation::TypeAnnotation};
 
 // ============================================================================
 // Variable Declaration Tests
@@ -13,7 +13,11 @@ fn test_let_with_simple_type() {
     assert_eq!(ast.len(), 1);
 
     match &ast[0] {
-        AstNode::VariableDecl { name, type_annotation, initializer } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            initializer,
+        } => {
             assert_eq!(name, "x");
             assert_eq!(type_annotation, &Some(TypeAnnotation::Number));
             match **initializer {
@@ -32,7 +36,11 @@ fn test_let_without_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::VariableDecl { name, type_annotation, .. } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "x");
             assert_eq!(type_annotation, &None);
         }
@@ -47,7 +55,11 @@ fn test_mut_with_simple_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::MutableDecl { name, type_annotation, initializer } => {
+        AstNode::MutableDecl {
+            name,
+            type_annotation,
+            initializer,
+        } => {
             assert_eq!(name, "count");
             assert_eq!(type_annotation, &Some(TypeAnnotation::Number));
             match **initializer {
@@ -66,7 +78,11 @@ fn test_let_with_union_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::VariableDecl { name, type_annotation, .. } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "value");
             match type_annotation {
                 Some(TypeAnnotation::Union(types)) => {
@@ -88,7 +104,11 @@ fn test_let_with_optional_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::VariableDecl { name, type_annotation, .. } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "maybe");
             match type_annotation {
                 Some(TypeAnnotation::Union(types)) => {
@@ -114,7 +134,11 @@ fn test_lambda_with_typed_params() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::Lambda { params, return_type, .. } => {
+        AstNode::Lambda {
+            params,
+            return_type,
+            ..
+        } => {
             assert_eq!(params.len(), 2);
 
             // First parameter
@@ -161,7 +185,11 @@ fn test_lambda_with_return_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::Lambda { params, return_type, .. } => {
+        AstNode::Lambda {
+            params,
+            return_type,
+            ..
+        } => {
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].1, Some(TypeAnnotation::Number));
             assert_eq!(params[1].1, Some(TypeAnnotation::Number));
@@ -178,7 +206,11 @@ fn test_lambda_no_types() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::Lambda { params, return_type, .. } => {
+        AstNode::Lambda {
+            params,
+            return_type,
+            ..
+        } => {
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].1, None);
             assert_eq!(params[1].1, None);
@@ -195,7 +227,11 @@ fn test_lambda_single_typed_param() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::Lambda { params, return_type, .. } => {
+        AstNode::Lambda {
+            params,
+            return_type,
+            ..
+        } => {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].0, "x");
             assert_eq!(params[0].1, Some(TypeAnnotation::Number));
@@ -238,15 +274,18 @@ fn test_let_with_tensor_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::VariableDecl { type_annotation, .. } => {
-            match type_annotation {
-                Some(TypeAnnotation::Tensor { element_type, shape }) => {
-                    assert_eq!(**element_type, TypeAnnotation::Number);
-                    assert_eq!(shape, &Some(vec![Some(2), Some(3)]));
-                }
-                _ => panic!("Expected Tensor type annotation"),
+        AstNode::VariableDecl {
+            type_annotation, ..
+        } => match type_annotation {
+            Some(TypeAnnotation::Tensor {
+                element_type,
+                shape,
+            }) => {
+                assert_eq!(**element_type, TypeAnnotation::Number);
+                assert_eq!(shape, &Some(vec![Some(2), Some(3)]));
             }
-        }
+            _ => panic!("Expected Tensor type annotation"),
+        },
         _ => panic!("Expected VariableDecl"),
     }
 }
@@ -258,15 +297,18 @@ fn test_let_with_tensor_no_shape() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::VariableDecl { type_annotation, .. } => {
-            match type_annotation {
-                Some(TypeAnnotation::Tensor { element_type, shape }) => {
-                    assert_eq!(**element_type, TypeAnnotation::Complex);
-                    assert_eq!(shape, &None);
-                }
-                _ => panic!("Expected Tensor type annotation"),
+        AstNode::VariableDecl {
+            type_annotation, ..
+        } => match type_annotation {
+            Some(TypeAnnotation::Tensor {
+                element_type,
+                shape,
+            }) => {
+                assert_eq!(**element_type, TypeAnnotation::Complex);
+                assert_eq!(shape, &None);
             }
-        }
+            _ => panic!("Expected Tensor type annotation"),
+        },
         _ => panic!("Expected VariableDecl"),
     }
 }
@@ -279,16 +321,17 @@ fn test_lambda_with_function_return_type() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::Lambda { return_type, .. } => {
-            match return_type {
-                Some(TypeAnnotation::Function { params, return_type }) => {
-                    assert_eq!(params.len(), 1);
-                    assert_eq!(params[0], Some(TypeAnnotation::Number));
-                    assert_eq!(**return_type, TypeAnnotation::Number);
-                }
-                _ => panic!("Expected Function type annotation"),
+        AstNode::Lambda { return_type, .. } => match return_type {
+            Some(TypeAnnotation::Function {
+                params,
+                return_type,
+            }) => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0], Some(TypeAnnotation::Number));
+                assert_eq!(**return_type, TypeAnnotation::Number);
             }
-        }
+            _ => panic!("Expected Function type annotation"),
+        },
         _ => panic!("Expected Lambda"),
     }
 }
@@ -309,7 +352,11 @@ fn test_sequence_with_types() {
 
             // First statement: let x: Number = 10
             match &statements[0] {
-                AstNode::VariableDecl { name, type_annotation, .. } => {
+                AstNode::VariableDecl {
+                    name,
+                    type_annotation,
+                    ..
+                } => {
                     assert_eq!(name, "x");
                     assert_eq!(type_annotation, &Some(TypeAnnotation::Number));
                 }
@@ -318,7 +365,11 @@ fn test_sequence_with_types() {
 
             // Second statement: mut y: String = "hello"
             match &statements[1] {
-                AstNode::MutableDecl { name, type_annotation, .. } => {
+                AstNode::MutableDecl {
+                    name,
+                    type_annotation,
+                    ..
+                } => {
                     assert_eq!(name, "y");
                     assert_eq!(type_annotation, &Some(TypeAnnotation::String));
                 }
@@ -337,15 +388,25 @@ fn test_higher_order_function_with_types() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::VariableDecl { name, type_annotation, .. } => {
+        AstNode::VariableDecl {
+            name,
+            type_annotation,
+            ..
+        } => {
             assert_eq!(name, "map");
             match type_annotation {
-                Some(TypeAnnotation::Function { params, return_type }) => {
+                Some(TypeAnnotation::Function {
+                    params,
+                    return_type,
+                }) => {
                     assert_eq!(params.len(), 2);
 
                     // First param: (Number): Number
                     match &params[0] {
-                        Some(TypeAnnotation::Function { params: inner_params, return_type: inner_return }) => {
+                        Some(TypeAnnotation::Function {
+                            params: inner_params,
+                            return_type: inner_return,
+                        }) => {
                             assert_eq!(inner_params.len(), 1);
                             assert_eq!(inner_params[0], Some(TypeAnnotation::Number));
                             assert_eq!(**inner_return, TypeAnnotation::Number);

@@ -1,7 +1,6 @@
 /// Lint module for Achronyme code
 /// Checks for parse errors and reports them with line/column information
-
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LintError {

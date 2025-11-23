@@ -79,11 +79,7 @@ impl IntrinsicRegistry {
     }
 
     /// Look up an intrinsic method
-    pub fn lookup(
-        &self,
-        type_disc: &TypeDiscriminant,
-        method_name: &str,
-    ) -> Option<IntrinsicFn> {
+    pub fn lookup(&self, type_disc: &TypeDiscriminant, method_name: &str) -> Option<IntrinsicFn> {
         self.methods
             .get(&(type_disc.clone(), method_name.to_string()))
             .copied()

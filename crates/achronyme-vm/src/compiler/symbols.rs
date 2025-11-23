@@ -28,7 +28,11 @@ impl SymbolTable {
     }
 
     /// Define an upvalue
-    pub(crate) fn define_upvalue(&mut self, name: String, upvalue_idx: u8) -> Result<(), CompileError> {
+    pub(crate) fn define_upvalue(
+        &mut self,
+        name: String,
+        upvalue_idx: u8,
+    ) -> Result<(), CompileError> {
         self.upvalues.insert(name, upvalue_idx);
         Ok(())
     }

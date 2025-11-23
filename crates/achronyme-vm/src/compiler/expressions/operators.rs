@@ -64,11 +64,7 @@ impl Compiler {
     /// Pattern: left && right
     /// - If left is falsy, return left (don't evaluate right)
     /// - If left is truthy, return right
-    fn compile_and(
-        &mut self,
-        left: &AstNode,
-        right: &AstNode,
-    ) -> Result<RegResult, CompileError> {
+    fn compile_and(&mut self, left: &AstNode, right: &AstNode) -> Result<RegResult, CompileError> {
         // Compile left operand
         let left_res = self.compile_expression(left)?;
 
@@ -103,11 +99,7 @@ impl Compiler {
     /// Pattern: left || right
     /// - If left is truthy, return left (don't evaluate right)
     /// - If left is falsy, return right
-    fn compile_or(
-        &mut self,
-        left: &AstNode,
-        right: &AstNode,
-    ) -> Result<RegResult, CompileError> {
+    fn compile_or(&mut self, left: &AstNode, right: &AstNode) -> Result<RegResult, CompileError> {
         // Compile left operand
         let left_res = self.compile_expression(left)?;
 

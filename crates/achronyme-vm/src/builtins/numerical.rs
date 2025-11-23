@@ -293,14 +293,8 @@ pub fn vm_gradient(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
 
         // Evaluate function at point + h and point - h
-        let f_plus = vm.call_value(
-            func,
-            &[Value::Vector(Rc::new(RefCell::new(point_plus)))],
-        )?;
-        let f_minus = vm.call_value(
-            func,
-            &[Value::Vector(Rc::new(RefCell::new(point_minus)))],
-        )?;
+        let f_plus = vm.call_value(func, &[Value::Vector(Rc::new(RefCell::new(point_plus)))])?;
+        let f_minus = vm.call_value(func, &[Value::Vector(Rc::new(RefCell::new(point_minus)))])?;
 
         let f_plus_num = extract_number(f_plus, "gradient")?;
         let f_minus_num = extract_number(f_minus, "gradient")?;

@@ -13,8 +13,8 @@
 
 use crate::error::VmError;
 use crate::value::Value;
-use crate::vm::{VmBuilder, VmIterator};
 use crate::vm::VM;
+use crate::vm::{VmBuilder, VmIterator};
 
 /// Helper function to check if a value is truthy
 fn is_truthy(value: &Value) -> bool {

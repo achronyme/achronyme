@@ -72,7 +72,9 @@ pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             if let Value::Number(sum) = sum_result {
                 Ok(Value::Number(sum / count))
             } else {
-                Err(VmError::Runtime("sum() returned non-numeric value".to_string()))
+                Err(VmError::Runtime(
+                    "sum() returned non-numeric value".to_string(),
+                ))
             }
         }
         _ => Err(VmError::TypeError {
@@ -106,7 +108,11 @@ pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             let mean_result = vm_mean(_vm, args)?;
             let mean = match mean_result {
                 Value::Number(n) => n,
-                _ => return Err(VmError::Runtime("mean() returned non-numeric value".to_string())),
+                _ => {
+                    return Err(VmError::Runtime(
+                        "mean() returned non-numeric value".to_string(),
+                    ))
+                }
             };
 
             // Calculate variance
@@ -148,8 +154,8 @@ mod tests {
         VM::new()
     }
 
-    use std::rc::Rc;
     use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn test_sum_basic() {
@@ -190,7 +196,16 @@ mod tests {
     #[test]
     fn test_std_basic() {
         let mut vm = setup_vm();
-        let vec = vec![Value::Number(2.0), Value::Number(4.0), Value::Number(4.0), Value::Number(4.0), Value::Number(5.0), Value::Number(5.0), Value::Number(7.0), Value::Number(9.0)];
+        let vec = vec![
+            Value::Number(2.0),
+            Value::Number(4.0),
+            Value::Number(4.0),
+            Value::Number(4.0),
+            Value::Number(5.0),
+            Value::Number(5.0),
+            Value::Number(7.0),
+            Value::Number(9.0),
+        ];
         let result = vm_std(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         // Expected std dev ≈ 2.138
         if let Value::Number(n) = result {

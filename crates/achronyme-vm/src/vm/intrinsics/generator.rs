@@ -14,6 +14,7 @@ use crate::vm::VM;
 pub fn generator_next(_vm: &mut VM, _receiver: &Value, _args: &[Value]) -> Result<Value, VmError> {
     // This should never be called directly - the Call opcode intercepts intrinsic calls
     Err(VmError::Runtime(
-        "generator_next intrinsic should be handled by Call opcode, not called directly".to_string()
+        "generator_next intrinsic should be handled by Call opcode, not called directly"
+            .to_string(),
     ))
 }

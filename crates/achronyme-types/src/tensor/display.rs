@@ -1,6 +1,6 @@
+use super::core::{ComplexTensor, RealTensor};
 use crate::complex::Complex;
 use std::fmt;
-use super::core::{RealTensor, ComplexTensor};
 
 // Display formatting for RealTensor
 impl fmt::Display for RealTensor {

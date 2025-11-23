@@ -35,11 +35,7 @@ pub enum VmIterator {
     },
 
     /// Range iterator: Numeric ranges
-    Range {
-        current: f64,
-        end: f64,
-        step: f64,
-    },
+    Range { current: f64, end: f64, step: f64 },
 }
 
 impl VmIterator {
@@ -249,8 +245,7 @@ impl VmBuilder {
                         // Decay to vector
                         *can_stay_tensor = false;
                         // Convert existing data to Vector
-                        let mut vec: Vec<Value> =
-                            data.iter().map(|&n| Value::Number(n)).collect();
+                        let mut vec: Vec<Value> = data.iter().map(|&n| Value::Number(n)).collect();
                         vec.push(value);
                         *self = VmBuilder::Vector(vec);
                         Ok(())

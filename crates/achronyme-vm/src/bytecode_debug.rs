@@ -13,8 +13,10 @@ pub fn disassemble_function(func: &FunctionPrototype, name: &str) {
     if !func.upvalues.is_empty() {
         println!("\nUpvalues:");
         for (i, upval) in func.upvalues.iter().enumerate() {
-            println!("  [{}] depth={} reg={} mutable={}",
-                i, upval.depth, upval.register, upval.is_mutable);
+            println!(
+                "  [{}] depth={} reg={} mutable={}",
+                i, upval.depth, upval.register, upval.is_mutable
+            );
         }
     }
 
@@ -41,7 +43,10 @@ fn disassemble_instruction(instruction: u32, func: &FunctionPrototype) {
     let opcode = match OpCode::from_u8(opcode_byte) {
         Some(op) => op,
         None => {
-            println!("UNKNOWN     opcode={} (raw: 0x{:08x})", opcode_byte, instruction);
+            println!(
+                "UNKNOWN     opcode={} (raw: 0x{:08x})",
+                opcode_byte, instruction
+            );
             return;
         }
     };
@@ -55,7 +60,10 @@ fn disassemble_instruction(instruction: u32, func: &FunctionPrototype) {
         OpCode::LoadConst => {
             let a = decode_a(instruction);
             let bx = decode_bx(instruction);
-            let const_val = func.constants.constants.get(bx as usize)
+            let const_val = func
+                .constants
+                .constants
+                .get(bx as usize)
                 .map(|v| format!("{:?}", v))
                 .unwrap_or_else(|| "???".to_string());
             println!("LOADCONST   R{} K[{}]  ; {}", a, bx, const_val);
@@ -72,8 +80,17 @@ fn disassemble_instruction(instruction: u32, func: &FunctionPrototype) {
             let a = decode_a(instruction);
             let b = decode_b(instruction);
             let c = decode_c(instruction);
-            let field_name = func.constants.constants.get(b as usize)
-                .and_then(|v| if let crate::value::Value::String(s) = v { Some(s.as_str()) } else { None })
+            let field_name = func
+                .constants
+                .constants
+                .get(b as usize)
+                .and_then(|v| {
+                    if let crate::value::Value::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or("???");
             println!("SETFIELD    R{} \"{}\" R{}", a, field_name, c);
         }
@@ -81,8 +98,17 @@ fn disassemble_instruction(instruction: u32, func: &FunctionPrototype) {
             let a = decode_a(instruction);
             let b = decode_b(instruction);
             let c = decode_c(instruction);
-            let field_name = func.constants.constants.get(c as usize)
-                .and_then(|v| if let crate::value::Value::String(s) = v { Some(s.as_str()) } else { None })
+            let field_name = func
+                .constants
+                .constants
+                .get(c as usize)
+                .and_then(|v| {
+                    if let crate::value::Value::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or("???");
             println!("GETFIELD    R{} R{} \"{}\"", a, b, field_name);
         }

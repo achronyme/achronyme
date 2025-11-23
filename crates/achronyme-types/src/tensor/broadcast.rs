@@ -80,14 +80,22 @@ impl<T: Clone> Tensor<T> {
 
     /// Adjust multi-dimensional indices for broadcasting
     /// Maps indices from result shape to indices in original shape
-    pub(crate) fn broadcast_index(result_indices: &[usize], original_shape: &[usize], result_shape: &[usize]) -> Vec<usize> {
+    pub(crate) fn broadcast_index(
+        result_indices: &[usize],
+        original_shape: &[usize],
+        result_shape: &[usize],
+    ) -> Vec<usize> {
         let rank_diff = result_shape.len() - original_shape.len();
         let mut adjusted = Vec::with_capacity(original_shape.len());
 
         for i in 0..original_shape.len() {
             let result_idx = result_indices[i + rank_diff];
             // If the original dimension is 1, always use index 0 (broadcasting)
-            adjusted.push(if original_shape[i] == 1 { 0 } else { result_idx });
+            adjusted.push(if original_shape[i] == 1 {
+                0
+            } else {
+                result_idx
+            });
         }
 
         adjusted

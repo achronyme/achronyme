@@ -67,9 +67,8 @@ pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     use std::fs;
 
     // Read the module file
-    let source = fs::read_to_string(&file_path).map_err(|e| {
-        VmError::Runtime(format!("Failed to read module '{}': {}", file_path, e))
-    })?;
+    let source = fs::read_to_string(&file_path)
+        .map_err(|e| VmError::Runtime(format!("Failed to read module '{}': {}", file_path, e)))?;
 
     // Parse the module
     let ast = achronyme_parser::parse(&source).map_err(|e| {
@@ -79,19 +78,13 @@ pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     // Compile the module
     let mut module_compiler = crate::compiler::Compiler::new(file_path.clone());
     let module_bytecode = module_compiler.compile(&ast).map_err(|e| {
-        VmError::Runtime(format!(
-            "Failed to compile module '{}': {:?}",
-            file_path, e
-        ))
+        VmError::Runtime(format!("Failed to compile module '{}': {:?}", file_path, e))
     })?;
 
     // Execute the module to get the exports Record
     let mut module_vm = VM::new();
     let module_result = module_vm.execute(module_bytecode).map_err(|e| {
-        VmError::Runtime(format!(
-            "Failed to execute module '{}': {:?}",
-            file_path, e
-        ))
+        VmError::Runtime(format!("Failed to execute module '{}': {:?}", file_path, e))
     })?;
 
     // Verify the result is a Record (module should return exports Record)

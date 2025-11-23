@@ -1,16 +1,16 @@
-use pest::iterators::Pair;
 use crate::ast::AstNode;
 use crate::pest_parser::Rule;
+use pest::iterators::Pair;
 
-pub mod statements;
-pub mod expressions;
-pub mod primary;
 pub mod collections;
 pub mod control_flow;
+pub mod expressions;
 pub mod functions;
-pub mod util;
-pub mod type_parser;
 pub mod pattern;
+pub mod primary;
+pub mod statements;
+pub mod type_parser;
+pub mod util;
 
 // ============================================================================
 // AST Parser Struct
@@ -43,13 +43,15 @@ impl AstParser {
 
     // Build AST from top_level_expr (either sequence or statement)
     fn build_ast_from_top_level_expr(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
-        let inner = pair.into_inner().next()
-            .ok_or("Empty top_level_expr")?;
+        let inner = pair.into_inner().next().ok_or("Empty top_level_expr")?;
 
         match inner.as_rule() {
             Rule::sequence => self.build_sequence(inner),
             Rule::statement => self.build_ast_from_statement(inner),
-            _ => Err(format!("Unexpected top_level_expr rule: {:?}", inner.as_rule()))
+            _ => Err(format!(
+                "Unexpected top_level_expr rule: {:?}",
+                inner.as_rule()
+            )),
         }
     }
 

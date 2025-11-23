@@ -27,12 +27,12 @@ pub struct SOCParser;
 
 /// Parse a SOC expression string into an AST
 pub fn parse(input: &str) -> Result<Vec<AstNode>, String> {
-    let pairs = SOCParser::parse(Rule::program, input)
-        .map_err(|e| format!("Parse error: {}", e))?;
-    
+    let pairs =
+        SOCParser::parse(Rule::program, input).map_err(|e| format!("Parse error: {}", e))?;
+
     // The unwrap is safe because a valid program will always have a `program` rule.
     let program_pair = pairs.into_iter().next().unwrap();
-    
+
     AstParser::new().parse_program(program_pair)
 }
 
@@ -124,7 +124,10 @@ mod tests {
     fn test_parse_complex() {
         let result = parse("3i").unwrap();
         assert_eq!(result.len(), 1);
-        assert!(matches!(result[0], AstNode::ComplexLiteral { re: 0.0, im: 3.0 }));
+        assert!(matches!(
+            result[0],
+            AstNode::ComplexLiteral { re: 0.0, im: 3.0 }
+        ));
     }
 
     #[test]
@@ -180,7 +183,10 @@ mod tests {
                     AstNode::If { .. } => {
                         // Correct, functional if is converted to If node
                     }
-                    _ => panic!("Expected If node for if(cond, then, else), got {:?}", ast[0])
+                    _ => panic!(
+                        "Expected If node for if(cond, then, else), got {:?}",
+                        ast[0]
+                    ),
                 }
             }
             Err(e) => {

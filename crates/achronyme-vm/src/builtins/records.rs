@@ -22,7 +22,9 @@ pub fn vm_keys(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Record(rc) => {
             let map = rc.borrow();
             let keys: Vec<Value> = map.keys().map(|k| Value::String(k.clone())).collect();
-            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(keys))))
+            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
+                keys,
+            ))))
         }
         _ => Err(VmError::TypeError {
             operation: "keys".to_string(),
@@ -45,7 +47,9 @@ pub fn vm_values(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Record(rc) => {
             let map = rc.borrow();
             let values: Vec<Value> = map.values().cloned().collect();
-            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(values))))
+            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
+                values,
+            ))))
         }
         _ => Err(VmError::TypeError {
             operation: "values".to_string(),

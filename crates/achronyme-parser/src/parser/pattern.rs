@@ -1,7 +1,7 @@
-use pest::iterators::Pair;
-use crate::ast::{AstNode, Pattern, LiteralPattern, VectorPatternElement, MatchArm};
+use crate::ast::{AstNode, LiteralPattern, MatchArm, Pattern, VectorPatternElement};
 use crate::parser::AstParser;
 use crate::pest_parser::Rule;
+use pest::iterators::Pair;
 
 impl AstParser {
     /// Build a match expression: match value { pattern => expr, ... }
@@ -9,8 +9,7 @@ impl AstParser {
         let mut inner = pair.into_inner();
 
         // First element is the value to match
-        let value_pair = inner.next()
-            .ok_or("Missing value in match expression")?;
+        let value_pair = inner.next().ok_or("Missing value in match expression")?;
         let value = Box::new(self.build_ast_from_expr(value_pair)?);
 
         // Remaining elements are match arms
@@ -33,18 +32,17 @@ impl AstParser {
         let mut inner = pair.into_inner();
 
         // First is the pattern
-        let pattern_pair = inner.next()
-            .ok_or("Missing pattern in match arm")?;
+        let pattern_pair = inner.next().ok_or("Missing pattern in match arm")?;
         let pattern = self.build_pattern(pattern_pair)?;
 
         // Next could be guard_clause or expression
-        let next_pair = inner.next()
-            .ok_or("Missing body in match arm")?;
+        let next_pair = inner.next().ok_or("Missing body in match arm")?;
 
         let (guard, body) = if next_pair.as_rule() == Rule::guard_clause {
             // We have a guard clause
             let guard_expr = self.build_guard_clause(next_pair)?;
-            let body_pair = inner.next()
+            let body_pair = inner
+                .next()
                 .ok_or("Missing body after guard in match arm")?;
             let body = Box::new(self.build_ast_from_expr(body_pair)?);
             (Some(guard_expr), body)
@@ -54,20 +52,25 @@ impl AstParser {
             (None, body)
         };
 
-        Ok(MatchArm { pattern, guard, body })
+        Ok(MatchArm {
+            pattern,
+            guard,
+            body,
+        })
     }
 
     /// Build a guard clause: if condition
     fn build_guard_clause(&mut self, pair: Pair<Rule>) -> Result<Box<AstNode>, String> {
-        let expr_pair = pair.into_inner().next()
+        let expr_pair = pair
+            .into_inner()
+            .next()
             .ok_or("Missing expression in guard clause")?;
         Ok(Box::new(self.build_ast_from_expr(expr_pair)?))
     }
 
     /// Build a pattern
     pub(super) fn build_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
-        let inner = pair.into_inner().next()
-            .ok_or("Empty pattern")?;
+        let inner = pair.into_inner().next().ok_or("Empty pattern")?;
 
         match inner.as_rule() {
             Rule::literal_pattern => self.build_literal_pattern(inner),
@@ -76,25 +79,26 @@ impl AstParser {
             Rule::type_pattern => Ok(Pattern::Type(inner.as_str().to_string())),
             Rule::record_pattern => self.build_record_pattern(inner),
             Rule::vector_pattern => self.build_vector_pattern(inner),
-            _ => Err(format!("Unexpected pattern rule: {:?}", inner.as_rule()))
+            _ => Err(format!("Unexpected pattern rule: {:?}", inner.as_rule())),
         }
     }
 
     /// Build a literal pattern (number, string, boolean, null)
     fn build_literal_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
-        let inner = pair.into_inner().next()
-            .ok_or("Empty literal pattern")?;
+        let inner = pair.into_inner().next().ok_or("Empty literal pattern")?;
 
         let literal = match inner.as_rule() {
             Rule::number => {
-                let num = inner.as_str().parse::<f64>()
+                let num = inner
+                    .as_str()
+                    .parse::<f64>()
                     .map_err(|e| format!("Failed to parse number in pattern: {}", e))?;
                 LiteralPattern::Number(num)
             }
             Rule::string_literal => {
                 let s = inner.as_str();
                 // Remove surrounding quotes
-                let content = &s[1..s.len()-1];
+                let content = &s[1..s.len() - 1];
                 // Process escape sequences
                 let processed = self.process_escape_sequences(content);
                 LiteralPattern::String(processed)
@@ -103,10 +107,13 @@ impl AstParser {
                 let value = inner.as_str() == "true";
                 LiteralPattern::Boolean(value)
             }
-            Rule::null_literal => {
-                LiteralPattern::Null
+            Rule::null_literal => LiteralPattern::Null,
+            _ => {
+                return Err(format!(
+                    "Unexpected literal pattern rule: {:?}",
+                    inner.as_rule()
+                ))
             }
-            _ => return Err(format!("Unexpected literal pattern rule: {:?}", inner.as_rule()))
         };
 
         Ok(Pattern::Literal(literal))
@@ -114,8 +121,7 @@ impl AstParser {
 
     /// Build a variable pattern (identifier that binds the matched value)
     fn build_variable_pattern(&mut self, pair: Pair<Rule>) -> Result<Pattern, String> {
-        let ident = pair.into_inner().next()
-            .ok_or("Empty variable pattern")?;
+        let ident = pair.into_inner().next().ok_or("Empty variable pattern")?;
         Ok(Pattern::Variable(ident.as_str().to_string()))
     }
 
@@ -134,11 +140,13 @@ impl AstParser {
     }
 
     /// Build a single record pattern field: name: pattern = default OR name = default OR name (shorthand)
-    fn build_record_pattern_field(&mut self, pair: Pair<Rule>) -> Result<(String, Pattern, Option<Box<AstNode>>), String> {
+    fn build_record_pattern_field(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<(String, Pattern, Option<Box<AstNode>>), String> {
         let mut inner = pair.into_inner();
 
-        let name_pair = inner.next()
-            .ok_or("Missing field name in record pattern")?;
+        let name_pair = inner.next().ok_or("Missing field name in record pattern")?;
         let name = name_pair.as_str().to_string();
 
         // Check what comes next: pattern, default expr, or nothing
@@ -161,7 +169,10 @@ impl AstParser {
                     default_expr = Some(Box::new(self.build_ast_from_expr(next_pair)?));
                 }
                 _ => {
-                    return Err(format!("Unexpected rule in record pattern field: {:?}", next_pair.as_rule()));
+                    return Err(format!(
+                        "Unexpected rule in record pattern field: {:?}",
+                        next_pair.as_rule()
+                    ));
                 }
             }
         }
@@ -184,20 +195,28 @@ impl AstParser {
     }
 
     /// Build a vector pattern element: pattern = default or ...rest
-    fn build_vector_pattern_element(&mut self, pair: Pair<Rule>) -> Result<VectorPatternElement, String> {
-        let inner = pair.into_inner().next()
+    fn build_vector_pattern_element(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<VectorPatternElement, String> {
+        let inner = pair
+            .into_inner()
+            .next()
             .ok_or("Empty vector pattern element")?;
 
         match inner.as_rule() {
             Rule::rest_pattern => {
-                let ident = inner.into_inner().next()
+                let ident = inner
+                    .into_inner()
+                    .next()
                     .ok_or("Missing identifier in rest pattern")?;
                 Ok(VectorPatternElement::Rest(ident.as_str().to_string()))
             }
             Rule::pattern_with_default => {
                 // Parse pattern with optional default
                 let mut pattern_inner = inner.into_inner();
-                let pattern_pair = pattern_inner.next()
+                let pattern_pair = pattern_inner
+                    .next()
                     .ok_or("Missing pattern in pattern_with_default")?;
                 let pattern = self.build_pattern(pattern_pair)?;
 
@@ -215,7 +234,10 @@ impl AstParser {
                 let pattern = self.build_pattern(inner)?;
                 Ok(VectorPatternElement::Pattern(pattern, None))
             }
-            _ => Err(format!("Unexpected vector pattern element rule: {:?}", inner.as_rule()))
+            _ => Err(format!(
+                "Unexpected vector pattern element rule: {:?}",
+                inner.as_rule()
+            )),
         }
     }
 }

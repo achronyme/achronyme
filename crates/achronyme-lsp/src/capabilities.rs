@@ -4,9 +4,7 @@ use tower_lsp::lsp_types::*;
 pub fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         // Full text sync - simplest to implement
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(
-            TextDocumentSyncKind::FULL,
-        )),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
 
         // Hover information (function signatures, type info)
         hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -37,8 +35,6 @@ pub fn server_capabilities() -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
 
         // Diagnostics are pushed via publishDiagnostics (no special capability needed)
-
         ..Default::default()
     }
 }
-

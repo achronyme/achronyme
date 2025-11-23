@@ -1,5 +1,5 @@
-use std::ops::{Add, Sub, Mul, Div, Neg};
 use std::fmt;
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Complex {

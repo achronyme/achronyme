@@ -1,8 +1,7 @@
 /// Tests for newline-based statement separation
 ///
 /// Verifies that statements can be separated by newlines instead of semicolons
-
-use achronyme_parser::{parse, ast::*};
+use achronyme_parser::{ast::*, parse};
 
 #[test]
 fn test_two_statements_with_newline() {

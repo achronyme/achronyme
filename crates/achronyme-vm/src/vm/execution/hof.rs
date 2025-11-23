@@ -26,7 +26,10 @@ impl VM {
     ///
     /// Creates a VmIterator from the source collection and stores it as an opaque
     /// Value::Iterator in the destination register.
-    pub(crate) fn execute_iter_init(&mut self, instruction: u32) -> Result<ExecutionResult, VmError> {
+    pub(crate) fn execute_iter_init(
+        &mut self,
+        instruction: u32,
+    ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
         let src = decode_b(instruction);
 
@@ -51,7 +54,10 @@ impl VM {
     /// Attempts to get the next value from the iterator. If successful, stores
     /// the value in the destination register and continues. If the iterator is
     /// exhausted, reads the next u16 as a jump offset and jumps forward.
-    pub(crate) fn execute_iter_next(&mut self, instruction: u32) -> Result<ExecutionResult, VmError> {
+    pub(crate) fn execute_iter_next(
+        &mut self,
+        instruction: u32,
+    ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
         let iter_reg = decode_b(instruction);
 
@@ -89,8 +95,12 @@ impl VM {
             None => {
                 // Iterator exhausted - read next instruction for jump offset
                 let frame = self.current_frame_mut()?;
-                let offset_hi = frame.fetch().ok_or(VmError::Runtime("Missing jump offset".into()))?;
-                let offset_lo = frame.fetch().ok_or(VmError::Runtime("Missing jump offset".into()))?;
+                let offset_hi = frame
+                    .fetch()
+                    .ok_or(VmError::Runtime("Missing jump offset".into()))?;
+                let offset_lo = frame
+                    .fetch()
+                    .ok_or(VmError::Runtime("Missing jump offset".into()))?;
                 let jump_offset = ((offset_hi as u16) << 8) | (offset_lo as u16);
 
                 // Jump forward
@@ -110,7 +120,10 @@ impl VM {
     ///
     /// Creates a VmBuilder with an optional type hint. The hint value guides
     /// what type of collection to build (e.g., Tensor hint creates TensorBuilder).
-    pub(crate) fn execute_build_init(&mut self, instruction: u32) -> Result<ExecutionResult, VmError> {
+    pub(crate) fn execute_build_init(
+        &mut self,
+        instruction: u32,
+    ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
         let hint_reg = decode_b(instruction);
 
@@ -137,7 +150,10 @@ impl VM {
     ///
     /// Pushes a value into the builder. The builder may decay its type if an
     /// incompatible value is pushed (e.g., TensorBuilder receiving a String).
-    pub(crate) fn execute_build_push(&mut self, instruction: u32) -> Result<ExecutionResult, VmError> {
+    pub(crate) fn execute_build_push(
+        &mut self,
+        instruction: u32,
+    ) -> Result<ExecutionResult, VmError> {
         let builder_reg = decode_a(instruction);
         let value_reg = decode_b(instruction);
 
@@ -173,7 +189,10 @@ impl VM {
     /// - C: Unused
     ///
     /// Consumes the builder and produces the final collection value.
-    pub(crate) fn execute_build_end(&mut self, instruction: u32) -> Result<ExecutionResult, VmError> {
+    pub(crate) fn execute_build_end(
+        &mut self,
+        instruction: u32,
+    ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
         let builder_reg = decode_b(instruction);
 
@@ -217,7 +236,8 @@ mod tests {
             Rc::new(crate::bytecode::ConstantPool::new()),
         );
         proto.register_count = 10; // Allocate enough registers for testing
-        vm.frames.push(crate::vm::frame::CallFrame::new(Rc::new(proto), None));
+        vm.frames
+            .push(crate::vm::frame::CallFrame::new(Rc::new(proto), None));
         vm.set_register(1, vec_value).unwrap();
 
         // Execute: R[0] = Iterator(R[1])
@@ -238,7 +258,8 @@ mod tests {
             Rc::new(crate::bytecode::ConstantPool::new()),
         );
         proto.register_count = 10; // Allocate enough registers for testing
-        vm.frames.push(crate::vm::frame::CallFrame::new(Rc::new(proto), None));
+        vm.frames
+            .push(crate::vm::frame::CallFrame::new(Rc::new(proto), None));
 
         // Execute: R[0] = Builder()
         let instruction = encode_abc(OpCode::BuildInit.as_u8(), 0, 0, 0);

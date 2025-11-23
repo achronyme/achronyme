@@ -3,8 +3,8 @@
 //! These tests verify that the grammar and parser correctly handle default values
 //! in function parameters, including validation of parameter ordering.
 
-use achronyme_parser::parse;
 use achronyme_parser::ast::AstNode;
+use achronyme_parser::parse;
 
 #[test]
 fn test_parse_simple_default() {
@@ -129,7 +129,11 @@ fn test_parse_complex_typed_with_defaults() {
 
     let stmts = result.unwrap();
     match &stmts[0] {
-        AstNode::Lambda { params, return_type, .. } => {
+        AstNode::Lambda {
+            params,
+            return_type,
+            ..
+        } => {
             assert_eq!(params.len(), 3);
             assert!(return_type.is_some());
         }
@@ -140,7 +144,11 @@ fn test_parse_complex_typed_with_defaults() {
 #[test]
 fn test_parse_no_space_around_equals() {
     let result = parse("(x=10) => x");
-    assert!(result.is_ok(), "Failed to parse without spaces: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse without spaces: {:?}",
+        result.err()
+    );
 }
 
 #[test]

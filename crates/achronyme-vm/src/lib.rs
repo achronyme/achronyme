@@ -33,11 +33,11 @@ pub mod value;
 pub mod vm;
 
 // Re-export main types
-pub use vm::VM;
-pub use compiler::Compiler;
-pub use opcode::OpCode;
-pub use error::{VmError, CompileError};
 pub use bytecode_debug::disassemble_function;
+pub use compiler::Compiler;
+pub use error::{CompileError, VmError};
+pub use opcode::OpCode;
+pub use vm::VM;
 
 #[cfg(test)]
 mod tests;

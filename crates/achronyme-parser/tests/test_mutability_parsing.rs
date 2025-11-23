@@ -1,4 +1,4 @@
-use achronyme_parser::{parse, ast::*};
+use achronyme_parser::{ast::*, parse};
 
 #[test]
 fn test_parse_mut_statement() {
@@ -9,7 +9,9 @@ fn test_parse_mut_statement() {
     assert_eq!(ast.len(), 1);
 
     match &ast[0] {
-        AstNode::MutableDecl { name, initializer, .. } => {
+        AstNode::MutableDecl {
+            name, initializer, ..
+        } => {
             assert_eq!(name, "x");
             match **initializer {
                 AstNode::Number(n) => assert_eq!(n, 10.0),
@@ -197,7 +199,7 @@ fn test_parse_record_only_mutable_fields() {
 
             for field in fields {
                 match field {
-                    RecordFieldOrSpread::MutableField { .. } => {},
+                    RecordFieldOrSpread::MutableField { .. } => {}
                     _ => panic!("Expected all fields to be mutable"),
                 }
             }
@@ -224,7 +226,7 @@ fn test_parse_sequence_mut_and_assignment() {
 
             // Second: assignment
             match &statements[1] {
-                AstNode::Assignment { .. } => {},
+                AstNode::Assignment { .. } => {}
                 _ => panic!("Expected Assignment"),
             }
 
@@ -263,7 +265,7 @@ fn test_parse_assignment_complex_expression() {
             // Target should be complex postfix expression
             // We just verify it parses, detailed structure varies
             match &**value {
-                AstNode::CallExpression { .. } => {},
+                AstNode::CallExpression { .. } => {}
                 _ => panic!("Expected CallExpression in value"),
             }
         }
@@ -274,10 +276,12 @@ fn test_parse_assignment_complex_expression() {
 #[test]
 fn test_parse_record_with_mutable_method() {
     // Note: assignments in lambda bodies require do blocks
-    let result = parse(r#"{
+    let result = parse(
+        r#"{
         mut valor: 0,
         incrementar: () => do { self.valor = self.valor + 1 }
-    }"#);
+    }"#,
+    );
 
     if let Err(ref e) = result {
         eprintln!("Parse error: {}", e);
@@ -309,7 +313,7 @@ fn test_parse_record_with_mutable_method() {
                                 AstNode::DoBlock { statements } => {
                                     assert!(statements.len() > 0);
                                     match &statements[0] {
-                                        AstNode::Assignment { .. } => {},
+                                        AstNode::Assignment { .. } => {}
                                         _ => panic!("Expected Assignment in do block"),
                                     }
                                 }

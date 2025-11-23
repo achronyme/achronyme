@@ -263,7 +263,9 @@ pub fn vm_split(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 .split(delimiter.as_str())
                 .map(|part| Value::String(part.to_string()))
                 .collect();
-            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(parts))))
+            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
+                parts,
+            ))))
         }
         _ => Err(VmError::TypeError {
             operation: "split".to_string(),

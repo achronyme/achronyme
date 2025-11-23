@@ -5,9 +5,9 @@ use crate::bytecode::BytecodeModule;
 use crate::error::VmError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 // Module structure
 mod execution;
@@ -21,7 +21,7 @@ mod result;
 // Re-export public types
 pub use frame::{CallFrame, RegisterWindow, SuspendedFrame, MAX_REGISTERS};
 pub use generator::{VmGeneratorRef, VmGeneratorState};
-pub use iterator::{VmIterator, VmBuilder};
+pub use iterator::{VmBuilder, VmIterator};
 
 // Internal imports
 use frame::CallFrame as InternalCallFrame;
@@ -80,8 +80,8 @@ impl VM {
             intrinsics: IntrinsicRegistry::new(),
             pending_intrinsic_calls: HashMap::new(),
             current_module: None,
-            precision: None,  // Full precision by default
-            epsilon: 1e-10,   // Default epsilon threshold
+            precision: None, // Full precision by default
+            epsilon: 1e-10,  // Default epsilon threshold
         }
     }
 
@@ -125,8 +125,7 @@ impl VM {
 
             // Decode and dispatch
             let opcode_byte = decode_opcode(instruction);
-            let opcode = OpCode::from_u8(opcode_byte)
-                .ok_or(VmError::InvalidOpcode(opcode_byte))?;
+            let opcode = OpCode::from_u8(opcode_byte).ok_or(VmError::InvalidOpcode(opcode_byte))?;
 
             // Execute instruction
             match self.execute_instruction(opcode, instruction)? {
@@ -162,7 +161,9 @@ impl VM {
 
                         // No handler in this frame
                         // Check if this is a generator frame and mark it as done
-                        let is_generator = self.frames.last()
+                        let is_generator = self
+                            .frames
+                            .last()
                             .and_then(|f| f.generator.as_ref())
                             .is_some();
 
@@ -170,7 +171,11 @@ impl VM {
                             let gen_frame = self.frames.last().unwrap();
                             if let Some(ref gen_value) = gen_frame.generator {
                                 if let Value::Generator(any_ref) = gen_value {
-                                    if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
+                                    if let Some(state_rc) =
+                                        any_ref.downcast_ref::<std::cell::RefCell<
+                                            crate::vm::generator::VmGeneratorState,
+                                        >>()
+                                    {
                                         let mut state = state_rc.borrow_mut();
                                         state.complete(None);
                                     }
@@ -232,15 +237,23 @@ impl VM {
     ) -> Result<ExecutionResult, VmError> {
         match opcode {
             // Variable and constant operations
-            OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadTrue | OpCode::LoadFalse
-            | OpCode::LoadImmI8 | OpCode::Move | OpCode::GetUpvalue | OpCode::SetUpvalue => {
-                self.execute_variables(opcode, instruction)
-            }
+            OpCode::LoadConst
+            | OpCode::LoadNull
+            | OpCode::LoadTrue
+            | OpCode::LoadFalse
+            | OpCode::LoadImmI8
+            | OpCode::Move
+            | OpCode::GetUpvalue
+            | OpCode::SetUpvalue => self.execute_variables(opcode, instruction),
 
             // Arithmetic and logical operations
-            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Pow | OpCode::Neg | OpCode::Not => {
-                self.execute_arithmetic(opcode, instruction)
-            }
+            OpCode::Add
+            | OpCode::Sub
+            | OpCode::Mul
+            | OpCode::Div
+            | OpCode::Pow
+            | OpCode::Neg
+            | OpCode::Not => self.execute_arithmetic(opcode, instruction),
 
             // Comparison operations
             OpCode::Eq | OpCode::Lt | OpCode::Le | OpCode::Gt | OpCode::Ge | OpCode::Ne => {
@@ -248,16 +261,24 @@ impl VM {
             }
 
             // Control flow
-            OpCode::Jump | OpCode::JumpIfTrue | OpCode::JumpIfFalse | OpCode::JumpIfNull
-            | OpCode::Return | OpCode::ReturnNull => self.execute_control(opcode, instruction),
+            OpCode::Jump
+            | OpCode::JumpIfTrue
+            | OpCode::JumpIfFalse
+            | OpCode::JumpIfNull
+            | OpCode::Return
+            | OpCode::ReturnNull => self.execute_control(opcode, instruction),
 
             // Functions and closures
-            OpCode::Closure | OpCode::Call | OpCode::TailCall => self.execute_functions(opcode, instruction),
+            OpCode::Closure | OpCode::Call | OpCode::TailCall => {
+                self.execute_functions(opcode, instruction)
+            }
 
             // Vectors
-            OpCode::NewVector | OpCode::VecPush | OpCode::VecGet | OpCode::VecSet | OpCode::VecSlice => {
-                self.execute_vectors(opcode, instruction)
-            }
+            OpCode::NewVector
+            | OpCode::VecPush
+            | OpCode::VecGet
+            | OpCode::VecSet
+            | OpCode::VecSlice => self.execute_vectors(opcode, instruction),
 
             // Records
             OpCode::NewRecord | OpCode::GetField | OpCode::SetField => {
@@ -265,9 +286,10 @@ impl VM {
             }
 
             // Pattern Matching
-            OpCode::MatchType | OpCode::MatchLit | OpCode::DestructureVec | OpCode::DestructureRec => {
-                self.execute_matching(opcode, instruction)
-            }
+            OpCode::MatchType
+            | OpCode::MatchLit
+            | OpCode::DestructureVec
+            | OpCode::DestructureRec => self.execute_matching(opcode, instruction),
 
             // Generators
             OpCode::CreateGen | OpCode::Yield | OpCode::ResumeGen | OpCode::MakeIterator => {
@@ -280,14 +302,10 @@ impl VM {
             }
 
             // Type System
-            OpCode::TypeCheck | OpCode::TypeAssert => {
-                self.execute_types(opcode, instruction)
-            }
+            OpCode::TypeCheck | OpCode::TypeAssert => self.execute_types(opcode, instruction),
 
             // Built-in Functions
-            OpCode::CallBuiltin => {
-                self.execute_call_builtin(instruction)
-            }
+            OpCode::CallBuiltin => self.execute_call_builtin(instruction),
 
             // Higher-Order Functions
             OpCode::IterInit => self.execute_iter_init(instruction),
@@ -410,8 +428,8 @@ impl VM {
 
                     // Decode and dispatch
                     let opcode_byte = decode_opcode(instruction);
-                    let opcode = OpCode::from_u8(opcode_byte)
-                        .ok_or(VmError::InvalidOpcode(opcode_byte))?;
+                    let opcode =
+                        OpCode::from_u8(opcode_byte).ok_or(VmError::InvalidOpcode(opcode_byte))?;
 
                     // Execute instruction
                     match self.execute_instruction(opcode, instruction)? {
@@ -535,17 +553,22 @@ impl VM {
 
                 return Ok(ExecutionResult::Continue);
             } else {
-                return Err(VmError::Runtime("Invalid generator type (expected VM generator or native iterator)".to_string()));
+                return Err(VmError::Runtime(
+                    "Invalid generator type (expected VM generator or native iterator)".to_string(),
+                ));
             }
         } else {
-            return Err(VmError::Runtime(format!("Cannot resume non-generator value: {:?}", gen_value)));
+            return Err(VmError::Runtime(format!(
+                "Cannot resume non-generator value: {:?}",
+                gen_value
+            )));
         }
     }
 
     /// Set the global precision for number formatting and rounding
     pub fn set_precision(&mut self, decimals: i32) {
         if decimals < 0 {
-            self.precision = None;  // Full precision
+            self.precision = None; // Full precision
         } else {
             self.precision = Some(decimals);
         }
@@ -583,7 +606,9 @@ impl VM {
         // Check if this is a generator frame
         if let Some(ref gen_value) = frame.generator {
             if let Value::Generator(any_ref) = gen_value {
-                if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
+                if let Some(state_rc) = any_ref
+                    .downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>()
+                {
                     let mut state = state_rc.borrow_mut();
                     // Mark generator as done
                     state.complete(Some(value.clone()));

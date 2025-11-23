@@ -1,8 +1,8 @@
 use crate::value::Value;
 use achronyme_parser::type_annotation::TypeAnnotation;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 /// Environment for variable storage with scope support using linked list of scopes
 ///
@@ -133,7 +133,12 @@ impl Environment {
     /// * `name` - Variable name
     /// * `value` - Initial value
     /// * `type_ann` - Type annotation to enforce on assignments
-    pub fn define_mutable_typed(&mut self, name: String, value: Value, type_ann: TypeAnnotation) -> Result<(), String> {
+    pub fn define_mutable_typed(
+        &mut self,
+        name: String,
+        value: Value,
+        type_ann: TypeAnnotation,
+    ) -> Result<(), String> {
         // Wrap in MutableRef
         let stored_value = Value::new_mutable(value);
 
@@ -146,7 +151,12 @@ impl Environment {
     }
 
     /// Internal: Define a variable with specified mutability
-    fn define_with_mutability(&mut self, name: String, value: Value, is_mutable: bool) -> Result<(), String> {
+    fn define_with_mutability(
+        &mut self,
+        name: String,
+        value: Value,
+        is_mutable: bool,
+    ) -> Result<(), String> {
         // Wrap in MutableRef if mutable
         let stored_value = if is_mutable {
             Value::new_mutable(value)

@@ -23,21 +23,24 @@ impl Compiler {
     /// ```
     /// CREATE_GEN R[dst], proto_idx
     /// ```
-    pub(crate) fn compile_generate_block(&mut self, statements: &[AstNode]) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_generate_block(
+        &mut self,
+        statements: &[AstNode],
+    ) -> Result<RegResult, CompileError> {
         // Create a nested function prototype for the generator
         let gen_name = format!("<generator@{}>", self.current_position());
         let mut child_compiler = Compiler {
-            module_name: self.module_name.clone(),  // Inherit module name from parent
+            module_name: self.module_name.clone(), // Inherit module name from parent
             function: FunctionPrototype::new(gen_name, self.function.constants.clone()),
             registers: RegisterAllocator::new(),
             symbols: SymbolTable::new(),
             loops: Vec::new(),
             parent: None,
             builtins: self.builtins.clone(),
-            type_registry: self.type_registry.clone(),  // Share the type registry
+            type_registry: self.type_registry.clone(), // Share the type registry
             exported_values: std::collections::HashMap::new(),
             exported_types: std::collections::HashMap::new(),
-            exports_reg: None,  // Generators don't have exports
+            exports_reg: None, // Generators don't have exports
         };
 
         // Mark the function as a generator
@@ -60,13 +63,15 @@ impl Compiler {
                     }
 
                     upvalues.push(crate::bytecode::UpvalueDescriptor {
-                        depth: 0,  // Immediate parent
+                        depth: 0, // Immediate parent
                         register: parent_reg,
-                        is_mutable: true,  // Assume mutable for now
+                        is_mutable: true, // Assume mutable for now
                     });
 
                     // Map variable to upvalue in child's symbol table
-                    child_compiler.symbols.define_upvalue(var.clone(), upvalue_idx as u8)?;
+                    child_compiler
+                        .symbols
+                        .define_upvalue(var.clone(), upvalue_idx as u8)?;
                 }
             }
         }
@@ -125,7 +130,10 @@ impl Compiler {
     ///
     /// When yield is used as an expression, it yields the value and returns it.
     /// This allows patterns like: `let x = yield value`
-    pub(crate) fn compile_yield_expr(&mut self, value: &AstNode) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_yield_expr(
+        &mut self,
+        value: &AstNode,
+    ) -> Result<RegResult, CompileError> {
         // Compile the value to yield
         let value_res = self.compile_expression(value)?;
 

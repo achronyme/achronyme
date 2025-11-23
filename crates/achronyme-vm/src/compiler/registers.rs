@@ -14,12 +14,18 @@ pub(crate) struct RegResult {
 impl RegResult {
     /// Create a temporary register result (can be freed)
     pub(crate) fn temp(index: u8) -> Self {
-        Self { index, is_temp: true }
+        Self {
+            index,
+            is_temp: true,
+        }
     }
 
     /// Create a variable register result (should not be freed)
     pub(crate) fn var(index: u8) -> Self {
-        Self { index, is_temp: false }
+        Self {
+            index,
+            is_temp: false,
+        }
     }
 
     /// Get the register index
@@ -75,7 +81,9 @@ impl RegisterAllocator {
     /// Returns the first register in the sequence
     pub(crate) fn allocate_many(&mut self, count: usize) -> Result<u8, CompileError> {
         if count == 0 {
-            return Err(CompileError::Error("Cannot allocate 0 registers".to_string()));
+            return Err(CompileError::Error(
+                "Cannot allocate 0 registers".to_string(),
+            ));
         }
 
         // For simplicity, always allocate from next_free (don't use free_list for consecutive allocations)

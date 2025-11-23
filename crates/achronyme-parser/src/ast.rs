@@ -30,12 +30,12 @@ pub enum UnaryOp {
 /// Compound assignment operators: +=, -=, *=, /=, %=, ^=
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompoundOp {
-    AddAssign,  // +=
-    SubAssign,  // -=
-    MulAssign,  // *=
-    DivAssign,  // /=
-    ModAssign,  // %=
-    PowAssign,  // ^=
+    AddAssign, // +=
+    SubAssign, // -=
+    MulAssign, // *=
+    DivAssign, // /=
+    ModAssign, // %=
+    PowAssign, // ^=
 }
 
 // Import TypeAnnotation from local module (avoids circular dependency)
@@ -71,7 +71,7 @@ pub enum AstNode {
         args: Vec<AstNode>,
     },
     CallExpression {
-        callee: Box<AstNode>,  // Expression that evaluates to a function (for IIFE)
+        callee: Box<AstNode>, // Expression that evaluates to a function (for IIFE)
         args: Vec<AstNode>,
     },
     ComplexLiteral {
@@ -86,38 +86,38 @@ pub enum AstNode {
     },
     VariableDecl {
         name: String,
-        type_annotation: Option<TypeAnnotation>,  // Optional type annotation
+        type_annotation: Option<TypeAnnotation>, // Optional type annotation
         initializer: Box<AstNode>,
     },
     MutableDecl {
         name: String,
-        type_annotation: Option<TypeAnnotation>,  // Optional type annotation
+        type_annotation: Option<TypeAnnotation>, // Optional type annotation
         initializer: Box<AstNode>,
     },
     /// Destructuring let binding: let { x, y } = value or let [a, b] = value
     LetDestructuring {
         pattern: Pattern,
-        type_annotation: Option<TypeAnnotation>,  // Optional type annotation
+        type_annotation: Option<TypeAnnotation>, // Optional type annotation
         initializer: Box<AstNode>,
     },
     /// Mutable destructuring binding: mut { x, y } = value or mut [a, b] = value
     MutableDestructuring {
         pattern: Pattern,
-        type_annotation: Option<TypeAnnotation>,  // Optional type annotation
+        type_annotation: Option<TypeAnnotation>, // Optional type annotation
         initializer: Box<AstNode>,
     },
     Assignment {
-        target: Box<AstNode>,  // postfix_expression (variable, field access, index)
+        target: Box<AstNode>, // postfix_expression (variable, field access, index)
         value: Box<AstNode>,
     },
     /// Compound assignment: x += 5, obj.field -= 3, arr[0] *= 2
     CompoundAssignment {
-        target: Box<AstNode>,   // identifier, field access, or index
-        operator: CompoundOp,   // +=, -=, *=, /=, %=, ^=
-        value: Box<AstNode>,    // expression to apply
+        target: Box<AstNode>, // identifier, field access, or index
+        operator: CompoundOp, // +=, -=, *=, /=, %=, ^=
+        value: Box<AstNode>,  // expression to apply
     },
     Return {
-        value: Box<AstNode>,  // Expression to return
+        value: Box<AstNode>, // Expression to return
     },
     VariableRef(String),
     SelfReference, // 'self' keyword for use in records
@@ -233,7 +233,7 @@ pub enum AstNode {
     RangeExpr {
         start: Box<AstNode>,
         end: Box<AstNode>,
-        inclusive: bool,  // true for ..=, false for ..
+        inclusive: bool, // true for ..=, false for ..
     },
 }
 
@@ -249,23 +249,24 @@ pub enum StringPart {
 /// Represents an array element - can be a single expression or a spread expression
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArrayElement {
-    Single(AstNode),        // Regular element: expr
-    Spread(Box<AstNode>),   // Spread element: ...expr
+    Single(AstNode),      // Regular element: expr
+    Spread(Box<AstNode>), // Spread element: ...expr
 }
 
 /// Represents a record field or spread expression
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordFieldOrSpread {
-    Field { name: String, value: AstNode },         // Immutable field: key: value
-    MutableField { name: String, value: AstNode },  // Mutable field: mut key: value
-    Spread(Box<AstNode>),                           // Spread: ...expr
+    Field { name: String, value: AstNode }, // Immutable field: key: value
+    MutableField { name: String, value: AstNode }, // Mutable field: mut key: value
+    Spread(Box<AstNode>),                   // Spread: ...expr
 }
 
 /// Represents an indexing argument - can be a single expression or a range
 #[derive(Debug, Clone, PartialEq)]
 pub enum IndexArg {
-    Single(Box<AstNode>),  // Single index: tensor[5]
-    Range {                // Range slice: tensor[1..5], tensor[..5], tensor[1..], tensor[..]
+    Single(Box<AstNode>), // Single index: tensor[5]
+    Range {
+        // Range slice: tensor[1..5], tensor[..5], tensor[1..], tensor[..]
         start: Option<Box<AstNode>>,
         end: Option<Box<AstNode>>,
     },
@@ -275,8 +276,8 @@ pub enum IndexArg {
 /// Examples: foo, foo as bar
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportItem {
-    pub name: String,           // The original name in the module
-    pub alias: Option<String>,  // Optional alias (for "as" imports)
+    pub name: String,          // The original name in the module
+    pub alias: Option<String>, // Optional alias (for "as" imports)
 }
 
 impl ImportItem {
@@ -302,14 +303,12 @@ pub enum Pattern {
     /// Record pattern: destructures record fields ({ name: n, age: a })
     /// Now with optional default values: { name, age = 25 }
     Record {
-        fields: Vec<(String, Pattern, Option<Box<AstNode>>)>,  // (field_name, pattern, optional_default)
+        fields: Vec<(String, Pattern, Option<Box<AstNode>>)>, // (field_name, pattern, optional_default)
     },
 
     /// Vector pattern: matches array structure ([x, y, ...rest])
     /// Now with optional default values: [first = 0, second = 0]
-    Vector {
-        elements: Vec<VectorPatternElement>,
-    },
+    Vector { elements: Vec<VectorPatternElement> },
 
     /// Type pattern: matches by runtime type (Number, String, Error)
     Type(String),
@@ -338,6 +337,6 @@ pub enum VectorPatternElement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub guard: Option<Box<AstNode>>,  // Optional if condition
+    pub guard: Option<Box<AstNode>>, // Optional if condition
     pub body: Box<AstNode>,
 }

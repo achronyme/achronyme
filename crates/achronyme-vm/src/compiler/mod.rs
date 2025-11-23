@@ -185,7 +185,9 @@ impl Compiler {
             let idx = pool.add_string(s);
 
             if idx > u8::MAX as usize {
-                return Err(CompileError::Error("Too many strings in constant pool".to_string()));
+                return Err(CompileError::Error(
+                    "Too many strings in constant pool".to_string(),
+                ));
             }
 
             Ok(idx)
@@ -202,7 +204,9 @@ impl Compiler {
             let idx = pool.add_string(s);
 
             if idx > u8::MAX as usize {
-                return Err(CompileError::Error("Too many strings in constant pool".to_string()));
+                return Err(CompileError::Error(
+                    "Too many strings in constant pool".to_string(),
+                ));
             }
 
             Ok(idx)
@@ -216,11 +220,7 @@ impl Compiler {
 
     /// Emit LOAD_CONST instruction
     pub(crate) fn emit_load_const(&mut self, dst: u8, const_idx: usize) {
-        self.emit(encode_abx(
-            OpCode::LoadConst.as_u8(),
-            dst,
-            const_idx as u16,
-        ));
+        self.emit(encode_abx(OpCode::LoadConst.as_u8(), dst, const_idx as u16));
     }
 
     /// Emit MOVE instruction
@@ -297,7 +297,10 @@ impl Compiler {
     }
 
     /// Convert type annotation to string for type checking
-    pub(crate) fn type_annotation_to_string(&self, type_ann: &achronyme_parser::TypeAnnotation) -> String {
+    pub(crate) fn type_annotation_to_string(
+        &self,
+        type_ann: &achronyme_parser::TypeAnnotation,
+    ) -> String {
         use achronyme_parser::TypeAnnotation;
 
         match type_ann {

@@ -3,9 +3,9 @@ use crate::complex::Complex;
 /// Generic N-dimensional tensor with efficient storage and operations
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<T> {
-    pub data: Vec<T>,           // Flat storage in row-major order
-    pub shape: Vec<usize>,      // Dimensions [d0, d1, d2, ...]
-    pub strides: Vec<usize>,    // Strides for efficient indexing
+    pub data: Vec<T>,        // Flat storage in row-major order
+    pub shape: Vec<usize>,   // Dimensions [d0, d1, d2, ...]
+    pub strides: Vec<usize>, // Strides for efficient indexing
 }
 
 // Type aliases for common cases
@@ -41,20 +41,23 @@ impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TensorError::DimensionMismatch { expected, got } => {
-                write!(f, "Dimension mismatch: expected {:?}, got {:?}", expected, got)
-            }
-            TensorError::InvalidShape { shape, data_len } => {
                 write!(
                     f,
-                    "Invalid shape {:?} for data length {}",
-                    shape, data_len
+                    "Dimension mismatch: expected {:?}, got {:?}",
+                    expected, got
                 )
+            }
+            TensorError::InvalidShape { shape, data_len } => {
+                write!(f, "Invalid shape {:?} for data length {}", shape, data_len)
             }
             TensorError::IndexOutOfBounds { index, shape } => {
                 write!(f, "Index {:?} out of bounds for shape {:?}", index, shape)
             }
             TensorError::EmptyTensor => write!(f, "Operation on empty tensor"),
-            TensorError::InvalidReshape { old_shape, new_shape } => {
+            TensorError::InvalidReshape {
+                old_shape,
+                new_shape,
+            } => {
                 write!(
                     f,
                     "Cannot reshape tensor from {:?} to {:?}",

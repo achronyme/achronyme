@@ -64,9 +64,12 @@ impl VM {
                         let pattern_const = self.get_constant(pattern_idx)?;
                         let element_count = match pattern_const {
                             Value::Number(n) => *n as usize,
-                            _ => return Err(VmError::Runtime(
-                                "DestructureVec pattern descriptor must be a number".to_string()
-                            )),
+                            _ => {
+                                return Err(VmError::Runtime(
+                                    "DestructureVec pattern descriptor must be a number"
+                                        .to_string(),
+                                ))
+                            }
                         };
 
                         // Borrow the vector to extract elements
@@ -76,9 +79,7 @@ impl VM {
                         // If vector is too short, use null for missing elements (for default value support)
                         let mut values = Vec::new();
                         for i in 0..element_count {
-                            let value = vec_borrowed.get(i)
-                                .cloned()
-                                .unwrap_or(Value::Null); // Use null if element doesn't exist
+                            let value = vec_borrowed.get(i).cloned().unwrap_or(Value::Null); // Use null if element doesn't exist
                             values.push(value);
                         }
 
@@ -87,8 +88,9 @@ impl VM {
 
                         // Now set the registers
                         for (i, value) in values.into_iter().enumerate() {
-                            let target_reg = dst_start.checked_add(i as u8)
-                                .ok_or(VmError::Runtime("Register overflow in destructuring".to_string()))?;
+                            let target_reg = dst_start.checked_add(i as u8).ok_or(
+                                VmError::Runtime("Register overflow in destructuring".to_string()),
+                            )?;
                             self.set_register(target_reg, value)?;
                         }
 
@@ -124,16 +126,22 @@ impl VM {
                                 for field in fields_borrowed.iter() {
                                     match field {
                                         Value::String(s) => names.push(s.clone()),
-                                        _ => return Err(VmError::Runtime(
-                                            "DestructureRec pattern must contain strings".to_string()
-                                        )),
+                                        _ => {
+                                            return Err(VmError::Runtime(
+                                                "DestructureRec pattern must contain strings"
+                                                    .to_string(),
+                                            ))
+                                        }
                                     }
                                 }
                                 names
                             }
-                            _ => return Err(VmError::Runtime(
-                                "DestructureRec pattern descriptor must be a vector".to_string()
-                            )),
+                            _ => {
+                                return Err(VmError::Runtime(
+                                    "DestructureRec pattern descriptor must be a vector"
+                                        .to_string(),
+                                ))
+                            }
                         };
 
                         // Extract all fields at once while we have the borrow
@@ -141,10 +149,8 @@ impl VM {
                         let rec_borrowed = rec_rc.borrow();
                         let mut values = Vec::new();
                         for field_name in field_names.iter() {
-                            let value = rec_borrowed
-                                .get(field_name)
-                                .cloned()
-                                .unwrap_or(Value::Null); // Use null if field doesn't exist
+                            let value =
+                                rec_borrowed.get(field_name).cloned().unwrap_or(Value::Null); // Use null if field doesn't exist
                             values.push(value);
                         }
 
@@ -153,8 +159,9 @@ impl VM {
 
                         // Now set the registers
                         for (i, value) in values.into_iter().enumerate() {
-                            let target_reg = dst_start.checked_add(i as u8)
-                                .ok_or(VmError::Runtime("Register overflow in destructuring".to_string()))?;
+                            let target_reg = dst_start.checked_add(i as u8).ok_or(
+                                VmError::Runtime("Register overflow in destructuring".to_string()),
+                            )?;
                             self.set_register(target_reg, value)?;
                         }
 

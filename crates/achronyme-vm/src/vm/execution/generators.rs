@@ -3,13 +3,13 @@
 use crate::error::VmError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
+use crate::vm::execution::iterators::{NativeIterator, StringIterator, VectorIterator};
+use crate::vm::generator::{VmGeneratorRef, VmGeneratorState};
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
-use crate::vm::generator::{VmGeneratorState, VmGeneratorRef};
-use crate::vm::execution::iterators::{NativeIterator, VectorIterator, StringIterator};
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::any::Any;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 impl VM {
     /// Execute generator instructions
@@ -29,7 +29,8 @@ impl VM {
                 let proto_idx = bx as usize;
 
                 // Get the function prototype
-                let proto = self.current_frame()?
+                let proto = self
+                    .current_frame()?
                     .function
                     .functions
                     .get(proto_idx)

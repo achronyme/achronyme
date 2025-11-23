@@ -29,7 +29,11 @@ fn test_pow_fractional() {
     let result = execute("10 ^ 0.5").unwrap();
     match result {
         Value::Number(n) => {
-            assert!((n - 3.16227766).abs() < 0.0001, "Expected ~3.16227766, got {}", n);
+            assert!(
+                (n - 3.16227766).abs() < 0.0001,
+                "Expected ~3.16227766, got {}",
+                n
+            );
         }
         _ => panic!("Expected Number"),
     }

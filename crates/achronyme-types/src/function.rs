@@ -1,10 +1,10 @@
+use crate::environment::Environment;
 use achronyme_parser::ast::AstNode;
 use achronyme_parser::type_annotation::TypeAnnotation;
+use std::any::Any;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::any::Any;
-use crate::environment::Environment;
 
 /// Function representation - can be either a user-defined lambda or a built-in function
 ///
@@ -77,8 +77,8 @@ impl Function {
         let param_count = params.len();
         Function::UserDefined {
             params,
-            param_types: vec![None; param_count],  // No type checking for legacy API
-            param_defaults: vec![None; param_count],  // No defaults for legacy API
+            param_types: vec![None; param_count], // No type checking for legacy API
+            param_defaults: vec![None; param_count], // No defaults for legacy API
             return_type: None,
             body: Rc::new(body),
             closure_env: Rc::new(RefCell::new(env)),
@@ -97,8 +97,8 @@ impl Function {
         let param_count = params.len();
         Function::UserDefined {
             params,
-            param_types: vec![None; param_count],  // No type checking
-            param_defaults: vec![None; param_count],  // No defaults
+            param_types: vec![None; param_count], // No type checking
+            param_defaults: vec![None; param_count], // No defaults
             return_type: None,
             body: Rc::new(body),
             closure_env,
@@ -119,7 +119,7 @@ impl Function {
         Function::UserDefined {
             params,
             param_types,
-            param_defaults: vec![None; param_count],  // No defaults (legacy compatibility)
+            param_defaults: vec![None; param_count], // No defaults (legacy compatibility)
             return_type,
             body: Rc::new(body),
             closure_env,
@@ -179,9 +179,30 @@ impl Function {
 impl PartialEq for Function {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Function::UserDefined { params: p1, param_types: pt1, param_defaults: pd1, return_type: rt1, body: b1, closure_env: e1 },
-             Function::UserDefined { params: p2, param_types: pt2, param_defaults: pd2, return_type: rt2, body: b2, closure_env: e2 }) => {
-                p1 == p2 && pt1 == pt2 && pd1.len() == pd2.len() && rt1 == rt2 && Rc::ptr_eq(b1, b2) && Rc::ptr_eq(e1, e2)
+            (
+                Function::UserDefined {
+                    params: p1,
+                    param_types: pt1,
+                    param_defaults: pd1,
+                    return_type: rt1,
+                    body: b1,
+                    closure_env: e1,
+                },
+                Function::UserDefined {
+                    params: p2,
+                    param_types: pt2,
+                    param_defaults: pd2,
+                    return_type: rt2,
+                    body: b2,
+                    closure_env: e2,
+                },
+            ) => {
+                p1 == p2
+                    && pt1 == pt2
+                    && pd1.len() == pd2.len()
+                    && rt1 == rt2
+                    && Rc::ptr_eq(b1, b2)
+                    && Rc::ptr_eq(e1, e2)
             }
             (Function::Builtin(n1), Function::Builtin(n2)) => n1 == n2,
             (Function::VmClosure(c1), Function::VmClosure(c2)) => Rc::ptr_eq(c1, c2),

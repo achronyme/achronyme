@@ -2,14 +2,17 @@ use clap::{Parser, Subcommand};
 use std::fs;
 
 mod formatting;
-mod symbols;
 mod lint;
+mod symbols;
 
 /// Achronyme - Scientific Computing Language
 #[derive(Parser)]
 #[command(name = "achronyme")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Scientific computing language with gradual typing", long_about = "Achronyme Development Toolkit\n\nProvides tools for developing, checking, and debugging Achronyme programs:\n  - Syntax and compilation checking\n  - Module inspection and bytecode analysis\n  - Code formatting and linting\n  - Script execution")]
+#[command(
+    about = "Scientific computing language with gradual typing",
+    long_about = "Achronyme Development Toolkit\n\nProvides tools for developing, checking, and debugging Achronyme programs:\n  - Syntax and compilation checking\n  - Module inspection and bytecode analysis\n  - Code formatting and linting\n  - Script execution"
+)]
 #[command(author = "Achronyme Team")]
 struct Cli {
     /// File to execute (.ach or .soc) or expression to evaluate
@@ -210,9 +213,11 @@ fn inspect_command(filename: &str, verbose: bool) {
     println!("  Upvalues: {}", module.main.upvalues.len());
     println!("  Nested Functions: {}", module.main.functions.len());
     println!();
-    println!("Module Constants: {} values, {} strings",
-             module.constants.constants.len(),
-             module.constants.strings.len());
+    println!(
+        "Module Constants: {} values, {} strings",
+        module.constants.constants.len(),
+        module.constants.strings.len()
+    );
 
     if verbose {
         println!();
@@ -230,8 +235,14 @@ fn inspect_command(filename: &str, verbose: bool) {
             println!();
             println!("Nested Functions:");
             for (i, func) in module.main.functions.iter().enumerate() {
-                println!("  [{}] {} (params: {}, registers: {}, instructions: {})",
-                    i, func.name, func.param_count, func.register_count, func.code.len());
+                println!(
+                    "  [{}] {} (params: {}, registers: {}, instructions: {})",
+                    i,
+                    func.name,
+                    func.param_count,
+                    func.register_count,
+                    func.code.len()
+                );
             }
         }
     }
@@ -379,9 +390,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             }
         }
         Value::Vector(v) => {
-            let elements: Vec<String> = v.borrow().iter()
-                .map(|val| format_value(val))
-                .collect();
+            let elements: Vec<String> = v.borrow().iter().map(|val| format_value(val)).collect();
             format!("[{}]", elements.join(", "))
         }
         Value::Tensor(t) => {
@@ -403,7 +412,9 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
                 }
                 1 => {
                     // Vector
-                    let elements: Vec<String> = t.data().iter()
+                    let elements: Vec<String> = t
+                        .data()
+                        .iter()
                         .map(|&x| {
                             if x.is_nan() {
                                 "NaN".to_string()
@@ -447,18 +458,26 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             format!("{}", ct)
         }
         Value::Record(map) => {
-            let mut fields: Vec<String> = map.borrow().iter()
+            let mut fields: Vec<String> = map
+                .borrow()
+                .iter()
                 .map(|(k, v)| format!("{}: {}", k, format_value(v)))
                 .collect();
             fields.sort(); // Sort for consistent output
             format!("{{ {} }}", fields.join(", "))
         }
-        Value::Edge { from, to, directed, properties } => {
+        Value::Edge {
+            from,
+            to,
+            directed,
+            properties,
+        } => {
             let arrow = if *directed { "->" } else { "<>" };
             if properties.is_empty() {
                 format!("{} {} {}", from, arrow, to)
             } else {
-                let props: Vec<String> = properties.iter()
+                let props: Vec<String> = properties
+                    .iter()
                     .map(|(k, v)| format!("{}: {}", k, format_value(v)))
                     .collect();
                 format!("{} {} {}: {{ {} }}", from, arrow, to, props.join(", "))
@@ -488,24 +507,14 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             // GeneratorYield is an internal marker that should never reach the REPL
             "<internal:generator-yield>".to_string()
         }
-        Value::Error { message, kind, .. } => {
-            match kind {
-                Some(k) => format!("Error({}: {})", k, message),
-                None => format!("Error({})", message),
-            }
-        }
-        Value::LoopBreak(_) => {
-            "<internal:loop-break>".to_string()
-        }
-        Value::LoopContinue => {
-            "<internal:loop-continue>".to_string()
-        }
-        Value::Iterator(_) => {
-            "<iterator>".to_string()
-        }
-        Value::Builder(_) => {
-            "<builder>".to_string()
-        }
+        Value::Error { message, kind, .. } => match kind {
+            Some(k) => format!("Error({}: {})", k, message),
+            None => format!("Error({})", message),
+        },
+        Value::LoopBreak(_) => "<internal:loop-break>".to_string(),
+        Value::LoopContinue => "<internal:loop-continue>".to_string(),
+        Value::Iterator(_) => "<iterator>".to_string(),
+        Value::Builder(_) => "<builder>".to_string(),
     }
 }
 
@@ -649,10 +658,7 @@ fn symbols_command(filename: &str, json_output: bool) {
                 } else {
                     println!("Symbols in '{}':", filename);
                     for symbol in &symbols {
-                        println!(
-                            "  {} {} (line {})",
-                            symbol.kind, symbol.name, symbol.line
-                        );
+                        println!("  {} {} (line {})", symbol.kind, symbol.name, symbol.line);
                     }
                 }
             }

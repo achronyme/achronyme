@@ -110,12 +110,16 @@ impl TypeAnnotation {
             TypeAnnotation::Null => "null".to_string(),
             TypeAnnotation::Any => "Any".to_string(),
 
-            TypeAnnotation::Tensor { element_type, shape } => {
+            TypeAnnotation::Tensor {
+                element_type,
+                shape,
+            } => {
                 let elem_str = element_type.to_string();
                 match shape {
                     None => format!("Tensor<{}>", elem_str),
                     Some(dims) => {
-                        let dims_str = dims.iter()
+                        let dims_str = dims
+                            .iter()
                             .map(|d| d.map_or("_".to_string(), |n| n.to_string()))
                             .collect::<Vec<_>>()
                             .join(", ");
@@ -128,7 +132,8 @@ impl TypeAnnotation {
                 if fields.is_empty() {
                     "{}".to_string()
                 } else {
-                    let fields_str = fields.iter()
+                    let fields_str = fields
+                        .iter()
                         .map(|(name, (is_mut, is_optional, ty))| {
                             let optional_marker = if *is_optional { "?" } else { "" };
                             if *is_mut {
@@ -143,20 +148,23 @@ impl TypeAnnotation {
                 }
             }
 
-            TypeAnnotation::Function { params, return_type } => {
-                let params_str = params.iter()
+            TypeAnnotation::Function {
+                params,
+                return_type,
+            } => {
+                let params_str = params
+                    .iter()
                     .map(|p| p.as_ref().map_or("Any".to_string(), |t| t.to_string()))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("({}) => {}", params_str, return_type.to_string())
             }
 
-            TypeAnnotation::Union(types) => {
-                types.iter()
-                    .map(|t| t.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            }
+            TypeAnnotation::Union(types) => types
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(" | "),
 
             TypeAnnotation::TypeReference(name) => name.clone(),
         }
@@ -178,24 +186,33 @@ impl TypeAnnotation {
             (TypeAnnotation::Union(types), other) => {
                 types.iter().any(|t| t.is_assignable_from(other))
             }
-            (self_type, TypeAnnotation::Union(other_types)) => {
-                other_types.iter().all(|ot| self_type.is_assignable_from(ot))
-            }
+            (self_type, TypeAnnotation::Union(other_types)) => other_types
+                .iter()
+                .all(|ot| self_type.is_assignable_from(ot)),
 
             // Record structural subtyping (simplified)
-            (TypeAnnotation::Record { fields: self_fields }, TypeAnnotation::Record { fields: other_fields }) => {
-                self_fields.iter().all(|(field_name, (self_mut, self_optional, self_type))| {
-                    match other_fields.get(field_name) {
-                        Some((other_mut, _other_optional, other_type)) => {
-                            // Field exists - check mutability and type
-                            self_mut == other_mut && self_type.is_assignable_from(other_type)
+            (
+                TypeAnnotation::Record {
+                    fields: self_fields,
+                },
+                TypeAnnotation::Record {
+                    fields: other_fields,
+                },
+            ) => {
+                self_fields
+                    .iter()
+                    .all(|(field_name, (self_mut, self_optional, self_type))| {
+                        match other_fields.get(field_name) {
+                            Some((other_mut, _other_optional, other_type)) => {
+                                // Field exists - check mutability and type
+                                self_mut == other_mut && self_type.is_assignable_from(other_type)
+                            }
+                            None => {
+                                // Field doesn't exist - only OK if self expects it to be optional
+                                *self_optional
+                            }
                         }
-                        None => {
-                            // Field doesn't exist - only OK if self expects it to be optional
-                            *self_optional
-                        }
-                    }
-                })
+                    })
             }
 
             _ => false,
@@ -212,19 +229,13 @@ mod tests {
         assert_eq!(TypeAnnotation::Number.to_string(), "Number");
         assert_eq!(TypeAnnotation::Boolean.to_string(), "Boolean");
 
-        let union = TypeAnnotation::Union(vec![
-            TypeAnnotation::Number,
-            TypeAnnotation::String,
-        ]);
+        let union = TypeAnnotation::Union(vec![TypeAnnotation::Number, TypeAnnotation::String]);
         assert_eq!(union.to_string(), "Number | String");
     }
 
     #[test]
     fn test_union_assignability() {
-        let union = TypeAnnotation::Union(vec![
-            TypeAnnotation::Number,
-            TypeAnnotation::String,
-        ]);
+        let union = TypeAnnotation::Union(vec![TypeAnnotation::Number, TypeAnnotation::String]);
 
         assert!(union.is_assignable_from(&TypeAnnotation::Number));
         assert!(union.is_assignable_from(&TypeAnnotation::String));

@@ -24,9 +24,7 @@ pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 
     match (&args[0], &args[1]) {
-        (Value::Number(re), Value::Number(im)) => {
-            Ok(Value::Complex(Complex::new(*re, *im)))
-        }
+        (Value::Number(re), Value::Number(im)) => Ok(Value::Complex(Complex::new(*re, *im))),
         _ => Err(VmError::TypeError {
             operation: "complex".to_string(),
             expected: "two Numbers".to_string(),

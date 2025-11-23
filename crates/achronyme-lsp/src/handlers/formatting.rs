@@ -375,8 +375,7 @@ pub fn normalize_operators(line: &str) -> String {
 
                 if is_unary {
                     // Check if there's a number after (unary minus)
-                    if i + 1 < chars.len()
-                        && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.')
+                    if i + 1 < chars.len() && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.')
                     {
                         // Unary minus with number - no space after
                         result.push('-');
@@ -814,10 +813,7 @@ mod tests {
 
     #[test]
     fn test_normalize_operators_preserves_strings() {
-        assert_eq!(
-            normalize_operators(r#"let s = "a+b""#),
-            r#"let s = "a+b""#
-        );
+        assert_eq!(normalize_operators(r#"let s = "a+b""#), r#"let s = "a+b""#);
         assert_eq!(
             normalize_operators(r#"let s = "x==y""#),
             r#"let s = "x==y""#
@@ -834,23 +830,26 @@ mod tests {
 
     #[test]
     fn test_normalize_commas_preserves_strings() {
-        assert_eq!(
-            normalize_commas(r#"let s = "a,b,c""#),
-            r#"let s = "a,b,c""#
-        );
+        assert_eq!(normalize_commas(r#"let s = "a,b,c""#), r#"let s = "a,b,c""#);
     }
 
     #[test]
     fn test_normalize_type_annotations() {
         assert_eq!(normalize_type_annotations("x:Number"), "x: Number");
-        assert_eq!(normalize_type_annotations("let x:Number = 5"), "let x: Number = 5");
+        assert_eq!(
+            normalize_type_annotations("let x:Number = 5"),
+            "let x: Number = 5"
+        );
     }
 
     #[test]
     fn test_normalize_control_flow() {
         assert_eq!(normalize_control_flow("if(x > 0)"), "if (x > 0)");
         assert_eq!(normalize_control_flow("while(true)"), "while (true)");
-        assert_eq!(normalize_control_flow("for(i in items)"), "for (i in items)");
+        assert_eq!(
+            normalize_control_flow("for(i in items)"),
+            "for (i in items)"
+        );
     }
 
     #[test]

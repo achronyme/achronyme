@@ -10,7 +10,9 @@ impl ComplexTensor {
     pub fn add(&self, other: &ComplexTensor) -> Result<ComplexTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<Complex> = self.data.iter()
+            let data: Vec<Complex> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| *a + *b)
                 .collect();
@@ -25,9 +27,12 @@ impl ComplexTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
@@ -41,7 +46,9 @@ impl ComplexTensor {
     pub fn sub(&self, other: &ComplexTensor) -> Result<ComplexTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<Complex> = self.data.iter()
+            let data: Vec<Complex> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| *a - *b)
                 .collect();
@@ -56,9 +63,12 @@ impl ComplexTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
@@ -72,7 +82,9 @@ impl ComplexTensor {
     pub fn mul(&self, other: &ComplexTensor) -> Result<ComplexTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<Complex> = self.data.iter()
+            let data: Vec<Complex> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| *a * *b)
                 .collect();
@@ -87,9 +99,12 @@ impl ComplexTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
@@ -103,7 +118,9 @@ impl ComplexTensor {
     pub fn div(&self, other: &ComplexTensor) -> Result<ComplexTensor, TensorError> {
         // Fast path: if shapes are identical, use direct element-wise operation
         if self.shape == other.shape {
-            let data: Vec<Complex> = self.data.iter()
+            let data: Vec<Complex> = self
+                .data
+                .iter()
                 .zip(other.data.iter())
                 .map(|(a, b)| *a / *b)
                 .collect();
@@ -118,9 +135,12 @@ impl ComplexTensor {
         let mut data = Vec::with_capacity(result_size);
 
         for flat_idx in 0..result_size {
-            let result_indices = Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
-            let self_indices = Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
-            let other_indices = Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
+            let result_indices =
+                Tensor::<Complex>::unravel_index(flat_idx, &result_shape, &result_strides);
+            let self_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &self.shape, &result_shape);
+            let other_indices =
+                Tensor::<Complex>::broadcast_index(&result_indices, &other.shape, &result_shape);
 
             let a = self.get(&self_indices)?;
             let b = other.get(&other_indices)?;
