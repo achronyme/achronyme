@@ -279,7 +279,9 @@ impl VM {
             | OpCode::VecPush
             | OpCode::VecGet
             | OpCode::VecSet
-            | OpCode::VecSlice => self.execute_vectors(opcode, instruction),
+            | OpCode::VecSlice
+            | OpCode::RangeEx
+            | OpCode::TensorGet => self.execute_vectors(opcode, instruction),
 
             // Records
             OpCode::NewRecord | OpCode::GetField | OpCode::SetField => {

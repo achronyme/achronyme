@@ -125,14 +125,14 @@ print("")
 print("5. Grading systems (3 approaches)")
 print("-" * 40)
 
-// Using piecewise
-let grade1 = (score) => piecewise(
-    [score >= 90, "A"],
-    [score >= 80, "B"],
-    [score >= 70, "C"],
-    [score >= 60, "D"],
-    "F"
-)
+// Using match
+let grade1 = (score) => match score {
+    s if (s >= 90) => "A",
+    s if (s >= 80) => "B",
+    s if (s >= 70) => "C",
+    s if (s >= 60) => "D",
+    _ => "F"
+}
 
 // Using if-else
 let grade2 = (score) => if (score >= 90) {

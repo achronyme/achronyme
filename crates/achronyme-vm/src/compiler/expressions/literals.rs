@@ -86,11 +86,23 @@ impl Compiler {
                         self.registers.free(elem_res.reg());
                     }
                 }
-                ArrayElement::Spread(_spread_node) => {
-                    // TODO: Implement spread operator for arrays
-                    return Err(CompileError::Error(
-                        "Spread operator in arrays not yet implemented".to_string(),
+                ArrayElement::Spread(spread_node) => {
+                    // Compile the expression to spread
+                    let spread_res = self.compile_expression(spread_node)?;
+
+                    // Emit VecSpread: vec_reg.spread(spread_res)
+                    // Format: A=vec_reg, B=spread_res_reg
+                    self.emit(encode_abc(
+                        OpCode::VecSpread.as_u8(),
+                        vec_reg,
+                        spread_res.reg(),
+                        0,
                     ));
+
+                    // Free temporary register
+                    if spread_res.is_temp() {
+                        self.registers.free(spread_res.reg());
+                    }
                 }
             }
         }

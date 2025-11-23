@@ -54,3 +54,4 @@ test-npm-install/
 **/*.rmeta
 Cargo.lock
 analyze-codebase.ps1
+test_all_examples.sh

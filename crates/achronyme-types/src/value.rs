@@ -86,6 +86,13 @@ pub enum Value {
     /// Uses Rc<dyn Any> for type erasure similar to Generator
     /// In the VM, this contains VmBuilder
     Builder(Rc<dyn Any>),
+    /// Range value: start..end (step is implicitly 1)
+    /// Used for slicing and iteration
+    Range {
+        start: Box<Value>,
+        end: Box<Value>,
+        inclusive: bool,
+    },
 }
 
 // Conversiones automáticas con From/Into
@@ -207,6 +214,79 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Attempt to convert a generic value (likely nested Vectors) into a Tensor or ComplexTensor
+    pub fn try_to_tensor(&self) -> Option<Value> {
+        // 1. Try to convert to RealTensor
+        if let Ok((data, shape)) = Self::flatten_real(self) {
+            // If it's a scalar (rank 0) or vector (rank 1), we might prefer to keep it as is?
+            // But if this is called, it's likely we NEED a tensor (e.g. for multidim slicing).
+            // So we convert.
+            if let Ok(t) = RealTensor::new(data, shape) {
+                return Some(Value::Tensor(t));
+            }
+        }
+
+        // 2. Try to convert to ComplexTensor (promotes Numbers)
+        if let Ok((data, shape)) = Self::flatten_complex(self) {
+            if let Ok(t) = ComplexTensor::new(data, shape) {
+                return Some(Value::ComplexTensor(t));
+            }
+        }
+
+        None
+    }
+
+    fn flatten_real(v: &Value) -> Result<(Vec<f64>, Vec<usize>), ()> {
+        match v {
+            Value::Number(n) => Ok((vec![*n], vec![])),
+            Value::Vector(vec_rc) => {
+                let vec = vec_rc.borrow();
+                if vec.is_empty() {
+                    return Ok((vec![], vec![0]));
+                }
+
+                let (mut data, shape) = Self::flatten_real(&vec[0])?;
+                for item in vec.iter().skip(1) {
+                    let (sub_data, sub_shape) = Self::flatten_real(item)?;
+                    if sub_shape != shape {
+                        return Err(()); // Jagged array
+                    }
+                    data.extend(sub_data);
+                }
+                let mut new_shape = vec![vec.len()];
+                new_shape.extend(shape);
+                Ok((data, new_shape))
+            }
+            _ => Err(()),
+        }
+    }
+
+    fn flatten_complex(v: &Value) -> Result<(Vec<Complex>, Vec<usize>), ()> {
+        match v {
+            Value::Number(n) => Ok((vec![Complex::new(*n, 0.0)], vec![])),
+            Value::Complex(c) => Ok((vec![*c], vec![])),
+            Value::Vector(vec_rc) => {
+                let vec = vec_rc.borrow();
+                if vec.is_empty() {
+                    return Ok((vec![], vec![0]));
+                }
+
+                let (mut data, shape) = Self::flatten_complex(&vec[0])?;
+                for item in vec.iter().skip(1) {
+                    let (sub_data, sub_shape) = Self::flatten_complex(item)?;
+                    if sub_shape != shape {
+                        return Err(()); // Jagged array
+                    }
+                    data.extend(sub_data);
+                }
+                let mut new_shape = vec![vec.len()];
+                new_shape.extend(shape);
+                Ok((data, new_shape))
+            }
+            _ => Err(()),
+        }
+    }
 }
 
 // Manual PartialEq implementation (Generator uses Rc<dyn Any> which doesn't impl PartialEq)
@@ -267,6 +347,18 @@ impl PartialEq for Value {
                 // Builders are compared by pointer equality (same instance)
                 std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
             }
+            (
+                Value::Range {
+                    start: s1,
+                    end: e1,
+                    inclusive: i1,
+                },
+                Value::Range {
+                    start: s2,
+                    end: e2,
+                    inclusive: i2,
+                },
+            ) => s1 == s2 && e1 == e2 && i1 == i2,
             _ => false,
         }
     }

@@ -15,11 +15,23 @@ let g = (z) => z * 2  // El parámetro 'z' debería ocultar al 'z' externo
 // g(3) debería ser 6, NO 20
 
 // ========================================
-// 3. PIECEWISE CON COMPLEJOS ✓
+// 3. PIECEWISE (Match pattern)CON COMPLEJOS ✓
 // ========================================
-let test_complex = piecewise([3 > 2, 1+i], [1 > 2, 2+i], 3+i)
+let test_complex = (z) => match z {
+    0 => "Cero",
+    x if (imag(x) == 0 && real(x) > 0) => "Real positivo",
+    x if (imag(x) == 0 && real(x) < 0) => "Real negativo",
+    x if (imag(x) != 0) => "Número complejo",
+    _ => "Otro caso"
+}
 // Debería ser 1+i
-
+print(test_complex(1+i))
+// Debería ser Real positivo
+print(test_complex(5))
+// Debería ser Real negativo
+print(test_complex(-3))
+// Debería ser Cero
+print(test_complex(0))
 // ========================================
 // 4. MAP CON CLOSURE
 // ========================================

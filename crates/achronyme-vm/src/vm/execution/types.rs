@@ -103,6 +103,7 @@ impl VM {
             Value::LoopContinue => "LoopContinue",
             Value::Iterator(_) => "Iterator",
             Value::Builder(_) => "Builder",
+            Value::Range { .. } => "Range",
         }
     }
 }

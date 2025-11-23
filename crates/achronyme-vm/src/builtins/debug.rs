@@ -192,5 +192,16 @@ fn describe_value(value: &Value, indent: usize) -> String {
             // Builder state is opaque (Rc<dyn Any>), so we can't introspect it
             "Builder(<opaque state>)".to_string()
         }
+
+        Value::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            let start_str = describe_value(start, 0);
+            let end_str = describe_value(end, 0);
+            let op = if *inclusive { "..=" } else { ".." };
+            format!("Range({}{}{})", start_str, op, end_str)
+        }
     }
 }

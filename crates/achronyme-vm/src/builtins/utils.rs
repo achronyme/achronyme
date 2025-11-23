@@ -44,6 +44,7 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::LoopContinue => "LoopContinue",
         Value::Iterator(_) => "Iterator",
         Value::Builder(_) => "Builder",
+        Value::Range { .. } => "Range",
     };
 
     Ok(Value::String(type_name.to_string()))
@@ -229,6 +230,16 @@ fn format_value(value: &Value) -> String {
         Value::LoopContinue => "<loop-continue>".to_string(),
         Value::Iterator(_) => "<iterator>".to_string(),
         Value::Builder(_) => "<builder>".to_string(),
+        Value::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            let start_str = format_value(start);
+            let end_str = format_value(end);
+            let op = if *inclusive { "..=" } else { ".." };
+            format!("{}{}{}", start_str, op, end_str)
+        }
     }
 }
 
