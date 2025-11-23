@@ -4,6 +4,7 @@ use crate::error::VmError;
 use crate::value::Value;
 
 /// Value operation methods
+#[allow(dead_code)]
 pub(crate) trait ValueOps {
     fn add_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
     fn sub_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;

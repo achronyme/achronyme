@@ -1,24 +1,15 @@
-// NOTE: Tree-walker evaluator temporarily disabled due to API changes
-// use achronyme_eval::Evaluator;
 use clap::{Parser, Subcommand};
-use rustyline::error::ReadlineError;
-use rustyline::{Editor, Config};
 use std::fs;
 
-mod highlighter;
-mod lsp_completer;
-mod repl_helper;
 mod formatting;
 mod symbols;
 mod lint;
-
-use repl_helper::ReplHelper;
 
 /// Achronyme - Scientific Computing Language
 #[derive(Parser)]
 #[command(name = "achronyme")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Scientific computing language with gradual typing", long_about = None)]
+#[command(about = "Scientific computing language with gradual typing", long_about = "Achronyme Development Toolkit\n\nProvides tools for developing, checking, and debugging Achronyme programs:\n  - Syntax and compilation checking\n  - Module inspection and bytecode analysis\n  - Code formatting and linting\n  - Script execution")]
 #[command(author = "Achronyme Team")]
 struct Cli {
     /// File to execute (.ach or .soc) or expression to evaluate
@@ -28,10 +19,6 @@ struct Cli {
     /// Evaluate an expression directly
     #[arg(short, long, value_name = "EXPR")]
     eval: Option<String>,
-
-    /// Run in REPL mode (default when no input)
-    #[arg(short, long)]
-    interactive: bool,
 
     /// Show disassembled bytecode
     #[arg(long)]
@@ -43,8 +30,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start interactive REPL
-    Repl,
     /// Run a script file
     Run {
         /// Path to the script file
@@ -55,9 +40,22 @@ enum Commands {
         /// Expression to evaluate
         expression: String,
     },
-    /// Check syntax without executing
+    /// Check syntax and compilation without executing
     Check {
         /// File to check
+        file: String,
+    },
+    /// Inspect compiled module (show statistics and metadata)
+    Inspect {
+        /// File to inspect
+        file: String,
+        /// Show detailed bytecode statistics
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Disassemble bytecode
+    Disassemble {
+        /// File to disassemble
         file: String,
     },
     /// Format Achronyme source files
@@ -97,10 +95,11 @@ fn main() {
     // Handle subcommands first
     if let Some(command) = cli.command {
         match command {
-            Commands::Repl => run_repl(),
             Commands::Run { file } => run_file(&file, debug_bytecode),
             Commands::Eval { expression } => run_expression(&expression),
-            Commands::Check { file } => check_syntax(&file),
+            Commands::Check { file } => check_command(&file),
+            Commands::Inspect { file, verbose } => inspect_command(&file, verbose),
+            Commands::Disassemble { file } => disassemble_command(&file),
             Commands::Format { file, check, diff } => format_command(&file, check, diff),
             Commands::Lint { file, json } => lint_command(&file, json),
             Commands::Symbols { file, json } => symbols_command(&file, json),
@@ -114,15 +113,17 @@ fn main() {
         return;
     }
 
-    // Handle --interactive flag
-    if cli.interactive {
-        run_repl();
-        return;
-    }
-
     // Handle positional input
     match cli.input {
-        None => run_repl(),
+        None => {
+            // No input provided - show help
+            eprintln!("Error: No input provided.");
+            eprintln!();
+            eprintln!("Usage: achronyme <COMMAND> or achronyme <FILE>");
+            eprintln!();
+            eprintln!("Try 'achronyme --help' for more information.");
+            std::process::exit(1);
+        }
         Some(input) => {
             if input.ends_with(".ach") || input.ends_with(".soc") {
                 run_file(&input, debug_bytecode);
@@ -133,7 +134,7 @@ fn main() {
     }
 }
 
-fn check_syntax(filename: &str) {
+fn check_command(filename: &str) {
     let contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(err) => {
@@ -142,217 +143,132 @@ fn check_syntax(filename: &str) {
         }
     };
 
-    match achronyme_parser::parse(&contents) {
-        Ok(_) => {
-            println!("Syntax OK: {}", filename);
+    // Step 1: Parse
+    let ast = match achronyme_parser::parse(&contents) {
+        Ok(ast) => {
+            println!("✓ Syntax OK");
+            ast
         }
         Err(err) => {
-            eprintln!("Syntax error in '{}':", filename);
+            eprintln!("✗ Syntax error in '{}':", filename);
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Step 2: Compile
+    let mut compiler = achronyme_vm::Compiler::new(filename.to_string());
+    match compiler.compile(&ast) {
+        Ok(_module) => {
+            println!("✓ Compilation OK");
+            println!("\nFile '{}' is ready to execute", filename);
+        }
+        Err(err) => {
+            eprintln!("✗ Compilation error in '{}':", filename);
             eprintln!("{}", err);
             std::process::exit(1);
         }
     }
 }
 
-fn run_repl() {
-    println!("Achronyme REPL v{}", env!("CARGO_PKG_VERSION"));
-    println!("Type 'exit' or 'quit' to exit, 'help' for help, 'clear' to clear screen");
+fn inspect_command(filename: &str, verbose: bool) {
+    let contents = match fs::read_to_string(filename) {
+        Ok(contents) => contents,
+        Err(err) => {
+            eprintln!("Error reading file '{}': {}", filename, err);
+            std::process::exit(1);
+        }
+    };
+
+    // Parse
+    let ast = match achronyme_parser::parse(&contents) {
+        Ok(ast) => ast,
+        Err(err) => {
+            eprintln!("Parse error: {:?}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Compile
+    let mut compiler = achronyme_vm::Compiler::new(filename.to_string());
+    let module = match compiler.compile(&ast) {
+        Ok(module) => module,
+        Err(err) => {
+            eprintln!("Compile error: {}", err);
+            std::process::exit(1);
+        }
+    };
+
+    // Display module information
+    println!("Module: {}", module.name);
     println!();
+    println!("Main Function:");
+    println!("  Name: {}", module.main.name);
+    println!("  Parameters: {}", module.main.param_count);
+    println!("  Registers: {}", module.main.register_count);
+    println!("  Instructions: {}", module.main.code.len());
+    println!("  Upvalues: {}", module.main.upvalues.len());
+    println!("  Nested Functions: {}", module.main.functions.len());
+    println!();
+    println!("Module Constants: {} values, {} strings",
+             module.constants.constants.len(),
+             module.constants.strings.len());
 
-    let config = Config::builder()
-        .auto_add_history(true)
-        .build();
-
-    let helper = ReplHelper::new();
-    let mut rl = Editor::with_config(config).expect("Failed to create editor");
-    rl.set_helper(Some(helper));
-
-    // Load history from file
-    let history_path = dirs::home_dir()
-        .map(|mut p| {
-            p.push(".achronyme_history");
-            p
-        });
-
-    if let Some(ref path) = history_path {
-        let _ = rl.load_history(path);
-    }
-
-    // NOTE: REPL currently uses VM backend only
-    // let mut evaluator = Evaluator::new();
-    let mut vm = achronyme_vm::VM::new();
-    let mut line_number = 1;
-    let mut input_buffer = String::new();
-
-    loop {
-        let prompt = if input_buffer.is_empty() {
-            format!("ach[{}]> ", line_number)
-        } else {
-            "     ...> ".to_string()
-        };
-
-        match rl.readline(&prompt) {
-            Ok(line) => {
-                // Add line to buffer
-                if !input_buffer.is_empty() {
-                    input_buffer.push('\n');
-                }
-                input_buffer.push_str(&line);
-
-                let trimmed = input_buffer.trim();
-
-                // Handle special commands (only when buffer is a single line)
-                if input_buffer.lines().count() == 1 {
-                    match trimmed {
-                        "exit" | "quit" => {
-                            println!("Goodbye!");
-                            break;
-                        }
-                        "help" => {
-                            print_help();
-                            input_buffer.clear();
-                            continue;
-                        }
-                        "clear" => {
-                            clear_screen();
-                            vm = achronyme_vm::VM::new();
-                            println!("Screen cleared");
-                            input_buffer.clear();
-                            continue;
-                        }
-                        "cls" => {
-                            clear_screen();
-                            input_buffer.clear();
-                            continue;
-                        }
-                        "" => {
-                            input_buffer.clear();
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Check if expression should continue (is incomplete)
-                if should_continue_reading(&input_buffer) {
-                    continue; // Wait for more input
-                }
-
-                // Expression is complete, evaluate it with VM
-                match evaluate_with_persistent_vm(&mut vm, trimmed) {
-                    Ok(result) => println!("{}", result),
-                    Err(err) => eprintln!("Error: {}", err),
-                }
-
-                input_buffer.clear();
-                line_number += 1;
-            }
-            Err(ReadlineError::Interrupted) => {
-                println!("^C");
-                input_buffer.clear();
-                continue;
-            }
-            Err(ReadlineError::Eof) => {
-                println!("Goodbye!");
-                break;
-            }
-            Err(err) => {
-                eprintln!("Error reading input: {}", err);
-                break;
-            }
+    if verbose {
+        println!();
+        println!("Detailed Constant Pool:");
+        println!("  Values: {}", module.constants.constants.len());
+        for (i, val) in module.constants.constants.iter().enumerate() {
+            println!("    [{}] {}", i, format_value(val));
         }
-    }
+        println!("  Strings: {}", module.constants.strings.len());
+        for (i, s) in module.constants.strings.iter().enumerate() {
+            println!("    [{}] \"{}\"", i, s);
+        }
 
-    // Save history to file
-    if let Some(path) = history_path {
-        let _ = rl.save_history(&path);
-    }
-}
-
-/// Check if we should continue reading more input (expression is incomplete)
-/// Uses a hybrid approach: fast delimiter check + parser confirmation
-fn should_continue_reading(input: &str) -> bool {
-    // First: Quick check for balanced delimiters
-    if !has_balanced_delimiters(input) {
-        return true; // Definitely incomplete
-    }
-
-    // Second: If delimiters are balanced, try parsing to confirm
-    // We use the parser to distinguish between "complete but invalid" vs "incomplete"
-    match achronyme_parser::parse(input) {
-        Ok(_) => false, // ✅ Complete and valid
-        Err(e) => {
-            // Check if it looks like an incomplete expression error
-            let error_msg = e.to_string();
-            // Pest reports "expected X, found EOI" when input ends prematurely
-            error_msg.contains("expected") && error_msg.contains("EOI")
+        if !module.main.functions.is_empty() {
+            println!();
+            println!("Nested Functions:");
+            for (i, func) in module.main.functions.iter().enumerate() {
+                println!("  [{}] {} (params: {}, registers: {}, instructions: {})",
+                    i, func.name, func.param_count, func.register_count, func.code.len());
+            }
         }
     }
 }
 
-/// Fast check for balanced delimiters (parentheses, braces, brackets)
-/// Also handles strings to avoid counting delimiters inside string literals
-fn has_balanced_delimiters(input: &str) -> bool {
-    let mut paren_count = 0;
-    let mut brace_count = 0;
-    let mut bracket_count = 0;
-    let mut in_string = false;
-    let mut escape_next = false;
-
-    for ch in input.chars() {
-        if escape_next {
-            escape_next = false;
-            continue;
+fn disassemble_command(filename: &str) {
+    let contents = match fs::read_to_string(filename) {
+        Ok(contents) => contents,
+        Err(err) => {
+            eprintln!("Error reading file '{}': {}", filename, err);
+            std::process::exit(1);
         }
+    };
 
-        match ch {
-            '\\' if in_string => escape_next = true,
-            '"' => in_string = !in_string,
-            '(' if !in_string => paren_count += 1,
-            ')' if !in_string => {
-                paren_count -= 1;
-                if paren_count < 0 {
-                    return false; // More closing than opening
-                }
-            }
-            '{' if !in_string => brace_count += 1,
-            '}' if !in_string => {
-                brace_count -= 1;
-                if brace_count < 0 {
-                    return false; // More closing than opening
-                }
-            }
-            '[' if !in_string => bracket_count += 1,
-            ']' if !in_string => {
-                bracket_count -= 1;
-                if bracket_count < 0 {
-                    return false; // More closing than opening
-                }
-            }
-            _ => {}
+    // Parse
+    let ast = match achronyme_parser::parse(&contents) {
+        Ok(ast) => ast,
+        Err(err) => {
+            eprintln!("Parse error: {:?}", err);
+            std::process::exit(1);
         }
-    }
+    };
 
-    // Balanced if all counts are zero and not inside a string
-    paren_count == 0 && brace_count == 0 && bracket_count == 0 && !in_string
-}
+    // Compile
+    let mut compiler = achronyme_vm::Compiler::new(filename.to_string());
+    let module = match compiler.compile(&ast) {
+        Ok(module) => module,
+        Err(err) => {
+            eprintln!("Compile error: {}", err);
+            std::process::exit(1);
+        }
+    };
 
-fn clear_screen() {
-    // Cross-platform screen clearing
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(&["/C", "cls"])
-            .status();
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = std::process::Command::new("clear").status();
-    }
-
-    // Also try ANSI escape sequence as fallback
-    print!("\x1B[2J\x1B[1;1H");
+    // Disassemble using the existing utility
+    println!("Disassembly of '{}':", filename);
+    println!();
+    achronyme_vm::disassemble_function(&module.main, filename);
 }
 
 fn run_file(filename: &str, debug_bytecode: bool) {
@@ -428,41 +344,6 @@ fn run_expression(expr: &str) {
             std::process::exit(1);
         }
     }
-}
-
-fn evaluate_with_vm(input: &str) -> Result<String, String> {
-    // Parse
-    let ast = achronyme_parser::parse(input)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
-
-    // Compile
-    let mut compiler = achronyme_vm::Compiler::new("<repl>".to_string());
-    let module = compiler.compile(&ast)
-        .map_err(|e| format!("Compile error: {}", e))?;
-
-    // Execute
-    let mut vm = achronyme_vm::VM::new();
-    let result = vm.execute(module)
-        .map_err(|e| format!("Runtime error: {}", e))?;
-
-    // Format result
-    Ok(format_value(&result))
-}
-
-fn evaluate_with_persistent_vm(vm: &mut achronyme_vm::VM, input: &str) -> Result<String, String> {
-    // TEMPORARY WORKAROUND:
-    // The VM doesn't currently support persistent variables across REPL evaluations
-    // because each evaluation creates a new frame with local variables.
-    //
-    // Proper solution would require:
-    // 1. GetGlobal/SetGlobal opcodes
-    // 2. Compiler mode to emit global variable operations for REPL
-    // 3. VM modifications to check globals when resolving variables
-    //
-    // For now, we use a fresh VM for each evaluation (same as before)
-    // Users must use `;` to chain statements: `let x = 42; x`
-
-    evaluate_with_vm(input)
 }
 
 fn format_vm_value(value: &achronyme_types::value::Value) -> String {
@@ -626,30 +507,6 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             "<builder>".to_string()
         }
     }
-}
-
-fn print_help() {
-    use nu_ansi_term::Color;
-
-    println!("{}", Color::Green.bold().paint("Achronyme REPL Commands:"));
-    println!("  {}        - Show this help message", Color::Cyan.paint("help"));
-    println!("  {}       - Clear screen and reset environment", Color::Cyan.paint("clear"));
-    println!("  {}        - Clear screen only (keep environment)", Color::Cyan.paint("cls"));
-    println!("  {}  - Exit the REPL", Color::Cyan.paint("exit, quit"));
-    println!();
-    println!("{}", Color::Green.bold().paint("Features:"));
-    println!("  - Syntax highlighting (automatic)");
-    println!("  - Command history (use ↑/↓ arrows)");
-    println!("  - Tab completion for built-in functions");
-    println!("  - History saved to ~/.achronyme_history");
-    println!();
-    println!("{}", Color::Green.bold().paint("Examples:"));
-    println!("  {}         - Basic arithmetic", Color::Yellow.paint("2 + 2"));
-    println!("  {}  - Variable assignment", Color::Yellow.paint("let x = 5"));
-    println!("  {}    - Lambda function", Color::Yellow.paint("let f = x => x^2"));
-    println!("  {}  - Numerical derivative", Color::Yellow.paint("diff(f, 2, 1e-5)"));
-    println!("  {}  - Numerical integration", Color::Yellow.paint("integral(sin, 0, 3.14159, 100)"));
-    println!("  {}  - FFT magnitude", Color::Yellow.paint("fft_mag([1, 2, 3, 4])"));
 }
 
 // ============================================================================

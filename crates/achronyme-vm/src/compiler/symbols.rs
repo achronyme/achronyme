@@ -52,6 +52,7 @@ impl SymbolTable {
     }
 
     /// Check if a register is used by any variable
+    #[allow(dead_code)]
     pub(crate) fn has_register(&self, reg: u8) -> bool {
         self.symbols.values().any(|&r| r == reg)
     }

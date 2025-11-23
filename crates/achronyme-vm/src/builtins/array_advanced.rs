@@ -125,7 +125,7 @@ pub fn vm_flatten(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match &args[0] {
         Value::Vector(rc) => {
             let vec = rc.borrow().clone();
-            drop(rc);
+            // No need to drop rc - it's just a reference
             let result = flatten_recursive(&vec, depth);
             Ok(Value::Vector(Rc::new(RefCell::new(result))))
         }

@@ -2,7 +2,6 @@
 
 use crate::bytecode::FunctionPrototype;
 use crate::opcode::{instruction::*, OpCode};
-use std::rc::Rc;
 
 /// Print detailed bytecode disassembly
 pub fn disassemble_function(func: &FunctionPrototype, name: &str) {

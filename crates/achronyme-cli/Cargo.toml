@@ -6,23 +6,12 @@ edition = "2021"
 [[bin]]
 name = "achronyme"
 path = "src/main.rs"
-required-features = ["cli"]
-
-[features]
-default = ["cli"]
-cli = ["dep:rustyline", "dep:nu-ansi-term", "dep:pest", "dep:dirs"]
 
 [dependencies]
 achronyme-parser = { path = "../achronyme-parser" }
-# NOTE: achronyme-eval temporarily disabled due to API changes in Value type
-# achronyme-eval = { path = "../achronyme-eval" }
 achronyme-vm = { path = "../achronyme-vm" }
 achronyme-types = { path = "../achronyme-types" }
 achronyme-lsp-core = { path = "../achronyme-lsp-core" }
-rustyline = { version = "14.0", optional = true }
-nu-ansi-term = { version = "0.50", optional = true }
-pest = { version = "2.7", optional = true }
-dirs = { version = "5.0", optional = true }
 clap = { version = "4.4", features = ["derive"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

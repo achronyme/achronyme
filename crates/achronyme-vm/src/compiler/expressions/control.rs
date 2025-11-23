@@ -9,6 +9,7 @@ use achronyme_parser::ast::AstNode;
 
 impl Compiler {
     /// Compile if expression (default: not in tail position)
+    #[allow(dead_code)]
     pub(crate) fn compile_if(
         &mut self,
         condition: &AstNode,

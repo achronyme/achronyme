@@ -42,6 +42,7 @@ pub struct Compiler {
     pub(crate) loops: Vec<LoopContext>,
 
     /// Parent compiler (for nested functions)
+    #[allow(dead_code)]
     parent: Option<Box<Compiler>>,
 
     /// Built-in function registry (shared across all compilers)

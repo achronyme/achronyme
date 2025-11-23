@@ -1,7 +1,0 @@
-[package]
-name = "achronyme-solver"
-version = "0.6.4"
-edition = "2021"
-
-[dependencies]
-achronyme-types = { path = "../achronyme-types" }

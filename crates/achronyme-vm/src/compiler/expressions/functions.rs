@@ -52,7 +52,7 @@ impl Compiler {
 
         // Emit default value handling and type assertions for each parameter
         // This must happen BEFORE analyzing upvalues, because we might reference parent variables
-        for (i, (param_name, type_ann, default_expr)) in params.iter().enumerate() {
+        for (i, (_param_name, type_ann, default_expr)) in params.iter().enumerate() {
             let param_reg = i as u8;
 
             // If parameter has default value, emit code to check if it's Null and fill it

@@ -2,29 +2,15 @@
 resolver = "2"
 members = [
     "crates/achronyme-parser",
-    # NOTE: achronyme-eval temporarily disabled due to API changes in Value type
-    # "crates/achronyme-eval",
     "crates/achronyme-types",
-    "crates/achronyme-linalg",
-    "crates/achronyme-dsp",
-    "crates/achronyme-numerical",
     "crates/achronyme-cli",
-    "crates/achronyme-solver",
-    "crates/achronyme-env",
     "crates/achronyme-lsp",
     "crates/achronyme-lsp-core",
     "crates/achronyme-vm",
 ]
 default-members = [
     "crates/achronyme-parser",
-    # NOTE: achronyme-eval temporarily disabled due to API changes in Value type
-    # "crates/achronyme-eval",
     "crates/achronyme-types",
-    "crates/achronyme-linalg",
-    "crates/achronyme-dsp",
-    "crates/achronyme-numerical",
-    "crates/achronyme-solver",
-    "crates/achronyme-env",
 ]
 
 [workspace.dependencies]

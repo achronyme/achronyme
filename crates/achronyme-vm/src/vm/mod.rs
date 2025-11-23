@@ -40,9 +40,11 @@ pub struct VM {
     globals: HashMap<String, Value>,
 
     /// Generator states (ID -> suspended frame)
+    #[allow(dead_code)]
     generators: HashMap<usize, SuspendedFrame>,
 
     /// Next generator ID
+    #[allow(dead_code)]
     next_generator_id: usize,
 
     /// Built-in function registry

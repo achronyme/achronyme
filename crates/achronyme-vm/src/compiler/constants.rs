@@ -28,6 +28,7 @@ pub(crate) fn get_constant(name: &str) -> Option<Value> {
 }
 
 /// Check if a name is a predefined constant
+#[allow(dead_code)]
 pub(crate) fn is_constant(name: &str) -> bool {
     matches!(
         name,

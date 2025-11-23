@@ -14,15 +14,12 @@
 pub mod array_advanced;
 pub mod complex;
 pub mod debug;
-pub mod dsp;
-pub mod graph;
 pub mod hof;
 pub mod io;
 pub mod linalg;
 pub mod math;
 pub mod module_system;
 pub mod numerical;
-pub mod pert;
 pub mod records;
 pub mod registry;
 pub mod statistics;
@@ -240,29 +237,6 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("import", module_system::vm_import, 1);
 
     // ========================================================================
-    // Digital Signal Processing (DSP) Functions
-    // ========================================================================
-
-    // FFT Functions
-    registry.register("fft", dsp::vm_fft, 1);
-    registry.register("ifft", dsp::vm_ifft, 1);
-    registry.register("fft_mag", dsp::vm_fft_mag, 1);
-    registry.register("fft_phase", dsp::vm_fft_phase, 1);
-
-    // Convolution
-    registry.register("conv", dsp::vm_conv, 2);
-    registry.register("conv_fft", dsp::vm_conv_fft, 2);
-
-    // Window Functions
-    registry.register("hanning", dsp::vm_hanning, 1);
-    registry.register("hamming", dsp::vm_hamming, 1);
-    registry.register("blackman", dsp::vm_blackman, 1);
-    registry.register("rectangular", dsp::vm_rectangular, 1);
-
-    // Utility Functions
-    registry.register("linspace", dsp::vm_linspace, 3);
-
-    // ========================================================================
     // Numerical Analysis Functions (Phase 4I)
     // ========================================================================
 
@@ -282,60 +256,6 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("solve", numerical::vm_solve, -1); // 3-4 args
     registry.register("newton", numerical::vm_newton, -1); // 2-4 args
     registry.register("secant", numerical::vm_secant, -1); // 3-4 args
-
-    // ========================================================================
-    // Graph Theory Functions (Phase 4K)
-    // ========================================================================
-
-    // Network Construction
-    registry.register("network", graph::vm_network, -1); // 1-2 args
-    registry.register("nodes", graph::vm_nodes, 1);
-    registry.register("edges", graph::vm_edges, 1);
-    registry.register("neighbors", graph::vm_neighbors, 2);
-    registry.register("degree", graph::vm_degree, 2);
-
-    // Traversal
-    registry.register("bfs", graph::vm_bfs, 2);
-    registry.register("dfs", graph::vm_dfs, 2);
-    registry.register("bfs_path", graph::vm_bfs_path, 3);
-
-    // Shortest Path
-    registry.register("dijkstra", graph::vm_dijkstra, 3);
-
-    // Minimum Spanning Tree
-    registry.register("kruskal", graph::vm_kruskal, 1);
-    registry.register("prim", graph::vm_prim, 2);
-
-    // Connectivity
-    registry.register("connected_components", graph::vm_connected_components, 1);
-    registry.register("is_connected", graph::vm_is_connected, 1);
-    registry.register("has_cycle", graph::vm_has_cycle, 1);
-
-    // Topological Sort
-    registry.register("topological_sort", graph::vm_topological_sort, 1);
-
-    // ========================================================================
-    // PERT/CPM Functions (Phase 4L)
-    // ========================================================================
-
-    // Critical Path Method
-    registry.register("forward_pass", pert::vm_forward_pass, 1);
-    registry.register("backward_pass", pert::vm_backward_pass, 1);
-    registry.register("calculate_slack", pert::vm_calculate_slack, 1);
-    registry.register("critical_path", pert::vm_critical_path, 1);
-    registry.register("all_critical_paths", pert::vm_all_critical_paths, 1);
-    registry.register("project_duration", pert::vm_project_duration, 1);
-
-    // PERT Probabilistic
-    registry.register("expected_time", pert::vm_expected_time, 3);
-    registry.register("task_variance", pert::vm_task_variance, 3);
-    registry.register("project_variance", pert::vm_project_variance, 1);
-    registry.register("project_std_dev", pert::vm_project_std_dev, 1);
-    registry.register("completion_probability", pert::vm_completion_probability, 2);
-    registry.register("time_for_probability", pert::vm_time_for_probability, 2);
-
-    // Comprehensive Analysis
-    registry.register("pert_analysis", pert::vm_pert_analysis, 1);
 
     registry
 }
@@ -357,11 +277,12 @@ mod tests {
         // Check non-existent function
         assert!(registry.get_id("nonexistent").is_none());
 
-        // Verify we have a good number of functions
-        // Original: 56 functions
-        // Added: 3 math (deg, rad, cbrt) + 3 stats + 7 linalg + 9 complex (incl. new ones) + 5 utils + 3 records + 8 array_advanced + 9 hof + 1 module + 11 dsp + 11 numerical = 62
-        // Total: 118+ functions
-        assert!(registry.len() > 115);
+        // Verify we have a good number of core functions
+        // Math: ~30, String: ~11, Vector: ~9, I/O: 3, Stats: 3, LinAlg: 7,
+        // Complex: 9, Utils: 5, Debug: 1, Records: 3, Array Advanced: 8,
+        // HOF: 9, Module: 1, Numerical: 11
+        // Total: ~110 core functions (removed DSP, Graph, PERT)
+        assert!(registry.len() > 80 && registry.len() < 120);
     }
 
     #[test]

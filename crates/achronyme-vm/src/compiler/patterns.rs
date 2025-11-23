@@ -12,6 +12,7 @@ pub(crate) enum PatternMode {
     /// Irrefutable pattern (let/mut binding) - must always match
     Irrefutable,
     /// Refutable pattern (match expression) - may fail to match
+    #[allow(dead_code)]
     Refutable,
 }
 

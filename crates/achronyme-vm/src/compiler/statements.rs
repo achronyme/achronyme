@@ -5,7 +5,6 @@ use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use achronyme_parser::ast::AstNode;
-use std::rc::Rc;
 
 impl Compiler {
     /// Compile a statement

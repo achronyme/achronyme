@@ -46,6 +46,7 @@ impl VectorIterator {
 #[derive(Debug)]
 pub struct StringIterator {
     /// The source string
+    #[allow(dead_code)]
     source: String,
     /// Current character index (using char indices, not byte indices)
     current_index: usize,

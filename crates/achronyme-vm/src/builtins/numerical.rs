@@ -648,7 +648,7 @@ pub fn vm_solve(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     // Evaluate at endpoints
     let mut fa = extract_number(vm.call_value(func, &[Value::Number(a)])?, "solve")?;
-    let mut fb = extract_number(vm.call_value(func, &[Value::Number(b)])?, "solve")?;
+    let fb = extract_number(vm.call_value(func, &[Value::Number(b)])?, "solve")?;
 
     // Check that signs are opposite
     if fa * fb > 0.0 {
@@ -670,7 +670,7 @@ pub fn vm_solve(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
         if fa * fc < 0.0 {
             b = c;
-            fb = fc;
+            // fb would be fc, but we don't need to track it
         } else {
             a = c;
             fa = fc;
@@ -727,7 +727,7 @@ pub fn vm_newton(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     const H: f64 = 1e-8; // Step size for numerical derivative
 
-    for iter in 0..max_iter {
+    for _ in 0..max_iter {
         let fx = extract_number(vm.call_value(func, &[Value::Number(x)])?, "newton")?;
 
         // Check if we've found the root
