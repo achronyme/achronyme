@@ -2,6 +2,7 @@
 
 use crate::error::VmError;
 use crate::opcode::{instruction::*, OpCode};
+use crate::value::Value;
 use crate::vm::frame::ExceptionHandler;
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
@@ -16,7 +17,60 @@ impl VM {
         match opcode {
             OpCode::Throw => {
                 let a = decode_a(instruction);
-                let error_value = self.get_register(a)?.clone();
+                let value = self.get_register(a)?.clone();
+
+                // Convert the thrown value to a proper Error value
+                let error_value = match value {
+                    // If it's already an Error, use it as-is
+                    Value::Error { .. } => value,
+
+                    // If it's a String, wrap it in an Error with message
+                    Value::String(s) => Value::Error {
+                        message: s,
+                        kind: None,
+                        source: None,
+                    },
+
+                    // If it's a Record with message/kind fields, convert to Error
+                    Value::Record(fields) => {
+                        let fields_ref = fields.borrow();
+
+                        // Extract message (required)
+                        let message = if let Some(msg_val) = fields_ref.get("message") {
+                            match msg_val {
+                                Value::String(s) => s.clone(),
+                                _ => format!("{:?}", msg_val),
+                            }
+                        } else {
+                            format!("{:?}", Value::Record(fields.clone()))
+                        };
+
+                        // Extract kind (optional)
+                        let kind = fields_ref.get("kind").and_then(|k| {
+                            match k {
+                                Value::String(s) => Some(s.clone()),
+                                _ => None,
+                            }
+                        });
+
+                        // Extract source (optional)
+                        let source = fields_ref.get("source").map(|s| Box::new(s.clone()));
+
+                        Value::Error {
+                            message,
+                            kind,
+                            source,
+                        }
+                    }
+
+                    // For any other value, convert to string and wrap in Error
+                    other => Value::Error {
+                        message: format!("{:?}", other),
+                        kind: None,
+                        source: None,
+                    },
+                };
+
                 Ok(ExecutionResult::Exception(error_value))
             }
 

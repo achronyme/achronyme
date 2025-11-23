@@ -1,0 +1,276 @@
+// ============================================================================
+// Piecewise Functions Examples (using match expressions)
+// ============================================================================
+// This file demonstrates how to define functions by parts (piecewise functions)
+// using match expressions with guards. Essential for optimization, physics,
+// machine learning, and mathematical modeling.
+
+// ============================================================================
+// 1. Basic Piecewise - Sign Function
+// ============================================================================
+// signo(x) = { -1 if x < 0
+//            {  1 if x > 0
+//            {  0 if x == 0
+
+let signo = x => match x {
+  n if (n < 0) => -1,
+  n if (n > 0) => 1,
+  _ => 0
+}
+
+signo(-10)  // -1
+signo(5)    // 1
+signo(0)    // 0
+
+// ============================================================================
+// 2. Absolute Value using Pattern Matching
+// ============================================================================
+// abs(x) = { -x if x < 0
+//          {  x otherwise
+
+let abs_custom = x => match x {
+  n if (n < 0) => -n,
+  n => n
+}
+
+abs_custom(-5)  // 5
+abs_custom(3)   // 3
+abs_custom(0)   // 0
+
+// ============================================================================
+// 3. Heaviside Step Function (Physics/DSP)
+// ============================================================================
+// H(x) = { 0 if x < 0
+//        { 1 if x >= 0
+
+let heaviside = x => match x {
+  n if (n < 0) => 0,
+  _ => 1
+}
+
+heaviside(-5)  // 0
+heaviside(0)   // 1
+heaviside(5)   // 1
+
+// ============================================================================
+// 4. Machine Learning - ReLU Activation Function
+// ============================================================================
+// ReLU(x) = max(0, x) = { 0 if x <= 0
+//                       { x if x > 0
+
+let relu_pw = x => match x {
+  n if (n > 0) => n,
+  _ => 0
+}
+
+relu_pw(-3)  // 0
+relu_pw(0)   // 0
+relu_pw(5)   // 5
+
+// ============================================================================
+// 5. Leaky ReLU Activation Function
+// ============================================================================
+// LeakyReLU(x) = { 0.01*x if x <= 0
+//                { x      if x > 0
+
+let leaky_relu = x => match x {
+  n if (n > 0) => n,
+  n => 0.01 * n
+}
+
+leaky_relu(10)   // 10
+leaky_relu(-10)  // -0.1
+
+// ============================================================================
+// 6. Progressive Tax Function (Economics/Optimization)
+// ============================================================================
+// Tax brackets:
+//   $0 - $10,000:   10%
+//   $10,001 - $50,000: 20%
+//   $50,001+:       30%
+
+let tax = income => match income {
+  i if (i <= 10000) => i * 0.1,
+  i if (i <= 50000) => i * 0.2,
+  i => i * 0.3
+}
+
+tax(5000)    // 500 (10%)
+tax(30000)   // 6000 (20%)
+tax(100000)  // 30000 (30%)
+
+// ============================================================================
+// 7. Electricity Rate (Stepped Pricing)
+// ============================================================================
+// Rate structure:
+//   0-100 kWh:    $0.10/kWh
+//   101-300 kWh:  $0.08/kWh
+//   301-500 kWh:  $0.06/kWh
+//   500+ kWh:     $0.05/kWh
+
+let tarifa = kwh => match kwh {
+  k if (k <= 100) => 0.10 * k,
+  k if (k <= 300) => 10 + 0.08 * (k - 100),
+  k if (k <= 500) => 26 + 0.06 * (k - 300),
+  k => 38 + 0.05 * (k - 500)
+}
+
+tarifa(50)   // 5.0
+tarifa(200)  // 18.0
+tarifa(400)  // 32.0
+tarifa(600)  // 43.0
+
+// ============================================================================
+// 8. Mathematical Function by Domain
+// ============================================================================
+// f(x) = { x^2      if x < -1
+//        { 2x + 1   if -1 <= x < 1
+//        { x^3      if x >= 1
+
+let f = x => match x {
+  n if (n < -1) => n^2,
+  n if (n < 1) => 2*n + 1,
+  n => n^3
+}
+
+f(-2)   // 4 (from x^2)
+f(0)    // 1 (from 2x+1)
+f(-1)   // -1 (from 2x+1)
+f(2)    // 8 (from x^3)
+
+// ============================================================================
+// 9. Physics - Force with Friction
+// ============================================================================
+// F(v) = { 0         if v == 0
+//        { -0.5*v^2  if v > 0 (air resistance)
+//        { 0.5*v^2   if v < 0
+
+let fuerza = v => match v {
+  0 => 0,
+  n if (n > 0) => -0.5 * n^2,
+  n => 0.5 * n^2
+}
+
+fuerza(0)   // 0
+fuerza(4)   // -8
+fuerza(-4)  // 8
+
+// ============================================================================
+// 10. Multivariable - Region Classification
+// ============================================================================
+// Classify points in 2D plane:
+//   1: inside circle (x^2 + y^2 < 1)
+//   2: inside square (|x| < 2 && |y| < 2) but outside circle
+//   0: outside square
+
+let region = (x, y) => do {
+  let dist_sq = x^2 + y^2
+  match dist_sq {
+    d if (d < 1) => 1,
+    _ => match x {
+      px if (abs(px) < 2 && abs(y) < 2) => 2,
+      _ => 0
+    }
+  }
+}
+
+region(0, 0)      // 1 (inside circle)
+region(1.5, 0)    // 2 (in square, outside circle)
+region(3, 3)      // 0 (outside both)
+
+// ============================================================================
+// 11. HOF Integration - Classify Numbers
+// ============================================================================
+// Use match with map to classify a list of numbers
+
+let classify = x => match x {
+  n if (n < 0) => -1,
+  n if (n > 0) => 1,
+  _ => 0
+}
+
+map(classify, [-5, -2, 0, 3, 7])  // [-1, -1, 0, 1, 1]
+
+// ============================================================================
+// 12. Sequential Evaluation (Short-Circuit)
+// ============================================================================
+// First matching condition wins
+
+let score_grade = score => match score {
+  s if (s >= 90) => 5,
+  s if (s >= 80) => 4,
+  s if (s >= 70) => 3,
+  s if (s >= 60) => 2,
+  _ => 1
+}
+
+score_grade(95)  // 5
+score_grade(85)  // 4
+score_grade(75)  // 3
+score_grade(50)  // 1
+
+// ============================================================================
+// 13. Error Case - No Default, No Match
+// ============================================================================
+// Match expressions require exhaustive patterns or a wildcard
+
+// This would error at runtime if x is outside [0, 2):
+// let partial = x => match x {
+//   n if (n >= 0 && n < 1) => n^2,
+//   n if (n >= 1 && n < 2) => 2*n - 1
+// }
+// partial(-1)  // ERROR: no pattern matched
+
+// ============================================================================
+// 14. Comparison: match vs if()
+// ============================================================================
+// For simple 2-branch cases, if() is more concise
+// For 3+ branches, match is clearer and more maintainable
+
+// Using if() - nested for multiple conditions
+let grade_if = score => if(
+  score >= 90, 5,
+  if(score >= 80, 4,
+     if(score >= 70, 3,
+        if(score >= 60, 2, 1))))
+
+// Using match - cleaner for multiple cases
+let grade_match = score => match score {
+  s if (s >= 90) => 5,
+  s if (s >= 80) => 4,
+  s if (s >= 70) => 3,
+  s if (s >= 60) => 2,
+  _ => 1
+}
+
+grade_if(85)     // 4
+grade_match(85)  // 4
+
+// ============================================================================
+// 15. Type-based Pattern Matching
+// ============================================================================
+// Match can also match by type, not just value
+
+let describe = value => match value {
+  Number => "It's a number",
+  String => "It's a string",
+  Vector => "It's a vector",
+  _ => "Unknown type"
+}
+
+describe(42)      // "It's a number"
+describe("hi")    // "It's a string"
+describe([1,2,3]) // "It's a vector"
+
+// ============================================================================
+// Summary
+// ============================================================================
+// match syntax: match value { pattern [if (guard)] => expr, ... }
+// - Evaluates patterns sequentially (short-circuit)
+// - First matching pattern wins
+// - Guards (if conditions) allow conditional matching
+// - Wildcard (_) matches anything (use as default)
+// - More expressive than piecewise() arrays
+// - Type-safe and idiomatic
+// - Works seamlessly with HOFs (map, filter, reduce)
+// ============================================================================

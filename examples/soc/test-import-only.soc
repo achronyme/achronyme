@@ -1,2 +1,0 @@
-// Just import, nothing else
-import { add } from "examples/soc/test-import-lib"

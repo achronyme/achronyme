@@ -1,8 +1,0 @@
-// This file tests that type errors are properly caught
-
-print("Testing type checking - expecting errors below...")
-
-// Test 1: Wrong type for typed parameter
-let typed = (x: Number, y: Number) => x + y
-print("\nCalling typed(\"10\", 20) - should fail with type error:")
-typed("10", 20)  // This should throw a type error

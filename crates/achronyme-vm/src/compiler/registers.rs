@@ -86,8 +86,46 @@ impl RegisterAllocator {
             ));
         }
 
-        // For simplicity, always allocate from next_free (don't use free_list for consecutive allocations)
-        // This ensures registers are consecutive
+        // Try to find consecutive registers in the free_list
+        // Sort the free_list to make finding consecutive ranges easier
+        if !self.free_list.is_empty() {
+            self.free_list.sort_unstable();
+
+            // Look for a consecutive sequence of 'count' registers
+            for window_start in 0..self.free_list.len() {
+                if window_start + count > self.free_list.len() {
+                    break; // Not enough registers left to check
+                }
+
+                let start_reg = self.free_list[window_start];
+                let mut is_consecutive = true;
+
+                // Check if we have 'count' consecutive registers starting here
+                for i in 0..count {
+                    let expected = start_reg + (i as u8);
+                    if window_start + i >= self.free_list.len()
+                        || self.free_list[window_start + i] != expected {
+                        is_consecutive = false;
+                        break;
+                    }
+                }
+
+                if is_consecutive {
+                    // Found a consecutive sequence! Remove these registers from free_list
+                    // Remove in reverse order to avoid index shifting issues
+                    for i in (0..count).rev() {
+                        self.free_list.remove(window_start + i);
+                    }
+
+                    // Update max_used if needed
+                    self.max_used = self.max_used.max(start_reg + (count as u8));
+
+                    return Ok(start_reg);
+                }
+            }
+        }
+
+        // Couldn't find consecutive registers in free_list, allocate from next_free
         let start_reg = self.next_free;
 
         // Check if we have enough space
@@ -133,5 +171,76 @@ mod tests {
         alloc.free(r0);
         let r2 = alloc.allocate().unwrap();
         assert_eq!(r2, 0); // Reused
+    }
+
+    #[test]
+    fn test_allocate_many_basic() {
+        let mut alloc = RegisterAllocator::new();
+
+        // Allocate 3 consecutive registers
+        let r0 = alloc.allocate_many(3).unwrap();
+        assert_eq!(r0, 0);
+        assert_eq!(alloc.max_used(), 3);
+
+        // Allocate 2 more
+        let r3 = alloc.allocate_many(2).unwrap();
+        assert_eq!(r3, 3);
+        assert_eq!(alloc.max_used(), 5);
+    }
+
+    #[test]
+    fn test_allocate_many_reuse() {
+        let mut alloc = RegisterAllocator::new();
+
+        // Allocate and free registers to create a consecutive free range
+        let r0 = alloc.allocate_many(2).unwrap(); // R0, R1
+        assert_eq!(r0, 0);
+
+        alloc.free(0);
+        alloc.free(1);
+
+        // Should reuse R0-R1 instead of allocating R2-R3
+        let r_reused = alloc.allocate_many(2).unwrap();
+        assert_eq!(r_reused, 0);
+        assert_eq!(alloc.max_used(), 2); // Should not increase
+    }
+
+    #[test]
+    fn test_allocate_many_partial_reuse() {
+        let mut alloc = RegisterAllocator::new();
+
+        // Allocate R0-R4
+        alloc.allocate_many(5).unwrap();
+
+        // Free R0, R1, R2 (consecutive) and R4 (not consecutive with others)
+        alloc.free(0);
+        alloc.free(1);
+        alloc.free(2);
+        alloc.free(4);
+
+        // Should reuse R0-R2 (3 consecutive registers)
+        let r_reused = alloc.allocate_many(3).unwrap();
+        assert_eq!(r_reused, 0);
+
+        // R3 is still allocated, R4 is free, so next allocation goes to R5
+        let r_new = alloc.allocate_many(2).unwrap();
+        assert_eq!(r_new, 5);
+    }
+
+    #[test]
+    fn test_allocate_many_no_consecutive_available() {
+        let mut alloc = RegisterAllocator::new();
+
+        // Allocate R0-R3
+        alloc.allocate_many(4).unwrap();
+
+        // Free R0 and R2 (not consecutive)
+        alloc.free(0);
+        alloc.free(2);
+
+        // Need 2 consecutive, but only have R0 and R2 separately
+        // Should allocate from next_free (R4-R5)
+        let r_new = alloc.allocate_many(2).unwrap();
+        assert_eq!(r_new, 4);
     }
 }

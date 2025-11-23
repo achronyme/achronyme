@@ -8,6 +8,240 @@ use crate::opcode::{instruction::*, OpCode};
 use achronyme_parser::ast::AstNode;
 
 impl Compiler {
+    /// Compile a pattern for match expressions (refutable context)
+    /// This handles nested patterns with literals/types by emitting match checks
+    /// and collecting jump instructions to the next arm on failure
+    fn compile_pattern_for_match(
+        &mut self,
+        pattern: &achronyme_parser::ast::Pattern,
+        target_reg: u8,
+        next_arm_jumps: &mut Vec<usize>,
+    ) -> Result<(), CompileError> {
+        use achronyme_parser::ast::{Pattern, VectorPatternElement};
+
+        match pattern {
+            Pattern::Literal(lit) => {
+                // For literals in match context, emit a match check
+                let lit_value = match lit {
+                    achronyme_parser::ast::LiteralPattern::Number(n) => {
+                        crate::value::Value::Number(*n)
+                    }
+                    achronyme_parser::ast::LiteralPattern::Boolean(b) => {
+                        crate::value::Value::Boolean(*b)
+                    }
+                    achronyme_parser::ast::LiteralPattern::String(s) => {
+                        crate::value::Value::String(s.clone())
+                    }
+                    achronyme_parser::ast::LiteralPattern::Null => crate::value::Value::Null,
+                };
+
+                let const_idx = self.add_constant(lit_value)?;
+                let match_reg = self.registers.allocate()?;
+
+                // Emit MatchLit: R[match_reg] = R[target] == K[const_idx]
+                self.emit(encode_abc(
+                    OpCode::MatchLit.as_u8(),
+                    match_reg,
+                    target_reg,
+                    const_idx as u8,
+                ));
+
+                // Jump to next arm if pattern doesn't match
+                next_arm_jumps.push(self.emit_jump_if_false(match_reg, 0));
+                self.registers.free(match_reg);
+
+                Ok(())
+            }
+
+            Pattern::Variable(name) => {
+                // Variable pattern always matches and binds the value
+                self.symbols.define(name.clone(), target_reg)?;
+                Ok(())
+            }
+
+            Pattern::Wildcard => {
+                // Wildcard always matches
+                Ok(())
+            }
+
+            Pattern::Type(type_name) => {
+                // Type pattern: check if value has the expected type
+                let type_idx = self.add_string(type_name.clone())?;
+                let match_reg = self.registers.allocate()?;
+
+                self.emit(encode_abc(
+                    OpCode::MatchType.as_u8(),
+                    match_reg,
+                    target_reg,
+                    type_idx as u8,
+                ));
+
+                // Jump to next arm if type doesn't match
+                next_arm_jumps.push(self.emit_jump_if_false(match_reg, 0));
+                self.registers.free(match_reg);
+
+                Ok(())
+            }
+
+            Pattern::Vector { elements } => {
+                // Handle empty vector pattern []
+                if elements.is_empty() {
+                    // TODO: Implement proper length checking for empty vector patterns []
+                    // For now, empty vector patterns match all vectors (known limitation)
+                    // This is because:
+                    // 1. DestructureVec doesn't validate length
+                    // 2. There's no VecLen opcode to check length directly
+                    // 3. GetGlobal isn't implemented to call len() function
+                    // Workaround: Use guards like `if (len(x) == 0)` instead of `[]` pattern
+                    return Ok(());
+                }
+
+                // Destructure vector and check nested patterns
+                let element_count = elements
+                    .iter()
+                    .filter(|e| matches!(e, VectorPatternElement::Pattern(..)))
+                    .count();
+                let has_rest = elements
+                    .iter()
+                    .any(|e| matches!(e, VectorPatternElement::Rest(_)));
+
+                // Create pattern descriptor
+                let pattern_desc = crate::value::Value::Number(element_count as f64);
+                let pattern_idx = self.add_constant(pattern_desc)?;
+
+                // Allocate registers for extracted elements
+                let mut registers_to_allocate = element_count;
+                if has_rest {
+                    registers_to_allocate += 1;
+                }
+
+                // Handle case where we need 0 registers
+                if registers_to_allocate == 0 {
+                    return Ok(());
+                }
+
+                let dst_start = self.registers.allocate_many(registers_to_allocate)?;
+
+                // Emit DestructureVec instruction
+                self.emit(encode_abc(
+                    OpCode::DestructureVec.as_u8(),
+                    dst_start,
+                    target_reg,
+                    pattern_idx as u8,
+                ));
+
+                // Now check nested patterns
+                let mut reg_idx = dst_start;
+                for elem in elements.iter() {
+                    match elem {
+                        VectorPatternElement::Pattern(nested_pattern, _default) => {
+                            // Recursively compile nested pattern
+                            self.compile_pattern_for_match(nested_pattern, reg_idx, next_arm_jumps)?;
+                            reg_idx += 1;
+                        }
+                        VectorPatternElement::Rest(name) => {
+                            // Bind rest variable
+                            let rest_reg = reg_idx;
+
+                            // Load start index
+                            let start_idx = crate::value::Value::Number(element_count as f64);
+                            let start_idx_const = self.add_constant(start_idx)?;
+                            let start_reg = self.registers.allocate()?;
+                            self.emit(encode_abx(
+                                OpCode::LoadConst.as_u8(),
+                                start_reg,
+                                start_idx_const as u16,
+                            ));
+
+                            // Emit VecSlice
+                            self.emit(encode_abc(
+                                OpCode::VecSlice.as_u8(),
+                                rest_reg,
+                                target_reg,
+                                start_reg,
+                            ));
+
+                            self.registers.free(start_reg);
+                            self.symbols.define(name.clone(), rest_reg)?;
+                            break;
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+
+            Pattern::Record { fields } => {
+                // Destructure record and check nested patterns
+                let mut field_names = Vec::new();
+                for (field_name, _, _) in fields {
+                    field_names.push(crate::value::Value::String(field_name.clone()));
+                }
+
+                // Create pattern descriptor
+                let pattern_desc = crate::value::Value::Vector(std::rc::Rc::new(
+                    std::cell::RefCell::new(field_names),
+                ));
+                let pattern_idx = self.add_constant(pattern_desc)?;
+
+                // Allocate registers for extracted fields
+                let field_count = fields.len();
+                let dst_start = self.registers.allocate_many(field_count)?;
+
+                // Emit DestructureRec instruction
+                self.emit(encode_abc(
+                    OpCode::DestructureRec.as_u8(),
+                    dst_start,
+                    target_reg,
+                    pattern_idx as u8,
+                ));
+
+                // Now check nested patterns and field existence
+                let mut reg_idx = dst_start;
+                for (field_name, nested_pattern, default_value) in fields {
+                    // If there's no default value, the field must exist (not be null)
+                    // Skip this check if the nested pattern is explicitly checking for null
+                    let is_null_pattern = matches!(
+                        nested_pattern,
+                        Pattern::Literal(achronyme_parser::ast::LiteralPattern::Null)
+                    );
+
+                    if default_value.is_none() && !is_null_pattern {
+                        // Check that the extracted field is not null
+                        // If it is null, jump to next arm (field doesn't exist)
+                        let null_check_reg = self.registers.allocate()?;
+                        self.emit(encode_abc(OpCode::LoadNull.as_u8(), null_check_reg, 0, 0));
+
+                        let eq_reg = self.registers.allocate()?;
+                        self.emit(encode_abc(OpCode::Eq.as_u8(), eq_reg, reg_idx, null_check_reg));
+
+                        self.registers.free(null_check_reg);
+
+                        // If field is null (equals null), jump to next arm
+                        next_arm_jumps.push(self.emit_jump_if_true(eq_reg, 0));
+                        self.registers.free(eq_reg);
+                    }
+
+                    // Recursively compile nested pattern
+                    self.compile_pattern_for_match(nested_pattern, reg_idx, next_arm_jumps)?;
+
+                    // If pattern is non-binding (Type, Wildcard, Literal), bind field name
+                    let needs_field_binding = matches!(
+                        nested_pattern,
+                        Pattern::Type(_) | Pattern::Wildcard | Pattern::Literal(_)
+                    );
+                    if needs_field_binding {
+                        self.symbols.define(field_name.clone(), reg_idx)?;
+                    }
+
+                    reg_idx += 1;
+                }
+
+                Ok(())
+            }
+        }
+    }
+
     /// Compile if expression (default: not in tail position)
     #[allow(dead_code)]
     pub(crate) fn compile_if(
@@ -327,19 +561,106 @@ impl Compiler {
                     }
                 }
 
-                achronyme_parser::ast::Pattern::Vector { .. }
-                | achronyme_parser::ast::Pattern::Record { .. } => {
-                    // For complex patterns (Vector/Record), we need to:
-                    // 1. Destructure into temp registers
-                    // 2. Check if destructuring succeeded (for now, assume it does)
-                    // 3. Evaluate guard
-                    // 4. Execute body
+                achronyme_parser::ast::Pattern::Vector { elements } => {
+                    // For vector patterns in match expressions:
+                    // 1. Check if value is a vector type
+                    // 2. Destructure and bind variables
+                    // 3. Check nested patterns (literals, types, etc.)
+                    // 4. Evaluate guard if present
+                    // 5. Execute body
 
-                    // This is simplified for Phase 4B - full implementation would need
-                    // runtime checks for destructuring validity
-                    return Err(CompileError::NotYetImplemented(
-                        "Vector/Record patterns in match expressions".to_string(),
+                    // Check if the value is a vector type
+                    let type_idx = self.add_string("Vector".to_string())?;
+                    let type_check_reg = self.registers.allocate()?;
+                    self.emit(encode_abc(
+                        OpCode::MatchType.as_u8(),
+                        type_check_reg,
+                        value_res.reg(),
+                        type_idx as u8,
                     ));
+
+                    // Jump to next arm if not a vector
+                    let mut next_arm_jumps = vec![self.emit_jump_if_false(type_check_reg, 0)];
+                    self.registers.free(type_check_reg);
+
+                    // Destructure the vector (this binds variables)
+                    // For now, we use Irrefutable mode and rely on runtime checks
+                    // TODO: Implement proper refutable pattern compilation with match result
+                    self.compile_pattern_for_match(&achronyme_parser::ast::Pattern::Vector { elements: elements.clone() }, value_res.reg(), &mut next_arm_jumps)?;
+
+                    // Check guard if present
+                    if let Some(guard) = &arm.guard {
+                        let guard_res = self.compile_expression(guard)?;
+                        next_arm_jumps.push(self.emit_jump_if_false(guard_res.reg(), 0));
+                        if guard_res.is_temp() {
+                            self.registers.free(guard_res.reg());
+                        }
+                    }
+
+                    // Compile body
+                    let body_res = self.compile_expression(&arm.body)?;
+                    self.emit_move(result_reg, body_res.reg());
+                    if body_res.is_temp() {
+                        self.registers.free(body_res.reg());
+                    }
+
+                    // Jump to end
+                    end_jumps.push(self.emit_jump(0));
+
+                    // Patch all jumps to next arm
+                    for jump in next_arm_jumps {
+                        self.patch_jump(jump);
+                    }
+                }
+
+                achronyme_parser::ast::Pattern::Record { fields } => {
+                    // For record patterns in match expressions:
+                    // 1. Check if value is a record type
+                    // 2. Destructure and bind variables
+                    // 3. Check nested patterns (literals, types, etc.)
+                    // 4. Evaluate guard if present
+                    // 5. Execute body
+
+                    // Check if the value is a record type
+                    let type_idx = self.add_string("Record".to_string())?;
+                    let type_check_reg = self.registers.allocate()?;
+                    self.emit(encode_abc(
+                        OpCode::MatchType.as_u8(),
+                        type_check_reg,
+                        value_res.reg(),
+                        type_idx as u8,
+                    ));
+
+                    // Jump to next arm if not a record
+                    let mut next_arm_jumps = vec![self.emit_jump_if_false(type_check_reg, 0)];
+                    self.registers.free(type_check_reg);
+
+                    // Destructure the record (this binds variables and checks nested patterns)
+                    self.compile_pattern_for_match(&achronyme_parser::ast::Pattern::Record { fields: fields.clone() }, value_res.reg(), &mut next_arm_jumps)?;
+
+                    // Check guard if present
+                    if let Some(guard) = &arm.guard {
+                        let guard_res = self.compile_expression(guard)?;
+                        next_arm_jumps.push(self.emit_jump_if_false(guard_res.reg(), 0));
+                        if guard_res.is_temp() {
+                            self.registers.free(guard_res.reg());
+                        }
+                    }
+
+                    // Compile body
+                    let body_res = self.compile_expression(&arm.body)?;
+                    self.emit_move(result_reg, body_res.reg());
+                    if body_res.is_temp() {
+                        self.registers.free(body_res.reg());
+                    }
+
+                    // Jump to end
+                    end_jumps.push(self.emit_jump(0));
+
+                    // Patch all jumps to next arm
+                    for jump in next_arm_jumps {
+                        self.patch_jump(jump);
+                    }
                 }
             }
         }
@@ -702,6 +1023,30 @@ impl Compiler {
 
         // Throw never returns normally, but we need to return something for type checking
         // Allocate a dummy register with null value
+        let dummy_reg = self.registers.allocate()?;
+        self.emit(encode_abc(OpCode::LoadNull.as_u8(), dummy_reg, 0, 0));
+
+        Ok(RegResult::temp(dummy_reg))
+    }
+
+    /// Compile return expression
+    /// Syntax: return value
+    /// Returns from the current function with the given value
+    /// This is used when return appears in expression context (e.g., inside do blocks)
+    pub(crate) fn compile_return_expr(&mut self, value: &AstNode) -> Result<RegResult, CompileError> {
+        // Compile the value to return
+        let value_res = self.compile_expression(value)?;
+
+        // Emit RETURN instruction
+        self.emit(encode_abc(OpCode::Return.as_u8(), value_res.reg(), 0, 0));
+
+        // Free the value register if temporary
+        if value_res.is_temp() {
+            self.registers.free(value_res.reg());
+        }
+
+        // Return never returns normally, but we need to return something for type checking
+        // Allocate a dummy register with null value (will never be used)
         let dummy_reg = self.registers.allocate()?;
         self.emit(encode_abc(OpCode::LoadNull.as_u8(), dummy_reg, 0, 0));
 

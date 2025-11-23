@@ -1,5 +1,0 @@
-let outer = (a) => (let middle = (b) => (let inner = (c) => a + b + c; inner); middle)
-
-let f = outer(1);
-let g = f(2);
-g(3)

@@ -75,6 +75,26 @@ impl VM {
                         self.set_register(dst, value)?;
                         Ok(ExecutionResult::Continue)
                     }
+                    Value::Error { message, kind, source } => {
+                        // Support field access on Error values
+                        let value = match field_name {
+                            "message" => Value::String(message.clone()),
+                            "kind" => match kind {
+                                Some(k) => Value::String(k.clone()),
+                                None => Value::Null,
+                            },
+                            "source" => match source {
+                                Some(s) => (**s).clone(),
+                                None => Value::Null,
+                            },
+                            _ => return Err(VmError::Runtime(format!(
+                                "Field '{}' not found in Error (available fields: message, kind, source)",
+                                field_name
+                            ))),
+                        };
+                        self.set_register(dst, value)?;
+                        Ok(ExecutionResult::Continue)
+                    }
                     _ => Err(VmError::TypeError {
                         operation: "record field access".to_string(),
                         expected: "Record".to_string(),

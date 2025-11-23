@@ -37,6 +37,9 @@ enum Commands {
     Run {
         /// Path to the script file
         file: String,
+        /// Show disassembled bytecode before execution
+        #[arg(long)]
+        debug_bytecode: bool,
     },
     /// Evaluate an expression
     Eval {
@@ -98,7 +101,11 @@ fn main() {
     // Handle subcommands first
     if let Some(command) = cli.command {
         match command {
-            Commands::Run { file } => run_file(&file, debug_bytecode),
+            Commands::Run { file, debug_bytecode: subcommand_debug } => {
+                // Prefer subcommand flag over global flag
+                let debug = subcommand_debug || debug_bytecode;
+                run_file(&file, debug)
+            }
             Commands::Eval { expression } => run_expression(&expression),
             Commands::Check { file } => check_command(&file),
             Commands::Inspect { file, verbose } => inspect_command(&file, verbose),

@@ -46,7 +46,11 @@ impl VM {
                         type_name,
                         self.value_type_name(&value)
                     );
-                    let error = Value::String(error_msg);
+                    let error = Value::Error {
+                        message: error_msg,
+                        kind: Some("TypeError".to_string()),
+                        source: None,
+                    };
                     return Ok(ExecutionResult::Exception(error));
                 }
 
@@ -69,6 +73,7 @@ impl VM {
             "Record" => matches!(value, Value::Record(_)),
             "Function" => matches!(value, Value::Function(_)),
             "Edge" => matches!(value, Value::Edge { .. }),
+            "Error" => matches!(value, Value::Error { .. }),
             "Any" => true, // Any type always matches
             _ => false,    // Unknown type name
         }

@@ -1,8 +1,0 @@
-// Check what's actually in the globals after export
-let add = (a, b) => a + b
-let multiply = (a, b) => a * b
-
-export { add, multiply }
-
-// After export, let's see if they're actually in globals
-print("After export, checking values...")

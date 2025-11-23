@@ -1,0 +1,8 @@
+// --- Numerical Integration Tests ---
+
+// Test 1: Trapezoidal rule
+// ∫x dx from 0 to 1 = 0.5
+let int1 = integral(x => x, 0, 1, 1000)
+
+// Expected: 0.5
+int1

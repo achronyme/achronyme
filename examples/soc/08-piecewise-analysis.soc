@@ -1,0 +1,324 @@
+// ============================================================================
+// Piecewise Functions with FFT, Differentiation & Integration
+// ============================================================================
+// Testing classic piecewise functions with numerical analysis operations
+// Now using match expressions instead of piecewise()
+
+// ============================================================================
+// 1. Square Wave (Fundamental DSP Signal)
+// ============================================================================
+// Square wave with period 2π, amplitude 1
+// f(t) = { 1  if 0 <= t < π
+//        { -1 if π <= t < 2π
+
+let square_wave = t => match t {
+  x if ((x % (2*PI)) < PI) => 1,
+  _ => -1
+}
+
+// Create time samples using linspace
+let t_samples = linspace(0, 2*PI, 32)
+
+// Sample square wave using map
+let square_samples = map(square_wave, t_samples)
+
+// Apply FFT to square wave
+let square_fft = fft(square_samples)
+
+// Result: Should show odd harmonics (1st, 3rd, 5th, ...)
+square_samples
+
+// ============================================================================
+// 2. Rectangular Pulse (Window Function)
+// ============================================================================
+// Rect(t) = { 1 if |t| <= 0.5
+//           { 0 otherwise
+
+let rect = t => match t {
+  x if (abs(x) <= 0.5) => 1,
+  _ => 0
+}
+
+// Sample rect pulse from -2 to 2
+let t_rect = linspace(-2, 2, 32)
+let rect_samples = map(rect, t_rect)
+
+// FFT of rect pulse → sinc function in frequency domain
+let rect_fft = fft(rect_samples)
+
+rect_samples
+
+// ============================================================================
+// 3. Triangular Wave
+// ============================================================================
+// Triangle wave with period 2
+// f(t) = { t % 2       if (t % 2) < 1
+//        { 2 - (t % 2) if (t % 2) >= 1
+
+let triangle = t => match t {
+  x if ((x % 2) < 1) => x % 2,
+  x => 2 - (x % 2)
+}
+
+// Sample triangle wave
+let t_tri = linspace(0, 4, 32)
+let tri_samples = map(triangle, t_tri)
+
+let tri_fft = fft(tri_samples)
+
+tri_samples
+
+// ============================================================================
+// 4. Sawtooth Wave
+// ============================================================================
+// Sawtooth with period 2π
+// f(t) = (t % 2π)/π - 1
+
+let sawtooth = t => ((t % (2*PI)) / PI) - 1
+
+// Sample sawtooth
+let t_saw = linspace(0, 2*PI, 32)
+let saw_samples = map(sawtooth, t_saw)
+
+let saw_fft = fft(saw_samples)
+
+saw_samples
+
+// ============================================================================
+// 5. Step Function (Heaviside) - Differentiation Test
+// ============================================================================
+// H(t) = { 0 if t < 0
+//        { 1 if t >= 0
+
+let heaviside = t => match t {
+  x if (x < 0) => 0,
+  _ => 1
+}
+
+// Sample Heaviside around discontinuity
+let t_H = linspace(-2, 2, 32)
+let H_samples = map(heaviside, t_H)
+
+// Numerical derivative of Heaviside at t=0
+// Should give large spike (approximation of Dirac delta)
+let deriv_left = diff(heaviside, -0.1, 0.01)
+let deriv_right = diff(heaviside, 0.1, 0.01)
+
+H_samples
+deriv_left   // Should be ≈ 0
+deriv_right  // Should be ≈ 0
+
+// ============================================================================
+// 6. Piecewise Linear Function - Integration Test
+// ============================================================================
+// f(t) = { 0       if t < 0
+//        { t       if 0 <= t < 1
+//        { 2-t     if 1 <= t < 2
+//        { 0       if t >= 2
+// This forms a triangle pulse
+
+let triangle_pulse = t => match t {
+  x if (x < 0) => 0,
+  x if (x < 1) => x,
+  x if (x < 2) => 2 - x,
+  _ => 0
+}
+
+// Integral from 0 to 2 should equal 1
+// (area of triangle = 1/2 * base * height = 1/2 * 2 * 1 = 1)
+let area = trapz(triangle_pulse, 0, 2, 100)
+
+area  // Should be approximately 1.0
+
+// ============================================================================
+// 7. Absolute Value Function - Differentiation
+// ============================================================================
+// |t| is piecewise: { -t if t < 0, t if t >= 0 }
+// Derivative should be: { -1 if t < 0, 1 if t > 0, undefined at 0 }
+
+let abs_func = t => match t {
+  x if (x < 0) => -x,
+  x => x
+}
+
+// Derivative at t = -1 should be -1
+let d_abs_neg = diff(abs_func, -1, 0.001)
+
+// Derivative at t = 1 should be 1
+let d_abs_pos = diff(abs_func, 1, 0.001)
+
+d_abs_neg  // Should be approximately -1
+d_abs_pos  // Should be approximately 1
+
+// ============================================================================
+// 8. ReLU Function - Integration
+// ============================================================================
+// ReLU(t) = max(0, t) = { 0 if t <= 0, t if t > 0 }
+// Integral from -1 to 2 = ∫_{-1}^{2} ReLU(t) dt = ∫_0^2 t dt = [t²/2]_0^2 = 2
+
+let relu = t => match t {
+  x if (x > 0) => x,
+  _ => 0
+}
+
+let relu_integral = trapz(relu, -1, 2, 100)
+
+relu_integral  // Should be approximately 2.0
+
+// ============================================================================
+// 9. Piecewise Polynomial - Continuity Test
+// ============================================================================
+// f(t) = { t²       if t < 1
+//        { 2t - 1   if 1 <= t < 2
+//        { t        if t >= 2
+
+let spline = t => match t {
+  x if (x < 1) => x^2,
+  x if (x < 2) => 2*x - 1,
+  x => x
+}
+
+// Test continuity at boundaries
+spline(0.99)  // ≈ 0.98 (from t²)
+spline(1.0)   // 1.0 (from 2t-1)
+spline(1.99)  // ≈ 2.98 (from 2t-1)
+spline(2.0)   // 2.0 (from t)
+
+// ============================================================================
+// 10. Clamped Function - Common in Control Systems
+// ============================================================================
+// Clamp(t) = { -1  if t < -1
+//            { t   if -1 <= t <= 1
+//            { 1   if t > 1
+
+let clamp = t => match t {
+  x if (x < -1) => -1,
+  x if (x <= 1) => x,
+  _ => 1
+}
+
+// Sample clamp function
+let t_clamp = linspace(-3, 3, 32)
+let clamp_samples = map(clamp, t_clamp)
+
+clamp_samples
+
+// ============================================================================
+// 11. Half-Wave Rectifier
+// ============================================================================
+// Half-wave rectifier: passes positive half, blocks negative
+// f(t) = { sin(t) if sin(t) > 0
+//        { 0      otherwise
+
+let half_wave = t => match sin(t) {
+  x if (x > 0) => x,
+  _ => 0
+}
+
+// Sample half-wave rectified sine
+let t_hw = linspace(0, 2*PI, 32)
+let hw_samples = map(half_wave, t_hw)
+
+// FFT should show DC component + even harmonics
+let hw_fft = fft(hw_samples)
+
+hw_samples
+
+// ============================================================================
+// 12. Full-Wave Rectifier
+// ============================================================================
+// Full-wave rectifier: absolute value of sine
+// f(t) = |sin(t)|
+
+let full_wave = t => match sin(t) {
+  x if (x >= 0) => x,
+  x => -x
+}
+
+// Sample full-wave rectified sine
+let t_fw = linspace(0, 2*PI, 32)
+let fw_samples = map(full_wave, t_fw)
+
+// FFT should show DC + even harmonics at double frequency
+let fw_fft = fft(fw_samples)
+
+fw_samples
+
+// ============================================================================
+// 13. Pulse Train (Digital Signal)
+// ============================================================================
+// Pulse train: sequence of pulses
+// f(t) = { 1 if (t % 1) < 0.25
+//        { 0 otherwise
+
+let pulse_train = t => match t {
+  x if ((x % 1) < 0.25) => 1,
+  _ => 0
+}
+
+// Sample pulse train
+let t_pulse = linspace(0, 4, 64)
+let pulse_samples = map(pulse_train, t_pulse)
+
+let pulse_fft = fft(pulse_samples)
+
+pulse_samples
+
+// ============================================================================
+// 14. Leaky ReLU - Derivative Test
+// ============================================================================
+// Leaky ReLU: { 0.01*t if t <= 0, t if t > 0 }
+// Derivative: { 0.01 if t < 0, 1 if t > 0 }
+
+let leaky_relu = t => match t {
+  x if (x > 0) => x,
+  x => 0.01 * x
+}
+
+// Test derivatives
+let d_leaky_neg = diff(leaky_relu, -1, 0.001)
+let d_leaky_pos = diff(leaky_relu, 1, 0.001)
+
+d_leaky_neg  // Should be approximately 0.01
+d_leaky_pos  // Should be approximately 1.0
+
+// ============================================================================
+// 15. Piecewise Constant (Step) Integration
+// ============================================================================
+// f(t) = { 1 if 0 <= t < 1
+//        { 2 if 1 <= t < 2
+//        { 3 if 2 <= t < 3
+//        { 0 otherwise
+
+let piecewise_const = t => match t {
+  x if (x < 0) => 0,
+  x if (x < 1) => 1,
+  x if (x < 2) => 2,
+  x if (x < 3) => 3,
+  _ => 0
+}
+
+// Integral from 0 to 3 should be 1*1 + 2*1 + 3*1 = 6
+let pc_integral = trapz(piecewise_const, 0, 3, 100)
+
+pc_integral  // Should be approximately 6.0
+
+// ============================================================================
+// Summary of Tests
+// ============================================================================
+// 1. Square Wave: Classic periodic signal, FFT shows odd harmonics
+// 2. Rect Pulse: Windowing function, FFT → sinc pattern
+// 3. Triangle Wave: Smooth piecewise, FFT shows 1/n² decay
+// 4. Sawtooth: Linear piecewise, FFT shows 1/n decay
+// 5. Heaviside: Unit step, derivative → Dirac delta approximation
+// 6. Triangle Pulse: Integration test, area = 1.0
+// 7. |t| Function: Derivative discontinuity at origin
+// 8. ReLU: ML activation, integral from -1 to 2 = 2.0
+// 9. Spline: Continuity preservation test
+// 10. Clamp: Saturation function for control systems
+// 11. Half-Wave Rectifier: Power electronics, FFT shows even harmonics
+// 12. Full-Wave Rectifier: Rectification, double frequency content
+// 13. Pulse Train: Digital signal, periodic pulses
+// 14. Leaky ReLU: ML activation with non-zero negative slope
+// 15. Piecewise Constant: Step function integration
+// ============================================================================

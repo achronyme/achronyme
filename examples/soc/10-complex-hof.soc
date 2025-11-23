@@ -1,0 +1,10 @@
+// Pruebas de vectores complejos con higher-order functions
+
+// 1. Definir una función de magnitud al cuadrado
+let magnitud = (vector) => vector ^ 2
+
+// 2. Crear un vector complejo
+let vec = [2+i, 3+i]
+
+// 3. Aplicar map a vector complejo
+map(magnitud, vec)

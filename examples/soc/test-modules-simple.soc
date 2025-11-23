@@ -1,3 +1,0 @@
-import { funcion1 } from "./modules/src/funcion1"
-
-print(funcion1(10, 20))

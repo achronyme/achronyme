@@ -1,6 +1,0 @@
-// Test importing from another module
-import { add } from "examples/soc/test-import-lib"
-
-let result1 = add(5, 3)
-
-print("5 + 3 = " + result1)

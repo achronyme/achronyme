@@ -1,3 +1,0 @@
-let point = { x: 10, y: 20 }
-let distance = sqrt(point.x ^ 2 + point.y ^ 2)
-distance

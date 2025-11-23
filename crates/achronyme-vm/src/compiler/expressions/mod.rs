@@ -124,6 +124,8 @@ impl Compiler {
 
             AstNode::Continue => self.compile_continue(),
 
+            AstNode::Return { value } => self.compile_return_expr(value),
+
             AstNode::Sequence { statements } | AstNode::DoBlock { statements } => {
                 let mut last_res: Option<RegResult> = None;
                 let num_statements = statements.len();

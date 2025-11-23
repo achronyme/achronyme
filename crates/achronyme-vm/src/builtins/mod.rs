@@ -79,8 +79,8 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("cbrt", math::vm_cbrt(), 1);
 
     // Constants
-    registry.register("pi", math::vm_pi, 0);
-    registry.register("e", math::vm_e, 0);
+    registry.register("PI", math::vm_pi, 0);
+    registry.register("E", math::vm_e, 0);
 
     // Precision Control
     registry.register("set_precision", math::vm_set_precision, 1);

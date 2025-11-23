@@ -515,7 +515,7 @@ postfix_op = {
     call_op | index_op | field_op
 }
 
-call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+call_op = { "(" ~ NEWLINE* ~ (expr ~ (NEWLINE* ~ "," ~ NEWLINE* ~ expr)*)? ~ NEWLINE* ~ ")" }
 index_op = { "[" ~ access_arg ~ ("," ~ access_arg)* ~ "]" }
 field_op = { "." ~ field_identifier }
 

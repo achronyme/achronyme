@@ -113,6 +113,14 @@ impl Compiler {
             );
 
             if is_expression {
+                // Free the previous result if it was temporary
+                // This prevents register accumulation across top-level statements
+                if let Some(old_res) = last_res {
+                    if old_res.is_temp() {
+                        self.registers.free(old_res.reg());
+                    }
+                }
+
                 let res = self.compile_expression(node)?;
                 last_res = Some(res);
             } else {

@@ -650,7 +650,16 @@ impl Compiler {
             builtin_idx as u8,
         ));
 
-        // Free temporary argument registers
+        // Free the argument slot registers allocated by allocate_many
+        // These are the consecutive registers result_reg+1, result_reg+2, ..., result_reg+args.len()
+        // Note: We do NOT free result_reg itself since that's what we're returning
+        if !args.is_empty() {
+            for i in 1..=args.len() {
+                self.registers.free(result_reg + (i as u8));
+            }
+        }
+
+        // Free temporary argument registers (those used during expression compilation)
         for arg_res in arg_results {
             if arg_res.is_temp() {
                 self.registers.free(arg_res.reg());

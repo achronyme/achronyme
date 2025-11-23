@@ -1,0 +1,180 @@
+// ============================================================================
+// Conditional Expressions and Logical Operators
+// ============================================================================
+// This example demonstrates the use of boolean literals, logical operators,
+// and the if() function in Achronyme SOC language.
+
+// ============================================================================
+// 1. Boolean Literals
+// ============================================================================
+
+let t = true
+let f = false
+print("Boolean true:", t)    // true
+print("Boolean false:", f)   // false
+// ============================================================================
+// 2. Logical Operators
+// ============================================================================
+
+// AND operator (&&)
+let and_test1 = true && true    // true
+let and_test2 = true && false   // false
+let and_test3 = false && false  // false
+print("AND Tests:", and_test1, and_test2, and_test3);
+
+// OR operator (||)
+let or_test1 = true || false    // true
+let or_test2 = false || false   // false
+let or_test3 = true || true     // true
+print("OR Tests:", or_test1, or_test2, or_test3);
+
+// NOT operator (!)
+let not_test1 = !true           // false
+let not_test2 = !false          // true
+let not_test3 = !!true          // true (double negation)
+print("NOT Tests:", not_test1, not_test2, not_test3);
+// ============================================================================
+// 3. Comparison Operators (return boolean)
+// ============================================================================
+
+let cmp1 = 5 > 3      // true
+let cmp2 = 5 < 3      // false
+let cmp3 = 10 >= 10   // true
+let cmp4 = 10 <= 9    // false
+let cmp5 = 5 == 5     // true
+let cmp6 = 3 != 4     // true
+print("Comparison Tests:", cmp1, cmp2, cmp3, cmp4, cmp5, cmp6);
+// ============================================================================
+// 4. Simple if() Expressions
+// ============================================================================
+
+// Basic if: if(condition, then_value, else_value)
+let result1 = if(5 > 3, 100, 200)     // 100
+let result2 = if(2 > 10, 100, 200)    // 200
+print("If Tests:", result1, result2);
+// if with variables
+let x = 10
+let category = if(x > 5, 1, 0)        // 1
+print("Category based on x:", category);
+// ============================================================================
+// 5. Mathematical Functions with if()
+// ============================================================================
+
+// Absolute value function
+let abs = x => if(x < 0, -x, x)
+abs(-5)   // 5
+abs(3)    // 3
+abs(0)    // 0
+print("Absolute Tests:", abs(-5), abs(3), abs(0));
+// Sign function (returns -1, 0, or 1)
+let sign = x => if(x < 0, -1, if(x > 0, 1, 0))
+sign(-10)  // -1
+sign(10)   // 1
+sign(0)    // 0
+print("Sign Tests:", sign(-10), sign(10), sign(0));
+// Maximum of two numbers
+let max2 = (a, b) => if(a > b, a, b)
+max2(10, 5)   // 10
+max2(3, 8)    // 8
+print("Max Tests:", max2(10, 5), max2(3, 8));
+// Minimum of two numbers
+let min2 = (a, b) => if(a < b, a, b)
+min2(10, 5)   // 5
+min2(3, 8)    // 3
+print("Min Tests:", min2(10, 5), min2(3, 8));
+// ============================================================================
+// 6. Machine Learning Activation Functions
+// ============================================================================
+
+// ReLU (Rectified Linear Unit)
+let relu = x => if(x > 0, x, 0)
+relu(5)    // 5
+relu(-3)   // 0
+relu(0)    // 0
+print("ReLU Tests:", relu(5), relu(-3), relu(0));
+// Leaky ReLU
+let leaky_relu = x => if(x > 0, x, 0.01 * x)
+leaky_relu(5)    // 5
+leaky_relu(-10)  // -0.1
+print("Leaky ReLU Tests:", leaky_relu(5), leaky_relu(-10));
+// Heaviside step function
+let heaviside = x => if(x >= 0, 1, 0)
+heaviside(5)   // 1
+heaviside(-2)  // 0
+heaviside(0)   // 1
+print("Heaviside Tests:", heaviside(5), heaviside(-2), heaviside(0));
+// ============================================================================
+// 7. Complex Conditions with Logical Operators
+// ============================================================================
+
+// Check if value is in range [min, max]
+let n_range = (x, min, max) => if(x >= min && x <= max, 1, 0)
+n_range(5, 0, 10)    // 1
+n_range(15, 0, 10)   // 0
+n_range(-5, 0, 10)   // 0
+print("Range Tests:", n_range(5, 0, 10), n_range(15, 0, 10), n_range(-5, 0, 10));
+// XOR (exclusive or) using logical operators
+let xor = (a, b) => if((a || b) && !(a && b), 1, 0)
+xor(true, false)   // 1
+xor(true, true)    // 0
+xor(false, false)  // 0
+print("XOR Tests:", xor(true, false), xor(true, true), xor(false, false));
+// ============================================================================
+// 8. Nested if() Expressions
+// ============================================================================
+
+// Grading system (using numbers: 4=A, 3=B, 2=C, 1=D, 0=F)
+let grade_num = score => if(score >= 90, 4, if(score >= 80, 3, if(score >= 70, 2, if(score >= 60, 1, 0))))
+grade_num(95)  // 4 (A)
+grade_num(75)  // 2 (C)
+grade_num(50)  // 0 (F)
+print("Grade Tests:", grade_num(95), grade_num(75), grade_num(50));
+// ============================================================================
+// 9. if() with Higher-Order Functions
+// ============================================================================
+
+// Filter positive numbers from vector
+let positive = v => filter(x => if(x > 0, true, false), v)
+positive([1, -2, 3, -4, 5])  // [1, 3, 5]
+print("Positive Filter Test:", positive([1, -2, 3, -4, 5]));
+// Or more concisely:
+let positive2 = v => filter(x => x > 0, v)
+positive2([1, -2, 3, -4, 5])  // [1, 3, 5]
+print("Positive2 Filter Test:", positive2([1, -2, 3, -4, 5]));
+// Clamp values to range [min, max]
+let clamp = (v, min_val, max_val) => map(x => if(x < min_val, min_val, if(x > max_val, max_val, x)), v)
+clamp([1, 5, 10, 15, 20], 5, 15)  // [5, 5, 10, 15, 15]
+print("Clamp Test:", clamp([1, 5, 10, 15, 20], 5, 15));
+// Apply ReLU to entire vector
+let relu_vec = v => map(x => if(x > 0, x, 0), v)
+relu_vec([1, -2, 3, -4, 5, -6])  // [1, 0, 3, 0, 5, 0]
+print("ReLU Vector Test:", relu_vec([1, -2, 3, -4, 5, -6]));
+// ============================================================================
+// 10. Practical Applications
+// ============================================================================
+
+// Piecewise linear function (simplified version of piecewise)
+// f(x) = 0        if x < 0
+//      = x        if 0 <= x < 1
+//      = 1        if x >= 1
+let piecewise_approx = x => if(x < 0, 0, if(x < 1, x, 1))
+piecewise_approx(-1)   // 0
+piecewise_approx(0.5)  // 0.5
+piecewise_approx(2)    // 1
+print("Piecewise Approx Tests:", piecewise_approx(-1), piecewise_approx(0.5), piecewise_approx(2));
+// Indicator function (characteristic function)
+let indicator = (x, a, b) => if(x >= a && x <= b, 1, 0)
+indicator(5, 0, 10)   // 1
+indicator(15, 0, 10)  // 0
+print("Indicator Tests:", indicator(5, 0, 10), indicator(15, 0, 10));
+// Sigmoid approximation using if (for demonstration)
+// Real sigmoid: 1 / (1 + exp(-x))
+// Simplified: clamp to [0, 1] range
+let sigmoid_approx = x => if(x < -6, 0, if(x > 6, 1, (x + 6) / 12))
+sigmoid_approx(-10)  // 0
+sigmoid_approx(0)    // 0.5
+sigmoid_approx(10)   // 1
+print("Sigmoid Approx Tests:", sigmoid_approx(-10), sigmoid_approx(0), sigmoid_approx(10)); 
+// ============================================================================
+// End of Conditionals Examples
+// ============================================================================
