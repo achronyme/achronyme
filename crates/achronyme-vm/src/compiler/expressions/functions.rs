@@ -154,6 +154,8 @@ impl Compiler {
             if !child_compiler.symbols.has(&var) && var != "rec" {
                 // This variable is captured from parent scope
                 // Skip 'rec' since it's already handled above
+
+                // First, check if it's a local variable in the parent
                 if let Ok(parent_reg) = self.symbols.get(&var) {
                     let upvalue_idx = upvalues.len();
                     if upvalue_idx >= 256 {
@@ -161,12 +163,28 @@ impl Compiler {
                     }
 
                     upvalues.push(UpvalueDescriptor {
-                        depth: 0, // Immediate parent
+                        depth: 0, // Immediate parent register
                         register: parent_reg,
-                        is_mutable: true, // Assume mutable for now
+                        is_mutable: true,
                     });
 
-                    // Map variable to upvalue in child's symbol table
+                    child_compiler
+                        .symbols
+                        .define_upvalue(var.clone(), upvalue_idx as u8)?;
+                }
+                // Check if it's an upvalue in the parent (transitive capture)
+                else if let Some(parent_upvalue_idx) = self.symbols.get_upvalue(&var) {
+                    let upvalue_idx = upvalues.len();
+                    if upvalue_idx >= 256 {
+                        return Err(CompileError::TooManyUpvalues);
+                    }
+
+                    upvalues.push(UpvalueDescriptor {
+                        depth: 1, // Captured from parent's upvalue (transitive)
+                        register: parent_upvalue_idx,
+                        is_mutable: true,
+                    });
+
                     child_compiler
                         .symbols
                         .define_upvalue(var.clone(), upvalue_idx as u8)?;

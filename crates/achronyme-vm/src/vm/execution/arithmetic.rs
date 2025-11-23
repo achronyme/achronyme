@@ -50,6 +50,14 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::Mod => {
+                let left = self.get_register(b)?;
+                let right = self.get_register(c)?;
+                let result = ValueOperations::mod_values(left, right)?;
+                self.set_register(a, result)?;
+                Ok(ExecutionResult::Continue)
+            }
+
             OpCode::Pow => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;

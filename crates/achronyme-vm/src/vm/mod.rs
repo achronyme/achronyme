@@ -251,6 +251,7 @@ impl VM {
             | OpCode::Sub
             | OpCode::Mul
             | OpCode::Div
+            | OpCode::Mod
             | OpCode::Pow
             | OpCode::Neg
             | OpCode::Not => self.execute_arithmetic(opcode, instruction),

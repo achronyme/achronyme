@@ -663,6 +663,126 @@ impl ValueOperations {
         }
     }
 
+    pub(crate) fn mod_values(left: &Value, right: &Value) -> Result<Value, VmError> {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        match (left, right) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
+
+            // Vector % Vector (element-wise)
+            (Value::Vector(ref a), Value::Vector(ref b)) => {
+                if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
+                    let a_borrow = a.borrow();
+                    let b_borrow = b.borrow();
+
+                    if a_borrow.len() != b_borrow.len() {
+                        return Err(VmError::TypeError {
+                            operation: "modulo".to_string(),
+                            expected: "vectors of same length".to_string(),
+                            got: format!(
+                                "vectors of length {} and {}",
+                                a_borrow.len(),
+                                b_borrow.len()
+                            ),
+                        });
+                    }
+
+                    // Modulo only defined for real numbers
+                    if a_borrow.iter().any(|v| matches!(v, Value::Complex(_)))
+                        || b_borrow.iter().any(|v| matches!(v, Value::Complex(_)))
+                    {
+                        return Err(VmError::TypeError {
+                            operation: "modulo".to_string(),
+                            expected: "real numeric vectors".to_string(),
+                            got: "complex numbers in vector".to_string(),
+                        });
+                    }
+
+                    let result: Vec<Value> = a_borrow
+                        .iter()
+                        .zip(b_borrow.iter())
+                        .map(|(av, bv)| match (av, bv) {
+                            (Value::Number(an), Value::Number(bn)) => Value::Number(an % bn),
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "modulo".to_string(),
+                        expected: "numeric vectors".to_string(),
+                        got: format!("{:?} % {:?}", left, right),
+                    })
+                }
+            }
+
+            // Broadcasting: Number % Vector
+            (Value::Number(scalar), Value::Vector(ref vec)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+
+                    if vec_borrow.iter().any(|v| matches!(v, Value::Complex(_))) {
+                        return Err(VmError::TypeError {
+                            operation: "modulo".to_string(),
+                            expected: "real numeric vector".to_string(),
+                            got: "complex numbers in vector".to_string(),
+                        });
+                    }
+
+                    let result: Vec<Value> = vec_borrow
+                        .iter()
+                        .map(|v| match v {
+                            Value::Number(n) => Value::Number(scalar % n),
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "modulo".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} % {:?}", left, right),
+                    })
+                }
+            }
+            (Value::Vector(ref vec), Value::Number(scalar)) => {
+                if Value::is_numeric_vector(vec) {
+                    let vec_borrow = vec.borrow();
+
+                    if vec_borrow.iter().any(|v| matches!(v, Value::Complex(_))) {
+                        return Err(VmError::TypeError {
+                            operation: "modulo".to_string(),
+                            expected: "real numeric vector".to_string(),
+                            got: "complex numbers in vector".to_string(),
+                        });
+                    }
+
+                    let result: Vec<Value> = vec_borrow
+                        .iter()
+                        .map(|v| match v {
+                            Value::Number(n) => Value::Number(n % scalar),
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                } else {
+                    Err(VmError::TypeError {
+                        operation: "modulo".to_string(),
+                        expected: "numeric vector for broadcasting".to_string(),
+                        got: format!("{:?} % {:?}", left, right),
+                    })
+                }
+            }
+
+            _ => Err(VmError::TypeError {
+                operation: "modulo".to_string(),
+                expected: "Number or Vector".to_string(),
+                got: format!("{:?} % {:?}", left, right),
+            }),
+        }
+    }
+
     pub(crate) fn pow_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
         use std::cell::RefCell;

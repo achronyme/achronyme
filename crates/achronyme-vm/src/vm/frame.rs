@@ -33,6 +33,14 @@ impl RegisterWindow {
         }
     }
 
+    /// Resize register window to accommodate more registers
+    pub fn resize(&mut self, new_size: usize) {
+        let new_size = new_size.min(MAX_REGISTERS);
+        if new_size > self.registers.len() {
+            self.registers.resize(new_size, Value::Null);
+        }
+    }
+
     /// Get register value
     #[inline]
     pub fn get(&self, idx: u8) -> Result<&Value, VmError> {

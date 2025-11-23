@@ -47,10 +47,28 @@ impl VM {
                         // Reserve slot for 'rec' - will be filled with the closure itself below
                         upvalues.push(Rc::new(RefCell::new(Value::Null)));
                     } else {
-                        // Capture from current frame's registers
-                        // TODO: Handle nested upvalues (upvalues from parent closure)
-                        let value = self.get_register(upvalue_desc.register)?.clone();
-                        upvalues.push(Rc::new(RefCell::new(value)));
+                        // Check depth to determine capture source
+                        if upvalue_desc.depth == 0 {
+                            // Direct capture from current frame's register
+                            let value = self.get_register(upvalue_desc.register)?.clone();
+                            upvalues.push(Rc::new(RefCell::new(value)));
+                        } else {
+                            // Transitive capture from current frame's upvalue
+                            let current_frame = self.current_frame()?;
+                            let parent_upvalue = current_frame
+                                .upvalues
+                                .get(upvalue_desc.register as usize)
+                                .ok_or_else(|| {
+                                    VmError::Runtime(format!(
+                                        "Invalid parent upvalue index: {} (frame has {} upvalues, depth={})",
+                                        upvalue_desc.register,
+                                        current_frame.upvalues.len(),
+                                        upvalue_desc.depth
+                                    ))
+                                })?
+                                .clone();
+                            upvalues.push(parent_upvalue);
+                        }
                     }
                 }
 
@@ -222,10 +240,16 @@ impl VM {
                 current_frame.upvalues = closure.upvalues.clone();
 
                 // Ensure register window is large enough for new function
-                // Note: We don't resize the register window in this implementation
-                // because it would be complex. The current frame's register window
-                // should already be large enough (255 registers for recursion).
-                // If needed in the future, we can add resize logic here.
+                // Note: We resize the register window if the new function needs more registers
+                // than the current frame has. This handles tail calls from functions with
+                // few registers to functions with many registers.
+                let needed_registers = if closure.prototype.register_count == 255 {
+                    256
+                } else {
+                    closure.prototype.register_count as usize
+                };
+                
+                current_frame.registers.resize(needed_registers);
 
                 // 6. Write arguments to frame base (R0, R1, ...)
                 // For missing arguments, set to Null (function prologue will fill defaults)
