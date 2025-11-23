@@ -1033,7 +1033,7 @@ impl ValueOperations {
                 let vec_borrow = vec.borrow();
                 let elements: Vec<String> = vec_borrow
                     .iter()
-                    .map(|v| Self::value_to_string(v))
+                    .map(Self::value_to_string)
                     .collect();
                 format!("[{}]", elements.join(", "))
             }

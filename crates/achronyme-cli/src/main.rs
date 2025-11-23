@@ -101,7 +101,10 @@ fn main() {
     // Handle subcommands first
     if let Some(command) = cli.command {
         match command {
-            Commands::Run { file, debug_bytecode: subcommand_debug } => {
+            Commands::Run {
+                file,
+                debug_bytecode: subcommand_debug,
+            } => {
                 // Prefer subcommand flag over global flag
                 let debug = subcommand_debug || debug_bytecode;
                 run_file(&file, debug)
@@ -397,7 +400,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             }
         }
         Value::Vector(v) => {
-            let elements: Vec<String> = v.borrow().iter().map(|val| format_value(val)).collect();
+            let elements: Vec<String> = v.borrow().iter().map(format_value).collect();
             format!("[{}]", elements.join(", "))
         }
         Value::Tensor(t) => {
@@ -532,6 +535,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             let op = if *inclusive { "..=" } else { ".." };
             format!("{}{}{}", start_str, op, end_str)
         }
+        Value::BoundMethod { method_name, .. } => format!("<method {}>", method_name),
     }
 }
 
@@ -627,19 +631,17 @@ fn lint_command(filename: &str, json_output: bool) {
                 std::process::exit(1);
             }
         }
+    } else if errors.is_empty() {
+        println!("No parse errors found: {}", filename);
     } else {
-        if errors.is_empty() {
-            println!("No parse errors found: {}", filename);
-        } else {
-            eprintln!("Parse errors in '{}':", filename);
-            for error in &errors {
-                eprintln!(
-                    "  {}:{}:{}: {} [{}]",
-                    filename, error.line, error.column, error.message, error.severity
-                );
-            }
-            std::process::exit(1);
+        eprintln!("Parse errors in '{}':", filename);
+        for error in &errors {
+            eprintln!(
+                "  {}:{}:{}: {} [{}]",
+                filename, error.line, error.column, error.message, error.severity
+            );
         }
+        std::process::exit(1);
     }
 }
 
@@ -669,14 +671,12 @@ fn symbols_command(filename: &str, json_output: bool) {
                         std::process::exit(1);
                     }
                 }
+            } else if symbols.is_empty() {
+                println!("No symbols found in: {}", filename);
             } else {
-                if symbols.is_empty() {
-                    println!("No symbols found in: {}", filename);
-                } else {
-                    println!("Symbols in '{}':", filename);
-                    for symbol in &symbols {
-                        println!("  {} {} (line {})", symbol.kind, symbol.name, symbol.line);
-                    }
+                println!("Symbols in '{}':", filename);
+                for symbol in &symbols {
+                    println!("  {} {} (line {})", symbol.kind, symbol.name, symbol.line);
                 }
             }
         }

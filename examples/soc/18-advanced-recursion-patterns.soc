@@ -22,28 +22,28 @@ let zeros = n => (
     (left, vector) => if(left == 0, vector, rec(left - 1, [0, ...vector]))
 )(n, [])
 
-zeros(5)    // [0, 0, 0, 0, 0]
-zeros(10)   // [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+println("zeros(5):", zeros(5))    // [0, 0, 0, 0, 0]
+println("zeros(10):", zeros(10))   // [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 // ones(n) - Create array of n ones
 let ones = n => (
     (left, vector) => if(left == 0, vector, rec(left - 1, [1, ...vector]))
 )(n, [])
 
-ones(5)     // [1, 1, 1, 1, 1]
+println("ones(5):", ones(5))     // [1, 1, 1, 1, 1]
 
 // ============================================================================
 // 2. Recursive Range Generation
 // ============================================================================
 
-// range(n) - Generate [0, 1, 2, ..., n-1]
-let range = n => (
+// range_rec(n) - Generate [0, 1, 2, ..., n-1]
+let range_rec = n => (
     (left, current, vector) =>
         if(left == 0, vector, rec(left - 1, current + 1, [...vector, current]))
 )(n, 0, [])
 
-range(5)    // [0, 1, 2, 3, 4]
-range(10)   // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+println("range(5):", range_rec(5))    // [0, 1, 2, 3, 4]
+println("range(10):", range_rec(10))   // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 // range_step(start, end, step) - Generate range with step
 let range_step = (start, end, step) => (
@@ -51,8 +51,8 @@ let range_step = (start, end, step) => (
         if(current >= end, vector, rec(current + step, [...vector, current]))
 )(start, [])
 
-range_step(0, 10, 2)    // [0, 2, 4, 6, 8]
-range_step(1, 10, 3)    // [1, 4, 7]
+println("range_step(0, 10, 2):", range_step(0, 10, 2))    // [0, 2, 4, 6, 8]
+println("range_step(1, 10, 3):", range_step(1, 10, 3))    // [1, 4, 7]
 
 // ============================================================================
 // 3. Factorial with Accumulator (Tail Recursion Style)
@@ -62,7 +62,7 @@ range_step(1, 10, 3)    // [1, 4, 7]
 let factorial_simple = n =>
     if(n <= 1, 1, n * rec(n - 1))
 
-factorial_simple(5)  // 120
+println("factorial_simple(5):", factorial_simple(5))  // 120
 
 // Factorial with accumulator (tail-call style)
 let factorial_acc = n => (
@@ -70,8 +70,8 @@ let factorial_acc = n => (
         if(current <= 1, acc, rec(current - 1, acc * current))
 )(n, 1)
 
-factorial_acc(5)     // 120
-factorial_acc(10)    // 3628800
+println("factorial_acc(5):", factorial_acc(5))     // 120
+println("factorial_acc(10):", factorial_acc(10))    // 3628800
 
 // ============================================================================
 // 4. Fibonacci with Memoization Pattern
@@ -83,8 +83,8 @@ let fibonacci_acc = n => (
         if(i == 0, a, rec(i - 1, b, a + b))
 )(n, 0, 1)
 
-fibonacci_acc(10)    // 55
-fibonacci_acc(20)    // 6765
+println("fibonacci_acc(10):", fibonacci_acc(10))    // 55
+println("fibonacci_acc(20):", fibonacci_acc(20))    // 6765
 
 // ============================================================================
 // 5. Sum with Accumulator
@@ -111,8 +111,8 @@ let repeat = (value, n) => (
         if(left == 0, vector, rec(left - 1, [value, ...vector]))
 )(n, [])
 
-repeat(42, 5)        // [42, 42, 42, 42, 42]
-repeat("x", 3)       // ["x", "x", "x"]
+println("repeat(42, 5):", repeat(42, 5))        // [42, 42, 42, 42, 42]
+println("repeat('x', 3):", repeat("x", 3))       // ["x", "x", "x"]
 
 // ============================================================================
 // 7. Countdown and Countup
@@ -124,7 +124,7 @@ let countdown = n => (
         if(current == 0, vector, rec(current - 1, [...vector, current]))
 )(n, [])
 
-countdown(5)         // [5, 4, 3, 2, 1]
+println("countdown(5):", countdown(5))         // [5, 4, 3, 2, 1]
 
 // countup(n) - Generate [1, 2, ..., n]
 let countup = n => (
@@ -132,7 +132,7 @@ let countup = n => (
         if(current > n, vector, rec(current + 1, [...vector, current]))
 )(1, [])
 
-countup(5)           // [1, 2, 3, 4, 5]
+println("countup(5):", countup(5))           // [1, 2, 3, 4, 5]
 
 // ============================================================================
 // 8. Power with Accumulator
@@ -144,8 +144,8 @@ let power_acc = (base, exp) => (
         if(remaining == 0, acc, rec(remaining - 1, acc * base))
 )(exp, 1)
 
-power_acc(2, 10)     // 1024
-power_acc(3, 4)      // 81
+println("power_acc(2, 10):", power_acc(2, 10))     // 1024
+println("power_acc(3, 4):", power_acc(3, 4))      // 81
 
 // ============================================================================
 // 9. Reverse Array (Recursive)
@@ -171,9 +171,9 @@ let fill_with = (n, fn) => (
         if(index >= n, vector, rec(index + 1, [...vector, fn(index)]))
 )(0, [])
 
-fill_with(5, x => x * x)         // [0, 1, 4, 9, 16]
-fill_with(5, x => x * 2)         // [0, 2, 4, 6, 8]
-fill_with(3, x => x * x * x)     // [0, 1, 8]
+println("fill_with squares:", fill_with(5, x => x * x))         // [0, 1, 4, 9, 16]
+println("fill_with doubles:", fill_with(5, x => x * 2))         // [0, 2, 4, 6, 8]
+println("fill_with cubes:", fill_with(3, x => x * x * x))     // [0, 1, 8]
 
 // ============================================================================
 // 11. Nested Recursion: 2D Arrays
@@ -187,7 +187,7 @@ let zeros_2d = (rows, cols) => (
            rec(rows_left - 1, [zeros(cols), ...result]))
 )(rows, [])
 
-zeros_2d(3, 4)       // [[0,0,0,0], [0,0,0,0], [0,0,0,0]]
+println("zeros_2d(3, 4):", zeros_2d(3, 4))       // [[0,0,0,0], [0,0,0,0], [0,0,0,0]]
 
 // identity_matrix(n) - Create n×n identity matrix
 let identity_matrix = n => (
@@ -200,7 +200,7 @@ let identity_matrix = n => (
            ]))
 )(0, [])
 
-identity_matrix(3)
+println("identity_matrix(3):", identity_matrix(3))
 // [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
 
 // ============================================================================
@@ -231,8 +231,8 @@ let gcd = (a, b) => (
     (x, y) => if(y == 0, x, rec(y, x % y))
 )(a, b)
 
-gcd(48, 18)          // 6
-gcd(100, 35)         // 5
+println("gcd(48, 18):", gcd(48, 18))          // 6
+println("gcd(100, 35):", gcd(100, 35))         // 5
 
 // ============================================================================
 // Summary: Key Patterns
@@ -270,11 +270,11 @@ gcd(100, 35)         // 5
 
 // ⚠️ Testing the limit:
 
-range(5)     // ✅ Works: [0, 1, 2, 3, 4]
-range(10)    // ✅ Works: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-range(40)    // ✅ Works (but getting close to limit)
-// range(50)    // ❌ Stack overflow!
-
+println("range(5):", range_rec(5))     // ✅ Works: [0, 1, 2, 3, 4]
+println("range(10):", range_rec(10))    // ✅ Works: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+println("range(40):", range_rec(40))    // ✅ Works (but getting close to limit)
+println("range(50):", range_rec(50))    // ✅ Works (at the edge)
+// range_rec(60)    // ❌ Fails: Stack overflow
 // Why only 50?
 // Each recursive call involves:
 // - Cloning the entire evaluation environment
@@ -287,19 +287,18 @@ range(40)    // ✅ Works (but getting close to limit)
 // Better Alternatives for Large Ranges
 // ============================================================================
 
-// ✅ Use built-in linspace instead:
-let range_safe = n => linspace(0, n - 1, n)
+let range_safe = n => range(0, n - 1)
 
-range_safe(100)    // ✅ Works!
-range_safe(1000)   // ✅ Works!
-range_safe(10000)  // ✅ Works!
+println("range_safe(100):", range_safe(100))    // ✅ Works!
+println("range_safe(1000):", range_safe(1000))   // ✅ Works!
+// range_safe(10000)  // ✅ Works!
 
 // ✅ Or use map with linspace:
-let zeros_safe = n => map(_ => 0, linspace(0, n - 1, n))
-let ones_safe = n => map(_ => 1, linspace(0, n - 1, n))
+let zeros_safe = n => map(_ => 0, range(0, n - 1))
+let ones_safe = n => map(_ => 1, range(0, n - 1))
 
-zeros_safe(100)    // ✅ Works perfectly
-ones_safe(1000)    // ✅ No stack issues
+println("zeros_safe(100):", zeros_safe(100))    // ✅ Works perfectly
+println("ones_safe(1000):", ones_safe(1000))    // ✅ No stack issues
 
 // ============================================================================
 // Summary

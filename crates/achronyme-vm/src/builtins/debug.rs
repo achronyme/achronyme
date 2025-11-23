@@ -90,7 +90,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
                     format!("Function(Builtin: {})", name)
                 }
                 Function::VmClosure(_) => {
-                    format!("Function(VmClosure: <bytecode>)")
+                    "Function(VmClosure: <bytecode>)".to_string()
                 }
             }
         }
@@ -202,6 +202,10 @@ fn describe_value(value: &Value, indent: usize) -> String {
             let end_str = describe_value(end, 0);
             let op = if *inclusive { "..=" } else { ".." };
             format!("Range({}{}{})", start_str, op, end_str)
+        }
+
+        Value::BoundMethod { method_name, .. } => {
+            format!("BoundMethod({})", method_name)
         }
     }
 }

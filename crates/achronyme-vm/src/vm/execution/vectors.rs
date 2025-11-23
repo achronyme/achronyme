@@ -48,6 +48,62 @@ impl VM {
                 }
             }
 
+            OpCode::VecSpread => {
+                // R[A].spread(R[B])
+                let vec_reg = a;
+                let spread_reg = b;
+
+                let vec_value = self.get_register(vec_reg)?.clone();
+                let spread_value = self.get_register(spread_reg)?.clone();
+
+                match vec_value {
+                    Value::Vector(ref vec_rc) => {
+                        let mut target_vec = vec_rc.borrow_mut();
+
+                        // Check what we are spreading
+                        match spread_value {
+                            Value::Vector(src_vec_rc) => {
+                                let src_vec = src_vec_rc.borrow();
+                                target_vec.extend(src_vec.iter().cloned());
+                            }
+                            Value::Tensor(t) => {
+                                // Spread tensor elements (flattened)
+                                for val in t.data() {
+                                    target_vec.push(Value::Number(*val));
+                                }
+                            }
+                            Value::ComplexTensor(t) => {
+                                for val in t.data() {
+                                    target_vec.push(Value::Complex(*val));
+                                }
+                            }
+                            Value::String(s) => {
+                                // Spread string as characters
+                                for c in s.chars() {
+                                    target_vec.push(Value::String(c.to_string()));
+                                }
+                            }
+                            // Could also support Generator/Iterator spreading if needed
+                            // But that requires more complex handling (consuming the iterator)
+                            _ => {
+                                return Err(VmError::TypeError {
+                                    operation: "spread".to_string(),
+                                    expected: "Vector, Tensor, or String".to_string(),
+                                    got: format!("{:?}", spread_value),
+                                });
+                            }
+                        }
+
+                        Ok(ExecutionResult::Continue)
+                    }
+                    _ => Err(VmError::TypeError {
+                        operation: "vector spread".to_string(),
+                        expected: "Vector".to_string(),
+                        got: format!("{:?}", vec_value),
+                    }),
+                }
+            }
+
             OpCode::VecGet => {
                 // R[A] = R[B][R[C]] (supports Vector and Tensor 1D indexing)
                 let dst = a;
@@ -512,24 +568,7 @@ impl VM {
                 // Automatic Type Promotion: Check if we have a nested Vector that should be a Tensor
                 // This allows matrix[i, j] where matrix is defined as [[1,2], [3,4]]
                 let promoted_tensor = if let Value::Vector(_) = tensor_val {
-                    if let Some(tensor) = tensor_val.try_to_tensor() {
-                        // Update the register with the promoted tensor for future efficiency
-                        // self.set_register(base, tensor.clone())?; // Can't update if it's a constant or literal?
-                        // But base register usually holds a variable.
-                        // If it's a literal, it's fine.
-                        // However, `self.get_register(base)` returned a Value.
-                        // If we update `base`, we update the local register.
-                        // This assumes the tensor is not shared or we don't care about identity change?
-                        // `Value::Vector` is identity-based. `Value::Tensor` is value-based.
-                        // If we promote, we change semantics from Ref to Value.
-                        // But since Tensors are immutable, it's safer?
-                        // Actually, if `matrix` is shared, updating one register won't update others.
-                        // But `try_to_tensor` creates a NEW value.
-                        // For `TensorGet`, we just use the promoted value for this operation.
-                        Some(tensor)
-                    } else {
-                        None
-                    }
+                    tensor_val.try_to_tensor()
                 } else {
                     None
                 };
@@ -549,19 +588,15 @@ impl VM {
                                     start: _,
                                     end: _,
                                     inclusive: _,
-                                } => {
-                                    Err(VmError::Runtime(
-                                        "Range slicing on Vector via TensorGet not yet specialized"
-                                            .to_string(),
-                                    ))
-                                }
-                                _ => {
-                                    Err(VmError::TypeError {
-                                        operation: "multidim indexing".to_string(),
-                                        expected: "Tensor".to_string(),
-                                        got: "Vector".to_string(),
-                                    })
-                                }
+                                } => Err(VmError::Runtime(
+                                    "Range slicing on Vector via TensorGet not yet specialized"
+                                        .to_string(),
+                                )),
+                                _ => Err(VmError::TypeError {
+                                    operation: "multidim indexing".to_string(),
+                                    expected: "Tensor".to_string(),
+                                    got: "Vector".to_string(),
+                                }),
                             }
                         } else {
                             Err(VmError::TypeError {

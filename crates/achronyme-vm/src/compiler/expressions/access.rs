@@ -26,7 +26,7 @@ impl Compiler {
                     // Existing logic for single index: VecGet
                     let idx_res = self.compile_expression(idx_expr)?;
                     let result_reg = self.registers.allocate()?;
-                    
+
                     // VecGet: R[result] = R[obj][R[idx]]
                     self.emit(encode_abc(
                         OpCode::VecGet.as_u8(),
@@ -36,8 +36,12 @@ impl Compiler {
                     ));
 
                     // Free temporary registers
-                    if obj_res.is_temp() { self.registers.free(obj_res.reg()); }
-                    if idx_res.is_temp() { self.registers.free(idx_res.reg()); }
+                    if obj_res.is_temp() {
+                        self.registers.free(obj_res.reg());
+                    }
+                    if idx_res.is_temp() {
+                        self.registers.free(idx_res.reg());
+                    }
 
                     return Ok(RegResult::temp(result_reg));
                 }
@@ -52,7 +56,9 @@ impl Compiler {
                     if let Some(s) = start {
                         let s_res = self.compile_expression(s)?;
                         self.emit_move(start_reg, s_res.reg());
-                        if s_res.is_temp() { self.registers.free(s_res.reg()); }
+                        if s_res.is_temp() {
+                            self.registers.free(s_res.reg());
+                        }
                     } else {
                         self.emit(encode_abc(OpCode::LoadNull.as_u8(), start_reg, 0, 0));
                     }
@@ -61,7 +67,9 @@ impl Compiler {
                     if let Some(e) = end {
                         let e_res = self.compile_expression(e)?;
                         self.emit_move(end_reg, e_res.reg());
-                        if e_res.is_temp() { self.registers.free(e_res.reg()); }
+                        if e_res.is_temp() {
+                            self.registers.free(e_res.reg());
+                        }
                     } else {
                         self.emit(encode_abc(OpCode::LoadNull.as_u8(), end_reg, 0, 0));
                     }
@@ -78,7 +86,9 @@ impl Compiler {
                     // Free registers
                     self.registers.free(start_reg);
                     self.registers.free(end_reg);
-                    if obj_res.is_temp() { self.registers.free(obj_res.reg()); }
+                    if obj_res.is_temp() {
+                        self.registers.free(obj_res.reg());
+                    }
 
                     return Ok(RegResult::temp(result_reg));
                 }
@@ -87,7 +97,7 @@ impl Compiler {
 
         // Case 2: Multi-dimensional access (Tensor)
         // We use TensorGet with a variable argument list of indices
-        
+
         // Allocate frame for Tensor + Indices
         // Frame: [Tensor, Index0, Index1, ...]
         let frame_start = self.registers.allocate_many(1 + indices.len())?;
@@ -96,7 +106,9 @@ impl Compiler {
 
         // Move tensor to slot 0
         self.emit_move(tensor_slot, obj_res.reg());
-        if obj_res.is_temp() { self.registers.free(obj_res.reg()); }
+        if obj_res.is_temp() {
+            self.registers.free(obj_res.reg());
+        }
 
         // Compile/Move indices to slots 1..N
         for (i, arg) in indices.iter().enumerate() {
@@ -105,7 +117,9 @@ impl Compiler {
                 IndexArg::Single(expr) => {
                     let expr_res = self.compile_expression(expr)?;
                     self.emit_move(target_reg, expr_res.reg());
-                    if expr_res.is_temp() { self.registers.free(expr_res.reg()); }
+                    if expr_res.is_temp() {
+                        self.registers.free(expr_res.reg());
+                    }
                 }
                 IndexArg::Range { start, end } => {
                     // Compile range into Value::Range using RangeEx opcode
@@ -117,7 +131,9 @@ impl Compiler {
                     if let Some(s) = start {
                         let res = self.compile_expression(s)?;
                         self.emit_move(s_reg, res.reg());
-                        if res.is_temp() { self.registers.free(res.reg()); }
+                        if res.is_temp() {
+                            self.registers.free(res.reg());
+                        }
                     } else {
                         self.emit(encode_abc(OpCode::LoadNull.as_u8(), s_reg, 0, 0));
                     }
@@ -125,7 +141,9 @@ impl Compiler {
                     if let Some(e) = end {
                         let res = self.compile_expression(e)?;
                         self.emit_move(e_reg, res.reg());
-                        if res.is_temp() { self.registers.free(res.reg()); }
+                        if res.is_temp() {
+                            self.registers.free(res.reg());
+                        }
                     } else {
                         self.emit(encode_abc(OpCode::LoadNull.as_u8(), e_reg, 0, 0));
                     }

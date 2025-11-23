@@ -136,7 +136,11 @@ impl Compiler {
                     match elem {
                         VectorPatternElement::Pattern(nested_pattern, _default) => {
                             // Recursively compile nested pattern
-                            self.compile_pattern_for_match(nested_pattern, reg_idx, next_arm_jumps)?;
+                            self.compile_pattern_for_match(
+                                nested_pattern,
+                                reg_idx,
+                                next_arm_jumps,
+                            )?;
                             reg_idx += 1;
                         }
                         VectorPatternElement::Rest(name) => {
@@ -213,7 +217,12 @@ impl Compiler {
                         self.emit(encode_abc(OpCode::LoadNull.as_u8(), null_check_reg, 0, 0));
 
                         let eq_reg = self.registers.allocate()?;
-                        self.emit(encode_abc(OpCode::Eq.as_u8(), eq_reg, reg_idx, null_check_reg));
+                        self.emit(encode_abc(
+                            OpCode::Eq.as_u8(),
+                            eq_reg,
+                            reg_idx,
+                            null_check_reg,
+                        ));
 
                         self.registers.free(null_check_reg);
 
@@ -586,7 +595,13 @@ impl Compiler {
                     // Destructure the vector (this binds variables)
                     // For now, we use Irrefutable mode and rely on runtime checks
                     // TODO: Implement proper refutable pattern compilation with match result
-                    self.compile_pattern_for_match(&achronyme_parser::ast::Pattern::Vector { elements: elements.clone() }, value_res.reg(), &mut next_arm_jumps)?;
+                    self.compile_pattern_for_match(
+                        &achronyme_parser::ast::Pattern::Vector {
+                            elements: elements.clone(),
+                        },
+                        value_res.reg(),
+                        &mut next_arm_jumps,
+                    )?;
 
                     // Check guard if present
                     if let Some(guard) = &arm.guard {
@@ -636,7 +651,13 @@ impl Compiler {
                     self.registers.free(type_check_reg);
 
                     // Destructure the record (this binds variables and checks nested patterns)
-                    self.compile_pattern_for_match(&achronyme_parser::ast::Pattern::Record { fields: fields.clone() }, value_res.reg(), &mut next_arm_jumps)?;
+                    self.compile_pattern_for_match(
+                        &achronyme_parser::ast::Pattern::Record {
+                            fields: fields.clone(),
+                        },
+                        value_res.reg(),
+                        &mut next_arm_jumps,
+                    )?;
 
                     // Check guard if present
                     if let Some(guard) = &arm.guard {
@@ -1033,7 +1054,10 @@ impl Compiler {
     /// Syntax: return value
     /// Returns from the current function with the given value
     /// This is used when return appears in expression context (e.g., inside do blocks)
-    pub(crate) fn compile_return_expr(&mut self, value: &AstNode) -> Result<RegResult, CompileError> {
+    pub(crate) fn compile_return_expr(
+        &mut self,
+        value: &AstNode,
+    ) -> Result<RegResult, CompileError> {
         // Compile the value to return
         let value_res = self.compile_expression(value)?;
 

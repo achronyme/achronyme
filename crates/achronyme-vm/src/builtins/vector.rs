@@ -26,9 +26,9 @@ pub fn vm_push(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let mut new_vec = vec.borrow().clone();
-            new_vec.push(args[1].clone());
-            Ok(Value::Vector(Rc::new(RefCell::new(new_vec))))
+            vec.borrow_mut().push(args[1].clone());
+            // Return the vector itself to allow chaining: v.push(1).push(2)
+            Ok(args[0].clone())
         }
         _ => Err(VmError::TypeError {
             operation: "push".to_string(),
@@ -48,16 +48,14 @@ pub fn vm_pop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let borrowed = vec.borrow();
+            let mut borrowed = vec.borrow_mut();
             if borrowed.is_empty() {
                 return Err(VmError::Runtime(
                     "pop(): cannot pop from empty vector".to_string(),
                 ));
             }
-            let mut new_vec = borrowed.clone();
-            drop(borrowed);
-            new_vec.pop();
-            Ok(Value::Vector(Rc::new(RefCell::new(new_vec))))
+            let val = borrowed.pop().unwrap();
+            Ok(val)
         }
         _ => Err(VmError::TypeError {
             operation: "pop".to_string(),
@@ -78,7 +76,7 @@ pub fn vm_insert(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1], &args[2]) {
         (Value::Vector(vec), Value::Number(idx), value) => {
             let idx = *idx as usize;
-            let borrowed = vec.borrow();
+            let mut borrowed = vec.borrow_mut();
             if idx > borrowed.len() {
                 return Err(VmError::Runtime(format!(
                     "insert(): index {} out of bounds for vector of length {}",
@@ -86,10 +84,8 @@ pub fn vm_insert(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     borrowed.len()
                 )));
             }
-            let mut new_vec = borrowed.clone();
-            drop(borrowed);
-            new_vec.insert(idx, value.clone());
-            Ok(Value::Vector(Rc::new(RefCell::new(new_vec))))
+            borrowed.insert(idx, value.clone());
+            Ok(args[0].clone())
         }
         _ => Err(VmError::TypeError {
             operation: "insert".to_string(),
@@ -110,7 +106,7 @@ pub fn vm_remove(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1]) {
         (Value::Vector(vec), Value::Number(idx)) => {
             let idx = *idx as usize;
-            let borrowed = vec.borrow();
+            let mut borrowed = vec.borrow_mut();
             if idx >= borrowed.len() {
                 return Err(VmError::Runtime(format!(
                     "remove(): index {} out of bounds for vector of length {}",
@@ -118,10 +114,8 @@ pub fn vm_remove(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     borrowed.len()
                 )));
             }
-            let mut new_vec = borrowed.clone();
-            drop(borrowed);
-            new_vec.remove(idx);
-            Ok(Value::Vector(Rc::new(RefCell::new(new_vec))))
+            let val = borrowed.remove(idx);
+            Ok(val)
         }
         _ => Err(VmError::TypeError {
             operation: "remove".to_string(),
@@ -149,17 +143,13 @@ pub fn vm_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             let end = *end as usize;
             let borrowed = vec.borrow();
 
-            if start > borrowed.len() || end > borrowed.len() || start > end {
-                return Err(VmError::Runtime(format!(
-                    "slice(): invalid range [{}..{}] for vector of length {}",
-                    start,
-                    end,
-                    borrowed.len()
-                )));
-            }
+            // Clamp end to length to be safe and forgiving
+            let len = borrowed.len();
+            let actual_end = end.min(len);
+            let actual_start = start.min(actual_end);
 
-            let result = borrowed[start..end].to_vec();
-            drop(borrowed);
+            let result = borrowed[actual_start..actual_end].to_vec();
+            // Slice returns a NEW vector
             Ok(Value::Vector(Rc::new(RefCell::new(result))))
         }
         _ => Err(VmError::TypeError {
@@ -182,6 +172,7 @@ pub fn vm_concat_vec(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         (Value::Vector(v1), Value::Vector(v2)) => {
             let mut result = v1.borrow().clone();
             result.extend(v2.borrow().clone());
+            // Concat returns a NEW vector
             Ok(Value::Vector(Rc::new(RefCell::new(result))))
         }
         _ => Err(VmError::TypeError {
@@ -206,9 +197,10 @@ pub fn vm_reverse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let mut reversed = vec.borrow().clone();
-            reversed.reverse();
-            Ok(Value::Vector(Rc::new(RefCell::new(reversed))))
+            let mut borrowed = vec.borrow_mut();
+            borrowed.reverse();
+            // In-place reverse, return self for chaining
+            Ok(args[0].clone())
         }
         _ => Err(VmError::TypeError {
             operation: "reverse".to_string(),
@@ -228,10 +220,10 @@ pub fn vm_sort(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let mut sorted = vec.borrow().clone();
+            let mut borrowed = vec.borrow_mut();
 
             // Simple sort for numbers and strings
-            sorted.sort_by(|a, b| match (a, b) {
+            borrowed.sort_by(|a, b| match (a, b) {
                 (Value::Number(n1), Value::Number(n2)) => {
                     n1.partial_cmp(n2).unwrap_or(std::cmp::Ordering::Equal)
                 }
@@ -239,7 +231,8 @@ pub fn vm_sort(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 _ => std::cmp::Ordering::Equal,
             });
 
-            Ok(Value::Vector(Rc::new(RefCell::new(sorted))))
+            // In-place sort, return self for chaining
+            Ok(args[0].clone())
         }
         _ => Err(VmError::TypeError {
             operation: "sort".to_string(),

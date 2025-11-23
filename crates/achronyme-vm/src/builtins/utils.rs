@@ -45,6 +45,7 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Iterator(_) => "Iterator",
         Value::Builder(_) => "Builder",
         Value::Range { .. } => "Range",
+        Value::BoundMethod { .. } => "BoundMethod",
     };
 
     Ok(Value::String(type_name.to_string()))
@@ -240,6 +241,7 @@ fn format_value(value: &Value) -> String {
             let op = if *inclusive { "..=" } else { ".." };
             format!("{}{}{}", start_str, op, end_str)
         }
+        Value::BoundMethod { method_name, .. } => format!("<method {}>", method_name),
     }
 }
 

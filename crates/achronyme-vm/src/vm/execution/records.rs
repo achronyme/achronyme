@@ -37,69 +37,71 @@ impl VM {
                 let rec_value = self.get_register(rec_reg)?.clone();
                 let field_name = self.get_string(key_idx)?;
 
-                // FIRST: For non-Record types, check if this is an intrinsic method lookup
-                // Records get normal field access (user-defined fields take precedence)
-                if !matches!(rec_value, Value::Record(_)) {
-                    if let Some(type_disc) =
-                        crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value)
-                    {
-                        if let Some(intrinsic_fn) = self.intrinsics.lookup(&type_disc, field_name) {
-                            // Found an intrinsic method!
-                            // Store the receiver and intrinsic function for later Call execution
-                            self.pending_intrinsic_calls
-                                .insert(dst, (rec_value.clone(), intrinsic_fn));
+                // 1. Attempt to get field from Record
+                if let Value::Record(rec_rc) = &rec_value {
+                    let rec_borrowed = rec_rc.borrow();
+                    if let Some(val) = rec_borrowed.get(field_name) {
+                        self.set_register(dst, val.clone())?;
+                        return Ok(ExecutionResult::Continue);
+                    }
+                    // Field not found in Record map, proceed to check intrinsics
+                }
 
-                            // Put a marker value in the register
-                            // We use Null as a placeholder - the Call opcode will check pending_intrinsic_calls
-                            // This is safe because real intrinsic methods can't be Null
-                            self.set_register(dst, Value::Null)?;
-                            return Ok(ExecutionResult::Continue);
-                        }
+                // 2. Attempt to find intrinsic method
+                if let Some(type_disc) =
+                    crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value)
+                {
+                    if self.intrinsics.lookup(&type_disc, field_name).is_some() {
+                        // Found an intrinsic method!
+                        let bound_method = Value::BoundMethod {
+                            receiver: Box::new(rec_value.clone()),
+                            method_name: field_name.to_string(),
+                        };
+                        self.set_register(dst, bound_method)?;
+                        return Ok(ExecutionResult::Continue);
                     }
                 }
 
-                // SECOND: Fall back to normal record field access
-                match &rec_value {
-                    Value::Record(rec_rc) => {
-                        let rec_borrowed = rec_rc.borrow();
-                        let value = rec_borrowed
-                            .get(field_name)
-                            .ok_or_else(|| {
-                                VmError::Runtime(format!(
-                                    "Field '{}' not found in record",
-                                    field_name
-                                ))
-                            })?
-                            .clone();
-                        drop(rec_borrowed); // Explicitly drop the borrow
-                        self.set_register(dst, value)?;
-                        Ok(ExecutionResult::Continue)
-                    }
-                    Value::Error { message, kind, source } => {
-                        // Support field access on Error values
-                        let value = match field_name {
-                            "message" => Value::String(message.clone()),
-                            "kind" => match kind {
-                                Some(k) => Value::String(k.clone()),
-                                None => Value::Null,
-                            },
-                            "source" => match source {
-                                Some(s) => (**s).clone(),
-                                None => Value::Null,
-                            },
-                            _ => return Err(VmError::Runtime(format!(
-                                "Field '{}' not found in Error (available fields: message, kind, source)",
+                // 3. Special case for Error fields
+                if let Value::Error {
+                    message,
+                    kind,
+                    source,
+                } = &rec_value
+                {
+                    let value = match field_name {
+                        "message" => Value::String(message.clone()),
+                        "kind" => match kind {
+                            Some(k) => Value::String(k.clone()),
+                            None => Value::Null,
+                        },
+                        "source" => match source {
+                            Some(s) => (**s).clone(),
+                            None => Value::Null,
+                        },
+                        _ => {
+                            return Err(VmError::Runtime(format!(
+                                "Field '{}' not found in Error",
                                 field_name
-                            ))),
-                        };
-                        self.set_register(dst, value)?;
-                        Ok(ExecutionResult::Continue)
-                    }
-                    _ => Err(VmError::TypeError {
+                            )))
+                        }
+                    };
+                    self.set_register(dst, value)?;
+                    return Ok(ExecutionResult::Continue);
+                }
+
+                // 4. Field not found
+                if let Value::Record(_) = rec_value {
+                    Err(VmError::Runtime(format!(
+                        "Field '{}' not found in record",
+                        field_name
+                    )))
+                } else {
+                    Err(VmError::TypeError {
                         operation: "record field access".to_string(),
-                        expected: "Record".to_string(),
+                        expected: "Record or Object with method".to_string(),
                         got: format!("{:?}", rec_value),
-                    }),
+                    })
                 }
             }
 

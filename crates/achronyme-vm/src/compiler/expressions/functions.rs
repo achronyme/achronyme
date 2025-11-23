@@ -223,9 +223,14 @@ impl Compiler {
         args: &[AstNode],
         is_tail: bool,
     ) -> Result<RegResult, CompileError> {
-        // Check if this is a built-in function call
-        if let Some(builtin_idx) = self.builtins.get_id(name) {
-            return self.compile_builtin_call(builtin_idx, args);
+        // Check for shadowing: if name is in symbols/upvalues, it's a variable call
+        let is_shadowed = self.symbols.has(name) || self.symbols.get_upvalue(name).is_some();
+
+        // Check if this is a built-in function call (if not shadowed)
+        if !is_shadowed {
+            if let Some(builtin_idx) = self.builtins.get_id(name) {
+                return self.compile_builtin_call(builtin_idx, args);
+            }
         }
 
         // ARREGLO CRÍTICO:
@@ -334,8 +339,13 @@ impl Compiler {
     ) -> Result<RegResult, CompileError> {
         // Check built-ins first
         if let AstNode::VariableRef(name) = callee {
-            if let Some(builtin_idx) = self.builtins.get_id(name) {
-                return self.compile_builtin_call(builtin_idx, args);
+            // Check for shadowing
+            let is_shadowed = self.symbols.has(name) || self.symbols.get_upvalue(name).is_some();
+
+            if !is_shadowed {
+                if let Some(builtin_idx) = self.builtins.get_id(name) {
+                    return self.compile_builtin_call(builtin_idx, args);
+                }
             }
         }
 
@@ -621,8 +631,8 @@ impl Compiler {
             self.registers.allocate()?
         } else {
             // Need result + arg count registers
-            let base = self.registers.allocate_many(1 + args.len())?;
-            base
+            
+            self.registers.allocate_many(1 + args.len())?
         };
 
         // Compile arguments into consecutive registers starting at result_reg + 1

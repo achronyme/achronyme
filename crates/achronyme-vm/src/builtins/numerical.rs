@@ -743,7 +743,7 @@ pub fn vm_newton(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
 
         // Newton-Raphson update: x_new = x - f(x)/f'(x)
-        x = x - fx / fprime;
+        x -= fx / fprime;
 
         // Check convergence
         if (fx / fprime).abs() < tol {

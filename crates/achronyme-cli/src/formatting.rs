@@ -45,11 +45,10 @@ fn update_context_for_line(context: &mut FormatContext, line: &str) {
     let trimmed = line.trim();
 
     // Decrease indent for lines starting with closing braces
-    if trimmed.starts_with('}') || trimmed.starts_with(']') || trimmed.starts_with(')') {
-        if context.indent_level >= context.indent_size {
+    if (trimmed.starts_with('}') || trimmed.starts_with(']') || trimmed.starts_with(')'))
+        && context.indent_level >= context.indent_size {
             context.indent_level -= context.indent_size;
         }
-    }
 
     // Count net brace changes for next line
     let (opens, closes) = count_braces_outside_strings(line);

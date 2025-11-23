@@ -104,7 +104,8 @@ impl RegisterAllocator {
                 for i in 0..count {
                     let expected = start_reg + (i as u8);
                     if window_start + i >= self.free_list.len()
-                        || self.free_list[window_start + i] != expected {
+                        || self.free_list[window_start + i] != expected
+                    {
                         is_consecutive = false;
                         break;
                     }

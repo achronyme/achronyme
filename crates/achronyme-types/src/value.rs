@@ -93,6 +93,11 @@ pub enum Value {
         end: Box<Value>,
         inclusive: bool,
     },
+    /// Bound method (intrinsic method linked to a receiver)
+    BoundMethod {
+        receiver: Box<Value>,
+        method_name: String,
+    },
 }
 
 // Conversiones automáticas con From/Into
@@ -359,6 +364,16 @@ impl PartialEq for Value {
                     inclusive: i2,
                 },
             ) => s1 == s2 && e1 == e2 && i1 == i2,
+            (
+                Value::BoundMethod {
+                    receiver: r1,
+                    method_name: m1,
+                },
+                Value::BoundMethod {
+                    receiver: r2,
+                    method_name: m2,
+                },
+            ) => r1 == r2 && m1 == m2,
             _ => false,
         }
     }

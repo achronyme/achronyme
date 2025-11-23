@@ -46,11 +46,9 @@ impl VM {
                         };
 
                         // Extract kind (optional)
-                        let kind = fields_ref.get("kind").and_then(|k| {
-                            match k {
-                                Value::String(s) => Some(s.clone()),
-                                _ => None,
-                            }
+                        let kind = fields_ref.get("kind").and_then(|k| match k {
+                            Value::String(s) => Some(s.clone()),
+                            _ => None,
                         });
 
                         // Extract source (optional)

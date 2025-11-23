@@ -25,7 +25,7 @@ pub use iterator::{VmBuilder, VmIterator};
 
 // Internal imports
 use frame::CallFrame as InternalCallFrame;
-use intrinsics::{IntrinsicFn, IntrinsicRegistry};
+use intrinsics::IntrinsicRegistry;
 use result::ExecutionResult;
 
 /// Maximum call stack depth
@@ -53,10 +53,6 @@ pub struct VM {
     /// Intrinsic method registry
     pub(crate) intrinsics: IntrinsicRegistry,
 
-    /// Pending intrinsic calls (register -> (receiver, intrinsic_fn))
-    /// Used to bind intrinsic methods to their receivers
-    pub(crate) pending_intrinsic_calls: HashMap<u8, (Value, IntrinsicFn)>,
-
     /// Current module file path (for resolving relative imports)
     pub(crate) current_module: Option<String>,
 
@@ -78,7 +74,6 @@ impl VM {
             next_generator_id: 0,
             builtins: crate::builtins::create_builtin_registry(),
             intrinsics: IntrinsicRegistry::new(),
-            pending_intrinsic_calls: HashMap::new(),
             current_module: None,
             precision: None, // Full precision by default
             epsilon: 1e-10,  // Default epsilon threshold
@@ -277,6 +272,7 @@ impl VM {
             // Vectors
             OpCode::NewVector
             | OpCode::VecPush
+            | OpCode::VecSpread
             | OpCode::VecGet
             | OpCode::VecSet
             | OpCode::VecSlice
@@ -554,17 +550,17 @@ impl VM {
                 frame.generator = Some(gen_value.clone());
                 self.frames.push(frame);
 
-                return Ok(ExecutionResult::Continue);
+                Ok(ExecutionResult::Continue)
             } else {
-                return Err(VmError::Runtime(
+                Err(VmError::Runtime(
                     "Invalid generator type (expected VM generator or native iterator)".to_string(),
-                ));
+                ))
             }
         } else {
-            return Err(VmError::Runtime(format!(
+            Err(VmError::Runtime(format!(
                 "Cannot resume non-generator value: {:?}",
                 gen_value
-            )));
+            )))
         }
     }
 

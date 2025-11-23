@@ -99,41 +99,6 @@ impl VM {
                 // Get the function value first
                 let func_value = self.get_register(func_reg)?.clone();
 
-                // FIRST: Check if this is a pending intrinsic call
-                // We check if func_value is Null (our marker) AND there's a pending intrinsic entry
-                if matches!(func_value, Value::Null) {
-                    if let Some((receiver, intrinsic_fn)) =
-                        self.pending_intrinsic_calls.remove(&func_reg)
-                    {
-                        // This is an intrinsic method call!
-                        // Special handling for generator.next() which needs to resume the generator
-
-                        // Check if this is a Generator.next() call specifically
-                        if let Some(type_disc) =
-                            crate::vm::intrinsics::TypeDiscriminant::from_value(&receiver)
-                        {
-                            if type_disc == crate::vm::intrinsics::TypeDiscriminant::Generator {
-                                // This is generator.next() - use special resume logic
-                                return self.resume_generator_internal(&receiver, result_reg);
-                            }
-                        }
-
-                        // For other intrinsics (future expansion), collect arguments and call the function
-                        let mut args = Vec::new();
-                        for i in 0..argc {
-                            let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
-                            args.push(self.get_register(arg_reg)?.clone());
-                        }
-
-                        // Call the intrinsic function
-                        let result = intrinsic_fn(self, &receiver, &args)?;
-                        self.set_register(result_reg, result)?;
-                        return Ok(ExecutionResult::Continue);
-                    }
-                }
-
-                // SECOND: Normal function call
-
                 match func_value {
                     Value::Function(Function::VmClosure(closure_any)) => {
                         // Downcast from Rc<dyn Any> to Closure
@@ -172,6 +137,43 @@ impl VM {
 
                         Ok(ExecutionResult::Continue)
                     }
+                    Value::BoundMethod {
+                        receiver,
+                        method_name,
+                    } => {
+                        // 1. Resolve the intrinsic function
+                        let discriminant =
+                            crate::vm::intrinsics::TypeDiscriminant::from_value(&receiver)
+                                .ok_or_else(|| {
+                                    VmError::Runtime("Invalid receiver for bound method".into())
+                                })?;
+
+                        let intrinsic_fn = self
+                            .intrinsics
+                            .lookup(&discriminant, &method_name)
+                            .ok_or_else(|| {
+                                VmError::Runtime(format!("Method '{}' not found", method_name))
+                            })?;
+
+                        // Special handling for generator.next() which needs to resume the generator
+                        if discriminant == crate::vm::intrinsics::TypeDiscriminant::Generator
+                            && method_name == "next"
+                        {
+                            return self.resume_generator_internal(&receiver, result_reg);
+                        }
+
+                        // 2. Collect arguments
+                        let mut args = Vec::new();
+                        for i in 0..argc {
+                            let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
+                            args.push(self.get_register(arg_reg)?.clone());
+                        }
+
+                        // 3. Call the intrinsic function
+                        let result = intrinsic_fn(self, &receiver, &args)?;
+                        self.set_register(result_reg, result)?;
+                        Ok(ExecutionResult::Continue)
+                    }
                     _ => Err(VmError::TypeError {
                         operation: "call".to_string(),
                         expected: "Function".to_string(),
@@ -187,94 +189,123 @@ impl VM {
                 // 1. Get callee function from register
                 let func_value = self.get_register(func_reg)?.clone();
 
-                let closure = match func_value {
-                    Value::Function(Function::VmClosure(closure_any)) => closure_any
-                        .downcast_ref::<Closure>()
-                        .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?
-                        .clone(),
-                    _ => {
-                        return Err(VmError::TypeError {
-                            operation: "tail call".to_string(),
-                            expected: "Function".to_string(),
-                            got: format!("{:?}", func_value),
-                        })
+                match func_value {
+                    Value::Function(Function::VmClosure(closure_any)) => {
+                        let closure = closure_any
+                            .downcast_ref::<Closure>()
+                            .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?
+                            .clone();
+
+                        // ... (Rest of existing closure logic) ...
+                        // 3. CRITICAL: Close upvalues before recycling frame
+                        // ...
+                        // 4. CRITICAL: Safe argument copying
+                        let mut args = Vec::with_capacity(argc as usize);
+                        for i in 0..argc {
+                            let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
+                            args.push(self.get_register(arg_reg)?.clone());
+                        }
+
+                        // 5. Get current frame and recycle it
+                        let current_frame = self.current_frame_mut()?;
+
+                        // Replace function
+                        current_frame.function = closure.prototype.clone();
+
+                        // Reset IP to 0
+                        current_frame.ip = 0;
+
+                        // Set upvalues
+                        current_frame.upvalues = closure.upvalues.clone();
+
+                        let needed_registers = if closure.prototype.register_count == 255 {
+                            256
+                        } else {
+                            closure.prototype.register_count as usize
+                        };
+
+                        current_frame.registers.resize(needed_registers);
+
+                        // 6. Write arguments to frame base
+                        let param_count = current_frame.function.param_count;
+                        for i in 0..param_count {
+                            if (i as usize) < args.len() {
+                                current_frame.registers.set(i, args[i as usize].clone())?;
+                            } else {
+                                current_frame.registers.set(i, Value::Null)?;
+                            }
+                        }
+
+                        // 7. Clear registers beyond the parameters
+                        for i in param_count..current_frame.function.register_count {
+                            current_frame.registers.set(i, Value::Null)?;
+                        }
+
+                        Ok(ExecutionResult::Continue)
                     }
-                };
+                    Value::BoundMethod {
+                        receiver,
+                        method_name,
+                    } => {
+                        // Tail call optimization for intrinsic methods:
+                        // Execute the intrinsic and immediately return its result.
 
-                // 2. Validate arity (optional - for now we allow arity mismatch like regular CALL)
-                // In production, you might want to enable this for safety
-                // if argc != closure.prototype.param_count {
-                //     return Err(VmError::Runtime(format!(
-                //         "Arity mismatch: expected {} arguments, got {}",
-                //         closure.prototype.param_count, argc
-                //     )));
-                // }
+                        // 1. Resolve the intrinsic function
+                        let discriminant =
+                            crate::vm::intrinsics::TypeDiscriminant::from_value(&receiver)
+                                .ok_or_else(|| {
+                                    VmError::Runtime("Invalid receiver for bound method".into())
+                                })?;
 
-                // 3. CRITICAL: Close upvalues before recycling frame
-                // Note: In a full implementation, this would close upvalues that point
-                // to registers in the current frame. Since our current implementation
-                // captures upvalues by value (not by reference to stack slots), we don't
-                // need to do anything here. But in a future optimization where upvalues
-                // point to stack locations, this would be critical.
-                // self.close_upvalues(current_frame_base);
+                        let intrinsic_fn = self
+                            .intrinsics
+                            .lookup(&discriminant, &method_name)
+                            .ok_or_else(|| {
+                                VmError::Runtime(format!("Method '{}' not found", method_name))
+                            })?;
 
-                // 4. CRITICAL: Safe argument copying - use temporary buffer to avoid overlap
-                // Arguments are currently in registers func_reg+1, func_reg+2, ..., func_reg+argc
-                // We need to move them to R0, R1, ..., R(argc-1)
-                let mut args = Vec::with_capacity(argc as usize);
-                for i in 0..argc {
-                    let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
-                    args.push(self.get_register(arg_reg)?.clone());
-                }
+                        // Special handling for generator.next()
+                        if discriminant == crate::vm::intrinsics::TypeDiscriminant::Generator
+                            && method_name == "next"
+                        {
+                            // Generators push frames, so we can't just execute and return.
+                            // For now, treating as regular call then return is safer, although it consumes stack temporarily.
+                            // Ideally we'd pop current frame before pushing generator frame.
+                            // But resume_generator_internal relies on current frame structure.
+                            // Fallback: Just error for now or implement non-optimized call.
+                            // Let's try non-optimized: Call then Return.
+                            // But wait, resume_generator_internal returns Continue, it doesn't return a Value immediately.
+                            // It pushes a frame.
+                            // If we run it, it pushes a frame. When that frame returns, it writes to a register.
+                            // But we don't have a dest register in TailCall.
+                            // So we can't support TCO for generators easily without more VM changes.
+                            return Err(VmError::Runtime(
+                                "Tail calls not currently supported for generator.next()".into(),
+                            ));
+                        }
 
-                // 5. Get current frame and recycle it
-                let current_frame = self.current_frame_mut()?;
+                        // 2. Collect arguments
+                        let mut args = Vec::new();
+                        for i in 0..argc {
+                            let arg_reg = func_reg.wrapping_add(1).wrapping_add(i);
+                            args.push(self.get_register(arg_reg)?.clone());
+                        }
 
-                // Replace function
-                current_frame.function = closure.prototype.clone();
+                        // 3. Call the intrinsic function
+                        let result = intrinsic_fn(self, &receiver, &args)?;
 
-                // Reset IP to 0
-                current_frame.ip = 0;
-
-                // Set upvalues
-                current_frame.upvalues = closure.upvalues.clone();
-
-                // Ensure register window is large enough for new function
-                // Note: We resize the register window if the new function needs more registers
-                // than the current frame has. This handles tail calls from functions with
-                // few registers to functions with many registers.
-                let needed_registers = if closure.prototype.register_count == 255 {
-                    256
-                } else {
-                    closure.prototype.register_count as usize
-                };
-                
-                current_frame.registers.resize(needed_registers);
-
-                // 6. Write arguments to frame base (R0, R1, ...)
-                // For missing arguments, set to Null (function prologue will fill defaults)
-                let param_count = current_frame.function.param_count;
-                for i in 0..param_count {
-                    if (i as usize) < args.len() {
-                        current_frame.registers.set(i, args[i as usize].clone())?;
-                    } else {
-                        current_frame.registers.set(i, Value::Null)?;
+                        // 4. Return the result
+                        // Since this is a tail call to a native function (which doesn't push a frame),
+                        // we simply return the result, which will cause the current frame to be popped
+                        // by the main execution loop (or call_value loop).
+                        Ok(ExecutionResult::Return(result))
                     }
+                    _ => Err(VmError::TypeError {
+                        operation: "tail call".to_string(),
+                        expected: "Function".to_string(),
+                        got: format!("{:?}", func_value),
+                    }),
                 }
-
-                // 7. Clear registers beyond the parameters to avoid stale values
-                // This is important for correctness when the new function has fewer parameters
-                for i in param_count..current_frame.function.register_count {
-                    current_frame.registers.set(i, Value::Null)?;
-                }
-
-                // Note: The 'rec' upvalue (index 0) is already set in current_frame.upvalues
-                // No need to set register 255 anymore - 'rec' is accessed via GetUpvalue
-
-                // Clear remaining registers (optional but recommended for GC)
-                // Skip this for now as it's just an optimization
-
-                Ok(ExecutionResult::Continue)
             }
 
             _ => unreachable!("Non-function opcode in function handler"),

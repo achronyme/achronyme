@@ -291,7 +291,7 @@ impl Compiler {
 
     /// Check if AST contains any Export nodes (recursively)
     fn contains_export(nodes: &[AstNode]) -> bool {
-        nodes.iter().any(|node| Self::node_contains_export(node))
+        nodes.iter().any(Self::node_contains_export)
     }
 
     /// Recursively check if a node contains Export
