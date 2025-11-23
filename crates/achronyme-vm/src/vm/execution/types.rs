@@ -72,6 +72,12 @@ impl VM {
             "Tensor" => matches!(value, Value::Tensor(_) | Value::ComplexTensor(_)),
             "Record" => matches!(value, Value::Record(_)),
             "Function" => matches!(value, Value::Function(_)),
+            "Generator" => matches!(value, Value::Generator(_)),
+            "Iterator" => matches!(value, Value::Iterator(_)),
+            "Null" => matches!(value, Value::Null),
+            "Range" => matches!(value, Value::Range { .. }),
+            "Builder" => matches!(value, Value::Builder(_)),
+            "MutableRef" => matches!(value, Value::MutableRef(_)),
             "Edge" => matches!(value, Value::Edge { .. }),
             "Error" => matches!(value, Value::Error { .. }),
             "Any" => true, // Any type always matches

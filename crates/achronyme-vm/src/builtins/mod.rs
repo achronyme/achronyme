@@ -125,7 +125,7 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("remove", vector::vm_remove, 2);
 
     // Slicing
-    registry.register("slice", vector::vm_slice, 3);
+    registry.register("slice", vector::vm_slice, -1);
     registry.register("concat_vec", vector::vm_concat_vec, 2);
 
     // Transformation

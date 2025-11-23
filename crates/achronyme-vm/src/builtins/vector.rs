@@ -130,21 +130,35 @@ pub fn vm_remove(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // ============================================================================
 
 pub fn vm_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
-    if args.len() != 3 {
+    if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
-            "slice() expects 3 arguments, got {}",
+            "slice() expects 2 or 3 arguments, got {}",
             args.len()
         )));
     }
 
-    match (&args[0], &args[1], &args[2]) {
-        (Value::Vector(vec), Value::Number(start), Value::Number(end)) => {
+    match (&args[0], &args[1]) {
+        (Value::Vector(vec), Value::Number(start)) => {
             let start = *start as usize;
-            let end = *end as usize;
             let borrowed = vec.borrow();
+            let len = borrowed.len();
+
+            let end = if args.len() == 3 {
+                match &args[2] {
+                    Value::Number(n) => *n as usize,
+                    _ => {
+                        return Err(VmError::TypeError {
+                            operation: "slice".to_string(),
+                            expected: "Vector, Number, [Number]".to_string(),
+                            got: format!("{:?}, {:?}, {:?}", args[0], args[1], args[2]),
+                        })
+                    }
+                }
+            } else {
+                len
+            };
 
             // Clamp end to length to be safe and forgiving
-            let len = borrowed.len();
             let actual_end = end.min(len);
             let actual_start = start.min(actual_end);
 
@@ -154,8 +168,8 @@ pub fn vm_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
         _ => Err(VmError::TypeError {
             operation: "slice".to_string(),
-            expected: "Vector, Number, Number".to_string(),
-            got: format!("{:?}, {:?}, {:?}", args[0], args[1], args[2]),
+            expected: "Vector, Number, [Number]".to_string(),
+            got: format!("{:?}", args),
         }),
     }
 }

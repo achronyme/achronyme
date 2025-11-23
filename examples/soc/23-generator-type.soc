@@ -38,7 +38,7 @@ print("--- Part 2: Generator Type Aliases ---")
 type DataStream = Generator
 type LazySequence = Generator
 
-let fibGenerator: () => LazySequence = () => generate {
+let fibGenerator: (): LazySequence = () => generate {
     let a = 0
     let b = 1
     yield a
@@ -70,7 +70,7 @@ print("--- Part 3: Functions Accepting Generators ---")
 
 // Function that takes a generator and collects values
 // Demonstrates using Generator type in parameters
-let takeThree: (Generator) => Vector = (gen) => do {
+let takeThree: (Generator): Vector = (gen) => do {
     let v1 = gen.next().value
     let v2 = gen.next().value
     let v3 = gen.next().value
