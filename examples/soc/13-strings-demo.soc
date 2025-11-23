@@ -7,46 +7,49 @@ let name = "Achronyme"
 
 // 2. Función concat - concatenar strings
 let message = concat(greeting, concat(" ", name))
-message
+print(message)
 
 // 3. Función length - obtener longitud
-length(greeting)
-length(name)
-length(message)
-
+len(greeting)
+len(name)
+len(message)
+print("Greeting length: " + str(len(greeting)))
+print("Name length: " + str(len(name)))
+print("Message length: " + str(len(message)))
 // 4. Comparación de strings
 greeting == "Hello"
 name != "Other"
-
+print("Greeting equals 'Hello': " + str(greeting == "Hello"))
 // 5. Strings con espacios
 let phrase = "¡Hola Mundo desde Achronyme!"
-phrase
-length(phrase)
+print(phrase)
+len(phrase)
 
 // 6. Escape sequences
 let multiline = "Line 1\nLine 2\nLine 3"
-multiline
-
+print(multiline)
 let tabbed = "Column1\tColumn2\tColumn3"
-tabbed
-
+print(tabbed)
 // 7. Strings con caracteres especiales
 let quote = "Dijeron: \"Bienvenido\""
-quote
+print(quote)
 
 // 8. Combinación con otras operaciones
-let count = length("test")
+let count = len("test")
 count == 4
-
+print("Length of 'test' is: " + str(count))
 // 9. Strings vacíos
 let empty = ""
-length(empty)
-
+len(empty)
+print("Empty string length: " + str(len(empty)))
 // 10. Unicode support
 let spanish = "¡Hola! ¿Cómo estás?"
 let chinese = "你好世界"
 let emoji = "🚀 Achronyme 🎉"
+print(spanish)
+print(chinese)
+print(emoji)
 
-spanish
-chinese
-emoji
+print("Strings Demo Completed")
+// ============================================================================
+

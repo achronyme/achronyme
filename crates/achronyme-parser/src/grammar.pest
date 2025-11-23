@@ -484,7 +484,7 @@ primary = {
   | self_ref           // Self-reference in records
   | rec_ref            // Rec-reference for recursive calls
   | identifier
-  | "(" ~ expr ~ ")"
+  | "(" ~ NEWLINE* ~ expr ~ NEWLINE* ~ ")"
 }
 
 // Range expression for slicing: start..end, start.., ..end, ..
@@ -521,7 +521,7 @@ field_op = { "." ~ field_identifier }
 
 // Power (right-associative): 2^3^4 = 2^(3^4)
 power = {
-    postfix_expression ~ ("^" ~ power)?
+    postfix_expression ~ ("^" ~ NEWLINE* ~ power)?
 }
 
 // Unary operators: -x, !x
@@ -541,33 +541,33 @@ logical_or_op = { "||" }
 
 // Multiplicative: *, /, %
 multiplicative = {
-    unary ~ (mult_op ~ unary)*
+    unary ~ (mult_op ~ NEWLINE* ~ unary)*
 }
 
 // Additive: +, -
 additive = {
-    multiplicative ~ (add_op ~ multiplicative)*
+    multiplicative ~ (add_op ~ NEWLINE* ~ multiplicative)*
 }
 
 // Edge: A -> B or A -- B with optional metadata
 // Syntax: identifier edge_op identifier [":" expr]
 edge = {
-    additive ~ (edge_op ~ additive ~ (":" ~ additive)?)?
+    additive ~ (edge_op ~ NEWLINE* ~ additive ~ (":" ~ NEWLINE* ~ additive)?)?
 }
 
 // Comparison: >, <, >=, <=, ==, !=
 comparison = {
-    edge ~ (cmp_op ~ edge)?
+    edge ~ (cmp_op ~ NEWLINE* ~ edge)?
 }
 
 // Logical AND: &&
 logical_and = {
-    comparison ~ (logical_and_op ~ comparison)*
+    comparison ~ (logical_and_op ~ NEWLINE* ~ comparison)*
 }
 
 // Logical OR: ||
 logical_or = {
-    logical_and ~ (logical_or_op ~ logical_and)*
+    logical_and ~ (logical_or_op ~ NEWLINE* ~ logical_and)*
 }
 
 // Range operators (lowest precedence)
@@ -576,7 +576,7 @@ logical_or = {
 // These have the lowest precedence so 1+2..5 = (1+2)..5 = 3..5
 range_op = { "..=" | ".." }
 standalone_range = {
-    logical_or ~ (range_op ~ logical_or)?
+    logical_or ~ (range_op ~ NEWLINE* ~ logical_or)?
 }
 
 // Expression (entry point for expressions)

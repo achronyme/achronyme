@@ -1,4 +1,4 @@
-import { CrearTejido } from "src/pedido"
+import { CrearTejido } from "./src/pedido"
 
 let paraCrearPollito = {
     horas: 5,
