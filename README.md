@@ -459,16 +459,13 @@ cargo run -- path/to/script.soc
 ```
 achronyme-core/
 ├── crates/
-│   ├── achronyme-eval/      # Evaluator and runtime
+│   ├── achronyme-cli/       # CLI and REPL implementation
 │   ├── achronyme-parser/    # Lexer and parser
-│   └── achronyme-types/     # Core type system
+│   ├── achronyme-types/     # Core type system
+│   └── achronyme-vm/        # Virtual machine and runtime
 ├── docs/
 │   └── language/            # Language documentation
-├── examples/
-│   └── soc/                 # Example programs
-└── src/
-    ├── bin/                 # CLI and REPL binaries
-    └── lib.rs               # Library entry point
+└── examples/                # Example programs
 ```
 
 ---

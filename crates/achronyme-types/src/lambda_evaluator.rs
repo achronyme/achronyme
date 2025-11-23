@@ -10,17 +10,6 @@ use crate::function::Function;
 /// This trait allows numerical calculus functions to evaluate lambdas
 /// without directly depending on the Evaluator type, enabling better
 /// testability and avoiding borrow checker issues.
-///
-/// # Example
-///
-/// ```ignore
-/// impl LambdaEvaluator for MyEvaluator {
-///     fn eval_at(&mut self, func: &Function, x: f64) -> Result<f64, String> {
-///         // Evaluate the lambda function at point x
-///         self.apply_lambda(func, vec![Value::Number(x)])
-///     }
-/// }
-/// ```
 pub trait LambdaEvaluator {
     /// Evaluate a lambda function at a single point
     ///
@@ -54,11 +43,6 @@ pub trait LambdaEvaluator {
     /// # Returns
     /// The numeric result of evaluating `func(args[0], args[1], ...)`
     ///
-    /// # Example
-    /// ```ignore
-    /// // For a function like: (x, y) => x^2 + y^2
-    /// let result = evaluator.eval_at_nd(&func, &[3.0, 4.0])?;
-    /// // result = 25.0
-    /// ```
+    /// For a function like: `(x, y) => x^2 + y^2`, calling with `&[3.0, 4.0]` returns `25.0`
     fn eval_at_nd(&mut self, func: &Function, args: &[f64]) -> Result<f64, String>;
 }

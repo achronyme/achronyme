@@ -203,8 +203,6 @@ thread 'test_arithmetic_add' panicked at 'Number mismatch for '2 + 2': tree=4.0,
 
 ### Known Limitations
 
-- **Tree-walker evaluator disabled**: The `achronyme-eval` crate is temporarily disabled due to API changes in the `Value` type (Vector and Record now use `Rc<RefCell<>>` for shared mutable ownership)
-- **No direct comparison tests**: Compatibility tests compare against expected values rather than tree-walker output
 - **Module system**: Import/export not yet implemented in VM
 - **Type system**: Gradual typing not yet enforced at compile time
 
@@ -229,10 +227,9 @@ If corpus tests fail:
 
 ## Future Work
 
-- **Re-enable tree-walker evaluator**: Update `achronyme-eval` to work with new `Value` API
 - **Property-based testing**: Use `proptest` to generate random programs
 - **Fuzzing**: Integrate `cargo-fuzz` for robustness testing
-- **Benchmarking**: Compare VM performance vs tree-walker
+- **Performance benchmarking**: Optimize VM execution performance
 - **Coverage analysis**: Ensure all VM opcodes are tested
 - **Regression tests**: Capture known bugs as tests
 

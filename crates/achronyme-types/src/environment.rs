@@ -17,15 +17,15 @@ use std::cell::RefCell;
 ///
 /// Example:
 /// ```
-/// use achronyme_eval::Environment;
+/// use achronyme_types::environment::Environment;
 /// use achronyme_types::value::Value;
 ///
 /// let mut env = Environment::new();
-/// env.define("x".to_string(), Value::Number(5.0));
+/// env.define("x".to_string(), Value::Number(5.0)).unwrap();
 ///
 /// // Create new scope for lambda (now cheap!)
 /// env.push_scope();
-/// env.define("x".to_string(), Value::Number(10.0)); // Shadows outer x
+/// env.define("x".to_string(), Value::Number(10.0)).unwrap(); // Shadows outer x
 /// assert_eq!(env.get("x").unwrap(), Value::Number(10.0));
 ///
 /// env.pop_scope();

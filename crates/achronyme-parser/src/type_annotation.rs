@@ -2,7 +2,7 @@
 //
 // This module implements the type annotation representation in the AST.
 // It is independent of runtime values (Value enum) to avoid circular dependencies.
-// Type checking against runtime values happens in achronyme-eval.
+// Type checking against runtime values happens in the VM runtime.
 //
 // Supports:
 // - Simple types (Number, Boolean, String, Complex)
