@@ -17,6 +17,7 @@ pub mod complex;
 pub mod concurrency;
 pub mod debug;
 pub mod encoding;
+pub mod env;
 pub mod gui;
 pub mod hof;
 pub mod io;
@@ -289,6 +290,15 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
 
     registry.register("http_get", net::vm_http_get, 1);
     registry.register("http_post", net::vm_http_post, -1); // 2 or 3 args
+
+    // ========================================================================
+    // Environment Functions
+    // ========================================================================
+
+    registry.register("env_get", env::vm_env_get, 1);
+    registry.register("env_set", env::vm_env_set, 2);
+    registry.register("env_vars", env::vm_env_vars, 0);
+    registry.register("env_load", env::vm_env_load, -1); // 0 or 1 args
 
     // ========================================================================
     // Concurrency Functions

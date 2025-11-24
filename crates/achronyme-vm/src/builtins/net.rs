@@ -4,6 +4,7 @@ use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
 use achronyme_types::value::VmFuture;
+use reqwest::Url;
 use std::collections::HashMap;
 
 /// http_get(url) -> Future<String>
@@ -79,6 +80,11 @@ pub fn vm_http_post(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
     };
 
+    let url_parsed = match Url::parse(&url) {
+        Ok(u) => u,
+        Err(e) => return Err(VmError::Runtime(format!("Invalid URL format: {}", e))),
+    };
+
     let body = match &args[1] {
         Value::String(s) => s.to_string(),
         _ => {
@@ -117,7 +123,7 @@ pub fn vm_http_post(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     let future = async move {
         let client = reqwest::Client::new();
-        let mut request = client.post(&url).body(body);
+        let mut request = client.post(url_parsed).body(body);
 
         if let Some(h_map) = headers {
             for (k, v) in h_map {
@@ -132,21 +138,27 @@ pub fn vm_http_post(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
         match request.send().await {
             Ok(response) => {
-                if response.status().is_success() {
-                    match response.text().await {
-                        Ok(text) => Value::String(text),
-                        Err(e) => Value::Error {
-                            message: format!("Failed to read response body: {}", e),
-                            kind: Some("NetworkError".into()),
-                            source: None,
-                        },
+                let status = response.status();
+                match response.text().await {
+                    Ok(text) => {
+                        if status.is_success() {
+                            Value::String(text)
+                        } else {
+                            // Devolvemos el cuerpo del error en el mensaje
+                            // para que tu script .soc pueda imprimirlo
+
+                            Value::Error {
+                                message: format!("HTTP {} - Body: {}", status, text),
+                                kind: Some("HttpError".into()),
+                                source: None,
+                            }
+                        }
                     }
-                } else {
-                    Value::Error {
-                        message: format!("HTTP request failed with status: {}", response.status()),
-                        kind: Some("HttpError".into()),
+                    Err(e) => Value::Error {
+                        message: format!("Failed to read response body: {}", e),
+                        kind: Some("NetworkError".into()),
                         source: None,
-                    }
+                    },
                 }
             }
             Err(e) => Value::Error {
