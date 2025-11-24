@@ -132,10 +132,8 @@ fn describe_value(value: &Value, indent: usize) -> String {
 
         Value::Null => "null".to_string(),
 
-        Value::Generator(_) => {
-            // Generator state is opaque (Rc<dyn Any>), so we can't introspect it
-            "Generator(<opaque state>)".to_string()
-        }
+        Value::Generator(_) => "Generator".to_string(),
+        Value::Future(_) => "Future".to_string(),
 
         Value::GeneratorYield(inner) => {
             format!("GeneratorYield({})", describe_value(inner, indent))
@@ -161,15 +159,9 @@ fn describe_value(value: &Value, indent: usize) -> String {
 
         Value::LoopContinue => "LoopContinue(internal marker - should not be visible)".to_string(),
 
-        Value::Iterator(_) => {
-            // Iterator state is opaque (Rc<dyn Any>), so we can't introspect it
-            "Iterator(<opaque state>)".to_string()
-        }
+        Value::Iterator(_) => "Iterator(<opaque state>)".to_string(),
 
-        Value::Builder(_) => {
-            // Builder state is opaque (Rc<dyn Any>), so we can't introspect it
-            "Builder(<opaque state>)".to_string()
-        }
+        Value::Builder(_) => "Builder(<opaque state>)".to_string(),
 
         Value::Range {
             start,

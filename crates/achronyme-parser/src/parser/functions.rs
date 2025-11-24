@@ -162,6 +162,99 @@ impl AstParser {
         Ok(AstNode::GenerateBlock { statements })
     }
 
+    pub(super) fn build_async_lambda(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
+        let mut inner = pair.into_inner();
+
+        // Grammar: "async" ~ typed_lambda_params ~ (":" ~ type_annotation)? ~ "=>" ~ lambda_body
+        let params_pair = inner.next().ok_or("Missing async lambda parameters")?;
+
+        // Parse typed parameters
+        let params = if params_pair.as_rule() == Rule::typed_lambda_params {
+            self.parse_typed_lambda_params(params_pair)?
+        } else {
+            // Fallback to legacy lambda_params for backward compatibility
+            self.extract_lambda_params(params_pair)?
+                .into_iter()
+                .map(|name| (name, None, None))
+                .collect()
+        };
+
+        // Parse optional return type
+        let mut return_type = None;
+        let mut next_pair = inner.next().ok_or("Missing async lambda body")?;
+
+        if next_pair.as_rule() == Rule::type_annotation {
+            return_type = Some(self.parse_type_annotation(next_pair)?);
+            next_pair = inner
+                .next()
+                .ok_or("Missing async lambda body after return type")?;
+        }
+
+        // Parse lambda body
+        let body = match next_pair.as_rule() {
+            Rule::lambda_body => {
+                let inner_body = next_pair
+                    .into_inner()
+                    .next()
+                    .ok_or("Empty async lambda body")?;
+                match inner_body.as_rule() {
+                    Rule::generate_block => self.build_generate_block(inner_body)?,
+                    Rule::do_block => self.build_do_block(inner_body)?,
+                    Rule::expr => self.build_ast_from_expr(inner_body)?,
+                    _ => {
+                        return Err(format!(
+                            "Unexpected async lambda body rule: {:?}",
+                            inner_body.as_rule()
+                        ))
+                    }
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "Expected lambda_body, got {:?}",
+                    next_pair.as_rule()
+                ))
+            }
+        };
+
+        Ok(AstNode::AsyncLambda {
+            params,
+            return_type,
+            body: Box::new(body),
+        })
+    }
+
+    pub(super) fn build_async_block(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
+        // Grammar: "async" ~ do_block
+        let do_block_pair = pair
+            .into_inner()
+            .next()
+            .ok_or("Missing do_block in async block")?;
+
+        // Parse do_block to get statements
+        // do_block -> "do" ~ block
+        let block_pair = do_block_pair
+            .into_inner()
+            .next()
+            .ok_or("Missing block in do_block")?;
+
+        // Parse block statements
+        let inner = block_pair.into_inner().next().ok_or("Empty block")?;
+
+        let statements = match inner.as_rule() {
+            Rule::sequence => inner
+                .into_inner()
+                .map(|stmt_pair| self.build_ast_from_statement(stmt_pair))
+                .collect::<Result<Vec<_>, _>>()?,
+            Rule::statement => {
+                vec![self.build_ast_from_statement(inner)?]
+            }
+            _ => return Err(format!("Unexpected rule in block: {:?}", inner.as_rule())),
+        };
+
+        Ok(AstNode::AsyncBlock { statements })
+    }
+
     pub(super) fn extract_lambda_params(
         &mut self,
         pair: Pair<Rule>,

@@ -300,6 +300,7 @@ impl Compiler {
             AstNode::Export { .. } => true,
             AstNode::Sequence { statements } => Self::contains_export(statements),
             AstNode::DoBlock { statements } => Self::contains_export(statements),
+            AstNode::AsyncBlock { statements } => Self::contains_export(statements),
             _ => false,
         }
     }

@@ -58,6 +58,8 @@ impl AstParser {
             Rule::do_block => self.build_do_block(inner),
             Rule::generate_block => self.build_generate_block(inner),
             Rule::lambda => self.build_lambda(inner),
+            Rule::async_lambda => self.build_async_lambda(inner),
+            Rule::async_block => self.build_async_block(inner),
 
             Rule::expr => self.build_ast_from_expr(inner),
             _ => Err(format!("Unexpected primary rule: {:?}", inner.as_rule())),

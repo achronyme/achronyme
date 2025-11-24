@@ -97,6 +97,9 @@ pub struct FunctionPrototype {
     /// Is this a generator function?
     pub is_generator: bool,
 
+    /// Is this an async function?
+    pub is_async: bool,
+
     /// Debug information
     pub debug_info: Option<DebugInfo>,
 
@@ -118,6 +121,7 @@ impl FunctionPrototype {
             functions: Vec::new(),
             constants,
             is_generator: false,
+            is_async: false,
             debug_info: None,
             param_defaults: Vec::new(),
         }

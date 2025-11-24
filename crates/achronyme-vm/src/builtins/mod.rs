@@ -12,6 +12,7 @@
 //! - Records: Object/map operations
 
 pub mod array_advanced;
+pub mod async_ops;
 pub mod complex;
 pub mod debug;
 pub mod hof;
@@ -256,6 +257,12 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("solve", numerical::vm_solve, -1); // 3-4 args
     registry.register("newton", numerical::vm_newton, -1); // 2-4 args
     registry.register("secant", numerical::vm_secant, -1); // 3-4 args
+
+    // ========================================================================
+    // Async Functions
+    // ========================================================================
+
+    registry.register("sleep", async_ops::vm_sleep, 1);
 
     registry
 }

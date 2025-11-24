@@ -26,8 +26,38 @@ impl Compiler {
         )],
         body: &AstNode,
     ) -> Result<RegResult, CompileError> {
+        self.compile_function_def(params, body, false)
+    }
+
+    /// Compile async lambda expression
+    pub(crate) fn compile_async_lambda(
+        &mut self,
+        params: &[(
+            String,
+            Option<achronyme_parser::TypeAnnotation>,
+            Option<Box<AstNode>>,
+        )],
+        body: &AstNode,
+    ) -> Result<RegResult, CompileError> {
+        self.compile_function_def(params, body, true)
+    }
+
+    fn compile_function_def(
+        &mut self,
+        params: &[(
+            String,
+            Option<achronyme_parser::TypeAnnotation>,
+            Option<Box<AstNode>>,
+        )],
+        body: &AstNode,
+        is_async: bool,
+    ) -> Result<RegResult, CompileError> {
         // Create a nested function compiler
-        let lambda_name = format!("<lambda@{}>", self.current_position());
+        let lambda_name = if is_async {
+            format!("<async_lambda@{}>", self.current_position())
+        } else {
+            format!("<lambda@{}>", self.current_position())
+        };
         let mut child_compiler = Compiler {
             module_name: self.module_name.clone(), // Inherit module name from parent
             function: FunctionPrototype::new(lambda_name, self.function.constants.clone()),
@@ -41,6 +71,12 @@ impl Compiler {
             exported_types: std::collections::HashMap::new(),
             exports_reg: None, // Lambdas don't have exports
         };
+
+        // Set async/generator flags
+        if is_async {
+            child_compiler.function.is_generator = true;
+            child_compiler.function.is_async = true;
+        }
 
         // Set parameter count
         child_compiler.function.param_count = params.len() as u8;
@@ -606,6 +642,18 @@ impl Compiler {
                     self.collect_variable_refs(stmt, vars)?;
                 }
             }
+            AstNode::AsyncLambda { body, .. } => {
+                // Don't traverse into nested lambdas
+                self.collect_variable_refs(body, vars)?;
+            }
+            AstNode::AsyncBlock { statements } => {
+                for stmt in statements {
+                    self.collect_variable_refs(stmt, vars)?;
+                }
+            }
+            AstNode::Await { future } => {
+                self.collect_variable_refs(future, vars)?;
+            }
             AstNode::LetDestructuring { initializer, .. }
             | AstNode::MutableDestructuring { initializer, .. } => {
                 self.collect_variable_refs(initializer, vars)?;
@@ -699,6 +747,90 @@ impl Compiler {
                 self.registers.free(arg_res.reg());
             }
         }
+
+        Ok(RegResult::temp(result_reg))
+    }
+
+    /// Compile await expression
+    pub(crate) fn compile_await(
+        &mut self,
+        future_expr: &AstNode,
+    ) -> Result<RegResult, CompileError> {
+        // Compile the future expression
+        let future_res = self.compile_expression(future_expr)?;
+
+        // Allocate result register
+        let result_reg = self.registers.allocate()?;
+
+        // Emit AWAIT instruction
+        // A = result, B = future
+        self.emit(encode_abc(
+            OpCode::Await.as_u8(),
+            result_reg,
+            future_res.reg(),
+            0,
+        ));
+
+        // Free future register if temp
+        if future_res.is_temp() {
+            self.registers.free(future_res.reg());
+        }
+
+        Ok(RegResult::temp(result_reg))
+    }
+
+    /// Compile async block (async do { ... })
+    ///
+    /// Compiles to an Immediately Invoked Async Function Expression (IIAFE)
+    /// call(async_lambda([], block))
+    pub(crate) fn compile_async_block(
+        &mut self,
+        statements: &[AstNode],
+    ) -> Result<RegResult, CompileError> {
+        // Create a DoBlock to wrap statements
+        let body = AstNode::DoBlock {
+            statements: statements.to_vec(),
+        };
+
+        // Compile as async lambda with no params
+        let lambda_res = self.compile_async_lambda(&[], &body)?;
+
+        // Emit Call instruction (IIFE)
+        // R[result] = R[lambda]()
+        let lambda_reg = lambda_res.reg();
+
+        // We need to respect the call convention:
+        // Alloc register block for function + args (0 args here)
+        // But compile_function_call/compile_call_expression handle that logic.
+        // We can't reuse compile_call_expression directly because we already compiled the lambda
+        // and have it in a register.
+        // But we can use a similar logic.
+
+        // Reserve 1 register for the function (no args)
+        let func_slot = self.registers.allocate()?;
+
+        // Move lambda to the slot
+        if lambda_reg != func_slot {
+            self.emit_move(func_slot, lambda_reg);
+        }
+
+        if lambda_res.is_temp() {
+            self.registers.free(lambda_reg);
+        }
+
+        // Result register
+        let result_reg = self.registers.allocate()?;
+
+        // Emit CALL
+        self.emit(encode_abc(
+            OpCode::Call.as_u8(),
+            result_reg,
+            func_slot,
+            0, // 0 args
+        ));
+
+        // Free function slot
+        self.registers.free(func_slot);
 
         Ok(RegResult::temp(result_reg))
     }

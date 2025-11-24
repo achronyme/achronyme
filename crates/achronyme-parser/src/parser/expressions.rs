@@ -172,6 +172,16 @@ impl AstParser {
         let first = inner.next().ok_or("Empty unary expression")?;
 
         match first.as_rule() {
+            Rule::await_expr => {
+                // await expr
+                let expr = first
+                    .into_inner()
+                    .next()
+                    .ok_or("Missing expression in await")?;
+                Ok(AstNode::Await {
+                    future: Box::new(self.build_ast_from_expr(expr)?),
+                })
+            }
             Rule::unary => {
                 // This is either - or ! operator
                 // Check what operator we have by looking at the string

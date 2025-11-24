@@ -37,14 +37,10 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::EarlyReturn(_) => "EarlyReturn",
         Value::MutableRef(_) => "MutableRef",
         Value::Generator(_) => "Generator",
-        Value::GeneratorYield(_) => "GeneratorYield",
+        Value::Future(_) => "Future",
         Value::Error { .. } => "Error",
-        Value::LoopBreak(_) => "LoopBreak",
-        Value::LoopContinue => "LoopContinue",
-        Value::Iterator(_) => "Iterator",
-        Value::Builder(_) => "Builder",
-        Value::Range { .. } => "Range",
         Value::BoundMethod { .. } => "BoundMethod",
+        _ => "Internal",
     };
 
     Ok(Value::String(type_name.to_string()))
@@ -223,23 +219,9 @@ fn format_value(value: &Value) -> String {
         Value::EarlyReturn(_) => "<early-return>".to_string(),
         Value::MutableRef(_) => "<mutable-ref>".to_string(),
         Value::Generator(_) => "<generator>".to_string(),
-        Value::GeneratorYield(_) => "<generator-yield>".to_string(),
-        Value::Error { .. } => "<error>".to_string(),
-        Value::LoopBreak(_) => "<loop-break>".to_string(),
-        Value::LoopContinue => "<loop-continue>".to_string(),
-        Value::Iterator(_) => "<iterator>".to_string(),
-        Value::Builder(_) => "<builder>".to_string(),
-        Value::Range {
-            start,
-            end,
-            inclusive,
-        } => {
-            let start_str = format_value(start);
-            let end_str = format_value(end);
-            let op = if *inclusive { "..=" } else { ".." };
-            format!("{}{}{}", start_str, op, end_str)
-        }
+        Value::Future(_) => "<future>".to_string(),
         Value::BoundMethod { method_name, .. } => format!("<method {}>", method_name),
+        _ => format!("{:?}", value),
     }
 }
 

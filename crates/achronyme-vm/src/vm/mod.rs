@@ -209,6 +209,43 @@ impl VM {
                     // No generator context - just return (shouldn't happen in normal execution)
                     return Ok(value);
                 }
+                ExecutionResult::Await(value, dst_reg) => {
+                    match value {
+                        Value::Future(vm_future) => {
+                            // Block on future (Phase 3 sync implementation)
+                            // We need to handle Tokio context properly to support builtins like sleep()
+                            let future = vm_future.0.clone();
+                            let result = match tokio::runtime::Handle::try_current() {
+                                Ok(handle) => {
+                                    // If we are in a Tokio context, we must be careful not to block the reactor
+                                    tokio::task::block_in_place(|| handle.block_on(future))
+                                }
+                                Err(_) => {
+                                    // No Tokio context, create a temporary one
+                                    let rt = tokio::runtime::Runtime::new().unwrap();
+                                    rt.block_on(future)
+                                }
+                            };
+                            self.set_register(dst_reg, result)?;
+                        }
+                        Value::Generator(_) => {
+                            // Awaiting a generator = Resuming/Starting it
+                            // The generator will execute and eventually Return its result to dst_reg
+                            // Note: This effectively makes the current frame wait for the generator
+                            // because we push the generator's frame on top.
+                            match self.resume_generator_internal(&value, dst_reg)? {
+                                ExecutionResult::Continue => continue,
+                                _ => continue, // Should be Continue
+                            }
+                        }
+                        _ => {
+                            return Err(VmError::Runtime(format!(
+                                "Value not awaitable: {:?}",
+                                value
+                            )))
+                        }
+                    }
+                }
             }
         }
     }
@@ -280,9 +317,11 @@ impl VM {
             | OpCode::DestructureRec => self.execute_matching(opcode, instruction),
 
             // Generators
-            OpCode::CreateGen | OpCode::Yield | OpCode::ResumeGen | OpCode::MakeIterator => {
-                self.execute_generators(opcode, instruction)
-            }
+            OpCode::CreateGen
+            | OpCode::Yield
+            | OpCode::ResumeGen
+            | OpCode::MakeIterator
+            | OpCode::Await => self.execute_generators(opcode, instruction),
 
             // Exception Handling
             OpCode::Throw | OpCode::PushHandler | OpCode::PopHandler => {
@@ -446,6 +485,11 @@ impl VM {
                                 "Cannot yield from function called via call_value".into(),
                             ));
                         }
+                        ExecutionResult::Await(_, _) => {
+                            return Err(VmError::Runtime(
+                                "Cannot await inside a synchronous call (e.g. callback)".into(),
+                            ));
+                        }
                     }
                 }
 
@@ -601,16 +645,26 @@ impl VM {
                 state.complete(Some(value.clone()));
                 drop(state);
 
-                // Create iterator result object: {value: null, done: true}
-                let mut result_map = HashMap::new();
-                result_map.insert("value".to_string(), Value::Null);
-                result_map.insert("done".to_string(), Value::Boolean(true));
-                let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                // If this is an async function, return the value directly (Promise resolution)
+                // Otherwise, wrap in Iterator result object
+                if frame.function.is_async {
+                    if let Some(return_reg) = frame.return_register {
+                        if let Some(caller_frame) = self.frames.last_mut() {
+                            caller_frame.registers.set(return_reg, value)?;
+                        }
+                    }
+                } else {
+                    // Create iterator result object: {value: null, done: true}
+                    let mut result_map = HashMap::new();
+                    result_map.insert("value".to_string(), Value::Null);
+                    result_map.insert("done".to_string(), Value::Boolean(true));
+                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
 
-                // If there's a return register in caller, set it with the iterator result
-                if let Some(return_reg) = frame.return_register {
-                    if let Some(caller_frame) = self.frames.last_mut() {
-                        caller_frame.registers.set(return_reg, result_record)?;
+                    // If there's a return register in caller, set it with the iterator result
+                    if let Some(return_reg) = frame.return_register {
+                        if let Some(caller_frame) = self.frames.last_mut() {
+                            caller_frame.registers.set(return_reg, result_record)?;
+                        }
                     }
                 }
 

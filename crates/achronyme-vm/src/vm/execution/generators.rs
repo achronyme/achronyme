@@ -129,6 +129,16 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::Await => {
+                // R[A] = await R[B]
+                let dst = a;
+                let src = decode_b(instruction);
+                let future = self.get_register(src)?.clone();
+
+                // Suspend and wait for future
+                Ok(ExecutionResult::Await(future, dst))
+            }
+
             _ => unreachable!("Non-generator opcode in generator handler"),
         }
     }

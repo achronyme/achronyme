@@ -1,10 +1,9 @@
-//! Function and closure instruction execution
-
 use crate::bytecode::Closure;
 use crate::error::VmError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use crate::vm::frame::CallFrame;
+use crate::vm::generator::VmGeneratorState;
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
 use achronyme_types::function::Function;
@@ -129,11 +128,18 @@ impl VM {
                         // Set upvalues
                         new_frame.upvalues = closure.upvalues.clone();
 
-                        // Note: The 'rec' upvalue (index 0) is already set in the closure.upvalues
-                        // No need to set register 255 anymore - 'rec' is accessed via GetUpvalue
+                        // Check if it's an async function (or generator)
+                        if closure.prototype.is_async || closure.prototype.is_generator {
+                            // Create generator state (suspended frame)
+                            let state = VmGeneratorState::new(new_frame);
+                            let gen_value = Value::Generator(Rc::new(RefCell::new(state)));
 
-                        // Push frame
-                        self.frames.push(new_frame);
+                            // Return generator object immediately
+                            self.set_register(result_reg, gen_value)?;
+                        } else {
+                            // Normal function: Push frame to stack
+                            self.frames.push(new_frame);
+                        }
 
                         Ok(ExecutionResult::Continue)
                     }

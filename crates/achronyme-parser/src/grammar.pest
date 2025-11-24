@@ -105,7 +105,7 @@ interpolated_text = @{
 // Note: "if" is NOT a keyword because if() function call syntax needs to work
 // The if_expr rule uses &"{" lookahead to distinguish if(cond){block} from if(cond, then, else)
 keyword = _{
-    ("let" | "mut" | "rec" | "self" | "true" | "false" | "import" | "from" | "export" | "as" | "return" | "while" | "type" | "yield" | "generate" | "for" | "in" | "try" | "catch" | "throw" | "match" | "break" | "continue") ~ !ASCII_ALPHANUMERIC
+    ("let" | "mut" | "rec" | "self" | "true" | "false" | "import" | "from" | "export" | "as" | "return" | "while" | "type" | "yield" | "generate" | "for" | "in" | "try" | "catch" | "throw" | "match" | "async" | "await" | "break" | "continue") ~ !ASCII_ALPHANUMERIC
 }
 
 // Identifiers: x, foo, my_var, PI, sin (but not keywords)
@@ -304,6 +304,11 @@ generate_block = {
     "generate" ~ block
 }
 
+// Async block: async do { ... }
+async_block = {
+    "async" ~ do_block
+}
+
 // Lambda body: can be an expression, do block, or generate block
 lambda_body = {
     generate_block | do_block | expr
@@ -316,6 +321,12 @@ lambda_body = {
 // Syntax: x =>\n    expr                       (multi-line support)
 lambda = {
     typed_lambda_params ~ (":" ~ type_annotation)? ~ "=>" ~ NEWLINE* ~ lambda_body
+}
+
+// Async lambda
+// Syntax: async (params) => body
+async_lambda = {
+    "async" ~ typed_lambda_params ~ (":" ~ type_annotation)? ~ "=>" ~ NEWLINE* ~ lambda_body
 }
 
 // ============================================================================
@@ -478,8 +489,10 @@ primary = {
   | control_flow_expr  // Control flow (if, match, etc.) - before record to avoid ambiguity
   | record             // Record literals { key: value }
   | array              // Arrays/tensors (vectors, matrices, and higher-dimensional)
+  | async_block        // Async blocks (must come before do_block)
   | do_block           // Do blocks (must come before lambda to avoid ambiguity)
   | generate_block     // Generator blocks (must come before lambda)
+  | async_lambda       // Async lambdas (must come before lambda)
   | lambda
   | self_ref           // Self-reference in records
   | rec_ref            // Rec-reference for recursive calls
@@ -525,9 +538,14 @@ power = {
 }
 
 // Unary operators: -x, !x
+await_expr = {
+    "await" ~ expr
+}
+
 unary = {
     "-" ~ unary
   | "!" ~ unary
+  | await_expr
   | power
 }
 

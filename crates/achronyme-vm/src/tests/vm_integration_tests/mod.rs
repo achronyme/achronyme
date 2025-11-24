@@ -1,5 +1,6 @@
 pub mod helpers;
 
+pub mod async_await;
 pub mod basic_operations;
 pub mod complex_numbers;
 pub mod control_flow;

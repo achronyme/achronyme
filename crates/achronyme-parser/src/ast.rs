@@ -229,6 +229,20 @@ pub enum AstNode {
         end: Box<AstNode>,
         inclusive: bool, // true for ..=, false for ..
     },
+    /// Async lambda: async (x) => do { await f() }
+    AsyncLambda {
+        params: Vec<(String, Option<TypeAnnotation>, Option<Box<AstNode>>)>,
+        return_type: Option<TypeAnnotation>,
+        body: Box<AstNode>,
+    },
+    /// Async block: async do { ... }
+    AsyncBlock {
+        statements: Vec<AstNode>,
+    },
+    /// Await expression: await expr
+    Await {
+        future: Box<AstNode>,
+    },
 }
 
 /// Represents a part of an interpolated string

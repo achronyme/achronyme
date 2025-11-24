@@ -11,6 +11,8 @@ pub(crate) enum ExecutionResult {
     Return(Value),
     /// Yield from generator
     Yield(Value),
+    /// Await future: (Future/Generator, Destination Register)
+    Await(Value, u8),
     /// Exception thrown (starts unwinding)
     Exception(Value),
 }

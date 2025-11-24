@@ -496,6 +496,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             // Generators are opaque type-erased handles, can't inspect internal state
             "<generator>".to_string()
         }
+        Value::Future(_) => "<future>".to_string(),
         Value::GeneratorYield(_) => {
             // GeneratorYield is an internal marker that should never reach the REPL
             "<internal:generator-yield>".to_string()

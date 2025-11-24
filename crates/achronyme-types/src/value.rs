@@ -1,9 +1,12 @@
 use crate::complex::Complex;
 use crate::function::Function;
 use crate::tensor::{ComplexTensor, RealTensor};
+use futures::future::{FutureExt, Shared};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -16,6 +19,25 @@ impl std::fmt::Display for TypeError {
         match self {
             TypeError::IncompatibleTypes => write!(f, "Incompatible types"),
         }
+    }
+}
+
+/// Wrapper for shared future to implement Clone and Debug
+#[derive(Clone)]
+pub struct VmFuture(pub Shared<Pin<Box<dyn Future<Output = Value> + Send>>>);
+
+impl VmFuture {
+    pub fn new<F>(future: F) -> Self
+    where
+        F: Future<Output = Value> + Send + 'static,
+    {
+        VmFuture(future.boxed().shared())
+    }
+}
+
+impl std::fmt::Debug for VmFuture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Future")
     }
 }
 
@@ -53,6 +75,8 @@ pub enum Value {
     /// In the VM, this contains Rc<RefCell<VmGeneratorState>>
     /// In other backends, it can contain their own generator state
     Generator(Rc<dyn Any>),
+    /// Future: asynchronous computation that produces a Value
+    Future(VmFuture),
     /// Internal marker for yield in generators
     /// Contains the value to yield and signals that generator should suspend
     /// This variant should never be exposed to user code
@@ -309,6 +333,7 @@ impl PartialEq for Value {
                 // Generators are compared by pointer equality (same instance)
                 std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
             }
+            (Value::Future(_), Value::Future(_)) => false, // Futures are unique computations
             (Value::GeneratorYield(a), Value::GeneratorYield(b)) => a == b,
             (
                 Value::Error {

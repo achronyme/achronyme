@@ -164,6 +164,8 @@ pub enum OpCode {
     /// Make iterator: R[A] = MakeIterator(R[B])
     /// Wraps vectors/strings in native iterators, passes generators through
     MakeIterator = 113,
+    /// Await future: R[A] = await R[B]
+    Await = 114,
 
     // ===== Error Handling =====
     /// Throw error: throw R[A]
@@ -307,6 +309,7 @@ impl OpCode {
             111 => Some(OpCode::Yield),
             112 => Some(OpCode::ResumeGen),
             113 => Some(OpCode::MakeIterator),
+            114 => Some(OpCode::Await),
             120 => Some(OpCode::Throw),
             121 => Some(OpCode::PushHandler),
             122 => Some(OpCode::PopHandler),
@@ -409,6 +412,7 @@ impl OpCode {
             OpCode::Yield => "YIELD",
             OpCode::ResumeGen => "RESUME_GEN",
             OpCode::MakeIterator => "MAKE_ITERATOR",
+            OpCode::Await => "AWAIT",
             OpCode::Throw => "THROW",
             OpCode::PushHandler => "PUSH_HANDLER",
             OpCode::PopHandler => "POP_HANDLER",

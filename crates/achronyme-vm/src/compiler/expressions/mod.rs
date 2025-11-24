@@ -80,6 +80,16 @@ impl Compiler {
                 body,
             } => self.compile_lambda(params, body),
 
+            AstNode::AsyncLambda {
+                params,
+                return_type: _,
+                body,
+            } => self.compile_async_lambda(params, body),
+
+            AstNode::AsyncBlock { statements } => self.compile_async_block(statements),
+
+            AstNode::Await { future } => self.compile_await(future),
+
             AstNode::FunctionCall { name, args } => self.compile_function_call(name, args, is_tail),
 
             AstNode::CallExpression { callee, args } => {

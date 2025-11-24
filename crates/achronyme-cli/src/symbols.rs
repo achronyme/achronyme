@@ -259,6 +259,20 @@ fn collect_symbols(node: &AstNode, symbols: &mut Vec<Symbol>, lines: &[&str]) {
             collect_symbols(end, symbols, lines);
         }
 
+        AstNode::AsyncLambda { body, .. } => {
+            collect_symbols(body, symbols, lines);
+        }
+
+        AstNode::AsyncBlock { statements } => {
+            for stmt in statements {
+                collect_symbols(stmt, symbols, lines);
+            }
+        }
+
+        AstNode::Await { future } => {
+            collect_symbols(future, symbols, lines);
+        }
+
         // Module/type system - not tracking as symbols for now
         AstNode::Import { .. } => {}
         AstNode::Export { .. } => {}
