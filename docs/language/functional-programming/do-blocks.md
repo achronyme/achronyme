@@ -238,7 +238,7 @@ let fibonacci = n => do {
 }
 ```
 
-**Note**: Recursion limited to ~50 calls (see [Performance Limitations](25-performance-limitations.md))
+**Note**: Recursion limited to ~50 calls (see [Performance Limitations](../advanced-topics/performance.md))
 
 ### Helper Functions
 
@@ -870,4 +870,4 @@ let transform = x => do {
 
 ---
 
-**Next**: [Recursion Patterns](22-recursion.md)
+**Next**: [Recursion Patterns](recursion.md)

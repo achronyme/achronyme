@@ -485,6 +485,12 @@ let f = x => (y => y + 2)(x)
 - `if()` and `piecewise()` are functions, but `if-else` blocks are also supported
 - Full support for loops (`while`, `for-in`), error handling (`try/catch/throw`), and pattern matching (`match`)
 
+## See Also
+
+- [Variables](../core-language/variables.md)
+- [Control Flow](../core-language/control-flow.md)
+- [Functions](../core-language/functions.md)
+
 ---
 
 **Next**: [Data Types](../core-language/data-types.md)

@@ -90,4 +90,17 @@ export { add }
 import { add } from "./utils/math"
 
 print(add(1, 2))
+
 ```
+
+
+
+## See Also
+
+
+
+- [Variables](../core-language/variables.md) - Variable declarations and scope
+
+- [Functions](../core-language/functions.md) - Defining functions
+
+- [Records](../data-structures/records.md) - Using records as namespaces

@@ -767,10 +767,10 @@ let factorial = n => (
 
 ---
 
-**Next**: [Best Practices](23-best-practices.md)
+**Next**: [Best Practices](../advanced-topics/best-practices.md)
 
 **See Also**:
-- [Functions and Lambdas](06-functions.md) - Basic recursion with `rec`
-- [Do Blocks](21-do-blocks.md) - Recursion with do blocks
-- [Performance Limitations](25-performance-limitations.md) - Detailed depth limits
-- [Higher-Order Functions](11-higher-order-functions.md) - Alternatives to recursion
+- [Functions and Lambdas](../core-language/functions.md) - Basic recursion with `rec`
+- [Do Blocks](do-blocks.md) - Recursion with do blocks
+- [Performance Limitations](../advanced-topics/performance.md) - Detailed depth limits
+- [Higher-Order Functions](higher-order-functions.md) - Alternatives to recursion

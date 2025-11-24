@@ -26,20 +26,33 @@ pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 return Ok(Value::Number(0.0));
             }
 
-            let mut sum = 0.0;
+            let mut sum_re = 0.0;
+            let mut sum_im = 0.0;
+            let mut is_complex = false;
+
             for val in vec.iter() {
                 match val {
-                    Value::Number(n) => sum += n,
+                    Value::Number(n) => sum_re += n,
+                    Value::Complex(c) => {
+                        sum_re += c.re;
+                        sum_im += c.im;
+                        is_complex = true;
+                    }
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "sum".to_string(),
-                            expected: "numeric vector".to_string(),
+                            expected: "numeric or complex vector".to_string(),
                             got: format!("{:?}", val),
                         })
                     }
                 }
             }
-            Ok(Value::Number(sum))
+
+            if is_complex {
+                Ok(Value::Complex(Complex::new(sum_re, sum_im)))
+            } else {
+                Ok(Value::Number(sum_re))
+            }
         }
         Value::Tensor(t) => {
             let sum: f64 = t.data().iter().sum();
@@ -249,6 +262,23 @@ mod tests {
             assert!((n - 2.138).abs() < 0.01);
         } else {
             panic!("Expected Number");
+        }
+    }
+
+    #[test]
+    fn test_sum_complex() {
+        let mut vm = setup_vm();
+        let vec = vec![
+            Value::Number(1.0),
+            Value::Complex(Complex::new(0.0, 2.0)),
+        ];
+        let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        match result {
+            Value::Complex(c) => {
+                assert_eq!(c.re, 1.0);
+                assert_eq!(c.im, 2.0);
+            }
+            _ => panic!("Expected Complex"),
         }
     }
 }

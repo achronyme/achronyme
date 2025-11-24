@@ -769,5 +769,5 @@ let result = reduce(
 
 ---
 
-**Next**: [Mathematical Functions](12-mathematical-functions.md)
+**Next**: [Mathematical Functions](../mathematical-computing/mathematical-functions.md)
 

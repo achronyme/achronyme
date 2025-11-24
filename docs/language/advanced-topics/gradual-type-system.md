@@ -75,7 +75,6 @@ Achronyme provides the following built-in type names:
 | `String` | Text strings | `"hello"` |
 | `Boolean` | Logical values | `true`, `false` |
 | `Complex` | Complex numbers | `3 + 4i` |
-| `Edge` | Graph edges | `A -> B` |
 | `Generator` | Generator/iterator | `generate { yield 1 }` |
 | `Function` | Any callable function | `(x) => x^2` |
 | `Error` | Error value | `throw "error"` |
@@ -291,29 +290,6 @@ let processWithCallback = (
     data: Any,
     callback: Callback
 ): Any | null => callback(data)
-```
-
-## Edge Type for Graphs
-
-The `Edge` type represents graph edges:
-
-```javascript
-// Typed edge creation
-let edge: Edge = A -> B
-
-// Function working with edges
-let getWeight = (e: Edge): Number => do {
-    // Extract weight from edge metadata
-    e.weight
-}
-
-// Creating typed graph edges
-let createEdge = (from: String, to: String): Edge =>
-    from -> to
-
-// With metadata
-let weightedEdge = (from: String, to: String, weight: Number): Edge =>
-    from -> to : {weight: weight}
 ```
 
 ## Type Inference
@@ -585,7 +561,7 @@ let pipeline = (transforms: Any, initial: Any): Any =>
 
 The gradual type system in Achronyme provides:
 
-- **Basic type annotations**: `Number`, `String`, `Boolean`, `Complex`, `Edge`
+- **Basic type annotations**: `Number`, `String`, `Boolean`, `Complex`
 - **Union types**: `Type1 | Type2` for values that can be multiple types
 - **Optional types**: `Type | null` for nullable values
 - **Function types**: `(Params): ReturnType` for function signatures

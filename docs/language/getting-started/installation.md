@@ -41,7 +41,15 @@ If you have the Rust toolchain installed, you can build Achronyme from source.
 To verify that Achronyme is installed correctly, run:
 
 ```bash
+
 achronyme --version
 ```
 
 You should see the current version number printed to the console.
+
+## Next Steps
+
+Now that you have Achronyme installed, continue to:
+
+- [Syntax Basics](syntax-basics.md) - Learn the fundamental syntax
+- [Introduction](introduction.md) - Overview of language features

@@ -1,0 +1,23 @@
+// Este módulo muestra el comportamiento de parametros opcionales y por defecto en el lenguaje SOC.
+
+let function = (a: Number, b: Number = 10, c?: String) => do {
+    // Imprime los valores de los parámetros recibidos
+    print("Valor de a: " + a);
+    print("Valor de b: " + b);
+    
+    if (c != null) {
+        print("Valor de c: " + c)
+    } else {
+        print("c no fue proporcionado")
+    }
+}
+
+// Llamadas a la función con diferentes combinaciones de parámetros
+print("Llamada 1: Solo con parámetro obligatorio");
+function(5);
+print("\nLlamada 2: Con parámetro obligatorio y opcional con valor por defecto");
+function(5, 20);
+print("\nLlamada 3: Con todos los parámetros");
+function(5, 15, "Hola SOC");
+print("\nLlamada 4: Con parámetro obligatorio y dejando el opcional con valor por defecto");
+function(5, null, "Parámetro opcional proporcionado");

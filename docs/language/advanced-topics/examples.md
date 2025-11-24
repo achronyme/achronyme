@@ -15,8 +15,7 @@ This document contains complete, practical examples demonstrating various featur
 3. [Signal Processing](#signal-processing)
 4. [Numerical Analysis](#numerical-analysis)
 5. [Object-Oriented Patterns](#object-oriented-patterns)
-6. [Graph Algorithms](#graph-algorithms)
-7. [Functional Programming](#functional-programming)
+6. [Functional Programming](#functional-programming)
 
 ## Basic Calculations
 
@@ -376,58 +375,6 @@ let query = Query
 query.build()
 ```
 
-## Graph Algorithms
-
-### Simple Graph
-
-```javascript
-// Create a simple graph
-let edges = [
-    A -> B,
-    B -> C,
-    C -> D,
-    D -> A,
-    A -> C
-]
-
-let g = network(edges)
-
-// Analyze
-let nodeList = nodes(g)
-let edgeList = edges(g)
-
-// Algorithms
-let bfsResult = bfs(g, "A")
-let path = bfs_path(g, "A", "D")
-
-{
-    nodes: nodeList,
-    bfs: bfsResult,
-    path: path
-}
-```
-
-### Weighted Graph (Shortest Path)
-
-```javascript
-// Weighted graph
-let edges = [
-    A -> B : {weight: 5},
-    A -> C : {weight: 3},
-    B -> D : {weight: 2},
-    C -> D : {weight: 6},
-    C -> E : {weight: 4},
-    D -> E : {weight: 1}
-]
-
-let g = network(edges)
-
-// Find shortest path
-let path = dijkstra(g, "A", "E")
-
-path
-```
-
 ## Functional Programming
 
 ### Function Composition
@@ -555,7 +502,6 @@ These examples demonstrate:
 - ✅ Signal processing workflows
 - ✅ Numerical methods
 - ✅ OOP patterns with records
-- ✅ Graph algorithms
 - ✅ Functional programming
 - ✅ Real-world applications
 

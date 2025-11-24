@@ -1,271 +1,104 @@
 ---
 title: "Performance and Limitations"
-description: "Performance characteristics and limitations of Achronyme"
+description: "Performance characteristics and limitations of the Achronyme VM"
 section: "advanced-topics"
 order: 3
 ---
 
+This document describes performance characteristics and known limitations of the Achronyme Virtual Machine (VM).
 
-This document describes current performance limitations in Achronyme and workarounds.
+## Recursion Depth
 
-## Stack Overflow with Deep Recursion
+### Current Status
 
-### Problem
-
-Achronyme currently has a **strict recursion depth limit of approximately 50-100 calls** before encountering stack overflow.
-
-```javascript
-// This WILL cause stack overflow:
-let range = n => (
-    (left, current, vector) =>
-        if(left == 0, vector, rec(left - 1, current + 1, [...vector, current]))
-)(n, 0, [])
-
-range(5)    // ✅ Works: [0, 1, 2, 3, 4]
-range(50)   // ❌ Stack overflow!
-```
-
-### Why This Happens
-
-Each recursive call with `rec` involves:
-
-1. **Environment Cloning**: The entire evaluation environment is cloned (all variables)
-2. **Function Cloning**: The function itself is cloned to bind to `rec`
-3. **Scope Management**: New scopes are pushed and popped
-4. **Vector Growth**: With patterns like `[...vector, element]`, progressively larger vectors are created
-5. **Stack Frames**: Each recursion creates a new Rust stack frame
-
-**Example with `range(50)`:**
-- Call 1: Creates `[0]`
-- Call 2: Creates `[0, 1]`
-- Call 3: Creates `[0, 1, 2]`
-- ...
-- Call 50: Creates `[0, 1, 2, ..., 49]`
-
-At depth 50, you have:
-- 50 nested stack frames
-- 50 cloned environments
-- 50 cloned functions
-- Intermediate vectors totaling ~1,275 elements (sum of 1+2+3+...+50)
-
-This quickly exhausts Rust's default **2MB stack size**.
-
-### Root Cause
-
-The implementation in `crates/achronyme-eval/src/handlers/functions.rs` (line 32-107) clones the environment and function on every recursive call:
-
-```rust
-// Line 51: Clone entire environment
-let saved_env = evaluator.environment().clone();
-
-// Line 58: Clone closure environment
-*evaluator.environment_mut() = (**closure_env).clone();
-
-// Line 62: Clone and bind 'rec'
-evaluator.environment_mut().define("rec".to_string(), Value::Function(function.clone()))?;
-```
-
-This is necessary for correctness (proper scoping and closure capture) but has performance implications.
-
-## Workarounds
-
-### 1. Use Built-in Functions
-
-When available, use built-in functions instead of recursion:
+Achronyme uses a register-based Virtual Machine with a fixed-size call stack. While significantly more efficient than previous tree-walker implementations, deep recursion is still limited by the VM's stack size configuration.
 
 ```javascript
-// ❌ Don't use recursive range for large n
-let range = n => (
-    (left, current, vector) =>
-        if(left == 0, vector, rec(left - 1, current + 1, [...vector, current]))
-)(n, 0, [])
-
-// ✅ Use built-in linspace instead
-let range = n => linspace(0, n - 1, n)
-
-range(100)   // ✅ Works!
-range(1000)  // ✅ Works!
-```
-
-### 2. Limit Recursion Depth
-
-Keep recursive calls under **~40-50** for safety:
-
-```javascript
-// Safe: Small recursion depth
+// Deep recursion may eventually hit the stack limit
 let factorial = n =>
     if(n <= 1, 1, n * rec(n - 1))
 
-factorial(10)   // ✅ Safe
-factorial(20)   // ✅ Safe
-factorial(50)   // ❌ Stack overflow risk
+factorial(1000)   // May trigger a stack overflow error depending on VM settings
 ```
 
-### 3. Use Iteration Over Recursion
+### Best Practices
 
-When possible, express problems using higher-order functions instead of recursion:
+1.  **Prefer Iteration**: Use `while` loops or `for-in` loops for deep iterations. They operate within a single stack frame and are much faster.
+    ```javascript
+    // Efficient iterative factorial
+    let factorial = n => do {
+        mut acc = 1
+        mut i = n
+        while (i > 0) {
+            acc *= i
+            i -= 1
+        }
+        acc
+    }
+    ```
+
+2.  **Use Built-in Functions**: Built-ins like `sum`, `map`, `reduce`, and `linspace` are implemented in Rust and are highly optimized, avoiding VM overhead entirely.
+    ```javascript
+    // ❌ Slow and stack-heavy
+    let sum_rec = arr => if(len(arr) == 0, 0, arr[0] + rec(arr[1..]))
+
+    // ✅ Fast and constant memory
+    let sum_fast = arr => sum(arr)
+    ```
+
+## Memory Management
+
+### Reference Counting
+
+Achronyme uses Reference Counting (RC) for complex types (Vectors, Records, Strings). This means:
+*   **Deterministic Cleanup**: Memory is freed as soon as the last reference is dropped.
+*   **Copy-on-Write (Optimization)**: Cloning a value typically just increments a counter. Deep copies only happen when mutating a shared value (if explicitly requested or required).
+
+### Circular References
+
+Because of Reference Counting, **circular references** (e.g., two records referencing each other) can lead to memory leaks as their reference counts never reach zero.
 
 ```javascript
-// ❌ Recursive sum (limited depth)
-let sum_recursive = arr => (
-    (remaining, acc) =>
-        if(remaining[0] == remaining[-1],
-           acc + remaining[0],
-           rec(remaining[1..], acc + remaining[0]))
-)(arr, 0)
-
-// ✅ Use built-in reduce (handles any size)
-let sum_iterative = arr => reduce((acc, x) => acc + x, 0, arr)
-
-sum_iterative([1, 2, 3, ..., 100])  // ✅ Works!
+// ⚠️ Potential Memory Leak
+let a = { name: "A" }
+let b = { name: "B" }
+a.friend = b
+b.friend = a  // Cycle created
 ```
 
-### 4. Break Large Problems into Chunks
+The VM does not currently have a cycle garbage collector. Avoid circular data structures when possible.
 
-Instead of one deep recursion, process in smaller batches:
+## Numerical Performance
+
+### Tensors vs Vectors
+
+*   **Tensors**: Homogeneous numerical arrays. Operations are vectorized and highly efficient.
+*   **Vectors**: Heterogeneous arrays. Operations require boxing/unboxing and dynamic type checking per element.
+
+**Recommendation**: Always use Tensors (arrays of pure numbers) for mathematical computations.
 
 ```javascript
-// Process 10 elements at a time
-let process_batch = (data, batch_size) => (
-    // ... implementation using smaller recursive depth
-)
+// ✅ Fast (Tensor)
+let data = [1.0, 2.0, 3.0, 4.0]
+let result = data * 2.0
+
+// ⚠️ Slower (Vector)
+let mixed = [1.0, "label", 3.0]
+// Operations here involve more overhead
 ```
 
-## Performance Comparison
+## VM Architecture
 
-| Approach | Max Size | Performance | Stack Safety |
-|----------|----------|-------------|--------------|
-| Deep recursion | ~50 | Fast for small n | ❌ Unsafe |
-| Built-in functions | Unlimited | Very fast | ✅ Safe |
-| Higher-order (map/reduce) | Unlimited | Fast | ✅ Safe |
-| Chunked processing | Unlimited | Moderate | ✅ Safe |
+Achronyme runs on a **Register-Based VM**, similar to Lua 5.0.
+*   **Registers**: Local variables are stored in a virtual register window, minimizing stack manipulation overhead.
+*   **Bytecode**: Source code is compiled to compact bytecode before execution.
+*   **Dispatch**: Efficient instruction dispatch loop.
 
-## Affected Patterns
-
-These recursive patterns are **limited to ~50 iterations**:
-
-### Range Generation
-```javascript
-let range = n => (
-    (left, current, vector) =>
-        if(left == 0, vector, rec(left - 1, current + 1, [...vector, current]))
-)(n, 0, [])
-
-// ✅ Use instead: linspace(0, n-1, n)
-```
-
-### Repeat/Fill
-```javascript
-let zeros = n => (
-    (left, vector) =>
-        if(left == 0, vector, rec(left - 1, [0, ...vector]))
-)(n, [])
-
-// ✅ Use instead: map(_ => 0, linspace(0, n-1, n))
-```
-
-### Factorial with Accumulator
-```javascript
-let factorial_acc = n => (
-    (current, acc) =>
-        if(current <= 1, acc, rec(current - 1, acc * current))
-)(n, 1)
-
-// ⚠️ Limited to n < 50
-```
-
-### Fibonacci
-```javascript
-let fibonacci = n =>
-    if(n <= 1, n, rec(n - 1) + rec(n - 2))
-
-// ⚠️ Limited to n < 50
-// Note: Also exponentially slow without memoization
-```
-
-## Safe Recursive Patterns
-
-These patterns are safe because they have naturally small depth:
-
-### Tree Traversal (Limited Depth)
-```javascript
-let tree_depth = node =>
-    if(node.left == undefined && node.right == undefined,
-       1,
-       1 + max([
-           if(node.left == undefined, 0, rec(node.left)),
-           if(node.right == undefined, 0, rec(node.right))
-       ]))
-
-// ✅ Safe for balanced trees with depth < 50
-```
-
-### GCD (Euclidean Algorithm)
-```javascript
-let gcd = (a, b) => (
-    (x, y) => if(y == 0, x, rec(y, x % y))
-)(a, b)
-
-// ✅ Safe - typically terminates in < 20 iterations
-gcd(48, 18)   // 6
-gcd(1000, 35) // 5
-```
-
-### Small Factorials
-```javascript
-let factorial = n =>
-    if(n <= 1, 1, n * rec(n - 1))
-
-// ✅ Safe for n < 40
-factorial(10)  // 3628800
-```
-
-## Future Improvements
-
-Potential optimizations being considered:
-
-1. **Tail Call Optimization**: Detect tail-recursive patterns and optimize them
-2. **Iterative Lowering**: Compile certain recursive patterns to loops
-3. **Lazy Evaluation**: Delay vector construction until needed
-4. **Stack Size Increase**: Configure larger stack size for Rust runtime
-5. **Reference Counting**: Reduce cloning by using Rc/Arc more aggressively
-
-## Best Practices
-
-1. ✅ **Prefer built-in functions** over recursion when available
-2. ✅ **Test with realistic data sizes** - don't assume recursion scales
-3. ✅ **Keep recursion depth < 40** for safety margin
-4. ✅ **Use `map`, `reduce`, `filter`** instead of manual recursion
-5. ⚠️ **Avoid recursive patterns with vector growth** (like `[...acc, elem]`)
-6. ⚠️ **Profile before optimizing** - measure actual performance
-
-## Testing Recursion Limits
-
-To test if your recursive function will work:
-
-```javascript
-// Test with small input first
-let test = my_recursive_fn(5)    // ✅ Works
-
-// Gradually increase
-let test = my_recursive_fn(10)   // ✅ Works
-let test = my_recursive_fn(20)   // ✅ Works
-let test = my_recursive_fn(40)   // ⚠️ Check carefully
-let test = my_recursive_fn(50)   // ❌ Likely overflow
-```
+This architecture provides significantly better performance than AST interpreters, but still incurs interpretation overhead compared to native code.
 
 ## Summary
 
-- **Current limit**: ~50 recursive calls
-- **Root cause**: Environment/function cloning on each `rec` call
-- **Workaround**: Use built-in functions and higher-order functions
-- **Safe patterns**: GCD, small factorials, shallow tree traversal
-- **Unsafe patterns**: Large ranges, deep recursion, recursive vector building
-
----
-
-**See Also**:
-- [Functions and Lambdas](06-functions.md) - Recursion basics
-- [Higher-Order Functions](11-higher-order-functions.md) - Alternatives to recursion
-- [Advanced Recursion Patterns](../examples/soc/37-advanced-recursion-patterns.soc) - Examples
-
+*   **Recursion**: Limited by stack size; prefer loops.
+*   **Memory**: Ref-counted; avoid cycles.
+*   **Math**: Use Tensors and built-ins for near-native speed.
+*   **Loops**: `for-in` and `while` are optimized.
