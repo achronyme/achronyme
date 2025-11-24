@@ -42,6 +42,8 @@ coverage/
 # Extra
 .claude/
 SESSION.md
+SESSION3.md
+SESSION4.md
 
 # Test/demo directories
 test-npm-install/

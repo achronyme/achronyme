@@ -162,6 +162,12 @@ The language automatically infers types based on usage. Arrays of numbers become
 - **Concurrency**: Spawn lightweight tasks (`spawn`) and communicate via `channel`s.
 - **Reactivity**: Fine-grained reactivity system with `signal` and `effect` for building responsive UIs.
 
+### Native GUI System
+- **Immediate Mode**: High-performance UI rendering with `egui`.
+- **Declarative Styling**: Tailwind-like syntax for rapid design.
+- **Scientific Plotting**: Hardware-accelerated plotting for massive datasets.
+- **Reactive Integration**: Bidirectional binding with Signals.
+
 ### Control Flow
 - Pattern matching with `match` expressions
 - Break and continue in loops
@@ -182,6 +188,7 @@ The language automatically infers types based on usage. Arrays of numbers become
 3. Explore [Data Types](../core-language/data-types.md)
 4. Try the [Examples](../advanced-topics/examples.md)
 5. Dive into [Concurrency and Reactivity](../concurrency/async-await.md)
+6. Explore the [Native GUI System](../ui/overview.md)
 
 ---
 

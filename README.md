@@ -69,6 +69,12 @@ let user: User = {name: "Alice"}  // email is optional
 - **Statistics**: Mean, standard deviation, distributions
 - **Complex Numbers**: Full arithmetic support
 
+### 🖥️ Native GUI & Scientific Plotting
+- **Immediate Mode GUI**: Built-in support for creating native desktop interfaces
+- **Tailwind-like Styling**: Define styles with strings like `"bg-gray-900 p-4 rounded-lg"`
+- **Scientific Plotting**: High-performance charts (Line, Scatter) accelerated by GPU
+- **Reactive Integration**: Seamlessly connect UI components to Achronyme logic
+
 ### 🏗️ Modern Language Features
 - **Modules**: Import/export system for code organization
 - **String interpolation**: Template strings with `'Hello, ${name}!'`
@@ -516,6 +522,7 @@ Achronyme is designed around these core principles:
 - ✅ For-in loops (`for(x in collection)`)
 - ✅ Generators with `yield` and `generate`
 - ✅ Destructuring assignments
+- ✅ Native GUI System (egui + plotting)
 
 ### 🚧 In Progress
 

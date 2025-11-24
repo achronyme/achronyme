@@ -184,6 +184,34 @@ pub fn vm_signal_peek(_vm: &mut VM, signal_val: &Value, args: &[Value]) -> Resul
     }
 }
 
+/// Internal helper to set signal value and trigger effects
+pub fn set_signal_value(
+    vm: &mut VM,
+    signal_rc: &Rc<RefCell<SignalState>>,
+    new_value: Value,
+) -> Result<(), VmError> {
+    let mut state = signal_rc.borrow_mut();
+
+    // Only update if value changed
+    if state.value != new_value {
+        state.value = new_value;
+
+        // Notify subscribers
+        // Clone the list of subscribers to release the borrow on state
+        let subscribers = state.subscribers.clone();
+
+        drop(state); // Release lock
+
+        // Run effects
+        for weak_sub in subscribers {
+            if let Some(effect_rc) = weak_sub.upgrade() {
+                run_effect(vm, effect_rc)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Signal.set(new_value) -> Null
 pub fn vm_signal_set(vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
@@ -194,26 +222,7 @@ pub fn vm_signal_set(vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<
 
     match signal_val {
         Value::Signal(state_rc) => {
-            let mut state = state_rc.borrow_mut();
-
-            // Only update if value changed
-            if state.value != new_value {
-                state.value = new_value;
-
-                // Notify subscribers
-                // Clone the list of subscribers to release the borrow on state
-                let subscribers = state.subscribers.clone();
-
-                drop(state); // Release lock
-
-                // Run effects
-                for weak_sub in subscribers {
-                    if let Some(effect_rc) = weak_sub.upgrade() {
-                        run_effect(vm, effect_rc)?;
-                    }
-                }
-            }
-
+            set_signal_value(vm, state_rc, new_value)?;
             Ok(Value::Null)
         }
         _ => Err(VmError::TypeError {

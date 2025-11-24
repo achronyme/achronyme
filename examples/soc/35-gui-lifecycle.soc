@@ -1,0 +1,21 @@
+// 35-gui-lifecycle.soc
+// This example demonstrates how to programmatically close the GUI.
+// Useful for automated testing.
+
+let frames = signal(0)
+
+let app = (ui) => do {
+    ui_label("This window will close automatically in 60 frames...", "")
+    ui_progress_bar(frames.value / 60, "")
+    
+    // Use peek() to read current value and set() to update it
+    // This avoids potential dependency cycles in reactive contexts
+    frames.set(frames.peek() + 1)
+    
+    if (frames.value > 60) {
+        ui_quit()
+    }
+}
+
+gui_run(app, { title: "Auto Close Test", width: 300, height: 100 })
+print("GUI closed successfully.")

@@ -16,6 +16,7 @@ pub mod async_ops;
 pub mod complex;
 pub mod concurrency;
 pub mod debug;
+pub mod gui;
 pub mod hof;
 pub mod io;
 pub mod linalg;
@@ -281,6 +282,27 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
 
     registry.register("signal", reactive::vm_signal, -1); // 0 or 1 args
     registry.register("effect", reactive::vm_effect, 1);
+
+    // ========================================================================
+    // GUI Functions (Phase 6)
+    // ========================================================================
+
+    registry.register("gui_run", gui::vm_gui_run, -1);
+    registry.register("ui_label", gui::vm_ui_label, 2);
+    registry.register("ui_button", gui::vm_ui_button, 2);
+    registry.register("ui_box", gui::vm_ui_box, 2);
+    registry.register("ui_plot", gui::vm_ui_plot, 2);
+    registry.register("ui_text_input", gui::vm_ui_text_input, 2);
+    registry.register("ui_slider", gui::vm_ui_slider, 4);
+    registry.register("ui_checkbox", gui::vm_ui_checkbox, 3);
+    registry.register("ui_combobox", gui::vm_ui_combobox, 3);
+    registry.register("ui_radio", gui::vm_ui_radio, 4);
+    registry.register("ui_tabs", gui::vm_ui_tabs, 4);
+    registry.register("ui_collapsing", gui::vm_ui_collapsing, 3);
+    registry.register("ui_scroll_area", gui::vm_ui_scroll_area, 2);
+    registry.register("ui_progress_bar", gui::vm_ui_progress_bar, 2);
+    registry.register("ui_separator", gui::vm_ui_separator, 1);
+    registry.register("ui_quit", gui::vm_ui_quit, 0);
 
     registry
 }

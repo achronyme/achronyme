@@ -13,7 +13,7 @@ use std::rc::Rc;
 mod execution;
 mod frame;
 mod generator;
-mod intrinsics;
+pub(crate) mod intrinsics;
 mod iterator;
 mod ops;
 mod result;
@@ -37,11 +37,11 @@ pub struct VM {
     pub(crate) frames: Vec<InternalCallFrame>,
 
     /// Global variables
-    globals: Rc<RefCell<HashMap<String, Value>>>,
+    pub(crate) globals: Rc<RefCell<HashMap<String, Value>>>,
 
     /// Generator states (ID -> suspended frame)
     #[allow(dead_code)]
-    generators: HashMap<usize, SuspendedFrame>,
+    pub(crate) generators: HashMap<usize, SuspendedFrame>,
 
     /// Built-in function registry
     pub(crate) builtins: BuiltinRegistry,

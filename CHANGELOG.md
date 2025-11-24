@@ -17,6 +17,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.6] - 2025-11-24
+
+### New Features
+
+**Native GUI System**
+- **Immediate Mode GUI:** Integrated `egui` for high-performance, native desktop interfaces.
+- **Declarative Styling:** Tailwind-like string syntax (e.g., `"bg-gray-900 p-4 rounded-xl"`).
+- **Thread-Local Bridge:** Innovative `ACTIVE_VM` pointer system allowing re-entrant VM execution from UI callbacks without cloning.
+- **Reactive Integration:** Full bidirectional binding between GUI controls and Signals.
+
+**UI Component Library**
+- **Basic Controls:** `ui_label`, `ui_button`, `ui_text_input`, `ui_slider`.
+- **Selection Controls:** `ui_checkbox`, `ui_combobox`, `ui_radio`.
+- **Layout Containers:** `ui_box` (Flexbox-like), `ui_tabs`, `ui_collapsing`, `ui_scroll_area`.
+- **Scientific Plotting:** `ui_plot` with hardware-accelerated rendering of massive datasets (Tensors).
+- **Feedback & Lifecycle:** `ui_progress_bar`, `ui_separator`, `ui_quit`.
+
+### Improvements
+
+- **Windows Support:** Added PowerShell test automation scripts.
+- **Modular Architecture:** Split `achronyme-gui` into its own crate.
+
+---
+
 ## [0.6.5] - 2025-11-23
 
 ### Major Changes

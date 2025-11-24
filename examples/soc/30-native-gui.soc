@@ -1,0 +1,56 @@
+// 30-native-gui.soc
+// Example of the Native GUI system using egui backend with Tailwind-like styling
+
+println("Launching Native GUI...")
+
+let frame_counter = signal(0)
+
+// Define the application render function
+let app = () => do {
+    // Increment frame counter
+    frame_counter.set(frame_counter.peek() + 1)
+    
+    // Auto-close after 200 frames (~3 seconds at 60fps) for CI testing
+    if (frame_counter.value > 200) {
+        ui_quit()
+    }
+
+    // Main Window Container (Dark Theme Background)
+    ui_box("bg-gray-900 w-[600px] h-[400px] p-8 flex-col", () => do {
+        
+        // Header Section
+        ui_box("flex-row mb-6 items-center", () => do {
+            ui_label("Achronyme GUI", "text-white text-3xl font-bold")
+            ui_label("v0.1", "text-gray-500 text-sm ml-4")
+        })
+
+        // Card Component
+        ui_box("bg-gray-800 p-6 rounded-xl border-gray-700 flex-col", () => do {
+            ui_label("Styling System", "text-blue-500 text-xl font-bold mb-2")
+            ui_label(
+                "This interface is defined using simple strings like 'p-4 rounded-xl'.", 
+                "text-gray-300 mb-4"
+            )
+
+            // Interactive Section
+            ui_box("flex-row bg-gray-900 p-4 rounded-lg border-gray-800", () => do {
+                let clicked = ui_button("Click Console Log", "bg-blue-500 text-white px-6 py-2 rounded-lg")
+                if (clicked) {
+                    println(" [GUI] Button clicked at " + str(PI))
+                }
+                // Return null explicitly to avoid parser confusion if needed, or just semicolon helps
+                null
+            })
+        })
+        
+        ui_box("mt-4", () => do {
+             ui_label("Footer Information", "text-gray-500 text-xs")
+        })
+    })
+}
+
+// Start the Event Loop
+// This function blocks until the window is closed
+gui_run(app)
+
+println("GUI Closed.")
