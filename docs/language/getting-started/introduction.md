@@ -168,6 +168,11 @@ The language automatically infers types based on usage. Arrays of numbers become
 - **Scientific Plotting**: Hardware-accelerated plotting for massive datasets.
 - **Reactive Integration**: Bidirectional binding with Signals.
 
+### System & Networking
+- **File I/O**: Asynchronous file reading, writing, and management.
+- **Networking**: Async HTTP client (`fetch`, `post`) for API integration.
+- **Data Encoding**: Native support for JSON and CSV parsing/generation.
+
 ### Control Flow
 - Pattern matching with `match` expressions
 - Break and continue in loops

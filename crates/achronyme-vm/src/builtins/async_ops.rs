@@ -153,3 +153,173 @@ pub fn vm_read_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     Ok(Value::Future(VmFuture::new(future)))
 }
+
+/// write_file(path, content) -> Future
+/// Asynchronously writes content to a file (overwriting).
+pub fn vm_write_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::Runtime(format!(
+            "write_file() expects 2 arguments, got {}",
+            args.len()
+        )));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => {
+            return Err(VmError::TypeError {
+                operation: "write_file".to_string(),
+                expected: "String".to_string(),
+                got: format!("{:?}", args[0]),
+            })
+        }
+    };
+
+    let content = match &args[1] {
+        Value::String(s) => s.to_string(),
+        _ => {
+            return Err(VmError::TypeError {
+                operation: "write_file".to_string(),
+                expected: "String".to_string(),
+                got: format!("{:?}", args[1]),
+            })
+        }
+    };
+
+    let future = async move {
+        match tokio::fs::write(&path, content).await {
+            Ok(_) => Value::Null,
+            Err(e) => Value::Error {
+                message: format!("Failed to write file '{}': {}", path, e),
+                kind: Some("IOError".into()),
+                source: None,
+            },
+        }
+    };
+
+    Ok(Value::Future(VmFuture::new(future)))
+}
+
+/// append_file(path, content) -> Future
+/// Asynchronously appends content to a file.
+pub fn vm_append_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::Runtime(format!(
+            "append_file() expects 2 arguments, got {}",
+            args.len()
+        )));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => {
+            return Err(VmError::TypeError {
+                operation: "append_file".to_string(),
+                expected: "String".to_string(),
+                got: format!("{:?}", args[0]),
+            })
+        }
+    };
+
+    let content = match &args[1] {
+        Value::String(s) => s.to_string(),
+        _ => {
+            return Err(VmError::TypeError {
+                operation: "append_file".to_string(),
+                expected: "String".to_string(),
+                got: format!("{:?}", args[1]),
+            })
+        }
+    };
+
+    let future = async move {
+        use tokio::io::AsyncWriteExt;
+        let result = async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .await?;
+            file.write_all(content.as_bytes()).await?;
+            Ok::<(), std::io::Error>(())
+        }
+        .await;
+
+        match result {
+            Ok(_) => Value::Null,
+            Err(e) => Value::Error {
+                message: format!("Failed to append to file '{}': {}", path, e),
+                kind: Some("IOError".into()),
+                source: None,
+            },
+        }
+    };
+
+    Ok(Value::Future(VmFuture::new(future)))
+}
+
+/// delete_file(path) -> Future
+/// Asynchronously deletes a file.
+pub fn vm_delete_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::Runtime(format!(
+            "delete_file() expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => {
+            return Err(VmError::TypeError {
+                operation: "delete_file".to_string(),
+                expected: "String".to_string(),
+                got: format!("{:?}", args[0]),
+            })
+        }
+    };
+
+    let future = async move {
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => Value::Boolean(true),
+            Err(e) => Value::Error {
+                message: format!("Failed to delete file '{}': {}", path, e),
+                kind: Some("IOError".into()),
+                source: None,
+            },
+        }
+    };
+
+    Ok(Value::Future(VmFuture::new(future)))
+}
+
+/// exists(path) -> Future
+/// Asynchronously checks if a file exists.
+pub fn vm_exists(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::Runtime(format!(
+            "exists() expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => {
+            return Err(VmError::TypeError {
+                operation: "exists".to_string(),
+                expected: "String".to_string(),
+                got: format!("{:?}", args[0]),
+            })
+        }
+    };
+
+    let future = async move {
+        match tokio::fs::metadata(&path).await {
+            Ok(_) => Value::Boolean(true),
+            Err(_) => Value::Boolean(false),
+        }
+    };
+
+    Ok(Value::Future(VmFuture::new(future)))
+}

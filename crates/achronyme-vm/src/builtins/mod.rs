@@ -16,12 +16,14 @@ pub mod async_ops;
 pub mod complex;
 pub mod concurrency;
 pub mod debug;
+pub mod encoding;
 pub mod gui;
 pub mod hof;
 pub mod io;
 pub mod linalg;
 pub mod math;
 pub mod module_system;
+pub mod net;
 pub mod numerical;
 pub mod reactive;
 pub mod records;
@@ -268,6 +270,25 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("sleep", async_ops::vm_sleep, 1);
     registry.register("spawn", async_ops::vm_spawn, -1);
     registry.register("read_file", async_ops::vm_read_file, 1);
+    registry.register("write_file", async_ops::vm_write_file, 2);
+    registry.register("append_file", async_ops::vm_append_file, 2);
+    registry.register("delete_file", async_ops::vm_delete_file, 1);
+    registry.register("exists", async_ops::vm_exists, 1);
+
+    // ========================================================================
+    // Encoding Functions (JSON, CSV)
+    // ========================================================================
+
+    registry.register("json_parse", encoding::vm_json_parse, 1);
+    registry.register("json_stringify", encoding::vm_json_stringify, -1); // 1 or 2 args
+    registry.register("csv_parse", encoding::vm_csv_parse, -1); // 1 or 2 args
+
+    // ========================================================================
+    // Network Functions
+    // ========================================================================
+
+    registry.register("http_get", net::vm_http_get, 1);
+    registry.register("http_post", net::vm_http_post, -1); // 2 or 3 args
 
     // ========================================================================
     // Concurrency Functions

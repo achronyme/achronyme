@@ -1,0 +1,63 @@
+// 38-http.soc
+// Test HTTP client (requires internet connection)
+
+println("Testing HTTP Client...")
+
+let run_test = async () => do {
+    // 1. GET Request (public JSON API)
+    println("Fetching TODO item...")
+    let url = "https://jsonplaceholder.typicode.com/todos/1"
+    
+    try {
+        let response = await http_get(url)
+        println("Response received (len=" + str(len(response)) + ")")
+        
+        // Parse JSON
+        let data = json_parse(response)
+        println("Title: " + data.title)
+        
+        if (data.id == 1) {
+            println("PASS: GET request successful")
+        } else {
+            println("FAIL: Unexpected data ID")
+        }
+    } catch (e) {
+        println("FAIL: GET request error: " + e.message)
+    }
+
+    // 2. POST Request
+    println("\nSending POST request...")
+    let post_url = "https://jsonplaceholder.typicode.com/posts"
+    let payload = {
+        title: "foo",
+        body: "bar",
+        userId: 1
+    }
+    
+    try {
+        let body_str = json_stringify(payload)
+        let resp = await http_post(post_url, body_str)
+        
+        let result = json_parse(resp)
+        println("Created ID: " + str(result.id))
+        
+        if (result.id == 101) { // JSONPlaceholder always returns 101 for new items
+            println("PASS: POST request successful")
+        } else {
+            println("FAIL: POST response ID mismatch")
+        }
+    } catch (e) {
+        println("FAIL: POST request error: " + e.message)
+    }
+    
+    // 3. Error Handling (Bad URL)
+    println("\nTesting Error Handling (Bad URL)...")
+    try {
+        await http_get("https://invalid-url.example.com")
+        println("FAIL: Should have failed")
+    } catch (e) {
+        println("PASS: Caught network error: " + e.message)
+    }
+}
+
+await run_test()

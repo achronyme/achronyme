@@ -1,0 +1,56 @@
+// 37-encoding.soc
+// Test JSON and CSV encoding/decoding functions
+
+println("Testing Encoding Functions...")
+
+// --- JSON ---
+let data = {
+    name: "Alice",
+    age: 30,
+    scores: [95, 88, 92],
+    active: true
+}
+
+println("\n[JSON Test]")
+let json_str = json_stringify(data, true) // pretty print
+println("Stringified:\n" + json_str)
+
+let parsed = json_parse(json_str)
+println("Parsed Name: " + parsed.name)
+println("Parsed Age: " + str(parsed.age))
+println("Parsed Score 0: " + str(parsed.scores[0]))
+
+if (parsed.name == "Alice" && parsed.age == 30) {
+    println("PASS: JSON roundtrip")
+} else {
+    println("FAIL: JSON roundtrip")
+}
+
+// --- CSV ---
+println("\n[CSV Test]")
+// Achronyme doesn't support multiline strings directly yet, so we concat
+let csv_data = "name,age,role\n" +
+               "Bob,25,Admin\n" +
+               "Charlie,35,User\n"
+
+// Parse as records
+let records = csv_parse(csv_data, true)
+println("CSV Records: " + str(len(records)))
+println("First record: " + records[0].name + " (" + records[0].role + ")")
+
+if (records[0].name == "Bob" && records[1].role == "User") {
+    println("PASS: CSV parsing (records)")
+} else {
+    println("FAIL: CSV parsing (records)")
+}
+
+// Parse as vectors (no headers)
+let vectors = csv_parse(csv_data, false)
+println("CSV Vectors: " + str(len(vectors)))
+println("Header row: " + vectors[0][0])
+
+if (vectors[0][0] == "name" && vectors[1][0] == "Bob") {
+    println("PASS: CSV parsing (vectors)")
+} else {
+    println("FAIL: CSV parsing (vectors)")
+}
