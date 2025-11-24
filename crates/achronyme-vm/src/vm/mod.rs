@@ -43,10 +43,6 @@ pub struct VM {
     #[allow(dead_code)]
     generators: HashMap<usize, SuspendedFrame>,
 
-    /// Next generator ID
-    #[allow(dead_code)]
-    next_generator_id: usize,
-
     /// Built-in function registry
     pub(crate) builtins: BuiltinRegistry,
 
@@ -71,7 +67,6 @@ impl VM {
             frames: Vec::with_capacity(256),
             globals: HashMap::new(),
             generators: HashMap::new(),
-            next_generator_id: 0,
             builtins: crate::builtins::create_builtin_registry(),
             intrinsics: IntrinsicRegistry::new(),
             current_module: None,

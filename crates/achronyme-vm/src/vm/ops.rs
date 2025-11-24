@@ -3,21 +3,6 @@
 use crate::error::VmError;
 use crate::value::Value;
 
-/// Value operation methods
-#[allow(dead_code)]
-pub(crate) trait ValueOps {
-    fn add_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn sub_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn mul_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn div_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn neg_value(&self, value: &Value) -> Result<Value, VmError>;
-    fn lt_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn le_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn gt_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn ge_values(&self, left: &Value, right: &Value) -> Result<Value, VmError>;
-    fn is_truthy(&self, value: &Value) -> bool;
-}
-
 /// Implementation of value operations for the VM
 pub(crate) struct ValueOperations;
 
