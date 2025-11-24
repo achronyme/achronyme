@@ -12,6 +12,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::complex::Complex;
 use achronyme_types::tensor::RealTensor;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -38,20 +39,41 @@ pub fn vm_dot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 )));
             }
 
-            let mut sum = 0.0;
+            let mut sum = Value::Number(0.0);
             for (val1, val2) in v1.iter().zip(v2.iter()) {
-                match (val1, val2) {
-                    (Value::Number(n1), Value::Number(n2)) => sum += n1 * n2,
+                // Calculate product
+                let product = match (val1, val2) {
+                    (Value::Number(n1), Value::Number(n2)) => Value::Number(n1 * n2),
+                    (Value::Number(n1), Value::Complex(c2)) => {
+                        Value::Complex(Complex::from_real(*n1) * *c2)
+                    }
+                    (Value::Complex(c1), Value::Number(n2)) => {
+                        Value::Complex(*c1 * Complex::from_real(*n2))
+                    }
+                    (Value::Complex(c1), Value::Complex(c2)) => Value::Complex(*c1 * *c2),
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "dot".to_string(),
-                            expected: "numeric vectors".to_string(),
+                            expected: "numeric or complex vectors".to_string(),
                             got: format!("{:?}, {:?}", val1, val2),
                         })
                     }
+                };
+
+                // Add to sum
+                match (sum, product) {
+                    (Value::Number(s), Value::Number(p)) => sum = Value::Number(s + p),
+                    (Value::Number(s), Value::Complex(p)) => {
+                        sum = Value::Complex(Complex::from_real(s) + p)
+                    }
+                    (Value::Complex(s), Value::Number(p)) => {
+                        sum = Value::Complex(s + Complex::from_real(p))
+                    }
+                    (Value::Complex(s), Value::Complex(p)) => sum = Value::Complex(s + p),
+                    _ => unreachable!(),
                 }
             }
-            Ok(Value::Number(sum))
+            Ok(sum)
         }
         _ => Err(VmError::TypeError {
             operation: "dot".to_string(),
@@ -133,10 +155,11 @@ pub fn vm_norm(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             for val in vec.iter() {
                 match val {
                     Value::Number(n) => sum_sq += n * n,
+                    Value::Complex(c) => sum_sq += c.magnitude() * c.magnitude(),
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "norm".to_string(),
-                            expected: "numeric vector".to_string(),
+                            expected: "numeric or complex vector".to_string(),
                             got: format!("{:?}", val),
                         })
                     }
@@ -184,10 +207,13 @@ pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             for val in vec.iter() {
                 match val {
                     Value::Number(n) => normalized.push(Value::Number(n / norm)),
+                    Value::Complex(c) => {
+                        normalized.push(Value::Complex(*c / Complex::from_real(norm)))
+                    }
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "normalize".to_string(),
-                            expected: "numeric vector".to_string(),
+                            expected: "numeric or complex vector".to_string(),
                             got: format!("{:?}", val),
                         })
                     }
@@ -603,5 +629,73 @@ mod tests {
 
         // trace = 1 + 5 + 9 = 15
         assert_eq!(result, Value::Number(15.0));
+    }
+
+    #[test]
+    fn test_dot_complex() {
+        let mut vm = setup_vm();
+        let v1 = vec![
+            Value::Complex(Complex::new(1.0, 1.0)),
+            Value::Complex(Complex::new(2.0, 2.0)),
+        ];
+        let v2 = vec![Value::Number(2.0), Value::Complex(Complex::new(0.0, 1.0))];
+        // (1+i)*2 + (2+2i)*i = 2+2i + 2i-2 = 4i
+        let result = vm_dot(
+            &mut vm,
+            &[
+                Value::Vector(Rc::new(RefCell::new(v1))),
+                Value::Vector(Rc::new(RefCell::new(v2))),
+            ],
+        )
+        .unwrap();
+
+        match result {
+            Value::Complex(c) => {
+                assert!((c.re).abs() < 1e-10);
+                assert!((c.im - 4.0).abs() < 1e-10);
+            }
+            _ => panic!("Expected Complex"),
+        }
+    }
+
+    #[test]
+    fn test_norm_complex() {
+        let mut vm = setup_vm();
+        let v = vec![Value::Number(3.0), Value::Complex(Complex::new(0.0, 4.0))];
+        // sqrt(3^2 + |4i|^2) = sqrt(9 + 16) = 5
+        let result = vm_norm(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    #[test]
+    fn test_normalize_complex() {
+        let mut vm = setup_vm();
+        let v = vec![
+            Value::Complex(Complex::new(3.0, 0.0)),
+            Value::Complex(Complex::new(0.0, 4.0)),
+        ];
+        let result = vm_normalize(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
+
+        match result {
+            Value::Vector(rc) => {
+                let vec = rc.borrow();
+                assert_eq!(vec.len(), 2);
+                // [3/5, 4i/5] = [0.6, 0.8i]
+                if let Value::Complex(c) = vec[0] {
+                    assert!((c.re - 0.6).abs() < 1e-10);
+                    assert!((c.im).abs() < 1e-10);
+                } else {
+                    panic!("Expected Complex");
+                }
+
+                if let Value::Complex(c) = vec[1] {
+                    assert!((c.re).abs() < 1e-10);
+                    assert!((c.im - 0.8).abs() < 1e-10);
+                } else {
+                    panic!("Expected Complex");
+                }
+            }
+            _ => panic!("Expected Vector"),
+        }
     }
 }

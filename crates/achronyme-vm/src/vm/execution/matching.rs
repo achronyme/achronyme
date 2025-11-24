@@ -181,21 +181,23 @@ impl VM {
 
     /// Check if a value matches a type name
     fn check_type_match(&self, value: &Value, type_name: &str) -> bool {
-        match (value, type_name) {
-            (Value::Number(_), "Number") => true,
-            (Value::Boolean(_), "Boolean") => true,
-            (Value::String(_), "String") => true,
-            (Value::Null, "Null") => true,
-            (Value::Vector(_), "Vector") | (Value::Vector(_), "Array") => true,
-            (Value::Record(_), "Record") | (Value::Record(_), "Object") => true,
-            (Value::Function(_), "Function") => true,
-            (Value::Complex(_), "Complex") => true,
-            (Value::Tensor(_), "Tensor") => true,
-            (Value::ComplexTensor(_), "ComplexTensor") => true,
-            (Value::Generator(_), "Generator") => true,
-            (Value::Error { .. }, "Error") => true,
-            (Value::MutableRef(_), "MutableRef") => true,
-            _ => false,
-        }
+        matches!(
+            (value, type_name),
+            (Value::Number(_), "Number")
+                | (Value::Boolean(_), "Boolean")
+                | (Value::String(_), "String")
+                | (Value::Null, "Null")
+                | (Value::Vector(_), "Vector")
+                | (Value::Vector(_), "Array")
+                | (Value::Record(_), "Record")
+                | (Value::Record(_), "Object")
+                | (Value::Function(_), "Function")
+                | (Value::Complex(_), "Complex")
+                | (Value::Tensor(_), "Tensor")
+                | (Value::ComplexTensor(_), "ComplexTensor")
+                | (Value::Generator(_), "Generator")
+                | (Value::Error { .. }, "Error")
+                | (Value::MutableRef(_), "MutableRef")
+        )
     }
 }

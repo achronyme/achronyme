@@ -330,6 +330,9 @@ impl VM {
                                 }
                             }
                             Value::Null => len,
+                            // Fix: If end_val is missing/undefined (e.g. when using rest pattern and register wasn't set), default to len?
+                            // But registers should be initialized.
+                            // If the compiler reuses registers, it might be dirty.
                             _ => {
                                 return Err(VmError::TypeError {
                                     operation: "slice end".to_string(),
@@ -758,16 +761,15 @@ impl VM {
         let total_elements: usize = new_shape.iter().product();
         let mut new_data = Vec::with_capacity(total_elements);
 
-        let mut counters = vec![0; rank];
-        for i in 0..rank {
-            counters[i] = ranges[i].0;
-        }
+        let mut counters: Vec<usize> = ranges.iter().take(rank).map(|r| r.0).collect();
 
         loop {
-            let mut offset = 0;
-            for i in 0..rank {
-                offset += counters[i] * t.strides()[i];
-            }
+            let offset: usize = counters
+                .iter()
+                .zip(t.strides())
+                .take(rank)
+                .map(|(c, s)| c * s)
+                .sum();
             new_data.push(t.data()[offset].clone());
 
             let mut i = rank - 1;

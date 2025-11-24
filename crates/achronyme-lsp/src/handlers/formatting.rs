@@ -102,9 +102,7 @@ fn count_braces_outside_strings(line: &str) -> (usize, usize) {
     let mut escape_next = false;
     let chars: Vec<char> = line.chars().collect();
 
-    for i in 0..chars.len() {
-        let c = chars[i];
-
+    for c in chars {
         if escape_next {
             escape_next = false;
             continue;
@@ -868,8 +866,10 @@ mod tests {
 
     #[test]
     fn test_format_line_with_indentation() {
-        let mut context = FormatContext::default();
-        context.indent_level = 4;
+        let context = FormatContext {
+            indent_level: 4,
+            ..Default::default()
+        };
         let result = format_line("return x", &context);
         assert_eq!(result, "    return x");
     }

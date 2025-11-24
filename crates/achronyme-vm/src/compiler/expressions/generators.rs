@@ -12,7 +12,7 @@ impl Compiler {
     /// Compile a generate block
     ///
     /// Generates bytecode that creates a generator object:
-    /// ```
+    /// ```achronyme
     /// let gen = generate {
     ///     yield 1
     ///     yield 2
@@ -20,7 +20,7 @@ impl Compiler {
     /// ```
     ///
     /// Compiles to:
-    /// ```
+    /// ```text
     /// CREATE_GEN R[dst], proto_idx
     /// ```
     pub(crate) fn compile_generate_block(
@@ -102,12 +102,12 @@ impl Compiler {
 
     /// Compile a yield statement
     ///
-    /// ```
+    /// ```achronyme
     /// yield value
     /// ```
     ///
     /// Compiles to:
-    /// ```
+    /// ```text
     /// R[temp] = value
     /// YIELD R[temp]
     /// ```

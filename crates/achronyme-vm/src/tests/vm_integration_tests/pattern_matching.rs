@@ -49,11 +49,6 @@ fn test_record_destructuring_basic() {
 
 #[test]
 fn test_record_destructuring_three_fields() {
-    let source = r#"
-        let person = {name: "Alice", age: 30, score: 95}
-        let {age, score} = person
-        age + score
-    "#;
     // Note: For now we'll use numbers since strings aren't fully implemented in VM
     let source = r#"
         let obj = {x: 10, y: 20, z: 30}
@@ -267,11 +262,6 @@ fn test_rest_pattern_two_elements() {
 
 #[test]
 fn test_rest_pattern_empty() {
-    let source = r#"
-        let v = [1, 2]
-        let [a, b, ...rest] = v
-        rest[0]
-    "#;
     // This should fail because rest would be empty and indexing would be out of bounds
     // But let's first test that rest exists as an empty vector
     let source = r#"
@@ -397,11 +387,6 @@ fn test_record_default_all_missing() {
 
 #[test]
 fn test_record_default_with_expression() {
-    let source = r#"
-        let r = {value: 50}
-        let {value = 0, other = value * 2} = r
-        value + other
-    "#;
     // Note: 'other' default uses 'value' from outer scope
     let source = r#"
         let r = {x: 10}

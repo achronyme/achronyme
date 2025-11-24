@@ -103,20 +103,18 @@ fn count_parameters_before_cursor(text: &str, func_start: usize, cursor: usize) 
     let start = func_start + 1;
     let end = cursor.min(chars.len());
 
-    for i in start..end {
-        let ch = chars[i];
-
+    for ch in chars.iter().take(end).skip(start) {
         if escape_next {
             escape_next = false;
             continue;
         }
 
-        if ch == '\\' && in_string {
+        if *ch == '\\' && in_string {
             escape_next = true;
             continue;
         }
 
-        match ch {
+        match *ch {
             '"' => in_string = !in_string,
             '|' if !in_string => {
                 // Toggle lambda state (|params| body)

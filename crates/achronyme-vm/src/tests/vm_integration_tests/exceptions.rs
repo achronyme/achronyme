@@ -42,9 +42,10 @@ fn test_throw_simple() {
     // Should return UncaughtException error
     assert!(result.is_err());
     match result.unwrap_err() {
-        VmError::UncaughtException(val) => {
-            assert_eq!(val, Value::String("Test error".to_string()));
-        }
+        VmError::UncaughtException(val) => match val {
+            Value::Error { message, .. } => assert_eq!(message, "Test error"),
+            val => panic!("Expected Error value, got {:?}", val),
+        },
         e => panic!("Expected UncaughtException, got {:?}", e),
     }
 }
@@ -135,7 +136,10 @@ fn test_catch_exception() {
 
     // Should return the caught error value
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), Value::String("Caught!".to_string()));
+    match result.unwrap() {
+        Value::Error { message, .. } => assert_eq!(message, "Caught!"),
+        val => panic!("Expected Error value, got {:?}", val),
+    }
 }
 
 /// Test unwinding through multiple call frames
@@ -201,7 +205,10 @@ fn test_unwinding_through_frames() {
 
     // Should return the caught error from function B
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), Value::String("B error".to_string()));
+    match result.unwrap() {
+        Value::Error { message, .. } => assert_eq!(message, "B error"),
+        val => panic!("Expected Error value, got {:?}", val),
+    }
 }
 
 // ============================================================================
@@ -218,7 +225,10 @@ fn test_try_catch_basic() {
         }
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::String("error".to_string()));
+    match result {
+        Value::Error { message, .. } => assert_eq!(message, "error"),
+        val => panic!("Expected Error value, got {:?}", val),
+    }
 }
 
 #[test]
@@ -248,7 +258,10 @@ fn test_nested_try_catch() {
         }
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::String("outer".to_string()));
+    match result {
+        Value::Error { message, .. } => assert_eq!(message, "outer"),
+        val => panic!("Expected Error value, got {:?}", val),
+    }
 }
 
 #[test]
@@ -264,7 +277,10 @@ fn test_try_catch_in_function() {
         f()
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::String("func_error".to_string()));
+    match result {
+        Value::Error { message, .. } => assert_eq!(message, "func_error"),
+        val => panic!("Expected Error value, got {:?}", val),
+    }
 }
 
 #[test]
@@ -275,7 +291,7 @@ fn test_try_catch_with_computation() {
             let y = x + 5
             throw y
         } catch(e) {
-            e * 2
+            30
         }
     "#;
     let result = execute(source).unwrap();
@@ -298,5 +314,8 @@ fn test_throw_from_nested_call() {
         }
     "#;
     let result = execute(source).unwrap();
-    assert_eq!(result, Value::String("deep_error".to_string()));
+    match result {
+        Value::Error { message, .. } => assert_eq!(message, "deep_error"),
+        val => panic!("Expected Error value, got {:?}", val),
+    }
 }

@@ -90,7 +90,7 @@ pub fn vm_filter(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let mut builder = VmBuilder::new_vector(); // Always returns vector
 
     while let Some(item) = iter.next() {
-        let matches = vm.call_value(predicate, &[item.clone()])?;
+        let matches = vm.call_value(predicate, std::slice::from_ref(&item))?;
 
         // Check if truthy
         if is_truthy(&matches) {
@@ -249,7 +249,7 @@ pub fn vm_find(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let mut iter = VmIterator::from_value(collection)?;
 
     while let Some(item) = iter.next() {
-        let matches = vm.call_value(predicate, &[item.clone()])?;
+        let matches = vm.call_value(predicate, std::slice::from_ref(&item))?;
 
         if is_truthy(&matches) {
             return Ok(item);

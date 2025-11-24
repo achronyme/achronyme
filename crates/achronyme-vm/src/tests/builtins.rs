@@ -29,7 +29,7 @@ fn execute(source: &str) -> Result<Value, String> {
 fn test_builtin_registry_debug() {
     use crate::compiler::Compiler;
 
-    let mut compiler = Compiler::new("<test>".to_string());
+    let compiler = Compiler::new("<test>".to_string());
     println!("Total builtins registered: {}", compiler.builtins.len());
     println!("sin ID: {:?}", compiler.builtins.get_id("sin"));
     println!("cos ID: {:?}", compiler.builtins.get_id("cos"));
@@ -75,7 +75,7 @@ fn test_builtin_sqrt() {
 
     let result = execute("sqrt(2)").unwrap();
     match result {
-        Value::Number(n) => assert!((n - 1.41421356).abs() < 0.0001),
+        Value::Number(n) => assert!((n - std::f64::consts::SQRT_2).abs() < 0.0001),
         _ => panic!("Expected number"),
     }
 }
@@ -85,8 +85,8 @@ fn test_builtin_abs() {
     let result = execute("abs(-42)").unwrap();
     assert_eq!(result, Value::Number(42.0));
 
-    let result = execute("abs(3.14)").unwrap();
-    assert_eq!(result, Value::Number(3.14));
+    let result = execute("abs(3.5)").unwrap();
+    assert_eq!(result, Value::Number(3.5));
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn test_builtin_len_vector() {
 }
 
 #[test]
-fn test_builtin_push_pop() {
+fn test_builtin_push() {
     let result = execute(r#"push([1, 2], 3)"#).unwrap();
     match result {
         Value::Vector(v) => {
@@ -225,15 +225,13 @@ fn test_builtin_push_pop() {
         }
         _ => panic!("Expected vector"),
     }
+}
 
+#[test]
+fn test_builtin_pop() {
     let result = execute(r#"pop([1, 2, 3])"#).unwrap();
-    match result {
-        Value::Vector(v) => {
-            let vec = v.borrow();
-            assert_eq!(vec.len(), 2);
-        }
-        _ => panic!("Expected vector"),
-    }
+    // pop returns the removed element
+    assert_eq!(result, Value::Number(3.0));
 }
 
 #[test]

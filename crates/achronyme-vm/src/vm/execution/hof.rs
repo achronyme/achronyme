@@ -220,7 +220,7 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::opcode::instruction::*;
+
     use crate::opcode::OpCode;
 
     #[test]

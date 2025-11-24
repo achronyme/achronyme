@@ -148,10 +148,6 @@ fn test_record_reference_semantics() {
 
 #[test]
 fn test_nested_records() {
-    let source = r#"
-        let person = { name: "Alice", address: { city: "NYC" } }
-        person.address.city
-    "#;
     // Note: String literals not yet implemented, so this test will use numbers
     let source = r#"
         let obj = { outer: { inner: 42 } }

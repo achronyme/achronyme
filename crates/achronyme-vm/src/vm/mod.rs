@@ -164,16 +164,12 @@ impl VM {
 
                         if is_generator {
                             let gen_frame = self.frames.last().unwrap();
-                            if let Some(ref gen_value) = gen_frame.generator {
-                                if let Value::Generator(any_ref) = gen_value {
-                                    if let Some(state_rc) =
-                                        any_ref.downcast_ref::<std::cell::RefCell<
-                                            crate::vm::generator::VmGeneratorState,
-                                        >>()
-                                    {
-                                        let mut state = state_rc.borrow_mut();
-                                        state.complete(None);
-                                    }
+                            if let Some(Value::Generator(any_ref)) = gen_frame.generator.as_ref() {
+                                if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<
+                                    crate::vm::generator::VmGeneratorState,
+                                >>() {
+                                    let mut state = state_rc.borrow_mut();
+                                    state.complete(None);
                                 }
                             }
                         }
@@ -188,10 +184,9 @@ impl VM {
                     let gen_frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
 
                     // If this frame has a generator reference, update the generator state
-                    if let Some(ref gen_value) = gen_frame.generator {
-                        if let Value::Generator(any_ref) = gen_value {
-                            if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
-                                let mut state = state_rc.borrow_mut();
+                    if let Some(Value::Generator(any_ref)) = gen_frame.generator.as_ref() {
+                        if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
+                            let mut state = state_rc.borrow_mut();
                                 // Save the frame state (clone before modifying to avoid borrow issues)
                                 let mut saved_frame = gen_frame.clone();
                                 saved_frame.generator = None; // Clear to avoid circular reference
@@ -214,7 +209,6 @@ impl VM {
                                 // Continue execution in caller frame
                                 continue;
                             }
-                        }
                     }
 
                     // No generator context - just return (shouldn't happen in normal execution)
@@ -603,31 +597,29 @@ impl VM {
         let frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
 
         // Check if this is a generator frame
-        if let Some(ref gen_value) = frame.generator {
-            if let Value::Generator(any_ref) = gen_value {
-                if let Some(state_rc) = any_ref
-                    .downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>()
-                {
-                    let mut state = state_rc.borrow_mut();
-                    // Mark generator as done
-                    state.complete(Some(value.clone()));
-                    drop(state);
+        if let Some(Value::Generator(any_ref)) = frame.generator.as_ref() {
+            if let Some(state_rc) =
+                any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>()
+            {
+                let mut state = state_rc.borrow_mut();
+                // Mark generator as done
+                state.complete(Some(value.clone()));
+                drop(state);
 
-                    // Create iterator result object: {value: null, done: true}
-                    let mut result_map = HashMap::new();
-                    result_map.insert("value".to_string(), Value::Null);
-                    result_map.insert("done".to_string(), Value::Boolean(true));
-                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                // Create iterator result object: {value: null, done: true}
+                let mut result_map = HashMap::new();
+                result_map.insert("value".to_string(), Value::Null);
+                result_map.insert("done".to_string(), Value::Boolean(true));
+                let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
 
-                    // If there's a return register in caller, set it with the iterator result
-                    if let Some(return_reg) = frame.return_register {
-                        if let Some(caller_frame) = self.frames.last_mut() {
-                            caller_frame.registers.set(return_reg, result_record)?;
-                        }
+                // If there's a return register in caller, set it with the iterator result
+                if let Some(return_reg) = frame.return_register {
+                    if let Some(caller_frame) = self.frames.last_mut() {
+                        caller_frame.registers.set(return_reg, result_record)?;
                     }
-
-                    return Ok(());
                 }
+
+                return Ok(());
             }
         }
 

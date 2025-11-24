@@ -23,6 +23,8 @@
 //! - `error`: Error types for VM and compiler
 //! - `builtins`: Built-in function registry and implementations
 
+#![allow(clippy::result_large_err)]
+
 pub mod builtins;
 pub mod bytecode;
 pub mod bytecode_debug;

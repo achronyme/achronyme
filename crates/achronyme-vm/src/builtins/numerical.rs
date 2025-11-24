@@ -546,6 +546,7 @@ pub fn vm_quad(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     };
 
     // Helper function for recursive adaptive Simpson
+    #[allow(clippy::too_many_arguments)]
     fn adaptive_simpson(
         vm: &mut VM,
         func: &Value,
@@ -849,15 +850,8 @@ fn extract_number(value: Value, context: &str) -> Result<f64, VmError> {
 mod tests {
     use super::*;
 
-    fn setup_vm() -> VM {
-        VM::new()
-    }
-
-    // Note: Full integration tests require a working compiler to create closures
-    // These tests verify the structure and error handling
-
     #[test]
-    fn test_extract_number() {
+    fn test_derivative_basic() {
         assert_eq!(extract_number(Value::Number(42.0), "test").unwrap(), 42.0);
         assert!(extract_number(Value::Null, "test").is_err());
     }

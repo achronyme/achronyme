@@ -247,26 +247,38 @@ impl Compiler {
                     // R[rest_reg] = R[target_reg][element_count..end]
                     let rest_reg = reg_idx;
 
-                    // Load start index as a constant
+                    // Allocate TWO registers for slice range (start, end)
+                    // VecSlice opcode uses R[C] for start and R[C+1] for end
+                    let range_start_reg = self.registers.allocate_many(2)?;
+                    let range_end_reg = range_start_reg + 1;
+
+                    // Load start index (element_count)
                     let start_idx = Value::Number(element_count as f64);
                     let start_idx_const = self.add_constant(start_idx)?;
-                    let start_reg = self.registers.allocate()?;
                     self.emit(encode_abx(
                         OpCode::LoadConst.as_u8(),
-                        start_reg,
+                        range_start_reg,
                         start_idx_const as u16,
                     ));
 
-                    // Emit VecSlice: R[rest_reg] = R[target_reg][start_reg..end]
+                    // Load end index (Null = end of vector)
+                    self.emit(encode_abx(
+                        OpCode::LoadNull.as_u8(),
+                        range_end_reg,
+                        0, // No operand for LoadNull
+                    ));
+
+                    // Emit VecSlice: R[rest_reg] = R[target_reg][start_reg..end_reg]
                     self.emit(encode_abc(
                         OpCode::VecSlice.as_u8(),
                         rest_reg,
                         target_reg,
-                        start_reg,
+                        range_start_reg,
                     ));
 
-                    // Free the temp start register
-                    self.registers.free(start_reg);
+                    // Free the temp range registers
+                    self.registers.free(range_end_reg);
+                    self.registers.free(range_start_reg);
 
                     // Bind the rest variable
                     self.symbols.define(name.clone(), rest_reg)?;

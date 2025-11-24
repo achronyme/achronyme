@@ -81,6 +81,7 @@ impl VmIterator {
     /// # Returns
     /// * `Some(Value)` - Next value in the iteration
     /// * `None` - Iterator is exhausted
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Value> {
         match self {
             VmIterator::Vector { data, len, index } => {
@@ -321,7 +322,6 @@ impl VmBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use achronyme_types::tensor::RealTensor;
 
     #[test]
     fn test_vector_iterator() {

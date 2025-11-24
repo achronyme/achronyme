@@ -1,5 +1,11 @@
 //! Function and lambda expression compilation
 
+#![allow(
+    clippy::type_complexity,
+    clippy::collapsible_match,
+    clippy::only_used_in_recursion
+)]
+
 use crate::bytecode::{FunctionPrototype, UpvalueDescriptor};
 use crate::compiler::registers::{RegResult, RegisterAllocator};
 use crate::compiler::symbols::SymbolTable;

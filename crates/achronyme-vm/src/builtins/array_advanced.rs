@@ -13,6 +13,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::complex::Complex;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -39,20 +40,34 @@ pub fn vm_product(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 return Ok(Value::Number(1.0));
             }
 
-            let mut product = 1.0;
+            let mut product = Value::Number(1.0);
+
             for val in vec.iter() {
-                match val {
-                    Value::Number(n) => product *= n,
+                match (&product, val) {
+                    (Value::Number(acc), Value::Number(n)) => {
+                        product = Value::Number(acc * n);
+                    }
+                    (Value::Number(acc), Value::Complex(c)) => {
+                        let acc_complex = Complex::from_real(*acc);
+                        product = Value::Complex(acc_complex * *c);
+                    }
+                    (Value::Complex(acc), Value::Number(n)) => {
+                        let n_complex = Complex::from_real(*n);
+                        product = Value::Complex(*acc * n_complex);
+                    }
+                    (Value::Complex(acc), Value::Complex(c)) => {
+                        product = Value::Complex(*acc * *c);
+                    }
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "product".to_string(),
-                            expected: "numeric vector".to_string(),
+                            expected: "numeric or complex vector".to_string(),
                             got: format!("{:?}", val),
                         })
                     }
                 }
             }
-            Ok(Value::Number(product))
+            Ok(product)
         }
         _ => Err(VmError::TypeError {
             operation: "product".to_string(),

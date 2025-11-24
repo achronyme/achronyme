@@ -1,5 +1,5 @@
-/// Formatting module for Achronyme source code
-/// Adapted from achronyme-lsp formatting.rs
+//! Formatting module for Achronyme source code
+//! Adapted from achronyme-lsp formatting.rs
 
 /// Context for tracking formatting state across lines
 #[derive(Debug, Clone)]
@@ -68,9 +68,7 @@ fn count_braces_outside_strings(line: &str) -> (usize, usize) {
     let mut escape_next = false;
     let chars: Vec<char> = line.chars().collect();
 
-    for i in 0..chars.len() {
-        let c = chars[i];
-
+    for c in chars {
         if escape_next {
             escape_next = false;
             continue;
@@ -316,11 +314,9 @@ fn normalize_operators(line: &str) -> String {
                     || result.trim().is_empty();
 
                 if is_unary {
-                    if i + 1 < chars.len() && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.')
+                    if i + 1 < chars.len()
+                        && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '.')
                     {
-                        result.push('-');
-                        i += 1;
-                    } else if i + 1 < chars.len() && chars[i + 1].is_alphanumeric() {
                         result.push('-');
                         i += 1;
                     } else {

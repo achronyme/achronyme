@@ -132,28 +132,36 @@ pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             // Calculate mean
             drop(vec);
             let mean_result = vm_mean(_vm, args)?;
-            let mean = match mean_result {
-                Value::Number(n) => n,
-                _ => {
-                    return Err(VmError::Runtime(
-                        "mean() returned non-numeric value".to_string(),
-                    ))
-                }
-            };
 
-            // Calculate variance
+            // Calculate variance (sum of squared magnitudes of differences)
             let vec = rc.borrow();
             let mut variance_sum = 0.0;
+
             for val in vec.iter() {
-                match val {
-                    Value::Number(n) => {
-                        let diff = n - mean;
+                match (val, &mean_result) {
+                    (Value::Number(n), Value::Number(mean_val)) => {
+                        let diff = n - mean_val;
                         variance_sum += diff * diff;
+                    }
+                    (Value::Number(n), Value::Complex(mean_val)) => {
+                        let diff = Complex::from_real(*n) - *mean_val;
+                        let mag = diff.magnitude();
+                        variance_sum += mag * mag;
+                    }
+                    (Value::Complex(c), Value::Number(mean_val)) => {
+                        let diff = *c - Complex::from_real(*mean_val);
+                        let mag = diff.magnitude();
+                        variance_sum += mag * mag;
+                    }
+                    (Value::Complex(c), Value::Complex(mean_val)) => {
+                        let diff = *c - *mean_val;
+                        let mag = diff.magnitude();
+                        variance_sum += mag * mag;
                     }
                     _ => {
                         return Err(VmError::TypeError {
                             operation: "std".to_string(),
-                            expected: "numeric vector".to_string(),
+                            expected: "numeric or complex vector".to_string(),
                             got: format!("{:?}", val),
                         })
                     }
@@ -268,10 +276,7 @@ mod tests {
     #[test]
     fn test_sum_complex() {
         let mut vm = setup_vm();
-        let vec = vec![
-            Value::Number(1.0),
-            Value::Complex(Complex::new(0.0, 2.0)),
-        ];
+        let vec = vec![Value::Number(1.0), Value::Complex(Complex::new(0.0, 2.0))];
         let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
         match result {
             Value::Complex(c) => {
