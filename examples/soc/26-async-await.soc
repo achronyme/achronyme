@@ -1,7 +1,5 @@
-// Example 26: Async/Await Demonstration
-// This example demonstrates the new async/await syntax and execution flow.
-// Note: Currently, the VM executes async code synchronously (blocking on await),
-// but the syntax and logical flow are fully established.
+// Example 26: Async/Await and Concurrency Demonstration
+// This example demonstrates async/await syntax, non-blocking execution, and concurrency using spawn.
 
 print("=== Async/Await Demo ===")
 
@@ -11,9 +9,10 @@ let fetch_user_data = async (id) => do {
     print("  [fetch] Requesting data for user ID: " + str(id) + "...")
     
     // Suspend execution for 500ms (simulating network latency)
+    // This is now non-blocking! Other tasks can run while this sleeps.
     await sleep(500)
     
-    print("  [fetch] Data received.")
+    print("  [fetch] Data received for user ID: " + str(id))
     
     // Return a record (simulated JSON response)
     {
@@ -26,39 +25,52 @@ let fetch_user_data = async (id) => do {
     }
 }
 
-// 2. Orchestration using an async block/function
+// 2. Concurrency with spawn()
+// spawn(func, ...args) launches a new task and returns a Future
+print("--- Concurrency Test: Spawning 3 tasks ---")
+
+// These will start executing immediately and concurrently
+let task1 = spawn(fetch_user_data, 101)
+let task2 = spawn(fetch_user_data, 102)
+let task3 = spawn(fetch_user_data, 103)
+
+print("[main] Tasks spawned. They are running in the background.")
+
+// Wait for results (awaiting the Future returned by spawn)
+print("[main] Waiting for task 1...")
+let user1 = await task1
+print("[main] Got user 1: " + user1.username)
+
+print("[main] Waiting for task 2...")
+let user2 = await task2
+print("[main] Got user 2: " + user2.username)
+
+print("[main] Waiting for task 3...")
+let user3 = await task3
+print("[main] Got user 3: " + user3.username)
+
+// 3. Inline Async Block
 let process_workflow = async () => do {
-    print("[main] Workflow started.")
-    
-    // Await the result of the async function
-    // Execution pauses here until fetch_user_data resolves
-    let user = await fetch_user_data(101)
+    print("\n--- Async Block Demo ---")
     
     // Feature Integration: Record Destructuring with Default Values
-    // Extract fields from the resolved value
-    let { username, role = "Guest", stats: { login_count } } = user
+    let { username, role = "Guest", stats: { login_count } } = user1
     
-    print("[main] Processing: " + username + " (" + role + ")")
-    print("[main] Logins: " + str(login_count))
+    print("[workflow] Processing: " + username + " (" + role + ")")
     
-    // 3. Inline Async Block
     // You can use async blocks as expressions
     let bonus_points = await async do {
-        print("  [calc] Calculating heavy math...")
+        print("  [calc] Calculating heavy math (simulated)...")
         await sleep(200)
         login_count * 10
     }
     
-    print("[main] Calculated Bonus: " + str(bonus_points))
+    print("[workflow] Calculated Bonus: " + str(bonus_points))
     
-    // Return final result
     "Workflow Complete"
 }
 
-// Execute the main workflow
-// Since top-level await is supported in the VM logic (via expression evaluation),
-// we can await the result of the main function.
-print("--- Execution Start ---")
+print("\n--- Execution Start ---")
 let status = await process_workflow()
 print("--- Execution End ---")
 print("Final Status: " + status)

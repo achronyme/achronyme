@@ -80,6 +80,11 @@ impl VM {
             "Builder" => matches!(value, Value::Builder(_)),
             "MutableRef" => matches!(value, Value::MutableRef(_)),
             "Error" => matches!(value, Value::Error { .. }),
+            "Sender" => matches!(value, Value::Sender(_)),
+            "Receiver" => matches!(value, Value::Receiver(_)),
+            "AsyncMutex" => matches!(value, Value::AsyncMutex(_)),
+            "MutexGuard" => matches!(value, Value::MutexGuard(_)),
+            "Signal" => matches!(value, Value::Signal(_)),
             "Any" => true, // Any type always matches
             _ => false,    // Unknown type name
         }
@@ -111,6 +116,11 @@ impl VM {
             Value::Builder(_) => "Builder",
             Value::Range { .. } => "Range",
             Value::BoundMethod { .. } => "BoundMethod",
+            Value::Sender(_) => "Sender",
+            Value::Receiver(_) => "Receiver",
+            Value::AsyncMutex(_) => "AsyncMutex",
+            Value::MutexGuard(_) => "MutexGuard",
+            Value::Signal(_) => "Signal",
         }
     }
 }

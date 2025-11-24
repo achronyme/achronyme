@@ -1,0 +1,157 @@
+// Example 28: Comprehensive Demo - Async, Concurrency & Reactivity
+// This example brings together all major features implemented:
+// 1. Async/Await & Non-blocking Sleep
+// 2. Concurrency (spawn, channels, mutex)
+// 3. Reactive System (signals, effects, computed)
+
+print("=== Comprehensive Achronyme Demo ===")
+
+// ----------------------------------------------------------------------------
+// PART 1: Reactive State Management
+// ----------------------------------------------------------------------------
+print("\n--- Part 1: Reactive System Setup ---")
+
+// Global application state
+let app_state = {
+    // Signals for reactive data
+    users: signal([]),
+    loading: signal(false),
+    total_processed: signal(0),
+    
+    // AsyncMutex for thread-safe logging
+    log_mutex: AsyncMutex([]) 
+}
+
+// Computed signal: Derived state
+// Automatically updates when app_state.users changes
+let user_count_display = signal("No users") 
+
+effect(() => do {
+    let count = len(app_state.users.value)
+    if (count == 0) {
+        user_count_display.set("No users loaded")
+    } else {
+        user_count_display.set("Users loaded: " + str(count))
+    }
+})
+
+// Effect to log changes
+effect(() => do {
+    print("[UI Update] Status: " + user_count_display.value)
+    if (app_state.loading.value) {
+        print("[UI Update] (Loading spinner visible...)")
+    }
+})
+
+// ----------------------------------------------------------------------------
+// PART 2: Async Workers & Channels
+// ----------------------------------------------------------------------------
+print("\n--- Part 2: Starting Async Worker System ---")
+
+let [tx, rx] = channel()
+
+// Thread-safe logger function
+let safe_log = async (msg) => do {
+    let guard = await app_state.log_mutex.lock()
+    let current_logs = guard.get()
+    push(current_logs, msg)
+    guard.set(current_logs)
+    // print("  [Log] " + msg) 
+}
+
+// Helper to clone vector and push item (functional update style)
+let clone_and_push = (vec, item) => do {
+    let new_vec = []
+    for (x in vec) { push(new_vec, x) }
+    push(new_vec, item)
+    new_vec
+}
+
+// Data processing worker
+// Listens for user IDs on channel, fetches data, and updates state
+let processor_worker = async () => do {
+    await safe_log("Worker started")
+    
+    while (true) {
+        let user_id = await rx.recv()
+        
+        if (user_id == null) {
+            await safe_log("Worker shutting down")
+            break
+        }
+        
+        await safe_log("Processing user ID: " + str(user_id))
+        
+        // Simulate async IO latency
+        await sleep(50)
+        
+        // Create user record
+        let user = {
+            id: user_id,
+            name: "User_" + str(user_id),
+            role: if (user_id % 2 == 0) { "Admin" } else { "User" }
+        }
+        
+        // Update reactive state safely
+        // We use peek() to read without subscribing (avoid cycle inside effect if this were one)
+        // And create a NEW vector to ensure change detection triggers
+        let current_list = app_state.users.peek()
+        let new_list = clone_and_push(current_list, user)
+        
+        // Trigger update
+        app_state.users.set(new_list)
+        
+        // Update counter
+        app_state.total_processed.set(app_state.total_processed.peek() + 1)
+    }
+}
+
+// ----------------------------------------------------------------------------
+// PART 3: Execution Flow
+// ----------------------------------------------------------------------------
+print("\n--- Part 3: Running Simulation ---")
+
+let main = async () => do {
+    // Start worker
+    let worker_handle = spawn(processor_worker)
+    
+    // Simulate UI interaction
+    app_state.loading.set(true)
+    
+    print("[Main] sending requests...")
+    
+    // Send tasks
+    for (id in range(101, 106)) { // 5 users
+        await tx.send(id)
+        // Simulate user typing speed / staggered requests
+        await sleep(20)
+    }
+    
+    // Close channel (sends null to receiver)
+    // Wait, we don't have a close() builtin for UnboundedSender in VM yet?
+    // We implemented it as wrapper around send. 
+    // Actually UnboundedSender doesn't have explicit close() on sender side in clone,
+    // it closes when all senders drop.
+    // But here 'tx' variable keeps it alive.
+    // We can send a sentinel 'null' manually if we want.
+    await tx.send(null) 
+    
+    // Wait for worker
+    await worker_handle
+    
+    app_state.loading.set(false)
+    
+    print("\n--- Part 4: Final Results ---")
+    print("Total Processed: " + str(app_state.total_processed.value))
+    print("Final UI State: " + user_count_display.value)
+    
+    // Check logs
+    let guard = await app_state.log_mutex.lock()
+    let logs = guard.get()
+    print("\n[Internal Logs]:")
+    for (log in logs) {
+        print("  > " + log)
+    }
+}
+
+await main()

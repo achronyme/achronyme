@@ -157,6 +157,11 @@ The language automatically infers types based on usage. Arrays of numbers become
 - Records with methods and `self` reference
 - Optional record fields: `{field?: Type}`
 
+### Concurrency and Reactivity
+- **Async/Await**: Non-blocking execution with `async` functions and `await`.
+- **Concurrency**: Spawn lightweight tasks (`spawn`) and communicate via `channel`s.
+- **Reactivity**: Fine-grained reactivity system with `signal` and `effect` for building responsive UIs.
+
 ### Control Flow
 - Pattern matching with `match` expressions
 - Break and continue in loops
@@ -176,6 +181,7 @@ The language automatically infers types based on usage. Arrays of numbers become
 2. Learn the [Syntax Basics](syntax-basics.md)
 3. Explore [Data Types](../core-language/data-types.md)
 4. Try the [Examples](../advanced-topics/examples.md)
+5. Dive into [Concurrency and Reactivity](../concurrency/async-await.md)
 
 ---
 

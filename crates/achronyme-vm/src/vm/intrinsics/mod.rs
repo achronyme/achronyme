@@ -22,6 +22,11 @@ pub enum TypeDiscriminant {
     Number,
     Boolean,
     Complex,
+    Sender,
+    Receiver,
+    AsyncMutex,
+    MutexGuard,
+    Signal,
 }
 
 impl TypeDiscriminant {
@@ -35,6 +40,11 @@ impl TypeDiscriminant {
             Value::Number(_) => Some(TypeDiscriminant::Number),
             Value::Boolean(_) => Some(TypeDiscriminant::Boolean),
             Value::Complex(_) => Some(TypeDiscriminant::Complex),
+            Value::Sender(_) => Some(TypeDiscriminant::Sender),
+            Value::Receiver(_) => Some(TypeDiscriminant::Receiver),
+            Value::AsyncMutex(_) => Some(TypeDiscriminant::AsyncMutex),
+            Value::MutexGuard(_) => Some(TypeDiscriminant::MutexGuard),
+            Value::Signal(_) => Some(TypeDiscriminant::Signal),
             _ => None,
         }
     }
@@ -337,6 +347,54 @@ impl IntrinsicRegistry {
             TypeDiscriminant::Record,
             "has",
             adapt!(crate::builtins::records::vm_has_field),
+        );
+
+        // === Concurrency Methods ===
+        self.register(
+            TypeDiscriminant::Sender,
+            "send",
+            crate::builtins::concurrency::vm_sender_send,
+        );
+        self.register(
+            TypeDiscriminant::Receiver,
+            "recv",
+            crate::builtins::concurrency::vm_receiver_recv,
+        );
+
+        // === AsyncMutex Methods ===
+        self.register(
+            TypeDiscriminant::AsyncMutex,
+            "lock",
+            crate::builtins::concurrency::vm_mutex_lock,
+        );
+
+        // === MutexGuard Methods ===
+        self.register(
+            TypeDiscriminant::MutexGuard,
+            "get",
+            crate::builtins::concurrency::vm_guard_get,
+        );
+        self.register(
+            TypeDiscriminant::MutexGuard,
+            "set",
+            crate::builtins::concurrency::vm_guard_set,
+        );
+
+        // === Signal Methods ===
+        self.register(
+            TypeDiscriminant::Signal,
+            "value", // Accessor property style .value
+            crate::builtins::reactive::vm_signal_get,
+        );
+        self.register(
+            TypeDiscriminant::Signal,
+            "peek",
+            crate::builtins::reactive::vm_signal_peek,
+        );
+        self.register(
+            TypeDiscriminant::Signal,
+            "set",
+            crate::builtins::reactive::vm_signal_set,
         );
     }
 }

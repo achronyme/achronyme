@@ -51,7 +51,19 @@ impl VM {
                 if let Some(type_disc) =
                     crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value)
                 {
-                    if self.intrinsics.lookup(&type_disc, field_name).is_some() {
+                    if let Some(func) = self.intrinsics.lookup(&type_disc, field_name) {
+                        // Special case for Signal.value (getter)
+                        // We invoke it immediately instead of returning a BoundMethod
+                        if matches!(type_disc, crate::vm::intrinsics::TypeDiscriminant::Signal)
+                            && field_name == "value"
+                        {
+                            // Invoke intrinsic with just the receiver
+                            // Note: IntrinsicFn signature is (vm, receiver, args)
+                            let result = func(self, &rec_value, &[])?;
+                            self.set_register(dst, result)?;
+                            return Ok(ExecutionResult::Continue);
+                        }
+
                         // Found an intrinsic method!
                         let bound_method = Value::BoundMethod {
                             receiver: Box::new(rec_value.clone()),

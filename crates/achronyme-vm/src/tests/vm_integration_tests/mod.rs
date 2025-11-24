@@ -2,13 +2,15 @@ pub mod helpers;
 
 pub mod async_await;
 pub mod basic_operations;
-pub mod complex_numbers;
-pub mod control_flow;
-pub mod data_structures;
+mod complex_numbers;
+mod concurrency;
+mod control_flow;
+mod data_structures;
 pub mod exceptions;
 pub mod functions;
 pub mod generators;
 pub mod gradual_types;
 pub mod operators;
 pub mod pattern_matching;
+mod reactive;
 pub mod tco;

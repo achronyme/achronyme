@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Major Changes
 
+**Async/Await & Concurrency**
+- Native `async`/`await` syntax and non-blocking execution
+- `spawn`, `channel`, `AsyncMutex` for concurrent programming
+- Async I/O support
+
+**Reactive System**
+- Signals and Effects for fine-grained reactivity
+- Automatic dependency tracking
+- Designed for responsive UI development
+
 **Register-based Virtual Machine**
 - Complete migration from Tree-Walker interpreter to Register-based VM
 - Foundation for async/await and generators

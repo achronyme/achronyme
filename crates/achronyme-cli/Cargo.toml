@@ -1,6 +1,6 @@
 [package]
 name = "achronyme-cli"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2021"
 
 [[bin]]
@@ -8,10 +8,10 @@ name = "achronyme"
 path = "src/main.rs"
 
 [dependencies]
-achronyme-parser = { path = "../achronyme-parser" }
-achronyme-vm = { path = "../achronyme-vm" }
-achronyme-types = { path = "../achronyme-types" }
-achronyme-lsp-core = { path = "../achronyme-lsp-core" }
+achronyme-parser = { path = "../achronyme-parser", version = "0.6.5" }
+achronyme-vm = { path = "../achronyme-vm", version = "0.6.5" }
+achronyme-types = { path = "../achronyme-types", version = "0.6.5" }
+achronyme-lsp-core = { path = "../achronyme-lsp-core", version = "0.1.0" }
 clap = { version = "4.4", features = ["derive"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

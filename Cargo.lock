@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "achronyme-cli"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "achronyme-lsp-core",
  "achronyme-parser",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "achronyme-parser"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "pest",
  "pest_derive",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "achronyme-types"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "achronyme-parser",
  "futures",

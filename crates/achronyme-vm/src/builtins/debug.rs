@@ -177,5 +177,15 @@ fn describe_value(value: &Value, indent: usize) -> String {
         Value::BoundMethod { method_name, .. } => {
             format!("BoundMethod({})", method_name)
         }
+
+        Value::Sender(_) => "Sender".to_string(),
+        Value::Receiver(_) => "Receiver".to_string(),
+        Value::AsyncMutex(_) => "AsyncMutex".to_string(),
+        Value::MutexGuard(_) => "MutexGuard".to_string(),
+
+        Value::Signal(state_rc) => {
+            let state = state_rc.borrow();
+            format!("Signal(value: {})", describe_value(&state.value, indent))
+        }
     }
 }

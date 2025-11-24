@@ -58,6 +58,9 @@ pub struct VM {
 
     /// Epsilon threshold for considering values as zero
     epsilon: f64,
+
+    /// Root scope for active effects to keep them alive
+    pub(crate) active_effects: Vec<Rc<RefCell<achronyme_types::value::EffectState>>>,
 }
 
 impl VM {
@@ -72,6 +75,7 @@ impl VM {
             current_module: None,
             precision: None, // Full precision by default
             epsilon: 1e-10,  // Default epsilon threshold
+            active_effects: Vec::new(),
         }
     }
 
@@ -86,6 +90,7 @@ impl VM {
             current_module: self.current_module.clone(),
             precision: self.precision,
             epsilon: self.epsilon,
+            active_effects: Vec::new(), // Child VM gets its own effect root scope
         }
     }
 

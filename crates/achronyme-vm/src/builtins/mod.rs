@@ -14,6 +14,7 @@
 pub mod array_advanced;
 pub mod async_ops;
 pub mod complex;
+pub mod concurrency;
 pub mod debug;
 pub mod hof;
 pub mod io;
@@ -21,6 +22,7 @@ pub mod linalg;
 pub mod math;
 pub mod module_system;
 pub mod numerical;
+pub mod reactive;
 pub mod records;
 pub mod registry;
 pub mod statistics;
@@ -266,6 +268,20 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("spawn", async_ops::vm_spawn, -1);
     registry.register("read_file", async_ops::vm_read_file, 1);
 
+    // ========================================================================
+    // Concurrency Functions
+    // ========================================================================
+
+    registry.register("channel", concurrency::vm_channel, 0);
+    registry.register("AsyncMutex", concurrency::vm_mutex, 1);
+
+    // ========================================================================
+    // Reactive Functions
+    // ========================================================================
+
+    registry.register("signal", reactive::vm_signal, -1); // 0 or 1 args
+    registry.register("effect", reactive::vm_effect, 1);
+
     registry
 }
 
@@ -289,9 +305,9 @@ mod tests {
         // Verify we have a good number of core functions
         // Math: ~30, String: ~11, Vector: ~9, I/O: 3, Stats: 3, LinAlg: 7,
         // Complex: 9, Utils: 5, Debug: 1, Records: 3, Array Advanced: 8,
-        // HOF: 9, Module: 1, Numerical: 11
+        // HOF: 9, Module: 1, Numerical: 11, Async: 2, IO: 3, Concurrency: 2
         // Total: ~110 core functions (removed DSP, Graph, PERT)
-        assert!(registry.len() > 80 && registry.len() < 120);
+        assert!(registry.len() > 80 && registry.len() < 130);
     }
 
     #[test]

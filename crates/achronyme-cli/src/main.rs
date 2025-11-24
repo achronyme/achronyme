@@ -528,6 +528,14 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             format!("{}{}{}", start_str, op, end_str)
         }
         Value::BoundMethod { method_name, .. } => format!("<method {}>", method_name),
+        Value::Sender(_) => "<sender>".to_string(),
+        Value::Receiver(_) => "<receiver>".to_string(),
+        Value::AsyncMutex(_) => "<mutex>".to_string(),
+        Value::MutexGuard(_) => "<mutex-guard>".to_string(),
+        Value::Signal(state_rc) => {
+            let state = state_rc.borrow();
+            format!("Signal({})", format_value(&state.value))
+        }
     }
 }
 

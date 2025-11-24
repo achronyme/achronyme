@@ -1,0 +1,104 @@
+// Example 27: Concurrency Primitives (Channels & Mutex)
+// This example demonstrates communication and synchronization between concurrent tasks.
+
+print("=== Concurrency Primitives Demo ===")
+
+// ----------------------------------------------------------------------------
+// Part 1: Channels (Message Passing)
+// ----------------------------------------------------------------------------
+print("\n--- Part 1: Channels (Producer/Consumer) ---")
+
+// Create a channel returning [Sender, Receiver]
+let chan = channel()
+let tx = chan[0]
+let rx = chan[1]
+
+// Producer Task
+let producer = async () => do {
+    print("  [Producer] Started.")
+    for (i in range(1, 6)) { // 1 to 5
+        await sleep(100) // Simulate work
+        print("  [Producer] Sending: " + str(i))
+        await tx.send(i)
+    }
+    print("  [Producer] Done sending.")
+    await tx.send("STOP") // Sentinel value
+}
+
+// Consumer Task
+let consumer = async () => do {
+    print("  [Consumer] Waiting for messages...")
+    while (true) {
+        let msg = await rx.recv()
+        if (msg == "STOP") {
+            print("  [Consumer] Received STOP signal.")
+            break
+        }
+        if (msg == null) {
+            print("  [Consumer] Channel closed (null received).")
+            break
+        }
+        print("  [Consumer] Processing: " + str(msg))
+    }
+    print("  [Consumer] Done.")
+}
+
+// Spawn both tasks
+let p_handle = spawn(producer)
+let c_handle = spawn(consumer)
+
+// Wait for them to finish
+await p_handle
+await c_handle
+
+// ----------------------------------------------------------------------------
+// Part 2: AsyncMutex (Shared State)
+// ----------------------------------------------------------------------------
+print("\n--- Part 2: AsyncMutex (Shared Counter) ---")
+
+// Initialize a mutex protecting a counter (starting at 0)
+let shared_counter = AsyncMutex(0)
+
+// Worker function
+let worker = async (id) => do {
+    print("  [Worker " + str(id) + "] Starting, waiting for lock...")
+    
+    // Acquire lock (waits if another worker has it)
+    let guard = await shared_counter.lock()
+    
+    // Critical Section
+    let current = guard.get()
+    print("  [Worker " + str(id) + "] Locked. Current: " + str(current))
+    
+    // Simulate processing inside critical section
+    await sleep(50)
+    
+    let updated = current + 1
+    guard.set(updated)
+    print("  [Worker " + str(id) + "] Updated to: " + str(updated) + ". Releasing lock.")
+    
+    // Lock is released automatically when 'guard' goes out of scope
+}
+
+// Spawn 5 concurrent workers
+let tasks = []
+for (i in range(0, 5)) {
+    push(tasks, spawn(worker, i))
+}
+
+// Wait for all workers
+print("[Main] Waiting for workers...")
+for (t in tasks) {
+    await t
+}
+
+// Verify final result
+let final_guard = await shared_counter.lock()
+let final_val = final_guard.get()
+print("\n[Main] All done. Final Counter Value: " + str(final_val))
+
+if (final_val == 5) {
+    print("✅ SUCCESS: Counter is consistent.")
+} else {
+    print("❌ FAILURE: Race condition detected.")
+}

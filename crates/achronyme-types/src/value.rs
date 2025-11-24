@@ -116,6 +116,37 @@ pub enum Value {
         receiver: Box<Value>,
         method_name: String,
     },
+    /// Channel Sender
+    Sender(Rc<RefCell<tokio::sync::mpsc::UnboundedSender<Value>>>),
+    /// Channel Receiver
+    Receiver(Rc<RefCell<tokio::sync::mpsc::UnboundedReceiver<Value>>>),
+    /// Async Mutex
+    AsyncMutex(std::sync::Arc<tokio::sync::Mutex<Value>>),
+    /// Mutex Guard (owned)
+    MutexGuard(Rc<RefCell<tokio::sync::OwnedMutexGuard<Value>>>),
+    /// Reactive Signal
+    Signal(Rc<RefCell<SignalState>>),
+}
+
+/// State of a reactive signal
+#[derive(Debug, Clone)]
+pub struct SignalState {
+    pub value: Value,
+    /// List of effects that depend on this signal
+    /// Use Weak references to avoid cycles (Signal -> Effect -> Closure -> Signal)
+    pub subscribers: Vec<std::rc::Weak<RefCell<EffectState>>>,
+}
+
+/// State of an effect
+#[derive(Debug, Clone)]
+pub struct EffectState {
+    /// The function to execute when dependencies change
+    pub callback: Value,
+    /// List of signals this effect depends on (to unsubscribe later if needed)
+    /// Strong references because the effect needs to keep track of its dependencies
+    /// even if they are not referenced elsewhere (though arguably if a signal is dropped,
+    /// the effect shouldn't run anymore).
+    pub dependencies: Vec<std::rc::Rc<RefCell<SignalState>>>,
 }
 
 // Conversiones automáticas con From/Into
@@ -379,6 +410,11 @@ impl PartialEq for Value {
                     method_name: m2,
                 },
             ) => r1 == r2 && m1 == m2,
+            (Value::Sender(a), Value::Sender(b)) => Rc::ptr_eq(a, b),
+            (Value::Receiver(a), Value::Receiver(b)) => Rc::ptr_eq(a, b),
+            (Value::AsyncMutex(a), Value::AsyncMutex(b)) => std::sync::Arc::ptr_eq(a, b),
+            (Value::MutexGuard(a), Value::MutexGuard(b)) => Rc::ptr_eq(a, b),
+            (Value::Signal(a), Value::Signal(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
     }

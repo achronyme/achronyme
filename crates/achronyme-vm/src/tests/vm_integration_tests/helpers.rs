@@ -4,8 +4,8 @@ use crate::compiler::Compiler;
 use crate::value::Value;
 use crate::vm::VM;
 
-/// Helper to compile and execute source code
-pub fn execute(source: &str) -> Result<Value, String> {
+/// Helper to compile and execute source code (Async)
+pub async fn execute_async(source: &str) -> Result<Value, String> {
     // Parse
     let ast = achronyme_parser::parse(source).map_err(|e| format!("Parse error: {:?}", e))?;
 
@@ -15,6 +15,15 @@ pub fn execute(source: &str) -> Result<Value, String> {
         .compile(&ast)
         .map_err(|e| format!("Compile error: {}", e))?;
 
+    // Execute
+    let mut vm = VM::new();
+    vm.execute(module)
+        .await
+        .map_err(|e| format!("Runtime error: {}", e))
+}
+
+/// Helper to compile and execute source code (Synchronous wrapper)
+pub fn execute(source: &str) -> Result<Value, String> {
     // Execute in a new runtime + LocalSet
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -23,10 +32,5 @@ pub fn execute(source: &str) -> Result<Value, String> {
 
     let local = tokio::task::LocalSet::new();
 
-    local
-        .block_on(&rt, async {
-            let mut vm = VM::new();
-            vm.execute(module).await
-        })
-        .map_err(|e| format!("Runtime error: {}", e))
+    local.block_on(&rt, execute_async(source))
 }
