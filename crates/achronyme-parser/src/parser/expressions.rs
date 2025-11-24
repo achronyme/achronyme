@@ -15,7 +15,6 @@ impl AstParser {
             Rule::logical_or => self.build_binary_op(pair),
             Rule::logical_and => self.build_binary_op(pair),
             Rule::comparison => self.build_comparison(pair),
-            Rule::edge => self.build_edge(pair),
             Rule::additive => self.build_binary_op(pair),
             Rule::multiplicative => self.build_binary_op(pair),
             Rule::unary => self.build_unary(pair),
@@ -64,60 +63,11 @@ impl AstParser {
         })
     }
 
-    pub(super) fn build_edge(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
-        let pairs: Vec<_> = pair.into_inner().collect();
-
-        if pairs.len() == 1 {
-            // No edge, just the additive expression
-            return self.build_ast_from_expr(pairs[0].clone());
-        }
-
-        // Edge syntax: additive edge_op additive [":" additive]
-        // pairs can be: [left, edge_op, right] or [left, edge_op, right, metadata]
-
-        if pairs.len() < 3 {
-            return Err(format!(
-                "Edge requires at least 3 pairs (from, op, to), got {}",
-                pairs.len()
-            ));
-        }
-
-        // Extract 'from' identifier - must be a single identifier
-        let from = self.extract_identifier(&pairs[0])?;
-
-        // Extract edge operator
-        let directed = match pairs[1].as_rule() {
-            Rule::edge_op => match pairs[1].as_str() {
-                "->" => true,
-                "<>" => false,
-                _ => return Err(format!("Unknown edge operator: {}", pairs[1].as_str())),
-            },
-            _ => return Err(format!("Expected edge_op, got: {:?}", pairs[1].as_rule())),
-        };
-
-        // Extract 'to' identifier - must be a single identifier
-        let to = self.extract_identifier(&pairs[2])?;
-
-        // Extract optional metadata
-        let metadata = if pairs.len() >= 4 {
-            Some(Box::new(self.build_ast_from_expr(pairs[3].clone())?))
-        } else {
-            None
-        };
-
-        Ok(AstNode::Edge {
-            from,
-            to,
-            directed,
-            metadata,
-        })
-    }
-
     pub(super) fn build_comparison(&mut self, pair: Pair<Rule>) -> Result<AstNode, String> {
         let pairs: Vec<_> = pair.into_inner().collect();
 
         if pairs.len() == 1 {
-            // No comparison, just the edge expression
+            // No comparison, just the additive expression
             return self.build_ast_from_expr(pairs[0].clone());
         }
 

@@ -12,7 +12,7 @@ Welcome to the Achronyme programming language documentation. Achronyme is a func
 Achronyme (also known as SOC - Scientific Operations Calculator) is a domain-specific language that combines:
 - **Functional programming** with first-class functions and closures
 - **Mathematical notation** familiar to scientists and engineers
-- **Powerful built-in libraries** for numerical analysis, DSP, linear algebra, and graph theory
+- **Comprehensive built-in functions** for numerical analysis, DSP, linear algebra, and graph theory (available globally)
 - **Tensor operations** with support for multi-dimensional arrays
 - **Interactive REPL** for rapid prototyping and exploration
 
@@ -23,9 +23,9 @@ Achronyme source files use the `.soc` extension (Scientific Operations Calculato
 ## Quick Example
 
 ```javascript
-// Import from modules
-import { mean, std } from "stats"
-import { sin, cos } from "math"
+// Built-in functions are available globally (no imports needed)
+// math: sin, cos, exp, log...
+// stats: mean, std, var...
 
 // Functions with default and optional parameters
 let greet = (name, greeting = "Hello") => '${greeting}, ${name}!'

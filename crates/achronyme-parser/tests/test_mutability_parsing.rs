@@ -112,7 +112,7 @@ fn test_parse_assignment_nested_fields() {
             }
 
             match &**value {
-                AstNode::Boolean(b) => assert_eq!(*b, true),
+                AstNode::Boolean(b) => assert!(*b),
                 _ => panic!("Expected Boolean"),
             }
         }
@@ -261,7 +261,7 @@ fn test_parse_assignment_complex_expression() {
 
     let ast = result.unwrap();
     match &ast[0] {
-        AstNode::Assignment { target, value } => {
+        AstNode::Assignment { target: _, value } => {
             // Target should be complex postfix expression
             // We just verify it parses, detailed structure varies
             match &**value {
@@ -311,7 +311,7 @@ fn test_parse_record_with_mutable_method() {
                             // Body should be a DoBlock containing assignment
                             match &**body {
                                 AstNode::DoBlock { statements } => {
-                                    assert!(statements.len() > 0);
+                                    assert!(!statements.is_empty());
                                     match &statements[0] {
                                         AstNode::Assignment { .. } => {}
                                         _ => panic!("Expected Assignment in do block"),

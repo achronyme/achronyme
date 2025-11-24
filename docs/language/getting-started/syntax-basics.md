@@ -27,13 +27,11 @@ Achronyme includes several types of statements:
 3. **Error handling** (`throw`)
 4. **Loop control** (`break`, `continue`)
 5. **Early returns** (`return`)
-6. **Module statements** (`import`, `export`)
 
 ```javascript
 let x = 10                    // Variable declaration
 mut counter = 0               // Mutable declaration
 for(i in [1, 2, 3]) { ... }  // For-in loop
-import { sin } from "math"    // Module import
 throw "Error message"         // Throw statement
 ```
 

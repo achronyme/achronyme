@@ -95,21 +95,6 @@ fn collect_symbols(node: &AstNode, symbols: &mut Vec<Symbol>, lines: &[&str]) {
             }
         }
 
-        AstNode::Edge { from, to, .. } => {
-            let line_from = find_line_for_identifier(from, lines);
-            let line_to = find_line_for_identifier(to, lines);
-            symbols.push(Symbol {
-                name: from.clone(),
-                kind: "edge_node".to_string(),
-                line: line_from,
-            });
-            symbols.push(Symbol {
-                name: to.clone(),
-                kind: "edge_node".to_string(),
-                line: line_to,
-            });
-        }
-
         AstNode::Sequence { statements } => {
             for stmt in statements {
                 collect_symbols(stmt, symbols, lines);

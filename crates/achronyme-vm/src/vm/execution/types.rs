@@ -78,7 +78,6 @@ impl VM {
             "Range" => matches!(value, Value::Range { .. }),
             "Builder" => matches!(value, Value::Builder(_)),
             "MutableRef" => matches!(value, Value::MutableRef(_)),
-            "Edge" => matches!(value, Value::Edge { .. }),
             "Error" => matches!(value, Value::Error { .. }),
             "Any" => true, // Any type always matches
             _ => false,    // Unknown type name
@@ -97,7 +96,6 @@ impl VM {
             Value::ComplexTensor(_) => "Tensor",
             Value::Record(_) => "Record",
             Value::Function(_) => "Function",
-            Value::Edge { .. } => "Edge",
             Value::TailCall(_) => "TailCall",
             Value::EarlyReturn(_) => "EarlyReturn",
             Value::Null => "Null",

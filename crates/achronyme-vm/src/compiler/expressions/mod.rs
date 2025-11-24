@@ -91,14 +91,6 @@ impl Compiler {
 
             AstNode::RecordLiteral(fields) => self.compile_record_literal(fields),
 
-            // Edge literals (graph edges)
-            AstNode::Edge {
-                from,
-                to,
-                directed,
-                metadata,
-            } => self.compile_edge_literal(from, to, *directed, metadata),
-
             // Access expressions
             AstNode::IndexAccess { object, indices } => self.compile_index_access(object, indices),
 

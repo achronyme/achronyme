@@ -130,12 +130,6 @@ pub enum AstNode {
         return_type: Option<TypeAnnotation>,
         body: Box<AstNode>,
     },
-    Edge {
-        from: String,
-        to: String,
-        directed: bool,
-        metadata: Option<Box<AstNode>>,
-    },
     // Indexing and slicing
     IndexAccess {
         object: Box<AstNode>,

@@ -631,7 +631,7 @@ impl Compiler {
             self.registers.allocate()?
         } else {
             // Need result + arg count registers
-            
+
             self.registers.allocate_many(1 + args.len())?
         };
 

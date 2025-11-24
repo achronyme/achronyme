@@ -33,7 +33,6 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Tensor(_) => "Tensor",
         Value::ComplexTensor(_) => "ComplexTensor",
         Value::Record(_) => "Record",
-        Value::Edge { .. } => "Edge",
         Value::TailCall(_) => "TailCall",
         Value::EarlyReturn(_) => "EarlyReturn",
         Value::MutableRef(_) => "MutableRef",
@@ -220,7 +219,6 @@ fn format_value(value: &Value) -> String {
                 format!("{{{}}}", pairs.join(", "))
             }
         }
-        Value::Edge { .. } => "<edge>".to_string(),
         Value::TailCall(_) => "<tail-call>".to_string(),
         Value::EarlyReturn(_) => "<early-return>".to_string(),
         Value::MutableRef(_) => "<mutable-ref>".to_string(),

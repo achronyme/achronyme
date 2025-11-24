@@ -205,9 +205,9 @@ grouped_type = {
     "(" ~ type_annotation ~ ")"
 }
 
-// Simple types: Number, Boolean, String, Complex, Edge, Generator, Function (opaque), Error
+// Simple types: Number, Boolean, String, Complex, Generator, Function (opaque), Error
 simple_type = @{
-    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Error" | "Edge") ~ !ASCII_ALPHANUMERIC
+    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Error") ~ !ASCII_ALPHANUMERIC
 }
 
 // Tensor type: Tensor<Number> or Tensor<Complex, [2,3]>
@@ -380,7 +380,7 @@ variable_pattern = { identifier }
 // Type pattern: match by runtime type
 // These are capital-case type names: Number, String, Boolean, Error, etc.
 type_pattern = @{
-    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Error" | "Tensor" | "Vector" | "Record" | "Edge" | "Null") ~ !ASCII_ALPHANUMERIC
+    ("Number" | "Boolean" | "String" | "Complex" | "Generator" | "Function" | "Error" | "Tensor" | "Vector" | "Record" | "Null") ~ !ASCII_ALPHANUMERIC
 }
 
 // Record pattern: destructure record fields
@@ -534,7 +534,6 @@ unary = {
 // Operators as separate rules (not silent, so they're captured)
 mult_op = { "*" | "/" | "%" }
 add_op = { "+" | "-" }
-edge_op = { "->" | "<>" }
 cmp_op = { "==" | "!=" | ">=" | "<=" | ">" | "<" }
 logical_and_op = { "&&" }
 logical_or_op = { "||" }
@@ -549,15 +548,9 @@ additive = {
     multiplicative ~ (add_op ~ NEWLINE* ~ multiplicative)*
 }
 
-// Edge: A -> B or A -- B with optional metadata
-// Syntax: identifier edge_op identifier [":" expr]
-edge = {
-    additive ~ (edge_op ~ NEWLINE* ~ additive ~ (":" ~ NEWLINE* ~ additive)?)?
-}
-
 // Comparison: >, <, >=, <=, ==, !=
 comparison = {
-    edge ~ (cmp_op ~ NEWLINE* ~ edge)?
+    additive ~ (cmp_op ~ NEWLINE* ~ additive)?
 }
 
 // Logical AND: &&

@@ -89,9 +89,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
                 Function::Builtin(name) => {
                     format!("Function(Builtin: {})", name)
                 }
-                Function::VmClosure(_) => {
-                    "Function(VmClosure: <bytecode>)".to_string()
-                }
+                Function::VmClosure(_) => "Function(VmClosure: <bytecode>)".to_string(),
             }
         }
 
@@ -114,26 +112,6 @@ fn describe_value(value: &Value, indent: usize) -> String {
                 };
 
                 format!("Record(fields: {}{}{})", map.len(), fields.join(""), more)
-            }
-        }
-
-        Value::Edge {
-            from,
-            to,
-            directed,
-            properties,
-        } => {
-            let dir = if *directed { "directed" } else { "undirected" };
-            if properties.is_empty() {
-                format!("Edge({} -> {}, {})", from, to, dir)
-            } else {
-                format!(
-                    "Edge({} -> {}, {}, properties: {})",
-                    from,
-                    to,
-                    dir,
-                    properties.len()
-                )
             }
         }
 

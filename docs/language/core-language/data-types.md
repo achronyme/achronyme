@@ -19,7 +19,6 @@ Achronyme has a rich type system designed for mathematical computing.
 | Vector | `["a", "b"]` or `[1, "hi", true]` | Generic arrays (can be heterogeneous) |
 | Record | `{x: 10}` | Key-value structures |
 | Function | `x => x^2` | Callable functions |
-| Edge | `A -> B` | Graph edges |
 | Null | `null` | Absence of value (for optional types) |
 | Error | `{message: "...", kind: "..."}` | Error values for try/catch |
 | Generator | `generate { yield 1 }` | Lazy sequences |
@@ -322,33 +321,6 @@ let add5 = makeAdder(5)
 add5(10)  // 15
 ```
 
-## Edges (Graphs)
-
-Edges represent graph relationships.
-
-```javascript
-// Directed edge
-A -> B
-
-// Undirected edge
-A <> B
-
-// Edge with metadata
-A -> B : {weight: 5, label: "road"}
-```
-
-### Creating Networks
-
-```javascript
-let edges = [
-    A -> B,
-    B -> C,
-    C -> A
-]
-
-let graph = network(edges)
-```
-
 ## Type Conversion
 
 ### Automatic Conversions
@@ -636,7 +608,6 @@ See [Generators](../advanced-topics/generators.md) for complete documentation.
 - **Vectors**: Generic arrays (can be heterogeneous)
 - **Records**: Key-value structures
 - **Functions**: First-class callables
-- **Edges**: Graph relationships
 - **Null**: Absence of value (for optional types)
 - **Error**: Structured error values for try/catch
 - **Generator**: Lazy sequences with yield

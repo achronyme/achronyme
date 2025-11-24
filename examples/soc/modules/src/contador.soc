@@ -5,9 +5,7 @@ let createCounter = (n) => {
     },
     dec: () => do {
         self.value -= 1
-    },
-    ejeDirigido: A -> B,
-    ejeNoDirigido: A <> B
+    }
 }
 
 export { createCounter } 

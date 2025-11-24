@@ -22,8 +22,6 @@ print("Usando add10 con 20:", add10(20))
 print(funcion1(a,b))
 print(funcion2(a,b))
 describe(contadorPrueba)
-print(contadorPrueba.ejeDirigido)
-print(contadorPrueba.ejeNoDirigido)
 print("Operaciones con complejos nativas asi es", e^(i*pi) + 1)
 
 print("Estado inicial del semaforo", semaforo.luz)

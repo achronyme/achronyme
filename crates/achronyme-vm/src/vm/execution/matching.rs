@@ -192,7 +192,6 @@ impl VM {
             (Value::Complex(_), "Complex") => true,
             (Value::Tensor(_), "Tensor") => true,
             (Value::ComplexTensor(_), "ComplexTensor") => true,
-            (Value::Edge { .. }, "Edge") => true,
             (Value::Generator(_), "Generator") => true,
             (Value::Error { .. }, "Error") => true,
             (Value::MutableRef(_), "MutableRef") => true,

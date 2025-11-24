@@ -476,23 +476,6 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             fields.sort(); // Sort for consistent output
             format!("{{ {} }}", fields.join(", "))
         }
-        Value::Edge {
-            from,
-            to,
-            directed,
-            properties,
-        } => {
-            let arrow = if *directed { "->" } else { "<>" };
-            if properties.is_empty() {
-                format!("{} {} {}", from, arrow, to)
-            } else {
-                let props: Vec<String> = properties
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, format_value(v)))
-                    .collect();
-                format!("{} {} {}: {{ {} }}", from, arrow, to, props.join(", "))
-            }
-        }
         Value::Function(_) => "<function>".to_string(),
         Value::TailCall(_) => {
             // TailCall is an internal marker that should never reach the REPL

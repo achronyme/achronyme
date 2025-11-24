@@ -193,10 +193,9 @@ From highest to lowest precedence:
 | 4 | `*` `/` `%` | Multiplication, division, modulo | Left |
 | 5 | `+` `-` | Addition, subtraction | Left |
 | 6 | `..` `..=` | Exclusive and inclusive range | Left |
-| 7 | `->` `<>` | Graph edges | Left |
-| 8 | `==` `!=` `<` `>` `<=` `>=` | Comparison | Left |
-| 9 | `&&` | Logical AND (short-circuit) | Left |
-| 10 | `||` | Logical OR (short-circuit) | Left |
+| 7 | `==` `!=` `<` `>` `<=` `>=` | Comparison | Left |
+| 8 | `&&` | Logical AND (short-circuit) | Left |
+| 9 | `||` | Logical OR (short-circuit) | Left |
 
 ### Precedence Examples
 
@@ -411,21 +410,6 @@ let f = x => x^2
 f(5)               // 25
 ```
 
-### Graph Edges (-> and <>)
-
-Create graph edges:
-
-```javascript
-// Directed edge
-A -> B
-
-// Undirected edge
-A <> B
-
-// With metadata
-A -> B : {weight: 5}
-```
-
 ## Operator Examples
 
 ### Mathematical Expressions
@@ -594,7 +578,6 @@ let area = PI * r^2
 - **Comparison**: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - **Logical**: `&&`, `||`, `!`
 - **Special**: `.` (field), `[]` (index), `()` (call)
-- **Graph**: `->` (directed edge), `<>` (undirected edge)
 - **Precedence**: Use parentheses when in doubt
 - **Associativity**: Most left-to-right, except `^` (right-to-left)
 - **Overloading**: Operators work with numbers, tensors, complex numbers

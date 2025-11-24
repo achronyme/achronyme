@@ -34,12 +34,6 @@ pub enum Value {
     /// Record (object/map) with shared mutable ownership
     /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
     Record(Rc<RefCell<HashMap<String, Value>>>),
-    Edge {
-        from: String,
-        to: String,
-        directed: bool,
-        properties: HashMap<String, Value>,
-    },
     /// Internal marker for tail call optimization
     /// Contains arguments for the next iteration of a tail-recursive function
     /// This variant should never be exposed to user code or returned from eval_str()
@@ -307,20 +301,6 @@ impl PartialEq for Value {
             (Value::Function(a), Value::Function(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Record(a), Value::Record(b)) => Rc::ptr_eq(a, b), // Reference equality
-            (
-                Value::Edge {
-                    from: f1,
-                    to: t1,
-                    directed: d1,
-                    properties: p1,
-                },
-                Value::Edge {
-                    from: f2,
-                    to: t2,
-                    directed: d2,
-                    properties: p2,
-                },
-            ) => f1 == f2 && t1 == t2 && d1 == d2 && p1 == p2,
             (Value::TailCall(a), Value::TailCall(b)) => a == b,
             (Value::EarlyReturn(a), Value::EarlyReturn(b)) => a == b,
             (Value::MutableRef(a), Value::MutableRef(b)) => Rc::ptr_eq(a, b), // Reference equality

@@ -1031,10 +1031,7 @@ impl ValueOperations {
             }
             Value::Vector(vec) => {
                 let vec_borrow = vec.borrow();
-                let elements: Vec<String> = vec_borrow
-                    .iter()
-                    .map(Self::value_to_string)
-                    .collect();
+                let elements: Vec<String> = vec_borrow.iter().map(Self::value_to_string).collect();
                 format!("[{}]", elements.join(", "))
             }
             Value::Record(map) => {

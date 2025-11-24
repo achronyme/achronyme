@@ -506,7 +506,6 @@ These cannot be used as variable names:
 - `return` - Early return
 - `match` - Pattern matching
 - `try`, `catch`, `throw` - Error handling
-- `import`, `export`, `from` - Module system
 - `generate`, `yield` - Generators
 - `type` - Type aliases
 
@@ -556,7 +555,7 @@ let y = x + 10
 - Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `^=`
 - Use descriptive names
 - Built-in constants: `PI`, `E`
-- Reserved keywords: `let`, `mut`, `true`, `false`, `null`, `self`, `rec`, `if`, `else`, `while`, `for`, `match`, `try`, `catch`, `throw`, `break`, `continue`, `return`, `import`, `export`, `generate`, `yield`, `type`
+- Reserved keywords: `let`, `mut`, `true`, `false`, `null`, `self`, `rec`, `if`, `else`, `while`, `for`, `match`, `try`, `catch`, `throw`, `break`, `continue`, `return`, `generate`, `yield`, `type`
 
 ---
 
