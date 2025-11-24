@@ -17,6 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.5] - 2025-11-23
+
+### Major Changes
+
+**Register-based Virtual Machine**
+- Complete migration from Tree-Walker interpreter to Register-based VM
+- Foundation for async/await and generators
+- Significant performance improvements
+
+**Runtime Cleanup**
+- Removed legacy `stdlib`
+- Removed experimental `Edge` type
+
+**Intrinsic Methods**
+- Native methods on data types (Strings, Vectors, etc.)
+
+### Improvements & Fixes
+
+- **Complex Numbers:** Full support in built-in math and linalg functions (`sum`, `dot`, etc.)
+- **Test Suite:** Overhauled and fully passing (zero false positives)
+- **Code Examples:** Updated and cleaned up
+- **CI Process:** Optimized and streamlined
+
+**[Full details...](./docs/changelog/v0.6.5.md)**
+
+---
+
 ## [0.6.4] - 2025-11-17
 
 ### New Features
