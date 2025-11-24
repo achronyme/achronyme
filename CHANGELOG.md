@@ -24,15 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Native GUI System**
 - **Immediate Mode GUI:** Integrated `egui` for high-performance, native desktop interfaces.
 - **Declarative Styling:** Tailwind-like string syntax (e.g., `"bg-gray-900 p-4 rounded-xl"`).
-- **Thread-Local Bridge:** Innovative `ACTIVE_VM` pointer system allowing re-entrant VM execution from UI callbacks without cloning.
 - **Reactive Integration:** Full bidirectional binding between GUI controls and Signals.
+- **Rich Component Library:** Buttons, sliders, inputs, plots, tabs, and more.
 
-**UI Component Library**
-- **Basic Controls:** `ui_label`, `ui_button`, `ui_text_input`, `ui_slider`.
-- **Selection Controls:** `ui_checkbox`, `ui_combobox`, `ui_radio`.
-- **Layout Containers:** `ui_box` (Flexbox-like), `ui_tabs`, `ui_collapsing`, `ui_scroll_area`.
-- **Scientific Plotting:** `ui_plot` with hardware-accelerated rendering of massive datasets (Tensors).
-- **Feedback & Lifecycle:** `ui_progress_bar`, `ui_separator`, `ui_quit`.
+**System & Networking**
+- **File System:** Async file operations (`read_file`, `write_file`, etc.).
+- **Networking:** Async HTTP client (`http_get`, `http_post`).
+- **Environment:** Access system variables (`env_get`, `env_load`).
+- **Data Encoding:** Native JSON and CSV support.
+
+**[Full details...](./docs/changelog/v0.6.6.md)**
 
 ### Improvements
 
