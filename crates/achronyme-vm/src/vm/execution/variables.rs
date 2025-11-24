@@ -82,6 +82,37 @@ impl VM {
                 Ok(ExecutionResult::Continue)
             }
 
+            OpCode::GetGlobal => {
+                let dst = a;
+                // Bx is index into constants pool for the name string
+                let name_idx = bx as usize;
+                let name = self.get_string(name_idx)?.to_string();
+
+                let value_opt = self.globals.borrow().get(&name).cloned();
+                if let Some(value) = value_opt {
+                    self.set_register(dst, value)?;
+                } else {
+                    return Err(VmError::Runtime(format!(
+                        "Undefined global variable: '{}'",
+                        name
+                    )));
+                }
+
+                Ok(ExecutionResult::Continue)
+            }
+
+            OpCode::SetGlobal => {
+                let src = a;
+                // Bx is index into constants pool for the name string
+                let name_idx = bx as usize;
+                let name = self.get_string(name_idx)?.to_string();
+                let value = self.get_register(src)?.clone();
+
+                self.globals.borrow_mut().insert(name, value);
+
+                Ok(ExecutionResult::Continue)
+            }
+
             _ => unreachable!("Non-variable opcode in variable handler"),
         }
     }

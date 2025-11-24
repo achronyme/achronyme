@@ -28,6 +28,7 @@ pub struct BuiltinMetadata {
 /// Registry of all built-in functions
 ///
 /// Provides O(1) lookup by both name (for compiler) and index (for VM)
+#[derive(Clone)]
 pub struct BuiltinRegistry {
     /// Name to index mapping (for compiler)
     pub name_to_id: HashMap<String, u16>,

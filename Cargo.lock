@@ -15,6 +15,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strsim 0.10.0",
+ "tokio",
 ]
 
 [[package]]

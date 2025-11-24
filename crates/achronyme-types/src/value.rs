@@ -24,14 +24,14 @@ impl std::fmt::Display for TypeError {
 
 /// Wrapper for shared future to implement Clone and Debug
 #[derive(Clone)]
-pub struct VmFuture(pub Shared<Pin<Box<dyn Future<Output = Value> + Send>>>);
+pub struct VmFuture(pub Shared<Pin<Box<dyn Future<Output = Value>>>>);
 
 impl VmFuture {
     pub fn new<F>(future: F) -> Self
     where
-        F: Future<Output = Value> + Send + 'static,
+        F: Future<Output = Value> + 'static,
     {
-        VmFuture(future.boxed().shared())
+        VmFuture(future.boxed_local().shared())
     }
 }
 

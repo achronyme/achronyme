@@ -4,7 +4,7 @@ use crate::vm::VM;
 use achronyme_parser::parse;
 
 /// Helper to compile and execute source code
-fn execute(source: &str) -> Result<Value, String> {
+async fn execute(source: &str) -> Result<Value, String> {
     // Parse
     let ast = parse(source).map_err(|e| format!("Parse error: {:?}", e))?;
 
@@ -17,20 +17,22 @@ fn execute(source: &str) -> Result<Value, String> {
     // Execute
     let mut vm = VM::new();
     vm.execute(module)
+        .await
         .map_err(|e| format!("Runtime error: {}", e))
 }
 
 #[test]
 fn test_async_sleep() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
         let source = r#"
             // Mocking time not easy without 'now()', relying on sleep duration
             // Just check if it executes without error and returns null
             await sleep(10)
         "#;
 
-        let result = execute(source);
+        let result = execute(source).await;
         assert!(result.is_ok(), "Execution failed: {:?}", result.err());
         assert_eq!(result.unwrap(), Value::Null);
     });
@@ -39,7 +41,8 @@ fn test_async_sleep() {
 #[test]
 fn test_async_function_call() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
         let source = r#"
             let f = async () => do {
                 await sleep(1)
@@ -48,7 +51,7 @@ fn test_async_function_call() {
             await f()
         "#;
 
-        let result = execute(source);
+        let result = execute(source).await;
         assert!(result.is_ok(), "Execution failed: {:?}", result.err());
         assert_eq!(result.unwrap(), Value::Number(42.0));
     });
@@ -57,7 +60,8 @@ fn test_async_function_call() {
 #[test]
 fn test_async_block() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
         let source = r#"
             let result = await async do {
                 await sleep(1)
@@ -66,7 +70,7 @@ fn test_async_block() {
             result
         "#;
 
-        let result = execute(source);
+        let result = execute(source).await;
         assert!(result.is_ok(), "Execution failed: {:?}", result.err());
         assert_eq!(result.unwrap(), Value::Number(100.0));
     });
@@ -75,7 +79,8 @@ fn test_async_block() {
 #[test]
 fn test_async_nested() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
         let source = r#"
             let inner = async (x) => x * 2
             let outer = async (y) => do {
@@ -85,7 +90,7 @@ fn test_async_nested() {
             await outer(10)
         "#;
 
-        let result = execute(source);
+        let result = execute(source).await;
         assert!(result.is_ok(), "Execution failed: {:?}", result.err());
         assert_eq!(result.unwrap(), Value::Number(21.0));
     });

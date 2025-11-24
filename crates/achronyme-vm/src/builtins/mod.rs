@@ -263,6 +263,8 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     // ========================================================================
 
     registry.register("sleep", async_ops::vm_sleep, 1);
+    registry.register("spawn", async_ops::vm_spawn, -1);
+    registry.register("read_file", async_ops::vm_read_file, 1);
 
     registry
 }

@@ -3,25 +3,24 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::value::VmFuture;
 
 /// Import a module by path
 ///
 /// This builtin function:
-/// 1. Reads the .soc file
+/// 1. Reads the .soc file (async)
 /// 2. Parses and compiles it
-/// 3. Executes it to get the exports Record
+/// 3. Executes it to get the exports Record (async)
 /// 4. Returns the exports Record
 ///
-/// Note: Module caching is currently not implemented due to thread-safety
-/// constraints with Value types. Each import re-loads and re-executes the module.
+/// Note: Module caching is currently not implemented.
 ///
 /// # Arguments
 /// * `vm` - The VM instance
 /// * `args` - Single argument: the module path as a string
 ///
 /// # Returns
-/// * `Ok(Value::Record)` - The module's exports Record
-/// * `Err(VmError)` - If the module cannot be loaded
+/// * `Ok(Value::Future)` - A future that resolves to the module's exports Record
 pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     // Validate argument count
     if args.len() != 1 {
@@ -60,30 +59,44 @@ pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 file_path = resolved.to_string_lossy().to_string();
             }
         }
-        // Otherwise, if it's not an absolute path, leave it as-is (relative to CWD)
     }
 
-    // Load and compile the module
-    use std::fs;
+    let file_path_captured = file_path.clone();
 
-    // Read the module file
-    let source = fs::read_to_string(&file_path)
+    let future = async move {
+        match load_module_async(file_path_captured).await {
+            Ok(val) => val,
+            Err(e) => Value::Error {
+                message: e.to_string(),
+                kind: Some("ImportError".into()),
+                source: None,
+            },
+        }
+    };
+
+    Ok(Value::Future(VmFuture::new(future)))
+}
+
+async fn load_module_async(file_path: String) -> Result<Value, VmError> {
+    // Read the module file async
+    let source = tokio::fs::read_to_string(&file_path)
+        .await
         .map_err(|e| VmError::Runtime(format!("Failed to read module '{}': {}", file_path, e)))?;
 
-    // Parse the module
+    // Parse the module (CPU bound, synchronous)
     let ast = achronyme_parser::parse(&source).map_err(|e| {
         VmError::Runtime(format!("Failed to parse module '{}': {:?}", file_path, e))
     })?;
 
-    // Compile the module
+    // Compile the module (CPU bound, synchronous)
     let mut module_compiler = crate::compiler::Compiler::new(file_path.clone());
     let module_bytecode = module_compiler.compile(&ast).map_err(|e| {
         VmError::Runtime(format!("Failed to compile module '{}': {:?}", file_path, e))
     })?;
 
-    // Execute the module to get the exports Record
+    // Execute the module to get the exports Record (Async)
     let mut module_vm = VM::new();
-    let module_result = module_vm.execute(module_bytecode).map_err(|e| {
+    let module_result = module_vm.execute(module_bytecode).await.map_err(|e| {
         VmError::Runtime(format!("Failed to execute module '{}': {:?}", file_path, e))
     })?;
 

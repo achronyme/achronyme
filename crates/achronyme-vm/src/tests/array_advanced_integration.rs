@@ -18,8 +18,18 @@ fn compile_and_run(source: &str) -> Result<Value, String> {
         .map_err(|e| format!("Compile error: {}", e))?;
 
     // Execute
-    let mut vm = VM::new();
-    vm.execute(module)
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let local = tokio::task::LocalSet::new();
+
+    local
+        .block_on(&rt, async {
+            let mut vm = VM::new();
+            vm.execute(module).await
+        })
         .map_err(|e| format!("Runtime error: {}", e))
 }
 

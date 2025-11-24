@@ -37,7 +37,7 @@ pub struct VM {
     pub(crate) frames: Vec<InternalCallFrame>,
 
     /// Global variables
-    globals: HashMap<String, Value>,
+    globals: Rc<RefCell<HashMap<String, Value>>>,
 
     /// Generator states (ID -> suspended frame)
     #[allow(dead_code)]
@@ -65,7 +65,7 @@ impl VM {
     pub fn new() -> Self {
         Self {
             frames: Vec::with_capacity(256),
-            globals: HashMap::new(),
+            globals: Rc::new(RefCell::new(HashMap::new())),
             generators: HashMap::new(),
             builtins: crate::builtins::create_builtin_registry(),
             intrinsics: IntrinsicRegistry::new(),
@@ -75,8 +75,22 @@ impl VM {
         }
     }
 
+    /// Create a child VM that shares globals
+    pub fn new_child(&self) -> Self {
+        Self {
+            frames: Vec::with_capacity(256),
+            globals: self.globals.clone(),
+            generators: HashMap::new(),
+            builtins: self.builtins.clone(), // BuiltinRegistry should be cloneable (usually Rc based)
+            intrinsics: self.intrinsics.clone(), // IntrinsicRegistry should be cloneable
+            current_module: self.current_module.clone(),
+            precision: self.precision,
+            epsilon: self.epsilon,
+        }
+    }
+
     /// Execute a bytecode module
-    pub fn execute(&mut self, module: BytecodeModule) -> Result<Value, VmError> {
+    pub async fn execute(&mut self, module: BytecodeModule) -> Result<Value, VmError> {
         // Set current module for import resolution
         self.current_module = Some(module.name.clone());
 
@@ -85,11 +99,11 @@ impl VM {
         self.frames.push(main_frame);
 
         // Run until completion
-        self.run()
+        self.run().await
     }
 
     /// Main execution loop
-    fn run(&mut self) -> Result<Value, VmError> {
+    pub(crate) async fn run(&mut self) -> Result<Value, VmError> {
         loop {
             // Check stack depth
             if self.frames.len() > MAX_CALL_DEPTH {
@@ -212,27 +226,13 @@ impl VM {
                 ExecutionResult::Await(value, dst_reg) => {
                     match value {
                         Value::Future(vm_future) => {
-                            // Block on future (Phase 3 sync implementation)
-                            // We need to handle Tokio context properly to support builtins like sleep()
+                            // Non-blocking await: yield to Tokio executor
                             let future = vm_future.0.clone();
-                            let result = match tokio::runtime::Handle::try_current() {
-                                Ok(handle) => {
-                                    // If we are in a Tokio context, we must be careful not to block the reactor
-                                    tokio::task::block_in_place(|| handle.block_on(future))
-                                }
-                                Err(_) => {
-                                    // No Tokio context, create a temporary one
-                                    let rt = tokio::runtime::Runtime::new().unwrap();
-                                    rt.block_on(future)
-                                }
-                            };
+                            let result = future.await;
                             self.set_register(dst_reg, result)?;
                         }
                         Value::Generator(_) => {
                             // Awaiting a generator = Resuming/Starting it
-                            // The generator will execute and eventually Return its result to dst_reg
-                            // Note: This effectively makes the current frame wait for the generator
-                            // because we push the generator's frame on top.
                             match self.resume_generator_internal(&value, dst_reg)? {
                                 ExecutionResult::Continue => continue,
                                 _ => continue, // Should be Continue
@@ -265,7 +265,9 @@ impl VM {
             | OpCode::LoadImmI8
             | OpCode::Move
             | OpCode::GetUpvalue
-            | OpCode::SetUpvalue => self.execute_variables(opcode, instruction),
+            | OpCode::SetUpvalue
+            | OpCode::GetGlobal
+            | OpCode::SetGlobal => self.execute_variables(opcode, instruction),
 
             // Arithmetic and logical operations
             OpCode::Add
@@ -505,12 +507,13 @@ impl VM {
 
     /// Set a global variable (for REPL)
     pub fn set_global(&mut self, name: String, value: Value) {
-        self.globals.insert(name, value);
+        self.globals.borrow_mut().insert(name, value);
     }
 
     /// Get a global variable (for REPL)
-    pub fn get_global(&self, name: &str) -> Option<&Value> {
-        self.globals.get(name)
+    pub fn get_global(&self, name: &str) -> Option<Value> {
+        // Note: We return Value (cloned) instead of &Value because we can't return a reference to the RefCell content
+        self.globals.borrow().get(name).cloned()
     }
 
     /// Resume a generator by pushing its frame and continuing execution

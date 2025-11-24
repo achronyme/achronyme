@@ -93,58 +93,66 @@ enum Commands {
     },
 }
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let cli = Cli::parse();
 
     let debug_bytecode = cli.debug_bytecode;
 
-    // Handle subcommands first
-    if let Some(command) = cli.command {
-        match command {
-            Commands::Run {
-                file,
-                debug_bytecode: subcommand_debug,
-            } => {
-                // Prefer subcommand flag over global flag
-                let debug = subcommand_debug || debug_bytecode;
-                run_file(&file, debug)
-            }
-            Commands::Eval { expression } => run_expression(&expression),
-            Commands::Check { file } => check_command(&file),
-            Commands::Inspect { file, verbose } => inspect_command(&file, verbose),
-            Commands::Disassemble { file } => disassemble_command(&file),
-            Commands::Format { file, check, diff } => format_command(&file, check, diff),
-            Commands::Lint { file, json } => lint_command(&file, json),
-            Commands::Symbols { file, json } => symbols_command(&file, json),
-        }
-        return;
-    }
+    // Create a LocalSet to allow !Send futures (Rc<...>) on the current thread
+    let local = tokio::task::LocalSet::new();
 
-    // Handle --eval flag
-    if let Some(expr) = cli.eval {
-        run_expression(&expr);
-        return;
-    }
-
-    // Handle positional input
-    match cli.input {
-        None => {
-            // No input provided - show help
-            eprintln!("Error: No input provided.");
-            eprintln!();
-            eprintln!("Usage: achronyme <COMMAND> or achronyme <FILE>");
-            eprintln!();
-            eprintln!("Try 'achronyme --help' for more information.");
-            std::process::exit(1);
-        }
-        Some(input) => {
-            if input.ends_with(".ach") || input.ends_with(".soc") {
-                run_file(&input, debug_bytecode);
-            } else {
-                run_expression(&input);
+    local
+        .run_until(async move {
+            // Handle subcommands first
+            if let Some(command) = cli.command {
+                match command {
+                    Commands::Run {
+                        file,
+                        debug_bytecode: subcommand_debug,
+                    } => {
+                        // Prefer subcommand flag over global flag
+                        let debug = subcommand_debug || debug_bytecode;
+                        run_file(&file, debug).await
+                    }
+                    Commands::Eval { expression } => run_expression(&expression).await,
+                    Commands::Check { file } => check_command(&file),
+                    Commands::Inspect { file, verbose } => inspect_command(&file, verbose),
+                    Commands::Disassemble { file } => disassemble_command(&file),
+                    Commands::Format { file, check, diff } => format_command(&file, check, diff),
+                    Commands::Lint { file, json } => lint_command(&file, json),
+                    Commands::Symbols { file, json } => symbols_command(&file, json),
+                }
+                return;
             }
-        }
-    }
+
+            // Handle --eval flag
+            if let Some(expr) = cli.eval {
+                run_expression(&expr).await;
+                return;
+            }
+
+            // Handle positional input
+            match cli.input {
+                None => {
+                    // No input provided - show help
+                    eprintln!("Error: No input provided.");
+                    eprintln!();
+                    eprintln!("Usage: achronyme <COMMAND> or achronyme <FILE>");
+                    eprintln!();
+                    eprintln!("Try 'achronyme --help' for more information.");
+                    std::process::exit(1);
+                }
+                Some(input) => {
+                    if input.ends_with(".ach") || input.ends_with(".soc") {
+                        run_file(&input, debug_bytecode).await;
+                    } else {
+                        run_expression(&input).await;
+                    }
+                }
+            }
+        })
+        .await;
 }
 
 fn check_command(filename: &str) {
@@ -292,7 +300,7 @@ fn disassemble_command(filename: &str) {
     achronyme_vm::disassemble_function(&module.main, filename);
 }
 
-fn run_file(filename: &str, debug_bytecode: bool) {
+async fn run_file(filename: &str, debug_bytecode: bool) {
     let contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(err) => {
@@ -327,7 +335,7 @@ fn run_file(filename: &str, debug_bytecode: bool) {
 
     // Execute
     let mut vm = achronyme_vm::VM::new();
-    match vm.execute(module) {
+    match vm.execute(module).await {
         Ok(result) => println!("{}", format_vm_value(&result)),
         Err(err) => {
             eprintln!("Runtime error: {}", err);
@@ -336,7 +344,7 @@ fn run_file(filename: &str, debug_bytecode: bool) {
     }
 }
 
-fn run_expression(expr: &str) {
+async fn run_expression(expr: &str) {
     // Parse
     let ast = match achronyme_parser::parse(expr) {
         Ok(ast) => ast,
@@ -358,7 +366,7 @@ fn run_expression(expr: &str) {
 
     // Execute
     let mut vm = achronyme_vm::VM::new();
-    match vm.execute(module) {
+    match vm.execute(module).await {
         Ok(result) => println!("{}", format_vm_value(&result)),
         Err(err) => {
             eprintln!("Runtime error: {}", err);

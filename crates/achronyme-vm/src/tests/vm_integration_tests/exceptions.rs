@@ -36,8 +36,17 @@ fn test_throw_simple() {
         constants,
     };
 
-    let mut vm = crate::vm::VM::new();
-    let result = vm.execute(module);
+    let result = {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async {
+            let mut vm = crate::vm::VM::new();
+            vm.execute(module).await
+        })
+    };
 
     // Should return UncaughtException error
     assert!(result.is_err());
@@ -81,8 +90,17 @@ fn test_push_pop_handler() {
         constants,
     };
 
-    let mut vm = crate::vm::VM::new();
-    let result = vm.execute(module);
+    let result = {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async {
+            let mut vm = crate::vm::VM::new();
+            vm.execute(module).await
+        })
+    };
 
     // Should succeed and return 42
     assert!(result.is_ok());
@@ -131,8 +149,17 @@ fn test_catch_exception() {
         constants,
     };
 
-    let mut vm = crate::vm::VM::new();
-    let result = vm.execute(module);
+    let result = {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async {
+            let mut vm = crate::vm::VM::new();
+            vm.execute(module).await
+        })
+    };
 
     // Should return the caught error value
     assert!(result.is_ok());
@@ -200,8 +227,17 @@ fn test_unwinding_through_frames() {
         constants,
     };
 
-    let mut vm = crate::vm::VM::new();
-    let result = vm.execute(module);
+    let result = {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async {
+            let mut vm = crate::vm::VM::new();
+            vm.execute(module).await
+        })
+    };
 
     // Should return the caught error from function B
     assert!(result.is_ok());

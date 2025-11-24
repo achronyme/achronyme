@@ -52,6 +52,7 @@ impl TypeDiscriminant {
 pub type IntrinsicFn = fn(&mut VM, &Value, &[Value]) -> Result<Value, VmError>;
 
 /// Registry of intrinsic methods
+#[derive(Clone)]
 pub struct IntrinsicRegistry {
     /// Map of (type_discriminant, method_name) -> intrinsic function
     methods: HashMap<(TypeDiscriminant, String), IntrinsicFn>,
