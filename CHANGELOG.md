@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2025-11-24
+
+### Changed
+- **BREAKING (internal)**: Migrated `Rc<RefCell<T>>` to `Arc<RwLock<T>>` for all VM values.
+  - `Value` types are now `Send + Sync`.
+  - `spawn()` uses `tokio::spawn` (multi-threaded) instead of `spawn_local`.
+  - Enables proper async execution (e.g. HTTP requests) alongside the GUI event loop.
+  - Improves performance for concurrent operations.
+
+### Fixed
+- Resolved deadlock where async tasks spawned from GUI callbacks would never execute.
+- Fixed UI freezing when performing async operations.
+
+---
+
 ## [0.6.6] - 2025-11-24
 
 ### New Features

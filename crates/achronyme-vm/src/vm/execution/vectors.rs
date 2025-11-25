@@ -5,6 +5,7 @@ use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
+use achronyme_types::sync::{shared, Shared};
 use achronyme_types::tensor::{ComplexTensor, RealTensor, Tensor};
 
 impl VM {
@@ -22,7 +23,7 @@ impl VM {
             OpCode::NewVector => {
                 // R[A] = [] (new empty vector)
                 let dst = a;
-                let vector = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())));
+                let vector = Value::Vector(shared(Vec::new()));
                 self.set_register(dst, vector)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -37,7 +38,7 @@ impl VM {
 
                 match vec_value {
                     Value::Vector(ref vec_rc) => {
-                        vec_rc.borrow_mut().push(push_value);
+                        vec_rc.write().push(push_value);
                         Ok(ExecutionResult::Continue)
                     }
                     _ => Err(VmError::TypeError {
@@ -58,12 +59,12 @@ impl VM {
 
                 match vec_value {
                     Value::Vector(ref vec_rc) => {
-                        let mut target_vec = vec_rc.borrow_mut();
+                        let mut target_vec = vec_rc.write();
 
                         // Check what we are spreading
                         match spread_value {
                             Value::Vector(src_vec_rc) => {
-                                let src_vec = src_vec_rc.borrow();
+                                let src_vec = src_vec_rc.read();
                                 target_vec.extend(src_vec.iter().cloned());
                             }
                             Value::Tensor(t) => {
@@ -115,7 +116,7 @@ impl VM {
 
                 match (&vec_value, &idx_value) {
                     (Value::Vector(vec_rc), Value::Number(idx)) => {
-                        let vec_borrowed = vec_rc.borrow();
+                        let vec_borrowed = vec_rc.read();
                         let len = vec_borrowed.len();
                         let index = *idx as isize;
                         let actual_idx = if index < 0 {
@@ -254,7 +255,7 @@ impl VM {
 
                 match (&vec_value, &idx_value) {
                     (Value::Vector(vec_rc), Value::Number(idx)) => {
-                        let mut vec_borrowed = vec_rc.borrow_mut();
+                        let mut vec_borrowed = vec_rc.write();
                         let index = *idx as isize;
                         let len = vec_borrowed.len();
                         let actual_idx = if index < 0 {
@@ -298,7 +299,7 @@ impl VM {
 
                 match vec_value {
                     Value::Vector(vec_rc) => {
-                        let vec = vec_rc.borrow();
+                        let vec = vec_rc.read();
                         let len = vec.len();
 
                         let start = match start_val {
@@ -344,8 +345,7 @@ impl VM {
 
                         let end = end.max(start);
                         let slice: Vec<Value> = vec[start..end].to_vec();
-                        let slice_vec =
-                            Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(slice)));
+                        let slice_vec = Value::Vector(shared(slice));
 
                         self.set_register(dst, slice_vec)?;
                         Ok(ExecutionResult::Continue)
@@ -546,16 +546,8 @@ impl VM {
 
             OpCode::TensorGet => {
                 // R[A] = R[B][indices...]
-                // A = dest, B = tensor, C = indices_start_reg.
-                // Indices count is NOT passed directly?
-                // We assume consecutive registers from C.
-                // How many? We must check rank of tensor.
-                // IF we support partial indexing, we need to know count.
-                // Let's assume standard ABI: TensorGet takes count in C? No, C is start reg.
-                // Wait, we redefined ABI in Plan:
-                // `TensorGet` A=dest, B=base_reg, C=count.
+                // A = dest, B = base_reg, C = count.
                 // R[B] = tensor. R[B+1]... = indices.
-                // This is consistent with Call.
 
                 let dst = a;
                 let base = b;
@@ -569,7 +561,6 @@ impl VM {
                 }
 
                 // Automatic Type Promotion: Check if we have a nested Vector that should be a Tensor
-                // This allows matrix[i, j] where matrix is defined as [[1,2], [3,4]]
                 let promoted_tensor = if let Value::Vector(_) = tensor_val {
                     tensor_val.try_to_tensor()
                 } else {
@@ -583,7 +574,6 @@ impl VM {
                     Value::ComplexTensor(t) => self.slice_complex_tensor_generic(dst, t, &indices),
                     // Fallback to chained indexing for Vectors if applicable?
                     Value::Vector(_) | Value::String(_) => {
-                        // ... existing fallback ...
                         if count == 1 {
                             let idx = &indices[0];
                             match idx {
@@ -744,12 +734,7 @@ impl VM {
         }
 
         if new_shape.is_empty() {
-            // Scalar result - create rank-0 tensor?
-            // Or should we return Value::Number?
-            // TensorGet usually returns Value.
-            // But this function returns Tensor<T>.
-            // If shape is empty, it is a rank-0 tensor (scalar).
-            // We must return Tensor<T> with empty shape and 1 element.
+            // Scalar result - create rank-0 tensor
             let mut offset = 0;
             for (i, &(start, _)) in ranges.iter().enumerate() {
                 offset += start * t.strides()[i];

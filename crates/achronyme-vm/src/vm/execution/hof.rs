@@ -13,8 +13,7 @@ use crate::value::Value;
 use crate::vm::iterator::{VmBuilder, VmIterator};
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{shared, Arc, RwLock};
 
 impl VM {
     /// Execute IterInit opcode: Create iterator from collection
@@ -36,8 +35,17 @@ impl VM {
         let source_value = self.get_register(src)?.clone();
         let iterator = VmIterator::from_value(&source_value)?;
 
-        // Store iterator as an opaque value using Rc<dyn Any>
-        let iterator_value = Value::Iterator(Rc::new(RefCell::new(iterator)));
+        // Store iterator as an opaque value using Arc<dyn Any>
+        // VmIterator is not Send/Sync by default if it holds Rc, but we migrated it to use Shared (Arc<RwLock>)
+        // so it should be Send + Sync.
+        // We need to wrap it in Arc<RwLock> to allow mutation during next(),
+        // but Value::Iterator expects Arc<dyn Any + Send + Sync>.
+        // Wait, Value::Iterator holds Arc<dyn Any>. Is it just Any or RwLock<Any>?
+        // The definition is: Iterator(Arc<dyn Any + Send + Sync>)
+        // We want to store a mutable iterator.
+        // So we wrap VmIterator in RwLock, then in Arc.
+        let iter_lock = RwLock::new(iterator);
+        let iterator_value = Value::Iterator(Arc::new(iter_lock));
         self.set_register(dst, iterator_value)?;
 
         Ok(ExecutionResult::Continue)
@@ -64,27 +72,23 @@ impl VM {
         // Get iterator value
         let iter_value = self.get_register(iter_reg)?.clone();
 
-        // Extract the VmIterator from the opaque Value::Iterator
-        let mut iterator = match iter_value {
-            Value::Iterator(rc) => {
-                // Downcast from Rc<dyn Any> to Rc<RefCell<VmIterator>>
-                let iter_rc = rc
-                    .downcast_ref::<RefCell<VmIterator>>()
+        let next_val = match &iter_value {
+            Value::Iterator(arc) => {
+                let iter_lock = arc
+                    .downcast_ref::<RwLock<VmIterator>>()
                     .ok_or_else(|| VmError::Runtime("Invalid iterator type".into()))?;
-                iter_rc.borrow_mut().clone()
+                iter_lock.write().next()
             }
             _ => return Err(VmError::Runtime("Expected iterator".into())),
         };
 
         // Try to get next value
-        match iterator.next() {
+        match next_val {
             Some(value) => {
                 // Store value in destination
                 self.set_register(dst, value)?;
 
-                // Store updated iterator back
-                let updated_iter = Value::Iterator(Rc::new(RefCell::new(iterator)));
-                self.set_register(iter_reg, updated_iter)?;
+                // No need to store updated iterator back because we modified it in place via RwLock!
 
                 // Skip the jump offset (we're not jumping)
                 let frame = self.current_frame_mut()?;
@@ -134,8 +138,8 @@ impl VM {
             VmBuilder::from_hint(hint)
         };
 
-        // Store builder as an opaque value
-        let builder_value = Value::Builder(Rc::new(RefCell::new(builder)));
+        // Store builder as an opaque value using Arc<RwLock<VmBuilder>>
+        let builder_value = Value::Builder(Arc::new(RwLock::new(builder)));
         self.set_register(dst, builder_value)?;
 
         Ok(ExecutionResult::Continue)
@@ -160,23 +164,16 @@ impl VM {
         let builder_value = self.get_register(builder_reg)?.clone();
         let value = self.get_register(value_reg)?.clone();
 
-        // Extract builder, push value, and store back
-        let mut builder = match builder_value {
-            Value::Builder(rc) => {
-                let builder_rc = rc
-                    .downcast_ref::<RefCell<VmBuilder>>()
+        // Extract builder and push value
+        match builder_value {
+            Value::Builder(arc) => {
+                let builder_lock = arc
+                    .downcast_ref::<RwLock<VmBuilder>>()
                     .ok_or_else(|| VmError::Runtime("Invalid builder type".into()))?;
-                builder_rc.borrow_mut().clone()
+                builder_lock.write().push(value)?;
             }
             _ => return Err(VmError::Runtime("Expected builder".into())),
         };
-
-        // Push value (may cause builder to decay)
-        builder.push(value)?;
-
-        // Store updated builder back
-        let updated_builder = Value::Builder(Rc::new(RefCell::new(builder)));
-        self.set_register(builder_reg, updated_builder)?;
 
         Ok(ExecutionResult::Continue)
     }
@@ -199,18 +196,20 @@ impl VM {
         let builder_value = self.get_register(builder_reg)?.clone();
 
         // Extract and finalize builder
-        let builder = match builder_value {
-            Value::Builder(rc) => {
-                let builder_rc = rc
-                    .downcast_ref::<RefCell<VmBuilder>>()
+        let result = match builder_value {
+            Value::Builder(arc) => {
+                let builder_lock = arc
+                    .downcast_ref::<RwLock<VmBuilder>>()
                     .ok_or_else(|| VmError::Runtime("Invalid builder type".into()))?;
-                // Take ownership by cloning
-                builder_rc.borrow().clone()
+
+                // We need to consume the builder.
+                // Since it's in an Arc<RwLock>, we clone the inner data.
+                let builder = builder_lock.read().clone();
+                builder.finalize()?
             }
             _ => return Err(VmError::Runtime("Expected builder".into())),
         };
 
-        let result = builder.finalize()?;
         self.set_register(dst, result)?;
 
         Ok(ExecutionResult::Continue)
@@ -220,24 +219,23 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::opcode::OpCode;
+    use achronyme_types::sync::{shared, Arc, RwLock};
 
     #[test]
     fn test_iter_init_vector() {
         let mut vm = VM::new();
         // Create a test vector
         let vec = vec![Value::Number(1.0), Value::Number(2.0)];
-        let vec_value = Value::Vector(Rc::new(RefCell::new(vec)));
+        let vec_value = Value::Vector(shared(vec));
 
         // Set up: R[1] = vector
-        let mut proto = crate::bytecode::FunctionPrototype::new(
-            "test".to_string(),
-            Rc::new(crate::bytecode::ConstantPool::new()),
-        );
+        let constants = Arc::new(crate::bytecode::ConstantPool::new());
+        let mut proto = crate::bytecode::FunctionPrototype::new("test".to_string(), constants);
         proto.register_count = 10; // Allocate enough registers for testing
+        let proto_arc = Arc::new(proto);
         vm.frames
-            .push(crate::vm::frame::CallFrame::new(Rc::new(proto), None));
+            .push(crate::vm::frame::CallFrame::new(proto_arc, None));
         vm.set_register(1, vec_value).unwrap();
 
         // Execute: R[0] = Iterator(R[1])
@@ -253,13 +251,12 @@ mod tests {
         let mut vm = VM::new();
 
         // Set up frame
-        let mut proto = crate::bytecode::FunctionPrototype::new(
-            "test".to_string(),
-            Rc::new(crate::bytecode::ConstantPool::new()),
-        );
+        let constants = Arc::new(crate::bytecode::ConstantPool::new());
+        let mut proto = crate::bytecode::FunctionPrototype::new("test".to_string(), constants);
         proto.register_count = 10; // Allocate enough registers for testing
+        let proto_arc = Arc::new(proto);
         vm.frames
-            .push(crate::vm::frame::CallFrame::new(Rc::new(proto), None));
+            .push(crate::vm::frame::CallFrame::new(proto_arc, None));
 
         // Execute: R[0] = Builder()
         let instruction = encode_abc(OpCode::BuildInit.as_u8(), 0, 0, 0);
@@ -280,7 +277,7 @@ mod tests {
 
         match vm.get_register(2).unwrap() {
             Value::Vector(vec) => {
-                let v = vec.borrow();
+                let v = vec.read();
                 assert_eq!(v.len(), 1);
                 assert_eq!(v[0], Value::Number(42.0));
             }

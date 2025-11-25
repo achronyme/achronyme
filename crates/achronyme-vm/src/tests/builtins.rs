@@ -177,7 +177,7 @@ fn test_builtin_split_join() {
     let result = execute(r#"split("a,b,c", ",")"#).unwrap();
     match result {
         Value::Vector(v) => {
-            let vec = v.borrow();
+            let vec = v.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::String("a".to_string()));
             assert_eq!(vec[1], Value::String("b".to_string()));
@@ -229,7 +229,7 @@ fn test_builtin_push() {
     let result = execute(r#"push([1, 2], 3)"#).unwrap();
     match result {
         Value::Vector(v) => {
-            let vec = v.borrow();
+            let vec = v.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[2], Value::Number(3.0));
         }
@@ -261,7 +261,7 @@ fn test_builtin_reverse() {
     let result = execute(r#"reverse([1, 2, 3])"#).unwrap();
     match result {
         Value::Vector(v) => {
-            let vec = v.borrow();
+            let vec = v.read();
             assert_eq!(vec[0], Value::Number(3.0));
             assert_eq!(vec[1], Value::Number(2.0));
             assert_eq!(vec[2], Value::Number(1.0));
@@ -275,7 +275,7 @@ fn test_builtin_sort() {
     let result = execute(r#"sort([3, 1, 2])"#).unwrap();
     match result {
         Value::Vector(v) => {
-            let vec = v.borrow();
+            let vec = v.read();
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[1], Value::Number(2.0));
             assert_eq!(vec[2], Value::Number(3.0));
@@ -289,7 +289,7 @@ fn test_builtin_slice() {
     let result = execute(r#"slice([1, 2, 3, 4, 5], 1, 4)"#).unwrap();
     match result {
         Value::Vector(v) => {
-            let vec = v.borrow();
+            let vec = v.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::Number(2.0));
             assert_eq!(vec[1], Value::Number(3.0));

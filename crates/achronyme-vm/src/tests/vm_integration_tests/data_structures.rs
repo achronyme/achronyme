@@ -10,7 +10,7 @@ fn test_vector_literal() {
 
     match result {
         Value::Vector(vec_rc) => {
-            let vec = vec_rc.borrow();
+            let vec = vec_rc.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[1], Value::Number(2.0));
@@ -84,7 +84,7 @@ fn test_empty_vector() {
 
     match result {
         Value::Vector(vec_rc) => {
-            let vec = vec_rc.borrow();
+            let vec = vec_rc.read();
             assert_eq!(vec.len(), 0);
         }
         _ => panic!("Expected Vector, got {:?}", result),
@@ -100,7 +100,7 @@ fn test_record_literal() {
 
     match result {
         Value::Record(rec_rc) => {
-            let rec = rec_rc.borrow();
+            let rec = rec_rc.read();
             assert_eq!(rec.len(), 2);
             assert_eq!(rec.get("x"), Some(&Value::Number(10.0)));
             assert_eq!(rec.get("y"), Some(&Value::Number(20.0)));
@@ -164,7 +164,7 @@ fn test_empty_record() {
 
     match result {
         Value::Record(rec_rc) => {
-            let rec = rec_rc.borrow();
+            let rec = rec_rc.read();
             assert_eq!(rec.len(), 0);
         }
         _ => panic!("Expected Record, got {:?}", result),

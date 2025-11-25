@@ -60,7 +60,7 @@ impl VM {
                     .get(upvalue_idx)
                     .ok_or(VmError::Runtime("Invalid upvalue index".to_string()))?;
 
-                let value = upvalue.borrow().clone();
+                let value = upvalue.read().clone();
                 self.set_register(dst, value)?;
 
                 Ok(ExecutionResult::Continue)
@@ -77,7 +77,7 @@ impl VM {
                     .get(upvalue_idx)
                     .ok_or(VmError::Runtime("Invalid upvalue index".to_string()))?;
 
-                *upvalue.borrow_mut() = value;
+                *upvalue.write() = value;
 
                 Ok(ExecutionResult::Continue)
             }
@@ -88,7 +88,7 @@ impl VM {
                 let name_idx = bx as usize;
                 let name = self.get_string(name_idx)?.to_string();
 
-                let value_opt = self.globals.borrow().get(&name).cloned();
+                let value_opt = self.globals.read().get(&name).cloned();
                 if let Some(value) = value_opt {
                     self.set_register(dst, value)?;
                 } else {
@@ -108,7 +108,7 @@ impl VM {
                 let name = self.get_string(name_idx)?.to_string();
                 let value = self.get_register(src)?.clone();
 
-                self.globals.borrow_mut().insert(name, value);
+                self.globals.write().insert(name, value);
 
                 Ok(ExecutionResult::Continue)
             }

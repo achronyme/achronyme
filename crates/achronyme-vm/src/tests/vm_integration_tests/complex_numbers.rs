@@ -160,7 +160,7 @@ fn test_complex_with_map() {
     let result = execute("map((x) => x * i, [1, 2, 3])").unwrap();
     match result {
         Value::Vector(vec) => {
-            let vec_borrow = vec.borrow();
+            let vec_borrow = vec.read();
             assert_eq!(vec_borrow.len(), 3);
 
             // Check first element

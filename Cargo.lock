@@ -176,6 +176,7 @@ version = "0.6.6"
 dependencies = [
  "achronyme-parser",
  "futures",
+ "parking_lot",
  "tokio",
 ]
 
@@ -190,6 +191,7 @@ dependencies = [
  "criterion",
  "csv",
  "futures",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",

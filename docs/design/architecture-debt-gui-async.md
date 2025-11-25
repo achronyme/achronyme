@@ -1,7 +1,7 @@
 # Architecture Debt: GUI Event Loop vs. Async VM Execution
 
 **Date:** 2025-11-24
-**Status:** Critical Limitation
+**Status:** RESOLVED
 **Component:** VM / GUI Bridge / Async Runtime
 
 ## The Problem
@@ -25,31 +25,14 @@ We effectively have two event loops fighting for control of the single thread:
 
 **Conflict:** When `eframe` takes control, `tokio` stops. Since the VM is trapped on that same thread, it halts.
 
-## Failed Mitigation Attempts (Lessons Learned)
-- **Forcing `multi_thread` Tokio:** Enabling the multi-thread runtime didn't help because `spawn_local` tasks are explicitly pinned to the thread they were spawned on (the main thread), which is blocked by the GUI.
-- **`block_on` builtin:** We implemented a `block_on` function to force async completion. This "works" but violates the non-blocking principle, freezing the application window during network IO.
+## Resolution: Migration to `Arc<RwLock<T>>`
 
-## Proposed Solution: "The Actor Model" Architecture
+We have migrated the entire VM and Value system from `Rc<RefCell<T>>` to `Arc<RwLock<T>>` (specifically using `parking_lot::RwLock` for performance).
 
-To solve this properly, we must decouple the VM execution from the GUI rendering.
+### Key Changes
+1. **Thread-Safe Values:** `Value` is now `Send + Sync`, allowing it to be shared across threads.
+2. **Multi-threaded Executor:** We replaced `tokio::task::spawn_local` with `tokio::spawn`, enabling true background execution on the Tokio thread pool.
+3. **GUI Integration:** The GUI runs on the main thread, while async tasks (including VM execution for those tasks) run on worker threads.
+4. **Shared State:** Signals and other shared state use `Arc<RwLock<...>>` to safely synchronize between the GUI thread and background tasks.
 
-### Strategy: VM on Background Thread
-1. **Main Thread (GUI):** Owns the `eframe` loop. It does *not* run the VM directly. It only renders the UI based on state received from the VM and sends user events (clicks, input) back to the VM.
-2. **Background Thread (Logic):** Runs the VM and the `tokio::task::LocalSet`.
-   - Since the VM runs entirely on this thread, `Rc` is fine (no cross-thread sharing of `Value`s).
-   - The `LocalSet` can run continuously (`run_until`), allowing `spawn`, `sleep`, and `http` to work perfectly.
-
-### The Challenge: Communication (`!Send`)
-Since `Value` is `!Send`, we cannot send `Value` objects directly between the Background Thread and the Main Thread via channels.
-
-**Implementation Plan:**
-1. **Serialized Protocol:** The VM and GUI communicate via a thread-safe protocol (e.g., enums or serialized JSON-like structures) that *is* `Send`.
-   - VM -> GUI: `RenderOp::Label(text, style)`, `RenderOp::Button(id, text)`
-   - GUI -> VM: `Event::Clicked(id)`, `Event::InputChanged(id, text)`
-2. **Shadow DOM / Virtual DOM:** The GUI thread maintains a "Shadow State" of the UI components that the VM updates.
-3. **Immediate Mode Bridge:** Since `egui` is immediate mode, the VM (background) could generate a "Display List" (vector of render commands) every frame (or on state change) and send it to the GUI thread to simply draw.
-
-### Next Steps
-1. Create a `Msg` enum for VM<->GUI communication.
-2. Refactor `achronyme-cli` to spawn a dedicated thread for the VM logic.
-3. Refactor `builtins/gui.rs` to stop calling `egui` directly and instead push commands to a `mpsc::channel`.
+This architecture allows `spawn(async_fn)` to work correctly even when called from a GUI callback, as the task is offloaded to a different thread and does not block the GUI event loop.

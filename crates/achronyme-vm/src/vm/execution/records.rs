@@ -5,6 +5,8 @@ use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
+use achronyme_types::sync::shared;
+use std::collections::HashMap;
 
 impl VM {
     /// Execute record instructions
@@ -21,9 +23,7 @@ impl VM {
             OpCode::NewRecord => {
                 // R[A] = {} (new empty record)
                 let dst = a;
-                let record = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-                    std::collections::HashMap::new(),
-                )));
+                let record = Value::Record(shared(HashMap::new()));
                 self.set_register(dst, record)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -39,7 +39,7 @@ impl VM {
 
                 // 1. Attempt to get field from Record
                 if let Value::Record(rec_rc) = &rec_value {
-                    let rec_borrowed = rec_rc.borrow();
+                    let rec_borrowed = rec_rc.read();
                     if let Some(val) = rec_borrowed.get(field_name) {
                         self.set_register(dst, val.clone())?;
                         return Ok(ExecutionResult::Continue);
@@ -129,7 +129,7 @@ impl VM {
 
                 match &rec_value {
                     Value::Record(rec_rc) => {
-                        let mut rec_borrowed = rec_rc.borrow_mut();
+                        let mut rec_borrowed = rec_rc.write();
                         rec_borrowed.insert(field_name.to_string(), new_value);
                         Ok(ExecutionResult::Continue)
                     }

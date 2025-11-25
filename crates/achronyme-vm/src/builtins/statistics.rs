@@ -21,7 +21,7 @@ pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             if vec.is_empty() {
                 return Ok(Value::Number(0.0));
             }
@@ -83,7 +83,7 @@ pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 
     let count = match &args[0] {
-        Value::Vector(rc) => rc.borrow().len(),
+        Value::Vector(rc) => rc.read().len(),
         Value::Tensor(t) => t.size(),
         Value::ComplexTensor(t) => t.size(),
         _ => {
@@ -122,7 +122,7 @@ pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             if vec.len() < 2 {
                 return Err(VmError::Runtime(
                     "std() requires a vector with at least 2 elements".to_string(),
@@ -134,7 +134,7 @@ pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             let mean_result = vm_mean(_vm, args)?;
 
             // Calculate variance (sum of squared magnitudes of differences)
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut variance_sum = 0.0;
 
             for val in vec.iter() {
@@ -207,13 +207,11 @@ pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use achronyme_types::sync::shared;
 
     fn setup_vm() -> VM {
         VM::new()
     }
-
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     #[test]
     fn test_sum_basic() {
@@ -225,7 +223,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_sum(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(15.0));
     }
 
@@ -233,7 +231,7 @@ mod tests {
     fn test_sum_empty() {
         let mut vm = setup_vm();
         let vec: Vec<Value> = vec![];
-        let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_sum(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
@@ -247,7 +245,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_mean(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_mean(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
 
@@ -264,7 +262,7 @@ mod tests {
             Value::Number(7.0),
             Value::Number(9.0),
         ];
-        let result = vm_std(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_std(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         // Expected std dev ≈ 2.138
         if let Value::Number(n) = result {
             assert!((n - 2.138).abs() < 0.01);
@@ -277,7 +275,7 @@ mod tests {
     fn test_sum_complex() {
         let mut vm = setup_vm();
         let vec = vec![Value::Number(1.0), Value::Complex(Complex::new(0.0, 2.0))];
-        let result = vm_sum(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_sum(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         match result {
             Value::Complex(c) => {
                 assert_eq!(c.re, 1.0);

@@ -10,6 +10,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::sync::{shared, Shared};
 
 // ============================================================================
 // Length and Access
@@ -25,7 +26,7 @@ pub fn vm_len(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::String(s) => Ok(Value::Number(s.len() as f64)),
-        Value::Vector(v) => Ok(Value::Number(v.borrow().len() as f64)),
+        Value::Vector(v) => Ok(Value::Number(v.read().len() as f64)),
         _ => Err(VmError::TypeError {
             operation: "len".to_string(),
             expected: "String or Vector".to_string(),
@@ -263,9 +264,7 @@ pub fn vm_split(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 .split(delimiter.as_str())
                 .map(|part| Value::String(part.to_string()))
                 .collect();
-            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
-                parts,
-            ))))
+            Ok(Value::Vector(shared(parts)))
         }
         _ => Err(VmError::TypeError {
             operation: "split".to_string(),
@@ -285,7 +284,7 @@ pub fn vm_join(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match (&args[0], &args[1]) {
         (Value::Vector(vec), Value::String(separator)) => {
-            let vec_borrowed = vec.borrow();
+            let vec_borrowed = vec.read();
             let strings: Result<Vec<String>, VmError> = vec_borrowed
                 .iter()
                 .map(|v| match v {

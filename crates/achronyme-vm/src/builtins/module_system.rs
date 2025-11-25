@@ -63,6 +63,7 @@ pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     let file_path_captured = file_path.clone();
 
+    // Since Compiler now uses Arc, it is Send, so the async block is Send
     let future = async move {
         match load_module_async(file_path_captured).await {
             Ok(val) => val,
@@ -89,6 +90,7 @@ async fn load_module_async(file_path: String) -> Result<Value, VmError> {
     })?;
 
     // Compile the module (CPU bound, synchronous)
+    // Compiler holds Arc<BuiltinRegistry> which is Send + Sync
     let mut module_compiler = crate::compiler::Compiler::new(file_path.clone());
     let module_bytecode = module_compiler.compile(&ast).map_err(|e| {
         VmError::Runtime(format!("Failed to compile module '{}': {:?}", file_path, e))

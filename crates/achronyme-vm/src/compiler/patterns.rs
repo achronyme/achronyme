@@ -5,6 +5,7 @@ use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use achronyme_parser::ast::{LiteralPattern, Pattern, VectorPatternElement};
+use achronyme_types::sync::shared;
 
 /// Pattern compilation mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -304,7 +305,8 @@ impl Compiler {
         }
 
         // Create pattern descriptor as a vector of field names
-        let pattern_desc = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(field_names)));
+        // Use shared() helper to create Shared<Vec<Value>>
+        let pattern_desc = Value::Vector(shared(field_names));
         let pattern_idx = self.add_constant(pattern_desc)?;
 
         // Allocate registers for extracted fields

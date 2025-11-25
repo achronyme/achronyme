@@ -3,12 +3,11 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use std::cell::RefCell;
+use achronyme_types::sync::shared;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::rc::Rc;
 
 /// env_get(key) -> String | Null
 pub fn vm_env_get(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
@@ -80,7 +79,7 @@ pub fn vm_env_vars(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         vars_map.insert(key, Value::String(value));
     }
 
-    Ok(Value::Record(Rc::new(RefCell::new(vars_map))))
+    Ok(Value::Record(shared(vars_map)))
 }
 
 /// env_load(path?) -> Boolean
@@ -127,7 +126,7 @@ pub fn vm_env_load(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
                 // Remove optional quotes
                 if (value.starts_with('"') && value.ends_with('"'))
-                    || (value.starts_with('\'') && value.ends_with('\''))
+                    || (value.starts_with('‘') && value.ends_with('’'))
                 {
                     value = &value[1..value.len() - 1];
                 }

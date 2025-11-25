@@ -7,9 +7,8 @@ use crate::vm::execution::iterators::{NativeIterator, StringIterator, VectorIter
 use crate::vm::generator::{VmGeneratorRef, VmGeneratorState};
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
+use achronyme_types::sync::{shared, Arc, RwLock};
 use std::any::Any;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 impl VM {
     /// Execute generator instructions
@@ -35,19 +34,19 @@ impl VM {
                     .functions
                     .get(proto_idx)
                     .ok_or(VmError::InvalidFunction(proto_idx))?
-                    .clone();
+                    .clone(); // proto is FunctionPrototype. Need to wrap in Arc for CallFrame.
 
                 // Capture upvalues from current frame (same as Closure)
                 let mut upvalues = Vec::new();
                 for upvalue_desc in &proto.upvalues {
                     // Capture from current frame's registers
                     let value = self.get_register(upvalue_desc.register)?.clone();
-                    upvalues.push(std::rc::Rc::new(std::cell::RefCell::new(value)));
+                    upvalues.push(shared(value));
                 }
 
                 // Create initial call frame for the generator
-                let proto_rc = std::rc::Rc::new(proto);
-                let mut gen_frame = crate::vm::frame::CallFrame::new(proto_rc, None);
+                let proto_arc = Arc::new(proto);
+                let mut gen_frame = crate::vm::frame::CallFrame::new(proto_arc, None);
 
                 // Set captured upvalues
                 gen_frame.upvalues = upvalues;
@@ -55,14 +54,14 @@ impl VM {
                 // Create VM-specific generator state
                 let state = VmGeneratorState::new(gen_frame);
 
-                // Wrap in Rc<RefCell<>> for shared mutability
-                let state_rc: VmGeneratorRef = Rc::new(RefCell::new(state));
+                // Wrap in Arc<RwLock<>> for shared mutability
+                let state_lock: VmGeneratorRef = shared(state);
 
-                // Type-erase to Rc<dyn Any> for storage in Value::Generator
-                let any_rc: Rc<dyn Any> = state_rc;
+                // Type-erase to Arc<dyn Any + Send + Sync> for storage in Value::Generator
+                let any_arc: Arc<dyn Any + Send + Sync> = state_lock;
 
                 // Store as generator value
-                self.set_register(dst, Value::Generator(any_rc))?;
+                self.set_register(dst, Value::Generator(any_arc))?;
 
                 Ok(ExecutionResult::Continue)
             }
@@ -106,15 +105,18 @@ impl VM {
                     // Vectors get wrapped in VectorIterator
                     Value::Vector(vec_ref) => {
                         let iter = NativeIterator::Vector(VectorIterator::new(vec_ref));
-                        let iter_rc: Rc<dyn Any> = Rc::new(RefCell::new(iter));
-                        self.set_register(dst, Value::Generator(iter_rc))?;
+                        // Wrap NativeIterator in RwLock and Arc<dyn Any + Send + Sync>
+                        let iter_lock = RwLock::new(iter);
+                        let iter_arc: Arc<dyn Any + Send + Sync> = Arc::new(iter_lock);
+                        self.set_register(dst, Value::Generator(iter_arc))?;
                     }
 
                     // Strings get wrapped in StringIterator
                     Value::String(s) => {
                         let iter = NativeIterator::String(StringIterator::new(s));
-                        let iter_rc: Rc<dyn Any> = Rc::new(RefCell::new(iter));
-                        self.set_register(dst, Value::Generator(iter_rc))?;
+                        let iter_lock = RwLock::new(iter);
+                        let iter_arc: Arc<dyn Any + Send + Sync> = Arc::new(iter_lock);
+                        self.set_register(dst, Value::Generator(iter_arc))?;
                     }
 
                     // Other types cannot be iterated

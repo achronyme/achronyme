@@ -1,8 +1,7 @@
 //! Bytecode format and data structures
 
 use crate::value::Value;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{Arc, Shared};
 
 /// Constant pool for bytecode
 #[derive(Debug, Clone)]
@@ -92,7 +91,7 @@ pub struct FunctionPrototype {
     pub functions: Vec<FunctionPrototype>,
 
     /// Constant pool (shared with nested functions)
-    pub constants: Rc<ConstantPool>,
+    pub constants: Arc<ConstantPool>,
 
     /// Is this a generator function?
     pub is_generator: bool,
@@ -111,7 +110,7 @@ pub struct FunctionPrototype {
 
 impl FunctionPrototype {
     /// Create a new function prototype
-    pub fn new(name: String, constants: Rc<ConstantPool>) -> Self {
+    pub fn new(name: String, constants: Arc<ConstantPool>) -> Self {
         Self {
             name,
             param_count: 0,
@@ -166,13 +165,13 @@ pub struct BytecodeModule {
     pub main: FunctionPrototype,
 
     /// Module-level constant pool
-    pub constants: Rc<ConstantPool>,
+    pub constants: Arc<ConstantPool>,
 }
 
 impl BytecodeModule {
     /// Create a new bytecode module
     pub fn new(name: String) -> Self {
-        let constants = Rc::new(ConstantPool::new());
+        let constants = Arc::new(ConstantPool::new());
         let main = FunctionPrototype::new("<main>".to_string(), constants.clone());
 
         Self {
@@ -187,15 +186,15 @@ impl BytecodeModule {
 #[derive(Debug, Clone)]
 pub struct Closure {
     /// Function prototype
-    pub prototype: Rc<FunctionPrototype>,
+    pub prototype: Arc<FunctionPrototype>,
 
     /// Captured upvalues (shared mutable references)
-    pub upvalues: Vec<Rc<RefCell<Value>>>,
+    pub upvalues: Vec<Shared<Value>>,
 }
 
 impl Closure {
     /// Create a new closure
-    pub fn new(prototype: Rc<FunctionPrototype>) -> Self {
+    pub fn new(prototype: Arc<FunctionPrototype>) -> Self {
         Self {
             prototype,
             upvalues: Vec::new(),
@@ -203,10 +202,7 @@ impl Closure {
     }
 
     /// Create closure with upvalues
-    pub fn with_upvalues(
-        prototype: Rc<FunctionPrototype>,
-        upvalues: Vec<Rc<RefCell<Value>>>,
-    ) -> Self {
+    pub fn with_upvalues(prototype: Arc<FunctionPrototype>, upvalues: Vec<Shared<Value>>) -> Self {
         Self {
             prototype,
             upvalues,
@@ -247,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_function_prototype() {
-        let constants = Rc::new(ConstantPool::new());
+        let constants = Arc::new(ConstantPool::new());
         let mut func = FunctionPrototype::new("test".to_string(), constants);
 
         func.param_count = 2;

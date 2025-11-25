@@ -93,66 +93,59 @@ enum Commands {
     },
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
     let debug_bytecode = cli.debug_bytecode;
 
-    // Create a LocalSet to allow !Send futures (Rc<...>) on the current thread
-    let local = tokio::task::LocalSet::new();
-
-    local
-        .run_until(async move {
-            // Handle subcommands first
-            if let Some(command) = cli.command {
-                match command {
-                    Commands::Run {
-                        file,
-                        debug_bytecode: subcommand_debug,
-                    } => {
-                        // Prefer subcommand flag over global flag
-                        let debug = subcommand_debug || debug_bytecode;
-                        run_file(&file, debug).await
-                    }
-                    Commands::Eval { expression } => run_expression(&expression).await,
-                    Commands::Check { file } => check_command(&file),
-                    Commands::Inspect { file, verbose } => inspect_command(&file, verbose),
-                    Commands::Disassemble { file } => disassemble_command(&file),
-                    Commands::Format { file, check, diff } => format_command(&file, check, diff),
-                    Commands::Lint { file, json } => lint_command(&file, json),
-                    Commands::Symbols { file, json } => symbols_command(&file, json),
-                }
-                return;
+    // Handle subcommands first
+    if let Some(command) = cli.command {
+        match command {
+            Commands::Run {
+                file,
+                debug_bytecode: subcommand_debug,
+            } => {
+                // Prefer subcommand flag over global flag
+                let debug = subcommand_debug || debug_bytecode;
+                run_file(&file, debug).await
             }
+            Commands::Eval { expression } => run_expression(&expression).await,
+            Commands::Check { file } => check_command(&file),
+            Commands::Inspect { file, verbose } => inspect_command(&file, verbose),
+            Commands::Disassemble { file } => disassemble_command(&file),
+            Commands::Format { file, check, diff } => format_command(&file, check, diff),
+            Commands::Lint { file, json } => lint_command(&file, json),
+            Commands::Symbols { file, json } => symbols_command(&file, json),
+        }
+        return;
+    }
 
-            // Handle --eval flag
-            if let Some(expr) = cli.eval {
-                run_expression(&expr).await;
-                return;
-            }
+    // Handle --eval flag
+    if let Some(expr) = cli.eval {
+        run_expression(&expr).await;
+        return;
+    }
 
-            // Handle positional input
-            match cli.input {
-                None => {
-                    // No input provided - show help
-                    eprintln!("Error: No input provided.");
-                    eprintln!();
-                    eprintln!("Usage: achronyme <COMMAND> or achronyme <FILE>");
-                    eprintln!();
-                    eprintln!("Try 'achronyme --help' for more information.");
-                    std::process::exit(1);
-                }
-                Some(input) => {
-                    if input.ends_with(".ach") || input.ends_with(".soc") {
-                        run_file(&input, debug_bytecode).await;
-                    } else {
-                        run_expression(&input).await;
-                    }
-                }
+    // Handle positional input
+    match cli.input {
+        None => {
+            // No input provided - show help
+            eprintln!("Error: No input provided.");
+            eprintln!();
+            eprintln!("Usage: achronyme <COMMAND> or achronyme <FILE>");
+            eprintln!();
+            eprintln!("Try 'achronyme --help' for more information.");
+            std::process::exit(1);
+        }
+        Some(input) => {
+            if input.ends_with(".ach") || input.ends_with(".soc") {
+                run_file(&input, debug_bytecode).await;
+            } else {
+                run_expression(&input).await;
             }
-        })
-        .await;
+        }
+    }
 }
 
 fn check_command(filename: &str) {
@@ -408,7 +401,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
             }
         }
         Value::Vector(v) => {
-            let elements: Vec<String> = v.borrow().iter().map(format_value).collect();
+            let elements: Vec<String> = v.read().iter().map(format_value).collect();
             format!("[{}]", elements.join(", "))
         }
         Value::Tensor(t) => {
@@ -477,7 +470,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
         }
         Value::Record(map) => {
             let mut fields: Vec<String> = map
-                .borrow()
+                .read()
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, format_value(v)))
                 .collect();
@@ -497,7 +490,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
         }
         Value::MutableRef(rc) => {
             // Auto-deref mutable references for display
-            format_value(&rc.borrow())
+            format_value(&rc.read())
         }
         Value::Null => "null".to_string(),
         Value::Generator(_) => {
@@ -533,7 +526,7 @@ fn format_value(value: &achronyme_types::value::Value) -> String {
         Value::AsyncMutex(_) => "<mutex>".to_string(),
         Value::MutexGuard(_) => "<mutex-guard>".to_string(),
         Value::Signal(state_rc) => {
-            let state = state_rc.borrow();
+            let state = state_rc.read();
             format!("Signal({})", format_value(&state.value))
         }
     }

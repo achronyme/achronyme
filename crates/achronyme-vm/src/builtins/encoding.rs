@@ -3,9 +3,8 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use std::cell::RefCell;
+use achronyme_types::sync::shared;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 // ============================================================================
 // JSON
@@ -85,14 +84,14 @@ fn json_to_value(json: serde_json::Value) -> Value {
         serde_json::Value::String(s) => Value::String(s),
         serde_json::Value::Array(arr) => {
             let vec: Vec<Value> = arr.into_iter().map(json_to_value).collect();
-            Value::Vector(Rc::new(RefCell::new(vec)))
+            Value::Vector(shared(vec))
         }
         serde_json::Value::Object(map) => {
             let mut records = HashMap::new();
             for (k, v) in map {
                 records.insert(k, json_to_value(v));
             }
-            Value::Record(Rc::new(RefCell::new(records)))
+            Value::Record(shared(records))
         }
     }
 }
@@ -113,7 +112,7 @@ fn value_to_json(val: &Value) -> Result<serde_json::Value, VmError> {
         }
         Value::String(s) => Ok(serde_json::Value::String(s.clone())),
         Value::Vector(v) => {
-            let v = v.borrow();
+            let v = v.read();
             let mut arr = Vec::with_capacity(v.len());
             for item in v.iter() {
                 arr.push(value_to_json(item)?);
@@ -121,7 +120,7 @@ fn value_to_json(val: &Value) -> Result<serde_json::Value, VmError> {
             Ok(serde_json::Value::Array(arr))
         }
         Value::Record(r) => {
-            let r = r.borrow();
+            let r = r.read();
             let mut map = serde_json::Map::new();
             for (k, v) in r.iter() {
                 map.insert(k.clone(), value_to_json(v)?);
@@ -201,7 +200,7 @@ pub fn vm_csv_parse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     row_map.insert(header_name.to_string(), val);
                 }
             }
-            result_rows.push(Value::Record(Rc::new(RefCell::new(row_map))));
+            result_rows.push(Value::Record(shared(row_map)));
         }
     } else {
         // Return Vector of Vectors
@@ -219,9 +218,9 @@ pub fn vm_csv_parse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 };
                 row_vec.push(val);
             }
-            result_rows.push(Value::Vector(Rc::new(RefCell::new(row_vec))));
+            result_rows.push(Value::Vector(shared(row_vec)));
         }
     }
 
-    Ok(Value::Vector(Rc::new(RefCell::new(result_rows))))
+    Ok(Value::Vector(shared(result_rows)))
 }

@@ -11,8 +11,7 @@ use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
 use achronyme_types::complex::Complex;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::shared;
 
 /// Create a complex number from real and imaginary parts
 pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
@@ -46,7 +45,7 @@ pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Number(n) => Ok(Value::Number(*n)),
         Value::Complex(c) => Ok(Value::Number(c.re)),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut real_parts = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -61,7 +60,7 @@ pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(Rc::new(RefCell::new(real_parts))))
+            Ok(Value::Vector(shared(real_parts)))
         }
         _ => Err(VmError::TypeError {
             operation: "real".to_string(),
@@ -84,7 +83,7 @@ pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Number(_) => Ok(Value::Number(0.0)),
         Value::Complex(c) => Ok(Value::Number(c.im)),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut imag_parts = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -99,7 +98,7 @@ pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(Rc::new(RefCell::new(imag_parts))))
+            Ok(Value::Vector(shared(imag_parts)))
         }
         _ => Err(VmError::TypeError {
             operation: "imag".to_string(),
@@ -122,7 +121,7 @@ pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Number(n) => Ok(Value::Number(*n)),
         Value::Complex(c) => Ok(Value::Complex(c.conjugate())),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut conjugates = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -137,7 +136,7 @@ pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(Rc::new(RefCell::new(conjugates))))
+            Ok(Value::Vector(shared(conjugates)))
         }
         _ => Err(VmError::TypeError {
             operation: "conj".to_string(),
@@ -292,18 +291,18 @@ pub fn vm_to_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Number(n) => {
             let r = n.abs();
             let theta = if *n >= 0.0 { 0.0 } else { std::f64::consts::PI };
-            Ok(Value::Vector(Rc::new(RefCell::new(vec![
+            Ok(Value::Vector(shared(vec![
                 Value::Number(r),
                 Value::Number(theta),
-            ]))))
+            ])))
         }
         Value::Complex(c) => {
             let r = c.magnitude();
             let theta = c.phase();
-            Ok(Value::Vector(Rc::new(RefCell::new(vec![
+            Ok(Value::Vector(shared(vec![
                 Value::Number(r),
                 Value::Number(theta),
-            ]))))
+            ])))
         }
         _ => Err(VmError::TypeError {
             operation: "to_polar".to_string(),

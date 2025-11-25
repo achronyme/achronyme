@@ -90,12 +90,12 @@ pub fn vm_spawn(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
     }
 
-    // Spawn future on local set
+    // Spawn future on Tokio runtime (multi-threaded)
     // The future runs the VM and returns the result
     let future = async move { child_vm.run().await };
 
-    // We use spawn_local because Value is !Send (Rc)
-    let handle = tokio::task::spawn_local(future);
+    // We use tokio::spawn because Value is now Send (Arc<RwLock>)
+    let handle = tokio::spawn(future);
 
     // Wrap the handle in a VmFuture so it can be awaited in Achronyme
     let vm_future = async move {

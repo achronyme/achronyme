@@ -22,8 +22,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::shared;
 
 // ============================================================================
 // DIFFERENTIATION
@@ -271,7 +270,7 @@ pub fn vm_gradient(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         1e-8
     };
 
-    let point = point_vec.borrow();
+    let point = point_vec.read();
     let n = point.len();
     let mut gradient = Vec::with_capacity(n);
 
@@ -293,8 +292,8 @@ pub fn vm_gradient(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
 
         // Evaluate function at point + h and point - h
-        let f_plus = vm.call_value(func, &[Value::Vector(Rc::new(RefCell::new(point_plus)))])?;
-        let f_minus = vm.call_value(func, &[Value::Vector(Rc::new(RefCell::new(point_minus)))])?;
+        let f_plus = vm.call_value(func, &[Value::Vector(shared(point_plus))])?;
+        let f_minus = vm.call_value(func, &[Value::Vector(shared(point_minus))])?;
 
         let f_plus_num = extract_number(f_plus, "gradient")?;
         let f_minus_num = extract_number(f_minus, "gradient")?;
@@ -304,7 +303,7 @@ pub fn vm_gradient(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         gradient.push(Value::Number(partial));
     }
 
-    Ok(Value::Vector(Rc::new(RefCell::new(gradient))))
+    Ok(Value::Vector(shared(gradient)))
 }
 
 // ============================================================================

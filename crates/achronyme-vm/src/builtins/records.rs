@@ -8,6 +8,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::sync::shared;
 
 /// Get all keys from a record as a vector of strings
 pub fn vm_keys(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
@@ -20,11 +21,9 @@ pub fn vm_keys(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Record(rc) => {
-            let map = rc.borrow();
+            let map = rc.read();
             let keys: Vec<Value> = map.keys().map(|k| Value::String(k.clone())).collect();
-            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
-                keys,
-            ))))
+            Ok(Value::Vector(shared(keys)))
         }
         _ => Err(VmError::TypeError {
             operation: "keys".to_string(),
@@ -45,11 +44,9 @@ pub fn vm_values(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Record(rc) => {
-            let map = rc.borrow();
+            let map = rc.read();
             let values: Vec<Value> = map.values().cloned().collect();
-            Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
-                values,
-            ))))
+            Ok(Value::Vector(shared(values)))
         }
         _ => Err(VmError::TypeError {
             operation: "values".to_string(),
@@ -70,7 +67,7 @@ pub fn vm_has_field(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match (&args[0], &args[1]) {
         (Value::Record(rc), Value::String(field_name)) => {
-            let map = rc.borrow();
+            let map = rc.read();
             Ok(Value::Boolean(map.contains_key(field_name)))
         }
         (Value::Record(_), _) => Err(VmError::TypeError {
@@ -89,9 +86,7 @@ pub fn vm_has_field(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
     use std::collections::HashMap;
-    use std::rc::Rc;
 
     fn setup_vm() -> VM {
         VM::new()
@@ -102,7 +97,7 @@ mod tests {
         map.insert("name".to_string(), Value::String("Alice".to_string()));
         map.insert("age".to_string(), Value::Number(30.0));
         map.insert("active".to_string(), Value::Boolean(true));
-        Value::Record(Rc::new(RefCell::new(map)))
+        Value::Record(shared(map))
     }
 
     #[test]
@@ -113,7 +108,7 @@ mod tests {
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3);
                 // Keys should be strings
                 for val in vec.iter() {
@@ -132,7 +127,7 @@ mod tests {
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3);
             }
             _ => panic!("Expected Vector"),

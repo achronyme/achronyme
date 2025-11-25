@@ -13,7 +13,7 @@ fn test_signal_basic() {
     let result = execute(source).unwrap();
     match result {
         Value::Vector(v) => {
-            let vec = v.borrow();
+            let vec = v.read();
             assert_eq!(vec[0], Value::Number(10.0));
             assert_eq!(vec[1], Value::Number(20.0));
         }

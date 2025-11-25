@@ -33,7 +33,7 @@ impl VM {
 
                     // If it's a Record with message/kind fields, convert to Error
                     Value::Record(fields) => {
-                        let fields_ref = fields.borrow();
+                        let fields_ref = fields.read();
 
                         // Extract message (required)
                         let message = if let Some(msg_val) = fields_ref.get("message") {

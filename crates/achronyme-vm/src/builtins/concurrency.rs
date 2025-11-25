@@ -3,9 +3,8 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::sync::{shared, Arc, RwLock, Shared};
 use achronyme_types::value::VmFuture;
-use std::cell::RefCell;
-use std::rc::Rc;
 use tokio::sync::mpsc;
 
 /// channel() -> [Sender, Receiver]
@@ -19,12 +18,12 @@ pub fn vm_channel(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     let (tx, rx) = mpsc::unbounded_channel();
 
-    let sender = Value::Sender(Rc::new(RefCell::new(tx)));
-    let receiver = Value::Receiver(Rc::new(RefCell::new(rx)));
+    let sender = Value::Sender(Arc::new(tx));
+    let receiver = Value::Receiver(Arc::new(tokio::sync::Mutex::new(rx)));
 
     // Return as a vector [sender, receiver]
     let vec = vec![sender, receiver];
-    Ok(Value::Vector(Rc::new(RefCell::new(vec))))
+    Ok(Value::Vector(shared(vec)))
 }
 
 // === Sender Methods ===
@@ -41,9 +40,10 @@ pub fn vm_sender_send(_vm: &mut VM, sender_val: &Value, args: &[Value]) -> Resul
     let message = args[0].clone();
 
     match sender_val {
-        Value::Sender(tx_rc) => {
+        Value::Sender(tx_arc) => {
             // We just send immediately for unbounded channel
-            let tx = tx_rc.borrow().clone(); // UnboundedSender is Clone
+            // UnboundedSender is thread-safe and we can clone it from Arc
+            let tx = (**tx_arc).clone();
 
             // We return a Future to allow 'await tx.send(val)' in the script
             // This maintains consistency and allows future switch to bounded channels (which need await)
@@ -85,11 +85,12 @@ pub fn vm_receiver_recv(
     }
 
     match receiver_val {
-        Value::Receiver(rx_rc) => {
-            let rx_rc = rx_rc.clone();
+        Value::Receiver(rx_arc) => {
+            let rx_arc = rx_arc.clone();
 
             let future = async move {
-                let mut rx = rx_rc.borrow_mut();
+                // Lock the receiver mutex
+                let mut rx = rx_arc.lock().await;
                 match rx.recv().await {
                     Some(val) => val,
                     None => Value::Null, // Channel closed
@@ -134,7 +135,7 @@ pub fn vm_mutex_lock(_vm: &mut VM, mutex_val: &Value, args: &[Value]) -> Result<
             let future = async move {
                 // lock_owned() returns an OwnedMutexGuard which we can store
                 let guard = mutex_arc.lock_owned().await;
-                Value::MutexGuard(Rc::new(RefCell::new(guard)))
+                Value::MutexGuard(shared(guard))
             };
 
             Ok(Value::Future(VmFuture::new(future)))
@@ -157,7 +158,7 @@ pub fn vm_guard_get(_vm: &mut VM, guard_val: &Value, args: &[Value]) -> Result<V
 
     match guard_val {
         Value::MutexGuard(guard_rc) => {
-            let guard = guard_rc.borrow();
+            let guard = guard_rc.read();
             Ok(guard.clone()) // Clone the inner value (derefs Guard -> Value)
         }
         _ => Err(VmError::TypeError {
@@ -178,8 +179,8 @@ pub fn vm_guard_set(_vm: &mut VM, guard_val: &Value, args: &[Value]) -> Result<V
 
     match guard_val {
         Value::MutexGuard(guard_rc) => {
-            let mut guard = guard_rc.borrow_mut();
-            // Dereference RefMut<OwnedMutexGuard> -> OwnedMutexGuard -> Value
+            let mut guard = guard_rc.write();
+            // Dereference RwLockWriteGuard<OwnedMutexGuard> -> OwnedMutexGuard -> Value
             **guard = new_value;
             Ok(Value::Null)
         }

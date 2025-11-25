@@ -10,8 +10,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::shared;
 
 /// Get the type name of a value
 pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
@@ -40,6 +39,11 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         Value::Future(_) => "Future",
         Value::Error { .. } => "Error",
         Value::BoundMethod { .. } => "BoundMethod",
+        Value::Sender(_) => "Sender",
+        Value::Receiver(_) => "Receiver",
+        Value::AsyncMutex(_) => "AsyncMutex",
+        Value::MutexGuard(_) => "MutexGuard",
+        Value::Signal(_) => "Signal",
         _ => "Internal",
     };
 
@@ -71,7 +75,7 @@ pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match &args[0] {
         Value::Number(n) => Ok(Value::Boolean(n.is_nan())),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut results = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -85,7 +89,7 @@ pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(Rc::new(RefCell::new(results))))
+            Ok(Value::Vector(shared(results)))
         }
         _ => Err(VmError::TypeError {
             operation: "isnan".to_string(),
@@ -107,7 +111,7 @@ pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match &args[0] {
         Value::Number(n) => Ok(Value::Boolean(n.is_infinite())),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut results = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -121,7 +125,7 @@ pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(Rc::new(RefCell::new(results))))
+            Ok(Value::Vector(shared(results)))
         }
         _ => Err(VmError::TypeError {
             operation: "isinf".to_string(),
@@ -143,7 +147,7 @@ pub fn vm_isfinite(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match &args[0] {
         Value::Number(n) => Ok(Value::Boolean(n.is_finite())),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut results = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -157,7 +161,7 @@ pub fn vm_isfinite(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
             }
-            Ok(Value::Vector(Rc::new(RefCell::new(results))))
+            Ok(Value::Vector(shared(results)))
         }
         _ => Err(VmError::TypeError {
             operation: "isfinite".to_string(),
@@ -188,7 +192,7 @@ fn format_value(value: &Value) -> String {
         Value::Boolean(b) => format!("{}", b),
         Value::String(s) => s.clone(),
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let elements: Vec<String> = vec.iter().map(format_value).collect();
             format!("[{}]", elements.join(", "))
         }
@@ -204,7 +208,7 @@ fn format_value(value: &Value) -> String {
         Value::Tensor(_) => "<tensor>".to_string(),
         Value::ComplexTensor(_) => "<complex-tensor>".to_string(),
         Value::Record(rc) => {
-            let map = rc.borrow();
+            let map = rc.read();
             if map.is_empty() {
                 "{}".to_string()
             } else {
@@ -220,7 +224,16 @@ fn format_value(value: &Value) -> String {
         Value::MutableRef(_) => "<mutable-ref>".to_string(),
         Value::Generator(_) => "<generator>".to_string(),
         Value::Future(_) => "<future>".to_string(),
+        Value::Error { .. } => "Error".to_string(),
         Value::BoundMethod { method_name, .. } => format!("<method {}>", method_name),
+        Value::Sender(_) => "<sender>".to_string(),
+        Value::Receiver(_) => "<receiver>".to_string(),
+        Value::AsyncMutex(_) => "<mutex>".to_string(),
+        Value::MutexGuard(_) => "<mutex-guard>".to_string(),
+        Value::Signal(rc) => {
+            let state = rc.read();
+            format!("Signal({})", format_value(&state.value))
+        }
         _ => format!("{:?}", value),
     }
 }

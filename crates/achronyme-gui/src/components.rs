@@ -231,7 +231,7 @@ pub fn plot(title: &str, options: &Value) {
         let mut height = 200.0;
 
         if let Value::Record(r) = options {
-            let r = r.borrow();
+            let r = r.read();
 
             if let Some(Value::Number(h)) = r.get("height") {
                 height = *h as f32;
@@ -244,12 +244,12 @@ pub fn plot(title: &str, options: &Value) {
             }
 
             if let Some(Value::Vector(series_vec)) = r.get("series") {
-                let series_list = series_vec.borrow();
+                let series_list = series_vec.read();
 
                 plot.height(height).show(ui, |plot_ui| {
                     for series_val in series_list.iter() {
                         if let Value::Record(s) = series_val {
-                            let s = s.borrow();
+                            let s = s.read();
                             let name = s
                                 .get("name")
                                 .and_then(|v| match v {
@@ -337,14 +337,14 @@ fn extract_plot_points(data: &Value) -> PlotPoints {
 
     // Case 2: Vector of Vectors
     if let Value::Vector(v_rc) = data {
-        let v = v_rc.borrow();
+        let v = v_rc.read();
         if let Some(first) = v.first() {
             if let Value::Vector(_) = first {
                 let points: Vec<[f64; 2]> = v
                     .iter()
                     .filter_map(|item| {
                         if let Value::Vector(pair) = item {
-                            let p = pair.borrow();
+                            let p = pair.read();
                             if p.len() >= 2 {
                                 if let (Value::Number(x), Value::Number(y)) = (&p[0], &p[1]) {
                                     return Some([*x, *y]);

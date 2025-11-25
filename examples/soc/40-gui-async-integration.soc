@@ -1,0 +1,28 @@
+// Test: spawn() funciona dentro de GUI
+let counter = signal(0)
+let loading = signal(false)
+
+let app = () => do {
+    ui_label("Counter: " + str(counter.value))
+
+    if (loading.value) {
+        ui_label("Loading...")
+    }
+
+    if (ui_button("Increment Async")) {
+        loading.set(true)
+        spawn(async () => do {
+            await sleep(100)
+            counter.set(counter.peek() + 1)
+            loading.set(false)
+        })
+    }
+
+    // Auto-close después de 5 segundos
+    if (counter.value >= 3) {
+        ui_quit()
+    }
+}
+
+gui_run(app, { title: "Async Test", width: 300, height: 200 })
+println("Test passed: GUI + Async works!")

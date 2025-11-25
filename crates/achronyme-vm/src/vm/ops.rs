@@ -9,8 +9,7 @@ pub(crate) struct ValueOperations;
 impl ValueOperations {
     pub(crate) fn add_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        use achronyme_types::sync::{shared, Shared};
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -22,8 +21,8 @@ impl ValueOperations {
             // Vector + Vector
             (Value::Vector(ref a), Value::Vector(ref b)) => {
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
-                    let a_borrow = a.borrow();
-                    let b_borrow = b.borrow();
+                    let a_borrow = a.read();
+                    let b_borrow = b.read();
 
                     if a_borrow.len() != b_borrow.len() {
                         return Err(VmError::TypeError {
@@ -52,7 +51,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "addition".to_string(),
@@ -65,7 +64,7 @@ impl ValueOperations {
             // Broadcasting: Number + Vector
             (Value::Number(scalar), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -74,7 +73,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "addition".to_string(),
@@ -85,7 +84,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Number(scalar)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -94,7 +93,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "addition".to_string(),
@@ -107,7 +106,7 @@ impl ValueOperations {
             // Broadcasting: Complex + Vector
             (Value::Complex(c), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -116,7 +115,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "addition".to_string(),
@@ -127,7 +126,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Complex(c)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -136,7 +135,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "addition".to_string(),
@@ -165,8 +164,7 @@ impl ValueOperations {
 
     pub(crate) fn sub_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        use achronyme_types::sync::{shared, Shared};
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
@@ -177,8 +175,8 @@ impl ValueOperations {
             // Vector - Vector
             (Value::Vector(ref a), Value::Vector(ref b)) => {
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
-                    let a_borrow = a.borrow();
-                    let b_borrow = b.borrow();
+                    let a_borrow = a.read();
+                    let b_borrow = b.read();
 
                     if a_borrow.len() != b_borrow.len() {
                         return Err(VmError::TypeError {
@@ -207,7 +205,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "subtraction".to_string(),
@@ -220,7 +218,7 @@ impl ValueOperations {
             // Broadcasting: Number - Vector
             (Value::Number(scalar), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -229,7 +227,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "subtraction".to_string(),
@@ -240,7 +238,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Number(scalar)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -249,7 +247,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "subtraction".to_string(),
@@ -262,7 +260,7 @@ impl ValueOperations {
             // Broadcasting: Complex - Vector
             (Value::Complex(c), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -271,7 +269,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "subtraction".to_string(),
@@ -282,7 +280,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Complex(c)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -291,7 +289,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "subtraction".to_string(),
@@ -311,8 +309,7 @@ impl ValueOperations {
 
     pub(crate) fn mul_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        use achronyme_types::sync::{shared, Shared};
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
@@ -323,8 +320,8 @@ impl ValueOperations {
             // Vector * Vector (element-wise)
             (Value::Vector(ref a), Value::Vector(ref b)) => {
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
-                    let a_borrow = a.borrow();
-                    let b_borrow = b.borrow();
+                    let a_borrow = a.read();
+                    let b_borrow = b.read();
 
                     if a_borrow.len() != b_borrow.len() {
                         return Err(VmError::TypeError {
@@ -353,7 +350,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "multiplication".to_string(),
@@ -366,7 +363,7 @@ impl ValueOperations {
             // Broadcasting: Number * Vector
             (Value::Number(scalar), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -375,7 +372,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "multiplication".to_string(),
@@ -386,7 +383,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Number(scalar)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -395,7 +392,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "multiplication".to_string(),
@@ -408,7 +405,7 @@ impl ValueOperations {
             // Broadcasting: Complex * Vector
             (Value::Complex(c), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -417,7 +414,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "multiplication".to_string(),
@@ -428,7 +425,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Complex(c)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -437,7 +434,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "multiplication".to_string(),
@@ -495,8 +492,7 @@ impl ValueOperations {
 
     pub(crate) fn div_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        use achronyme_types::sync::{shared, Shared};
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => {
@@ -516,8 +512,8 @@ impl ValueOperations {
             // Vector / Vector (element-wise)
             (Value::Vector(ref a), Value::Vector(ref b)) => {
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
-                    let a_borrow = a.borrow();
-                    let b_borrow = b.borrow();
+                    let a_borrow = a.read();
+                    let b_borrow = b.read();
 
                     if a_borrow.len() != b_borrow.len() {
                         return Err(VmError::TypeError {
@@ -546,7 +542,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "division".to_string(),
@@ -559,7 +555,7 @@ impl ValueOperations {
             // Broadcasting: Number / Vector
             (Value::Number(scalar), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -568,7 +564,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "division".to_string(),
@@ -579,7 +575,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Number(scalar)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -588,7 +584,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "division".to_string(),
@@ -601,7 +597,7 @@ impl ValueOperations {
             // Broadcasting: Complex / Vector
             (Value::Complex(c), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -610,7 +606,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "division".to_string(),
@@ -621,7 +617,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Complex(c)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -630,7 +626,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "division".to_string(),
@@ -649,8 +645,7 @@ impl ValueOperations {
     }
 
     pub(crate) fn mod_values(left: &Value, right: &Value) -> Result<Value, VmError> {
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        use achronyme_types::sync::{shared, Shared};
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
@@ -658,8 +653,8 @@ impl ValueOperations {
             // Vector % Vector (element-wise)
             (Value::Vector(ref a), Value::Vector(ref b)) => {
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
-                    let a_borrow = a.borrow();
-                    let b_borrow = b.borrow();
+                    let a_borrow = a.read();
+                    let b_borrow = b.read();
 
                     if a_borrow.len() != b_borrow.len() {
                         return Err(VmError::TypeError {
@@ -692,7 +687,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "modulo".to_string(),
@@ -705,7 +700,7 @@ impl ValueOperations {
             // Broadcasting: Number % Vector
             (Value::Number(scalar), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
 
                     if vec_borrow.iter().any(|v| matches!(v, Value::Complex(_))) {
                         return Err(VmError::TypeError {
@@ -722,7 +717,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "modulo".to_string(),
@@ -733,7 +728,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Number(scalar)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
 
                     if vec_borrow.iter().any(|v| matches!(v, Value::Complex(_))) {
                         return Err(VmError::TypeError {
@@ -750,7 +745,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "modulo".to_string(),
@@ -770,8 +765,7 @@ impl ValueOperations {
 
     pub(crate) fn pow_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        use achronyme_types::sync::{shared, Shared};
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
@@ -784,8 +778,8 @@ impl ValueOperations {
             // Vector ^ Vector (element-wise)
             (Value::Vector(ref a), Value::Vector(ref b)) => {
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
-                    let a_borrow = a.borrow();
-                    let b_borrow = b.borrow();
+                    let a_borrow = a.read();
+                    let b_borrow = b.read();
 
                     if a_borrow.len() != b_borrow.len() {
                         return Err(VmError::TypeError {
@@ -814,7 +808,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "exponentiation".to_string(),
@@ -827,7 +821,7 @@ impl ValueOperations {
             // Broadcasting: Number ^ Vector
             (Value::Number(scalar), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -838,7 +832,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "exponentiation".to_string(),
@@ -849,7 +843,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Number(scalar)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -858,7 +852,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "exponentiation".to_string(),
@@ -871,7 +865,7 @@ impl ValueOperations {
             // Broadcasting: Complex ^ Vector
             (Value::Complex(c), Value::Vector(ref vec)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -880,7 +874,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "exponentiation".to_string(),
@@ -891,7 +885,7 @@ impl ValueOperations {
             }
             (Value::Vector(ref vec), Value::Complex(c)) => {
                 if Value::is_numeric_vector(vec) {
-                    let vec_borrow = vec.borrow();
+                    let vec_borrow = vec.read();
                     let result: Vec<Value> = vec_borrow
                         .iter()
                         .map(|v| match v {
@@ -902,7 +896,7 @@ impl ValueOperations {
                             _ => unreachable!(),
                         })
                         .collect();
-                    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+                    Ok(Value::Vector(shared(result)))
                 } else {
                     Err(VmError::TypeError {
                         operation: "exponentiation".to_string(),
@@ -1015,12 +1009,12 @@ impl ValueOperations {
                 }
             }
             Value::Vector(vec) => {
-                let vec_borrow = vec.borrow();
+                let vec_borrow = vec.read();
                 let elements: Vec<String> = vec_borrow.iter().map(Self::value_to_string).collect();
                 format!("[{}]", elements.join(", "))
             }
             Value::Record(map) => {
-                let map_borrow = map.borrow();
+                let map_borrow = map.read();
                 let fields: Vec<String> = map_borrow
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k, Self::value_to_string(v)))

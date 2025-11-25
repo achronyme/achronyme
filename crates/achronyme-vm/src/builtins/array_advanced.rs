@@ -14,9 +14,8 @@ use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
 use achronyme_types::complex::Complex;
-use std::cell::RefCell;
+use achronyme_types::sync::{shared, Shared};
 use std::collections::HashSet;
-use std::rc::Rc;
 
 // ============================================================================
 // Phase 4E: Advanced Array Functions
@@ -35,7 +34,7 @@ pub fn vm_product(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             if vec.is_empty() {
                 return Ok(Value::Number(1.0));
             }
@@ -90,17 +89,17 @@ pub fn vm_zip(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match (&args[0], &args[1]) {
         (Value::Vector(v1), Value::Vector(v2)) => {
-            let vec1 = v1.borrow();
-            let vec2 = v2.borrow();
+            let vec1 = v1.read();
+            let vec2 = v2.read();
             let min_len = vec1.len().min(vec2.len());
 
             let mut result = Vec::new();
             for i in 0..min_len {
                 let pair = vec![vec1[i].clone(), vec2[i].clone()];
-                result.push(Value::Vector(Rc::new(RefCell::new(pair))));
+                result.push(Value::Vector(shared(pair)));
             }
 
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "zip".to_string(),
@@ -139,10 +138,10 @@ pub fn vm_flatten(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(rc) => {
-            let vec = rc.borrow().clone();
+            let vec = rc.read().clone();
             // No need to drop rc - it's just a reference
             let result = flatten_recursive(&vec, depth);
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "flatten".to_string(),
@@ -162,7 +161,7 @@ fn flatten_recursive(vec: &[Value], depth: usize) -> Vec<Value> {
     for val in vec {
         match val {
             Value::Vector(inner_rc) => {
-                let inner = inner_rc.borrow();
+                let inner = inner_rc.read();
                 let flattened = flatten_recursive(&inner, depth - 1);
                 result.extend(flattened);
             }
@@ -186,9 +185,9 @@ pub fn vm_take(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1]) {
         (Value::Vector(rc), Value::Number(n)) => {
             let n = (*n as usize).max(0);
-            let vec = rc.borrow();
+            let vec = rc.read();
             let result = vec.iter().take(n).cloned().collect();
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "take".to_string(),
@@ -212,9 +211,9 @@ pub fn vm_drop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1]) {
         (Value::Vector(rc), Value::Number(n)) => {
             let n = (*n as usize).max(0);
-            let vec = rc.borrow();
+            let vec = rc.read();
             let result = vec.iter().skip(n).cloned().collect();
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "drop".to_string(),
@@ -237,7 +236,7 @@ pub fn vm_unique(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut seen = HashSet::new();
             let mut result = Vec::new();
 
@@ -249,7 +248,7 @@ pub fn vm_unique(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
 
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "unique".to_string(),
@@ -290,14 +289,14 @@ pub fn vm_chunk(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 ));
             }
 
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut result = Vec::new();
 
             for chunk in vec.chunks(size) {
-                result.push(Value::Vector(Rc::new(RefCell::new(chunk.to_vec()))));
+                result.push(Value::Vector(shared(chunk.to_vec())));
             }
 
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "chunk".to_string(),
@@ -380,7 +379,7 @@ pub fn vm_range(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         }
     }
 
-    Ok(Value::Vector(Rc::new(RefCell::new(result))))
+    Ok(Value::Vector(shared(result)))
 }
 
 #[cfg(test)]
@@ -399,7 +398,7 @@ mod tests {
     fn test_product_basic() {
         let mut vm = setup_vm();
         let vec = vec![Value::Number(2.0), Value::Number(3.0), Value::Number(4.0)];
-        let result = vm_product(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_product(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(24.0));
     }
 
@@ -407,7 +406,7 @@ mod tests {
     fn test_product_empty() {
         let mut vm = setup_vm();
         let vec: Vec<Value> = vec![];
-        let result = vm_product(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_product(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(1.0));
     }
 
@@ -415,7 +414,7 @@ mod tests {
     fn test_product_with_zero() {
         let mut vm = setup_vm();
         let vec = vec![Value::Number(5.0), Value::Number(0.0), Value::Number(3.0)];
-        let result = vm_product(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_product(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
@@ -430,20 +429,17 @@ mod tests {
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
         let result = vm_zip(
             &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(v1))),
-                Value::Vector(Rc::new(RefCell::new(v2))),
-            ],
+            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3);
                 // Check first pair
                 if let Value::Vector(pair) = &vec[0] {
-                    let p = pair.borrow();
+                    let p = pair.read();
                     assert_eq!(p[0], Value::Number(1.0));
                     assert_eq!(p[1], Value::Number(4.0));
                 }
@@ -459,16 +455,13 @@ mod tests {
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
         let result = vm_zip(
             &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(v1))),
-                Value::Vector(Rc::new(RefCell::new(v2))),
-            ],
+            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 2); // Should zip to length of shorter array
             }
             _ => panic!("Expected Vector"),
@@ -482,20 +475,14 @@ mod tests {
     #[test]
     fn test_flatten_basic() {
         let mut vm = setup_vm();
-        let inner1 = Value::Vector(Rc::new(RefCell::new(vec![
-            Value::Number(1.0),
-            Value::Number(2.0),
-        ])));
-        let inner2 = Value::Vector(Rc::new(RefCell::new(vec![
-            Value::Number(3.0),
-            Value::Number(4.0),
-        ])));
+        let inner1 = Value::Vector(shared(vec![Value::Number(1.0), Value::Number(2.0)]));
+        let inner2 = Value::Vector(shared(vec![Value::Number(3.0), Value::Number(4.0)]));
         let outer = vec![inner1, inner2];
-        let result = vm_flatten(&mut vm, &[Value::Vector(Rc::new(RefCell::new(outer)))]).unwrap();
+        let result = vm_flatten(&mut vm, &[Value::Vector(shared(outer))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 4);
                 assert_eq!(vec[0], Value::Number(1.0));
                 assert_eq!(vec[3], Value::Number(4.0));
@@ -507,21 +494,15 @@ mod tests {
     #[test]
     fn test_flatten_depth() {
         let mut vm = setup_vm();
-        let innermost = Value::Vector(Rc::new(RefCell::new(vec![Value::Number(1.0)])));
-        let middle = Value::Vector(Rc::new(RefCell::new(vec![innermost])));
+        let innermost = Value::Vector(shared(vec![Value::Number(1.0)]));
+        let middle = Value::Vector(shared(vec![innermost]));
         let outer = vec![middle];
-        let result = vm_flatten(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(outer))),
-                Value::Number(2.0),
-            ],
-        )
-        .unwrap();
+        let result =
+            vm_flatten(&mut vm, &[Value::Vector(shared(outer)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 1);
                 assert_eq!(vec[0], Value::Number(1.0));
             }
@@ -543,18 +524,11 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_take(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(vec))),
-                Value::Number(3.0),
-            ],
-        )
-        .unwrap();
+        let result = vm_take(&mut vm, &[Value::Vector(shared(vec)), Value::Number(3.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3);
                 assert_eq!(vec[0], Value::Number(1.0));
                 assert_eq!(vec[2], Value::Number(3.0));
@@ -567,18 +541,11 @@ mod tests {
     fn test_take_more_than_length() {
         let mut vm = setup_vm();
         let vec = vec![Value::Number(1.0), Value::Number(2.0)];
-        let result = vm_take(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(vec))),
-                Value::Number(10.0),
-            ],
-        )
-        .unwrap();
+        let result = vm_take(&mut vm, &[Value::Vector(shared(vec)), Value::Number(10.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 2);
             }
             _ => panic!("Expected Vector"),
@@ -599,18 +566,11 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_drop(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(vec))),
-                Value::Number(2.0),
-            ],
-        )
-        .unwrap();
+        let result = vm_drop(&mut vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3);
                 assert_eq!(vec[0], Value::Number(3.0));
                 assert_eq!(vec[2], Value::Number(5.0));
@@ -623,18 +583,11 @@ mod tests {
     fn test_drop_all() {
         let mut vm = setup_vm();
         let vec = vec![Value::Number(1.0), Value::Number(2.0)];
-        let result = vm_drop(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(vec))),
-                Value::Number(10.0),
-            ],
-        )
-        .unwrap();
+        let result = vm_drop(&mut vm, &[Value::Vector(shared(vec)), Value::Number(10.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 0);
             }
             _ => panic!("Expected Vector"),
@@ -656,11 +609,11 @@ mod tests {
             Value::Number(1.0),
             Value::Number(4.0),
         ];
-        let result = vm_unique(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_unique(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 4);
                 assert_eq!(vec[0], Value::Number(1.0));
                 assert_eq!(vec[1], Value::Number(2.0));
@@ -680,11 +633,11 @@ mod tests {
             Value::String("a".to_string()),
             Value::String("c".to_string()),
         ];
-        let result = vm_unique(&mut vm, &[Value::Vector(Rc::new(RefCell::new(vec)))]).unwrap();
+        let result = vm_unique(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3);
             }
             _ => panic!("Expected Vector"),
@@ -705,18 +658,11 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_chunk(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(vec))),
-                Value::Number(2.0),
-            ],
-        )
-        .unwrap();
+        let result = vm_chunk(&mut vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 3); // [1,2], [3,4], [5]
             }
             _ => panic!("Expected Vector"),
@@ -732,18 +678,11 @@ mod tests {
             Value::Number(3.0),
             Value::Number(4.0),
         ];
-        let result = vm_chunk(
-            &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(vec))),
-                Value::Number(2.0),
-            ],
-        )
-        .unwrap();
+        let result = vm_chunk(&mut vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 2);
             }
             _ => panic!("Expected Vector"),
@@ -761,7 +700,7 @@ mod tests {
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 5);
                 assert_eq!(vec[0], Value::Number(0.0));
                 assert_eq!(vec[4], Value::Number(4.0));
@@ -781,7 +720,7 @@ mod tests {
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 5); // [1, 3, 5, 7, 9]
                 assert_eq!(vec[0], Value::Number(1.0));
                 assert_eq!(vec[4], Value::Number(9.0));
@@ -801,7 +740,7 @@ mod tests {
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 5); // [5, 4, 3, 2, 1]
                 assert_eq!(vec[0], Value::Number(5.0));
                 assert_eq!(vec[4], Value::Number(1.0));

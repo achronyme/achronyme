@@ -1,18 +1,17 @@
+use crate::sync::{shared, Shared};
 use crate::value::Value;
 use achronyme_parser::type_annotation::TypeAnnotation;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 /// Environment for variable storage with scope support using linked list of scopes
 ///
-/// This is a major performance optimization that uses Rc (reference counting) to
+/// This is a major performance optimization that uses Arc (reference counting) to
 /// share environment data instead of cloning it. This is especially important for
 /// recursive functions and closures.
 ///
 /// The environment is now a linked list where each scope points to its parent.
 /// When a new scope is created, we create a new Environment that references the
-/// current environment as its parent using Rc. This makes scope creation O(1)
+/// current environment as its parent using Arc. This makes scope creation O(1)
 /// instead of O(n) where n is the total number of variables.
 ///
 /// Example:
@@ -40,8 +39,8 @@ pub struct Environment {
     /// Metadata: tracks type annotations for variables (for type checking on assignment)
     type_annotations: HashMap<String, TypeAnnotation>,
     /// Parent environment (if any)
-    /// Now uses RefCell to allow mutation of parent scopes
-    parent: Option<Rc<RefCell<Environment>>>,
+    /// Now uses RwLock to allow mutation of parent scopes
+    parent: Option<Shared<Environment>>,
 }
 
 impl Environment {
@@ -58,8 +57,8 @@ impl Environment {
     /// Create a child environment with this environment as parent
     ///
     /// This is now the primary way to create a new scope. It's O(1) because
-    /// we just create a new empty HashMap and an Rc pointer to the parent.
-    pub fn new_child(parent: Rc<RefCell<Environment>>) -> Self {
+    /// we just create a new empty HashMap and an Arc pointer to the parent.
+    pub fn new_child(parent: Shared<Environment>) -> Self {
         Self {
             variables: HashMap::new(),
             mutability: HashMap::new(),
@@ -76,7 +75,7 @@ impl Environment {
     ///
     /// NOTE: This is now implemented by creating a child and swapping.
     pub fn push_scope(&mut self) {
-        let parent = Rc::new(RefCell::new(self.clone()));
+        let parent = shared(self.clone());
         *self = Environment::new_child(parent);
     }
 
@@ -86,8 +85,8 @@ impl Environment {
     /// Panics if trying to pop the root scope.
     pub fn pop_scope(&mut self) {
         if let Some(parent) = self.parent.clone() {
-            // Clone the parent out of the Rc<RefCell<>> and replace self
-            *self = parent.borrow().clone();
+            // Clone the parent out of the Shared<> and replace self
+            *self = parent.read().clone();
         } else {
             panic!("Cannot pop root scope");
         }
@@ -99,7 +98,7 @@ impl Environment {
         let mut current_parent = self.parent.clone();
         while let Some(parent) = current_parent {
             depth += 1;
-            current_parent = parent.borrow().parent.clone();
+            current_parent = parent.read().parent.clone();
         }
         depth
     }
@@ -191,7 +190,7 @@ impl Environment {
 
         // Search parent scopes
         if let Some(ref parent) = self.parent {
-            return parent.borrow().get(name);
+            return parent.read().get(name);
         }
 
         Err(format!("Undefined variable '{}'", name))
@@ -210,7 +209,7 @@ impl Environment {
         }
 
         if let Some(ref parent) = self.parent {
-            return parent.borrow().has(name);
+            return parent.read().has(name);
         }
 
         false
@@ -248,7 +247,7 @@ impl Environment {
 
         // Search and mutate in parent scopes
         if let Some(ref parent) = self.parent {
-            return parent.borrow_mut().assign(name, value);
+            return parent.write().assign(name, value);
         }
 
         Err(format!("Undefined variable '{}'", name))
@@ -265,7 +264,7 @@ impl Environment {
 
         // Search parent scopes
         if let Some(ref parent) = self.parent {
-            return parent.borrow().get_type_annotation(name);
+            return parent.read().get_type_annotation(name);
         }
 
         None
@@ -281,7 +280,7 @@ impl Environment {
     /// Returns error if variable not found in any scope
     ///
     /// NOTE: This is more complex with the linked structure because we need
-    /// to modify the parent, which is behind an Rc. For now, we only allow
+    /// to modify the parent, which is behind an Arc. For now, we only allow
     /// setting variables in the current scope. This matches the semantics
     /// of most languages where assignment creates a new binding if it doesn't
     /// exist in the current scope.
@@ -294,7 +293,7 @@ impl Environment {
 
         // Check if it exists in parent scopes
         if let Some(ref parent) = self.parent {
-            if parent.borrow().has(name) {
+            if parent.read().has(name) {
                 // Variable exists in parent, but we shadow it in the current scope
                 self.variables.insert(name.to_string(), value);
                 return Ok(());
@@ -329,13 +328,13 @@ impl Environment {
     /// Used when creating a closure to capture the current environment.
     ///
     /// DEPRECATED: This is kept for backward compatibility but is expensive.
-    /// New code should use `to_rc()` to capture the environment as Rc<RefCell<Environment>>.
+    /// New code should use `to_shared()` to capture the environment as Shared<Environment>.
     pub fn snapshot(&self) -> HashMap<String, Value> {
         let mut snapshot = HashMap::new();
 
         // Collect from parent first (so current scope can override)
         if let Some(ref parent) = self.parent {
-            snapshot = parent.borrow().snapshot();
+            snapshot = parent.read().snapshot();
         }
 
         // Add/override with current scope (deref MutableRef values)
@@ -364,15 +363,15 @@ impl Environment {
         }
     }
 
-    /// Convert this environment to an Rc<RefCell<>> for efficient sharing
+    /// Convert this environment to an Shared<> for efficient sharing
     ///
     /// This is the preferred way to capture an environment for closures.
-    pub fn to_rc(&self) -> Rc<RefCell<Environment>> {
-        Rc::new(RefCell::new(self.clone()))
+    pub fn to_shared(&self) -> Shared<Environment> {
+        shared(self.clone())
     }
 
     /// Create a new environment with a specific parent
-    pub fn with_parent(parent: Rc<RefCell<Environment>>) -> Self {
+    pub fn with_parent(parent: Shared<Environment>) -> Self {
         Self::new_child(parent)
     }
 }

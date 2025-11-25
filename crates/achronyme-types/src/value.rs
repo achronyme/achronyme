@@ -1,13 +1,12 @@
 use crate::complex::Complex;
 use crate::function::Function;
+use crate::sync::{shared, Arc, RwLock, Shared};
 use crate::tensor::{ComplexTensor, RealTensor};
-use futures::future::{FutureExt, Shared};
+use futures::future::{FutureExt, Shared as FuturesShared};
 use std::any::Any;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
 
 #[derive(Debug)]
 pub enum TypeError {
@@ -24,14 +23,14 @@ impl std::fmt::Display for TypeError {
 
 /// Wrapper for shared future to implement Clone and Debug
 #[derive(Clone)]
-pub struct VmFuture(pub Shared<Pin<Box<dyn Future<Output = Value>>>>);
+pub struct VmFuture(pub FuturesShared<Pin<Box<dyn Future<Output = Value> + Send>>>);
 
 impl VmFuture {
     pub fn new<F>(future: F) -> Self
     where
-        F: Future<Output = Value> + 'static,
+        F: Future<Output = Value> + Send + 'static,
     {
-        VmFuture(future.boxed_local().shared())
+        VmFuture(future.boxed().shared())
     }
 }
 
@@ -47,15 +46,13 @@ pub enum Value {
     Boolean(bool),
     Complex(Complex),
     /// Vector with shared mutable ownership - allows mutation and sharing
-    /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
-    Vector(Rc<RefCell<Vec<Value>>>),
+    Vector(Shared<Vec<Value>>),
     Tensor(RealTensor),           // Optimized N-dimensional array of real numbers
     ComplexTensor(ComplexTensor), // Optimized N-dimensional array of complex numbers
     Function(Function),           // Both user-defined lambdas and built-in functions
     String(String),
     /// Record (object/map) with shared mutable ownership
-    /// Uses Rc<RefCell<>> so that `let b = a` creates a reference, not a copy
-    Record(Rc<RefCell<HashMap<String, Value>>>),
+    Record(Shared<HashMap<String, Value>>),
     /// Internal marker for tail call optimization
     /// Contains arguments for the next iteration of a tail-recursive function
     /// This variant should never be exposed to user code or returned from eval_str()
@@ -65,16 +62,15 @@ pub enum Value {
     /// This variant should never be exposed to user code or returned from eval_str()
     EarlyReturn(Box<Value>),
     /// Mutable reference - allows mutation of values declared with `mut` keyword
-    /// Uses Rc<RefCell<>> for shared mutable ownership
-    MutableRef(Rc<RefCell<Value>>),
+    MutableRef(Shared<Value>),
     /// Null value - represents absence of value (for optional types)
     /// Used in union types like `Number | null` for optional values
     Null,
     /// Generator: suspended function that can be resumed
-    /// Uses Rc<dyn Any> for type erasure to avoid circular dependencies
-    /// In the VM, this contains Rc<RefCell<VmGeneratorState>>
+    /// Uses Arc<dyn Any> for type erasure to avoid circular dependencies
+    /// In the VM, this contains Shared<VmGeneratorState>
     /// In other backends, it can contain their own generator state
-    Generator(Rc<dyn Any>),
+    Generator(Arc<dyn Any + Send + Sync>),
     /// Future: asynchronous computation that produces a Value
     Future(VmFuture),
     /// Internal marker for yield in generators
@@ -97,13 +93,13 @@ pub enum Value {
     /// This variant should never be exposed to user code
     LoopContinue,
     /// Iterator (opaque handle for HOF operations)
-    /// Uses Rc<dyn Any> for type erasure similar to Generator
+    /// Uses Arc<dyn Any> for type erasure similar to Generator
     /// In the VM, this contains VmIterator
-    Iterator(Rc<dyn Any>),
+    Iterator(Arc<dyn Any + Send + Sync>),
     /// Builder (opaque handle for HOF operations)
-    /// Uses Rc<dyn Any> for type erasure similar to Generator
+    /// Uses Arc<dyn Any> for type erasure similar to Generator
     /// In the VM, this contains VmBuilder
-    Builder(Rc<dyn Any>),
+    Builder(Arc<dyn Any + Send + Sync>),
     /// Range value: start..end (step is implicitly 1)
     /// Used for slicing and iteration
     Range {
@@ -117,15 +113,15 @@ pub enum Value {
         method_name: String,
     },
     /// Channel Sender
-    Sender(Rc<RefCell<tokio::sync::mpsc::UnboundedSender<Value>>>),
+    Sender(Arc<tokio::sync::mpsc::UnboundedSender<Value>>),
     /// Channel Receiver
-    Receiver(Rc<RefCell<tokio::sync::mpsc::UnboundedReceiver<Value>>>),
+    Receiver(Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Value>>>),
     /// Async Mutex
     AsyncMutex(std::sync::Arc<tokio::sync::Mutex<Value>>),
     /// Mutex Guard (owned)
-    MutexGuard(Rc<RefCell<tokio::sync::OwnedMutexGuard<Value>>>),
+    MutexGuard(Shared<tokio::sync::OwnedMutexGuard<Value>>),
     /// Reactive Signal
-    Signal(Rc<RefCell<SignalState>>),
+    Signal(Shared<SignalState>),
 }
 
 /// State of a reactive signal
@@ -134,7 +130,7 @@ pub struct SignalState {
     pub value: Value,
     /// List of effects that depend on this signal
     /// Use Weak references to avoid cycles (Signal -> Effect -> Closure -> Signal)
-    pub subscribers: Vec<std::rc::Weak<RefCell<EffectState>>>,
+    pub subscribers: Vec<std::sync::Weak<RwLock<EffectState>>>,
 }
 
 /// State of an effect
@@ -146,7 +142,7 @@ pub struct EffectState {
     /// Strong references because the effect needs to keep track of its dependencies
     /// even if they are not referenced elsewhere (though arguably if a signal is dropped,
     /// the effect shouldn't run anymore).
-    pub dependencies: Vec<std::rc::Rc<RefCell<SignalState>>>,
+    pub dependencies: Vec<Shared<SignalState>>,
 }
 
 // Conversiones automáticas con From/Into
@@ -159,15 +155,15 @@ impl From<f64> for Value {
 // Helper functions for vector operations
 impl Value {
     /// Check if a vector is numeric (contains only Number or Complex values)
-    pub fn is_numeric_vector(vec: &Rc<RefCell<Vec<Value>>>) -> bool {
-        vec.borrow()
+    pub fn is_numeric_vector(vec: &Shared<Vec<Value>>) -> bool {
+        vec.read()
             .iter()
             .all(|v| matches!(v, Value::Number(_) | Value::Complex(_)))
     }
 
     /// Convert a generic vector to a RealTensor (rank 1)
-    pub fn to_real_tensor(vec: &Rc<RefCell<Vec<Value>>>) -> Result<RealTensor, TypeError> {
-        let vec_borrowed = vec.borrow();
+    pub fn to_real_tensor(vec: &Shared<Vec<Value>>) -> Result<RealTensor, TypeError> {
+        let vec_borrowed = vec.read();
         let nums: Result<Vec<f64>, _> = vec_borrowed
             .iter()
             .map(|v| match v {
@@ -183,8 +179,8 @@ impl Value {
     }
 
     /// Convert a generic vector to a ComplexTensor (rank 1)
-    pub fn to_complex_tensor(vec: &Rc<RefCell<Vec<Value>>>) -> Result<ComplexTensor, TypeError> {
-        let vec_borrowed = vec.borrow();
+    pub fn to_complex_tensor(vec: &Shared<Vec<Value>>) -> Result<ComplexTensor, TypeError> {
+        let vec_borrowed = vec.read();
         let complexes: Result<Vec<Complex>, _> = vec_borrowed
             .iter()
             .map(|v| match v {
@@ -204,7 +200,7 @@ impl Value {
     pub fn from_real_tensor(tensor: RealTensor) -> Value {
         if tensor.is_vector() {
             let vec_data: Vec<Value> = tensor.data().iter().map(|&n| Value::Number(n)).collect();
-            Value::Vector(Rc::new(RefCell::new(vec_data)))
+            Value::Vector(shared(vec_data))
         } else {
             Value::Tensor(tensor)
         }
@@ -214,7 +210,7 @@ impl Value {
     pub fn from_complex_tensor(tensor: ComplexTensor) -> Value {
         if tensor.is_vector() {
             let vec_data: Vec<Value> = tensor.data().iter().map(|&c| Value::Complex(c)).collect();
-            Value::Vector(Rc::new(RefCell::new(vec_data)))
+            Value::Vector(shared(vec_data))
         } else {
             Value::ComplexTensor(tensor)
         }
@@ -230,7 +226,7 @@ impl Value {
 
     /// Create a new mutable reference
     pub fn new_mutable(value: Value) -> Value {
-        Value::MutableRef(Rc::new(RefCell::new(value)))
+        Value::MutableRef(shared(value))
     }
 
     /// Dereferencia un valor mutable (para lectura)
@@ -238,7 +234,7 @@ impl Value {
     /// Si no es mutable, retorna una copia del valor mismo
     pub fn deref(&self) -> Result<Value, String> {
         match self {
-            Value::MutableRef(rc) => Ok(rc.borrow().clone()),
+            Value::MutableRef(rc) => Ok(rc.read().clone()),
             _ => Ok(self.clone()),
         }
     }
@@ -248,7 +244,7 @@ impl Value {
     pub fn assign(&self, new_value: Value) -> Result<(), String> {
         match self {
             Value::MutableRef(rc) => {
-                *rc.borrow_mut() = new_value;
+                *rc.write() = new_value;
                 Ok(())
             }
             _ => Err("Cannot assign to immutable value".to_string()),
@@ -262,7 +258,7 @@ impl Value {
 
     /// Get the generator state if this value is a generator
     /// Returns the opaque Any reference - caller must downcast to their concrete type
-    pub fn as_generator(&self) -> Option<&Rc<dyn Any>> {
+    pub fn as_generator(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
         match self {
             Value::Generator(g) => Some(g),
             _ => None,
@@ -295,7 +291,7 @@ impl Value {
         match v {
             Value::Number(n) => Ok((vec![*n], vec![])),
             Value::Vector(vec_rc) => {
-                let vec = vec_rc.borrow();
+                let vec = vec_rc.read();
                 if vec.is_empty() {
                     return Ok((vec![], vec![0]));
                 }
@@ -321,7 +317,7 @@ impl Value {
             Value::Number(n) => Ok((vec![Complex::new(*n, 0.0)], vec![])),
             Value::Complex(c) => Ok((vec![*c], vec![])),
             Value::Vector(vec_rc) => {
-                let vec = vec_rc.borrow();
+                let vec = vec_rc.read();
                 if vec.is_empty() {
                     return Ok((vec![], vec![0]));
                 }
@@ -343,26 +339,26 @@ impl Value {
     }
 }
 
-// Manual PartialEq implementation (Generator uses Rc<dyn Any> which doesn't impl PartialEq)
+// Manual PartialEq implementation (Generator uses Arc<dyn Any> which doesn't impl PartialEq)
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Complex(a), Value::Complex(b)) => a == b,
-            (Value::Vector(a), Value::Vector(b)) => Rc::ptr_eq(a, b), // Reference equality
+            (Value::Vector(a), Value::Vector(b)) => Arc::ptr_eq(a, b), // Reference equality
             (Value::Tensor(a), Value::Tensor(b)) => a == b,
             (Value::ComplexTensor(a), Value::ComplexTensor(b)) => a == b,
             (Value::Function(a), Value::Function(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
-            (Value::Record(a), Value::Record(b)) => Rc::ptr_eq(a, b), // Reference equality
+            (Value::Record(a), Value::Record(b)) => Arc::ptr_eq(a, b), // Reference equality
             (Value::TailCall(a), Value::TailCall(b)) => a == b,
             (Value::EarlyReturn(a), Value::EarlyReturn(b)) => a == b,
-            (Value::MutableRef(a), Value::MutableRef(b)) => Rc::ptr_eq(a, b), // Reference equality
+            (Value::MutableRef(a), Value::MutableRef(b)) => Arc::ptr_eq(a, b), // Reference equality
             (Value::Null, Value::Null) => true,
             (Value::Generator(a), Value::Generator(b)) => {
                 // Generators are compared by pointer equality (same instance)
-                std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
+                Arc::ptr_eq(a, b)
             }
             (Value::Future(_), Value::Future(_)) => false, // Futures are unique computations
             (Value::GeneratorYield(a), Value::GeneratorYield(b)) => a == b,
@@ -382,11 +378,11 @@ impl PartialEq for Value {
             (Value::LoopContinue, Value::LoopContinue) => true,
             (Value::Iterator(a), Value::Iterator(b)) => {
                 // Iterators are compared by pointer equality (same instance)
-                std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
+                Arc::ptr_eq(a, b)
             }
             (Value::Builder(a), Value::Builder(b)) => {
                 // Builders are compared by pointer equality (same instance)
-                std::ptr::eq(a.as_ref() as *const dyn Any, b.as_ref() as *const dyn Any)
+                Arc::ptr_eq(a, b)
             }
             (
                 Value::Range {
@@ -410,11 +406,11 @@ impl PartialEq for Value {
                     method_name: m2,
                 },
             ) => r1 == r2 && m1 == m2,
-            (Value::Sender(a), Value::Sender(b)) => Rc::ptr_eq(a, b),
-            (Value::Receiver(a), Value::Receiver(b)) => Rc::ptr_eq(a, b),
+            (Value::Sender(a), Value::Sender(b)) => Arc::ptr_eq(a, b),
+            (Value::Receiver(a), Value::Receiver(b)) => Arc::ptr_eq(a, b),
             (Value::AsyncMutex(a), Value::AsyncMutex(b)) => std::sync::Arc::ptr_eq(a, b),
-            (Value::MutexGuard(a), Value::MutexGuard(b)) => Rc::ptr_eq(a, b),
-            (Value::Signal(a), Value::Signal(b)) => Rc::ptr_eq(a, b),
+            (Value::MutexGuard(a), Value::MutexGuard(b)) => Arc::ptr_eq(a, b),
+            (Value::Signal(a), Value::Signal(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -431,8 +427,8 @@ impl std::ops::Add for Value {
                 // Check if both vectors are numeric
                 if Value::is_numeric_vector(a) && Value::is_numeric_vector(b) {
                     // Check if any element is complex
-                    let has_complex_a = a.borrow().iter().any(|v| matches!(v, Value::Complex(_)));
-                    let has_complex_b = b.borrow().iter().any(|v| matches!(v, Value::Complex(_)));
+                    let has_complex_a = a.read().iter().any(|v| matches!(v, Value::Complex(_)));
+                    let has_complex_b = b.read().iter().any(|v| matches!(v, Value::Complex(_)));
 
                     if has_complex_a || has_complex_b {
                         // Complex tensor addition

@@ -29,7 +29,7 @@ fn test_generator_simple_yield() {
     // Should return {value: 1, done: false}
     match result {
         Value::Record(rec_rc) => {
-            let rec = rec_rc.borrow();
+            let rec = rec_rc.read();
             assert_eq!(rec.get("value"), Some(&Value::Number(1.0)));
             assert_eq!(rec.get("done"), Some(&Value::Boolean(false)));
         }
@@ -68,7 +68,7 @@ fn test_generator_exhausted() {
     // Should return {value: null, done: true} when exhausted
     match result {
         Value::Record(rec_rc) => {
-            let rec = rec_rc.borrow();
+            let rec = rec_rc.read();
             assert_eq!(rec.get("value"), Some(&Value::Null));
             assert_eq!(rec.get("done"), Some(&Value::Boolean(true)));
         }

@@ -6,6 +6,7 @@ use crate::compiler::Compiler;
 use crate::error::CompileError;
 use crate::opcode::{instruction::*, OpCode};
 use achronyme_parser::ast::AstNode;
+use achronyme_types::sync::shared;
 
 impl Compiler {
     /// Compile a pattern for match expressions (refutable context)
@@ -183,9 +184,7 @@ impl Compiler {
                 }
 
                 // Create pattern descriptor
-                let pattern_desc = crate::value::Value::Vector(std::rc::Rc::new(
-                    std::cell::RefCell::new(field_names),
-                ));
+                let pattern_desc = crate::value::Value::Vector(shared(field_names));
                 let pattern_idx = self.add_constant(pattern_desc)?;
 
                 // Allocate registers for extracted fields

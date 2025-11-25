@@ -63,7 +63,7 @@ pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let mut title = "Achronyme App".to_string();
 
     if let Some(Value::Record(r)) = args.get(1) {
-        let opts = r.borrow();
+        let opts = r.read();
         if let Some(Value::Number(w)) = opts.get("width") {
             width = *w as f32;
         }
@@ -141,7 +141,7 @@ pub fn vm_ui_text_input(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     if let Value::Signal(sig_rc) = &signal {
         let mut text = {
-            let sig = sig_rc.borrow();
+            let sig = sig_rc.read();
             match &sig.value {
                 Value::String(s) => s.clone(),
                 Value::Number(n) => n.to_string(),
@@ -173,7 +173,7 @@ pub fn vm_ui_slider(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     if let Value::Signal(sig_rc) = &signal {
         let mut value = {
-            let sig = sig_rc.borrow();
+            let sig = sig_rc.read();
             value_as_f64(&sig.value).unwrap_or(0.0)
         };
 
@@ -197,7 +197,7 @@ pub fn vm_ui_box(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let mut children = Value::Null;
 
     if let Value::Record(r) = &props {
-        let r = r.borrow();
+        let r = r.read();
         if let Some(s) = r.get("style") {
             style = s.clone();
         }
@@ -258,7 +258,7 @@ pub fn vm_ui_checkbox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     if let Value::Signal(sig_rc) = &signal {
         let mut checked = {
-            let sig = sig_rc.borrow();
+            let sig = sig_rc.read();
             match &sig.value {
                 Value::Boolean(b) => *b,
                 _ => false,
@@ -289,7 +289,7 @@ pub fn vm_ui_combobox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     let options_vec: Vec<String> = match options {
         Value::Vector(v) => v
-            .borrow()
+            .read()
             .iter()
             .map(|val| match val {
                 Value::String(s) => s.clone(),
@@ -301,7 +301,7 @@ pub fn vm_ui_combobox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     if let Value::Signal(sig_rc) = &signal {
         let mut current = {
-            let sig = sig_rc.borrow();
+            let sig = sig_rc.read();
             match &sig.value {
                 Value::String(s) => s.clone(),
                 v => format!("{:?}", v),
@@ -345,7 +345,7 @@ pub fn vm_ui_radio(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     if let Value::Signal(sig_rc) = &signal {
         let current = {
-            let sig = sig_rc.borrow();
+            let sig = sig_rc.read();
             match &sig.value {
                 Value::String(s) => s.clone(),
                 v => format!("{:?}", v),
@@ -378,7 +378,7 @@ pub fn vm_ui_tabs(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     let titles_vec: Vec<String> = match titles {
         Value::Vector(v) => v
-            .borrow()
+            .read()
             .iter()
             .map(|val| match val {
                 Value::String(s) => s.clone(),
@@ -393,7 +393,7 @@ pub fn vm_ui_tabs(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     if let Value::Signal(sig_rc) = &signal {
         is_signal = true;
-        let sig = sig_rc.borrow();
+        let sig = sig_rc.read();
         current_idx = match &sig.value {
             Value::Number(n) => *n as usize,
             _ => 0,

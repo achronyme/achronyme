@@ -38,7 +38,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
         Value::Complex(c) => format!("Complex(re: {}, im: {})", c.re, c.im),
 
         Value::Vector(vec_rc) => {
-            let vec = vec_rc.borrow();
+            let vec = vec_rc.read();
             if vec.is_empty() {
                 "Vector(empty)".to_string()
             } else {
@@ -94,7 +94,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
         }
 
         Value::Record(map_rc) => {
-            let map = map_rc.borrow();
+            let map = map_rc.read();
             if map.is_empty() {
                 "Record(empty)".to_string()
             } else {
@@ -116,7 +116,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
         }
 
         Value::MutableRef(rc) => {
-            let inner = rc.borrow();
+            let inner = rc.read();
             format!("MutableRef({})", describe_value(&inner, indent))
         }
 
@@ -184,7 +184,7 @@ fn describe_value(value: &Value, indent: usize) -> String {
         Value::MutexGuard(_) => "MutexGuard".to_string(),
 
         Value::Signal(state_rc) => {
-            let state = state_rc.borrow();
+            let state = state_rc.read();
             format!("Signal(value: {})", describe_value(&state.value, indent))
         }
     }

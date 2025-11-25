@@ -42,7 +42,7 @@ fn test_range_basic() {
     let result = compile_and_run("range(0, 5)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 5);
             assert_eq!(vec[0], Value::Number(0.0));
             assert_eq!(vec[4], Value::Number(4.0));
@@ -56,7 +56,7 @@ fn test_range_with_step() {
     let result = compile_and_run("range(1, 10, 2)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 5);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[4], Value::Number(9.0));
@@ -70,7 +70,7 @@ fn test_range_negative_step() {
     let result = compile_and_run("range(5, 0, -1)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 5);
             assert_eq!(vec[0], Value::Number(5.0));
             assert_eq!(vec[4], Value::Number(1.0));
@@ -116,11 +116,11 @@ fn test_zip_basic() {
     let result = compile_and_run("zip([1, 2, 3], [4, 5, 6])").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 3);
             // Check first pair
             if let Value::Vector(pair) = &vec[0] {
-                let p = pair.borrow();
+                let p = pair.read();
                 assert_eq!(p[0], Value::Number(1.0));
                 assert_eq!(p[1], Value::Number(4.0));
             } else {
@@ -146,7 +146,7 @@ fn test_flatten_basic() {
     let result = compile_and_run("flatten([[1, 2], [3, 4]])").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 4);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[3], Value::Number(4.0));
@@ -160,7 +160,7 @@ fn test_flatten_with_depth() {
     let result = compile_and_run("flatten([[[1]], [[2]]], 2)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 2);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[1], Value::Number(2.0));
@@ -174,7 +174,7 @@ fn test_flatten_mixed() {
     let result = compile_and_run("flatten([1, [2, 3], 4])").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 4);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[1], Value::Number(2.0));
@@ -194,7 +194,7 @@ fn test_take_basic() {
     let result = compile_and_run("take([1, 2, 3, 4, 5], 3)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[2], Value::Number(3.0));
@@ -208,7 +208,7 @@ fn test_take_with_range() {
     let result = compile_and_run("take(range(0, 100), 5)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 5);
         }
         _ => panic!("Expected Vector"),
@@ -230,7 +230,7 @@ fn test_drop_basic() {
     let result = compile_and_run("drop([1, 2, 3, 4, 5], 2)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::Number(3.0));
             assert_eq!(vec[2], Value::Number(5.0));
@@ -251,7 +251,7 @@ fn test_take_and_drop_combined() {
     let result = compile_and_run("take(drop([1, 2, 3, 4, 5, 6, 7], 2), 3)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::Number(3.0)); // [3, 4, 5]
             assert_eq!(vec[2], Value::Number(5.0));
@@ -269,7 +269,7 @@ fn test_unique_basic() {
     let result = compile_and_run("unique([1, 2, 2, 3, 1, 4])").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 4);
             assert_eq!(vec[0], Value::Number(1.0));
             assert_eq!(vec[1], Value::Number(2.0));
@@ -301,7 +301,7 @@ fn test_chunk_basic() {
     let result = compile_and_run("chunk([1, 2, 3, 4, 5], 2)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 3); // [1,2], [3,4], [5]
         }
         _ => panic!("Expected Vector"),
@@ -313,7 +313,7 @@ fn test_chunk_exact() {
     let result = compile_and_run("chunk([1, 2, 3, 4], 2)").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 2); // [1,2], [3,4]
         }
         _ => panic!("Expected Vector"),
@@ -343,7 +343,7 @@ fn test_nested_array_operations() {
     let result = compile_and_run("flatten(chunk(range(0, 6), 2))").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 6);
         }
         _ => panic!("Expected Vector"),
@@ -362,7 +362,7 @@ fn test_zip_with_range() {
     let result = compile_and_run("zip([\"a\", \"b\", \"c\"], range(1, 4))").unwrap();
     match result {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             assert_eq!(vec.len(), 3);
         }
         _ => panic!("Expected Vector"),

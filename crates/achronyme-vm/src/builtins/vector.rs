@@ -9,8 +9,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::shared;
 
 // ============================================================================
 // Modification Functions
@@ -26,7 +25,7 @@ pub fn vm_push(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            vec.borrow_mut().push(args[1].clone());
+            vec.write().push(args[1].clone());
             // Return the vector itself to allow chaining: v.push(1).push(2)
             Ok(args[0].clone())
         }
@@ -48,7 +47,7 @@ pub fn vm_pop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let mut borrowed = vec.borrow_mut();
+            let mut borrowed = vec.write();
             if borrowed.is_empty() {
                 return Err(VmError::Runtime(
                     "pop(): cannot pop from empty vector".to_string(),
@@ -76,7 +75,7 @@ pub fn vm_insert(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1], &args[2]) {
         (Value::Vector(vec), Value::Number(idx), value) => {
             let idx = *idx as usize;
-            let mut borrowed = vec.borrow_mut();
+            let mut borrowed = vec.write();
             if idx > borrowed.len() {
                 return Err(VmError::Runtime(format!(
                     "insert(): index {} out of bounds for vector of length {}",
@@ -106,7 +105,7 @@ pub fn vm_remove(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1]) {
         (Value::Vector(vec), Value::Number(idx)) => {
             let idx = *idx as usize;
-            let mut borrowed = vec.borrow_mut();
+            let mut borrowed = vec.write();
             if idx >= borrowed.len() {
                 return Err(VmError::Runtime(format!(
                     "remove(): index {} out of bounds for vector of length {}",
@@ -140,7 +139,7 @@ pub fn vm_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     match (&args[0], &args[1]) {
         (Value::Vector(vec), Value::Number(start)) => {
             let start = *start as usize;
-            let borrowed = vec.borrow();
+            let borrowed = vec.read();
             let len = borrowed.len();
 
             let end = if args.len() == 3 {
@@ -164,7 +163,7 @@ pub fn vm_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
             let result = borrowed[actual_start..actual_end].to_vec();
             // Slice returns a NEW vector
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "slice".to_string(),
@@ -184,10 +183,10 @@ pub fn vm_concat_vec(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match (&args[0], &args[1]) {
         (Value::Vector(v1), Value::Vector(v2)) => {
-            let mut result = v1.borrow().clone();
-            result.extend(v2.borrow().clone());
+            let mut result = v1.read().clone();
+            result.extend(v2.read().clone());
             // Concat returns a NEW vector
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "concat".to_string(),
@@ -211,7 +210,7 @@ pub fn vm_reverse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let mut borrowed = vec.borrow_mut();
+            let mut borrowed = vec.write();
             borrowed.reverse();
             // In-place reverse, return self for chaining
             Ok(args[0].clone())
@@ -234,7 +233,7 @@ pub fn vm_sort(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let mut borrowed = vec.borrow_mut();
+            let mut borrowed = vec.write();
 
             // Simple sort for numbers and strings
             borrowed.sort_by(|a, b| match (a, b) {
@@ -270,7 +269,7 @@ pub fn vm_first(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let borrowed = vec.borrow();
+            let borrowed = vec.read();
             if borrowed.is_empty() {
                 Ok(Value::Null)
             } else {
@@ -295,7 +294,7 @@ pub fn vm_last(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(vec) => {
-            let borrowed = vec.borrow();
+            let borrowed = vec.read();
             if borrowed.is_empty() {
                 Ok(Value::Null)
             } else {
@@ -320,7 +319,7 @@ pub fn vm_is_empty(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 
     match &args[0] {
-        Value::Vector(vec) => Ok(Value::Boolean(vec.borrow().is_empty())),
+        Value::Vector(vec) => Ok(Value::Boolean(vec.read().is_empty())),
         Value::String(s) => Ok(Value::Boolean(s.is_empty())),
         _ => Err(VmError::TypeError {
             operation: "is_empty".to_string(),

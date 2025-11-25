@@ -23,7 +23,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::Null => false,
         Value::Number(n) => *n != 0.0,
         Value::String(s) => !s.is_empty(),
-        Value::Vector(v) => !v.borrow().is_empty(),
+        Value::Vector(v) => !v.read().is_empty(),
         _ => true,
     }
 }

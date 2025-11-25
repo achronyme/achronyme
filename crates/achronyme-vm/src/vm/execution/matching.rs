@@ -73,7 +73,7 @@ impl VM {
                         };
 
                         // Borrow the vector to extract elements
-                        let vec_borrowed = vec_rc.borrow();
+                        let vec_borrowed = vec_rc.read();
 
                         // Extract all values at once while we have the borrow
                         // If vector is too short, use null for missing elements (for default value support)
@@ -120,7 +120,7 @@ impl VM {
                         let pattern_const = self.get_constant(pattern_idx)?;
                         let field_names = match pattern_const {
                             Value::Vector(fields_rc) => {
-                                let fields_borrowed = fields_rc.borrow();
+                                let fields_borrowed = fields_rc.read();
                                 // Extract field names from vector
                                 let mut names = Vec::new();
                                 for field in fields_borrowed.iter() {
@@ -146,7 +146,7 @@ impl VM {
 
                         // Extract all fields at once while we have the borrow
                         // If a field doesn't exist, use null (for default value support)
-                        let rec_borrowed = rec_rc.borrow();
+                        let rec_borrowed = rec_rc.read();
                         let mut values = Vec::new();
                         for field_name in field_names.iter() {
                             let value =
@@ -198,6 +198,11 @@ impl VM {
                 | (Value::Generator(_), "Generator")
                 | (Value::Error { .. }, "Error")
                 | (Value::MutableRef(_), "MutableRef")
+                | (Value::Sender(_), "Sender")
+                | (Value::Receiver(_), "Receiver")
+                | (Value::AsyncMutex(_), "AsyncMutex")
+                | (Value::MutexGuard(_), "MutexGuard")
+                | (Value::Signal(_), "Signal")
         )
     }
 }

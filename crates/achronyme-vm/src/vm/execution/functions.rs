@@ -7,8 +7,7 @@ use crate::vm::generator::VmGeneratorState;
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
 use achronyme_types::function::Function;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{shared, Arc, RwLock};
 
 impl VM {
     /// Execute function and closure instructions
@@ -34,7 +33,10 @@ impl VM {
                     .functions
                     .get(func_idx)
                     .ok_or(VmError::InvalidFunction(func_idx))?
-                    .clone();
+                    .clone(); // FunctionPrototype is NOT shared inside Compiler, but here we get it from Arc?
+                              // FunctionPrototype is in Arc<ConstantPool>, but nested functions are Vec<FunctionPrototype>
+                              // So prototype is FunctionPrototype.
+                              // We need to wrap it in Arc for Closure.
 
                 // Capture upvalues from current frame
                 let mut upvalues = Vec::new();
@@ -44,13 +46,13 @@ impl VM {
                 for (idx, upvalue_desc) in prototype.upvalues.iter().enumerate() {
                     if idx == 0 {
                         // Reserve slot for 'rec' - will be filled with the closure itself below
-                        upvalues.push(Rc::new(RefCell::new(Value::Null)));
+                        upvalues.push(shared(Value::Null));
                     } else {
                         // Check depth to determine capture source
                         if upvalue_desc.depth == 0 {
                             // Direct capture from current frame's register
                             let value = self.get_register(upvalue_desc.register)?.clone();
-                            upvalues.push(Rc::new(RefCell::new(value)));
+                            upvalues.push(shared(value));
                         } else {
                             // Transitive capture from current frame's upvalue
                             let current_frame = self.current_frame()?;
@@ -72,17 +74,22 @@ impl VM {
                 }
 
                 // Create closure
-                let closure = Closure::with_upvalues(Rc::new(prototype), upvalues.clone());
+                let closure = Closure::with_upvalues(Arc::new(prototype), upvalues.clone());
 
-                // Store as Function value using Rc<dyn Any>
-                let closure_rc = Rc::new(closure);
+                // Store as Function value using Arc<dyn Any>
+                // Note: Closure is not Send/Sync if it contains Rc, but we migrated Value to be Send.
+                // Closure contains Arc<FunctionPrototype> and Vec<Shared<Value>>.
+                // Shared<Value> is Arc<RwLock<Value>>.
+                // FunctionPrototype contains Arc<ConstantPool> and Vec<FunctionPrototype>.
+                // Everything should be Send + Sync now.
+                let closure_arc = Arc::new(closure);
                 let func_value = Value::Function(Function::VmClosure(
-                    closure_rc.clone() as Rc<dyn std::any::Any>
+                    closure_arc as Arc<dyn std::any::Any + Send + Sync>,
                 ));
 
                 // NOW fill upvalue 0 with the closure itself (for recursive calls via 'rec')
                 if !upvalues.is_empty() {
-                    *upvalues[0].borrow_mut() = func_value.clone();
+                    *upvalues[0].write() = func_value.clone();
                 }
 
                 self.set_register(dst, func_value)?;
@@ -100,7 +107,7 @@ impl VM {
 
                 match func_value {
                     Value::Function(Function::VmClosure(closure_any)) => {
-                        // Downcast from Rc<dyn Any> to Closure
+                        // Downcast from Arc<dyn Any> to Closure
                         let closure = closure_any
                             .downcast_ref::<Closure>()
                             .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?;
@@ -132,7 +139,9 @@ impl VM {
                         if closure.prototype.is_async || closure.prototype.is_generator {
                             // Create generator state (suspended frame)
                             let state = VmGeneratorState::new(new_frame);
-                            let gen_value = Value::Generator(Rc::new(RefCell::new(state)));
+                            // Wrap in Shared<VmGeneratorState> -> Arc<RwLock<...>>
+                            let state_lock = RwLock::new(state);
+                            let gen_value = Value::Generator(Arc::new(state_lock));
 
                             // Return generator object immediately
                             self.set_register(result_reg, gen_value)?;

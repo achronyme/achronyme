@@ -178,12 +178,12 @@ fn format_value(value: &Value, vm: &VM) -> String {
         Value::Complex(c) => format_complex(c, vm),
         Value::String(s) => s.clone(),
         Value::Vector(vec) => {
-            let borrowed = vec.borrow();
+            let borrowed = vec.read();
             let items: Vec<String> = borrowed.iter().map(|v| format_value(v, vm)).collect();
             format!("[{}]", items.join(", "))
         }
         Value::Record(map) => {
-            let map = map.borrow();
+            let map = map.read();
             let items: Vec<String> = map
                 .iter()
                 .map(|(k, v)| format!("{}: {}", k, format_value(v, vm)))

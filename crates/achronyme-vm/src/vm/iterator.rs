@@ -6,8 +6,7 @@
 
 use crate::error::VmError;
 use crate::value::Value;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{shared, Shared};
 
 /// VM-level iterator abstraction for safe traversal of collections
 ///
@@ -17,7 +16,7 @@ use std::rc::Rc;
 pub enum VmIterator {
     /// Vector iterator: Direct access (fast)
     Vector {
-        data: Rc<RefCell<Vec<Value>>>,
+        data: Shared<Vec<Value>>,
         len: usize,
         index: usize,
     },
@@ -50,7 +49,7 @@ impl VmIterator {
     pub fn from_value(value: &Value) -> Result<Self, VmError> {
         match value {
             Value::Vector(rc) => {
-                let len = rc.borrow().len();
+                let len = rc.read().len();
                 Ok(VmIterator::Vector {
                     data: rc.clone(),
                     len,
@@ -88,7 +87,7 @@ impl VmIterator {
                 if *index >= *len {
                     return None;
                 }
-                let val = data.borrow()[*index].clone();
+                let val = data.read()[*index].clone();
                 *index += 1;
                 Some(val)
             }
@@ -277,7 +276,7 @@ impl VmBuilder {
     /// * `Err(VmError)` - Failed to construct (e.g., invalid tensor dimensions)
     pub fn finalize(self) -> Result<Value, VmError> {
         match self {
-            VmBuilder::Vector(vec) => Ok(Value::Vector(Rc::new(RefCell::new(vec)))),
+            VmBuilder::Vector(vec) => Ok(Value::Vector(shared(vec))),
 
             VmBuilder::Tensor {
                 data,
@@ -325,11 +324,11 @@ mod tests {
 
     #[test]
     fn test_vector_iterator() {
-        let vec = Rc::new(RefCell::new(vec![
+        let vec = shared(vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
-        ]));
+        ]);
 
         let mut iter = VmIterator::from_value(&Value::Vector(vec)).unwrap();
 
@@ -397,7 +396,7 @@ mod tests {
         let result = builder.finalize().unwrap();
         match result {
             Value::Vector(vec) => {
-                let v = vec.borrow();
+                let v = vec.read();
                 assert_eq!(v.len(), 3);
                 assert_eq!(v[0], Value::Number(1.0));
                 assert_eq!(v[2], Value::String("test".to_string()));
@@ -434,7 +433,7 @@ mod tests {
         let result = builder.finalize().unwrap();
         match result {
             Value::Vector(vec) => {
-                let v = vec.borrow();
+                let v = vec.read();
                 assert_eq!(v.len(), 3);
                 assert_eq!(v[0], Value::Number(1.0));
                 assert_eq!(v[1], Value::String("oops".to_string()));
@@ -464,7 +463,7 @@ mod tests {
     fn test_builder_from_hint() {
         use achronyme_types::tensor::RealTensor;
         // Test Vector hint
-        let vec_hint = Value::Vector(Rc::new(RefCell::new(vec![])));
+        let vec_hint = Value::Vector(shared(vec![]));
         let builder = VmBuilder::from_hint(&vec_hint);
         assert!(matches!(builder, VmBuilder::Vector(_)));
 

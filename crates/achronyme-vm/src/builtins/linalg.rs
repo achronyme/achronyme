@@ -13,9 +13,8 @@ use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
 use achronyme_types::complex::Complex;
+use achronyme_types::sync::shared;
 use achronyme_types::tensor::RealTensor;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 /// Calculate dot product of two vectors
 pub fn vm_dot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
@@ -28,8 +27,8 @@ pub fn vm_dot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match (&args[0], &args[1]) {
         (Value::Vector(rc1), Value::Vector(rc2)) => {
-            let v1 = rc1.borrow();
-            let v2 = rc2.borrow();
+            let v1 = rc1.read();
+            let v2 = rc2.read();
 
             if v1.len() != v2.len() {
                 return Err(VmError::Runtime(format!(
@@ -94,8 +93,8 @@ pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match (&args[0], &args[1]) {
         (Value::Vector(rc1), Value::Vector(rc2)) => {
-            let v1 = rc1.borrow();
-            let v2 = rc2.borrow();
+            let v1 = rc1.read();
+            let v2 = rc2.read();
 
             if v1.len() != 3 || v2.len() != 3 {
                 return Err(VmError::Runtime("cross() requires 3D vectors".to_string()));
@@ -129,7 +128,7 @@ pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 Value::Number(x1 * y2 - y1 * x2),
             ];
 
-            Ok(Value::Vector(Rc::new(RefCell::new(result))))
+            Ok(Value::Vector(shared(result)))
         }
         _ => Err(VmError::TypeError {
             operation: "cross".to_string(),
@@ -150,7 +149,7 @@ pub fn vm_norm(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     match &args[0] {
         Value::Vector(rc) => {
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut sum_sq = 0.0;
             for val in vec.iter() {
                 match val {
@@ -202,7 +201,7 @@ pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             }
 
             // Divide each element by norm
-            let vec = rc.borrow();
+            let vec = rc.read();
             let mut normalized = Vec::new();
             for val in vec.iter() {
                 match val {
@@ -220,7 +219,7 @@ pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 }
             }
 
-            Ok(Value::Vector(Rc::new(RefCell::new(normalized))))
+            Ok(Value::Vector(shared(normalized)))
         }
         _ => Err(VmError::TypeError {
             operation: "normalize".to_string(),
@@ -413,6 +412,7 @@ pub fn vm_trace(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use achronyme_types::sync::shared;
 
     fn setup_vm() -> VM {
         VM::new()
@@ -425,10 +425,7 @@ mod tests {
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
         let result = vm_dot(
             &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(v1))),
-                Value::Vector(Rc::new(RefCell::new(v2))),
-            ],
+            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
         // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
@@ -442,16 +439,13 @@ mod tests {
         let v2 = vec![Value::Number(0.0), Value::Number(1.0), Value::Number(0.0)];
         let result = vm_cross(
             &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(v1))),
-                Value::Vector(Rc::new(RefCell::new(v2))),
-            ],
+            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
         // i × j = k = [0, 0, 1]
         match result {
             Value::Vector(rc) => {
-                let v = rc.borrow();
+                let v = rc.read();
                 assert_eq!(v.len(), 3);
                 assert_eq!(v[0], Value::Number(0.0));
                 assert_eq!(v[1], Value::Number(0.0));
@@ -465,7 +459,7 @@ mod tests {
     fn test_norm_basic() {
         let mut vm = setup_vm();
         let v = vec![Value::Number(3.0), Value::Number(4.0)];
-        let result = vm_norm(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
+        let result = vm_norm(&mut vm, &[Value::Vector(shared(v))]).unwrap();
         // sqrt(3^2 + 4^2) = sqrt(9 + 16) = sqrt(25) = 5
         assert_eq!(result, Value::Number(5.0));
     }
@@ -474,10 +468,10 @@ mod tests {
     fn test_normalize_basic() {
         let mut vm = setup_vm();
         let v = vec![Value::Number(3.0), Value::Number(4.0)];
-        let result = vm_normalize(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
+        let result = vm_normalize(&mut vm, &[Value::Vector(shared(v))]).unwrap();
         match result {
             Value::Vector(rc) => {
-                let normalized = rc.borrow();
+                let normalized = rc.read();
                 assert_eq!(normalized.len(), 2);
                 // Should be [3/5, 4/5] = [0.6, 0.8]
                 if let Value::Number(n) = normalized[0] {
@@ -642,10 +636,7 @@ mod tests {
         // (1+i)*2 + (2+2i)*i = 2+2i + 2i-2 = 4i
         let result = vm_dot(
             &mut vm,
-            &[
-                Value::Vector(Rc::new(RefCell::new(v1))),
-                Value::Vector(Rc::new(RefCell::new(v2))),
-            ],
+            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
 
@@ -663,7 +654,7 @@ mod tests {
         let mut vm = setup_vm();
         let v = vec![Value::Number(3.0), Value::Complex(Complex::new(0.0, 4.0))];
         // sqrt(3^2 + |4i|^2) = sqrt(9 + 16) = 5
-        let result = vm_norm(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
+        let result = vm_norm(&mut vm, &[Value::Vector(shared(v))]).unwrap();
         assert_eq!(result, Value::Number(5.0));
     }
 
@@ -674,11 +665,11 @@ mod tests {
             Value::Complex(Complex::new(3.0, 0.0)),
             Value::Complex(Complex::new(0.0, 4.0)),
         ];
-        let result = vm_normalize(&mut vm, &[Value::Vector(Rc::new(RefCell::new(v)))]).unwrap();
+        let result = vm_normalize(&mut vm, &[Value::Vector(shared(v))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
-                let vec = rc.borrow();
+                let vec = rc.read();
                 assert_eq!(vec.len(), 2);
                 // [3/5, 4i/5] = [0.6, 0.8i]
                 if let Value::Complex(c) = vec[0] {

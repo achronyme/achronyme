@@ -99,7 +99,7 @@ pub fn vm_http_post(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let headers = if args.len() > 2 {
         match &args[2] {
             Value::Record(r) => {
-                let r = r.borrow();
+                let r = r.read();
                 let mut h = HashMap::new();
                 for (k, v) in r.iter() {
                     if let Value::String(s) = v {

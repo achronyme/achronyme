@@ -9,14 +9,14 @@ fn test_throw_simple() {
     use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
     use crate::error::VmError;
     use crate::opcode::{instruction::*, OpCode};
-    use std::rc::Rc;
+    use achronyme_types::sync::Arc;
 
     // Build bytecode manually:
     // R[0] = "Error message"
     // THROW R[0]
     let mut constants = ConstantPool::new();
     let err_const_idx = constants.add_constant(Value::String("Test error".to_string()));
-    let constants = Rc::new(constants);
+    let constants = Arc::new(constants);
 
     let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
     main.register_count = 255;
@@ -64,14 +64,14 @@ fn test_throw_simple() {
 fn test_push_pop_handler() {
     use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
     use crate::opcode::{instruction::*, OpCode};
-    use std::rc::Rc;
+    use achronyme_types::sync::Arc;
 
     // Build bytecode:
     // PUSH_HANDLER R[1], offset=5 (points to catch block)
     // R[0] = 42 (some safe code)
     // POP_HANDLER
     // RETURN R[0]
-    let constants = Rc::new(ConstantPool::new());
+    let constants = Arc::new(ConstantPool::new());
     let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
     main.register_count = 255;
 
@@ -112,7 +112,7 @@ fn test_push_pop_handler() {
 fn test_catch_exception() {
     use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
     use crate::opcode::{instruction::*, OpCode};
-    use std::rc::Rc;
+    use achronyme_types::sync::Arc;
 
     // Build bytecode:
     // PUSH_HANDLER R[1], offset=3 (points to catch block at IP 4)
@@ -123,7 +123,7 @@ fn test_catch_exception() {
     // RETURN R[1]  (error value stored in R[1])
     let mut constants = ConstantPool::new();
     let err_const_idx = constants.add_constant(Value::String("Caught!".to_string()));
-    let constants = Rc::new(constants);
+    let constants = Arc::new(constants);
 
     let mut main = FunctionPrototype::new("<main>".to_string(), constants.clone());
     main.register_count = 255;
@@ -174,12 +174,12 @@ fn test_catch_exception() {
 fn test_unwinding_through_frames() {
     use crate::bytecode::{BytecodeModule, ConstantPool, FunctionPrototype};
     use crate::opcode::{instruction::*, OpCode};
-    use std::rc::Rc;
+    use achronyme_types::sync::Arc;
 
     // Setup: Main calls function A, A calls function B, B throws, A catches
     let mut constants = ConstantPool::new();
     let err_const = constants.add_constant(Value::String("B error".to_string()));
-    let constants = Rc::new(constants);
+    let constants = Arc::new(constants);
 
     // Function B (throws error)
     let mut func_b = FunctionPrototype::new("func_b".to_string(), constants.clone());

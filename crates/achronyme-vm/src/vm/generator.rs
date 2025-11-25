@@ -2,11 +2,10 @@
 
 use crate::value::Value;
 use crate::vm::frame::CallFrame;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{Arc, Shared};
 
 /// VM-specific generator state
-/// This is the concrete type stored inside Value::Generator(Rc<dyn Any>)
+/// This is the concrete type stored inside Value::Generator(Arc<dyn Any>)
 #[derive(Debug)]
 pub struct VmGeneratorState {
     /// The frozen call frame (contains IP, registers, upvalues)
@@ -20,8 +19,8 @@ pub struct VmGeneratorState {
 }
 
 /// Shared reference to VM generator state
-/// Uses Rc<RefCell<>> for shared mutability (needed for .next() to mutate state)
-pub type VmGeneratorRef = Rc<RefCell<VmGeneratorState>>;
+/// Uses Shared (Arc<RwLock>) for shared mutability
+pub type VmGeneratorRef = Shared<VmGeneratorState>;
 
 impl VmGeneratorState {
     /// Create a new generator with the given call frame
@@ -50,13 +49,13 @@ mod tests {
     use super::*;
     use crate::bytecode::ConstantPool;
     use crate::bytecode::FunctionPrototype;
-    use std::rc::Rc;
+    use achronyme_types::sync::Arc;
 
     #[test]
     fn test_generator_state_creation() {
-        let constants = Rc::new(ConstantPool::new());
+        let constants = Arc::new(ConstantPool::new());
         let proto = FunctionPrototype::new("test_gen".to_string(), constants);
-        let frame = CallFrame::new(Rc::new(proto), None);
+        let frame = CallFrame::new(Arc::new(proto), None);
 
         let state = VmGeneratorState::new(frame);
         assert!(!state.is_done());
@@ -65,9 +64,9 @@ mod tests {
 
     #[test]
     fn test_generator_completion() {
-        let constants = Rc::new(ConstantPool::new());
+        let constants = Arc::new(ConstantPool::new());
         let proto = FunctionPrototype::new("test_gen".to_string(), constants);
-        let frame = CallFrame::new(Rc::new(proto), None);
+        let frame = CallFrame::new(Arc::new(proto), None);
 
         let mut state = VmGeneratorState::new(frame);
 

@@ -7,8 +7,8 @@ use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use achronyme_parser::ast::AstNode;
 use achronyme_parser::type_annotation::TypeAnnotation;
+use achronyme_types::sync::Arc;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 // Module structure
 mod constants;
@@ -46,7 +46,7 @@ pub struct Compiler {
     parent: Option<Box<Compiler>>,
 
     /// Built-in function registry (shared across all compilers)
-    pub(crate) builtins: Rc<BuiltinRegistry>,
+    pub(crate) builtins: Arc<BuiltinRegistry>,
 
     /// Type registry for storing type aliases
     pub(crate) type_registry: HashMap<String, TypeAnnotation>,
@@ -64,7 +64,7 @@ pub struct Compiler {
 impl Compiler {
     /// Create a new compiler for a module
     pub fn new(module_name: String) -> Self {
-        let constants = Rc::new(ConstantPool::new());
+        let constants = Arc::new(ConstantPool::new());
         let function = FunctionPrototype::new("<main>".to_string(), constants);
 
         Self {
@@ -74,7 +74,7 @@ impl Compiler {
             symbols: SymbolTable::new(),
             loops: Vec::new(),
             parent: None,
-            builtins: Rc::new(crate::builtins::create_builtin_registry()),
+            builtins: Arc::new(crate::builtins::create_builtin_registry()),
             type_registry: HashMap::new(),
             exported_values: HashMap::new(),
             exported_types: HashMap::new(),
@@ -158,7 +158,7 @@ impl Compiler {
     /// Add constant to pool
     pub(crate) fn add_constant(&mut self, value: Value) -> Result<usize, CompileError> {
         // Try to get mutable access to the constant pool
-        if let Some(pool) = Rc::get_mut(&mut self.function.constants) {
+        if let Some(pool) = Arc::get_mut(&mut self.function.constants) {
             let idx = pool.add_constant(value);
 
             if idx > u16::MAX as usize {
@@ -170,11 +170,11 @@ impl Compiler {
             // Constant pool is shared, we need to make a copy
             // This can happen with nested lambdas
             let pool_clone = (*self.function.constants).clone();
-            self.function.constants = Rc::new(pool_clone);
+            self.function.constants = Arc::new(pool_clone);
 
             // Now we can get mutable access
-            let pool = Rc::get_mut(&mut self.function.constants)
-                .expect("Just created new Rc, should be unique");
+            let pool = Arc::get_mut(&mut self.function.constants)
+                .expect("Just created new Arc, should be unique");
 
             let idx = pool.add_constant(value);
 
@@ -189,7 +189,7 @@ impl Compiler {
     /// Add string to constant pool (for field names, etc.)
     pub(crate) fn add_string(&mut self, s: String) -> Result<usize, CompileError> {
         // Try to get mutable access to the constant pool
-        if let Some(pool) = Rc::get_mut(&mut self.function.constants) {
+        if let Some(pool) = Arc::get_mut(&mut self.function.constants) {
             let idx = pool.add_string(s);
 
             if idx > u8::MAX as usize {
@@ -203,11 +203,11 @@ impl Compiler {
             // Constant pool is shared, we need to make a copy
             // This can happen with nested lambdas
             let pool_clone = (*self.function.constants).clone();
-            self.function.constants = Rc::new(pool_clone);
+            self.function.constants = Arc::new(pool_clone);
 
             // Now we can get mutable access
-            let pool = Rc::get_mut(&mut self.function.constants)
-                .expect("Just created new Rc, should be unique");
+            let pool = Arc::get_mut(&mut self.function.constants)
+                .expect("Just created new Arc, should be unique");
 
             let idx = pool.add_string(s);
 

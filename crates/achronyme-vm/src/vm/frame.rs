@@ -3,8 +3,7 @@
 use crate::bytecode::FunctionPrototype;
 use crate::error::VmError;
 use crate::value::Value;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{Arc, Shared};
 
 /// Maximum number of registers per function (8-bit addressing)
 pub const MAX_REGISTERS: usize = 256;
@@ -86,7 +85,7 @@ impl RegisterWindow {
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     /// Function being executed
-    pub function: Rc<FunctionPrototype>,
+    pub function: Arc<FunctionPrototype>,
 
     /// Instruction pointer (current position in code)
     pub ip: usize,
@@ -95,7 +94,7 @@ pub struct CallFrame {
     pub registers: RegisterWindow,
 
     /// Captured upvalues (for closures)
-    pub upvalues: Vec<Rc<RefCell<Value>>>,
+    pub upvalues: Vec<Shared<Value>>,
 
     /// Return register in caller's frame
     pub return_register: Option<u8>,
@@ -110,7 +109,7 @@ pub struct CallFrame {
 
 impl CallFrame {
     /// Create a new call frame
-    pub fn new(function: Rc<FunctionPrototype>, return_register: Option<u8>) -> Self {
+    pub fn new(function: Arc<FunctionPrototype>, return_register: Option<u8>) -> Self {
         // register_count is the number of registers needed
         // Since u8 can't represent 256, we use 255 to mean "all 256 registers"
         let size = if function.register_count == 255 {
@@ -189,8 +188,8 @@ mod tests {
 
     #[test]
     fn test_call_frame() {
-        let constants = Rc::new(ConstantPool::new());
-        let func = Rc::new(FunctionPrototype::new("test".to_string(), constants));
+        let constants = Arc::new(ConstantPool::new());
+        let func = Arc::new(FunctionPrototype::new("test".to_string(), constants));
         let frame = CallFrame::new(func, None);
 
         assert_eq!(frame.ip, 0);

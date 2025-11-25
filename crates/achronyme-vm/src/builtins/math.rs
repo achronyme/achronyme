@@ -10,6 +10,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
+use achronyme_types::sync::shared;
 
 // ============================================================================
 // Helper Macros
@@ -30,7 +31,7 @@ macro_rules! unary_math_fn {
             match &args[0] {
                 Value::Number(x) => Ok(Value::Number($f(*x))),
                 Value::Vector(v) => {
-                    let vec_borrowed = v.borrow();
+                    let vec_borrowed = v.read();
                     let mut result = Vec::with_capacity(vec_borrowed.len());
                     for val in vec_borrowed.iter() {
                         match val {
@@ -45,9 +46,7 @@ macro_rules! unary_math_fn {
                         }
                     }
                     drop(vec_borrowed);
-                    Ok(Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(
-                        result,
-                    ))))
+                    Ok(Value::Vector(shared(result)))
                 }
                 _ => Err(VmError::TypeError {
                     operation: $name.to_string(),

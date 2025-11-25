@@ -5,22 +5,21 @@
 //! work seamlessly with the existing generator infrastructure.
 
 use crate::value::Value;
-use std::cell::RefCell;
-use std::rc::Rc;
+use achronyme_types::sync::{shared, Shared};
 
 /// Iterator for Vector values
 /// Iterates over elements of a vector in order
 #[derive(Debug)]
 pub struct VectorIterator {
     /// The source vector (shared reference)
-    source: Rc<RefCell<Vec<Value>>>,
+    source: Shared<Vec<Value>>,
     /// Current index
     current_index: usize,
 }
 
 impl VectorIterator {
     /// Create a new vector iterator
-    pub fn new(vector: Rc<RefCell<Vec<Value>>>) -> Self {
+    pub fn new(vector: Shared<Vec<Value>>) -> Self {
         Self {
             source: vector,
             current_index: 0,
@@ -30,7 +29,7 @@ impl VectorIterator {
     /// Get the next value from the iterator
     /// Returns Some(value) if there are more elements, None if exhausted
     pub fn next(&mut self) -> Option<Value> {
-        let vec = self.source.borrow();
+        let vec = self.source.read();
         if self.current_index < vec.len() {
             let value = vec[self.current_index].clone();
             self.current_index += 1;
@@ -102,11 +101,11 @@ mod tests {
 
     #[test]
     fn test_vector_iterator() {
-        let vec = Rc::new(RefCell::new(vec![
+        let vec = shared(vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
-        ]));
+        ]);
 
         let mut iter = VectorIterator::new(vec);
 
@@ -119,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_vector_iterator_empty() {
-        let vec = Rc::new(RefCell::new(vec![]));
+        let vec = shared(vec![]);
         let mut iter = VectorIterator::new(vec);
         assert_eq!(iter.next(), None);
     }
@@ -152,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_native_iterator_vector() {
-        let vec = Rc::new(RefCell::new(vec![Value::Number(42.0)]));
+        let vec = shared(vec![Value::Number(42.0)]);
         let mut iter = NativeIterator::Vector(VectorIterator::new(vec));
 
         assert_eq!(iter.next(), Some(Value::Number(42.0)));

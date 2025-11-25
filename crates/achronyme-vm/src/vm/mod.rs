@@ -5,9 +5,8 @@ use crate::bytecode::BytecodeModule;
 use crate::error::VmError;
 use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
-use std::cell::RefCell;
+use achronyme_types::sync::{shared, Arc, RwLock, Shared};
 use std::collections::HashMap;
-use std::rc::Rc;
 
 // Module structure
 mod execution;
@@ -37,7 +36,7 @@ pub struct VM {
     pub(crate) frames: Vec<InternalCallFrame>,
 
     /// Global variables
-    pub(crate) globals: Rc<RefCell<HashMap<String, Value>>>,
+    pub(crate) globals: Shared<HashMap<String, Value>>,
 
     /// Generator states (ID -> suspended frame)
     #[allow(dead_code)]
@@ -60,7 +59,7 @@ pub struct VM {
     epsilon: f64,
 
     /// Root scope for active effects to keep them alive
-    pub(crate) active_effects: Vec<Rc<RefCell<achronyme_types::value::EffectState>>>,
+    pub(crate) active_effects: Vec<Shared<achronyme_types::value::EffectState>>,
 }
 
 impl VM {
@@ -68,7 +67,7 @@ impl VM {
     pub fn new() -> Self {
         Self {
             frames: Vec::with_capacity(256),
-            globals: Rc::new(RefCell::new(HashMap::new())),
+            globals: shared(HashMap::new()),
             generators: HashMap::new(),
             builtins: crate::builtins::create_builtin_registry(),
             intrinsics: IntrinsicRegistry::new(),
@@ -100,7 +99,7 @@ impl VM {
         self.current_module = Some(module.name.clone());
 
         // Create main frame
-        let main_frame = InternalCallFrame::new(Rc::new(module.main), None);
+        let main_frame = InternalCallFrame::new(Arc::new(module.main), None);
         self.frames.push(main_frame);
 
         // Run until completion
@@ -179,10 +178,11 @@ impl VM {
                         if is_generator {
                             let gen_frame = self.frames.last().unwrap();
                             if let Some(Value::Generator(any_ref)) = gen_frame.generator.as_ref() {
-                                if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<
-                                    crate::vm::generator::VmGeneratorState,
-                                >>() {
-                                    let mut state = state_rc.borrow_mut();
+                                if let Some(state_lock) = any_ref
+                                    .downcast_ref::<RwLock<crate::vm::generator::VmGeneratorState>>(
+                                    )
+                                {
+                                    let mut state = state_lock.write();
                                     state.complete(None);
                                 }
                             }
@@ -199,30 +199,32 @@ impl VM {
 
                     // If this frame has a generator reference, update the generator state
                     if let Some(Value::Generator(any_ref)) = gen_frame.generator.as_ref() {
-                        if let Some(state_rc) = any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>() {
-                            let mut state = state_rc.borrow_mut();
-                                // Save the frame state (clone before modifying to avoid borrow issues)
-                                let mut saved_frame = gen_frame.clone();
-                                saved_frame.generator = None; // Clear to avoid circular reference
-                                state.frame = saved_frame;
-                                drop(state);
+                        if let Some(state_lock) =
+                            any_ref.downcast_ref::<RwLock<crate::vm::generator::VmGeneratorState>>()
+                        {
+                            let mut state = state_lock.write();
+                            // Save the frame state (clone before modifying to avoid borrow issues)
+                            let mut saved_frame = gen_frame.clone();
+                            saved_frame.generator = None; // Clear to avoid circular reference
+                            state.frame = saved_frame;
+                            drop(state);
 
-                                // Create iterator result object: {value: <yielded>, done: false}
-                                let mut result_map = std::collections::HashMap::new();
-                                result_map.insert("value".to_string(), value);
-                                result_map.insert("done".to_string(), Value::Boolean(false));
-                                let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                            // Create iterator result object: {value: <yielded>, done: false}
+                            let mut result_map = std::collections::HashMap::new();
+                            result_map.insert("value".to_string(), value);
+                            result_map.insert("done".to_string(), Value::Boolean(false));
+                            let result_record = Value::Record(shared(result_map));
 
-                                // Put iterator result record in the caller's return register
-                                if let Some(return_reg) = gen_frame.return_register {
-                                    if let Some(caller_frame) = self.frames.last_mut() {
-                                        caller_frame.registers.set(return_reg, result_record)?;
-                                    }
+                            // Put iterator result record in the caller's return register
+                            if let Some(return_reg) = gen_frame.return_register {
+                                if let Some(caller_frame) = self.frames.last_mut() {
+                                    caller_frame.registers.set(return_reg, result_record)?;
                                 }
-
-                                // Continue execution in caller frame
-                                continue;
                             }
+
+                            // Continue execution in caller frame
+                            continue;
+                        }
                     }
 
                     // No generator context - just return (shouldn't happen in normal execution)
@@ -414,7 +416,8 @@ impl VM {
 
         match func {
             Value::Function(Function::VmClosure(closure_any)) => {
-                // Downcast from Rc<dyn Any> to Closure
+                // Downcast from Arc<dyn Any> to Closure
+                // Note: Closure is not shared, it's inside the Arc
                 let closure = closure_any
                     .downcast_ref::<Closure>()
                     .ok_or(VmError::Runtime("Invalid VmClosure type".to_string()))?;
@@ -512,13 +515,13 @@ impl VM {
 
     /// Set a global variable (for REPL)
     pub fn set_global(&mut self, name: String, value: Value) {
-        self.globals.borrow_mut().insert(name, value);
+        self.globals.write().insert(name, value);
     }
 
     /// Get a global variable (for REPL)
     pub fn get_global(&self, name: &str) -> Option<Value> {
         // Note: We return Value (cloned) instead of &Value because we can't return a reference to the RefCell content
-        self.globals.borrow().get(name).cloned()
+        self.globals.read().get(name).cloned()
     }
 
     /// Resume a generator by pushing its frame and continuing execution
@@ -538,50 +541,50 @@ impl VM {
         // Extract generator from Value
         if let Value::Generator(any_ref) = gen_value {
             // First, try to downcast to native iterator
-            if let Some(iter_rc) = any_ref.downcast_ref::<RefCell<NativeIterator>>() {
+            if let Some(iter_lock) = any_ref.downcast_ref::<RwLock<NativeIterator>>() {
                 // Handle native iterator
-                let mut iter = iter_rc.borrow_mut();
+                let mut iter = iter_lock.write();
 
                 if let Some(value) = iter.next() {
                     // More elements available: {value: X, done: false}
-                    drop(iter); // Release borrow
+                    drop(iter); // Release lock
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), value);
                     result_map.insert("done".to_string(), Value::Boolean(false));
-                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    let result_record = Value::Record(shared(result_map));
                     self.set_register(result_reg, result_record)?;
                     return Ok(ExecutionResult::Continue);
                 } else {
                     // Iterator exhausted: {value: null, done: true}
-                    drop(iter); // Release borrow
+                    drop(iter); // Release lock
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), Value::Null);
                     result_map.insert("done".to_string(), Value::Boolean(true));
-                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    let result_record = Value::Record(shared(result_map));
                     self.set_register(result_reg, result_record)?;
                     return Ok(ExecutionResult::Continue);
                 }
             }
 
-            // Downcast from Rc<dyn Any> to Rc<RefCell<VmGeneratorState>>
-            if let Some(state_rc) = any_ref.downcast_ref::<RefCell<VmGeneratorState>>() {
-                let state = state_rc.borrow();
+            // Downcast from Arc<dyn Any> to RwLock<VmGeneratorState>
+            if let Some(state_lock) = any_ref.downcast_ref::<RwLock<VmGeneratorState>>() {
+                let state = state_lock.read();
 
                 // Check if generator is already exhausted
                 if state.is_done() {
                     // Return iterator result object: {value: null, done: true}
-                    drop(state); // Release borrow
+                    drop(state); // Release lock
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), Value::Null);
                     result_map.insert("done".to_string(), Value::Boolean(true));
-                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    let result_record = Value::Record(shared(result_map));
                     self.set_register(result_reg, result_record)?;
                     return Ok(ExecutionResult::Continue);
                 }
 
                 // Take the frame (clone it since we need to restore it later)
                 let gen_frame = state.frame.clone();
-                drop(state); // Release borrow before pushing frame
+                drop(state); // Release lock before pushing frame
 
                 // Push the generator's frame onto the stack
                 // Set return register so the yielded value goes to result_reg
@@ -645,10 +648,10 @@ impl VM {
 
         // Check if this is a generator frame
         if let Some(Value::Generator(any_ref)) = frame.generator.as_ref() {
-            if let Some(state_rc) =
-                any_ref.downcast_ref::<std::cell::RefCell<crate::vm::generator::VmGeneratorState>>()
+            if let Some(state_lock) =
+                any_ref.downcast_ref::<RwLock<crate::vm::generator::VmGeneratorState>>()
             {
-                let mut state = state_rc.borrow_mut();
+                let mut state = state_lock.write();
                 // Mark generator as done
                 state.complete(Some(value.clone()));
                 drop(state);
@@ -666,7 +669,7 @@ impl VM {
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), Value::Null);
                     result_map.insert("done".to_string(), Value::Boolean(true));
-                    let result_record = Value::Record(Rc::new(RefCell::new(result_map)));
+                    let result_record = Value::Record(shared(result_map));
 
                     // If there's a return register in caller, set it with the iterator result
                     if let Some(return_reg) = frame.return_register {

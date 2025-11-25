@@ -61,7 +61,7 @@ fn test_return_multiple_paths() {
 
     match result {
         Value::Vector(vec_rc) => {
-            let vec = vec_rc.borrow();
+            let vec = vec_rc.read();
             assert_eq!(vec.len(), 3);
             assert_eq!(vec[0], Value::String("negative".to_string()));
             assert_eq!(vec[1], Value::String("positive".to_string()));

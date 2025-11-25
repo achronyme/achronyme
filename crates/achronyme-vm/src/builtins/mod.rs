@@ -358,9 +358,10 @@ mod tests {
         // Verify we have a good number of core functions
         // Math: ~30, String: ~11, Vector: ~9, I/O: 3, Stats: 3, LinAlg: 7,
         // Complex: 9, Utils: 5, Debug: 1, Records: 3, Array Advanced: 8,
-        // HOF: 9, Module: 1, Numerical: 11, Async: 2, IO: 3, Concurrency: 2
-        // Total: ~110 core functions (removed DSP, Graph, PERT)
-        assert!(registry.len() > 80 && registry.len() < 130);
+        // HOF: 9, Module: 1, Numerical: 11, Async: 7, Encoding: 3, Network: 2,
+        // Env: 4, Concurrency: 2, Reactive: 2, GUI: 16
+        // Total: ~146 functions
+        assert!(registry.len() > 100 && registry.len() < 200);
     }
 
     #[test]
