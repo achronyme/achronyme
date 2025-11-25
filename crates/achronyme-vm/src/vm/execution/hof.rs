@@ -13,7 +13,7 @@ use crate::value::Value;
 use crate::vm::iterator::{VmBuilder, VmIterator};
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
-use achronyme_types::sync::{shared, Arc, RwLock};
+use achronyme_types::sync::{Arc, RwLock};
 
 impl VM {
     /// Execute IterInit opcode: Create iterator from collection

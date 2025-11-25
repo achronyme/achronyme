@@ -1,0 +1,80 @@
+// 42-style-showcase.soc
+// Demonstrates currently supported UI styling utilities.
+
+println("Running Style Showcase Demo...")
+
+let toggle = signal(false)
+let count = signal(0)
+
+let app = () => do {
+    // Main container: Dark background, full size, padding, column layout, center content
+    ui_box("bg-[#1a1a1a] w-full p-6 flex-col items-center justify-center gap-6", () => do {
+
+        // Header
+        ui_label("Achronyme GUI Style Showcase", "text-white text-3xl font-bold")
+
+        // First row: Layout & Spacing demonstration
+        ui_box("bg-[#222222] p-4 rounded-lg flex-row gap-4 items-center justify-between w-[600px]", () => do {
+            ui_label("Layout & Spacing", "text-blue-400 text-xl font-bold")
+            ui_box("flex-row gap-2", () => do {
+                if (ui_button("Button 1", "bg-blue-600 text-white p-2 rounded")) {
+                    count.set(count.peek() + 1)
+                }
+                if (ui_button("Button 2", "bg-green-600 text-white p-2 rounded")) {
+                    count.set(count.peek() + 1)
+                }
+            })
+        })
+
+        // Second row: Colors, Typography & Borders demonstration
+        ui_box("bg-[#222222] p-4 rounded-lg flex-col gap-4 w-[600px]", () => do {
+            ui_label("Colors, Typography & Borders", "text-purple-400 text-xl font-bold")
+
+            ui_box("bg-red-500 text-white p-3 rounded-md border-2 border-[#ffcc00]", () => do {
+                ui_label("Red Background, White Text, Orange Border", "")
+            })
+
+            ui_box("flex-col", () => do {
+                ui_label("Bold Monospace Text", "text-yellow-400 font-bold font-mono text-lg")
+                ui_label("Normal Text", "text-gray-300 text-sm")
+            })
+
+            ui_box("bg-green-500 p-2 rounded-full", () => do {
+                ui_label("Rounded Full Background", "text-white")
+            })
+        })
+
+        // Third row: Dimensions and arbitrary values
+        ui_box("bg-[#222222] p-4 rounded-lg flex-col gap-2 w-[600px]", () => do {
+            ui_label("Dimensions & Arbitrary Values", "text-teal-400 text-xl font-bold")
+
+            ui_box("bg-[#333333] w-[200px] h-[50px] flex-col items-center justify-center", () => do {
+                ui_label("Fixed 200px x 50px Box", "text-gray-300")
+            })
+            // Note: w-full/h-full are parsed but not yet fully functional as egui needs to correctly reserve space.
+            // When w-full/h-full are supported, this box should fill available space.
+            ui_box("bg-[#444444] w-full h-[50px] flex-col items-center justify-center", () => do {
+                ui_label("w-full (not yet fully dynamic, but parsed) h-50px", "text-gray-400 text-sm")
+            })
+        })
+
+        // Dynamic content
+        ui_box("flex-row items-center gap-2", () => do {
+            ui_label("Count: " + str(count.value), "text-white text-lg")
+            if (ui_button("Toggle Message", "bg-indigo-600 text-white p-2 rounded")) {
+                toggle.set(!toggle.value)
+            }
+        })
+        if (toggle.value) {
+            ui_label("This message is toggled!", "text-green-500 font-bold")
+        }
+
+        // Footer
+        ui_box("mt-auto", () => do { // mt-auto is not supported, just for visual separation
+             ui_label("Demo by Achronyme", "text-gray-600 text-sm")
+        })
+    })
+}
+
+gui_run(app, { title: "Style Showcase", width: 700, height: 900 })
+println("Style Showcase Demo Finished.")

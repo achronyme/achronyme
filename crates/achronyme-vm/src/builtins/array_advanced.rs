@@ -14,7 +14,7 @@ use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
 use achronyme_types::complex::Complex;
-use achronyme_types::sync::{shared, Shared};
+use achronyme_types::sync::shared;
 use std::collections::HashSet;
 
 // ============================================================================

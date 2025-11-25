@@ -1,5 +1,6 @@
 use crate::bridge;
-use crate::style::{LayoutMode, StyleConfig};
+use crate::layout::{LayoutContext, SizingStrategy};
+use crate::style::StyleConfig;
 use achronyme_types::value::Value;
 use egui::{FontFamily, RichText};
 use egui_plot::{Legend, Line, Plot, PlotPoints, Points};
@@ -11,7 +12,8 @@ pub fn label(text: &str, style: &Value) {
 
         let mut rich_text = RichText::new(text);
 
-        if let Some(color) = config.text_color {
+        // Use effective_text_color which applies opacity
+        if let Some(color) = config.effective_text_color() {
             rich_text = rich_text.color(color);
         }
 
@@ -21,6 +23,10 @@ pub fn label(text: &str, style: &Value) {
 
         if config.font_bold {
             rich_text = rich_text.strong();
+        }
+
+        if config.font_italic {
+            rich_text = rich_text.italics();
         }
 
         if config.font_monospace {
@@ -39,14 +45,17 @@ pub fn button(text: &str, style: &Value) -> bool {
 
         // Apply text styles to the button label
         let mut rich_text = RichText::new(text);
-        if let Some(color) = config.text_color {
-            rich_text = rich_text.color(color); // This sets the TEXT color
+        if let Some(color) = config.effective_text_color() {
+            rich_text = rich_text.color(color);
         }
         if let Some(size) = config.font_size {
             rich_text = rich_text.size(size);
         }
         if config.font_bold {
             rich_text = rich_text.strong();
+        }
+        if config.font_italic {
+            rich_text = rich_text.italics();
         }
 
         let mut btn = egui::Button::new(rich_text);
@@ -68,33 +77,102 @@ where
 {
     if let Some(ui) = bridge::get_ui() {
         let config = StyleConfig::from_value(style);
+
+        // Build context from current UI state for layout decisions
+        let ctx = LayoutContext::from_ui(ui, false);
+        let plan = config.resolve_layout(&ctx);
+
+        // Apply spacing if specified in the plan
+        if let Some(spacing) = plan.item_spacing {
+            ui.spacing_mut().item_spacing = spacing;
+        }
+
         let frame = config.to_frame();
 
-        frame.show(ui, |ui| {
-            // Apply explicit dimensions if provided
-            if let Some(w) = config.width {
-                ui.set_min_width(w);
-                ui.set_max_width(w);
-            }
-            if let Some(h) = config.height {
-                ui.set_min_height(h);
-                ui.set_max_height(h);
+        match plan.sizing_strategy {
+            SizingStrategy::ShrinkWrap { .. } => {
+                // Use ui.scope + horizontal to force shrink-wrap behavior
+                // This allows parent's layout to position this block correctly
+                ui.scope(|ui| {
+                    ui.horizontal(|ui| {
+                        let shrink_frame = egui::Frame::none()
+                            .fill(
+                                config
+                                    .background_color
+                                    .unwrap_or(egui::Color32::TRANSPARENT),
+                            )
+                            .stroke(frame.stroke)
+                            .rounding(frame.rounding)
+                            .inner_margin(config.padding);
+
+                        shrink_frame.show(ui, |ui| {
+                            if let Some(spacing) = plan.item_spacing {
+                                ui.spacing_mut().item_spacing = spacing;
+                            }
+
+                            match plan.layout.main_dir() {
+                                egui::Direction::LeftToRight | egui::Direction::RightToLeft => {
+                                    ui.horizontal(|ui| {
+                                        bridge::with_ui_context(ui, children);
+                                    });
+                                }
+                                egui::Direction::TopDown | egui::Direction::BottomUp => {
+                                    ui.vertical(|ui| {
+                                        bridge::with_ui_context(ui, children);
+                                    });
+                                }
+                            }
+                        });
+                    });
+                });
             }
 
-            // Apply layout direction
-            match config.layout_mode {
-                LayoutMode::Horizontal => {
-                    ui.horizontal(|ui| {
+            SizingStrategy::Fixed { width, height } => {
+                frame.show(ui, |ui| {
+                    if let Some(w) = width {
+                        if w.is_infinite() {
+                            let avail = ui.available_width();
+                            if avail.is_finite() {
+                                ui.set_min_width(avail);
+                            }
+                        } else {
+                            ui.set_min_width(w);
+                            ui.set_max_width(w);
+                        }
+                    }
+                    if let Some(h) = height {
+                        if h.is_infinite() {
+                            let avail = ui.available_height();
+                            if avail.is_finite() {
+                                ui.set_min_height(avail);
+                            }
+                        } else {
+                            ui.set_min_height(h);
+                            ui.set_max_height(h);
+                        }
+                    }
+
+                    if let Some(spacing) = plan.item_spacing {
+                        ui.spacing_mut().item_spacing = spacing;
+                    }
+
+                    ui.with_layout(plan.layout, |ui| {
                         bridge::with_ui_context(ui, children);
                     });
-                }
-                LayoutMode::Vertical => {
-                    ui.vertical(|ui| {
-                        bridge::with_ui_context(ui, children);
-                    });
-                }
+                });
             }
-        });
+
+            SizingStrategy::UseAvailable => {
+                frame.show(ui, |ui| {
+                    if let Some(spacing) = plan.item_spacing {
+                        ui.spacing_mut().item_spacing = spacing;
+                    }
+                    ui.with_layout(plan.layout, |ui| {
+                        bridge::with_ui_context(ui, children);
+                    });
+                });
+            }
+        }
     }
 }
 

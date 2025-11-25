@@ -3,7 +3,7 @@
 use crate::error::VmError;
 use crate::value::Value;
 use crate::vm::VM;
-use achronyme_types::sync::{shared, Arc, RwLock, Shared};
+use achronyme_types::sync::{shared, Arc, Shared};
 use achronyme_types::value::{EffectState, SignalState};
 use std::cell::RefCell;
 

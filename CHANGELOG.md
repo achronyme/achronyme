@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.7.0] - 2025-11-24
+## [0.6.6] - 2025-11-24
 
 ### Changed
 - **BREAKING (internal)**: Migrated `Rc<RefCell<T>>` to `Arc<RwLock<T>>` for all VM values.
@@ -29,10 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Resolved deadlock where async tasks spawned from GUI callbacks would never execute.
 - Fixed UI freezing when performing async operations.
-
----
-
-## [0.6.6] - 2025-11-24
 
 ### New Features
 

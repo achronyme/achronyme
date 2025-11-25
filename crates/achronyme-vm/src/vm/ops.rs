@@ -9,7 +9,7 @@ pub(crate) struct ValueOperations;
 impl ValueOperations {
     pub(crate) fn add_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use achronyme_types::sync::{shared, Shared};
+        use achronyme_types::sync::shared;
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -164,7 +164,7 @@ impl ValueOperations {
 
     pub(crate) fn sub_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use achronyme_types::sync::{shared, Shared};
+        use achronyme_types::sync::shared;
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
@@ -309,7 +309,7 @@ impl ValueOperations {
 
     pub(crate) fn mul_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use achronyme_types::sync::{shared, Shared};
+        use achronyme_types::sync::shared;
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
@@ -492,7 +492,7 @@ impl ValueOperations {
 
     pub(crate) fn div_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use achronyme_types::sync::{shared, Shared};
+        use achronyme_types::sync::shared;
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => {
@@ -645,7 +645,7 @@ impl ValueOperations {
     }
 
     pub(crate) fn mod_values(left: &Value, right: &Value) -> Result<Value, VmError> {
-        use achronyme_types::sync::{shared, Shared};
+        use achronyme_types::sync::shared;
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
@@ -765,7 +765,7 @@ impl ValueOperations {
 
     pub(crate) fn pow_values(left: &Value, right: &Value) -> Result<Value, VmError> {
         use achronyme_types::complex::Complex;
-        use achronyme_types::sync::{shared, Shared};
+        use achronyme_types::sync::shared;
 
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),

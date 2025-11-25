@@ -2,7 +2,7 @@
 
 use crate::value::Value;
 use crate::vm::frame::CallFrame;
-use achronyme_types::sync::{Arc, Shared};
+use achronyme_types::sync::Shared;
 
 /// VM-specific generator state
 /// This is the concrete type stored inside Value::Generator(Arc<dyn Any>)

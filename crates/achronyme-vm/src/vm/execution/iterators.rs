@@ -5,7 +5,7 @@
 //! work seamlessly with the existing generator infrastructure.
 
 use crate::value::Value;
-use achronyme_types::sync::{shared, Shared};
+use achronyme_types::sync::Shared;
 
 /// Iterator for Vector values
 /// Iterates over elements of a vector in order

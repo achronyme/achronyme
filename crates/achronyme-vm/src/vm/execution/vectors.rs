@@ -5,7 +5,7 @@ use crate::opcode::{instruction::*, OpCode};
 use crate::value::Value;
 use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
-use achronyme_types::sync::{shared, Shared};
+use achronyme_types::sync::shared;
 use achronyme_types::tensor::{ComplexTensor, RealTensor, Tensor};
 
 impl VM {
