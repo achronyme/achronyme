@@ -8,6 +8,7 @@ members = [
     "crates/achronyme-lsp-core",
     "crates/achronyme-vm",
     "crates/achronyme-gui",
+    "crates/achronyme-render",
 ]
 default-members = [
     "crates/achronyme-parser",

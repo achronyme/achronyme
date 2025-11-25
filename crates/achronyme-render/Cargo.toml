@@ -1,0 +1,13 @@
+[package]
+name = "achronyme-render"
+version = "0.1.0"
+edition = "2021"
+description = "Achronyme UI Engine - Retained mode UI with Flexbox layout"
+
+[dependencies]
+winit = "0.30"
+softbuffer = "0.4"
+taffy = "0.5"
+slotmap = "1.0"  # Efficient node storage with stable IDs
+pest = "2.7"
+pest_derive = "2.7"
