@@ -589,4 +589,21 @@ mod tests {
         assert_eq!(result.layout.width, Some(f32::INFINITY));
         assert_eq!(result.layout.height, Some(f32::INFINITY));
     }
+
+    #[test]
+    fn test_flex_row_parsing() {
+        // Test exact string from test-layout.soc
+        let result = parse_style("bg-[#333333] p-4 rounded-lg flex-row gap-2 items-center").unwrap();
+        assert_eq!(result.layout.direction, FlexDirection::Row, "flex-row should set direction to Row");
+        assert_eq!(result.layout.gap, 8.0, "gap-2 should be 8px"); // 2 * 4 = 8
+        assert_eq!(result.layout.align_items, Some(AlignItems::Center));
+        assert_eq!(result.layout.padding, 16.0, "p-4 should be 16px"); // 4 * 4 = 16
+    }
+
+    #[test]
+    fn test_flex_row_simple() {
+        let result = parse_style("flex-row gap-2").unwrap();
+        assert_eq!(result.layout.direction, FlexDirection::Row, "flex-row should set direction to Row");
+        assert_eq!(result.layout.gap, 8.0, "gap-2 should be 8px");
+    }
 }

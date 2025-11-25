@@ -11,3 +11,4 @@ taffy = "0.5"
 slotmap = "1.0"  # Efficient node storage with stable IDs
 pest = "2.7"
 pest_derive = "2.7"
+fontdue = "0.9"  # Lightweight font rasterization

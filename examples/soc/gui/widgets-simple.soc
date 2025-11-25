@@ -1,0 +1,34 @@
+// Simple widget test - one widget at a time
+let render = () => do {
+    ui_box("bg-[#1a1a1a] w-full h-full p-6 flex-col gap-4", () => do {
+        ui_label("Widget Test", "text-white text-xl font-bold")
+
+        // Text input
+        ui_label("Text Input:", "text-gray-300")
+        ui_text_input("Enter text...", "")
+
+        // Separator
+        ui_separator("")
+
+        // Slider
+        ui_label("Slider:", "text-gray-300")
+        ui_slider(50, 0, 100, "")
+
+        // Separator
+        ui_separator("")
+
+        // Checkboxes
+        ui_label("Checkboxes:", "text-gray-300")
+        ui_checkbox("Option A", true, "")
+        ui_checkbox("Option B", false, "")
+
+        // Separator
+        ui_separator("")
+
+        // Progress bar
+        ui_label("Progress (60%):", "text-gray-300")
+        ui_progress_bar(0.6, "")
+    })
+}
+
+gui_run(render, { title: "Widget Test", width: 400, height: 500 })

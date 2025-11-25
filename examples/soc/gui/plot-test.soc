@@ -1,0 +1,27 @@
+// Plot test - test the ui_plot component with static data
+let render = () => do {
+    ui_box("bg-[#1a1a1a] w-full h-full p-6 flex-col gap-4", () => do {
+        ui_label("Plot Test", "text-white text-xl font-bold")
+
+        // Simple static data - use correct arbitrary length syntax
+        ui_plot({
+            title: "Simple Line Plot",
+            x_label: "X",
+            y_label: "Y",
+            series: [
+                {
+                    name: "line1",
+                    kind: "line",
+                    data: [[0, 10], [1, 40], [2, 30], [3, 60], [4, 50], [5, 80], [6, 70], [7, 90]],
+                    color: 4282154742,
+                    radius: 2
+                }
+            ],
+            style: "w-[400px] h-[200px]"
+        })
+
+        ui_label("Should show a line plot above", "text-gray-400 text-sm")
+    })
+}
+
+gui_run(render, { title: "Plot Test", width: 500, height: 400 })

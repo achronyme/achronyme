@@ -36,21 +36,26 @@
 //! └─────────────────────────────────────────────────────┘
 //! ```
 
+pub mod events;
 pub mod layout;
 pub mod node;
 pub mod render;
 pub mod style_parser;
+pub mod text;
 
+use events::{EventManager, MouseButton};
 use layout::{LayoutEngine, LayoutStyle};
+pub use events::Event;
+pub use node::{NodeId, PlotKind, PlotSeries};
 pub use style_parser::{parse_style, ParsedStyle};
-use node::{NodeId, UiNode, UiTree};
-use render::SoftwareRenderer;
+use node::{UiNode, UiTree};
+use render::{RenderState, SoftwareRenderer};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::WindowEvent;
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
@@ -88,10 +93,18 @@ pub struct AuiApp {
     layout_engine: LayoutEngine,
     /// The software renderer
     renderer: SoftwareRenderer,
+    /// Event manager for handling interactions
+    events: EventManager,
     /// Root node ID
     root: Option<NodeId>,
     /// Current window size
     size: PhysicalSize<u32>,
+    /// Current cursor position
+    cursor_pos: PhysicalPosition<f64>,
+    /// Track hovered node for visual feedback
+    hovered_node: Option<NodeId>,
+    /// Track pressed node for visual feedback
+    pressed_node: Option<NodeId>,
 }
 
 impl AuiApp {
@@ -106,7 +119,11 @@ impl AuiApp {
             styles: HashMap::new(),
             layout_engine: LayoutEngine::new(),
             renderer: SoftwareRenderer::new(800, 600),
+            events: EventManager::new(),
             root: None,
+            cursor_pos: PhysicalPosition::new(0.0, 0.0),
+            hovered_node: None,
+            pressed_node: None,
         }
     }
 
@@ -161,6 +178,67 @@ impl AuiApp {
         self.add_node(node::NodeContent::Button { label: label.to_string() }, style_str)
     }
 
+    /// Add a text input with style string
+    pub fn add_text_input(&mut self, id: u64, placeholder: &str, style_str: &str) -> NodeId {
+        self.add_node(
+            node::NodeContent::TextInput {
+                id,
+                placeholder: placeholder.to_string(),
+            },
+            style_str,
+        )
+    }
+
+    /// Add a slider with style string
+    pub fn add_slider(&mut self, id: u64, min: f64, max: f64, value: f64, style_str: &str) -> NodeId {
+        self.add_node(
+            node::NodeContent::Slider { id, min, max, value },
+            style_str,
+        )
+    }
+
+    /// Add a checkbox with style string
+    pub fn add_checkbox(&mut self, id: u64, label: &str, checked: bool, style_str: &str) -> NodeId {
+        self.add_node(
+            node::NodeContent::Checkbox {
+                id,
+                label: label.to_string(),
+                checked,
+            },
+            style_str,
+        )
+    }
+
+    /// Add a progress bar with style string
+    pub fn add_progress_bar(&mut self, progress: f32, style_str: &str) -> NodeId {
+        self.add_node(node::NodeContent::ProgressBar { progress }, style_str)
+    }
+
+    /// Add a separator with style string
+    pub fn add_separator(&mut self, style_str: &str) -> NodeId {
+        self.add_node(node::NodeContent::Separator, style_str)
+    }
+
+    /// Add a plot with style string
+    pub fn add_plot(
+        &mut self,
+        title: &str,
+        x_label: &str,
+        y_label: &str,
+        series: Vec<node::PlotSeries>,
+        style_str: &str,
+    ) -> NodeId {
+        self.add_node(
+            node::NodeContent::Plot {
+                title: title.to_string(),
+                x_label: x_label.to_string(),
+                y_label: y_label.to_string(),
+                series,
+            },
+            style_str,
+        )
+    }
+
     /// Add a child to a parent node
     pub fn add_child(&mut self, parent: NodeId, child: NodeId) {
         self.tree.add_child(parent, child);
@@ -171,6 +249,36 @@ impl AuiApp {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    /// Register a click handler for a node
+    pub fn on_click(&mut self, node: NodeId, callback: impl Fn(&events::Event) + Send + Sync + 'static) {
+        self.events.on_click(node, callback);
+    }
+
+    /// Register a hover enter handler
+    pub fn on_hover_enter(&mut self, node: NodeId, callback: impl Fn(&events::Event) + Send + Sync + 'static) {
+        self.events.on_hover_enter(node, callback);
+    }
+
+    /// Register a hover leave handler
+    pub fn on_hover_leave(&mut self, node: NodeId, callback: impl Fn(&events::Event) + Send + Sync + 'static) {
+        self.events.on_hover_leave(node, callback);
+    }
+
+    /// Get the currently hovered node (for styling)
+    pub fn hovered(&self) -> Option<NodeId> {
+        self.hovered_node
+    }
+
+    /// Get the currently pressed node (for styling)
+    pub fn pressed(&self) -> Option<NodeId> {
+        self.pressed_node
+    }
+
+    /// Get access to the event manager
+    pub fn events_mut(&mut self) -> &mut EventManager {
+        &mut self.events
     }
 
     fn do_layout(&mut self) {
@@ -220,9 +328,13 @@ impl AuiApp {
             Err(_) => return,
         };
 
-        // Render to the buffer
+        // Render to the buffer with interactive state
         self.renderer.resize(width, height);
-        self.renderer.render(&mut buffer, &self.tree, root);
+        let state = RenderState {
+            hovered: self.hovered_node,
+            pressed: self.pressed_node,
+        };
+        self.renderer.render_with_state(&mut buffer, &self.tree, root, state);
 
         // Present
         let _ = buffer.present();
@@ -268,6 +380,60 @@ impl ApplicationHandler for AuiApp {
             }
             WindowEvent::RedrawRequested => {
                 self.do_render();
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = position;
+                if let Some(root) = self.root {
+                    let x = position.x as f32;
+                    let y = position.y as f32;
+                    let events = self.events.handle_mouse_move(&self.tree, root, x, y);
+
+                    // Update hover state
+                    let new_hovered = self.events.hovered();
+                    if new_hovered != self.hovered_node {
+                        self.hovered_node = new_hovered;
+                        self.request_redraw();
+                    }
+
+                    // Dispatch events
+                    for mut evt in events {
+                        self.events.dispatch(&self.tree, &mut evt);
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let mouse_btn = match button {
+                    WinitMouseButton::Left => MouseButton::Left,
+                    WinitMouseButton::Right => MouseButton::Right,
+                    WinitMouseButton::Middle => MouseButton::Middle,
+                    _ => return,
+                };
+
+                match state {
+                    ElementState::Pressed => {
+                        if let Some(mut evt) = self.events.handle_mouse_down(&self.tree, mouse_btn) {
+                            self.pressed_node = Some(evt.target);
+                            self.events.dispatch(&self.tree, &mut evt);
+                            self.request_redraw();
+                        }
+                    }
+                    ElementState::Released => {
+                        let events = self.events.handle_mouse_up(&self.tree, mouse_btn);
+                        self.pressed_node = None;
+
+                        for mut evt in events {
+                            self.events.dispatch(&self.tree, &mut evt);
+                        }
+                        self.request_redraw();
+                    }
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                // Mouse left window - clear hover state
+                if self.hovered_node.is_some() {
+                    self.hovered_node = None;
+                    self.request_redraw();
+                }
             }
             _ => {}
         }

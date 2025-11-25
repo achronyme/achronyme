@@ -20,7 +20,73 @@ pub enum NodeContent {
     Text(String),
     /// A clickable button
     Button { label: String },
-    // Future: Image, Input, etc.
+    /// A single-line text input
+    TextInput {
+        /// Unique ID for state management
+        id: u64,
+        /// Placeholder text when empty
+        placeholder: String,
+    },
+    /// A horizontal slider for numeric values
+    Slider {
+        /// Unique ID for state management
+        id: u64,
+        /// Minimum value
+        min: f64,
+        /// Maximum value
+        max: f64,
+        /// Current value (from signal)
+        value: f64,
+    },
+    /// A checkbox for boolean values
+    Checkbox {
+        /// Unique ID for state management
+        id: u64,
+        /// Label text
+        label: String,
+        /// Current checked state
+        checked: bool,
+    },
+    /// A progress bar (non-interactive)
+    ProgressBar {
+        /// Progress value (0.0 to 1.0)
+        progress: f32,
+    },
+    /// A visual separator line
+    Separator,
+    /// A plot/chart for data visualization
+    Plot {
+        /// Plot title
+        title: String,
+        /// X-axis label
+        x_label: String,
+        /// Y-axis label
+        y_label: String,
+        /// Data series
+        series: Vec<PlotSeries>,
+    },
+}
+
+/// A single data series in a plot
+#[derive(Debug, Clone)]
+pub struct PlotSeries {
+    /// Series name (for legend)
+    pub name: String,
+    /// Type of plot: "line", "scatter", "points"
+    pub kind: PlotKind,
+    /// Data points as (x, y) pairs
+    pub data: Vec<(f64, f64)>,
+    /// Line/point color as ARGB
+    pub color: u32,
+    /// Point radius (for scatter/points)
+    pub radius: f32,
+}
+
+/// Type of plot visualization
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlotKind {
+    Line,
+    Scatter,
 }
 
 /// Visual style properties for a node
@@ -163,6 +229,127 @@ impl UiNode {
         self.style.border_width = width;
         self.style.border_color = Some(color);
         self
+    }
+
+    /// Create a text input node
+    pub fn text_input(id: u64, placeholder: impl Into<String>) -> Self {
+        Self {
+            content: NodeContent::TextInput {
+                id,
+                placeholder: placeholder.into(),
+            },
+            style: NodeStyle {
+                background_color: Some(0xFF2D2D2D),
+                text_color: Some(0xFFFFFFFF),
+                border_color: Some(0xFF4B5563),
+                border_width: 1.0,
+                border_radius: 4.0,
+                font_size: 14.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a slider node
+    pub fn slider(id: u64, min: f64, max: f64, value: f64) -> Self {
+        Self {
+            content: NodeContent::Slider { id, min, max, value },
+            style: NodeStyle {
+                background_color: Some(0xFF374151),
+                border_radius: 4.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a checkbox node
+    pub fn checkbox(id: u64, label: impl Into<String>, checked: bool) -> Self {
+        Self {
+            content: NodeContent::Checkbox {
+                id,
+                label: label.into(),
+                checked,
+            },
+            style: NodeStyle {
+                text_color: Some(0xFFFFFFFF),
+                font_size: 14.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a progress bar node
+    pub fn progress_bar(progress: f32) -> Self {
+        Self {
+            content: NodeContent::ProgressBar {
+                progress: progress.clamp(0.0, 1.0),
+            },
+            style: NodeStyle {
+                background_color: Some(0xFF374151),
+                border_radius: 4.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a separator node
+    pub fn separator() -> Self {
+        Self {
+            content: NodeContent::Separator,
+            style: NodeStyle {
+                background_color: Some(0xFF4B5563),
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a plot node
+    pub fn plot(title: impl Into<String>, x_label: impl Into<String>, y_label: impl Into<String>, series: Vec<PlotSeries>) -> Self {
+        Self {
+            content: NodeContent::Plot {
+                title: title.into(),
+                x_label: x_label.into(),
+                y_label: y_label.into(),
+                series,
+            },
+            style: NodeStyle {
+                background_color: Some(0xFF1F2937),
+                border_radius: 8.0,
+                text_color: Some(0xFFFFFFFF),
+                font_size: 12.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
     }
 }
 
