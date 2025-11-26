@@ -11,7 +11,7 @@ use std::cell::RefCell;
 // This allows true re-entrancy: the GUI render loop runs "inside" the VM's execution context.
 
 thread_local! {
-    static ACTIVE_VM: RefCell<Option<*mut VM>> = RefCell::new(None);
+    static ACTIVE_VM: RefCell<Option<*const VM>> = RefCell::new(None);
 }
 
 struct VmGuiEvaluator;
@@ -24,9 +24,7 @@ impl Evaluator for VmGuiEvaluator {
                 // 1. We are single-threaded (LocalSet).
                 // 2. The VM pointer is valid because `vm_gui_run` blocks while the GUI is running.
                 // 3. We are re-entering the VM recursively, which `call_value` handles correctly logic-wise.
-                //    We use unsafe to bypass Rust's borrow checker preventing multiple &mut to the same object on the stack,
-                //    but conceptually this is a recursive call on the same thread.
-                let vm = unsafe { &mut *vm_ptr };
+                let vm = unsafe { &*vm_ptr };
 
                 // Execute synchronously using the REAL VM
                 vm.call_value(func, &args)
@@ -49,7 +47,7 @@ fn value_as_f64(v: &Value) -> Option<f64> {
 
 // --- Native Functions ---
 
-pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_gui_run(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "gui.run requires a render function".to_string(),
@@ -85,7 +83,7 @@ pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     // Store VM pointer in thread-local storage
     ACTIVE_VM.with(|cell| {
-        *cell.borrow_mut() = Some(vm as *mut VM);
+        *cell.borrow_mut() = Some(vm as *const VM);
     });
 
     // Run GUI (Blocking)
@@ -102,7 +100,7 @@ pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ui_label(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_label(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let text = args
         .get(0)
         .cloned()
@@ -119,7 +117,7 @@ pub fn vm_ui_label(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Null)
 }
 
-pub fn vm_ui_button(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_button(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let text = args
         .get(0)
         .cloned()
@@ -135,7 +133,7 @@ pub fn vm_ui_button(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(clicked))
 }
 
-pub fn vm_ui_text_input(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_text_input(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let signal = args.get(0).cloned().unwrap_or(Value::Null);
     let style = args.get(1).cloned().unwrap_or(Value::Null);
 
@@ -165,7 +163,7 @@ pub fn vm_ui_text_input(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ui_slider(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_slider(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let signal = args.get(0).cloned().unwrap_or(Value::Null);
     let min = args.get(1).and_then(|v| value_as_f64(v)).unwrap_or(0.0);
     let max = args.get(2).and_then(|v| value_as_f64(v)).unwrap_or(100.0);
@@ -190,7 +188,7 @@ pub fn vm_ui_slider(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ui_box(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_box(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let props = args.get(0).cloned().unwrap_or(Value::Null);
 
     let mut style = Value::Null;
@@ -216,7 +214,7 @@ pub fn vm_ui_box(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             // Access the active VM from thread local
             ACTIVE_VM.with(|cell| {
                 if let Some(vm_ptr) = *cell.borrow() {
-                    let vm = unsafe { &mut *vm_ptr };
+                    let vm = unsafe { &*vm_ptr };
                     // Recursive execution on the same VM
                     let _ = vm.call_value(&children, &[]);
                 }
@@ -227,7 +225,7 @@ pub fn vm_ui_box(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Null)
 }
 
-pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let title = args
         .get(0)
         .cloned()
@@ -243,7 +241,7 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Null)
 }
 
-pub fn vm_ui_checkbox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_checkbox(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let signal = args.get(0).cloned().unwrap_or(Value::Null);
     let label = args
         .get(1)
@@ -282,7 +280,7 @@ pub fn vm_ui_checkbox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ui_combobox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_combobox(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let signal = args.get(0).cloned().unwrap_or(Value::Null);
     let options = args.get(1).cloned().unwrap_or(Value::Null);
     let style = args.get(2).cloned().unwrap_or(Value::Null);
@@ -324,7 +322,7 @@ pub fn vm_ui_combobox(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ui_radio(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_radio(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let signal = args.get(0).cloned().unwrap_or(Value::Null);
     let value_to_select = args.get(1).cloned().unwrap_or(Value::Null);
     let label = args
@@ -370,7 +368,7 @@ pub fn vm_ui_radio(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ui_tabs(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_tabs(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let titles = args.get(0).cloned().unwrap_or(Value::Null);
     let signal = args.get(1).cloned().unwrap_or(Value::Null);
     let content_fn = args.get(2).cloned().unwrap_or(Value::Null);
@@ -416,7 +414,7 @@ pub fn vm_ui_tabs(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if let Value::Function(_) = content_fn {
         ACTIVE_VM.with(|cell| {
             if let Some(vm_ptr) = *cell.borrow() {
-                let vm = unsafe { &mut *vm_ptr };
+                let vm = unsafe { &*vm_ptr };
                 let _ = vm.call_value(&content_fn, &[Value::Number(current_idx as f64)]);
             }
         });
@@ -425,7 +423,7 @@ pub fn vm_ui_tabs(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Null)
 }
 
-pub fn vm_ui_collapsing(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_collapsing(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let title = args
         .get(0)
         .cloned()
@@ -442,7 +440,7 @@ pub fn vm_ui_collapsing(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> 
         if let Value::Function(_) = children {
             ACTIVE_VM.with(|cell| {
                 if let Some(vm_ptr) = *cell.borrow() {
-                    let vm = unsafe { &mut *vm_ptr };
+                    let vm = unsafe { &*vm_ptr };
                     let _ = vm.call_value(&children, &[]);
                 }
             });
@@ -451,7 +449,7 @@ pub fn vm_ui_collapsing(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> 
     Ok(Value::Null)
 }
 
-pub fn vm_ui_scroll_area(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_scroll_area(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let children = args.get(0).cloned().unwrap_or(Value::Null);
     let style = args.get(1).cloned().unwrap_or(Value::Null);
 
@@ -459,7 +457,7 @@ pub fn vm_ui_scroll_area(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError>
         if let Value::Function(_) = children {
             ACTIVE_VM.with(|cell| {
                 if let Some(vm_ptr) = *cell.borrow() {
-                    let vm = unsafe { &mut *vm_ptr };
+                    let vm = unsafe { &*vm_ptr };
                     let _ = vm.call_value(&children, &[]);
                 }
             });
@@ -468,7 +466,7 @@ pub fn vm_ui_scroll_area(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError>
     Ok(Value::Null)
 }
 
-pub fn vm_ui_progress_bar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_progress_bar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let value = args.get(0).cloned().unwrap_or(Value::Number(0.0));
     let style = args.get(1).cloned().unwrap_or(Value::Null);
 
@@ -481,13 +479,13 @@ pub fn vm_ui_progress_bar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError
     Ok(Value::Null)
 }
 
-pub fn vm_ui_separator(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_separator(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let style = args.get(0).cloned().unwrap_or(Value::Null);
     components::separator(&style);
     Ok(Value::Null)
 }
 
-pub fn vm_ui_quit(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_quit(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     components::quit();
     Ok(Value::Null)
 }

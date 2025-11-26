@@ -37,12 +37,8 @@ fn test_throw_simple() {
     };
 
     let result = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, async {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
             let mut vm = crate::vm::VM::new();
             vm.execute(module).await
         })
@@ -91,12 +87,8 @@ fn test_push_pop_handler() {
     };
 
     let result = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, async {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
             let mut vm = crate::vm::VM::new();
             vm.execute(module).await
         })
@@ -150,12 +142,8 @@ fn test_catch_exception() {
     };
 
     let result = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, async {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
             let mut vm = crate::vm::VM::new();
             vm.execute(module).await
         })
@@ -228,12 +216,8 @@ fn test_unwinding_through_frames() {
     };
 
     let result = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, async {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
             let mut vm = crate::vm::VM::new();
             vm.execute(module).await
         })

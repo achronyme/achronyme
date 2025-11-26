@@ -24,8 +24,7 @@ async fn execute(source: &str) -> Result<Value, String> {
 #[test]
 fn test_async_sleep() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    rt.block_on(async {
         let source = r#"
             // Mocking time not easy without 'now()', relying on sleep duration
             // Just check if it executes without error and returns null
@@ -41,8 +40,7 @@ fn test_async_sleep() {
 #[test]
 fn test_async_function_call() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    rt.block_on(async {
         let source = r#"
             let f = async () => do {
                 await sleep(1)
@@ -60,8 +58,7 @@ fn test_async_function_call() {
 #[test]
 fn test_async_block() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    rt.block_on(async {
         let source = r#"
             let result = await async do {
                 await sleep(1)
@@ -79,8 +76,7 @@ fn test_async_block() {
 #[test]
 fn test_async_nested() {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
+    rt.block_on(async {
         let source = r#"
             let inner = async (x) => x * 2
             let outer = async (y) => do {

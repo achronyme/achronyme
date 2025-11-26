@@ -24,7 +24,7 @@ use std::collections::HashSet;
 /// Calculate the product of all elements in an array
 ///
 /// Example: product([2, 3, 4]) -> 24
-pub fn vm_product(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_product(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "product() expects 1 argument, got {}",
@@ -79,7 +79,7 @@ pub fn vm_product(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Combine two arrays element-wise into pairs
 ///
 /// Example: zip([1, 2, 3], [4, 5, 6]) -> [[1, 4], [2, 5], [3, 6]]
-pub fn vm_zip(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_zip(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "zip() expects 2 arguments, got {}",
@@ -113,7 +113,7 @@ pub fn vm_zip(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 ///
 /// Example: flatten([[1, 2], [3, 4]]) -> [1, 2, 3, 4]
 /// Example: flatten([[[1]], [[2]]], 2) -> [1, 2]
-pub fn vm_flatten(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_flatten(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() || args.len() > 2 {
         return Err(VmError::Runtime(format!(
             "flatten() expects 1 or 2 arguments, got {}",
@@ -174,7 +174,7 @@ fn flatten_recursive(vec: &[Value], depth: usize) -> Vec<Value> {
 /// Take the first n elements from an array
 ///
 /// Example: take([1, 2, 3, 4, 5], 3) -> [1, 2, 3]
-pub fn vm_take(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_take(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "take() expects 2 arguments, got {}",
@@ -200,7 +200,7 @@ pub fn vm_take(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Drop the first n elements from an array
 ///
 /// Example: drop([1, 2, 3, 4, 5], 2) -> [3, 4, 5]
-pub fn vm_drop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_drop(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "drop() expects 2 arguments, got {}",
@@ -226,7 +226,7 @@ pub fn vm_drop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Remove duplicate elements from an array (preserves first occurrence order)
 ///
 /// Example: unique([1, 2, 2, 3, 1, 4]) -> [1, 2, 3, 4]
-pub fn vm_unique(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_unique(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "unique() expects 1 argument, got {}",
@@ -272,7 +272,7 @@ fn value_hash_key(val: &Value) -> String {
 /// Split an array into chunks of specified size
 ///
 /// Example: chunk([1, 2, 3, 4, 5], 2) -> [[1, 2], [3, 4], [5]]
-pub fn vm_chunk(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_chunk(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "chunk() expects 2 arguments, got {}",
@@ -315,7 +315,7 @@ pub fn vm_chunk(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// Example: range(0, 5) -> [0, 1, 2, 3, 4]
 /// Example: range(1, 10, 2) -> [1, 3, 5, 7, 9]
 /// Example: range(5, 0, -1) -> [5, 4, 3, 2, 1]
-pub fn vm_range(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_range(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "range() expects 2 or 3 arguments, got {}",
@@ -396,25 +396,25 @@ mod tests {
 
     #[test]
     fn test_product_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![Value::Number(2.0), Value::Number(3.0), Value::Number(4.0)];
-        let result = vm_product(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_product(&vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(24.0));
     }
 
     #[test]
     fn test_product_empty() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec: Vec<Value> = vec![];
-        let result = vm_product(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_product(&vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(1.0));
     }
 
     #[test]
     fn test_product_with_zero() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![Value::Number(5.0), Value::Number(0.0), Value::Number(3.0)];
-        let result = vm_product(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_product(&vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
@@ -424,11 +424,11 @@ mod tests {
 
     #[test]
     fn test_zip_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
         let result = vm_zip(
-            &mut vm,
+            &vm,
             &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
@@ -450,11 +450,11 @@ mod tests {
 
     #[test]
     fn test_zip_different_lengths() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0)];
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
         let result = vm_zip(
-            &mut vm,
+            &vm,
             &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
         )
         .unwrap();
@@ -474,11 +474,11 @@ mod tests {
 
     #[test]
     fn test_flatten_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let inner1 = Value::Vector(shared(vec![Value::Number(1.0), Value::Number(2.0)]));
         let inner2 = Value::Vector(shared(vec![Value::Number(3.0), Value::Number(4.0)]));
         let outer = vec![inner1, inner2];
-        let result = vm_flatten(&mut vm, &[Value::Vector(shared(outer))]).unwrap();
+        let result = vm_flatten(&vm, &[Value::Vector(shared(outer))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -493,12 +493,12 @@ mod tests {
 
     #[test]
     fn test_flatten_depth() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let innermost = Value::Vector(shared(vec![Value::Number(1.0)]));
         let middle = Value::Vector(shared(vec![innermost]));
         let outer = vec![middle];
         let result =
-            vm_flatten(&mut vm, &[Value::Vector(shared(outer)), Value::Number(2.0)]).unwrap();
+            vm_flatten(&vm, &[Value::Vector(shared(outer)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_take_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -524,7 +524,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_take(&mut vm, &[Value::Vector(shared(vec)), Value::Number(3.0)]).unwrap();
+        let result = vm_take(&vm, &[Value::Vector(shared(vec)), Value::Number(3.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -539,9 +539,9 @@ mod tests {
 
     #[test]
     fn test_take_more_than_length() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![Value::Number(1.0), Value::Number(2.0)];
-        let result = vm_take(&mut vm, &[Value::Vector(shared(vec)), Value::Number(10.0)]).unwrap();
+        let result = vm_take(&vm, &[Value::Vector(shared(vec)), Value::Number(10.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_drop_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -566,7 +566,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_drop(&mut vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
+        let result = vm_drop(&vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -581,9 +581,9 @@ mod tests {
 
     #[test]
     fn test_drop_all() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![Value::Number(1.0), Value::Number(2.0)];
-        let result = vm_drop(&mut vm, &[Value::Vector(shared(vec)), Value::Number(10.0)]).unwrap();
+        let result = vm_drop(&vm, &[Value::Vector(shared(vec)), Value::Number(10.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_unique_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -609,7 +609,7 @@ mod tests {
             Value::Number(1.0),
             Value::Number(4.0),
         ];
-        let result = vm_unique(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_unique(&vm, &[Value::Vector(shared(vec))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -626,14 +626,14 @@ mod tests {
 
     #[test]
     fn test_unique_strings() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::String("a".to_string()),
             Value::String("b".to_string()),
             Value::String("a".to_string()),
             Value::String("c".to_string()),
         ];
-        let result = vm_unique(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_unique(&vm, &[Value::Vector(shared(vec))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_chunk_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -658,7 +658,7 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_chunk(&mut vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
+        let result = vm_chunk(&vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -671,14 +671,14 @@ mod tests {
 
     #[test]
     fn test_chunk_exact() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
             Value::Number(4.0),
         ];
-        let result = vm_chunk(&mut vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
+        let result = vm_chunk(&vm, &[Value::Vector(shared(vec)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -695,8 +695,8 @@ mod tests {
 
     #[test]
     fn test_range_basic() {
-        let mut vm = setup_vm();
-        let result = vm_range(&mut vm, &[Value::Number(0.0), Value::Number(5.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_range(&vm, &[Value::Number(0.0), Value::Number(5.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -711,9 +711,9 @@ mod tests {
 
     #[test]
     fn test_range_step() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let result = vm_range(
-            &mut vm,
+            &vm,
             &[Value::Number(1.0), Value::Number(10.0), Value::Number(2.0)],
         )
         .unwrap();
@@ -731,9 +731,9 @@ mod tests {
 
     #[test]
     fn test_range_negative_step() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let result = vm_range(
-            &mut vm,
+            &vm,
             &[Value::Number(5.0), Value::Number(0.0), Value::Number(-1.0)],
         )
         .unwrap();
@@ -751,9 +751,9 @@ mod tests {
 
     #[test]
     fn test_range_zero_step_error() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let result = vm_range(
-            &mut vm,
+            &vm,
             &[Value::Number(0.0), Value::Number(5.0), Value::Number(0.0)],
         );
         assert!(result.is_err());

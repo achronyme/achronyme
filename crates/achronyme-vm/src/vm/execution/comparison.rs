@@ -10,7 +10,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute comparison instructions
     pub(crate) fn execute_comparison(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -30,7 +30,7 @@ impl VM {
             OpCode::Lt => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::lt_values(left, right)?;
+                let result = ValueOperations::lt_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -38,7 +38,7 @@ impl VM {
             OpCode::Le => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::le_values(left, right)?;
+                let result = ValueOperations::le_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -46,7 +46,7 @@ impl VM {
             OpCode::Gt => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::gt_values(left, right)?;
+                let result = ValueOperations::gt_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -54,7 +54,7 @@ impl VM {
             OpCode::Ge => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::ge_values(left, right)?;
+                let result = ValueOperations::ge_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }

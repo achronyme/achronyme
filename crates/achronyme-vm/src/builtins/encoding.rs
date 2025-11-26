@@ -11,7 +11,7 @@ use std::collections::HashMap;
 // ============================================================================
 
 /// json_parse(string) -> Value
-pub fn vm_json_parse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_json_parse(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(
             "json_parse() expects 1 argument".to_string(),
@@ -36,7 +36,7 @@ pub fn vm_json_parse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// json_stringify(value, pretty?) -> String
-pub fn vm_json_stringify(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_json_stringify(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "json_stringify() expects at least 1 argument".to_string(),
@@ -143,7 +143,7 @@ fn value_to_json(val: &Value) -> Result<serde_json::Value, VmError> {
 // ============================================================================
 
 /// csv_parse(string, has_headers?) -> Vector<Record> or Vector<Vector>
-pub fn vm_csv_parse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_csv_parse(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "csv_parse() expects at least 1 argument".to_string(),

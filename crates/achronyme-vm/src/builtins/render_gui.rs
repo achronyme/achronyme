@@ -8,9 +8,9 @@
 
 use crate::error::VmError;
 use crate::value::Value;
-use crate::vm::VM;
-use achronyme_render::{run, AuiApp, NodeId, PlotKind, PlotSeries, WindowConfig};
-use achronyme_types::sync::Shared;
+use crate::vm::{SignalNotifier, VM};
+use achronyme_render::{AuiApp, NodeId, PlotKind, PlotSeries, WindowConfig};
+use achronyme_types::sync::{Arc, Shared};
 use achronyme_types::value::SignalState;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ struct BuildContext {
     /// Stack of parent node IDs for nested containers
     parent_stack: Vec<NodeId>,
     /// VM pointer for callback execution (reserved for future event handling)
-    vm_ptr: Option<*mut VM>,
+    vm_ptr: Option<*const VM>,
     /// Signal bindings for reactive controls (widget_id -> signal)
     signal_bindings: HashMap<u64, SignalBinding>,
     /// Map of widget_id to NodeId for updating values
@@ -130,15 +130,15 @@ pub enum ControlChange {
 /// Widgets read their signal values during creation, so programmatic updates
 /// (like signal.set() from buttons) are automatically reflected on rebuild.
 ///
-/// NOTE: We do NOT call notify_signal_changed here because:
-/// 1. We're already in a rebuild triggered by user interaction
-/// 2. Calling notifier would cause an infinite loop (sync → notify → rebuild → sync...)
-/// 3. The signal value is updated directly, effects will run on next VM tick
+/// This function uses set_signal_value to properly trigger effects/subscribers.
 fn sync_signals_from_app(
+    vm: &crate::vm::VM,
     app: &achronyme_render::AuiApp,
     bindings: &HashMap<u64, SignalBinding>,
     widget_nodes: &HashMap<u64, NodeId>,
 ) {
+    use crate::builtins::reactive::set_signal_value;
+
     for (widget_id, binding) in bindings {
         let Some(&node_id) = widget_nodes.get(widget_id) else {
             continue;
@@ -156,37 +156,34 @@ fn sync_signals_from_app(
         match binding {
             SignalBinding::TextInput(sig_rc) => {
                 if let Some(value) = app.get_text_input_value(node_id) {
-                    let mut sig = sig_rc.write();
-                    if let Value::String(ref old) = sig.value {
-                        if *old != value {
-                            sig.value = Value::String(value);
-                        }
-                    } else {
-                        sig.value = Value::String(value);
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::String(ref s) = sig.value { s.clone() } else { String::new() }
+                    };
+                    if old_val != value {
+                        let _ = set_signal_value(vm, sig_rc, Value::String(value));
                     }
                 }
             }
             SignalBinding::Slider(sig_rc) => {
                 if let Some(value) = app.get_slider_value(node_id) {
-                    let mut sig = sig_rc.write();
-                    if let Value::Number(old) = sig.value {
-                        if (old - value).abs() > 0.001 {
-                            sig.value = Value::Number(value);
-                        }
-                    } else {
-                        sig.value = Value::Number(value);
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::Number(n) = sig.value { n } else { 0.0 }
+                    };
+                    if (old_val - value).abs() > 0.001 {
+                        let _ = set_signal_value(vm, sig_rc, Value::Number(value));
                     }
                 }
             }
             SignalBinding::Checkbox(sig_rc) => {
                 if let Some(checked) = app.get_checkbox_checked(node_id) {
-                    let mut sig = sig_rc.write();
-                    if let Value::Boolean(old) = sig.value {
-                        if old != checked {
-                            sig.value = Value::Boolean(checked);
-                        }
-                    } else {
-                        sig.value = Value::Boolean(checked);
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::Boolean(b) = sig.value { b } else { false }
+                    };
+                    if old_val != checked {
+                        let _ = set_signal_value(vm, sig_rc, Value::Boolean(checked));
                     }
                 }
             }
@@ -231,7 +228,7 @@ fn sync_signals_to_app(
 /// gui_run(render_fn, options) - Main entry point
 /// Runs the GUI application with the given render function
 /// The render function is called each frame to enable reactive updates via signals
-pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_gui_run(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "gui_run requires a render function".to_string(),
@@ -297,6 +294,25 @@ enum UserEvent {
     SignalChanged,
 }
 
+/// Signal notifier that sets a shared flag for immediate detection
+/// This implements the SignalNotifier trait from VM, allowing the reactive
+/// system to notify the GUI when signals change without thread_local state.
+struct ImmediateNotifier {
+    signal_changed: Arc<std::sync::atomic::AtomicBool>,
+    proxy: std::sync::Mutex<achronyme_render::winit::event_loop::EventLoopProxy<UserEvent>>,
+}
+
+impl SignalNotifier for ImmediateNotifier {
+    fn notify(&self) {
+        // Set flag for immediate detection within same frame
+        self.signal_changed.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Also send event to wake up event loop if waiting
+        if let Ok(proxy) = self.proxy.lock() {
+            let _ = proxy.send_event(UserEvent::SignalChanged);
+        }
+    }
+}
+
 /// Run the app with per-frame re-rendering (immediate-mode style)
 /// This re-executes the render function each frame, allowing buttons to detect clicks
 /// and signals to update reactively.
@@ -304,7 +320,7 @@ fn run_with_callback(
     app: achronyme_render::AuiApp,
     initial_bindings: HashMap<u64, SignalBinding>,
     initial_widget_nodes: HashMap<u64, NodeId>,
-    vm: &mut VM,
+    vm: &VM,
     render_fn: Value,
 ) {
     use achronyme_render::winit::event_loop::{ControlFlow, EventLoop};
@@ -313,11 +329,16 @@ fn run_with_callback(
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait); // Wait for events (efficient)
 
-    // Register signal notifier to wake up the loop
+    // Shared flag for immediate signal change detection
+    let signal_changed_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // Create signal notifier using the VM's system (replaces thread_local register_signal_notifier)
     let proxy = event_loop.create_proxy();
-    crate::builtins::reactive::register_signal_notifier(move || {
-        let _ = proxy.send_event(UserEvent::SignalChanged);
+    let notifier = Arc::new(ImmediateNotifier {
+        signal_changed: signal_changed_flag.clone(),
+        proxy: std::sync::Mutex::new(proxy),
     });
+    vm.set_signal_notifier(Some(notifier));
 
     // Store clicked buttons separately so they survive tree rebuilds
     let clicked_buttons: std::rc::Rc<std::cell::RefCell<Vec<u64>>> =
@@ -328,7 +349,7 @@ fn run_with_callback(
     // Run the event loop with per-frame rendering
     struct AppWrapper<'a> {
         app: achronyme_render::AuiApp,
-        vm: &'a mut VM,
+        vm: &'a VM,
         render_fn: Value,
         config: achronyme_render::WindowConfig,
         needs_rebuild: bool,
@@ -337,6 +358,10 @@ fn run_with_callback(
         // Persist bindings to sync signals before rebuild
         last_bindings: HashMap<u64, SignalBinding>,
         last_widget_nodes: HashMap<u64, NodeId>,
+        // Shared flag for immediate signal change detection
+        signal_changed: Arc<std::sync::atomic::AtomicBool>,
+        // Throttle rebuilds during drag to ~60fps
+        last_rebuild_time: std::time::Instant,
     }
 
     impl<'a> achronyme_render::winit::application::ApplicationHandler<UserEvent> for AppWrapper<'a> {
@@ -387,12 +412,23 @@ fn run_with_callback(
                         self.app.request_redraw();
                     }
                 }
-                WindowEvent::KeyboardInput { .. } | WindowEvent::CursorMoved { .. } => {
-                    // For keyboard/mouse move, also rebuild to update state if needed
-                    // Optimization: We might not need full rebuild on cursor move unless hover effects
-                    // For now, we keep it but ensure ControlFlow::Wait handles the rest
+                WindowEvent::KeyboardInput { .. } => {
+                    // Keyboard input may change text inputs, rebuild to update state
                     self.needs_rebuild = true;
                     self.app.request_redraw();
+                }
+                WindowEvent::CursorMoved { .. } => {
+                    // During slider drag: sync signal and rebuild so dependent labels update
+                    // Throttle to ~60fps to avoid excessive rebuilds
+                    if self.app.is_dragging_slider() {
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(self.last_rebuild_time);
+                        if elapsed.as_millis() >= 16 {
+                            self.needs_rebuild = true;
+                            self.last_rebuild_time = now;
+                        }
+                        // request_redraw already called by app.window_event
+                    }
                 }
                 WindowEvent::RedrawRequested => {
                     // Check if quit was requested
@@ -402,11 +438,23 @@ fn run_with_callback(
                     }
 
                     // Re-execute render function for immediate-mode behavior
-                    if self.needs_rebuild {
-                        // 1. SYNC INPUTS TO SIGNALS
+                    // Loop until no more signal changes (handles button clicks that modify signals)
+                    let mut rebuild_count = 0;
+                    const MAX_REBUILDS: i32 = 3; // Prevent infinite loops
+
+                    while self.needs_rebuild && rebuild_count < MAX_REBUILDS {
+                        rebuild_count += 1;
+
+                        // Clear the signal_changed flag before render
+                        self.signal_changed.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                        // 1. SYNC INPUTS TO SIGNALS (only on first rebuild!)
                         // Before destroying the tree, read current values from widgets and update signals
                         // This ensures that user input is captured into the signal system
-                        sync_signals_from_app(&self.app, &self.last_bindings, &self.last_widget_nodes);
+                        // Only sync on first rebuild - subsequent rebuilds are just to reflect signal changes
+                        if rebuild_count == 1 {
+                            sync_signals_from_app(self.vm, &self.app, &self.last_bindings, &self.last_widget_nodes);
+                        }
 
                         // Reset widget ID counter so IDs are stable across frames
                         reset_widget_id_counter();
@@ -446,7 +494,7 @@ fn run_with_callback(
 
                         // Get the app back and SAVE BINDINGS
                         BUILD_CONTEXT.with(|cell| {
-                            if let Some(mut ctx) = cell.borrow_mut().take() {
+                            if let Some(ctx) = cell.borrow_mut().take() {
                                 self.app = ctx.app;
                                 // Save bindings for next frame
                                 self.last_bindings = ctx.signal_bindings;
@@ -462,10 +510,13 @@ fn run_with_callback(
                         // Recalculate layout for the new tree!
                         self.app.compute_layout();
 
-                        // Clear clicked buttons after they've been processed
+                        // Clear clicked buttons after first rebuild (they've been processed)
                         self.clicked_buttons.borrow_mut().clear();
                         self.app.clear_clicked_buttons();
-                        self.needs_rebuild = false;
+
+                        // Check if a signal was modified during render (e.g., button click)
+                        // If so, we need another rebuild to reflect the new signal values
+                        self.needs_rebuild = self.signal_changed.load(std::sync::atomic::Ordering::SeqCst);
                     }
                 }
                 _ => {}
@@ -486,13 +537,18 @@ fn run_with_callback(
         quit_requested,
         last_bindings: initial_bindings, // Use bindings from initial render
         last_widget_nodes: initial_widget_nodes,
+        signal_changed: signal_changed_flag,
+        last_rebuild_time: std::time::Instant::now(),
     };
 
     let _ = event_loop.run_app(&mut wrapper);
+
+    // Clean up signal notifier when GUI closes
+    vm.set_signal_notifier(None);
 }
 
 /// ui_box(style, children_fn) - Create a container
-pub fn vm_ui_box(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_box(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_box called outside of gui_run".to_string(),
@@ -558,7 +614,7 @@ pub fn vm_ui_box(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// ui_label(text, style) - Create a text label
-pub fn vm_ui_label(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_label(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_label called outside of gui_run".to_string(),
@@ -590,7 +646,7 @@ pub fn vm_ui_label(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// ui_button(text, style) - Create a button
 /// Returns true if the button was clicked since the last frame
-pub fn vm_ui_button(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_button(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_button called outside of gui_run".to_string(),
@@ -632,7 +688,7 @@ pub fn vm_ui_button(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// If first arg is a Signal, bind to it reactively
 /// If first arg is a string, it's treated as the initial value (placeholder is empty)
 /// If first arg is a record with {value, placeholder}, use both
-pub fn vm_ui_text_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_text_input(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_text_input called outside of gui_run".to_string(),
@@ -702,7 +758,7 @@ pub fn vm_ui_text_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> 
 /// ui_slider(value_or_signal, min, max, style) - Create a slider control
 /// If first arg is a Signal, bind to it reactively
 /// Otherwise, value should be a number representing the current value
-pub fn vm_ui_slider(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_slider(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_slider called outside of gui_run".to_string(),
@@ -756,7 +812,7 @@ pub fn vm_ui_slider(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// ui_checkbox(label, checked_or_signal, style) - Create a checkbox
 /// If second arg is a Signal, bind to it reactively
-pub fn vm_ui_checkbox(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_checkbox(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_checkbox called outside of gui_run".to_string(),
@@ -803,34 +859,34 @@ pub fn vm_ui_checkbox(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(checked))
 }
 
-pub fn vm_ui_combobox(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_combobox(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement combobox
     Ok(Value::Boolean(false))
 }
 
-pub fn vm_ui_radio(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_radio(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement radio
     Ok(Value::Boolean(false))
 }
 
-pub fn vm_ui_tabs(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_tabs(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement tabs
     Ok(Value::Null)
 }
 
-pub fn vm_ui_collapsing(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_collapsing(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement collapsing
     Ok(Value::Null)
 }
 
-pub fn vm_ui_scroll_area(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_scroll_area(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement scroll area
     Ok(Value::Null)
 }
 
 /// ui_progress_bar(progress, style) - Create a progress bar
 /// progress is a value between 0.0 and 1.0
-pub fn vm_ui_progress_bar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_progress_bar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_progress_bar called outside of gui_run".to_string(),
@@ -858,7 +914,7 @@ pub fn vm_ui_progress_bar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError
 }
 
 /// ui_separator(style) - Create a visual separator line
-pub fn vm_ui_separator(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_separator(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_separator called outside of gui_run".to_string(),
@@ -881,7 +937,7 @@ pub fn vm_ui_separator(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// ui_quit() - Request the application to quit
-pub fn vm_ui_quit(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_quit(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
     with_build_context(|ctx| {
         ctx.app.request_quit();
     }).ok();
@@ -891,7 +947,7 @@ pub fn vm_ui_quit(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
 /// ui_plot(config) - Create a plot/chart visualization
 /// config is a record with: title, x_label, y_label, series
 /// series is an array of: { name, kind: "line"|"scatter", data: [[x,y],...], color, radius }
-pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_plot called outside of gui_run".to_string(),

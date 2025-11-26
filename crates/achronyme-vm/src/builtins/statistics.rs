@@ -11,7 +11,7 @@ use crate::vm::VM;
 use achronyme_types::complex::Complex;
 
 /// Sum all elements in a vector or tensor
-pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_sum(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "sum() expects 1 argument, got {}",
@@ -74,7 +74,7 @@ pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate mean (average) of elements
-pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_mean(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "mean() expects 1 argument, got {}",
@@ -112,7 +112,7 @@ pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate standard deviation
-pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_std(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "std() expects 1 argument, got {}",
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_sum_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -223,21 +223,21 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_sum(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_sum(&vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(15.0));
     }
 
     #[test]
     fn test_sum_empty() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec: Vec<Value> = vec![];
-        let result = vm_sum(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_sum(&vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
     #[test]
     fn test_mean_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -245,13 +245,13 @@ mod tests {
             Value::Number(4.0),
             Value::Number(5.0),
         ];
-        let result = vm_mean(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_mean(&vm, &[Value::Vector(shared(vec))]).unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
 
     #[test]
     fn test_std_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![
             Value::Number(2.0),
             Value::Number(4.0),
@@ -262,7 +262,7 @@ mod tests {
             Value::Number(7.0),
             Value::Number(9.0),
         ];
-        let result = vm_std(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_std(&vm, &[Value::Vector(shared(vec))]).unwrap();
         // Expected std dev ≈ 2.138
         if let Value::Number(n) = result {
             assert!((n - 2.138).abs() < 0.01);
@@ -273,9 +273,9 @@ mod tests {
 
     #[test]
     fn test_sum_complex() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let vec = vec![Value::Number(1.0), Value::Complex(Complex::new(0.0, 2.0))];
-        let result = vm_sum(&mut vm, &[Value::Vector(shared(vec))]).unwrap();
+        let result = vm_sum(&vm, &[Value::Vector(shared(vec))]).unwrap();
         match result {
             Value::Complex(c) => {
                 assert_eq!(c.re, 1.0);

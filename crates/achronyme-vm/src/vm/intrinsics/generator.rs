@@ -11,7 +11,7 @@ use crate::vm::VM;
 /// the Call opcode handler when it detects an intrinsic call.
 ///
 /// This function should not be called directly - it's only used for registry lookup.
-pub fn generator_next(_vm: &mut VM, _receiver: &Value, _args: &[Value]) -> Result<Value, VmError> {
+pub fn generator_next(_vm: &VM, _receiver: &Value, _args: &[Value]) -> Result<Value, VmError> {
     // This should never be called directly - the Call opcode intercepts intrinsic calls
     Err(VmError::Runtime(
         "generator_next intrinsic should be handled by Call opcode, not called directly"

@@ -13,7 +13,7 @@ use std::any::Any;
 impl VM {
     /// Execute generator instructions
     pub(crate) fn execute_generators(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -28,19 +28,22 @@ impl VM {
                 let proto_idx = bx as usize;
 
                 // Get the function prototype
-                let proto = self
-                    .current_frame()?
-                    .function
-                    .functions
-                    .get(proto_idx)
-                    .ok_or(VmError::InvalidFunction(proto_idx))?
-                    .clone(); // proto is FunctionPrototype. Need to wrap in Arc for CallFrame.
+                let proto = {
+                    let state = self.state.read();
+                    let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+                    frame
+                        .function
+                        .functions
+                        .get(proto_idx)
+                        .ok_or(VmError::InvalidFunction(proto_idx))?
+                        .clone()
+                };
 
                 // Capture upvalues from current frame (same as Closure)
                 let mut upvalues = Vec::new();
                 for upvalue_desc in &proto.upvalues {
                     // Capture from current frame's registers
-                    let value = self.get_register(upvalue_desc.register)?.clone();
+                    let value = self.get_register(upvalue_desc.register)?;
                     upvalues.push(shared(value));
                 }
 
@@ -69,7 +72,7 @@ impl VM {
             OpCode::Yield => {
                 // Yield R[A]
                 // 1. Get the value to yield
-                let value = self.get_register(a)?.clone();
+                let value = self.get_register(a)?;
 
                 // 2. This should suspend execution and return control to caller
                 // The caller (ResumeGen) will handle saving the frame state
@@ -82,7 +85,7 @@ impl VM {
                 let dst = a;
                 let gen_reg = decode_b(instruction);
 
-                let gen_value = self.get_register(gen_reg)?.clone();
+                let gen_value = self.get_register(gen_reg)?;
 
                 // Use the shared resume logic
                 self.resume_generator_internal(&gen_value, dst)
@@ -94,7 +97,7 @@ impl VM {
                 let dst = a;
                 let src = decode_b(instruction);
 
-                let value = self.get_register(src)?.clone();
+                let value = self.get_register(src)?;
 
                 match value {
                     // Generators pass through unchanged
@@ -135,7 +138,7 @@ impl VM {
                 // R[A] = await R[B]
                 let dst = a;
                 let src = decode_b(instruction);
-                let future = self.get_register(src)?.clone();
+                let future = self.get_register(src)?;
 
                 // Suspend and wait for future
                 Ok(ExecutionResult::Await(future, dst))

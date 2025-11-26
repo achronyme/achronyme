@@ -38,7 +38,7 @@ fn is_truthy(value: &Value) -> bool {
 /// let numbers = [1, 2, 3];
 /// let doubled = map(x => x * 2, numbers);  // [2, 4, 6]
 /// ```
-pub fn vm_map(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_map(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "map() expects 2 arguments (callback, collection), got {}",
@@ -75,7 +75,7 @@ pub fn vm_map(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [1, 2, 3, 4, 5];
 /// let evens = filter(x => x % 2 == 0, numbers);  // [2, 4]
 /// ```
-pub fn vm_filter(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_filter(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "filter() expects 2 arguments (predicate, collection), got {}",
@@ -111,7 +111,7 @@ pub fn vm_filter(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [1, 2, 3, 4];
 /// let sum = reduce((acc, x) => acc + x, 0, numbers);  // 10
 /// ```
-pub fn vm_reduce(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_reduce(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 3 {
         return Err(VmError::Runtime(format!(
             "reduce() expects 3 arguments (callback, initial, collection), got {}",
@@ -141,7 +141,7 @@ pub fn vm_reduce(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// ```achronyme
 /// let result = pipe(5, x => x * 2, x => x + 1);  // 11
 /// ```
-pub fn vm_pipe(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_pipe(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "pipe() expects at least 1 argument (initial value)".into(),
@@ -168,7 +168,7 @@ pub fn vm_pipe(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [1, 2, 3, 4, 5];
 /// let has_even = any(x => x % 2 == 0, numbers);  // true
 /// ```
-pub fn vm_any(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_any(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "any() expects 2 arguments (predicate, collection), got {}",
@@ -202,7 +202,7 @@ pub fn vm_any(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [2, 4, 6, 8];
 /// let all_even = all(x => x % 2 == 0, numbers);  // true
 /// ```
-pub fn vm_all(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_all(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "all() expects 2 arguments (predicate, collection), got {}",
@@ -235,7 +235,7 @@ pub fn vm_all(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [1, 2, 3, 4, 5];
 /// let first_even = find(x => x % 2 == 0, numbers);  // 2
 /// ```
-pub fn vm_find(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_find(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "find() expects 2 arguments (predicate, collection), got {}",
@@ -269,7 +269,7 @@ pub fn vm_find(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [1, 3, 4, 5];
 /// let index = findIndex(x => x % 2 == 0, numbers);  // 2
 /// ```
-pub fn vm_find_index(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_find_index(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "findIndex() expects 2 arguments (predicate, collection), got {}",
@@ -305,7 +305,7 @@ pub fn vm_find_index(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// let numbers = [1, 2, 3, 4, 5, 6];
 /// let even_count = count(x => x % 2 == 0, numbers);  // 3
 /// ```
-pub fn vm_count(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_count(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "count() expects 2 arguments (predicate, collection), got {}",

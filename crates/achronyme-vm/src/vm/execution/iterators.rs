@@ -98,6 +98,7 @@ impl NativeIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use achronyme_types::sync::shared;
 
     #[test]
     fn test_vector_iterator() {

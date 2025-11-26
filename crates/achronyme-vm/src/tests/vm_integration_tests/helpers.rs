@@ -24,13 +24,7 @@ pub async fn execute_async(source: &str) -> Result<Value, String> {
 
 /// Helper to compile and execute source code (Synchronous wrapper)
 pub fn execute(source: &str) -> Result<Value, String> {
-    // Execute in a new runtime + LocalSet
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    let local = tokio::task::LocalSet::new();
-
-    local.block_on(&rt, execute_async(source))
+    // Execute in a new runtime (multi-threaded)
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(execute_async(source))
 }

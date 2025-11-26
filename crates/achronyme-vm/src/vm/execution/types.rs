@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute type-related opcodes (TYPE_CHECK, TYPE_ASSERT)
     pub(crate) fn execute_types(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -21,10 +21,10 @@ impl VM {
                 let val_reg = decode_b(instruction);
                 let type_idx = decode_c(instruction) as usize;
 
-                let value = self.get_register(val_reg)?.clone();
+                let value = self.get_register(val_reg)?;
                 let type_name = self.get_string(type_idx)?;
 
-                let matches = self.check_type(&value, type_name);
+                let matches = self.check_type(&value, &type_name);
                 self.set_register(dst, Value::Boolean(matches))?;
 
                 Ok(ExecutionResult::Continue)
@@ -36,10 +36,10 @@ impl VM {
                 let val_reg = decode_a(instruction);
                 let type_idx = decode_bx(instruction) as usize;
 
-                let value = self.get_register(val_reg)?.clone();
+                let value = self.get_register(val_reg)?;
                 let type_name = self.get_string(type_idx)?;
 
-                if !self.check_type(&value, type_name) {
+                if !self.check_type(&value, &type_name) {
                     // Throw TypeError
                     let error_msg = format!(
                         "Type assertion failed: expected {}, got {}",

@@ -16,7 +16,7 @@ use crate::vm::VM;
 /// # Returns
 /// * `Ok(Value::String)` - Description of the value
 /// * `Err(VmError)` - If wrong number of arguments
-pub fn vm_describe(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_describe(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "describe() expects 1 argument, got {}",

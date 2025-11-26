@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 /// http_get(url) -> Future<String>
 /// Performs an HTTP GET request and returns the body as a string.
-pub fn vm_http_get(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_http_get(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "http_get() expects 1 argument, got {}",
@@ -61,7 +61,7 @@ pub fn vm_http_get(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// http_post(url, body, headers?) -> Future<String>
 /// Performs an HTTP POST request.
-pub fn vm_http_post(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_http_post(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "http_post() expects 2 or 3 arguments, got {}",

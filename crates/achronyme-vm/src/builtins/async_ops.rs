@@ -9,7 +9,7 @@ use achronyme_types::value::VmFuture;
 use std::time::Duration;
 
 /// sleep(ms) -> Future
-pub fn vm_sleep(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_sleep(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "sleep() expects 1 argument, got {}",
@@ -47,7 +47,7 @@ pub fn vm_sleep(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// spawn(func, ...args) -> Future
 /// Spawns a new task running the given function.
-pub fn vm_spawn(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_spawn(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "spawn() expects at least 1 argument".to_string(),
@@ -58,7 +58,7 @@ pub fn vm_spawn(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let func_args = args[1..].to_vec();
 
     // Create child VM
-    let mut child_vm = vm.new_child();
+    let child_vm = vm.new_child();
 
     // Set up call frame in child VM
     match &func {
@@ -79,7 +79,7 @@ pub fn vm_spawn(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
                 new_frame.registers.set(i as u8, arg.clone())?;
             }
 
-            child_vm.frames.push(new_frame);
+            child_vm.state.write().frames.push(new_frame);
         }
         _ => {
             return Err(VmError::TypeError {
@@ -121,7 +121,7 @@ pub fn vm_spawn(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// read_file(path) -> Future
 /// Asynchronously reads a file and returns its content as a string.
-pub fn vm_read_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_read_file(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "read_file() expects 1 argument, got {}",
@@ -156,7 +156,7 @@ pub fn vm_read_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// write_file(path, content) -> Future
 /// Asynchronously writes content to a file (overwriting).
-pub fn vm_write_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_write_file(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "write_file() expects 2 arguments, got {}",
@@ -202,7 +202,7 @@ pub fn vm_write_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// append_file(path, content) -> Future
 /// Asynchronously appends content to a file.
-pub fn vm_append_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_append_file(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "append_file() expects 2 arguments, got {}",
@@ -260,7 +260,7 @@ pub fn vm_append_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// delete_file(path) -> Future
 /// Asynchronously deletes a file.
-pub fn vm_delete_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_delete_file(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "delete_file() expects 1 argument, got {}",
@@ -295,7 +295,7 @@ pub fn vm_delete_file(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// exists(path) -> Future
 /// Asynchronously checks if a file exists.
-pub fn vm_exists(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_exists(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "exists() expects 1 argument, got {}",

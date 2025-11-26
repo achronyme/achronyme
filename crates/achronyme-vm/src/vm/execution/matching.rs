@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute pattern matching instructions
     pub(crate) fn execute_matching(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -25,10 +25,10 @@ impl VM {
                 let value_reg = b;
                 let type_idx = c as usize;
 
-                let value = self.get_register(value_reg)?.clone();
+                let value = self.get_register(value_reg)?;
                 let expected_type = self.get_string(type_idx)?;
 
-                let matches = self.check_type_match(&value, expected_type);
+                let matches = self.check_type_match(&value, &expected_type);
                 self.set_register(dst, Value::Boolean(matches))?;
                 Ok(ExecutionResult::Continue)
             }
@@ -63,7 +63,7 @@ impl VM {
                         // Get pattern descriptor (for now, just a number indicating element count)
                         let pattern_const = self.get_constant(pattern_idx)?;
                         let element_count = match pattern_const {
-                            Value::Number(n) => *n as usize,
+                            Value::Number(n) => n as usize,
                             _ => {
                                 return Err(VmError::Runtime(
                                     "DestructureVec pattern descriptor must be a number"

@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{self, BufRead};
 
 /// env_get(key) -> String | Null
-pub fn vm_env_get(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_env_get(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime("env_get() expects 1 argument".to_string()));
     }
@@ -33,7 +33,7 @@ pub fn vm_env_get(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// env_set(key, value) -> Null
-pub fn vm_env_set(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_env_set(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(
             "env_set() expects 2 arguments".to_string(),
@@ -67,7 +67,7 @@ pub fn vm_env_set(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// env_vars() -> Record
-pub fn vm_env_vars(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_env_vars(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime(
             "env_vars() expects 0 arguments".to_string(),
@@ -85,7 +85,7 @@ pub fn vm_env_vars(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// env_load(path?) -> Boolean
 /// Loads environment variables from a file (defaults to ".env").
 /// Returns true if file was found and loaded, false otherwise.
-pub fn vm_env_load(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_env_load(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let path = if args.is_empty() {
         ".env".to_string()
     } else if args.len() == 1 {

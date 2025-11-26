@@ -39,7 +39,7 @@ pub fn notify_signal_changed(_signal_rc: &Shared<SignalState>) {
 
 /// signal(initial_value) -> Signal
 /// Creates a new reactive signal.
-pub fn vm_signal(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     let initial_value = if args.is_empty() {
         Value::Null
     } else {
@@ -56,7 +56,7 @@ pub fn vm_signal(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// effect(callback) -> Null
 /// Registers a side effect that runs immediately and re-runs when dependencies change.
-pub fn vm_effect(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_effect(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(
             "effect() expects 1 argument (callback function)".to_string(),
@@ -72,7 +72,7 @@ pub fn vm_effect(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     });
 
     // Keep effect alive by adding to VM roots
-    vm.active_effects.push(effect_state.clone());
+    vm.state.write().active_effects.push(effect_state.clone());
 
     // Run the effect immediately to track dependencies
     run_effect(vm, effect_state)?;
@@ -81,7 +81,7 @@ pub fn vm_effect(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Helper to run an effect and track dependencies
-fn run_effect(vm: &mut VM, effect: Shared<EffectState>) -> Result<(), VmError> {
+fn run_effect(vm: &VM, effect: Shared<EffectState>) -> Result<(), VmError> {
     // 1. Cleanup: Unsubscribe from previous dependencies
     cleanup_effect(&effect);
 
@@ -126,7 +126,7 @@ fn cleanup_effect(effect_rc: &Shared<EffectState>) {
 // === Signal Methods ===
 
 /// Signal.value -> Value (Getter)
-pub fn vm_signal_get(_vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal_get(_vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("get() expects 0 arguments".to_string()));
     }
@@ -182,7 +182,7 @@ pub fn vm_signal_get(_vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result
 
 /// Signal.peek() -> Value
 /// Returns the current value WITHOUT tracking dependency.
-pub fn vm_signal_peek(_vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal_peek(_vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("peek() expects 0 arguments".to_string()));
     }
@@ -202,7 +202,7 @@ pub fn vm_signal_peek(_vm: &mut VM, signal_val: &Value, args: &[Value]) -> Resul
 
 /// Internal helper to set signal value and trigger effects
 pub fn set_signal_value(
-    vm: &mut VM,
+    vm: &VM,
     signal_rc: &Shared<SignalState>,
     new_value: Value,
 ) -> Result<(), VmError> {
@@ -225,18 +225,21 @@ pub fn set_signal_value(
             }
         }
 
-        // Notify external listener (e.g. GUI)
+        // Notify external listener (e.g. GUI) via thread-local (legacy)
         SIGNAL_NOTIFIER.with(|cell| {
             if let Some(callback) = cell.borrow().as_ref() {
                 callback();
             }
         });
+
+        // Notify via VM-based notifier (preferred for render engine)
+        vm.notify_signal_change();
     }
     Ok(())
 }
 
 /// Signal.set(new_value) -> Null
-pub fn vm_signal_set(vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal_set(vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime("set() expects 1 argument".to_string()));
     }

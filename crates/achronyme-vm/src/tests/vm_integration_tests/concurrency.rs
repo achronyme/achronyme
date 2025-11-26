@@ -3,13 +3,8 @@ use crate::value::Value;
 
 #[test]
 fn test_channel_communication() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-
-    local.block_on(&rt, async {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
         let source = r#"
             let pair = channel()
             let tx = pair[0]
@@ -30,13 +25,8 @@ fn test_channel_communication() {
 
 #[test]
 fn test_async_mutex() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = tokio::task::LocalSet::new();
-
-    local.block_on(&rt, async {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
         let source = r#"
             let counter = AsyncMutex(0)
 

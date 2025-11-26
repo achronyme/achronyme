@@ -13,7 +13,7 @@ use crate::vm::VM;
 use achronyme_types::sync::shared;
 
 /// Get the type name of a value
-pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_typeof(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "typeof() expects 1 argument, got {}",
@@ -51,7 +51,7 @@ pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Convert a value to its string representation
-pub fn vm_str(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_str(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "str() expects 1 argument, got {}",
@@ -64,7 +64,7 @@ pub fn vm_str(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a value is NaN
-pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_isnan(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "isnan() expects 1 argument, got {}",
@@ -100,7 +100,7 @@ pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a value is infinite
-pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_isinf(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "isinf() expects 1 argument, got {}",
@@ -136,7 +136,7 @@ pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a value is finite
-pub fn vm_isfinite(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_isfinite(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "isfinite() expects 1 argument, got {}",
@@ -248,99 +248,99 @@ mod tests {
 
     #[test]
     fn test_typeof_number() {
-        let mut vm = setup_vm();
-        let result = vm_typeof(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_typeof(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::String("Number".to_string()));
     }
 
     #[test]
     fn test_typeof_string() {
-        let mut vm = setup_vm();
-        let result = vm_typeof(&mut vm, &[Value::String("hello".to_string())]).unwrap();
+        let vm = setup_vm();
+        let result = vm_typeof(&vm, &[Value::String("hello".to_string())]).unwrap();
         assert_eq!(result, Value::String("String".to_string()));
     }
 
     #[test]
     fn test_typeof_boolean() {
-        let mut vm = setup_vm();
-        let result = vm_typeof(&mut vm, &[Value::Boolean(true)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_typeof(&vm, &[Value::Boolean(true)]).unwrap();
         assert_eq!(result, Value::String("Boolean".to_string()));
     }
 
     #[test]
     fn test_str_number() {
-        let mut vm = setup_vm();
-        let result = vm_str(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_str(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::String("42".to_string()));
     }
 
     #[test]
     fn test_str_string() {
-        let mut vm = setup_vm();
-        let result = vm_str(&mut vm, &[Value::String("hello".to_string())]).unwrap();
+        let vm = setup_vm();
+        let result = vm_str(&vm, &[Value::String("hello".to_string())]).unwrap();
         assert_eq!(result, Value::String("hello".to_string()));
     }
 
     #[test]
     fn test_str_boolean() {
-        let mut vm = setup_vm();
-        let result = vm_str(&mut vm, &[Value::Boolean(true)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_str(&vm, &[Value::Boolean(true)]).unwrap();
         assert_eq!(result, Value::String("true".to_string()));
     }
 
     #[test]
     fn test_isnan_true() {
-        let mut vm = setup_vm();
-        let result = vm_isnan(&mut vm, &[Value::Number(f64::NAN)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isnan(&vm, &[Value::Number(f64::NAN)]).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
     fn test_isnan_false() {
-        let mut vm = setup_vm();
-        let result = vm_isnan(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isnan(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
     #[test]
     fn test_isinf_positive() {
-        let mut vm = setup_vm();
-        let result = vm_isinf(&mut vm, &[Value::Number(f64::INFINITY)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isinf(&vm, &[Value::Number(f64::INFINITY)]).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
     fn test_isinf_negative() {
-        let mut vm = setup_vm();
-        let result = vm_isinf(&mut vm, &[Value::Number(f64::NEG_INFINITY)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isinf(&vm, &[Value::Number(f64::NEG_INFINITY)]).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
     fn test_isinf_false() {
-        let mut vm = setup_vm();
-        let result = vm_isinf(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isinf(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
     #[test]
     fn test_isfinite_true() {
-        let mut vm = setup_vm();
-        let result = vm_isfinite(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isfinite(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
     fn test_isfinite_false_nan() {
-        let mut vm = setup_vm();
-        let result = vm_isfinite(&mut vm, &[Value::Number(f64::NAN)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isfinite(&vm, &[Value::Number(f64::NAN)]).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
     #[test]
     fn test_isfinite_false_inf() {
-        let mut vm = setup_vm();
-        let result = vm_isfinite(&mut vm, &[Value::Number(f64::INFINITY)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_isfinite(&vm, &[Value::Number(f64::INFINITY)]).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 }

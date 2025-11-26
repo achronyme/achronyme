@@ -11,7 +11,7 @@ use achronyme_types::tensor::{ComplexTensor, RealTensor, Tensor};
 impl VM {
     /// Execute vector and tensor instructions
     pub(crate) fn execute_vectors(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -298,13 +298,13 @@ impl VM {
                 let end_val = self.get_register(end_reg)?;
 
                 match vec_value {
-                    Value::Vector(vec_rc) => {
-                        let vec = vec_rc.read();
+                    Value::Vector(v) => {
+                        let vec = v.read();
                         let len = vec.len();
 
                         let start = match start_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (len as isize + idx).max(0) as usize
                                 } else {
@@ -323,7 +323,7 @@ impl VM {
 
                         let end = match end_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (len as isize + idx).max(0) as usize
                                 } else {
@@ -331,9 +331,6 @@ impl VM {
                                 }
                             }
                             Value::Null => len,
-                            // Fix: If end_val is missing/undefined (e.g. when using rest pattern and register wasn't set), default to len?
-                            // But registers should be initialized.
-                            // If the compiler reuses registers, it might be dirty.
                             _ => {
                                 return Err(VmError::TypeError {
                                     operation: "slice end".to_string(),
@@ -345,9 +342,8 @@ impl VM {
 
                         let end = end.max(start);
                         let slice: Vec<Value> = vec[start..end].to_vec();
-                        let slice_vec = Value::Vector(shared(slice));
-
-                        self.set_register(dst, slice_vec)?;
+                        drop(vec); // Release the read lock
+                        self.set_register(dst, Value::Vector(shared(slice)))?;
                         Ok(ExecutionResult::Continue)
                     }
                     Value::Tensor(t) => {
@@ -359,7 +355,7 @@ impl VM {
 
                         let start = match start_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (len as isize + idx).max(0) as usize
                                 } else {
@@ -378,7 +374,7 @@ impl VM {
 
                         let end = match end_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (len as isize + idx).max(0) as usize
                                 } else {
@@ -420,7 +416,7 @@ impl VM {
 
                         let start = match start_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (len as isize + idx).max(0) as usize
                                 } else {
@@ -439,7 +435,7 @@ impl VM {
 
                         let end = match end_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (len as isize + idx).max(0) as usize
                                 } else {
@@ -477,7 +473,7 @@ impl VM {
 
                         let start = match start_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (char_count as isize + idx).max(0) as usize
                                 } else {
@@ -496,7 +492,7 @@ impl VM {
 
                         let end = match end_val {
                             Value::Number(n) => {
-                                let idx = *n as isize;
+                                let idx = n as isize;
                                 if idx < 0 {
                                     (char_count as isize + idx).max(0) as usize
                                 } else {
@@ -613,7 +609,7 @@ impl VM {
 
     // Helper for generic tensor slicing
     fn slice_tensor_generic(
-        &mut self,
+        &self,
         dst: u8,
         t: &RealTensor,
         indices: &[Value],
@@ -624,7 +620,7 @@ impl VM {
     }
 
     fn slice_complex_tensor_generic(
-        &mut self,
+        &self,
         dst: u8,
         t: &ComplexTensor,
         indices: &[Value],
@@ -636,7 +632,7 @@ impl VM {
 
     // Generic implementation that returns Tensor<T>
     fn perform_tensor_slicing<T: Clone>(
-        &mut self,
+        &self,
         t: &Tensor<T>,
         indices: &[Value],
     ) -> Result<Tensor<T>, VmError> {

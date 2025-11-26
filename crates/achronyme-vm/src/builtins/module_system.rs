@@ -21,7 +21,7 @@ use achronyme_types::value::VmFuture;
 ///
 /// # Returns
 /// * `Ok(Value::Future)` - A future that resolves to the module's exports Record
-pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_import(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     // Validate argument count
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
@@ -51,7 +51,13 @@ pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     // Resolve relative paths based on current module
     use std::path::Path;
-    if let Some(current_module) = &vm.current_module {
+    
+    let current_module = {
+        let state = vm.state.read();
+        state.current_module.clone()
+    };
+
+    if let Some(current_module) = &current_module {
         // If the path starts with ./ or ../, it's relative to the current module
         if file_path.starts_with("./") || file_path.starts_with("../") {
             if let Some(parent) = Path::new(current_module).parent() {

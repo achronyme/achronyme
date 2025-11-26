@@ -11,7 +11,7 @@ use crate::vm::VM;
 use achronyme_types::sync::shared;
 
 /// Get all keys from a record as a vector of strings
-pub fn vm_keys(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_keys(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "keys() expects 1 argument, got {}",
@@ -34,7 +34,7 @@ pub fn vm_keys(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Get all values from a record as a vector
-pub fn vm_values(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_values(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "values() expects 1 argument, got {}",
@@ -57,7 +57,7 @@ pub fn vm_values(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a record has a specific field
-pub fn vm_has_field(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_has_field(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "has_field() expects 2 arguments, got {}",
@@ -102,9 +102,9 @@ mod tests {
 
     #[test]
     fn test_keys_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let record = create_test_record();
-        let result = vm_keys(&mut vm, &[record]).unwrap();
+        let result = vm_keys(&vm, &[record]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -121,9 +121,9 @@ mod tests {
 
     #[test]
     fn test_values_basic() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let record = create_test_record();
-        let result = vm_values(&mut vm, &[record]).unwrap();
+        let result = vm_values(&vm, &[record]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -136,18 +136,18 @@ mod tests {
 
     #[test]
     fn test_has_field_true() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let record = create_test_record();
-        let result = vm_has_field(&mut vm, &[record, Value::String("name".to_string())]).unwrap();
+        let result = vm_has_field(&vm, &[record, Value::String("name".to_string())]).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
     fn test_has_field_false() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let record = create_test_record();
         let result =
-            vm_has_field(&mut vm, &[record, Value::String("missing".to_string())]).unwrap();
+            vm_has_field(&vm, &[record, Value::String("missing".to_string())]).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 }

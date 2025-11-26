@@ -11,7 +11,7 @@ use std::collections::HashMap;
 impl VM {
     /// Execute record instructions
     pub(crate) fn execute_records(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -34,13 +34,13 @@ impl VM {
                 let rec_reg = b;
                 let key_idx = c as usize;
 
-                let rec_value = self.get_register(rec_reg)?.clone();
+                let rec_value = self.get_register(rec_reg)?;
                 let field_name = self.get_string(key_idx)?;
 
                 // 1. Attempt to get field from Record
                 if let Value::Record(rec_rc) = &rec_value {
                     let rec_borrowed = rec_rc.read();
-                    if let Some(val) = rec_borrowed.get(field_name) {
+                    if let Some(val) = rec_borrowed.get(&field_name) {
                         self.set_register(dst, val.clone())?;
                         return Ok(ExecutionResult::Continue);
                     }
@@ -51,7 +51,7 @@ impl VM {
                 if let Some(type_disc) =
                     crate::vm::intrinsics::TypeDiscriminant::from_value(&rec_value)
                 {
-                    if let Some(func) = self.intrinsics.lookup(&type_disc, field_name) {
+                    if let Some(func) = self.intrinsics.lookup(&type_disc, &field_name) {
                         // Special case for Signal.value (getter)
                         // We invoke it immediately instead of returning a BoundMethod
                         if matches!(type_disc, crate::vm::intrinsics::TypeDiscriminant::Signal)
@@ -81,7 +81,7 @@ impl VM {
                     source,
                 } = &rec_value
                 {
-                    let value = match field_name {
+                    let value = match field_name.as_str() {
                         "message" => Value::String(message.clone()),
                         "kind" => match kind {
                             Some(k) => Value::String(k.clone()),
@@ -123,9 +123,9 @@ impl VM {
                 let key_idx = b as usize;
                 let val_reg = c;
 
-                let rec_value = self.get_register(rec_reg)?.clone();
+                let rec_value = self.get_register(rec_reg)?;
                 let field_name = self.get_string(key_idx)?;
-                let new_value = self.get_register(val_reg)?.clone();
+                let new_value = self.get_register(val_reg)?;
 
                 match &rec_value {
                     Value::Record(rec_rc) => {

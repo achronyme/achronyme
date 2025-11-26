@@ -18,7 +18,7 @@ impl VM {
     ///
     /// Arguments are expected to be in consecutive registers starting at dest+1
     pub(crate) fn execute_call_builtin(
-        &mut self,
+        &self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let dest = decode_a(instruction);

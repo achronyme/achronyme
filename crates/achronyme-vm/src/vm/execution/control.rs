@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute control flow instructions
     pub(crate) fn execute_control(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -18,24 +18,30 @@ impl VM {
         match opcode {
             OpCode::Jump => {
                 let offset = decode_sbx(instruction);
-                self.current_frame_mut()?.jump(offset);
+                let mut state = self.state.write();
+                let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                frame.jump(offset);
                 Ok(ExecutionResult::Continue)
             }
 
             OpCode::JumpIfTrue => {
                 let cond = self.get_register(a)?;
-                if ValueOperations::is_truthy(cond) {
+                if ValueOperations::is_truthy(&cond) {
                     let offset = decode_sbx(instruction);
-                    self.current_frame_mut()?.jump(offset);
+                    let mut state = self.state.write();
+                    let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                    frame.jump(offset);
                 }
                 Ok(ExecutionResult::Continue)
             }
 
             OpCode::JumpIfFalse => {
                 let cond = self.get_register(a)?;
-                if !ValueOperations::is_truthy(cond) {
+                if !ValueOperations::is_truthy(&cond) {
                     let offset = decode_sbx(instruction);
-                    self.current_frame_mut()?.jump(offset);
+                    let mut state = self.state.write();
+                    let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                    frame.jump(offset);
                 }
                 Ok(ExecutionResult::Continue)
             }
@@ -44,13 +50,15 @@ impl VM {
                 let value = self.get_register(a)?;
                 if matches!(value, crate::value::Value::Null) {
                     let offset = decode_sbx(instruction);
-                    self.current_frame_mut()?.jump(offset);
+                    let mut state = self.state.write();
+                    let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                    frame.jump(offset);
                 }
                 Ok(ExecutionResult::Continue)
             }
 
             OpCode::Return => {
-                let value = self.get_register(a)?.clone();
+                let value = self.get_register(a)?;
                 Ok(ExecutionResult::Return(value))
             }
 

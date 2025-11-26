@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute variable and constant loading instructions
     pub(crate) fn execute_variables(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -19,7 +19,7 @@ impl VM {
 
         match opcode {
             OpCode::LoadConst => {
-                let value = self.get_constant(bx as usize)?.clone();
+                let value = self.get_constant(bx as usize)?;
                 self.set_register(a, value)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -45,7 +45,7 @@ impl VM {
             }
 
             OpCode::Move => {
-                let value = self.get_register(b)?.clone();
+                let value = self.get_register(b)?;
                 self.set_register(a, value)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -54,13 +54,17 @@ impl VM {
                 let dst = a;
                 let upvalue_idx = b as usize;
 
-                let upvalue = self
-                    .current_frame()?
+                let state = self.state.read();
+                let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+                
+                let upvalue = frame
                     .upvalues
                     .get(upvalue_idx)
                     .ok_or(VmError::Runtime("Invalid upvalue index".to_string()))?;
 
                 let value = upvalue.read().clone();
+                drop(state); // Release lock before setting register
+                
                 self.set_register(dst, value)?;
 
                 Ok(ExecutionResult::Continue)
@@ -70,9 +74,12 @@ impl VM {
                 let upvalue_idx = a as usize;
                 let src = b;
 
-                let value = self.get_register(src)?.clone();
-                let upvalue = self
-                    .current_frame()?
+                let value = self.get_register(src)?;
+                
+                let state = self.state.read();
+                let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+                
+                let upvalue = frame
                     .upvalues
                     .get(upvalue_idx)
                     .ok_or(VmError::Runtime("Invalid upvalue index".to_string()))?;
@@ -86,7 +93,7 @@ impl VM {
                 let dst = a;
                 // Bx is index into constants pool for the name string
                 let name_idx = bx as usize;
-                let name = self.get_string(name_idx)?.to_string();
+                let name = self.get_string(name_idx)?;
 
                 let value_opt = self.globals.read().get(&name).cloned();
                 if let Some(value) = value_opt {
@@ -105,8 +112,8 @@ impl VM {
                 let src = a;
                 // Bx is index into constants pool for the name string
                 let name_idx = bx as usize;
-                let name = self.get_string(name_idx)?.to_string();
-                let value = self.get_register(src)?.clone();
+                let name = self.get_string(name_idx)?;
+                let value = self.get_register(src)?;
 
                 self.globals.write().insert(name, value);
 

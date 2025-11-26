@@ -14,7 +14,7 @@ use achronyme_types::complex::Complex;
 use achronyme_types::sync::shared;
 
 /// Create a complex number from real and imaginary parts
-pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_complex(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "complex() expects 2 arguments, got {}",
@@ -33,7 +33,7 @@ pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Extract real part of a number or complex number
-pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_real(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "real() expects 1 argument, got {}",
@@ -71,7 +71,7 @@ pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Extract imaginary part of a number or complex number
-pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_imag(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "imag() expects 1 argument, got {}",
@@ -109,7 +109,7 @@ pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate complex conjugate
-pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_conj(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "conj() expects 1 argument, got {}",
@@ -147,7 +147,7 @@ pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate argument (phase angle) of a complex number
-pub fn vm_arg(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_arg(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "arg() expects 1 argument, got {}",
@@ -183,7 +183,7 @@ pub fn vm_arg(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// magnitude(complex(3, 4))  // 5.0
 /// magnitude(5)              // 5.0
 /// ```
-pub fn vm_magnitude(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_magnitude(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "magnitude() expects 1 argument, got {}",
@@ -212,7 +212,7 @@ pub fn vm_magnitude(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// phase(complex(1, 1))  // π/4 ≈ 0.7854
 /// phase(-1)             // π ≈ 3.1416
 /// ```
-pub fn vm_phase(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_phase(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "phase() expects 1 argument, got {}",
@@ -247,7 +247,7 @@ pub fn vm_phase(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// polar(1, pi/4)  // complex(0.7071, 0.7071) ≈ 1∠45°
 /// polar(5, 0)     // complex(5, 0)
 /// ```
-pub fn vm_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_polar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "polar() expects 2 arguments (r, theta), got {}",
@@ -279,7 +279,7 @@ pub fn vm_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 /// to_polar(complex(1, 1))   // [1.4142, 0.7854] ≈ [√2, π/4]
 /// to_polar(complex(3, 4))   // [5, 0.9273]
 /// ```
-pub fn vm_to_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_to_polar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "to_polar() expects 1 argument, got {}",
@@ -322,8 +322,8 @@ mod tests {
 
     #[test]
     fn test_complex_basic() {
-        let mut vm = setup_vm();
-        let result = vm_complex(&mut vm, &[Value::Number(3.0), Value::Number(4.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_complex(&vm, &[Value::Number(3.0), Value::Number(4.0)]).unwrap();
         match result {
             Value::Complex(c) => {
                 assert_eq!(c.re, 3.0);
@@ -335,46 +335,46 @@ mod tests {
 
     #[test]
     fn test_real_number() {
-        let mut vm = setup_vm();
-        let result = vm_real(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_real(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
     fn test_real_complex() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let c = Complex::new(3.0, 4.0);
-        let result = vm_real(&mut vm, &[Value::Complex(c)]).unwrap();
+        let result = vm_real(&vm, &[Value::Complex(c)]).unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
 
     #[test]
     fn test_imag_number() {
-        let mut vm = setup_vm();
-        let result = vm_imag(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_imag(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
     #[test]
     fn test_imag_complex() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let c = Complex::new(3.0, 4.0);
-        let result = vm_imag(&mut vm, &[Value::Complex(c)]).unwrap();
+        let result = vm_imag(&vm, &[Value::Complex(c)]).unwrap();
         assert_eq!(result, Value::Number(4.0));
     }
 
     #[test]
     fn test_conj_number() {
-        let mut vm = setup_vm();
-        let result = vm_conj(&mut vm, &[Value::Number(42.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_conj(&vm, &[Value::Number(42.0)]).unwrap();
         assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
     fn test_conj_complex() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let c = Complex::new(3.0, 4.0);
-        let result = vm_conj(&mut vm, &[Value::Complex(c)]).unwrap();
+        let result = vm_conj(&vm, &[Value::Complex(c)]).unwrap();
         match result {
             Value::Complex(conj) => {
                 assert_eq!(conj.re, 3.0);
@@ -386,23 +386,23 @@ mod tests {
 
     #[test]
     fn test_arg_positive() {
-        let mut vm = setup_vm();
-        let result = vm_arg(&mut vm, &[Value::Number(5.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_arg(&vm, &[Value::Number(5.0)]).unwrap();
         assert_eq!(result, Value::Number(0.0));
     }
 
     #[test]
     fn test_arg_negative() {
-        let mut vm = setup_vm();
-        let result = vm_arg(&mut vm, &[Value::Number(-5.0)]).unwrap();
+        let vm = setup_vm();
+        let result = vm_arg(&vm, &[Value::Number(-5.0)]).unwrap();
         assert_eq!(result, Value::Number(std::f64::consts::PI));
     }
 
     #[test]
     fn test_arg_complex() {
-        let mut vm = setup_vm();
+        let vm = setup_vm();
         let c = Complex::new(1.0, 1.0);
-        let result = vm_arg(&mut vm, &[Value::Complex(c)]).unwrap();
+        let result = vm_arg(&vm, &[Value::Complex(c)]).unwrap();
         // arg(1+i) = π/4 ≈ 0.7854
         if let Value::Number(n) = result {
             assert!((n - std::f64::consts::FRAC_PI_4).abs() < 0.001);

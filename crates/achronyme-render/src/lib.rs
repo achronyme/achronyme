@@ -372,6 +372,16 @@ impl AuiApp {
         self.modified_nodes.clear();
     }
 
+    /// Check if a slider is currently being dragged
+    pub fn is_dragging_slider(&self) -> bool {
+        self.dragging_slider.is_some()
+    }
+
+    /// Check if any nodes have been modified this frame
+    pub fn has_modified_nodes(&self) -> bool {
+        !self.modified_nodes.is_empty()
+    }
+
     /// Request the app to quit
     pub fn request_quit(&mut self) {
         self.quit_requested = true;

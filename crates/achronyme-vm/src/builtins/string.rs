@@ -16,7 +16,7 @@ use achronyme_types::sync::shared;
 // Length and Access
 // ============================================================================
 
-pub fn vm_len(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_len(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "len() expects 1 argument, got {}",
@@ -35,7 +35,7 @@ pub fn vm_len(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_char_at(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_char_at(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "char_at() expects 2 arguments, got {}",
@@ -68,7 +68,7 @@ pub fn vm_char_at(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // Case Conversion
 // ============================================================================
 
-pub fn vm_upper(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_upper(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "upper() expects 1 argument, got {}",
@@ -86,7 +86,7 @@ pub fn vm_upper(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_lower(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_lower(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "lower() expects 1 argument, got {}",
@@ -108,7 +108,7 @@ pub fn vm_lower(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // Whitespace Handling
 // ============================================================================
 
-pub fn vm_trim(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_trim(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "trim() expects 1 argument, got {}",
@@ -126,7 +126,7 @@ pub fn vm_trim(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_trim_start(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_trim_start(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "trim_start() expects 1 argument, got {}",
@@ -144,7 +144,7 @@ pub fn vm_trim_start(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_trim_end(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_trim_end(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "trim_end() expects 1 argument, got {}",
@@ -166,7 +166,7 @@ pub fn vm_trim_end(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // Search Functions
 // ============================================================================
 
-pub fn vm_contains(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_contains(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "contains() expects 2 arguments, got {}",
@@ -186,7 +186,7 @@ pub fn vm_contains(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_starts_with(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_starts_with(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "starts_with() expects 2 arguments, got {}",
@@ -206,7 +206,7 @@ pub fn vm_starts_with(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_ends_with(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ends_with(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "ends_with() expects 2 arguments, got {}",
@@ -230,7 +230,7 @@ pub fn vm_ends_with(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // Manipulation Functions
 // ============================================================================
 
-pub fn vm_replace(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_replace(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 3 {
         return Err(VmError::Runtime(format!(
             "replace() expects 3 arguments, got {}",
@@ -250,7 +250,7 @@ pub fn vm_replace(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_split(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_split(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "split() expects 2 arguments, got {}",
@@ -274,7 +274,7 @@ pub fn vm_split(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_join(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_join(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "join() expects 2 arguments, got {}",
@@ -307,7 +307,7 @@ pub fn vm_join(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_substring(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_substring(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 3 {
         return Err(VmError::Runtime(format!(
             "substring() expects 3 arguments, got {}",
@@ -341,7 +341,7 @@ pub fn vm_substring(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_concat(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_concat(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "concat() expects 2 arguments, got {}",

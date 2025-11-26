@@ -10,7 +10,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute exception handling instructions
     pub(crate) fn execute_exceptions(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -77,8 +77,11 @@ impl VM {
                 let offset = decode_sbx(instruction);
 
                 // Calculate absolute catch_ip: current IP + offset
-                let frame = self.current_frame()?;
-                let catch_ip = (frame.ip as isize + offset as isize) as usize;
+                let catch_ip = {
+                    let state = self.state.read();
+                    let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+                    (frame.ip as isize + offset as isize) as usize
+                };
 
                 // Push handler to current frame
                 let handler = ExceptionHandler {
@@ -86,12 +89,17 @@ impl VM {
                     error_reg: a,
                 };
 
-                self.current_frame_mut()?.handlers.push(handler);
+                let mut state = self.state.write();
+                let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                frame.handlers.push(handler);
+                
                 Ok(ExecutionResult::Continue)
             }
 
             OpCode::PopHandler => {
-                let frame = self.current_frame_mut()?;
+                let mut state = self.state.write();
+                let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                
                 if frame.handlers.is_empty() {
                     return Err(VmError::Runtime("No exception handler to pop".to_string()));
                 }

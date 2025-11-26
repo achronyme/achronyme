@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute arithmetic instructions
     pub(crate) fn execute_arithmetic(
-        &mut self,
+        &self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -21,7 +21,7 @@ impl VM {
             OpCode::Add => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::add_values(left, right)?;
+                let result = ValueOperations::add_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -29,7 +29,7 @@ impl VM {
             OpCode::Sub => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::sub_values(left, right)?;
+                let result = ValueOperations::sub_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -37,7 +37,7 @@ impl VM {
             OpCode::Mul => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::mul_values(left, right)?;
+                let result = ValueOperations::mul_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -45,7 +45,7 @@ impl VM {
             OpCode::Div => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::div_values(left, right)?;
+                let result = ValueOperations::div_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -53,7 +53,7 @@ impl VM {
             OpCode::Mod => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::mod_values(left, right)?;
+                let result = ValueOperations::mod_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
@@ -61,21 +61,21 @@ impl VM {
             OpCode::Pow => {
                 let left = self.get_register(b)?;
                 let right = self.get_register(c)?;
-                let result = ValueOperations::pow_values(left, right)?;
+                let result = ValueOperations::pow_values(&left, &right)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
 
             OpCode::Neg => {
                 let value = self.get_register(b)?;
-                let result = ValueOperations::neg_value(value)?;
+                let result = ValueOperations::neg_value(&value)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }
 
             OpCode::Not => {
                 let value = self.get_register(b)?;
-                let result = ValueOperations::not_value(value)?;
+                let result = ValueOperations::not_value(&value)?;
                 self.set_register(a, result)?;
                 Ok(ExecutionResult::Continue)
             }

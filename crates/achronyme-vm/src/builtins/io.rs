@@ -14,7 +14,7 @@ use std::io::{self, Write};
 // ============================================================================
 
 /// Print value to stdout with newline
-pub fn vm_print(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_print(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "print() requires at least 1 argument".to_string(),
@@ -34,7 +34,7 @@ pub fn vm_print(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Print value to stdout with newline
-pub fn vm_println(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_println(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         // Just print newline
         println!();
@@ -58,7 +58,7 @@ pub fn vm_println(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 // ============================================================================
 
 /// Read a line from stdin
-pub fn vm_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_input(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     // Optional prompt
     if args.len() == 1 {
         if let Value::String(prompt) = &args[0] {
