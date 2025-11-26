@@ -223,7 +223,7 @@ impl LayoutEngine {
                 font_size: node.style.font_size,
                 bold: node.style.font_bold,
             },
-            NodeContent::Button { label } => MeasureContext::Button {
+            NodeContent::Button { label, .. } => MeasureContext::Button {
                 label: label.clone(),
                 font_size: node.style.font_size,
             },
@@ -621,8 +621,8 @@ mod tests {
 
         // Three children: label + 2 buttons (using text measurement)
         let label = tree.insert(UiNode::text("Row 1:"));
-        let btn1 = tree.insert(UiNode::button("Button A"));
-        let btn2 = tree.insert(UiNode::button("Button B"));
+        let btn1 = tree.insert(UiNode::button(1, "Button A"));
+        let btn2 = tree.insert(UiNode::button(2, "Button B"));
 
         tree.add_child(root, label);
         tree.add_child(root, btn1);
@@ -719,7 +719,7 @@ mod tests {
 
         // Button A: "bg-blue-600 text-white p-2 rounded"
         let btn_a_parsed = parse_style("bg-blue-600 text-white p-2 rounded").unwrap();
-        let mut btn_a_node = UiNode::button("Button A");
+        let mut btn_a_node = UiNode::button(1, "Button A");
         btn_a_node.style = btn_a_parsed.visual;
         let btn_a = tree.insert(btn_a_node);
         tree.add_child(row_box, btn_a);
@@ -727,7 +727,7 @@ mod tests {
 
         // Button B: "bg-green-600 text-white p-2 rounded"
         let btn_b_parsed = parse_style("bg-green-600 text-white p-2 rounded").unwrap();
-        let mut btn_b_node = UiNode::button("Button B");
+        let mut btn_b_node = UiNode::button(2, "Button B");
         btn_b_node.style = btn_b_parsed.visual;
         let btn_b = tree.insert(btn_b_node);
         tree.add_child(row_box, btn_b);

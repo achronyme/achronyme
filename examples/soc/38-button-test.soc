@@ -1,0 +1,36 @@
+// 38-button-test.soc
+// Simple test for button click detection
+
+println("Button Test Starting...")
+
+let click_count = signal(0)
+
+let app = () => do {
+    ui_box("bg-[#1a1a2e] w-full h-full flex-col items-center justify-center gap-4", () => do {
+        ui_label("Button Click Test", "text-white text-2xl")
+
+        let count = click_count.value
+        ui_label("Clicks: " + str(count), "text-[#4ade80] text-xl")
+
+        let clicked = ui_button("Click Me!", "bg-[#3b82f6] text-white px-6 py-3 rounded text-lg")
+        if (clicked) {
+            println("Button was clicked! Count: " + str(count + 1))
+            click_count.set(count + 1)
+        }
+
+        let reset = ui_button("Reset", "bg-[#ef4444] text-white px-4 py-2 rounded")
+        if (reset) {
+            println("Reset clicked!")
+            click_count.set(0)
+        }
+
+        // Auto-quit after 10 clicks for testing
+        if (count >= 10) {
+            ui_label("Test complete! Closing...", "text-[#fbbf24]")
+            ui_quit()
+        }
+    })
+}
+
+gui_run(app, { title: "Button Test", width: 400, height: 300 })
+println("GUI Closed. Final count: " + str(click_count.value))

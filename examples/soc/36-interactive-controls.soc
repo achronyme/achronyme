@@ -1,0 +1,74 @@
+// 36-interactive-controls.soc
+// Example demonstrating interactive controls with the new wgpu-powered renderer
+
+println("Launching Interactive Controls Demo...")
+
+let frame_counter = signal(0)
+
+// Define the application render function
+let app = () => do {
+    // Increment frame counter
+    frame_counter.set(frame_counter.peek() + 1)
+
+    // Auto-close after 300 frames (~5 seconds at 60fps) for CI testing
+    if (frame_counter.value > 300) {
+        ui_quit()
+    }
+
+    // Main Container with dark background
+    ui_box("bg-[#1a1a2e] w-full h-full flex-col items-center justify-center gap-6 p-8", () => do {
+
+        // Title
+        ui_label("Interactive Controls Demo", "text-white text-2xl font-bold")
+        ui_label("wgpu-powered renderer", "text-[#8888aa] text-sm")
+
+        // Card container
+        ui_box("bg-[#16213e] rounded-lg p-6 flex-col gap-4 w-[400px]", () => do {
+
+            // Text Input Section
+            ui_box("flex-col gap-2", () => do {
+                ui_label("Name:", "text-white")
+                ui_text_input({
+                    value: "",
+                    placeholder: "Click here and type your name..."
+                }, "w-full h-[36px] rounded bg-[#2d2d2d]")
+            })
+
+            // Slider Section
+            ui_box("flex-col gap-2", () => do {
+                ui_label("Volume:", "text-white")
+                ui_slider(50, 0, 100, "w-full")
+            })
+
+            // Checkbox Section
+            ui_box("flex-col gap-2", () => do {
+                ui_checkbox("Enable notifications", false, "text-white")
+                ui_checkbox("Dark mode", true, "text-white")
+            })
+
+            ui_separator("bg-[#4b5563]")
+
+            // Button Row
+            ui_box("flex-row gap-4 justify-center", () => do {
+                let clicked1 = ui_button("Primary", "bg-[#3b82f6] text-white px-4 py-2 rounded")
+                if (clicked1) {
+                    println("Primary button clicked!")
+                }
+
+                let clicked2 = ui_button("Secondary", "bg-[#e94560] text-white px-4 py-2 rounded")
+                if (clicked2) {
+                    println("Secondary button clicked!")
+                }
+                null
+            })
+
+            // Instructions
+            ui_label("Try interacting with the controls above!", "text-[#6b7280] text-center")
+        })
+    })
+}
+
+// Start the Event Loop
+gui_run(app, { title: "Interactive Controls", width: 600, height: 500 })
+
+println("GUI Closed.")

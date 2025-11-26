@@ -252,6 +252,16 @@ impl TextRenderer {
     }
 }
 
+impl TextRenderer {
+    /// Get the font for the specified weight (for direct glyph access)
+    pub fn get_font(&self, weight: FontWeight) -> &Font {
+        match weight {
+            FontWeight::Regular => &self.font_regular,
+            FontWeight::Bold => &self.font_bold,
+        }
+    }
+}
+
 impl Default for TextRenderer {
     fn default() -> Self {
         Self::new()

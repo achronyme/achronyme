@@ -26,22 +26,31 @@
 //!                        │ feeds
 //!                        ▼
 //! ┌─────────────────────────────────────────────────────┐
-//! │                 SoftwareRenderer                     │
-//! │  Rasterizes nodes to pixel buffer                   │
+//! │              WgpuRenderer (GPU) / SoftwareRenderer   │
+//! │  Rasterizes nodes to screen                         │
 //! └──────────────────────┬──────────────────────────────┘
 //!                        │ displays via
 //!                        ▼
 //! ┌─────────────────────────────────────────────────────┐
-//! │                  Window (winit + softbuffer)         │
+//! │                  Window (winit)                      │
 //! └─────────────────────────────────────────────────────┘
 //! ```
 
 pub mod events;
 pub mod layout;
 pub mod node;
-pub mod render;
 pub mod style_parser;
 pub mod text;
+
+// Conditional rendering backends
+#[cfg(feature = "wgpu-backend")]
+pub mod wgpu_renderer;
+
+#[cfg(feature = "software-backend")]
+pub mod render;
+
+// Re-export winit for consumers
+pub use winit;
 
 use events::{EventManager, MouseButton};
 use layout::{LayoutEngine, LayoutStyle};
@@ -49,15 +58,21 @@ pub use events::Event;
 pub use node::{NodeId, PlotKind, PlotSeries};
 pub use style_parser::{parse_style, ParsedStyle};
 use node::{UiNode, UiTree};
-use render::{RenderState, SoftwareRenderer};
-use std::collections::HashMap;
-use std::num::NonZeroU32;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent, KeyEvent};
+use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
+
+// Re-export the appropriate renderer types
+#[cfg(feature = "wgpu-backend")]
+pub use wgpu_renderer::RenderState;
+
+#[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+pub use render::RenderState;
 
 /// Configuration for creating a window
 #[derive(Clone)]
@@ -80,19 +95,15 @@ impl Default for WindowConfig {
 /// The main application state
 pub struct AuiApp {
     /// Window configuration
-    config: WindowConfig,
+    pub config: WindowConfig,
     /// The window (created on resume)
     window: Option<Arc<Window>>,
-    /// Softbuffer surface
-    surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
     /// The UI tree
     tree: UiTree,
     /// Layout styles for each node
     styles: HashMap<NodeId, LayoutStyle>,
     /// The layout engine
     layout_engine: LayoutEngine,
-    /// The software renderer
-    renderer: SoftwareRenderer,
     /// Event manager for handling interactions
     events: EventManager,
     /// Root node ID
@@ -105,6 +116,31 @@ pub struct AuiApp {
     hovered_node: Option<NodeId>,
     /// Track pressed node for visual feedback
     pressed_node: Option<NodeId>,
+    /// Track focused node for keyboard input
+    focused_node: Option<NodeId>,
+    /// Track if slider is being dragged
+    dragging_slider: Option<NodeId>,
+    /// Track clicked button widget IDs (cleared after each frame)
+    clicked_buttons: Vec<u64>,
+    /// Track nodes that were modified by user input this frame
+    modified_nodes: HashSet<NodeId>,
+    /// Flag to request app quit
+    quit_requested: bool,
+
+    // Backend-specific fields
+    #[cfg(feature = "wgpu-backend")]
+    renderer: Option<wgpu_renderer::WgpuRenderer>,
+
+    #[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+    surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
+    #[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+    renderer: render::SoftwareRenderer,
+}
+
+impl Default for AuiApp {
+    fn default() -> Self {
+        Self::new(WindowConfig::default())
+    }
 }
 
 impl AuiApp {
@@ -114,16 +150,27 @@ impl AuiApp {
             size: PhysicalSize::new(config.width, config.height),
             config,
             window: None,
-            surface: None,
             tree: UiTree::new(),
             styles: HashMap::new(),
             layout_engine: LayoutEngine::new(),
-            renderer: SoftwareRenderer::new(800, 600),
             events: EventManager::new(),
             root: None,
             cursor_pos: PhysicalPosition::new(0.0, 0.0),
             hovered_node: None,
             pressed_node: None,
+            focused_node: None,
+            dragging_slider: None,
+            clicked_buttons: Vec::new(),
+            modified_nodes: HashSet::new(),
+            quit_requested: false,
+
+            #[cfg(feature = "wgpu-backend")]
+            renderer: None,
+
+            #[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+            surface: None,
+            #[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+            renderer: render::SoftwareRenderer::new(800, 600),
         }
     }
 
@@ -174,16 +221,18 @@ impl AuiApp {
     }
 
     /// Add a button with style string
-    pub fn add_button(&mut self, label: &str, style_str: &str) -> NodeId {
-        self.add_node(node::NodeContent::Button { label: label.to_string() }, style_str)
+    pub fn add_button(&mut self, id: u64, label: &str, style_str: &str) -> NodeId {
+        self.add_node(node::NodeContent::Button { id, label: label.to_string() }, style_str)
     }
 
     /// Add a text input with style string
-    pub fn add_text_input(&mut self, id: u64, placeholder: &str, style_str: &str) -> NodeId {
+    pub fn add_text_input(&mut self, id: u64, placeholder: &str, initial_value: &str, style_str: &str) -> NodeId {
         self.add_node(
             node::NodeContent::TextInput {
                 id,
                 placeholder: placeholder.to_string(),
+                value: initial_value.to_string(),
+                cursor: initial_value.len(),
             },
             style_str,
         )
@@ -281,7 +330,258 @@ impl AuiApp {
         &mut self.events
     }
 
-    fn do_layout(&mut self) {
+    /// Get the currently focused node
+    pub fn focused(&self) -> Option<NodeId> {
+        self.focused_node
+    }
+
+    /// Set focus to a specific node
+    pub fn set_focus(&mut self, node: Option<NodeId>) {
+        self.focused_node = node;
+    }
+
+    /// Check if a button with the given widget_id was clicked this frame
+    pub fn was_button_clicked(&self, widget_id: u64) -> bool {
+        self.clicked_buttons.contains(&widget_id)
+    }
+
+    /// Register that a button was clicked (by widget_id)
+    pub fn register_button_click(&mut self, widget_id: u64) {
+        if !self.clicked_buttons.contains(&widget_id) {
+            self.clicked_buttons.push(widget_id);
+        }
+    }
+
+    /// Clear clicked buttons (call at the start of each frame)
+    pub fn clear_clicked_buttons(&mut self) {
+        self.clicked_buttons.clear();
+    }
+
+    /// Check if a node was modified by user input this frame
+    pub fn was_node_modified(&self, node_id: NodeId) -> bool {
+        self.modified_nodes.contains(&node_id)
+    }
+
+    /// Mark a node as modified (internal use)
+    fn mark_modified(&mut self, node_id: NodeId) {
+        self.modified_nodes.insert(node_id);
+    }
+
+    /// Clear modified status (call at start of frame)
+    pub fn clear_modified_nodes(&mut self) {
+        self.modified_nodes.clear();
+    }
+
+    /// Request the app to quit
+    pub fn request_quit(&mut self) {
+        self.quit_requested = true;
+    }
+
+    /// Check if quit was requested
+    pub fn is_quit_requested(&self) -> bool {
+        self.quit_requested
+    }
+
+    /// Clear the UI tree for rebuilding (for immediate-mode style rendering)
+    pub fn clear_tree(&mut self) {
+        self.tree = UiTree::new();
+        self.styles.clear();
+        self.root = None;
+        self.modified_nodes.clear();
+    }
+
+    /// Handle keyboard input for focused control
+    fn handle_keyboard_input(&mut self, key_event: &KeyEvent) {
+        if key_event.state != ElementState::Pressed {
+            return;
+        }
+
+        let Some(focused) = self.focused_node else {
+            return;
+        };
+
+        let Some(node) = self.tree.get_mut(focused) else {
+            return;
+        };
+
+        match &mut node.content {
+            node::NodeContent::TextInput { value, cursor, .. } => {
+                match &key_event.logical_key {
+                    Key::Character(c) => {
+                        // Insert character at cursor
+                        let char_str = c.as_str();
+                        value.insert_str(*cursor, char_str);
+                        *cursor += char_str.len();
+                    }
+                    Key::Named(NamedKey::Space) => {
+                        value.insert_str(*cursor, " ");
+                        *cursor += 1;
+                    }
+                    Key::Named(NamedKey::Backspace) => {
+                        if *cursor > 0 {
+                            // Find previous char boundary
+                            let prev = value[..*cursor].char_indices()
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                            value.remove(prev);
+                            *cursor = prev;
+                        }
+                    }
+                    Key::Named(NamedKey::Delete) => {
+                        if *cursor < value.len() {
+                            value.remove(*cursor);
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowLeft) => {
+                        if *cursor > 0 {
+                            *cursor = value[..*cursor].char_indices()
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowRight) => {
+                        if *cursor < value.len() {
+                            *cursor = value[*cursor..].char_indices()
+                                .nth(1)
+                                .map(|(i, _)| *cursor + i)
+                                .unwrap_or(value.len());
+                        }
+                    }
+                    Key::Named(NamedKey::Home) => {
+                        *cursor = 0;
+                    }
+                    Key::Named(NamedKey::End) => {
+                        *cursor = value.len();
+                    }
+                    _ => {}
+                }
+                self.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle click on interactive controls
+    fn handle_control_click(&mut self, node_id: NodeId, local_x: f32, _local_y: f32) {
+        let Some(node) = self.tree.get_mut(node_id) else {
+            return;
+        };
+
+        match &mut node.content {
+            node::NodeContent::TextInput { .. } => {
+                // Focus the text input
+                self.focused_node = Some(node_id);
+            }
+            node::NodeContent::Checkbox { checked, .. } => {
+                // Toggle the checkbox
+                *checked = !*checked;
+                self.mark_modified(node_id);
+            }
+            node::NodeContent::Slider { min, max, value, .. } => {
+                // Calculate value from click position
+                let width = node.layout.width;
+                if width > 0.0 {
+                    let ratio = (local_x / width).clamp(0.0, 1.0) as f64;
+                    *value = *min + ratio * (*max - *min);
+                    self.mark_modified(node_id);
+                }
+            }
+            node::NodeContent::Button { id, .. } => {
+                // Register button click for immediate-mode style detection
+                self.clicked_buttons.push(*id);
+            }
+            _ => {}
+        }
+        self.request_redraw();
+    }
+
+    /// Handle slider drag
+    fn handle_slider_drag(&mut self, x: f32) {
+        let Some(slider_id) = self.dragging_slider else {
+            return;
+        };
+
+        let Some(node) = self.tree.get_mut(slider_id) else {
+            return;
+        };
+
+        if let node::NodeContent::Slider { min, max, value, .. } = &mut node.content {
+            let layout_x = node.layout.x;
+            let width = node.layout.width;
+            if width > 0.0 {
+                let local_x = x - layout_x;
+                let ratio = (local_x / width).clamp(0.0, 1.0) as f64;
+                *value = *min + ratio * (*max - *min);
+                self.mark_modified(slider_id);
+                self.request_redraw();
+            }
+        }
+    }
+
+    /// Get the value of a text input by node id
+    pub fn get_text_input_value(&self, node_id: NodeId) -> Option<String> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::TextInput { value, .. } = &node.content {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get the value of a slider by node id
+    pub fn get_slider_value(&self, node_id: NodeId) -> Option<f64> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::Slider { value, .. } = &node.content {
+                Some(*value)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get the checked state of a checkbox by node id
+    pub fn get_checkbox_checked(&self, node_id: NodeId) -> Option<bool> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::Checkbox { checked, .. } = &node.content {
+                Some(*checked)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Set the value of a text input
+    pub fn set_text_input_value(&mut self, node_id: NodeId, new_value: &str) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::TextInput { value, cursor, .. } = &mut node.content {
+                *value = new_value.to_string();
+                *cursor = new_value.len();
+            }
+        }
+    }
+
+    /// Set the value of a slider
+    pub fn set_slider_value(&mut self, node_id: NodeId, new_value: f64) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::Slider { value, min, max, .. } = &mut node.content {
+                *value = new_value.clamp(*min, *max);
+            }
+        }
+    }
+
+    /// Set the checked state of a checkbox
+    pub fn set_checkbox_checked(&mut self, node_id: NodeId, new_checked: bool) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::Checkbox { checked, .. } = &mut node.content {
+                *checked = new_checked;
+            }
+        }
+    }
+
+    pub fn compute_layout(&mut self) {
         if let Some(root) = self.root {
             // Update root style to match actual window size
             if let Some(root_style) = self.styles.get_mut(&root) {
@@ -300,7 +600,27 @@ impl AuiApp {
         }
     }
 
+    #[cfg(feature = "wgpu-backend")]
     fn do_render(&mut self) {
+        let Some(renderer) = &mut self.renderer else {
+            return;
+        };
+        let Some(root) = self.root else {
+            return;
+        };
+
+        let state = wgpu_renderer::RenderState {
+            hovered: self.hovered_node,
+            pressed: self.pressed_node,
+            focused: self.focused_node,
+        };
+        renderer.render_tree(&self.tree, root, state);
+    }
+
+    #[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+    fn do_render(&mut self) {
+        use std::num::NonZeroU32;
+
         let Some(surface) = &mut self.surface else {
             return;
         };
@@ -330,7 +650,7 @@ impl AuiApp {
 
         // Render to the buffer with interactive state
         self.renderer.resize(width, height);
-        let state = RenderState {
+        let state = render::RenderState {
             hovered: self.hovered_node,
             pressed: self.pressed_node,
         };
@@ -354,15 +674,23 @@ impl ApplicationHandler for AuiApp {
         let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
         self.size = window.inner_size();
 
-        // Create softbuffer surface
-        let context = softbuffer::Context::new(window.clone()).unwrap();
-        let surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
+        // Initialize backend
+        #[cfg(feature = "wgpu-backend")]
+        {
+            self.renderer = Some(wgpu_renderer::WgpuRenderer::new(window.clone()));
+        }
+
+        #[cfg(all(feature = "software-backend", not(feature = "wgpu-backend")))]
+        {
+            let context = softbuffer::Context::new(window.clone()).unwrap();
+            let surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
+            self.surface = Some(surface);
+        }
 
         self.window = Some(window.clone());
-        self.surface = Some(surface);
 
         // Initial layout
-        self.do_layout();
+        self.compute_layout();
 
         // Request initial draw
         window.request_redraw();
@@ -375,7 +703,13 @@ impl ApplicationHandler for AuiApp {
             }
             WindowEvent::Resized(new_size) => {
                 self.size = new_size;
-                self.do_layout();
+
+                #[cfg(feature = "wgpu-backend")]
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.resize(new_size.width, new_size.height);
+                }
+
+                self.compute_layout();
                 self.request_redraw();
             }
             WindowEvent::RedrawRequested => {
@@ -383,9 +717,15 @@ impl ApplicationHandler for AuiApp {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = position;
+                let x = position.x as f32;
+                let y = position.y as f32;
+
+                // Handle slider dragging
+                if self.dragging_slider.is_some() {
+                    self.handle_slider_drag(x);
+                }
+
                 if let Some(root) = self.root {
-                    let x = position.x as f32;
-                    let y = position.y as f32;
                     let events = self.events.handle_mouse_move(&self.tree, root, x, y);
 
                     // Update hover state
@@ -413,23 +753,47 @@ impl ApplicationHandler for AuiApp {
                     ElementState::Pressed => {
                         if let Some(mut evt) = self.events.handle_mouse_down(&self.tree, mouse_btn) {
                             self.pressed_node = Some(evt.target);
+
+                            // Check if pressing a slider to start dragging
+                            if let Some(node) = self.tree.get(evt.target) {
+                                if matches!(node.content, node::NodeContent::Slider { .. }) {
+                                    self.dragging_slider = Some(evt.target);
+                                    // Immediately update slider value
+                                    self.handle_control_click(evt.target, evt.local_x, evt.local_y);
+                                }
+                            }
+
                             self.events.dispatch(&self.tree, &mut evt);
                             self.request_redraw();
+                        } else {
+                            // Clicked outside any node - unfocus
+                            self.focused_node = None;
                         }
                     }
                     ElementState::Released => {
+                        // Stop slider dragging
+                        self.dragging_slider = None;
+
                         let events = self.events.handle_mouse_up(&self.tree, mouse_btn);
                         self.pressed_node = None;
 
                         for mut evt in events {
+                            // Handle control click on release (for checkboxes, text inputs)
+                            if matches!(evt.event_type, events::EventType::Click(_)) {
+                                self.handle_control_click(evt.target, evt.local_x, evt.local_y);
+                            }
                             self.events.dispatch(&self.tree, &mut evt);
                         }
                         self.request_redraw();
                     }
                 }
             }
+            WindowEvent::KeyboardInput { event: key_event, .. } => {
+                self.handle_keyboard_input(&key_event);
+            }
             WindowEvent::CursorLeft { .. } => {
-                // Mouse left window - clear hover state
+                // Mouse left window - clear hover state and stop dragging
+                self.dragging_slider = None;
                 if self.hovered_node.is_some() {
                     self.hovered_node = None;
                     self.request_redraw();
@@ -452,7 +816,7 @@ pub fn demo() {
     use taffy::prelude::*;
 
     let config = WindowConfig {
-        title: "AUI Demo - Shrink-Wrap Centering".to_string(),
+        title: "AUI Demo - GPU Accelerated".to_string(),
         width: 600,
         height: 400,
     };
@@ -503,7 +867,7 @@ pub fn demo() {
     app.styles_mut()
         .insert(label2, LayoutStyle::default().with_width(150.0).with_height(20.0));
 
-    let button = app.tree_mut().insert(UiNode::button("Click Me"));
+    let button = app.tree_mut().insert(UiNode::button(1, "Click Me"));
     app.tree_mut().add_child(card, button);
     app.styles_mut()
         .insert(button, LayoutStyle::default().with_width(100.0).with_height(32.0));

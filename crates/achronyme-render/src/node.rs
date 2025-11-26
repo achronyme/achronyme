@@ -19,13 +19,22 @@ pub enum NodeContent {
     /// A text label
     Text(String),
     /// A clickable button
-    Button { label: String },
+    Button {
+        /// Unique ID for click tracking
+        id: u64,
+        /// Button label text
+        label: String,
+    },
     /// A single-line text input
     TextInput {
         /// Unique ID for state management
         id: u64,
         /// Placeholder text when empty
         placeholder: String,
+        /// Current text value
+        value: String,
+        /// Cursor position in the text
+        cursor: usize,
     },
     /// A horizontal slider for numeric values
     Slider {
@@ -186,9 +195,10 @@ impl UiNode {
     }
 
     /// Create a new button node
-    pub fn button(label: impl Into<String>) -> Self {
+    pub fn button(id: u64, label: impl Into<String>) -> Self {
         Self {
             content: NodeContent::Button {
+                id,
                 label: label.into(),
             },
             style: NodeStyle {
@@ -237,6 +247,8 @@ impl UiNode {
             content: NodeContent::TextInput {
                 id,
                 placeholder: placeholder.into(),
+                value: String::new(),
+                cursor: 0,
             },
             style: NodeStyle {
                 background_color: Some(0xFF2D2D2D),
@@ -501,7 +513,7 @@ mod tests {
 
         // Add children
         let child1 = tree.insert(UiNode::text("Hello"));
-        let child2 = tree.insert(UiNode::button("Click Me"));
+        let child2 = tree.insert(UiNode::button(1, "Click Me"));
 
         tree.add_child(root, child1);
         tree.add_child(root, child2);

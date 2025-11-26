@@ -11,6 +11,30 @@ use std::cell::RefCell;
 // Stores the current effect being executed, if any.
 thread_local! {
     static TRACKING_CONTEXT: RefCell<Option<Shared<EffectState>>> = RefCell::new(None);
+    // Callback to notify external systems (like GUI) when a signal changes
+    static SIGNAL_NOTIFIER: RefCell<Option<Box<dyn Fn()>>> = RefCell::new(None);
+}
+
+/// Registers a callback to be invoked whenever ANY signal changes value.
+/// Used by the GUI engine to trigger rebuilds.
+pub fn register_signal_notifier<F>(callback: F)
+where
+    F: Fn() + 'static,
+{
+    SIGNAL_NOTIFIER.with(|cell| {
+        *cell.borrow_mut() = Some(Box::new(callback));
+    });
+}
+
+/// Notify external systems (e.g., GUI) that a signal has changed.
+/// This is called when GUI widgets update signal values from user interaction.
+/// Unlike set_signal_value(), this does NOT run effects (those are handled by the VM).
+pub fn notify_signal_changed(_signal_rc: &Shared<SignalState>) {
+    SIGNAL_NOTIFIER.with(|cell| {
+        if let Some(callback) = cell.borrow().as_ref() {
+            callback();
+        }
+    });
 }
 
 /// signal(initial_value) -> Signal
@@ -200,6 +224,13 @@ pub fn set_signal_value(
                 run_effect(vm, effect_rc)?;
             }
         }
+
+        // Notify external listener (e.g. GUI)
+        SIGNAL_NOTIFIER.with(|cell| {
+            if let Some(callback) = cell.borrow().as_ref() {
+                callback();
+            }
+        });
     }
     Ok(())
 }

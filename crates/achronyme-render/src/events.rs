@@ -373,7 +373,7 @@ mod tests {
             node.layout.height = 200.0;
         }
 
-        let grandchild = tree.insert(UiNode::button("Click"));
+        let grandchild = tree.insert(UiNode::button(1, "Click"));
         tree.add_child(child, grandchild);
         if let Some(node) = tree.get_mut(grandchild) {
             node.layout.x = 75.0;
