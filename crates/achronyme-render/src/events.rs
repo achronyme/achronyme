@@ -207,6 +207,31 @@ impl EventManager {
         })
     }
 
+    /// Process mouse button press at specific coordinates (for deferred/queued events)
+    pub fn handle_mouse_down_at(
+        &mut self,
+        tree: &UiTree,
+        root: NodeId,
+        x: f32,
+        y: f32,
+        button: MouseButton,
+    ) -> Option<Event> {
+        // Do hit test at the specified coordinates
+        let target = hit_test(tree, root, x, y)?;
+        self.mouse_down_target = Some(target);
+
+        let (local_x, local_y) = self.local_coords(tree, target, x, y);
+        Some(Event {
+            event_type: EventType::MouseDown(button),
+            target,
+            x,
+            y,
+            local_x,
+            local_y,
+            propagation_stopped: false,
+        })
+    }
+
     /// Process mouse button release
     pub fn handle_mouse_up(&mut self, tree: &UiTree, button: MouseButton) -> Vec<Event> {
         let mut events = Vec::new();

@@ -73,6 +73,10 @@ pub enum NodeContent {
         y_label: String,
         /// Data series
         series: Vec<PlotSeries>,
+        /// Fixed X-axis range (min, max) - None means auto-scale from data
+        x_range: Option<(f64, f64)>,
+        /// Fixed Y-axis range (min, max) - None means auto-scale from data
+        y_range: Option<(f64, f64)>,
     },
 }
 
@@ -358,6 +362,8 @@ impl UiNode {
                 x_label: x_label.into(),
                 y_label: y_label.into(),
                 series,
+                x_range: None,
+                y_range: None,
             },
             style: NodeStyle {
                 background_color: Some(0xFF1F2937),

@@ -466,6 +466,7 @@ fn run_with_callback(
                             }
                         }
                         // Now we need to rebuild to process the clicks
+                        // Also rebuild after slider drag ends (rebuilds were skipped during drag)
                         self.needs_rebuild = true;
                         self.app.request_redraw();
                     }
@@ -494,6 +495,10 @@ fn run_with_callback(
                         event_loop.exit();
                         return;
                     }
+
+                    // Note: We allow rebuilds during slider drag now.
+                    // The hover state is refreshed after each rebuild in finalize_rebuild(),
+                    // which ensures clicks work correctly even during animation.
 
                     // Re-execute render function for immediate-mode behavior
                     // Loop until no more signal changes (handles button clicks that modify signals)
@@ -557,11 +562,13 @@ fn run_with_callback(
                         }
 
                         // Get the app back and SAVE BINDINGS
+                        let mut new_widget_nodes = HashMap::new();
                         BUILD_CONTEXT.with(|cell| {
                             if let Some(ctx) = cell.borrow_mut().take() {
                                 self.app = ctx.app;
                                 // Save bindings for next frame
                                 self.last_bindings = ctx.signal_bindings;
+                                new_widget_nodes = ctx.widget_nodes.clone();
                                 self.last_widget_nodes = ctx.widget_nodes;
 
                                 // Check if quit was requested during render
@@ -573,6 +580,10 @@ fn run_with_callback(
 
                         // Recalculate layout for the new tree!
                         self.app.compute_layout();
+
+                        // NOW finalize rebuild after layout is computed
+                        // This ensures pending slider drags have valid layout info
+                        self.app.finalize_rebuild(new_widget_nodes);
 
                         // Clear clicked buttons after first rebuild (they've been processed)
                         self.clicked_buttons.borrow_mut().clear();
@@ -1026,8 +1037,9 @@ pub fn vm_ui_quit(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// ui_plot(config) - Create a plot/chart visualization
-/// config is a record with: title, x_label, y_label, series
+/// config is a record with: title, x_label, y_label, series, x_range, y_range
 /// series is an array of: { name, kind: "line"|"scatter", data: [[x,y],...], color, radius }
+/// x_range and y_range are optional arrays [min, max] to fix axis ranges
 pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
@@ -1035,7 +1047,7 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         ));
     }
 
-    let (title, x_label, y_label, series, style_str) = if let Some(Value::Record(r)) = args.get(0) {
+    let (title, x_label, y_label, series, x_range, y_range, style_str) = if let Some(Value::Record(r)) = args.get(0) {
         let r = r.read();
         let title = match r.get("title") {
             Some(Value::String(s)) => s.clone(),
@@ -1052,6 +1064,48 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
         let style_str = match r.get("style") {
             Some(Value::String(s)) => s.clone(),
             _ => String::new(),
+        };
+
+        // Parse x_range: [min, max]
+        let x_range = match r.get("x_range") {
+            Some(Value::Vector(arr)) => {
+                let arr = arr.read();
+                if arr.len() >= 2 {
+                    let min = match &arr[0] {
+                        Value::Number(n) => *n,
+                        _ => 0.0,
+                    };
+                    let max = match &arr[1] {
+                        Value::Number(n) => *n,
+                        _ => 1.0,
+                    };
+                    Some((min, max))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        // Parse y_range: [min, max]
+        let y_range = match r.get("y_range") {
+            Some(Value::Vector(arr)) => {
+                let arr = arr.read();
+                if arr.len() >= 2 {
+                    let min = match &arr[0] {
+                        Value::Number(n) => *n,
+                        _ => 0.0,
+                    };
+                    let max = match &arr[1] {
+                        Value::Number(n) => *n,
+                        _ => 1.0,
+                    };
+                    Some((min, max))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         };
 
         // Parse series array
@@ -1126,13 +1180,15 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
             }
         }
 
-        (title, x_label, y_label, plot_series, style_str)
+        (title, x_label, y_label, plot_series, x_range, y_range, style_str)
     } else {
         (
             String::new(),
             "X".to_string(),
             "Y".to_string(),
             Vec::new(),
+            None,
+            None,
             String::new(),
         )
     };
@@ -1140,7 +1196,7 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     with_build_context(|ctx| {
         let id = ctx
             .app
-            .add_plot(&title, &x_label, &y_label, series, &style_str);
+            .add_plot(&title, &x_label, &y_label, series, x_range, y_range, &style_str);
 
         if let Some(parent) = ctx.current_parent() {
             ctx.app.add_child(parent, id);

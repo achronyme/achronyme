@@ -1203,8 +1203,15 @@ impl WgpuRenderer {
                     is_focused,
                 );
             }
-            NodeContent::Plot { title, series, .. } => {
-                self.render_plot(x, y, w, h, title, series, style);
+            NodeContent::Plot {
+                title,
+                x_label,
+                y_label,
+                series,
+                x_range,
+                y_range,
+            } => {
+                self.render_plot(x, y, w, h, title, x_label, y_label, series, *x_range, *y_range, style);
             }
         }
 
@@ -1427,54 +1434,165 @@ impl WgpuRenderer {
         w: f32,
         h: f32,
         title: &str,
+        x_label: &str,
+        y_label: &str,
         series: &[PlotSeries],
+        fixed_x_range: Option<(f64, f64)>,
+        fixed_y_range: Option<(f64, f64)>,
         style: &NodeStyle,
     ) {
         let bg_color = style.background_color.unwrap_or(0xFF1F2937);
         self.push_rect(x, y, w, h, bg_color, style.border_radius, 0.0, 0);
 
-        // Title
-        self.push_text(
-            title,
-            x + 8.0,
-            y + 4.0,
-            w - 16.0,
-            24.0,
-            14.0,
-            0xFFFFFFFF,
-            TextAlign::Left,
-            FontWeight::Bold,
-        );
+        // Layout constants
+        let title_height = if title.is_empty() { 8.0 } else { 28.0 };
+        let y_axis_width = 55.0; // Space for Y axis labels
+        let x_axis_height = 40.0; // Space for X axis labels
+        let padding = 8.0;
 
-        let plot_x = x + 40.0;
-        let plot_y = y + 32.0;
-        let plot_w = w - 50.0;
-        let plot_h = h - 56.0;
+        // Title (centered)
+        if !title.is_empty() {
+            self.push_text(
+                title,
+                x + padding,
+                y + 4.0,
+                w - padding * 2.0,
+                24.0,
+                14.0,
+                0xFFFFFFFF,
+                TextAlign::Center,
+                FontWeight::Bold,
+            );
+        }
+
+        // Plot area
+        let plot_x = x + y_axis_width;
+        let plot_y = y + title_height;
+        let plot_w = w - y_axis_width - padding;
+        let plot_h = h - title_height - x_axis_height;
 
         if plot_w <= 0.0 || plot_h <= 0.0 || series.is_empty() {
             return;
         }
 
-        // Find bounds
-        let (mut min_x, mut max_x, mut min_y, mut max_y) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-        for s in series {
-            for &(px, py) in &s.data {
-                min_x = min_x.min(px);
-                max_x = max_x.max(px);
-                min_y = min_y.min(py);
-                max_y = max_y.max(py);
+        // Determine axis ranges: use fixed ranges if provided, otherwise auto-calculate from data
+        let (min_x, max_x) = if let Some((lo, hi)) = fixed_x_range {
+            (lo, hi)
+        } else {
+            // Auto-calculate from data
+            let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+            for s in series {
+                for &(px, _) in &s.data {
+                    lo = lo.min(px);
+                    hi = hi.max(px);
+                }
             }
-        }
+            (lo, hi)
+        };
+
+        let (min_y, max_y) = if let Some((lo, hi)) = fixed_y_range {
+            (lo, hi)
+        } else {
+            // Auto-calculate from data with padding
+            let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+            for s in series {
+                for &(_, py) in &s.data {
+                    lo = lo.min(py);
+                    hi = hi.max(py);
+                }
+            }
+            // Add some padding to bounds so data doesn't touch edges
+            let y_margin = (hi - lo) * 0.05;
+            (lo - y_margin, hi + y_margin)
+        };
+
         let range_x = (max_x - min_x).max(0.001);
         let range_y = (max_y - min_y).max(0.001);
 
-        // Grid lines
-        for i in 0..=4 {
-            let gy = plot_y + (plot_h * i as f32) / 4.0;
-            self.push_rect(plot_x, gy, plot_w, 1.0, 0xFF374151, 0.0, 0.0, 0);
+        let grid_color = 0xFF374151;
+        let label_color = 0xFF9CA3AF;
+        let num_grid_lines = 5;
+
+        // Draw horizontal grid lines with Y-axis tick values
+        for i in 0..=num_grid_lines {
+            let ratio = i as f32 / num_grid_lines as f32;
+            let gy = plot_y + plot_h - (plot_h * ratio);
+
+            // Grid line
+            self.push_rect(plot_x, gy, plot_w, 1.0, grid_color, 0.0, 0.0, 0);
+
+            // Y-axis tick value
+            let y_val = min_y + (range_y * ratio as f64);
+            let y_text = Self::format_axis_value(y_val);
+            self.push_text(
+                &y_text,
+                x + 2.0,
+                gy - 7.0,
+                y_axis_width - 6.0,
+                14.0,
+                10.0,
+                label_color,
+                TextAlign::Right,
+                FontWeight::Regular,
+            );
         }
 
-        // Draw series
+        // Draw vertical grid lines with X-axis tick values
+        for i in 0..=num_grid_lines {
+            let ratio = i as f32 / num_grid_lines as f32;
+            let gx = plot_x + (plot_w * ratio);
+
+            // Grid line
+            self.push_rect(gx, plot_y, 1.0, plot_h, grid_color, 0.0, 0.0, 0);
+
+            // X-axis tick value
+            let x_val = min_x + (range_x * ratio as f64);
+            let x_text = Self::format_axis_value(x_val);
+            self.push_text(
+                &x_text,
+                gx - 20.0,
+                plot_y + plot_h + 4.0,
+                40.0,
+                14.0,
+                10.0,
+                label_color,
+                TextAlign::Center,
+                FontWeight::Regular,
+            );
+        }
+
+        // X-axis label (centered below plot)
+        if !x_label.is_empty() {
+            self.push_text(
+                x_label,
+                plot_x,
+                plot_y + plot_h + 22.0,
+                plot_w,
+                16.0,
+                11.0,
+                0xFFD1D5DB,
+                TextAlign::Center,
+                FontWeight::Regular,
+            );
+        }
+
+        // Y-axis label (rotated text is complex, so we'll place it vertically as individual chars or just at top)
+        // For simplicity, place it at the top-left of the Y axis area
+        if !y_label.is_empty() {
+            self.push_text(
+                y_label,
+                x + 2.0,
+                plot_y - 2.0,
+                y_axis_width - 4.0,
+                14.0,
+                10.0,
+                0xFFD1D5DB,
+                TextAlign::Left,
+                FontWeight::Regular,
+            );
+        }
+
+        // Draw series data
         for s in series {
             let radius = s.radius.max(2.0);
 
@@ -1482,57 +1600,66 @@ impl WgpuRenderer {
                 crate::node::PlotKind::Line => {
                     let mut prev_point: Option<(f32, f32)> = None;
 
-                    // Draw lines and points in one pass without allocating a vector
                     for &(px, py) in &s.data {
                         let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
                         let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
+
+                        // Clamp to plot area
+                        let sx = sx.clamp(plot_x, plot_x + plot_w);
+                        let sy = sy.clamp(plot_y, plot_y + plot_h);
 
                         // Draw line from previous point
                         if let Some((prev_x, prev_y)) = prev_point {
                             self.push_line(prev_x, prev_y, sx, sy, 2.0, s.color);
                         }
 
-                        // Draw point
-                        let point_radius = radius * 0.6;
-                        self.push_rect(
-                            sx - point_radius,
-                            sy - point_radius,
-                            point_radius * 2.0,
-                            point_radius * 2.0,
-                            s.color,
-                            point_radius,
-                            0.0,
-                            0,
-                        );
-
                         prev_point = Some((sx, sy));
                     }
                 }
                 crate::node::PlotKind::Scatter => {
-                    // Draw only points
                     for &(px, py) in &s.data {
                         let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
                         let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
 
-                        self.push_rect(
-                            sx - radius,
-                            sy - radius,
-                            radius * 2.0,
-                            radius * 2.0,
-                            s.color,
-                            radius,
-                            0.0,
-                            0,
-                        );
+                        // Only draw if within plot area
+                        if sx >= plot_x && sx <= plot_x + plot_w && sy >= plot_y && sy <= plot_y + plot_h {
+                            self.push_rect(
+                                sx - radius,
+                                sy - radius,
+                                radius * 2.0,
+                                radius * 2.0,
+                                s.color,
+                                radius,
+                                0.0,
+                                0,
+                            );
+                        }
                     }
                 }
             }
         }
 
-        // Border
+        // Plot border
         self.push_rect(
             plot_x, plot_y, plot_w, plot_h, 0x00000000, 0.0, 1.0, 0xFF4B5563,
         );
+    }
+
+    /// Format axis value for display (handles scientific notation for very large/small numbers)
+    fn format_axis_value(val: f64) -> String {
+        let abs_val = val.abs();
+        if abs_val == 0.0 {
+            "0".to_string()
+        } else if abs_val >= 10000.0 || abs_val < 0.01 {
+            // Use scientific notation
+            format!("{:.1e}", val)
+        } else if abs_val >= 100.0 {
+            format!("{:.0}", val)
+        } else if abs_val >= 1.0 {
+            format!("{:.1}", val)
+        } else {
+            format!("{:.2}", val)
+        }
     }
 
     fn lighten_color(color: Color, factor: f32) -> Color {

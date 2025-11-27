@@ -135,6 +135,12 @@ pub struct AuiApp {
     widget_to_node: HashMap<u64, NodeId>,
     /// Map NodeId to widget_id (for reverse lookups)
     node_to_widget: HashMap<NodeId, u64>,
+    /// Flag to indicate we're in the middle of a rebuild (tree is temporarily invalid)
+    rebuilding: bool,
+    /// Pending slider drag position (queued during rebuild)
+    pending_slider_drag: Option<f32>,
+    /// Pending mouse press (queued during rebuild): (x, y, button)
+    pending_mouse_press: Option<(f32, f32)>,
     /// Flag to request app quit
     quit_requested: bool,
 
@@ -175,6 +181,9 @@ impl AuiApp {
             modified_widgets: HashSet::new(),
             widget_to_node: HashMap::new(),
             node_to_widget: HashMap::new(),
+            rebuilding: false,
+            pending_slider_drag: None,
+            pending_mouse_press: None,
             quit_requested: false,
 
             #[cfg(feature = "wgpu-backend")]
@@ -312,6 +321,8 @@ impl AuiApp {
         x_label: &str,
         y_label: &str,
         series: Vec<node::PlotSeries>,
+        x_range: Option<(f64, f64)>,
+        y_range: Option<(f64, f64)>,
         style_str: &str,
     ) -> NodeId {
         self.add_node(
@@ -320,6 +331,8 @@ impl AuiApp {
                 x_label: x_label.to_string(),
                 y_label: y_label.to_string(),
                 series,
+                x_range,
+                y_range,
             },
             style_str,
         )
@@ -471,20 +484,92 @@ impl AuiApp {
         self.quit_requested
     }
 
-    /// Clear the UI tree for rebuilding (for immediate-mode style rendering)
-    /// Note: This clears the tree and widget mappings, but preserves interaction state
-    /// (focused_widget, dragging_slider, pressed_widget) because they use widget_id.
-    pub fn clear_tree(&mut self) {
+    /// Begin rebuilding the UI tree
+    /// Sets rebuilding flag to queue events instead of processing immediately
+    pub fn begin_rebuild(&mut self) {
+        self.rebuilding = true;
         self.tree.clear();
         self.styles.clear();
         self.root = None;
-        // Clear the mappings - they'll be rebuilt when widgets are registered
-        self.widget_to_node.clear();
-        self.node_to_widget.clear();
+        // DON'T clear widget_to_node/node_to_widget here!
+        // They'll be replaced atomically in finalize_rebuild()
         // Clear hovered_node since NodeIds are invalid now
         self.hovered_node = None;
         // Note: We DON'T clear focused_widget, dragging_slider, pressed_widget
         // because they use widget_id which survives rebuilds
+    }
+
+    /// Legacy clear_tree for compatibility - same as begin_rebuild
+    pub fn clear_tree(&mut self) {
+        self.begin_rebuild();
+    }
+
+    /// Finalize the rebuild by swapping in new widget mappings atomically
+    /// Also processes any queued events (like slider drags and mouse presses)
+    pub fn finalize_rebuild(&mut self, new_widget_to_node: HashMap<u64, NodeId>) {
+        // Build reverse mapping
+        let new_node_to_widget: HashMap<NodeId, u64> = new_widget_to_node
+            .iter()
+            .map(|(&wid, &nid)| (nid, wid))
+            .collect();
+
+        // Atomically replace both mappings
+        self.widget_to_node = new_widget_to_node;
+        self.node_to_widget = new_node_to_widget;
+
+        // Mark rebuild as complete
+        self.rebuilding = false;
+
+        // CRITICAL: Refresh hover state after rebuild!
+        // The old hover NodeId is invalid - do a fresh hit test at current cursor position
+        // This ensures clicks work correctly even if the cursor didn't move after rebuild
+        if let Some(root) = self.root {
+            let x = self.cursor_pos.x as f32;
+            let y = self.cursor_pos.y as f32;
+            // This updates events.hovered with the new NodeId at current cursor position
+            let _ = self.events.handle_mouse_move(&self.tree, root, x, y);
+            // Also update our local hover tracking
+            self.hovered_node = self.events.hovered();
+        }
+
+        // Process any pending mouse press that occurred during rebuild
+        if let Some((x, y)) = self.pending_mouse_press.take() {
+            self.process_pending_mouse_press(x, y);
+        }
+
+        // Process any pending slider drag that occurred during rebuild
+        if let Some(x) = self.pending_slider_drag.take() {
+            self.handle_slider_drag(x);
+        }
+    }
+
+    /// Process a mouse press that was queued during rebuild
+    fn process_pending_mouse_press(&mut self, x: f32, y: f32) {
+        // Find what's under the cursor now that tree is rebuilt
+        if let Some(root) = self.root {
+            if let Some(mut evt) = self.events.handle_mouse_down_at(&self.tree, root, x, y, MouseButton::Left) {
+                // Store pressed widget by widget_id
+                if let Some(&widget_id) = self.node_to_widget.get(&evt.target) {
+                    self.pressed_widget = Some(widget_id);
+                }
+
+                // Check if pressing a slider to start dragging
+                if let Some(node) = self.tree.get(evt.target) {
+                    if let node::NodeContent::Slider { id, .. } = &node.content {
+                        self.dragging_slider = Some(*id);
+                        self.handle_control_click(evt.target, evt.local_x, evt.local_y);
+                    }
+                }
+
+                self.events.dispatch(&self.tree, &mut evt);
+                self.request_redraw();
+            }
+        }
+    }
+
+    /// Check if we're currently rebuilding (tree is temporarily invalid)
+    pub fn is_rebuilding(&self) -> bool {
+        self.rebuilding
     }
 
     /// Register a widget with its NodeId (call after adding a widget to the tree)
@@ -655,6 +740,12 @@ impl AuiApp {
 
     /// Handle slider drag
     fn handle_slider_drag(&mut self, x: f32) {
+        // If we're rebuilding, queue the drag for later
+        if self.rebuilding {
+            self.pending_slider_drag = Some(x);
+            return;
+        }
+
         // dragging_slider now holds widget_id, not NodeId
         let Some(slider_widget_id) = self.dragging_slider else {
             return;
@@ -662,6 +753,8 @@ impl AuiApp {
 
         // Look up current NodeId from widget_id
         let Some(&slider_node_id) = self.widget_to_node.get(&slider_widget_id) else {
+            // Widget not yet registered in new tree, queue for later
+            self.pending_slider_drag = Some(x);
             return;
         };
 
@@ -922,6 +1015,14 @@ impl ApplicationHandler for AuiApp {
 
                 match state {
                     ElementState::Pressed => {
+                        // If we're rebuilding, queue the mouse press for later
+                        if self.rebuilding {
+                            let x = self.cursor_pos.x as f32;
+                            let y = self.cursor_pos.y as f32;
+                            self.pending_mouse_press = Some((x, y));
+                            return;
+                        }
+
                         if let Some(mut evt) = self.events.handle_mouse_down(&self.tree, mouse_btn)
                         {
                             // Store pressed widget by widget_id (not NodeId)
