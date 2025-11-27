@@ -92,6 +92,13 @@ impl Default for WindowConfig {
     }
 }
 
+/// Actions from control clicks (used to defer state updates)
+enum ControlAction {
+    Focus(u64),
+    Modified(u64),
+    ButtonClick(u64),
+}
+
 /// The main application state
 pub struct AuiApp {
     /// Window configuration
@@ -114,16 +121,20 @@ pub struct AuiApp {
     cursor_pos: PhysicalPosition<f64>,
     /// Track hovered node for visual feedback
     hovered_node: Option<NodeId>,
-    /// Track pressed node for visual feedback
-    pressed_node: Option<NodeId>,
-    /// Track focused node for keyboard input
-    focused_node: Option<NodeId>,
-    /// Track if slider is being dragged
-    dragging_slider: Option<NodeId>,
+    /// Track pressed widget (by widget_id, survives tree rebuild)
+    pressed_widget: Option<u64>,
+    /// Track focused widget for keyboard input (by widget_id, survives tree rebuild)
+    focused_widget: Option<u64>,
+    /// Track if slider is being dragged (by widget_id, survives tree rebuild)
+    dragging_slider: Option<u64>,
     /// Track clicked button widget IDs (cleared after each frame)
     clicked_buttons: Vec<u64>,
-    /// Track nodes that were modified by user input this frame
-    modified_nodes: HashSet<NodeId>,
+    /// Track widget IDs that were modified by user input this frame
+    modified_widgets: HashSet<u64>,
+    /// Map widget_id to current NodeId (updated each rebuild)
+    widget_to_node: HashMap<u64, NodeId>,
+    /// Map NodeId to widget_id (for reverse lookups)
+    node_to_widget: HashMap<NodeId, u64>,
     /// Flag to request app quit
     quit_requested: bool,
 
@@ -157,11 +168,13 @@ impl AuiApp {
             root: None,
             cursor_pos: PhysicalPosition::new(0.0, 0.0),
             hovered_node: None,
-            pressed_node: None,
-            focused_node: None,
+            pressed_widget: None,
+            focused_widget: None,
             dragging_slider: None,
             clicked_buttons: Vec::new(),
-            modified_nodes: HashSet::new(),
+            modified_widgets: HashSet::new(),
+            widget_to_node: HashMap::new(),
+            node_to_widget: HashMap::new(),
             quit_requested: false,
 
             #[cfg(feature = "wgpu-backend")]
@@ -358,7 +371,7 @@ impl AuiApp {
 
     /// Get the currently pressed node (for styling)
     pub fn pressed(&self) -> Option<NodeId> {
-        self.pressed_node
+        self.pressed_widget.and_then(|wid| self.widget_to_node.get(&wid).copied())
     }
 
     /// Get access to the event manager
@@ -368,12 +381,22 @@ impl AuiApp {
 
     /// Get the currently focused node
     pub fn focused(&self) -> Option<NodeId> {
-        self.focused_node
+        self.focused_widget.and_then(|wid| self.widget_to_node.get(&wid).copied())
     }
 
-    /// Set focus to a specific node
+    /// Set focus to a specific node (looks up widget_id from node)
     pub fn set_focus(&mut self, node: Option<NodeId>) {
-        self.focused_node = node;
+        self.focused_widget = node.and_then(|nid| self.node_to_widget.get(&nid).copied());
+    }
+
+    /// Set focus by widget_id (survives tree rebuilds)
+    pub fn set_focus_widget(&mut self, widget_id: Option<u64>) {
+        self.focused_widget = widget_id;
+    }
+
+    /// Get the currently focused widget_id
+    pub fn focused_widget_id(&self) -> Option<u64> {
+        self.focused_widget
     }
 
     /// Check if a button with the given widget_id was clicked this frame
@@ -393,19 +416,34 @@ impl AuiApp {
         self.clicked_buttons.clear();
     }
 
-    /// Check if a node was modified by user input this frame
-    pub fn was_node_modified(&self, node_id: NodeId) -> bool {
-        self.modified_nodes.contains(&node_id)
+    /// Check if a widget was modified by user input this frame (by widget_id)
+    pub fn was_widget_modified(&self, widget_id: u64) -> bool {
+        self.modified_widgets.contains(&widget_id)
     }
 
-    /// Mark a node as modified (internal use)
+    /// Check if a node was modified by user input this frame
+    pub fn was_node_modified(&self, node_id: NodeId) -> bool {
+        self.node_to_widget.get(&node_id)
+            .map(|wid| self.modified_widgets.contains(wid))
+            .unwrap_or(false)
+    }
+
+    /// Mark a widget as modified (by widget_id, internal use)
+    fn mark_widget_modified(&mut self, widget_id: u64) {
+        self.modified_widgets.insert(widget_id);
+    }
+
+    /// Mark a node as modified (internal use) - looks up widget_id
+    #[allow(dead_code)]
     fn mark_modified(&mut self, node_id: NodeId) {
-        self.modified_nodes.insert(node_id);
+        if let Some(&widget_id) = self.node_to_widget.get(&node_id) {
+            self.modified_widgets.insert(widget_id);
+        }
     }
 
     /// Clear modified status (call at start of frame)
-    pub fn clear_modified_nodes(&mut self) {
-        self.modified_nodes.clear();
+    pub fn clear_modified_widgets(&mut self) {
+        self.modified_widgets.clear();
     }
 
     /// Check if a slider is currently being dragged
@@ -413,9 +451,14 @@ impl AuiApp {
         self.dragging_slider.is_some()
     }
 
-    /// Check if any nodes have been modified this frame
-    pub fn has_modified_nodes(&self) -> bool {
-        !self.modified_nodes.is_empty()
+    /// Check if any widgets have been modified this frame
+    pub fn has_modified_widgets(&self) -> bool {
+        !self.modified_widgets.is_empty()
+    }
+
+    /// Get the set of modified widget IDs this frame
+    pub fn modified_widget_ids(&self) -> &HashSet<u64> {
+        &self.modified_widgets
     }
 
     /// Request the app to quit
@@ -429,11 +472,36 @@ impl AuiApp {
     }
 
     /// Clear the UI tree for rebuilding (for immediate-mode style rendering)
+    /// Note: This clears the tree and widget mappings, but preserves interaction state
+    /// (focused_widget, dragging_slider, pressed_widget) because they use widget_id.
     pub fn clear_tree(&mut self) {
-        self.tree = UiTree::new();
+        self.tree.clear();
         self.styles.clear();
         self.root = None;
-        self.modified_nodes.clear();
+        // Clear the mappings - they'll be rebuilt when widgets are registered
+        self.widget_to_node.clear();
+        self.node_to_widget.clear();
+        // Clear hovered_node since NodeIds are invalid now
+        self.hovered_node = None;
+        // Note: We DON'T clear focused_widget, dragging_slider, pressed_widget
+        // because they use widget_id which survives rebuilds
+    }
+
+    /// Register a widget with its NodeId (call after adding a widget to the tree)
+    /// This allows interaction state to survive tree rebuilds
+    pub fn register_widget(&mut self, widget_id: u64, node_id: NodeId) {
+        self.widget_to_node.insert(widget_id, node_id);
+        self.node_to_widget.insert(node_id, widget_id);
+    }
+
+    /// Get the NodeId for a widget_id (if it exists in current tree)
+    pub fn get_widget_node(&self, widget_id: u64) -> Option<NodeId> {
+        self.widget_to_node.get(&widget_id).copied()
+    }
+
+    /// Get the widget_id for a NodeId (if it's a widget)
+    pub fn get_node_widget(&self, node_id: NodeId) -> Option<u64> {
+        self.node_to_widget.get(&node_id).copied()
     }
 
     /// Handle keyboard input for focused control
@@ -442,7 +510,12 @@ impl AuiApp {
             return;
         }
 
-        let Some(focused) = self.focused_node else {
+        // Use widget_id to find the current NodeId
+        let Some(widget_id) = self.focused_widget else {
+            return;
+        };
+
+        let Some(&focused) = self.widget_to_node.get(&widget_id) else {
             return;
         };
 
@@ -520,53 +593,79 @@ impl AuiApp {
 
         // Mark as modified if value changed (so signal sync picks it up)
         if value_changed {
-            self.mark_modified(focused);
+            self.mark_widget_modified(widget_id);
         }
     }
 
     /// Handle click on interactive controls
     fn handle_control_click(&mut self, node_id: NodeId, local_x: f32, _local_y: f32) {
-        let Some(node) = self.tree.get_mut(node_id) else {
-            return;
+        // First extract the information we need from the node
+        let action = {
+            let Some(node) = self.tree.get_mut(node_id) else {
+                return;
+            };
+
+            match &mut node.content {
+                node::NodeContent::TextInput { id, .. } => {
+                    Some(ControlAction::Focus(*id))
+                }
+                node::NodeContent::Checkbox { id, checked, .. } => {
+                    *checked = !*checked;
+                    Some(ControlAction::Modified(*id))
+                }
+                node::NodeContent::Slider {
+                    id,
+                    min,
+                    max,
+                    value,
+                } => {
+                    let width = node.layout.width;
+                    if width > 0.0 {
+                        let ratio = (local_x / width).clamp(0.0, 1.0) as f64;
+                        *value = *min + ratio * (*max - *min);
+                        Some(ControlAction::Modified(*id))
+                    } else {
+                        None
+                    }
+                }
+                node::NodeContent::Button { id, .. } => {
+                    Some(ControlAction::ButtonClick(*id))
+                }
+                _ => None,
+            }
         };
 
-        match &mut node.content {
-            node::NodeContent::TextInput { .. } => {
-                // Focus the text input
-                self.focused_node = Some(node_id);
-            }
-            node::NodeContent::Checkbox { checked, .. } => {
-                // Toggle the checkbox
-                *checked = !*checked;
-                self.mark_modified(node_id);
-            }
-            node::NodeContent::Slider {
-                min, max, value, ..
-            } => {
-                // Calculate value from click position
-                let width = node.layout.width;
-                if width > 0.0 {
-                    let ratio = (local_x / width).clamp(0.0, 1.0) as f64;
-                    *value = *min + ratio * (*max - *min);
-                    self.mark_modified(node_id);
+        // Now apply the action (no longer borrowing tree)
+        if let Some(action) = action {
+            match action {
+                ControlAction::Focus(widget_id) => {
+                    self.focused_widget = Some(widget_id);
+                }
+                ControlAction::Modified(widget_id) => {
+                    self.mark_widget_modified(widget_id);
+                }
+                ControlAction::ButtonClick(widget_id) => {
+                    self.clicked_buttons.push(widget_id);
                 }
             }
-            node::NodeContent::Button { id, .. } => {
-                // Register button click for immediate-mode style detection
-                self.clicked_buttons.push(*id);
-            }
-            _ => {}
         }
+
         self.request_redraw();
     }
 
     /// Handle slider drag
     fn handle_slider_drag(&mut self, x: f32) {
-        let Some(slider_id) = self.dragging_slider else {
+        // dragging_slider now holds widget_id, not NodeId
+        let Some(slider_widget_id) = self.dragging_slider else {
             return;
         };
 
-        let Some(node) = self.tree.get_mut(slider_id) else {
+        // Look up current NodeId from widget_id
+        let Some(&slider_node_id) = self.widget_to_node.get(&slider_widget_id) else {
+            return;
+        };
+
+        let Some(node) = self.tree.get_mut(slider_node_id) else {
             return;
         };
 
@@ -580,7 +679,7 @@ impl AuiApp {
                 let local_x = x - layout_x;
                 let ratio = (local_x / width).clamp(0.0, 1.0) as f64;
                 *value = *min + ratio * (*max - *min);
-                self.mark_modified(slider_id);
+                self.mark_widget_modified(slider_widget_id);
                 self.request_redraw();
             }
         }
@@ -671,17 +770,19 @@ impl AuiApp {
 
     #[cfg(feature = "wgpu-backend")]
     fn do_render(&mut self) {
-        let Some(renderer) = &mut self.renderer else {
-            return;
-        };
         let Some(root) = self.root else {
             return;
         };
 
+        // Resolve widget_ids to NodeIds before borrowing renderer
         let state = wgpu_renderer::RenderState {
             hovered: self.hovered_node,
-            pressed: self.pressed_node,
-            focused: self.focused_node,
+            pressed: self.pressed(),
+            focused: self.focused(),
+        };
+
+        let Some(renderer) = &mut self.renderer else {
+            return;
         };
         renderer.render_tree(&self.tree, root, state);
     }
@@ -823,12 +924,16 @@ impl ApplicationHandler for AuiApp {
                     ElementState::Pressed => {
                         if let Some(mut evt) = self.events.handle_mouse_down(&self.tree, mouse_btn)
                         {
-                            self.pressed_node = Some(evt.target);
+                            // Store pressed widget by widget_id (not NodeId)
+                            if let Some(&widget_id) = self.node_to_widget.get(&evt.target) {
+                                self.pressed_widget = Some(widget_id);
+                            }
 
                             // Check if pressing a slider to start dragging
                             if let Some(node) = self.tree.get(evt.target) {
-                                if matches!(node.content, node::NodeContent::Slider { .. }) {
-                                    self.dragging_slider = Some(evt.target);
+                                if let node::NodeContent::Slider { id, .. } = &node.content {
+                                    // Store slider widget_id (survives tree rebuilds!)
+                                    self.dragging_slider = Some(*id);
                                     // Immediately update slider value
                                     self.handle_control_click(evt.target, evt.local_x, evt.local_y);
                                 }
@@ -838,7 +943,7 @@ impl ApplicationHandler for AuiApp {
                             self.request_redraw();
                         } else {
                             // Clicked outside any node - unfocus
-                            self.focused_node = None;
+                            self.focused_widget = None;
                         }
                     }
                     ElementState::Released => {
@@ -846,7 +951,7 @@ impl ApplicationHandler for AuiApp {
                         self.dragging_slider = None;
 
                         let events = self.events.handle_mouse_up(&self.tree, mouse_btn);
-                        self.pressed_node = None;
+                        self.pressed_widget = None;
 
                         for mut evt in events {
                             // Handle control click on release (for checkboxes, text inputs)

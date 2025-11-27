@@ -106,6 +106,14 @@ impl BuildContext {
     fn bind_signal(&mut self, widget_id: u64, node_id: NodeId, binding: SignalBinding) {
         self.signal_bindings.insert(widget_id, binding);
         self.widget_nodes.insert(widget_id, node_id);
+        // Register with app so interaction state survives tree rebuilds
+        self.app.register_widget(widget_id, node_id);
+    }
+
+    /// Register a widget with the app (for non-signal-bound widgets like buttons)
+    fn register_widget(&mut self, widget_id: u64, node_id: NodeId) {
+        self.widget_nodes.insert(widget_id, node_id);
+        self.app.register_widget(widget_id, node_id);
     }
 }
 
@@ -171,11 +179,12 @@ fn sync_signals_from_app(
         };
 
         // CRITICAL: Only sync user-modified widgets to signals.
+        // Use was_widget_modified which uses widget_id (survives tree rebuilds)
         // The flow is:
-        //   User interaction → widget state changes → mark_modified() → sync to signal
+        //   User interaction → widget state changes → mark_widget_modified() → sync to signal
         //   Programmatic change → signal.set() → triggers rebuild → widgets read signal values
         // This prevents the race condition where we overwrite programmatic updates.
-        if !app.was_node_modified(node_id) {
+        if !app.was_widget_modified(*widget_id) {
             continue;
         }
 
@@ -725,6 +734,9 @@ pub fn vm_ui_button(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
         let id = ctx.app.add_button(widget_id, &text, &style_str);
 
+        // Register widget for interaction state tracking
+        ctx.register_widget(widget_id, id);
+
         // Add to parent or set as root
         if let Some(parent) = ctx.current_parent() {
             ctx.app.add_child(parent, id);
@@ -802,9 +814,11 @@ pub fn vm_ui_text_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> 
             .app
             .add_text_input(widget_id, &placeholder, &initial_value, &style_str);
 
-        // Register signal binding if present
+        // Register signal binding if present, otherwise just register widget
         if let Some(sig) = signal_opt.clone() {
             ctx.bind_signal(widget_id, id, SignalBinding::TextInput(sig));
+        } else {
+            ctx.register_widget(widget_id, id);
         }
 
         if let Some(parent) = ctx.current_parent() {
@@ -857,9 +871,11 @@ pub fn vm_ui_slider(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     with_build_context(|ctx| {
         let id = ctx.app.add_slider(widget_id, min, max, value, &style_str);
 
-        // Register signal binding if present
+        // Register signal binding if present, otherwise just register widget
         if let Some(sig) = signal_opt.clone() {
             ctx.bind_signal(widget_id, id, SignalBinding::Slider(sig));
+        } else {
+            ctx.register_widget(widget_id, id);
         }
 
         if let Some(parent) = ctx.current_parent() {
@@ -906,9 +922,11 @@ pub fn vm_ui_checkbox(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     with_build_context(|ctx| {
         let id = ctx.app.add_checkbox(widget_id, &label, checked, &style_str);
 
-        // Register signal binding if present
+        // Register signal binding if present, otherwise just register widget
         if let Some(sig) = signal_opt.clone() {
             ctx.bind_signal(widget_id, id, SignalBinding::Checkbox(sig));
+        } else {
+            ctx.register_widget(widget_id, id);
         }
 
         if let Some(parent) = ctx.current_parent() {
@@ -1063,23 +1081,38 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
                     // Parse data points [[x, y], ...]
                     let mut data = Vec::new();
-                    if let Some(Value::Vector(data_arr)) = sr.get("data") {
-                        let data_arr = data_arr.read();
-                        data.reserve(data_arr.len()); // Pre-allocate memory
-                        for point in data_arr.iter() {
-                            if let Value::Vector(pt) = point {
-                                let pt = pt.read();
-                                let x = match pt.get(0) {
-                                    Some(Value::Number(n)) => *n,
-                                    _ => 0.0,
-                                };
-                                let y = match pt.get(1) {
-                                    Some(Value::Number(n)) => *n,
-                                    _ => 0.0,
-                                };
-                                data.push((x, y));
+                    match sr.get("data") {
+                        Some(Value::Vector(data_arr)) => {
+                            let data_arr = data_arr.read();
+                            data.reserve(data_arr.len()); // Pre-allocate memory
+                            for point in data_arr.iter() {
+                                if let Value::Vector(pt) = point {
+                                    let pt = pt.read();
+                                    let x = match pt.get(0) {
+                                        Some(Value::Number(n)) => *n,
+                                        _ => 0.0,
+                                    };
+                                    let y = match pt.get(1) {
+                                        Some(Value::Number(n)) => *n,
+                                        _ => 0.0,
+                                    };
+                                    data.push((x, y));
+                                }
                             }
                         }
+                        Some(Value::Tensor(tensor)) => {
+                            // Support for RealTensor of shape [N, 2]
+                            if tensor.rank() == 2 && tensor.shape[1] == 2 {
+                                let len = tensor.shape[0];
+                                data.reserve(len);
+                                for i in 0..len {
+                                    let x = tensor.data[i * 2];
+                                    let y = tensor.data[i * 2 + 1];
+                                    data.push((x, y));
+                                }
+                            }
+                        }
+                        _ => {}
                     }
 
                     plot_series.push(PlotSeries {

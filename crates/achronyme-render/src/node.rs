@@ -397,6 +397,12 @@ impl UiTree {
         self.nodes.insert(node)
     }
 
+    /// Clear the tree but keep allocated capacity
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.root = None;
+    }
+
     /// Set the root node
     pub fn set_root(&mut self, id: NodeId) {
         self.root = Some(id);
