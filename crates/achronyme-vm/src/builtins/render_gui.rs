@@ -157,7 +157,7 @@ pub enum ControlChange {
 ///
 /// This function uses set_signal_value to properly trigger effects/subscribers.
 fn sync_signals_from_app(
-    vm: &crate::vm::VM,
+    vm: &mut crate::vm::VM,
     app: &achronyme_render::AuiApp,
     bindings: &HashMap<u64, SignalBinding>,
     widget_nodes: &HashMap<u64, NodeId>,
@@ -253,7 +253,7 @@ fn sync_signals_to_app(
 /// gui_run(render_fn, options) - Main entry point
 /// Runs the GUI application with the given render function
 /// The render function is called each frame to enable reactive updates via signals
-pub fn vm_gui_run(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() {
         return Err(VmError::Runtime(
             "gui_run requires a render function".to_string(),
@@ -345,7 +345,7 @@ fn run_with_callback(
     app: achronyme_render::AuiApp,
     initial_bindings: HashMap<u64, SignalBinding>,
     initial_widget_nodes: HashMap<u64, NodeId>,
-    vm: &VM,
+    vm: &mut VM,
     render_fn: Value,
 ) {
     use achronyme_render::winit::event_loop::{ControlFlow, EventLoop};
@@ -374,7 +374,7 @@ fn run_with_callback(
     // Run the event loop with per-frame rendering
     struct AppWrapper<'a> {
         app: achronyme_render::AuiApp,
-        vm: &'a VM,
+        vm: &'a mut VM,
         render_fn: Value,
         config: achronyme_render::WindowConfig,
         needs_rebuild: bool,
@@ -573,7 +573,7 @@ fn run_with_callback(
 }
 
 /// ui_box(style, children_fn) - Create a container
-pub fn vm_ui_box(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_box(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_box called outside of gui_run".to_string(),
@@ -639,7 +639,7 @@ pub fn vm_ui_box(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// ui_label(text, style) - Create a text label
-pub fn vm_ui_label(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_label(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_label called outside of gui_run".to_string(),
@@ -671,7 +671,7 @@ pub fn vm_ui_label(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// ui_button(text, style) - Create a button
 /// Returns true if the button was clicked since the last frame
-pub fn vm_ui_button(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_button(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_button called outside of gui_run".to_string(),
@@ -713,7 +713,7 @@ pub fn vm_ui_button(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// If first arg is a Signal, bind to it reactively
 /// If first arg is a string, it's treated as the initial value (placeholder is empty)
 /// If first arg is a record with {value, placeholder}, use both
-pub fn vm_ui_text_input(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_text_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_text_input called outside of gui_run".to_string(),
@@ -783,7 +783,7 @@ pub fn vm_ui_text_input(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// ui_slider(value_or_signal, min, max, style) - Create a slider control
 /// If first arg is a Signal, bind to it reactively
 /// Otherwise, value should be a number representing the current value
-pub fn vm_ui_slider(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_slider(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_slider called outside of gui_run".to_string(),
@@ -837,7 +837,7 @@ pub fn vm_ui_slider(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// ui_checkbox(label, checked_or_signal, style) - Create a checkbox
 /// If second arg is a Signal, bind to it reactively
-pub fn vm_ui_checkbox(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_checkbox(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_checkbox called outside of gui_run".to_string(),
@@ -884,34 +884,34 @@ pub fn vm_ui_checkbox(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(checked))
 }
 
-pub fn vm_ui_combobox(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_combobox(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement combobox
     Ok(Value::Boolean(false))
 }
 
-pub fn vm_ui_radio(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_radio(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement radio
     Ok(Value::Boolean(false))
 }
 
-pub fn vm_ui_tabs(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_tabs(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement tabs
     Ok(Value::Null)
 }
 
-pub fn vm_ui_collapsing(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_collapsing(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement collapsing
     Ok(Value::Null)
 }
 
-pub fn vm_ui_scroll_area(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_scroll_area(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     // TODO: Implement scroll area
     Ok(Value::Null)
 }
 
 /// ui_progress_bar(progress, style) - Create a progress bar
 /// progress is a value between 0.0 and 1.0
-pub fn vm_ui_progress_bar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_progress_bar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_progress_bar called outside of gui_run".to_string(),
@@ -939,7 +939,7 @@ pub fn vm_ui_progress_bar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// ui_separator(style) - Create a visual separator line
-pub fn vm_ui_separator(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_separator(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_separator called outside of gui_run".to_string(),
@@ -962,7 +962,7 @@ pub fn vm_ui_separator(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// ui_quit() - Request the application to quit
-pub fn vm_ui_quit(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_quit(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     with_build_context(|ctx| {
         ctx.app.request_quit();
     }).ok();
@@ -972,7 +972,7 @@ pub fn vm_ui_quit(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
 /// ui_plot(config) - Create a plot/chart visualization
 /// config is a record with: title, x_label, y_label, series
 /// series is an array of: { name, kind: "line"|"scatter", data: [[x,y],...], color, radius }
-pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_plot called outside of gui_run".to_string(),
@@ -1027,6 +1027,7 @@ pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
                     let mut data = Vec::new();
                     if let Some(Value::Vector(data_arr)) = sr.get("data") {
                         let data_arr = data_arr.read();
+                        data.reserve(data_arr.len()); // Pre-allocate memory
                         for point in data_arr.iter() {
                             if let Value::Vector(pt) = point {
                                 let pt = pt.read();

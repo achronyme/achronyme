@@ -23,9 +23,7 @@ effect(() => do {
 
     // Generate 500 points for the domain [0, 20]
     let points = map((i) => do {
-        let x = i / 25.0 // Domain 0..20
-        let y = a * sin(x * f + p)
-        [x, y]
+        [i / 25.0, a * sin(i / 25.0 * f + p)]
     }, range(0, 500))
 
     // Update the plot data signal

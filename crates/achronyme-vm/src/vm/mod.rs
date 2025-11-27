@@ -39,31 +39,9 @@ pub const MAX_CALL_DEPTH: usize = 10000;
 
 /// Virtual Machine
 pub struct VM {
-    /// Mutable execution state
-    pub(crate) state: Shared<VMState>,
-
-    /// Global variables
-    pub(crate) globals: Shared<HashMap<String, Value>>,
-
-    /// Built-in function registry
-    pub(crate) builtins: Arc<BuiltinRegistry>,
-
-    /// Intrinsic method registry
-    pub(crate) intrinsics: Arc<IntrinsicRegistry>,
-
-    /// Configuration
-    config: Shared<VMConfig>,
-
-    /// Shared signal notifier - all child VMs share this with parent.
-    /// This allows the notifier to be set at any time (e.g., when GUI starts)
-    /// and all VMs (including previously spawned children) will see it.
-    /// Uses Shared (Arc<RwLock>) so the reference is shared, not copied.
-    signal_notifier: Shared<Option<Arc<dyn SignalNotifier>>>,
-}
-
-/// Mutable execution state, protected by RwLock
-pub struct VMState {
-    /// Call stack
+    // --- Thread-Local State (No Locks) ---
+    
+    /// Call stack - directly owned by the thread's VM instance
     pub(crate) frames: Vec<InternalCallFrame>,
 
     /// Generator states (ID -> suspended frame)
@@ -75,12 +53,25 @@ pub struct VMState {
     /// Root scope for active effects to keep them alive
     pub(crate) active_effects: Vec<Shared<EffectState>>,
 
-    // --- Reactive Context (replaces thread_local TRACKING_CONTEXT) ---
-
     /// Current effect being tracked during execution.
-    /// When an effect callback is running, this holds that effect so that
-    /// signal reads can automatically register dependencies.
     pub(crate) tracking_effect: Option<Shared<EffectState>>,
+
+    // --- Shared State (Thread-Safe) ---
+
+    /// Global variables - Shared across threads
+    pub(crate) globals: Shared<HashMap<String, Value>>,
+
+    /// Built-in function registry - Immutable after init
+    pub(crate) builtins: Arc<BuiltinRegistry>,
+
+    /// Intrinsic method registry - Immutable after init
+    pub(crate) intrinsics: Arc<IntrinsicRegistry>,
+
+    /// Configuration - Shared
+    config: Shared<VMConfig>,
+
+    /// Shared signal notifier
+    signal_notifier: Shared<Option<Arc<dyn SignalNotifier>>>,
 }
 
 /// Configuration that rarely changes
@@ -94,20 +85,23 @@ pub struct VMConfig {
 }
 
 // Thread-safety guarantees
+// VM is Send because it owns its data, but it is NOT Sync because of the RefCells/local state?
+// Actually, Vec and HashMap are Send. So VM is Send.
+// It is NOT Sync because `frames` cannot be accessed concurrently without locks.
+// But that's fine, a VM instance represents a single thread of execution.
 unsafe impl Send for VM {}
-unsafe impl Sync for VM {}
+// unsafe impl Sync for VM {} // Explicitly NOT Sync if we wanted to be strict, but auto traits handle it.
 
 impl VM {
     /// Create a new VM
     pub fn new() -> Self {
         Self {
-            state: shared(VMState {
-                frames: Vec::with_capacity(256),
-                generators: HashMap::new(),
-                current_module: None,
-                active_effects: Vec::new(),
-                tracking_effect: None,
-            }),
+            frames: Vec::with_capacity(256),
+            generators: HashMap::new(),
+            current_module: None,
+            active_effects: Vec::new(),
+            tracking_effect: None,
+            
             globals: shared(HashMap::new()),
             builtins: Arc::new(crate::builtins::create_builtin_registry()),
             intrinsics: Arc::new(IntrinsicRegistry::new()),
@@ -120,56 +114,36 @@ impl VM {
     }
 
     /// Create a child VM that shares globals and signal notifier
-    ///
-    /// The child VM shares the same `signal_notifier` reference as the parent,
-    /// so if the parent sets a notifier later (e.g., when GUI starts), the child
-    /// will automatically see it. This enables patterns like:
-    /// ```
-    /// spawn(animator)  // Child created before GUI
-    /// gui_run(app)     // GUI sets notifier - child sees it too
-    /// ```
     pub fn new_child(&self) -> Self {
         Self {
-            state: shared(VMState {
-                frames: Vec::with_capacity(256),
-                generators: HashMap::new(),
-                current_module: None,
-                active_effects: Vec::new(),
-                tracking_effect: None,
-            }),
+            frames: Vec::with_capacity(256),
+            generators: HashMap::new(),
+            current_module: None,
+            active_effects: Vec::new(),
+            tracking_effect: None,
+            
             globals: self.globals.clone(),
             builtins: self.builtins.clone(),
             intrinsics: self.intrinsics.clone(),
             config: self.config.clone(),
-            // Share the same notifier reference (not a copy of the value)
-            // This allows notifier to be set after child creation
             signal_notifier: self.signal_notifier.clone(),
         }
     }
+
     // --- Reactive Context Methods ---
 
-    /// Set the current tracking effect (called when entering an effect callback)
-    pub fn set_tracking_effect(&self, effect: Option<Shared<EffectState>>) {
-        self.state.write().tracking_effect = effect;
+    pub fn set_tracking_effect(&mut self, effect: Option<Shared<EffectState>>) {
+        self.tracking_effect = effect;
     }
 
-    /// Get the current tracking effect (called when reading a signal)
     pub fn get_tracking_effect(&self) -> Option<Shared<EffectState>> {
-        self.state.read().tracking_effect.clone()
+        self.tracking_effect.clone()
     }
 
-    /// Register a signal notifier callback (called by GUI systems)
-    ///
-    /// This notifier is shared between parent and all child VMs, so setting it
-    /// on the parent will make it visible to all children (even those created earlier).
     pub fn set_signal_notifier(&self, notifier: Option<Arc<dyn SignalNotifier>>) {
         *self.signal_notifier.write() = notifier;
     }
 
-    /// Notify that a signal has changed (called after signal.set)
-    ///
-    /// This reads from the shared notifier, so it works correctly even when called
-    /// from a child VM that was created before the notifier was set.
     pub fn notify_signal_change(&self) {
         if let Some(notifier) = &*self.signal_notifier.read() {
             notifier.notify();
@@ -177,60 +151,43 @@ impl VM {
     }
 
     /// Execute a bytecode module
-    pub async fn execute(&self, module: BytecodeModule) -> Result<Value, VmError> {
-        {
-            let mut state = self.state.write();
-            // Set current module for import resolution
-            state.current_module = Some(module.name.clone());
+    pub async fn execute(&mut self, module: BytecodeModule) -> Result<Value, VmError> {
+        // Set current module for import resolution
+        self.current_module = Some(module.name.clone());
 
-            // Create main frame
-            let main_frame = InternalCallFrame::new(Arc::new(module.main), None);
-            state.frames.push(main_frame);
-        }
+        // Create main frame
+        let main_frame = InternalCallFrame::new(Arc::new(module.main), None);
+        self.frames.push(main_frame);
 
         // Run until completion
         self.run().await
     }
 
     /// Main execution loop
-    pub(crate) async fn run(&self) -> Result<Value, VmError> {
+    pub(crate) async fn run(&mut self) -> Result<Value, VmError> {
         loop {
-            // We need to hold the lock for as little time as possible,
-            // but for the fetch-decode-execute loop, we might need to hold it
-            // during the whole step or rely on granular locking.
-            // For Phase 1, we'll lock for the frame access and then instruction execution.
-            // However, `execute_instruction` needs to mutate state.
-            
-            // 1. Fetch instruction
-            let (instruction, is_main_return) = {
-                let mut state = self.state.write();
-                
-                // Check stack depth
-                if state.frames.len() > MAX_CALL_DEPTH {
-                    return Err(VmError::StackOverflow);
-                }
+            // 1. Fetch instruction - No locks!
+            if self.frames.len() > MAX_CALL_DEPTH {
+                return Err(VmError::StackOverflow);
+            }
 
-                // Get current frame
-                let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
-
-                match frame.fetch() {
-                    Some(inst) => (inst, false),
-                    None => {
-                        // End of function, return null
-                        if state.frames.len() == 1 {
-                            // Main function ended
-                            return Ok(Value::Null);
+            let (instruction, is_main_return) = match self.frames.last_mut() {
+                Some(frame) => {
+                    match frame.fetch() {
+                        Some(inst) => (inst, false),
+                        None => {
+                            // End of function
+                            if self.frames.len() == 1 {
+                                return Ok(Value::Null);
+                            }
+                            (0, true) // Signal return
                         }
-                        // We need to return from function. 
-                        // We can't call do_return here because we hold the lock.
-                        // We will signal this.
-                        (0, true) // Dummy instruction, signal return
                     }
                 }
+                None => return Err(VmError::StackUnderflow),
             };
 
             if is_main_return {
-                // Handle implicit return null
                 self.do_return(Value::Null)?;
                 continue;
             }
@@ -243,129 +200,94 @@ impl VM {
             match self.execute_instruction(opcode, instruction)? {
                 ExecutionResult::Continue => continue,
                 ExecutionResult::Return(value) => {
-                    // Check if we are at the top level
-                    let stack_len = self.state.read().frames.len();
-                    if stack_len == 1 {
+                    if self.frames.len() == 1 {
                         return Ok(value);
                     }
                     self.do_return(value)?;
                 }
                 ExecutionResult::Exception(error) => {
-                    // Start unwinding
+                    // Unwinding logic - No locks!
                     loop {
-                        // We need to lock state to access frames
-                        let mut state = self.state.write();
-                        
-                        // Get current frame
-                        let frame_idx = state.frames.len().checked_sub(1);
-                        
+                        let frame_idx = self.frames.len().checked_sub(1);
                         match frame_idx {
                             Some(idx) => {
-                                let frame = &mut state.frames[idx];
+                                // Check for handlers
+                                // We need to access frame mutably, but we also need to index self.frames
+                                // Splitting borrow is tricky with Vec index.
+                                // We can just take the last frame since we are unwinding stack top-down.
                                 
-                                // Check if this frame has handlers
-                                if let Some(handler) = frame.handlers.pop() {
-                                    // Found a handler!
-                                    // 1. Store error in the designated register
+                                // Peek at the last frame
+                                let has_handler = self.frames[idx].handlers.last().is_some();
+                                
+                                if has_handler {
+                                    let frame = &mut self.frames[idx];
+                                    let handler = frame.handlers.pop().unwrap();
                                     frame.registers.set(handler.error_reg, error.clone())?;
-                                    // 2. Jump to catch block
                                     frame.jump_to(handler.catch_ip);
-                                    // 3. Resume execution
-                                    break;
+                                    break; // Resume execution
                                 }
-                                
-                                // No handler in this frame
-                                // Check if this is a generator frame and mark it as done
+
+                                // No handler, clean up generator if needed
+                                let frame = &mut self.frames[idx];
                                 if let Some(Value::Generator(any_ref)) = frame.generator.as_ref() {
                                     if let Some(gen_state_lock) = any_ref
                                         .downcast_ref::<RwLock<crate::vm::generator::VmGeneratorState>>()
                                     {
-                                        // We must drop state lock before acquiring generator lock to avoid deadlock?
-                                        // Actually, here we are unwinding, so we might own the generator state via the frame?
-                                        // No, generator state is shared.
-                                        // Safe order: VMState lock -> GeneratorState lock? 
-                                        // If we hold VMState lock, we shouldn't lock GeneratorState if GeneratorState lock might wait for VMState lock.
-                                        // Generator execution usually holds VMState lock.
-                                        
-                                        // Let's clone the weak ref or similar if possible?
-                                        // We can just write to it.
                                         let mut gen_state = gen_state_lock.write();
                                         gen_state.complete(None);
                                     }
                                 }
-                                
-                                // Pop frame and continue unwinding
-                                state.frames.pop();
-                            },
-                            None => {
-                                // No more frames - uncaught exception
-                                return Err(VmError::UncaughtException(error));
+
+                                self.frames.pop();
                             }
+                            None => return Err(VmError::UncaughtException(error)),
                         }
                     }
                     continue;
                 }
                 ExecutionResult::Yield(value) => {
-                    let mut state = self.state.write();
-                    
-                    // Pop the generator's frame and save it back
-                    let gen_frame = state.frames.pop().ok_or(VmError::StackUnderflow)?;
+                    let gen_frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
 
-                    // If this frame has a generator reference, update the generator state
                     if let Some(Value::Generator(any_ref)) = gen_frame.generator.as_ref() {
                         if let Some(gen_state_lock) =
                             any_ref.downcast_ref::<RwLock<crate::vm::generator::VmGeneratorState>>()
                         {
                             let mut gen_state = gen_state_lock.write();
-                            // Save the frame state
                             let mut saved_frame = gen_frame.clone();
-                            saved_frame.generator = None; // Clear to avoid circular reference
+                            saved_frame.generator = None;
                             gen_state.frame = saved_frame;
                             drop(gen_state);
 
-                            // Create iterator result object
-                            let mut result_map = std::collections::HashMap::new();
+                            let mut result_map = HashMap::new();
                             result_map.insert("value".to_string(), value);
                             result_map.insert("done".to_string(), Value::Boolean(false));
                             let result_record = Value::Record(shared(result_map));
 
-                            // Put iterator result record in the caller's return register
                             if let Some(return_reg) = gen_frame.return_register {
-                                if let Some(caller_frame) = state.frames.last_mut() {
+                                if let Some(caller_frame) = self.frames.last_mut() {
                                     caller_frame.registers.set(return_reg, result_record)?;
                                 }
                             }
-
-                            // Continue execution in caller frame
                             continue;
                         }
                     }
-
-                    // No generator context - just return
                     return Ok(value);
                 }
                 ExecutionResult::Await(value, dst_reg) => {
                     match value {
                         Value::Future(vm_future) => {
-                            // Non-blocking await: yield to Tokio executor
                             let future = vm_future.0.clone();
+                            // Await future (suspends async task, not thread)
                             let result = future.await;
-                            // We need to lock state to set register
                             self.set_register(dst_reg, result)?;
                         }
                         Value::Generator(_) => {
-                            // Awaiting a generator = Resuming/Starting it
                             match self.resume_generator_internal(&value, dst_reg)? {
                                 ExecutionResult::Continue => continue,
                                 _ => continue,
                             }
                         }
-                        _ => {
-                            return Err(VmError::Runtime(format!(
-                                "Value not awaitable: {:?}",
-                                value
-                            )))
-                        }
+                        _ => return Err(VmError::Runtime(format!("Value not awaitable: {:?}", value))),
                     }
                 }
             }
@@ -374,7 +296,7 @@ impl VM {
 
     /// Execute a single instruction
     fn execute_instruction(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -465,7 +387,6 @@ impl VM {
             OpCode::BuildPush => self.execute_build_push(instruction),
             OpCode::BuildEnd => self.execute_build_end(instruction),
 
-            // Not yet implemented
             _ => Err(VmError::Runtime(format!(
                 "Opcode {} not yet implemented",
                 opcode
@@ -473,38 +394,26 @@ impl VM {
         }
     }
 
-    // ===== Helper methods =====
+    // ===== Helper methods (Now Lock-Free or &mut self) =====
 
-    /// Get current call frame
-    /// Note: This returns a clone or reference? We can't return reference to field inside lock.
-    /// We can't easily return &InternalCallFrame without holding the lock.
-    /// So internal helpers might need to take the LockGuard or we change how we access frames.
-    /// For public/crate helpers, we might need to return clones or use a callback.
-    /// 
-    /// BUT: These helper methods are used inside `execute_*` methods which are on `&self`.
-    /// The best pattern here is to have `execute_*` methods acquire the lock and do their work.
-    /// 
-    /// HOWEVER, `get_register` and `set_register` are very common.
-    /// Let's make them lock internally.
-    
     /// Get register from current frame (cloned value)
+    #[inline]
     pub(crate) fn get_register(&self, idx: u8) -> Result<Value, VmError> {
-        let state = self.state.read();
-        let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+        let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
         frame.registers.get(idx).cloned()
     }
 
     /// Set register in current frame
-    pub(crate) fn set_register(&self, idx: u8, value: Value) -> Result<(), VmError> {
-        let mut state = self.state.write();
-        let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+    #[inline]
+    pub(crate) fn set_register(&mut self, idx: u8, value: Value) -> Result<(), VmError> {
+        let frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
         frame.registers.set(idx, value)
     }
 
     /// Get constant from current frame's function
+    #[inline]
     pub(crate) fn get_constant(&self, idx: usize) -> Result<Value, VmError> {
-        let state = self.state.read();
-        let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+        let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
         frame
             .function
             .constants
@@ -514,9 +423,9 @@ impl VM {
     }
 
     /// Get string from constant pool
+    #[inline]
     pub(crate) fn get_string(&self, idx: usize) -> Result<String, VmError> {
-        let state = self.state.read();
-        let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
+        let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
         frame
             .function
             .constants
@@ -526,7 +435,7 @@ impl VM {
     }
 
     /// Call a Value as a function with given arguments
-    pub fn call_value(&self, func: &Value, args: &[Value]) -> Result<Value, VmError> {
+    pub fn call_value(&mut self, func: &Value, args: &[Value]) -> Result<Value, VmError> {
         use crate::bytecode::Closure;
         use achronyme_types::function::Function;
 
@@ -548,37 +457,24 @@ impl VM {
                 new_frame.upvalues = closure.upvalues.clone();
 
                 // Push frame
-                {
-                    let mut state = self.state.write();
-                    state.frames.push(new_frame);
-                }
+                self.frames.push(new_frame);
 
-                // Execute until this frame returns
-                // We need to capture the depth *before* pushing? No, *after* pushing.
-                // Actually we need to know the depth of the *caller* to know when we return to it.
-                let initial_depth = {
-                    let state = self.state.read();
-                    state.frames.len() - 1
-                };
+                let initial_depth = self.frames.len() - 1;
 
                 loop {
                     let (instruction, should_return) = {
-                        let mut state = self.state.write();
                         // Check if we're still in the function we called
-                        if state.frames.len() <= initial_depth {
-                            // We popped back to caller (or further)
-                            // This shouldn't happen if we manage the loop correctly,
-                            // but let's be safe.
+                        if self.frames.len() <= initial_depth {
                             return Ok(Value::Null);
                         }
 
-                        let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                        let frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
 
                         match frame.fetch() {
                             Some(inst) => (inst, false),
                             None => {
-                                if state.frames.len() == initial_depth + 1 {
-                                    state.frames.pop();
+                                if self.frames.len() == initial_depth + 1 {
+                                    self.frames.pop();
                                     return Ok(Value::Null);
                                 }
                                 (0, true)
@@ -587,7 +483,7 @@ impl VM {
                     };
 
                     if should_return {
-                        break; 
+                        break;
                     }
 
                     let opcode_byte = decode_opcode(instruction);
@@ -596,16 +492,14 @@ impl VM {
 
                     match self.execute_instruction(opcode, instruction)? {
                         ExecutionResult::Continue => {
-                            let current_depth = self.state.read().frames.len();
-                            if current_depth <= initial_depth {
+                            if self.frames.len() <= initial_depth {
                                 return Ok(Value::Null);
                             }
                             continue;
                         }
                         ExecutionResult::Return(value) => {
-                            let mut state = self.state.write();
-                            if state.frames.len() > initial_depth {
-                                state.frames.pop();
+                            if self.frames.len() > initial_depth {
+                                self.frames.pop();
                             }
                             return Ok(value);
                         }
@@ -647,7 +541,7 @@ impl VM {
 
     /// Resume a generator
     pub(crate) fn resume_generator_internal(
-        &self,
+        &mut self,
         gen_value: &Value,
         result_reg: u8,
     ) -> Result<ExecutionResult, VmError> {
@@ -656,9 +550,10 @@ impl VM {
         if let Value::Generator(any_ref) = gen_value {
             if let Some(iter_lock) = any_ref.downcast_ref::<RwLock<NativeIterator>>() {
                 let mut iter = iter_lock.write();
+                let next_val = iter.next();
+                drop(iter);
 
-                if let Some(value) = iter.next() {
-                    drop(iter);
+                if let Some(value) = next_val {
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), value);
                     result_map.insert("done".to_string(), Value::Boolean(false));
@@ -666,7 +561,6 @@ impl VM {
                     self.set_register(result_reg, result_record)?;
                     return Ok(ExecutionResult::Continue);
                 } else {
-                    drop(iter);
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), Value::Null);
                     result_map.insert("done".to_string(), Value::Boolean(true));
@@ -678,7 +572,6 @@ impl VM {
 
             if let Some(state_lock) = any_ref.downcast_ref::<RwLock<VmGeneratorState>>() {
                 let state = state_lock.read();
-
                 if state.is_done() {
                     drop(state);
                     let mut result_map = HashMap::new();
@@ -696,10 +589,7 @@ impl VM {
                 frame.return_register = Some(result_reg);
                 frame.generator = Some(gen_value.clone());
 
-                {
-                    let mut vm_state = self.state.write();
-                    vm_state.frames.push(frame);
-                }
+                self.frames.push(frame);
 
                 return Ok(ExecutionResult::Continue);
             }
@@ -752,9 +642,8 @@ impl VM {
     }
 
     /// Perform return from function
-    fn do_return(&self, value: Value) -> Result<(), VmError> {
-        let mut state = self.state.write();
-        let frame = state.frames.pop().ok_or(VmError::StackUnderflow)?;
+    fn do_return(&mut self, value: Value) -> Result<(), VmError> {
+        let frame = self.frames.pop().ok_or(VmError::StackUnderflow)?;
 
         if let Some(Value::Generator(any_ref)) = frame.generator.as_ref() {
             if let Some(gen_state_lock) =
@@ -766,7 +655,7 @@ impl VM {
 
                 if frame.function.is_async {
                     if let Some(return_reg) = frame.return_register {
-                        if let Some(caller_frame) = state.frames.last_mut() {
+                        if let Some(caller_frame) = self.frames.last_mut() {
                             caller_frame.registers.set(return_reg, value)?;
                         }
                     }
@@ -776,7 +665,7 @@ impl VM {
                     let result_record = Value::Record(shared(result_map));
 
                     if let Some(return_reg) = frame.return_register {
-                        if let Some(caller_frame) = state.frames.last_mut() {
+                        if let Some(caller_frame) = self.frames.last_mut() {
                             caller_frame.registers.set(return_reg, result_record)?;
                         }
                     }
@@ -787,7 +676,7 @@ impl VM {
         }
 
         if let Some(return_reg) = frame.return_register {
-            if let Some(caller_frame) = state.frames.last_mut() {
+            if let Some(caller_frame) = self.frames.last_mut() {
                 caller_frame.registers.set(return_reg, value)?;
             }
         }

@@ -15,7 +15,7 @@ use achronyme_types::sync::shared;
 // Modification Functions
 // ============================================================================
 
-pub fn vm_push(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_push(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "push() expects 2 arguments, got {}",
@@ -37,7 +37,7 @@ pub fn vm_push(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_pop(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_pop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "pop() expects 1 argument, got {}",
@@ -64,7 +64,7 @@ pub fn vm_pop(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_insert(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_insert(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 3 {
         return Err(VmError::Runtime(format!(
             "insert() expects 3 arguments, got {}",
@@ -94,7 +94,7 @@ pub fn vm_insert(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_remove(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_remove(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "remove() expects 2 arguments, got {}",
@@ -128,7 +128,7 @@ pub fn vm_remove(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 // Slicing and Concatenation
 // ============================================================================
 
-pub fn vm_slice(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_slice(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "slice() expects 2 or 3 arguments, got {}",
@@ -173,7 +173,7 @@ pub fn vm_slice(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_concat_vec(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_concat_vec(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "concat() expects 2 arguments, got {}",
@@ -200,7 +200,7 @@ pub fn vm_concat_vec(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 // Transformation Functions
 // ============================================================================
 
-pub fn vm_reverse(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_reverse(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "reverse() expects 1 argument, got {}",
@@ -223,7 +223,7 @@ pub fn vm_reverse(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_sort(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_sort(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "sort() expects 1 argument, got {}",
@@ -259,7 +259,7 @@ pub fn vm_sort(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 // Query Functions
 // ============================================================================
 
-pub fn vm_first(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_first(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "first() expects 1 argument, got {}",
@@ -284,7 +284,7 @@ pub fn vm_first(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_last(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_last(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "last() expects 1 argument, got {}",
@@ -310,7 +310,7 @@ pub fn vm_last(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-pub fn vm_is_empty(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_is_empty(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "is_empty() expects 1 argument, got {}",

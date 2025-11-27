@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute pattern matching instructions
     pub(crate) fn execute_matching(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {

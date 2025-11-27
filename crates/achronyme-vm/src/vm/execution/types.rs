@@ -7,9 +7,9 @@ use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
 
 impl VM {
-    /// Execute type-related opcodes (TYPE_CHECK, TYPE_ASSERT)
+    /// Execute type checking/casting instructions
     pub(crate) fn execute_types(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {

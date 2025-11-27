@@ -26,7 +26,7 @@ impl VM {
     /// Creates a VmIterator from the source collection and stores it as an opaque
     /// Value::Iterator in the destination register.
     pub(crate) fn execute_iter_init(
-        &self,
+        &mut self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
@@ -63,7 +63,7 @@ impl VM {
     /// the value in the destination register and continues. If the iterator is
     /// exhausted, reads the next u16 as a jump offset and jumps forward.
     pub(crate) fn execute_iter_next(
-        &self,
+        &mut self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
@@ -91,16 +91,14 @@ impl VM {
                 // No need to store updated iterator back because we modified it in place via RwLock!
 
                 // Skip the jump offset (we're not jumping)
-                let mut state = self.state.write();
-                let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                let frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
                 frame.ip += 2; // Skip 2 bytes (u16)
 
                 Ok(ExecutionResult::Continue)
             }
             None => {
                 // Iterator exhausted - read next instruction for jump offset
-                let mut state = self.state.write();
-                let frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                let frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
                 let offset_hi = frame
                     .fetch()
                     .ok_or(VmError::Runtime("Missing jump offset".into()))?;
@@ -127,7 +125,7 @@ impl VM {
     /// Creates a VmBuilder with an optional type hint. The hint value guides
     /// what type of collection to build (e.g., Tensor hint creates TensorBuilder).
     pub(crate) fn execute_build_init(
-        &self,
+        &mut self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
@@ -157,7 +155,7 @@ impl VM {
     /// Pushes a value into the builder. The builder may decay its type if an
     /// incompatible value is pushed (e.g., TensorBuilder receiving a String).
     pub(crate) fn execute_build_push(
-        &self,
+        &mut self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let builder_reg = decode_a(instruction);
@@ -189,7 +187,7 @@ impl VM {
     ///
     /// Consumes the builder and produces the final collection value.
     pub(crate) fn execute_build_end(
-        &self,
+        &mut self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let dst = decode_a(instruction);
@@ -236,8 +234,7 @@ mod tests {
         let mut proto = crate::bytecode::FunctionPrototype::new("test".to_string(), constants);
         proto.register_count = 10; // Allocate enough registers for testing
         let proto_arc = Arc::new(proto);
-        vm.state.write().frames
-            .push(crate::vm::frame::CallFrame::new(proto_arc, None));
+        vm.frames.push(crate::vm::frame::CallFrame::new(proto_arc, None));
         vm.set_register(1, vec_value).unwrap();
 
         // Execute: R[0] = Iterator(R[1])
@@ -257,8 +254,7 @@ mod tests {
         let mut proto = crate::bytecode::FunctionPrototype::new("test".to_string(), constants);
         proto.register_count = 10; // Allocate enough registers for testing
         let proto_arc = Arc::new(proto);
-        vm.state.write().frames
-            .push(crate::vm::frame::CallFrame::new(proto_arc, None));
+        vm.frames.push(crate::vm::frame::CallFrame::new(proto_arc, None));
 
         // Execute: R[0] = Builder()
         let instruction = encode_abc(OpCode::BuildInit.as_u8(), 0, 0, 0);

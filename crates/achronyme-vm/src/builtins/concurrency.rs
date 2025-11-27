@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 /// channel() -> [Sender, Receiver]
 /// Creates an unbounded mpsc channel.
-pub fn vm_channel(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_channel(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime(
             "channel() expects 0 arguments".to_string(),
@@ -29,7 +29,7 @@ pub fn vm_channel(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 // === Sender Methods ===
 
 /// Sender.send(value) -> Future<Null>
-pub fn vm_sender_send(_vm: &VM, sender_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_sender_send(_vm: &mut VM, sender_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "send() expects 1 argument (value), got {}",
@@ -73,7 +73,7 @@ pub fn vm_sender_send(_vm: &VM, sender_val: &Value, args: &[Value]) -> Result<Va
 /// Receiver.recv() -> Future<Value>
 /// Returns value or null if closed
 pub fn vm_receiver_recv(
-    _vm: &VM,
+    _vm: &mut VM,
     receiver_val: &Value,
     args: &[Value],
 ) -> Result<Value, VmError> {
@@ -110,7 +110,7 @@ pub fn vm_receiver_recv(
 // === AsyncMutex Methods ===
 
 /// AsyncMutex(initial_value) -> AsyncMutex
-pub fn vm_mutex(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_mutex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(
             "AsyncMutex() expects 1 argument (initial value)".to_string(),
@@ -123,7 +123,7 @@ pub fn vm_mutex(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// AsyncMutex.lock() -> Future<MutexGuard>
-pub fn vm_mutex_lock(_vm: &VM, mutex_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_mutex_lock(_vm: &mut VM, mutex_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("lock() expects 0 arguments".to_string()));
     }
@@ -151,7 +151,7 @@ pub fn vm_mutex_lock(_vm: &VM, mutex_val: &Value, args: &[Value]) -> Result<Valu
 // === MutexGuard Methods ===
 
 /// MutexGuard.get() -> Value
-pub fn vm_guard_get(_vm: &VM, guard_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_guard_get(_vm: &mut VM, guard_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("get() expects 0 arguments".to_string()));
     }
@@ -170,7 +170,7 @@ pub fn vm_guard_get(_vm: &VM, guard_val: &Value, args: &[Value]) -> Result<Value
 }
 
 /// MutexGuard.set(value) -> Null
-pub fn vm_guard_set(_vm: &VM, guard_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_guard_set(_vm: &mut VM, guard_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime("set() expects 1 argument".to_string()));
     }

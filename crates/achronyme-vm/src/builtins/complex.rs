@@ -14,7 +14,7 @@ use achronyme_types::complex::Complex;
 use achronyme_types::sync::shared;
 
 /// Create a complex number from real and imaginary parts
-pub fn vm_complex(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_complex(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "complex() expects 2 arguments, got {}",
@@ -33,7 +33,7 @@ pub fn vm_complex(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Extract real part of a number or complex number
-pub fn vm_real(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_real(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "real() expects 1 argument, got {}",
@@ -71,7 +71,7 @@ pub fn vm_real(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Extract imaginary part of a number or complex number
-pub fn vm_imag(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_imag(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "imag() expects 1 argument, got {}",
@@ -109,7 +109,7 @@ pub fn vm_imag(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate complex conjugate
-pub fn vm_conj(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_conj(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "conj() expects 1 argument, got {}",
@@ -147,7 +147,7 @@ pub fn vm_conj(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate argument (phase angle) of a complex number
-pub fn vm_arg(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_arg(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "arg() expects 1 argument, got {}",
@@ -183,7 +183,7 @@ pub fn vm_arg(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// magnitude(complex(3, 4))  // 5.0
 /// magnitude(5)              // 5.0
 /// ```
-pub fn vm_magnitude(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_magnitude(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "magnitude() expects 1 argument, got {}",
@@ -212,7 +212,7 @@ pub fn vm_magnitude(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// phase(complex(1, 1))  // π/4 ≈ 0.7854
 /// phase(-1)             // π ≈ 3.1416
 /// ```
-pub fn vm_phase(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_phase(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "phase() expects 1 argument, got {}",
@@ -247,7 +247,7 @@ pub fn vm_phase(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// polar(1, pi/4)  // complex(0.7071, 0.7071) ≈ 1∠45°
 /// polar(5, 0)     // complex(5, 0)
 /// ```
-pub fn vm_polar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "polar() expects 2 arguments (r, theta), got {}",
@@ -279,7 +279,7 @@ pub fn vm_polar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// to_polar(complex(1, 1))   // [1.4142, 0.7854] ≈ [√2, π/4]
 /// to_polar(complex(3, 4))   // [5, 0.9273]
 /// ```
-pub fn vm_to_polar(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_to_polar(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "to_polar() expects 1 argument, got {}",

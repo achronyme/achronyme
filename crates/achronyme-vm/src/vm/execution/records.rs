@@ -9,9 +9,9 @@ use achronyme_types::sync::shared;
 use std::collections::HashMap;
 
 impl VM {
-    /// Execute record instructions
+    /// Execute record operations
     pub(crate) fn execute_records(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {

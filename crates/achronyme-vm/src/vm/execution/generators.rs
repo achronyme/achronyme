@@ -13,7 +13,7 @@ use std::any::Any;
 impl VM {
     /// Execute generator instructions
     pub(crate) fn execute_generators(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -28,16 +28,13 @@ impl VM {
                 let proto_idx = bx as usize;
 
                 // Get the function prototype
-                let proto = {
-                    let state = self.state.read();
-                    let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
-                    frame
-                        .function
-                        .functions
-                        .get(proto_idx)
-                        .ok_or(VmError::InvalidFunction(proto_idx))?
-                        .clone()
-                };
+                let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
+                let proto = frame
+                    .function
+                    .functions
+                    .get(proto_idx)
+                    .ok_or(VmError::InvalidFunction(proto_idx))?
+                    .clone();
 
                 // Capture upvalues from current frame (same as Closure)
                 let mut upvalues = Vec::new();

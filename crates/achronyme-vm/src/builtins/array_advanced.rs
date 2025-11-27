@@ -24,7 +24,7 @@ use std::collections::HashSet;
 /// Calculate the product of all elements in an array
 ///
 /// Example: product([2, 3, 4]) -> 24
-pub fn vm_product(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_product(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "product() expects 1 argument, got {}",
@@ -79,7 +79,7 @@ pub fn vm_product(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// Combine two arrays element-wise into pairs
 ///
 /// Example: zip([1, 2, 3], [4, 5, 6]) -> [[1, 4], [2, 5], [3, 6]]
-pub fn vm_zip(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_zip(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "zip() expects 2 arguments, got {}",
@@ -113,7 +113,7 @@ pub fn vm_zip(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 ///
 /// Example: flatten([[1, 2], [3, 4]]) -> [1, 2, 3, 4]
 /// Example: flatten([[[1]], [[2]]], 2) -> [1, 2]
-pub fn vm_flatten(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_flatten(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.is_empty() || args.len() > 2 {
         return Err(VmError::Runtime(format!(
             "flatten() expects 1 or 2 arguments, got {}",
@@ -174,7 +174,7 @@ fn flatten_recursive(vec: &[Value], depth: usize) -> Vec<Value> {
 /// Take the first n elements from an array
 ///
 /// Example: take([1, 2, 3, 4, 5], 3) -> [1, 2, 3]
-pub fn vm_take(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_take(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "take() expects 2 arguments, got {}",
@@ -200,7 +200,7 @@ pub fn vm_take(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// Drop the first n elements from an array
 ///
 /// Example: drop([1, 2, 3, 4, 5], 2) -> [3, 4, 5]
-pub fn vm_drop(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_drop(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "drop() expects 2 arguments, got {}",
@@ -226,7 +226,7 @@ pub fn vm_drop(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// Remove duplicate elements from an array (preserves first occurrence order)
 ///
 /// Example: unique([1, 2, 2, 3, 1, 4]) -> [1, 2, 3, 4]
-pub fn vm_unique(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_unique(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "unique() expects 1 argument, got {}",
@@ -272,7 +272,7 @@ fn value_hash_key(val: &Value) -> String {
 /// Split an array into chunks of specified size
 ///
 /// Example: chunk([1, 2, 3, 4, 5], 2) -> [[1, 2], [3, 4], [5]]
-pub fn vm_chunk(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_chunk(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "chunk() expects 2 arguments, got {}",
@@ -315,7 +315,7 @@ pub fn vm_chunk(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// Example: range(0, 5) -> [0, 1, 2, 3, 4]
 /// Example: range(1, 10, 2) -> [1, 3, 5, 7, 9]
 /// Example: range(5, 0, -1) -> [5, 4, 3, 2, 1]
-pub fn vm_range(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_range(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "range() expects 2 or 3 arguments, got {}",

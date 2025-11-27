@@ -1305,31 +1305,34 @@ impl WgpuRenderer {
         // Draw series
         for s in series {
             let radius = s.radius.max(2.0);
-
-            // Calculate screen coordinates for all points
-            let screen_points: Vec<(f32, f32)> = s.data.iter().map(|&(px, py)| {
-                let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
-                let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
-                (sx, sy)
-            }).collect();
-
+            
             match s.kind {
                 crate::node::PlotKind::Line => {
-                    // Draw lines connecting consecutive points
-                    for pair in screen_points.windows(2) {
-                        let (x1, y1) = pair[0];
-                        let (x2, y2) = pair[1];
-                        self.push_line(x1, y1, x2, y2, 2.0, s.color);
-                    }
-                    // Draw small points at each data point
-                    for &(sx, sy) in &screen_points {
+                    let mut prev_point: Option<(f32, f32)> = None;
+                    
+                    // Draw lines and points in one pass without allocating a vector
+                    for &(px, py) in &s.data {
+                        let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
+                        let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
+                        
+                        // Draw line from previous point
+                        if let Some((prev_x, prev_y)) = prev_point {
+                            self.push_line(prev_x, prev_y, sx, sy, 2.0, s.color);
+                        }
+                        
+                        // Draw point
                         let point_radius = radius * 0.6;
                         self.push_rect(sx - point_radius, sy - point_radius, point_radius * 2.0, point_radius * 2.0, s.color, point_radius, 0.0, 0);
+                        
+                        prev_point = Some((sx, sy));
                     }
                 }
                 crate::node::PlotKind::Scatter => {
                     // Draw only points
-                    for &(sx, sy) in &screen_points {
+                    for &(px, py) in &s.data {
+                        let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
+                        let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
+                        
                         self.push_rect(sx - radius, sy - radius, radius * 2.0, radius * 2.0, s.color, radius, 0.0, 0);
                     }
                 }

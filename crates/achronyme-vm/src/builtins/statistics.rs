@@ -11,7 +11,7 @@ use crate::vm::VM;
 use achronyme_types::complex::Complex;
 
 /// Sum all elements in a vector or tensor
-pub fn vm_sum(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_sum(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "sum() expects 1 argument, got {}",
@@ -74,7 +74,7 @@ pub fn vm_sum(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate mean (average) of elements
-pub fn vm_mean(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_mean(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "mean() expects 1 argument, got {}",
@@ -112,7 +112,7 @@ pub fn vm_mean(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate standard deviation
-pub fn vm_std(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_std(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "std() expects 1 argument, got {}",

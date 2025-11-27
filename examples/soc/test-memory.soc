@@ -1,0 +1,28 @@
+// Test memory usage with signals and effects
+println("Memory test starting...")
+
+let counter = signal(0)
+let derived = signal(0)
+
+// Simple effect that reads counter and writes derived
+effect(() => do {
+    let c = counter.value
+    derived.set(c * 2)
+})
+
+// Animator that increments counter
+let animator = async () => do {
+    let i = 0
+    while(i < 100) {
+        await sleep(10)
+        counter.set(counter.peek() + 1)
+        i = i + 1
+    }
+    println("Animator done, counter=" + str(counter.value) + ", derived=" + str(derived.value))
+}
+
+spawn(animator)
+
+// Wait for animator to finish
+await sleep(1500)
+println("Test complete")

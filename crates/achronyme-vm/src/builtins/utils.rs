@@ -13,7 +13,7 @@ use crate::vm::VM;
 use achronyme_types::sync::shared;
 
 /// Get the type name of a value
-pub fn vm_typeof(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_typeof(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "typeof() expects 1 argument, got {}",
@@ -51,7 +51,7 @@ pub fn vm_typeof(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Convert a value to its string representation
-pub fn vm_str(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_str(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "str() expects 1 argument, got {}",
@@ -64,7 +64,7 @@ pub fn vm_str(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a value is NaN
-pub fn vm_isnan(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_isnan(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "isnan() expects 1 argument, got {}",
@@ -100,7 +100,7 @@ pub fn vm_isnan(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a value is infinite
-pub fn vm_isinf(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_isinf(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "isinf() expects 1 argument, got {}",
@@ -136,7 +136,7 @@ pub fn vm_isinf(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a value is finite
-pub fn vm_isfinite(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_isfinite(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "isfinite() expects 1 argument, got {}",

@@ -43,7 +43,7 @@ use achronyme_types::sync::shared;
 /// let f = x => x^2
 /// let df = diff(f, 3)  // Should be ≈ 6
 /// ```
-pub fn vm_diff(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_diff(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     // Validate argument count
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
@@ -106,7 +106,7 @@ pub fn vm_diff(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^3
 /// let d2f = diff2(f, 2)  // Should be ≈ 12
 /// ```
-pub fn vm_diff2(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_diff2(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "diff2() expects 2 or 3 arguments (fn, x, h?), got {}",
@@ -169,7 +169,7 @@ pub fn vm_diff2(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^4
 /// let d3f = diff3(f, 2)  // Should be ≈ 48
 /// ```
-pub fn vm_diff3(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_diff3(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "diff3() expects 2 or 3 arguments (fn, x, h?), got {}",
@@ -235,7 +235,7 @@ pub fn vm_diff3(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = v => v[0]^2 + v[1]^2
 /// let grad = gradient(f, [1, 2])  // Should be ≈ [2, 4]
 /// ```
-pub fn vm_gradient(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_gradient(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 3 {
         return Err(VmError::Runtime(format!(
             "gradient() expects 2 or 3 arguments (fn, point, h?), got {}",
@@ -325,7 +325,7 @@ pub fn vm_gradient(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2
 /// let area = integral(f, 0, 1)  // Should be ≈ 0.333...
 /// ```
-pub fn vm_integral(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_integral(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 3 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "integral() expects 3 or 4 arguments (fn, a, b, n?), got {}",
@@ -382,7 +382,7 @@ pub fn vm_integral(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2
 /// let area = simpson(f, 0, 1)  // Should be ≈ 0.333...
 /// ```
-pub fn vm_simpson(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_simpson(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 3 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "simpson() expects 3 or 4 arguments (fn, a, b, n?), got {}",
@@ -447,7 +447,7 @@ pub fn vm_simpson(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2
 /// let area = romberg(f, 0, 1)  // High-precision result ≈ 0.333...
 /// ```
-pub fn vm_romberg(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_romberg(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 3 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "romberg() expects 3 or 4 arguments (fn, a, b, max_iter?), got {}",
@@ -527,7 +527,7 @@ pub fn vm_romberg(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2
 /// let area = quad(f, 0, 1)  // Adaptive high-precision result
 /// ```
-pub fn vm_quad(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_quad(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 3 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "quad() expects 3 or 4 arguments (fn, a, b, tol?), got {}",
@@ -547,7 +547,7 @@ pub fn vm_quad(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     // Helper function for recursive adaptive Simpson
     #[allow(clippy::too_many_arguments)]
     fn adaptive_simpson(
-        vm: &VM,
+        vm: &mut VM,
         func: &Value,
         a: f64,
         b: f64,
@@ -623,7 +623,7 @@ pub fn vm_quad(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2 - 4
 /// let root = solve(f, 0, 3)  // Should be ≈ 2
 /// ```
-pub fn vm_solve(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_solve(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 3 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "solve() expects 3 or 4 arguments (fn, a, b, tol?), got {}",
@@ -698,7 +698,7 @@ pub fn vm_solve(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2 - 4
 /// let root = newton(f, 1)  // Should be ≈ 2
 /// ```
-pub fn vm_newton(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_newton(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "newton() expects 2-4 arguments (fn, x0, tol?, max_iter?), got {}",
@@ -772,7 +772,7 @@ pub fn vm_newton(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 /// let f = x => x^2 - 4
 /// let root = secant(f, 1, 3)  // Should be ≈ 2
 /// ```
-pub fn vm_secant(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_secant(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 3 || args.len() > 4 {
         return Err(VmError::Runtime(format!(
             "secant() expects 3 or 4 arguments (fn, x0, x1, tol?), got {}",

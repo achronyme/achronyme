@@ -9,16 +9,9 @@ use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
 
 impl VM {
-    /// Execute CallBuiltin opcode
-    ///
-    /// Format: CallBuiltin dest(A), argc(B), builtin_idx(C)
-    /// - dest: Register to store result
-    /// - argc: Number of arguments
-    /// - builtin_idx: Index in built-in registry (u8 in C field, or u16 in Bx field)
-    ///
-    /// Arguments are expected to be in consecutive registers starting at dest+1
+    /// Execute builtin function call
     pub(crate) fn execute_call_builtin(
-        &self,
+        &mut self,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
         let dest = decode_a(instruction);
@@ -54,14 +47,14 @@ impl VM {
         }
 
         // Remember the current frame depth before calling builtin
-        let pre_call_depth = self.state.read().frames.len();
+        let pre_call_depth = self.frames.len();
 
         // Call the native function
         let native_fn = metadata.func;
         let result = native_fn(self, &args)?;
 
         // Verify we're still at the same stack depth before storing result
-        let post_call_depth = self.state.read().frames.len();
+        let post_call_depth = self.frames.len();
 
         // Only store result if stack depth is the same
         // If depth changed, we're in a different execution context
@@ -71,11 +64,9 @@ impl VM {
             // Stack depth changed - this happens when builtins like ui_box
             // trigger callbacks that leave frames on the stack
             // Pop excess frames to restore correct state
-            let mut state = self.state.write();
-            while state.frames.len() > pre_call_depth {
-                state.frames.pop();
+            while self.frames.len() > pre_call_depth {
+                self.frames.pop();
             }
-            drop(state);
             // Now try to store the result
             self.set_register(dest, result)?;
         }

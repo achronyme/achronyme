@@ -9,7 +9,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute arithmetic instructions
     pub(crate) fn execute_arithmetic(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {

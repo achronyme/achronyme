@@ -12,7 +12,7 @@ use achronyme_types::sync::{shared, Arc, RwLock};
 impl VM {
     /// Execute function and closure instructions
     pub(crate) fn execute_functions(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -27,16 +27,13 @@ impl VM {
                 let func_idx = bx as usize;
 
                 // Get function prototype from current frame's function
-                let prototype = {
-                    let state = self.state.read();
-                    let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
-                    frame
-                        .function
-                        .functions
-                        .get(func_idx)
-                        .ok_or(VmError::InvalidFunction(func_idx))?
-                        .clone()
-                };
+                let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
+                let prototype = frame
+                    .function
+                    .functions
+                    .get(func_idx)
+                    .ok_or(VmError::InvalidFunction(func_idx))?
+                    .clone();
 
                 // Capture upvalues from current frame
                 let mut upvalues = Vec::new();
@@ -52,10 +49,8 @@ impl VM {
                             upvalues.push(shared(value));
                         } else {
                             // Transitive capture from current frame's upvalue
-                            // Need to read current frame again
-                            let state = self.state.read();
-                            let current_frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
-                            
+                            let current_frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
+
                             let parent_upvalue = current_frame
                                 .upvalues
                                 .get(upvalue_desc.register as usize)
@@ -124,8 +119,7 @@ impl VM {
                             let gen_value = Value::Generator(Arc::new(state_lock));
                             self.set_register(result_reg, gen_value)?;
                         } else {
-                            let mut state = self.state.write();
-                            state.frames.push(new_frame);
+                            self.frames.push(new_frame);
                         }
 
                         Ok(ExecutionResult::Continue)
@@ -190,8 +184,7 @@ impl VM {
                             args.push(self.get_register(arg_reg)?);
                         }
 
-                        let mut state = self.state.write();
-                        let current_frame = state.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                        let current_frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
 
                         current_frame.function = closure.prototype.clone();
                         current_frame.ip = 0;

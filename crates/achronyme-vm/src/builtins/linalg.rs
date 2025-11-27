@@ -17,7 +17,7 @@ use achronyme_types::sync::shared;
 use achronyme_types::tensor::RealTensor;
 
 /// Calculate dot product of two vectors
-pub fn vm_dot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_dot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "dot() expects 2 arguments, got {}",
@@ -83,7 +83,7 @@ pub fn vm_dot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate cross product of two 3D vectors
-pub fn vm_cross(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_cross(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "cross() expects 2 arguments, got {}",
@@ -139,7 +139,7 @@ pub fn vm_cross(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate Euclidean norm (magnitude) of a vector
-pub fn vm_norm(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_norm(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "norm() expects 1 argument, got {}",
@@ -175,7 +175,7 @@ pub fn vm_norm(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Normalize a vector to unit length
-pub fn vm_normalize(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_normalize(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "normalize() expects 1 argument, got {}",
@@ -230,7 +230,7 @@ pub fn vm_normalize(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Transpose a 2D matrix
-pub fn vm_transpose(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_transpose(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "transpose() expects 1 argument, got {}",
@@ -278,7 +278,7 @@ pub fn vm_transpose(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate determinant of a square matrix
-pub fn vm_det(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_det(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "det() expects 1 argument, got {}",
@@ -361,7 +361,7 @@ pub fn vm_det(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Calculate trace (sum of diagonal elements) of a square matrix
-pub fn vm_trace(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_trace(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "trace() expects 1 argument, got {}",

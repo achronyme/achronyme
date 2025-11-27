@@ -7,9 +7,9 @@ use crate::vm::result::ExecutionResult;
 use crate::vm::VM;
 
 impl VM {
-    /// Execute variable and constant loading instructions
+    /// Execute variable operations
     pub(crate) fn execute_variables(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -54,17 +54,15 @@ impl VM {
                 let dst = a;
                 let upvalue_idx = b as usize;
 
-                let state = self.state.read();
-                let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
-                
+                let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
+
                 let upvalue = frame
                     .upvalues
                     .get(upvalue_idx)
                     .ok_or(VmError::Runtime("Invalid upvalue index".to_string()))?;
 
                 let value = upvalue.read().clone();
-                drop(state); // Release lock before setting register
-                
+
                 self.set_register(dst, value)?;
 
                 Ok(ExecutionResult::Continue)
@@ -75,10 +73,9 @@ impl VM {
                 let src = b;
 
                 let value = self.get_register(src)?;
-                
-                let state = self.state.read();
-                let frame = state.frames.last().ok_or(VmError::StackUnderflow)?;
-                
+
+                let frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
+
                 let upvalue = frame
                     .upvalues
                     .get(upvalue_idx)

@@ -11,7 +11,7 @@ use achronyme_types::tensor::{ComplexTensor, RealTensor, Tensor};
 impl VM {
     /// Execute vector and tensor instructions
     pub(crate) fn execute_vectors(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {
@@ -609,7 +609,7 @@ impl VM {
 
     // Helper for generic tensor slicing
     fn slice_tensor_generic(
-        &self,
+        &mut self,
         dst: u8,
         t: &RealTensor,
         indices: &[Value],
@@ -620,7 +620,7 @@ impl VM {
     }
 
     fn slice_complex_tensor_generic(
-        &self,
+        &mut self,
         dst: u8,
         t: &ComplexTensor,
         indices: &[Value],

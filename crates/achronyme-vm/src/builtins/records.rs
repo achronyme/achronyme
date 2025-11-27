@@ -11,7 +11,7 @@ use crate::vm::VM;
 use achronyme_types::sync::shared;
 
 /// Get all keys from a record as a vector of strings
-pub fn vm_keys(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_keys(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "keys() expects 1 argument, got {}",
@@ -34,7 +34,7 @@ pub fn vm_keys(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Get all values from a record as a vector
-pub fn vm_values(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_values(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(format!(
             "values() expects 1 argument, got {}",
@@ -57,7 +57,7 @@ pub fn vm_values(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Check if a record has a specific field
-pub fn vm_has_field(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_has_field(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 2 {
         return Err(VmError::Runtime(format!(
             "has_field() expects 2 arguments, got {}",

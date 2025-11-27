@@ -10,7 +10,7 @@ use crate::vm::VM;
 impl VM {
     /// Execute comparison instructions
     pub(crate) fn execute_comparison(
-        &self,
+        &mut self,
         opcode: OpCode,
         instruction: u32,
     ) -> Result<ExecutionResult, VmError> {

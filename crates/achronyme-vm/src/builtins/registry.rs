@@ -12,7 +12,7 @@ use std::collections::HashMap;
 ///
 /// Takes a mutable reference to the VM and a slice of argument values,
 /// returns a Result with the computed value or a VmError.
-pub type NativeFn = fn(&VM, &[Value]) -> Result<Value, VmError>;
+pub type NativeFn = fn(&mut VM, &[Value]) -> Result<Value, VmError>;
 
 /// Metadata for a single built-in function
 #[derive(Clone)]
@@ -118,7 +118,7 @@ impl Default for BuiltinRegistry {
 mod tests {
     use super::*;
 
-    fn dummy_fn(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
+    fn dummy_fn(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
         Ok(Value::Null)
     }
 

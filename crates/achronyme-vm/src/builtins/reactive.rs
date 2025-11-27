@@ -40,7 +40,7 @@ pub fn notify_signal_changed(_signal_rc: &Shared<SignalState>) {
 
 /// signal(initial_value) -> Signal
 /// Creates a new reactive signal.
-pub fn vm_signal(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let initial_value = if args.is_empty() {
         Value::Null
     } else {
@@ -57,7 +57,7 @@ pub fn vm_signal(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// effect(callback) -> Null
 /// Registers a side effect that runs immediately and re-runs when dependencies change.
-pub fn vm_effect(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_effect(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime(
             "effect() expects 1 argument (callback function)".to_string(),
@@ -73,7 +73,7 @@ pub fn vm_effect(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
     });
 
     // Keep effect alive by adding to VM roots
-    vm.state.write().active_effects.push(effect_state.clone());
+    vm.active_effects.push(effect_state.clone());
 
     // Run the effect immediately to track dependencies
     run_effect(vm, effect_state)?;
@@ -83,7 +83,7 @@ pub fn vm_effect(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 
 /// Helper to run an effect and track dependencies
 /// Uses VM-based tracking context to support multi-threaded execution (e.g., spawned tasks)
-fn run_effect(vm: &VM, effect: Shared<EffectState>) -> Result<(), VmError> {
+fn run_effect(vm: &mut VM, effect: Shared<EffectState>) -> Result<(), VmError> {
     // 1. Cleanup: Unsubscribe from previous dependencies
     cleanup_effect(&effect);
 
@@ -125,7 +125,7 @@ fn cleanup_effect(effect_rc: &Shared<EffectState>) {
 
 /// Signal.value -> Value (Getter)
 /// Uses VM-based tracking context to support multi-threaded execution (e.g., spawned tasks)
-pub fn vm_signal_get(vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal_get(vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("get() expects 0 arguments".to_string()));
     }
@@ -169,7 +169,7 @@ pub fn vm_signal_get(vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Valu
 
 /// Signal.peek() -> Value
 /// Returns the current value WITHOUT tracking dependency.
-pub fn vm_signal_peek(_vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal_peek(_vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("peek() expects 0 arguments".to_string()));
     }
@@ -189,7 +189,7 @@ pub fn vm_signal_peek(_vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Va
 
 /// Internal helper to set signal value and trigger effects
 pub fn set_signal_value(
-    vm: &VM,
+    vm: &mut VM,
     signal_rc: &Shared<SignalState>,
     new_value: Value,
 ) -> Result<(), VmError> {
@@ -201,8 +201,15 @@ pub fn set_signal_value(
 
         // Notify subscribers
         // Clone the list of subscribers to release the lock on state
-        let subscribers = state.subscribers.clone();
+        // Also clean up dead weak references while we're at it
+        let subscribers: Vec<_> = state.subscribers.iter()
+            .filter_map(|weak| weak.upgrade().map(|_| weak.clone()))
+            .collect();
 
+        // Replace with cleaned list (removes dead refs)
+        state.subscribers = subscribers;
+
+        let subscribers = state.subscribers.clone();
         drop(state); // Release lock
 
         // Run effects
@@ -226,7 +233,7 @@ pub fn set_signal_value(
 }
 
 /// Signal.set(new_value) -> Null
-pub fn vm_signal_set(vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+pub fn vm_signal_set(vm: &mut VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
         return Err(VmError::Runtime("set() expects 1 argument".to_string()));
     }

@@ -53,13 +53,13 @@ impl TypeDiscriminant {
 /// Intrinsic function signature
 ///
 /// Takes:
-/// - &VM: reference to the VM for state access
+/// - &mut VM: mutable reference to the VM for state access and calling functions
 /// - &Value: the receiver (self/this)
 /// - &[Value]: arguments to the method
 ///
 /// Returns:
 /// - Result<Value, VmError>: the return value or error
-pub type IntrinsicFn = fn(&VM, &Value, &[Value]) -> Result<Value, VmError>;
+pub type IntrinsicFn = fn(&mut VM, &Value, &[Value]) -> Result<Value, VmError>;
 
 /// Registry of intrinsic methods
 #[derive(Clone)]
@@ -114,7 +114,7 @@ impl IntrinsicRegistry {
         // It prepends the 'receiver' to the arguments list.
         macro_rules! adapt {
             ($native_fn:expr) => {
-                |vm: &VM, receiver: &Value, args: &[Value]| -> Result<Value, VmError> {
+                |vm: &mut VM, receiver: &Value, args: &[Value]| -> Result<Value, VmError> {
                     let mut full_args = Vec::with_capacity(args.len() + 1);
                     full_args.push(receiver.clone());
                     full_args.extend_from_slice(args);
@@ -127,7 +127,7 @@ impl IntrinsicRegistry {
         // Useful for HOFs where signature is (callback, collection)
         macro_rules! adapt_last {
             ($native_fn:expr) => {
-                |vm: &VM, receiver: &Value, args: &[Value]| -> Result<Value, VmError> {
+                |vm: &mut VM, receiver: &Value, args: &[Value]| -> Result<Value, VmError> {
                     let mut full_args = Vec::with_capacity(args.len() + 1);
                     full_args.extend_from_slice(args);
                     full_args.push(receiver.clone());
