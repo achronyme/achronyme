@@ -409,7 +409,6 @@ pub fn vm_trace(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

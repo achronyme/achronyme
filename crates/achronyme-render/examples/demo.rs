@@ -93,7 +93,14 @@ fn main() {
     let box_row = app.add_container("flex-row gap-2 items-center mt-4");
     app.add_child(root, box_row);
 
-    let colors = ["bg-red-400", "bg-orange-400", "bg-yellow-400", "bg-green-400", "bg-blue-400", "bg-purple-400"];
+    let colors = [
+        "bg-red-400",
+        "bg-orange-400",
+        "bg-yellow-400",
+        "bg-green-400",
+        "bg-blue-400",
+        "bg-purple-400",
+    ];
     for color in colors {
         let style = format!("{} rounded w-[30px] h-[30px]", color);
         let box_node = app.add_container(&style);

@@ -146,8 +146,7 @@ mod tests {
     fn test_has_field_false() {
         let vm = setup_vm();
         let record = create_test_record();
-        let result =
-            vm_has_field(&vm, &[record, Value::String("missing".to_string())]).unwrap();
+        let result = vm_has_field(&vm, &[record, Value::String("missing".to_string())]).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 }

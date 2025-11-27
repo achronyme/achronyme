@@ -234,7 +234,8 @@ mod tests {
         let mut proto = crate::bytecode::FunctionPrototype::new("test".to_string(), constants);
         proto.register_count = 10; // Allocate enough registers for testing
         let proto_arc = Arc::new(proto);
-        vm.frames.push(crate::vm::frame::CallFrame::new(proto_arc, None));
+        vm.frames
+            .push(crate::vm::frame::CallFrame::new(proto_arc, None));
         vm.set_register(1, vec_value).unwrap();
 
         // Execute: R[0] = Iterator(R[1])
@@ -254,7 +255,8 @@ mod tests {
         let mut proto = crate::bytecode::FunctionPrototype::new("test".to_string(), constants);
         proto.register_count = 10; // Allocate enough registers for testing
         let proto_arc = Arc::new(proto);
-        vm.frames.push(crate::vm::frame::CallFrame::new(proto_arc, None));
+        vm.frames
+            .push(crate::vm::frame::CallFrame::new(proto_arc, None));
 
         // Execute: R[0] = Builder()
         let instruction = encode_abc(OpCode::BuildInit.as_u8(), 0, 0, 0);

@@ -154,7 +154,13 @@ impl TextRenderer {
         }
     }
 
-    fn get_or_rasterize(&mut self, weight: FontWeight, c: char, size: f32, size_key: u16) -> CachedGlyph {
+    fn get_or_rasterize(
+        &mut self,
+        weight: FontWeight,
+        c: char,
+        size: f32,
+        size_key: u16,
+    ) -> CachedGlyph {
         let cache_key = (c, size_key);
 
         if let Some(cached) = self.cache.get(&cache_key) {
@@ -187,14 +193,17 @@ impl TextRenderer {
         };
 
         // Store in cache
-        self.cache.insert(cache_key, CachedGlyph {
-            bitmap: glyph.bitmap.clone(),
-            width: glyph.width,
-            height: glyph.height,
-            xmin: glyph.xmin,
-            ymin: glyph.ymin,
-            advance: glyph.advance,
-        });
+        self.cache.insert(
+            cache_key,
+            CachedGlyph {
+                bitmap: glyph.bitmap.clone(),
+                width: glyph.width,
+                height: glyph.height,
+                xmin: glyph.xmin,
+                ymin: glyph.ymin,
+                advance: glyph.advance,
+            },
+        );
 
         glyph
     }

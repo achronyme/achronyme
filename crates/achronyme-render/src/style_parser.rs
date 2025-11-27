@@ -209,10 +209,8 @@ fn process_utility(style: &mut ParsedStyle, pair: pest::iterators::Pair<Rule>) {
 
         Rule::font_weight => {
             if let Some(inner) = pair.into_inner().next() {
-                style.visual.font_bold = matches!(
-                    inner.as_str(),
-                    "semibold" | "bold" | "extrabold" | "black"
-                );
+                style.visual.font_bold =
+                    matches!(inner.as_str(), "semibold" | "bold" | "extrabold" | "black");
             }
         }
 
@@ -324,7 +322,10 @@ fn parse_arbitrary_length(pair: pest::iterators::Pair<Rule>) -> f32 {
             let text = inner.as_str();
             // Remove unit suffix and # prefix if present
             let text = text.trim_start_matches('#');
-            let numeric: String = text.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+            let numeric: String = text
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+                .collect();
             return numeric.parse().unwrap_or(0.0);
         }
     }
@@ -570,8 +571,9 @@ mod tests {
     #[test]
     fn test_complex_style() {
         let result = parse_style(
-            "flex-col items-center justify-center gap-4 p-6 bg-[#333333] rounded-xl shadow-lg"
-        ).unwrap();
+            "flex-col items-center justify-center gap-4 p-6 bg-[#333333] rounded-xl shadow-lg",
+        )
+        .unwrap();
 
         assert_eq!(result.layout.direction, FlexDirection::Column);
         assert_eq!(result.layout.align_items, Some(AlignItems::Center));
@@ -593,8 +595,13 @@ mod tests {
     #[test]
     fn test_flex_row_parsing() {
         // Test exact string from test-layout.soc
-        let result = parse_style("bg-[#333333] p-4 rounded-lg flex-row gap-2 items-center").unwrap();
-        assert_eq!(result.layout.direction, FlexDirection::Row, "flex-row should set direction to Row");
+        let result =
+            parse_style("bg-[#333333] p-4 rounded-lg flex-row gap-2 items-center").unwrap();
+        assert_eq!(
+            result.layout.direction,
+            FlexDirection::Row,
+            "flex-row should set direction to Row"
+        );
         assert_eq!(result.layout.gap, 8.0, "gap-2 should be 8px"); // 2 * 4 = 8
         assert_eq!(result.layout.align_items, Some(AlignItems::Center));
         assert_eq!(result.layout.padding, 16.0, "p-4 should be 16px"); // 4 * 4 = 16
@@ -603,7 +610,11 @@ mod tests {
     #[test]
     fn test_flex_row_simple() {
         let result = parse_style("flex-row gap-2").unwrap();
-        assert_eq!(result.layout.direction, FlexDirection::Row, "flex-row should set direction to Row");
+        assert_eq!(
+            result.layout.direction,
+            FlexDirection::Row,
+            "flex-row should set direction to Row"
+        );
         assert_eq!(result.layout.gap, 8.0, "gap-2 should be 8px");
     }
 }

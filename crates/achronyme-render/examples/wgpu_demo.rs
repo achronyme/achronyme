@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo run -p achronyme-render --example wgpu_demo --features wgpu-backend
 
+use achronyme_render::node::{PlotKind, PlotSeries};
 use achronyme_render::{run, AuiApp, WindowConfig};
-use achronyme_render::node::{PlotSeries, PlotKind};
 
 fn main() {
     let config = WindowConfig {
@@ -15,7 +15,8 @@ fn main() {
     let mut app = AuiApp::new(config);
 
     // Root container - dark background, centered content
-    let root = app.add_container("bg-[#1a1a2e] w-full h-full flex-col items-center justify-center gap-8");
+    let root =
+        app.add_container("bg-[#1a1a2e] w-full h-full flex-col items-center justify-center gap-8");
 
     // Title
     let title = app.add_text("Achronyme UI Engine", "text-white text-2xl");

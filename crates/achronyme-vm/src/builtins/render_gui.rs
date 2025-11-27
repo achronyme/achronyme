@@ -73,6 +73,7 @@ pub enum SignalBinding {
     Checkbox(Shared<SignalState>),
 }
 
+#[allow(dead_code)]
 struct BuildContext {
     /// The AuiApp being built
     app: AuiApp,
@@ -183,7 +184,11 @@ fn sync_signals_from_app(
                 if let Some(value) = app.get_text_input_value(node_id) {
                     let old_val = {
                         let sig = sig_rc.read();
-                        if let Value::String(ref s) = sig.value { s.clone() } else { String::new() }
+                        if let Value::String(ref s) = sig.value {
+                            s.clone()
+                        } else {
+                            String::new()
+                        }
                     };
                     if old_val != value {
                         let _ = set_signal_value(vm, sig_rc, Value::String(value));
@@ -194,7 +199,11 @@ fn sync_signals_from_app(
                 if let Some(value) = app.get_slider_value(node_id) {
                     let old_val = {
                         let sig = sig_rc.read();
-                        if let Value::Number(n) = sig.value { n } else { 0.0 }
+                        if let Value::Number(n) = sig.value {
+                            n
+                        } else {
+                            0.0
+                        }
                     };
                     if (old_val - value).abs() > 0.001 {
                         let _ = set_signal_value(vm, sig_rc, Value::Number(value));
@@ -205,7 +214,11 @@ fn sync_signals_from_app(
                 if let Some(checked) = app.get_checkbox_checked(node_id) {
                     let old_val = {
                         let sig = sig_rc.read();
-                        if let Value::Boolean(b) = sig.value { b } else { false }
+                        if let Value::Boolean(b) = sig.value {
+                            b
+                        } else {
+                            false
+                        }
                     };
                     if old_val != checked {
                         let _ = set_signal_value(vm, sig_rc, Value::Boolean(checked));
@@ -217,6 +230,7 @@ fn sync_signals_from_app(
 }
 
 /// Sync signal values TO the app (for when signals change externally)
+#[allow(dead_code)]
 fn sync_signals_to_app(
     app: &mut achronyme_render::AuiApp,
     bindings: &HashMap<u64, SignalBinding>,
@@ -296,10 +310,14 @@ pub fn vm_gui_run(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
     let _ = vm.call_value(&render_fn, &[]);
 
     // Extract the built app and signal bindings
-    let (app, signal_bindings, widget_nodes) = BUILD_CONTEXT.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        borrow.take().map(|ctx| (ctx.app, ctx.signal_bindings, ctx.widget_nodes))
-    }).ok_or_else(|| VmError::Runtime("gui_run: Failed to build UI".to_string()))?;
+    let (app, signal_bindings, widget_nodes) = BUILD_CONTEXT
+        .with(|cell| {
+            let mut borrow = cell.borrow_mut();
+            borrow
+                .take()
+                .map(|ctx| (ctx.app, ctx.signal_bindings, ctx.widget_nodes))
+        })
+        .ok_or_else(|| VmError::Runtime("gui_run: Failed to build UI".to_string()))?;
 
     // If there are no signal bindings, just run the app normally
     if signal_bindings.is_empty() {
@@ -330,7 +348,8 @@ struct ImmediateNotifier {
 impl SignalNotifier for ImmediateNotifier {
     fn notify(&self) {
         // Set flag for immediate detection within same frame
-        self.signal_changed.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.signal_changed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         // Also send event to wake up event loop if waiting
         if let Ok(proxy) = self.proxy.lock() {
             let _ = proxy.send_event(UserEvent::SignalChanged);
@@ -372,6 +391,7 @@ fn run_with_callback(
         std::rc::Rc::new(std::cell::Cell::new(false));
 
     // Run the event loop with per-frame rendering
+    #[allow(dead_code)]
     struct AppWrapper<'a> {
         app: achronyme_render::AuiApp,
         vm: &'a mut VM,
@@ -394,7 +414,11 @@ fn run_with_callback(
             self.app.resumed(event_loop);
         }
 
-        fn user_event(&mut self, _event_loop: &achronyme_render::winit::event_loop::ActiveEventLoop, event: UserEvent) {
+        fn user_event(
+            &mut self,
+            _event_loop: &achronyme_render::winit::event_loop::ActiveEventLoop,
+            event: UserEvent,
+        ) {
             match event {
                 UserEvent::SignalChanged => {
                     // Signal changed, we need to rebuild UI to reflect new values
@@ -471,14 +495,20 @@ fn run_with_callback(
                         rebuild_count += 1;
 
                         // Clear the signal_changed flag before render
-                        self.signal_changed.store(false, std::sync::atomic::Ordering::SeqCst);
+                        self.signal_changed
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
 
                         // 1. SYNC INPUTS TO SIGNALS (only on first rebuild!)
                         // Before destroying the tree, read current values from widgets and update signals
                         // This ensures that user input is captured into the signal system
                         // Only sync on first rebuild - subsequent rebuilds are just to reflect signal changes
                         if rebuild_count == 1 {
-                            sync_signals_from_app(self.vm, &self.app, &self.last_bindings, &self.last_widget_nodes);
+                            sync_signals_from_app(
+                                self.vm,
+                                &self.app,
+                                &self.last_bindings,
+                                &self.last_widget_nodes,
+                            );
                         }
 
                         // Reset widget ID counter so IDs are stable across frames
@@ -541,7 +571,9 @@ fn run_with_callback(
 
                         // Check if a signal was modified during render (e.g., button click)
                         // If so, we need another rebuild to reflect the new signal values
-                        self.needs_rebuild = self.signal_changed.load(std::sync::atomic::Ordering::SeqCst);
+                        self.needs_rebuild = self
+                            .signal_changed
+                            .load(std::sync::atomic::Ordering::SeqCst);
                     }
                 }
                 _ => {}
@@ -750,10 +782,13 @@ pub fn vm_ui_text_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> 
                 Some(Value::String(s)) => (s.clone(), None),
                 _ => (String::new(), None),
             };
-            let placeholder = r.get("placeholder").and_then(|v| match v {
-                Value::String(s) => Some(s.clone()),
-                _ => None,
-            }).unwrap_or_default();
+            let placeholder = r
+                .get("placeholder")
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
             (value, placeholder, signal)
         }
         _ => (String::new(), "Enter text...".to_string(), None),
@@ -763,7 +798,9 @@ pub fn vm_ui_text_input(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> 
     let widget_id = next_widget_id();
 
     with_build_context(|ctx| {
-        let id = ctx.app.add_text_input(widget_id, &placeholder, &initial_value, &style_str);
+        let id = ctx
+            .app
+            .add_text_input(widget_id, &placeholder, &initial_value, &style_str);
 
         // Register signal binding if present
         if let Some(sig) = signal_opt.clone() {
@@ -965,7 +1002,8 @@ pub fn vm_ui_separator(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 pub fn vm_ui_quit(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     with_build_context(|ctx| {
         ctx.app.request_quit();
-    }).ok();
+    })
+    .ok();
     Ok(Value::Null)
 }
 
@@ -1057,11 +1095,19 @@ pub fn vm_ui_plot(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
         (title, x_label, y_label, plot_series, style_str)
     } else {
-        (String::new(), "X".to_string(), "Y".to_string(), Vec::new(), String::new())
+        (
+            String::new(),
+            "X".to_string(),
+            "Y".to_string(),
+            Vec::new(),
+            String::new(),
+        )
     };
 
     with_build_context(|ctx| {
-        let id = ctx.app.add_plot(&title, &x_label, &y_label, series, &style_str);
+        let id = ctx
+            .app
+            .add_plot(&title, &x_label, &y_label, series, &style_str);
 
         if let Some(parent) = ctx.current_parent() {
             ctx.app.add_child(parent, id);

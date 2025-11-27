@@ -86,12 +86,12 @@ impl TextVertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct LineVertex {
-    pub position: [f32; 2],      // Vertex position
-    pub line_start: [f32; 2],    // Line segment start
-    pub line_end: [f32; 2],      // Line segment end
-    pub color: [f32; 4],         // Line color
-    pub thickness: f32,          // Line thickness
-    pub _padding: f32,           // Padding for alignment
+    pub position: [f32; 2],   // Vertex position
+    pub line_start: [f32; 2], // Line segment start
+    pub line_end: [f32; 2],   // Line segment end
+    pub color: [f32; 4],      // Line color
+    pub thickness: f32,       // Line thickness
+    pub _padding: f32,        // Padding for alignment
 }
 
 impl LineVertex {
@@ -113,6 +113,7 @@ impl LineVertex {
 }
 
 /// A text item to be rendered
+#[allow(dead_code)]
 struct TextItem {
     text: String,
     x: f32,
@@ -172,6 +173,7 @@ pub struct WgpuRenderer {
     text_bind_group: wgpu::BindGroup,
     text_vertex_buffer: wgpu::Buffer,
     text_index_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     max_text_quads: usize,
 
     // Shared resources
@@ -584,7 +586,8 @@ impl WgpuRenderer {
             .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
         // Resize text staging buffer
-        self.text_staging_buffer.resize((width * height) as usize, 0);
+        self.text_staging_buffer
+            .resize((width * height) as usize, 0);
 
         // Recreate text texture with new size
         self.text_texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -750,15 +753,7 @@ impl WgpuRenderer {
     }
 
     /// Add a line segment to the batch
-    pub fn push_line(
-        &mut self,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        thickness: f32,
-        color: Color,
-    ) {
+    pub fn push_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: Color) {
         if self.line_vertices.len() / 4 >= self.max_lines {
             return;
         }
@@ -900,10 +895,8 @@ impl WgpuRenderer {
                 render_pass.set_pipeline(&self.rect_pipeline);
                 render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    self.rect_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(self.rect_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..(num_rects * 6) as u32, 0, 0..1);
             }
 
@@ -913,10 +906,8 @@ impl WgpuRenderer {
                 render_pass.set_pipeline(&self.line_pipeline);
                 render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    self.line_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(self.line_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..(num_lines * 6) as u32, 0, 0..1);
             }
 
@@ -933,10 +924,8 @@ impl WgpuRenderer {
                 render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 render_pass.set_bind_group(1, &self.text_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.text_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    self.text_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..6, 0, 0..1);
             }
         }
@@ -956,31 +945,26 @@ impl WgpuRenderer {
         let height = self.size.1;
 
         // Clone text items to avoid borrow conflict
-        let items: Vec<_> = self.text_items.iter().map(|item| {
-            (
-                item.text.clone(),
-                item.x as i32,
-                item.y as i32,
-                item.width as u32,
-                item.height as u32,
-                item.font_size,
-                item.align,
-                item.weight,
-            )
-        }).collect();
+        let items: Vec<_> = self
+            .text_items
+            .iter()
+            .map(|item| {
+                (
+                    item.text.clone(),
+                    item.x as i32,
+                    item.y as i32,
+                    item.width as u32,
+                    item.height as u32,
+                    item.font_size,
+                    item.align,
+                    item.weight,
+                )
+            })
+            .collect();
 
         for (text, x, y, max_width, max_height, font_size, align, weight) in items {
             self.render_text_item_to_staging(
-                &text,
-                x,
-                y,
-                max_width,
-                max_height,
-                font_size,
-                align,
-                weight,
-                width,
-                height,
+                &text, x, y, max_width, max_height, font_size, align, weight, width, height,
             );
         }
     }
@@ -1121,7 +1105,16 @@ impl WgpuRenderer {
                 0.0
             };
 
-            self.push_rect(x, y, w, h, bg, style.border_radius, border_width, border_color);
+            self.push_rect(
+                x,
+                y,
+                w,
+                h,
+                bg,
+                style.border_radius,
+                border_width,
+                border_color,
+            );
         }
 
         // Hover outline for buttons
@@ -1134,8 +1127,16 @@ impl WgpuRenderer {
             NodeContent::Container => {}
             NodeContent::Text(text) => {
                 let color = style.text_color.unwrap_or(0xFFFFFFFF);
-                let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
-                let weight = if style.font_bold { FontWeight::Bold } else { FontWeight::Regular };
+                let font_size = if style.font_size > 0.0 {
+                    style.font_size
+                } else {
+                    14.0
+                };
+                let weight = if style.font_bold {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Regular
+                };
                 let align = match style.text_align.as_deref() {
                     Some("center") => TextAlign::Center,
                     Some("right") => TextAlign::Right,
@@ -1145,11 +1146,31 @@ impl WgpuRenderer {
             }
             NodeContent::Button { label, .. } => {
                 let color = style.text_color.unwrap_or(0xFFFFFFFF);
-                let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
-                let weight = if style.font_bold { FontWeight::Bold } else { FontWeight::Regular };
-                self.push_text(label, x, y, w, h, font_size, color, TextAlign::Center, weight);
+                let font_size = if style.font_size > 0.0 {
+                    style.font_size
+                } else {
+                    14.0
+                };
+                let weight = if style.font_bold {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Regular
+                };
+                self.push_text(
+                    label,
+                    x,
+                    y,
+                    w,
+                    h,
+                    font_size,
+                    color,
+                    TextAlign::Center,
+                    weight,
+                );
             }
-            NodeContent::Slider { min, max, value, .. } => {
+            NodeContent::Slider {
+                min, max, value, ..
+            } => {
                 self.render_slider(x, y, w, h, *min, *max, *value, style, is_hovered);
             }
             NodeContent::Checkbox { checked, label, .. } => {
@@ -1162,9 +1183,25 @@ impl WgpuRenderer {
                 let color = style.background_color.unwrap_or(0xFF4B5563);
                 self.push_rect(x, y, w, h.max(1.0), color, 0.0, 0.0, 0);
             }
-            NodeContent::TextInput { placeholder, value, cursor, .. } => {
+            NodeContent::TextInput {
+                placeholder,
+                value,
+                cursor,
+                ..
+            } => {
                 let is_focused = state.focused == Some(node_id);
-                self.render_text_input(x, y, w, h, placeholder, value, *cursor, style, is_hovered, is_focused);
+                self.render_text_input(
+                    x,
+                    y,
+                    w,
+                    h,
+                    placeholder,
+                    value,
+                    *cursor,
+                    style,
+                    is_hovered,
+                    is_focused,
+                );
             }
             NodeContent::Plot { title, series, .. } => {
                 self.render_plot(x, y, w, h, title, series, style);
@@ -1177,31 +1214,78 @@ impl WgpuRenderer {
         }
     }
 
-    fn render_slider(&mut self, x: f32, y: f32, w: f32, h: f32, min: f64, max: f64, value: f64, style: &NodeStyle, is_hovered: bool) {
+    fn render_slider(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        min: f64,
+        max: f64,
+        value: f64,
+        style: &NodeStyle,
+        is_hovered: bool,
+    ) {
         let track_height = 6.0;
         let track_y = y + (h - track_height) / 2.0;
         let track_bg = style.background_color.unwrap_or(0xFF374151);
         self.push_rect(x, track_y, w, track_height, track_bg, 3.0, 0.0, 0);
 
         let range = max - min;
-        let normalized = if range > 0.0 { ((value - min) / range).clamp(0.0, 1.0) } else { 0.0 };
+        let normalized = if range > 0.0 {
+            ((value - min) / range).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let fill_width = (w as f64 * normalized) as f32;
         if fill_width > 0.0 {
-            self.push_rect(x, track_y, fill_width, track_height, 0xFF3B82F6, 3.0, 0.0, 0);
+            self.push_rect(
+                x,
+                track_y,
+                fill_width,
+                track_height,
+                0xFF3B82F6,
+                3.0,
+                0.0,
+                0,
+            );
         }
 
         let thumb_radius = 8.0;
         let thumb_x = x + fill_width - thumb_radius;
         let thumb_y = y + h / 2.0 - thumb_radius;
         let thumb_color = if is_hovered { 0xFFFFFFFF } else { 0xFFE5E7EB };
-        self.push_rect(thumb_x, thumb_y, thumb_radius * 2.0, thumb_radius * 2.0, thumb_color, thumb_radius, 0.0, 0);
+        self.push_rect(
+            thumb_x,
+            thumb_y,
+            thumb_radius * 2.0,
+            thumb_radius * 2.0,
+            thumb_color,
+            thumb_radius,
+            0.0,
+            0,
+        );
     }
 
-    fn render_checkbox(&mut self, x: f32, y: f32, _w: f32, h: f32, checked: bool, label: &str, style: &NodeStyle, is_hovered: bool) {
+    fn render_checkbox(
+        &mut self,
+        x: f32,
+        y: f32,
+        _w: f32,
+        h: f32,
+        checked: bool,
+        label: &str,
+        style: &NodeStyle,
+        is_hovered: bool,
+    ) {
         let box_size = 18.0;
         let box_y = y + (h - box_size) / 2.0;
         let box_bg = if checked { 0xFF3B82F6 } else { 0xFF374151 };
-        let box_bg = if is_hovered { Self::lighten_color(box_bg, 0.15) } else { box_bg };
+        let box_bg = if is_hovered {
+            Self::lighten_color(box_bg, 0.15)
+        } else {
+            box_bg
+        };
         let border_color = if is_hovered { 0xFF60A5FA } else { 0xFF4B5563 };
         self.push_rect(x, box_y, box_size, box_size, box_bg, 4.0, 1.0, border_color);
 
@@ -1211,11 +1295,33 @@ impl WgpuRenderer {
 
         // Label
         let color = style.text_color.unwrap_or(0xFFFFFFFF);
-        let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
-        self.push_text(label, x + box_size + 8.0, y, 200.0, h, font_size, color, TextAlign::Left, FontWeight::Regular);
+        let font_size = if style.font_size > 0.0 {
+            style.font_size
+        } else {
+            14.0
+        };
+        self.push_text(
+            label,
+            x + box_size + 8.0,
+            y,
+            200.0,
+            h,
+            font_size,
+            color,
+            TextAlign::Left,
+            FontWeight::Regular,
+        );
     }
 
-    fn render_progress_bar(&mut self, x: f32, y: f32, w: f32, h: f32, progress: f32, style: &NodeStyle) {
+    fn render_progress_bar(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        progress: f32,
+        style: &NodeStyle,
+    ) {
         let track_bg = style.background_color.unwrap_or(0xFF374151);
         let radius = style.border_radius.min(h / 2.0);
         self.push_rect(x, y, w, h, track_bg, radius, 0.0, 0);
@@ -1226,7 +1332,19 @@ impl WgpuRenderer {
         }
     }
 
-    fn render_text_input(&mut self, x: f32, y: f32, w: f32, h: f32, placeholder: &str, value: &str, cursor: usize, style: &NodeStyle, is_hovered: bool, is_focused: bool) {
+    fn render_text_input(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        placeholder: &str,
+        value: &str,
+        cursor: usize,
+        style: &NodeStyle,
+        is_hovered: bool,
+        is_focused: bool,
+    ) {
         let bg_color = style.background_color.unwrap_or(0xFF2D2D2D);
         let bg_color = if is_focused {
             Self::lighten_color(bg_color, 0.15)
@@ -1243,23 +1361,58 @@ impl WgpuRenderer {
             style.border_color.unwrap_or(0xFF4B5563)
         };
         let border_width = if is_focused { 2.0 } else { 1.0 };
-        self.push_rect(x, y, w, h, bg_color, style.border_radius, border_width, border_color);
+        self.push_rect(
+            x,
+            y,
+            w,
+            h,
+            bg_color,
+            style.border_radius,
+            border_width,
+            border_color,
+        );
 
-        let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
+        let font_size = if style.font_size > 0.0 {
+            style.font_size
+        } else {
+            14.0
+        };
 
         if value.is_empty() {
             // Show placeholder when empty
-            self.push_text(placeholder, x + 8.0, y, w - 16.0, h, font_size, 0xFF9CA3AF, TextAlign::Left, FontWeight::Regular);
+            self.push_text(
+                placeholder,
+                x + 8.0,
+                y,
+                w - 16.0,
+                h,
+                font_size,
+                0xFF9CA3AF,
+                TextAlign::Left,
+                FontWeight::Regular,
+            );
         } else {
             // Show actual value
             let text_color = style.text_color.unwrap_or(0xFFFFFFFF);
-            self.push_text(value, x + 8.0, y, w - 16.0, h, font_size, text_color, TextAlign::Left, FontWeight::Regular);
+            self.push_text(
+                value,
+                x + 8.0,
+                y,
+                w - 16.0,
+                h,
+                font_size,
+                text_color,
+                TextAlign::Left,
+                FontWeight::Regular,
+            );
         }
 
         // Draw cursor when focused
         if is_focused {
             let text_before_cursor = &value[..cursor.min(value.len())];
-            let (cursor_offset, _) = self.text_renderer.measure(text_before_cursor, font_size, FontWeight::Regular);
+            let (cursor_offset, _) =
+                self.text_renderer
+                    .measure(text_before_cursor, font_size, FontWeight::Regular);
             let cursor_x = x + 8.0 + cursor_offset;
             let cursor_y = y + (h - font_size) / 2.0;
             // Blinking cursor (simple solid line for now)
@@ -1267,12 +1420,31 @@ impl WgpuRenderer {
         }
     }
 
-    fn render_plot(&mut self, x: f32, y: f32, w: f32, h: f32, title: &str, series: &[PlotSeries], style: &NodeStyle) {
+    fn render_plot(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        title: &str,
+        series: &[PlotSeries],
+        style: &NodeStyle,
+    ) {
         let bg_color = style.background_color.unwrap_or(0xFF1F2937);
         self.push_rect(x, y, w, h, bg_color, style.border_radius, 0.0, 0);
 
         // Title
-        self.push_text(title, x + 8.0, y + 4.0, w - 16.0, 24.0, 14.0, 0xFFFFFFFF, TextAlign::Left, FontWeight::Bold);
+        self.push_text(
+            title,
+            x + 8.0,
+            y + 4.0,
+            w - 16.0,
+            24.0,
+            14.0,
+            0xFFFFFFFF,
+            TextAlign::Left,
+            FontWeight::Bold,
+        );
 
         let plot_x = x + 40.0;
         let plot_y = y + 32.0;
@@ -1305,25 +1477,34 @@ impl WgpuRenderer {
         // Draw series
         for s in series {
             let radius = s.radius.max(2.0);
-            
+
             match s.kind {
                 crate::node::PlotKind::Line => {
                     let mut prev_point: Option<(f32, f32)> = None;
-                    
+
                     // Draw lines and points in one pass without allocating a vector
                     for &(px, py) in &s.data {
                         let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
                         let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
-                        
+
                         // Draw line from previous point
                         if let Some((prev_x, prev_y)) = prev_point {
                             self.push_line(prev_x, prev_y, sx, sy, 2.0, s.color);
                         }
-                        
+
                         // Draw point
                         let point_radius = radius * 0.6;
-                        self.push_rect(sx - point_radius, sy - point_radius, point_radius * 2.0, point_radius * 2.0, s.color, point_radius, 0.0, 0);
-                        
+                        self.push_rect(
+                            sx - point_radius,
+                            sy - point_radius,
+                            point_radius * 2.0,
+                            point_radius * 2.0,
+                            s.color,
+                            point_radius,
+                            0.0,
+                            0,
+                        );
+
                         prev_point = Some((sx, sy));
                     }
                 }
@@ -1332,15 +1513,26 @@ impl WgpuRenderer {
                     for &(px, py) in &s.data {
                         let sx = plot_x + ((px - min_x) / range_x * plot_w as f64) as f32;
                         let sy = plot_y + plot_h - ((py - min_y) / range_y * plot_h as f64) as f32;
-                        
-                        self.push_rect(sx - radius, sy - radius, radius * 2.0, radius * 2.0, s.color, radius, 0.0, 0);
+
+                        self.push_rect(
+                            sx - radius,
+                            sy - radius,
+                            radius * 2.0,
+                            radius * 2.0,
+                            s.color,
+                            radius,
+                            0.0,
+                            0,
+                        );
                     }
                 }
             }
         }
 
         // Border
-        self.push_rect(plot_x, plot_y, plot_w, plot_h, 0x00000000, 0.0, 1.0, 0xFF4B5563);
+        self.push_rect(
+            plot_x, plot_y, plot_w, plot_h, 0x00000000, 0.0, 1.0, 0xFF4B5563,
+        );
     }
 
     fn lighten_color(color: Color, factor: f32) -> Color {

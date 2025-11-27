@@ -52,19 +52,19 @@ pub mod render;
 // Re-export winit for consumers
 pub use winit;
 
+pub use events::Event;
 use events::{EventManager, MouseButton};
 use layout::{LayoutEngine, LayoutStyle};
-pub use events::Event;
 pub use node::{NodeId, PlotKind, PlotSeries};
-pub use style_parser::{parse_style, ParsedStyle};
 use node::{UiNode, UiTree};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+pub use style_parser::{parse_style, ParsedStyle};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent, KeyEvent};
-use winit::keyboard::{Key, NamedKey};
+use winit::event::{ElementState, KeyEvent, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 // Re-export the appropriate renderer types
@@ -222,11 +222,23 @@ impl AuiApp {
 
     /// Add a button with style string
     pub fn add_button(&mut self, id: u64, label: &str, style_str: &str) -> NodeId {
-        self.add_node(node::NodeContent::Button { id, label: label.to_string() }, style_str)
+        self.add_node(
+            node::NodeContent::Button {
+                id,
+                label: label.to_string(),
+            },
+            style_str,
+        )
     }
 
     /// Add a text input with style string
-    pub fn add_text_input(&mut self, id: u64, placeholder: &str, initial_value: &str, style_str: &str) -> NodeId {
+    pub fn add_text_input(
+        &mut self,
+        id: u64,
+        placeholder: &str,
+        initial_value: &str,
+        style_str: &str,
+    ) -> NodeId {
         self.add_node(
             node::NodeContent::TextInput {
                 id,
@@ -239,9 +251,21 @@ impl AuiApp {
     }
 
     /// Add a slider with style string
-    pub fn add_slider(&mut self, id: u64, min: f64, max: f64, value: f64, style_str: &str) -> NodeId {
+    pub fn add_slider(
+        &mut self,
+        id: u64,
+        min: f64,
+        max: f64,
+        value: f64,
+        style_str: &str,
+    ) -> NodeId {
         self.add_node(
-            node::NodeContent::Slider { id, min, max, value },
+            node::NodeContent::Slider {
+                id,
+                min,
+                max,
+                value,
+            },
             style_str,
         )
     }
@@ -301,17 +325,29 @@ impl AuiApp {
     }
 
     /// Register a click handler for a node
-    pub fn on_click(&mut self, node: NodeId, callback: impl Fn(&events::Event) + Send + Sync + 'static) {
+    pub fn on_click(
+        &mut self,
+        node: NodeId,
+        callback: impl Fn(&events::Event) + Send + Sync + 'static,
+    ) {
         self.events.on_click(node, callback);
     }
 
     /// Register a hover enter handler
-    pub fn on_hover_enter(&mut self, node: NodeId, callback: impl Fn(&events::Event) + Send + Sync + 'static) {
+    pub fn on_hover_enter(
+        &mut self,
+        node: NodeId,
+        callback: impl Fn(&events::Event) + Send + Sync + 'static,
+    ) {
         self.events.on_hover_enter(node, callback);
     }
 
     /// Register a hover leave handler
-    pub fn on_hover_leave(&mut self, node: NodeId, callback: impl Fn(&events::Event) + Send + Sync + 'static) {
+    pub fn on_hover_leave(
+        &mut self,
+        node: NodeId,
+        callback: impl Fn(&events::Event) + Send + Sync + 'static,
+    ) {
         self.events.on_hover_leave(node, callback);
     }
 
@@ -435,7 +471,8 @@ impl AuiApp {
                     Key::Named(NamedKey::Backspace) => {
                         if *cursor > 0 {
                             // Find previous char boundary
-                            let prev = value[..*cursor].char_indices()
+                            let prev = value[..*cursor]
+                                .char_indices()
                                 .last()
                                 .map(|(i, _)| i)
                                 .unwrap_or(0);
@@ -452,7 +489,8 @@ impl AuiApp {
                     }
                     Key::Named(NamedKey::ArrowLeft) => {
                         if *cursor > 0 {
-                            *cursor = value[..*cursor].char_indices()
+                            *cursor = value[..*cursor]
+                                .char_indices()
                                 .last()
                                 .map(|(i, _)| i)
                                 .unwrap_or(0);
@@ -460,7 +498,8 @@ impl AuiApp {
                     }
                     Key::Named(NamedKey::ArrowRight) => {
                         if *cursor < value.len() {
-                            *cursor = value[*cursor..].char_indices()
+                            *cursor = value[*cursor..]
+                                .char_indices()
                                 .nth(1)
                                 .map(|(i, _)| *cursor + i)
                                 .unwrap_or(value.len());
@@ -501,7 +540,9 @@ impl AuiApp {
                 *checked = !*checked;
                 self.mark_modified(node_id);
             }
-            node::NodeContent::Slider { min, max, value, .. } => {
+            node::NodeContent::Slider {
+                min, max, value, ..
+            } => {
                 // Calculate value from click position
                 let width = node.layout.width;
                 if width > 0.0 {
@@ -529,7 +570,10 @@ impl AuiApp {
             return;
         };
 
-        if let node::NodeContent::Slider { min, max, value, .. } = &mut node.content {
+        if let node::NodeContent::Slider {
+            min, max, value, ..
+        } = &mut node.content
+        {
             let layout_x = node.layout.x;
             let width = node.layout.width;
             if width > 0.0 {
@@ -588,7 +632,10 @@ impl AuiApp {
     /// Set the value of a slider
     pub fn set_slider_value(&mut self, node_id: NodeId, new_value: f64) {
         if let Some(node) = self.tree.get_mut(node_id) {
-            if let node::NodeContent::Slider { value, min, max, .. } = &mut node.content {
+            if let node::NodeContent::Slider {
+                value, min, max, ..
+            } = &mut node.content
+            {
                 *value = new_value.clamp(*min, *max);
             }
         }
@@ -676,7 +723,8 @@ impl AuiApp {
             hovered: self.hovered_node,
             pressed: self.pressed_node,
         };
-        self.renderer.render_with_state(&mut buffer, &self.tree, root, state);
+        self.renderer
+            .render_with_state(&mut buffer, &self.tree, root, state);
 
         // Present
         let _ = buffer.present();
@@ -773,7 +821,8 @@ impl ApplicationHandler for AuiApp {
 
                 match state {
                     ElementState::Pressed => {
-                        if let Some(mut evt) = self.events.handle_mouse_down(&self.tree, mouse_btn) {
+                        if let Some(mut evt) = self.events.handle_mouse_down(&self.tree, mouse_btn)
+                        {
                             self.pressed_node = Some(evt.target);
 
                             // Check if pressing a slider to start dragging
@@ -810,7 +859,9 @@ impl ApplicationHandler for AuiApp {
                     }
                 }
             }
-            WindowEvent::KeyboardInput { event: key_event, .. } => {
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
                 self.handle_keyboard_input(&key_event);
             }
             WindowEvent::CursorLeft { .. } => {
@@ -866,9 +917,11 @@ pub fn demo() {
     );
 
     // Inner card (shrink-wrap, should be centered!)
-    let card = app
-        .tree_mut()
-        .insert(UiNode::container().with_background(0xFF333333).with_border_radius(8.0));
+    let card = app.tree_mut().insert(
+        UiNode::container()
+            .with_background(0xFF333333)
+            .with_border_radius(8.0),
+    );
     app.tree_mut().add_child(root, card);
     app.styles_mut().insert(
         card,
@@ -879,26 +932,38 @@ pub fn demo() {
     );
 
     // Card content
-    let label1 = app.tree_mut().insert(UiNode::text("This card is shrink-wrapped"));
+    let label1 = app
+        .tree_mut()
+        .insert(UiNode::text("This card is shrink-wrapped"));
     app.tree_mut().add_child(card, label1);
-    app.styles_mut()
-        .insert(label1, LayoutStyle::default().with_width(180.0).with_height(20.0));
+    app.styles_mut().insert(
+        label1,
+        LayoutStyle::default().with_width(180.0).with_height(20.0),
+    );
 
-    let label2 = app.tree_mut().insert(UiNode::text("And properly centered!"));
+    let label2 = app
+        .tree_mut()
+        .insert(UiNode::text("And properly centered!"));
     app.tree_mut().add_child(card, label2);
-    app.styles_mut()
-        .insert(label2, LayoutStyle::default().with_width(150.0).with_height(20.0));
+    app.styles_mut().insert(
+        label2,
+        LayoutStyle::default().with_width(150.0).with_height(20.0),
+    );
 
     let button = app.tree_mut().insert(UiNode::button(1, "Click Me"));
     app.tree_mut().add_child(card, button);
-    app.styles_mut()
-        .insert(button, LayoutStyle::default().with_width(100.0).with_height(32.0));
+    app.styles_mut().insert(
+        button,
+        LayoutStyle::default().with_width(100.0).with_height(32.0),
+    );
 
     // Footer
     let footer = app.tree_mut().insert(UiNode::text("Footer"));
     app.tree_mut().add_child(root, footer);
-    app.styles_mut()
-        .insert(footer, LayoutStyle::default().with_width(80.0).with_height(20.0));
+    app.styles_mut().insert(
+        footer,
+        LayoutStyle::default().with_width(80.0).with_height(20.0),
+    );
 
     app.set_root(root);
 

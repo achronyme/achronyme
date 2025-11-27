@@ -427,11 +427,7 @@ mod tests {
         let vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
-        let result = vm_zip(
-            &vm,
-            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
-        )
-        .unwrap();
+        let result = vm_zip(&vm, &[Value::Vector(shared(v1)), Value::Vector(shared(v2))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -453,11 +449,7 @@ mod tests {
         let vm = setup_vm();
         let v1 = vec![Value::Number(1.0), Value::Number(2.0)];
         let v2 = vec![Value::Number(4.0), Value::Number(5.0), Value::Number(6.0)];
-        let result = vm_zip(
-            &vm,
-            &[Value::Vector(shared(v1)), Value::Vector(shared(v2))],
-        )
-        .unwrap();
+        let result = vm_zip(&vm, &[Value::Vector(shared(v1)), Value::Vector(shared(v2))]).unwrap();
 
         match result {
             Value::Vector(rc) => {
@@ -497,8 +489,7 @@ mod tests {
         let innermost = Value::Vector(shared(vec![Value::Number(1.0)]));
         let middle = Value::Vector(shared(vec![innermost]));
         let outer = vec![middle];
-        let result =
-            vm_flatten(&vm, &[Value::Vector(shared(outer)), Value::Number(2.0)]).unwrap();
+        let result = vm_flatten(&vm, &[Value::Vector(shared(outer)), Value::Number(2.0)]).unwrap();
 
         match result {
             Value::Vector(rc) => {

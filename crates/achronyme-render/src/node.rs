@@ -270,7 +270,12 @@ impl UiNode {
     /// Create a slider node
     pub fn slider(id: u64, min: f64, max: f64, value: f64) -> Self {
         Self {
-            content: NodeContent::Slider { id, min, max, value },
+            content: NodeContent::Slider {
+                id,
+                min,
+                max,
+                value,
+            },
             style: NodeStyle {
                 background_color: Some(0xFF374151),
                 border_radius: 4.0,
@@ -341,7 +346,12 @@ impl UiNode {
     }
 
     /// Create a plot node
-    pub fn plot(title: impl Into<String>, x_label: impl Into<String>, y_label: impl Into<String>, series: Vec<PlotSeries>) -> Self {
+    pub fn plot(
+        title: impl Into<String>,
+        x_label: impl Into<String>,
+        y_label: impl Into<String>,
+        series: Vec<PlotSeries>,
+    ) -> Self {
         Self {
             content: NodeContent::Plot {
                 title: title.into(),

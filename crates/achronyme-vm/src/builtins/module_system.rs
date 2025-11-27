@@ -51,7 +51,7 @@ pub fn vm_import(vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
 
     // Resolve relative paths based on current module
     use std::path::Path;
-    
+
     let current_module = vm.current_module.clone();
 
     if let Some(current_module) = &current_module {

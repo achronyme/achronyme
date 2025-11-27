@@ -49,7 +49,8 @@ impl VM {
                             upvalues.push(shared(value));
                         } else {
                             // Transitive capture from current frame's upvalue
-                            let current_frame = self.frames.last().ok_or(VmError::StackUnderflow)?;
+                            let current_frame =
+                                self.frames.last().ok_or(VmError::StackUnderflow)?;
 
                             let parent_upvalue = current_frame
                                 .upvalues
@@ -184,7 +185,8 @@ impl VM {
                             args.push(self.get_register(arg_reg)?);
                         }
 
-                        let current_frame = self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
+                        let current_frame =
+                            self.frames.last_mut().ok_or(VmError::StackUnderflow)?;
 
                         current_frame.function = closure.prototype.clone();
                         current_frame.ip = 0;

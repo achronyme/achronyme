@@ -97,16 +97,28 @@ impl EventManager {
 
     /// Register a click handler (convenience method)
     pub fn on_click(&mut self, node: NodeId, callback: impl Fn(&Event) + Send + Sync + 'static) {
-        self.on(node, EventType::Click(MouseButton::Left), Box::new(callback));
+        self.on(
+            node,
+            EventType::Click(MouseButton::Left),
+            Box::new(callback),
+        );
     }
 
     /// Register a hover enter handler
-    pub fn on_hover_enter(&mut self, node: NodeId, callback: impl Fn(&Event) + Send + Sync + 'static) {
+    pub fn on_hover_enter(
+        &mut self,
+        node: NodeId,
+        callback: impl Fn(&Event) + Send + Sync + 'static,
+    ) {
         self.on(node, EventType::MouseEnter, Box::new(callback));
     }
 
     /// Register a hover leave handler
-    pub fn on_hover_leave(&mut self, node: NodeId, callback: impl Fn(&Event) + Send + Sync + 'static) {
+    pub fn on_hover_leave(
+        &mut self,
+        node: NodeId,
+        callback: impl Fn(&Event) + Send + Sync + 'static,
+    ) {
         self.on(node, EventType::MouseLeave, Box::new(callback));
     }
 

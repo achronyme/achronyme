@@ -202,7 +202,9 @@ pub fn set_signal_value(
         // Notify subscribers
         // Clone the list of subscribers to release the lock on state
         // Also clean up dead weak references while we're at it
-        let subscribers: Vec<_> = state.subscribers.iter()
+        let subscribers: Vec<_> = state
+            .subscribers
+            .iter()
             .filter_map(|weak| weak.upgrade().map(|_| weak.clone()))
             .collect();
 

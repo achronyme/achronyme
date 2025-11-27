@@ -70,20 +70,26 @@ impl LayoutStyle {
                 bottom: length(self.margin_bottom.unwrap_or(self.margin)),
             },
             size: Size {
-                width: self.width.map(|w| {
-                    if w.is_infinite() {
-                        Dimension::Percent(1.0) // w-full = 100%
-                    } else {
-                        length(w)
-                    }
-                }).unwrap_or(Dimension::Auto),
-                height: self.height.map(|h| {
-                    if h.is_infinite() {
-                        Dimension::Percent(1.0) // h-full = 100%
-                    } else {
-                        length(h)
-                    }
-                }).unwrap_or(Dimension::Auto),
+                width: self
+                    .width
+                    .map(|w| {
+                        if w.is_infinite() {
+                            Dimension::Percent(1.0) // w-full = 100%
+                        } else {
+                            length(w)
+                        }
+                    })
+                    .unwrap_or(Dimension::Auto),
+                height: self
+                    .height
+                    .map(|h| {
+                        if h.is_infinite() {
+                            Dimension::Percent(1.0) // h-full = 100%
+                        } else {
+                            length(h)
+                        }
+                    })
+                    .unwrap_or(Dimension::Auto),
             },
             min_size: Size {
                 width: self.min_width.map(length).unwrap_or(Dimension::Auto),
@@ -150,7 +156,11 @@ impl LayoutStyle {
 #[derive(Debug, Clone)]
 pub enum MeasureContext {
     /// Text node with content and font size
-    Text { text: String, font_size: f32, bold: bool },
+    Text {
+        text: String,
+        font_size: f32,
+        bold: bool,
+    },
     /// Button with label and font size
     Button { label: String, font_size: f32 },
     /// Container (no measurement needed)
@@ -194,7 +204,12 @@ impl LayoutEngine {
 
     /// Sync the UiTree with Taffy's internal tree
     /// This should be called when nodes are added/removed/modified
-    pub fn sync_tree(&mut self, tree: &mut UiTree, root: NodeId, styles: &HashMap<NodeId, LayoutStyle>) {
+    pub fn sync_tree(
+        &mut self,
+        tree: &mut UiTree,
+        root: NodeId,
+        styles: &HashMap<NodeId, LayoutStyle>,
+    ) {
         // Clear existing Taffy nodes
         self.taffy.clear();
         self.node_map.clear();
@@ -258,7 +273,9 @@ impl LayoutEngine {
             .ok()?;
 
         // Set the context for measurement
-        self.taffy.set_node_context(taffy_node, Some(measure_context)).ok()?;
+        self.taffy
+            .set_node_context(taffy_node, Some(measure_context))
+            .ok()?;
 
         // Store mappings
         self.node_map.insert(node_id, taffy_node);
@@ -273,7 +290,13 @@ impl LayoutEngine {
     }
 
     /// Compute layout for the tree using measure function for text
-    pub fn compute_layout(&mut self, tree: &mut UiTree, root: NodeId, available_width: f32, available_height: f32) {
+    pub fn compute_layout(
+        &mut self,
+        tree: &mut UiTree,
+        root: NodeId,
+        available_width: f32,
+        available_height: f32,
+    ) {
         if let Some(&taffy_root) = self.node_map.get(&root) {
             // Compute layout with available space and measure function
             let available_space = Size {
@@ -287,7 +310,12 @@ impl LayoutEngine {
                 taffy_root,
                 available_space,
                 |known_dimensions, available_space, _node_id, node_context, _style| {
-                    measure_node(known_dimensions, available_space, node_context, text_renderer)
+                    measure_node(
+                        known_dimensions,
+                        available_space,
+                        node_context,
+                        text_renderer,
+                    )
                 },
             );
 
@@ -298,7 +326,13 @@ impl LayoutEngine {
         }
     }
 
-    fn copy_layouts_to_tree(&self, tree: &mut UiTree, node_id: NodeId, parent_x: f32, parent_y: f32) {
+    fn copy_layouts_to_tree(
+        &self,
+        tree: &mut UiTree,
+        node_id: NodeId,
+        parent_x: f32,
+        parent_y: f32,
+    ) {
         let taffy_node = match self.node_map.get(&node_id) {
             Some(&tn) => tn,
             None => return,
@@ -356,30 +390,53 @@ fn measure_node(
     }
 
     match node_context {
-        Some(MeasureContext::Text { text, font_size, bold }) => {
+        Some(MeasureContext::Text {
+            text,
+            font_size,
+            bold,
+        }) => {
             // Use default font size if not specified (0.0)
-            let actual_font_size = if *font_size <= 0.0 { DEFAULT_FONT_SIZE } else { *font_size };
-            let weight = if *bold { FontWeight::Bold } else { FontWeight::Regular };
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let weight = if *bold {
+                FontWeight::Bold
+            } else {
+                FontWeight::Regular
+            };
             let (text_width, text_height) = text_renderer.measure(text, actual_font_size, weight);
 
             // Add some padding around text
             let padding = 4.0;
             Size {
                 width: known_dimensions.width.unwrap_or(text_width + padding * 2.0),
-                height: known_dimensions.height.unwrap_or(text_height + padding * 2.0),
+                height: known_dimensions
+                    .height
+                    .unwrap_or(text_height + padding * 2.0),
             }
         }
         Some(MeasureContext::Button { label, font_size }) => {
             // Use default font size if not specified (0.0)
-            let actual_font_size = if *font_size <= 0.0 { DEFAULT_FONT_SIZE } else { *font_size };
-            let (text_width, text_height) = text_renderer.measure(label, actual_font_size, FontWeight::Regular);
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let (text_width, text_height) =
+                text_renderer.measure(label, actual_font_size, FontWeight::Regular);
 
             // Buttons have more padding
             let h_padding = 16.0;
             let v_padding = 8.0;
             Size {
-                width: known_dimensions.width.unwrap_or(text_width + h_padding * 2.0),
-                height: known_dimensions.height.unwrap_or(text_height + v_padding * 2.0),
+                width: known_dimensions
+                    .width
+                    .unwrap_or(text_width + h_padding * 2.0),
+                height: known_dimensions
+                    .height
+                    .unwrap_or(text_height + v_padding * 2.0),
             }
         }
         Some(MeasureContext::Container) | None => {
@@ -391,7 +448,11 @@ fn measure_node(
         }
         Some(MeasureContext::TextInput { font_size, .. }) => {
             // Text input has minimum width, height based on font
-            let actual_font_size = if *font_size <= 0.0 { DEFAULT_FONT_SIZE } else { *font_size };
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
             let line_height = actual_font_size * 1.4;
             Size {
                 width: known_dimensions.width.unwrap_or(200.0), // Default width
@@ -407,13 +468,22 @@ fn measure_node(
         }
         Some(MeasureContext::Checkbox { label, font_size }) => {
             // Checkbox: checkbox square + gap + label
-            let actual_font_size = if *font_size <= 0.0 { DEFAULT_FONT_SIZE } else { *font_size };
-            let (text_width, text_height) = text_renderer.measure(label, actual_font_size, FontWeight::Regular);
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let (text_width, text_height) =
+                text_renderer.measure(label, actual_font_size, FontWeight::Regular);
             let checkbox_size = 18.0;
             let gap = 8.0;
             Size {
-                width: known_dimensions.width.unwrap_or(checkbox_size + gap + text_width + 8.0),
-                height: known_dimensions.height.unwrap_or(text_height.max(checkbox_size) + 8.0),
+                width: known_dimensions
+                    .width
+                    .unwrap_or(checkbox_size + gap + text_width + 8.0),
+                height: known_dimensions
+                    .height
+                    .unwrap_or(text_height.max(checkbox_size) + 8.0),
             }
         }
         Some(MeasureContext::ProgressBar) => {
@@ -477,8 +547,14 @@ mod tests {
         tree.add_child(root, child2);
 
         // Children have fixed sizes
-        styles.insert(child1, LayoutStyle::default().with_width(100.0).with_height(30.0));
-        styles.insert(child2, LayoutStyle::default().with_width(150.0).with_height(30.0));
+        styles.insert(
+            child1,
+            LayoutStyle::default().with_width(100.0).with_height(30.0),
+        );
+        styles.insert(
+            child2,
+            LayoutStyle::default().with_width(150.0).with_height(30.0),
+        );
 
         // Sync and compute
         engine.sync_tree(&mut tree, root, &styles);
@@ -566,7 +642,10 @@ mod tests {
         // Content inside inner box
         let label = tree.insert(UiNode::text("Centered!"));
         tree.add_child(inner, label);
-        styles.insert(label, LayoutStyle::default().with_width(80.0).with_height(20.0));
+        styles.insert(
+            label,
+            LayoutStyle::default().with_width(80.0).with_height(20.0),
+        );
 
         // Compute layout
         engine.sync_tree(&mut tree, root, &styles);
@@ -579,7 +658,10 @@ mod tests {
 
         println!(
             "Inner box: x={}, y={}, w={}, h={}",
-            inner_node.layout.x, inner_node.layout.y, inner_node.layout.width, inner_node.layout.height
+            inner_node.layout.x,
+            inner_node.layout.y,
+            inner_node.layout.width,
+            inner_node.layout.height
         );
 
         // Inner should shrink-wrap: width = label_width + 2*padding = 80 + 32 = 112
@@ -610,13 +692,17 @@ mod tests {
             LayoutStyle::row()
                 .with_width(400.0)
                 .with_height(100.0)
-                .with_gap(8.0)  // gap-2 = 8px
+                .with_gap(8.0) // gap-2 = 8px
                 .with_align_items(AlignItems::Center),
         );
 
         // Verify the style was created correctly
         let root_style = styles.get(&root).unwrap();
-        assert_eq!(root_style.direction, FlexDirection::Row, "Root should be flex-row");
+        assert_eq!(
+            root_style.direction,
+            FlexDirection::Row,
+            "Root should be flex-row"
+        );
         assert_eq!(root_style.gap, 8.0, "Root gap should be 8");
 
         // Three children: label + 2 buttons (using text measurement)
@@ -642,9 +728,18 @@ mod tests {
         let b1 = tree.get(btn1).unwrap();
         let b2 = tree.get(btn2).unwrap();
 
-        println!("Label: x={}, y={}, w={}, h={}", l.layout.x, l.layout.y, l.layout.width, l.layout.height);
-        println!("Btn1:  x={}, y={}, w={}, h={}", b1.layout.x, b1.layout.y, b1.layout.width, b1.layout.height);
-        println!("Btn2:  x={}, y={}, w={}, h={}", b2.layout.x, b2.layout.y, b2.layout.width, b2.layout.height);
+        println!(
+            "Label: x={}, y={}, w={}, h={}",
+            l.layout.x, l.layout.y, l.layout.width, l.layout.height
+        );
+        println!(
+            "Btn1:  x={}, y={}, w={}, h={}",
+            b1.layout.x, b1.layout.y, b1.layout.width, b1.layout.height
+        );
+        println!(
+            "Btn2:  x={}, y={}, w={}, h={}",
+            b2.layout.x, b2.layout.y, b2.layout.width, b2.layout.height
+        );
 
         // All should have positive widths (measured)
         assert!(l.layout.width > 0.0, "Label should have measured width");
@@ -670,17 +765,18 @@ mod tests {
     #[test]
     fn test_simulated_soc_structure() {
         // This test simulates the exact structure from test-layout.soc
-        use crate::style_parser::parse_style;
         use crate::node::NodeStyle;
+        use crate::style_parser::parse_style;
 
         let mut tree = UiTree::new();
         let mut engine = LayoutEngine::new();
         let mut styles = HashMap::new();
 
         // Root container: "bg-[#1a1a1a] w-full h-full p-6 flex-col items-center gap-4"
-        let root_parsed = parse_style("bg-[#1a1a1a] w-full h-full p-6 flex-col items-center gap-4").unwrap();
+        let root_parsed =
+            parse_style("bg-[#1a1a1a] w-full h-full p-6 flex-col items-center gap-4").unwrap();
         let mut root_style = root_parsed.layout;
-        root_style.width = Some(500.0);  // Fixed window size
+        root_style.width = Some(500.0); // Fixed window size
         root_style.height = Some(400.0);
         let mut root_node = UiNode::container();
         root_node.style = root_parsed.visual;
@@ -697,7 +793,8 @@ mod tests {
         styles.insert(title, title_parsed.layout);
 
         // Row box: "bg-[#333333] p-4 rounded-lg flex-row gap-2 items-center"
-        let row_parsed = parse_style("bg-[#333333] p-4 rounded-lg flex-row gap-2 items-center").unwrap();
+        let row_parsed =
+            parse_style("bg-[#333333] p-4 rounded-lg flex-row gap-2 items-center").unwrap();
         let mut row_node = UiNode::container();
         row_node.style = row_parsed.visual;
         let row_box = tree.insert(row_node);
@@ -707,7 +804,11 @@ mod tests {
         // Verify row box has flex-row direction
         println!("Row box direction: {:?}", row_parsed.layout.direction);
         println!("Row box gap: {:?}", row_parsed.layout.gap);
-        assert_eq!(row_parsed.layout.direction, FlexDirection::Row, "Row box should be flex-row");
+        assert_eq!(
+            row_parsed.layout.direction,
+            FlexDirection::Row,
+            "Row box should be flex-row"
+        );
 
         // Label inside row: "Row 1:"
         let label_parsed = parse_style("text-blue-400").unwrap();
@@ -744,10 +845,22 @@ mod tests {
         let row = tree.get(row_box).unwrap();
 
         println!("\n=== SOC Simulation Test ===");
-        println!("Row box: x={}, y={}, w={}, h={}", row.layout.x, row.layout.y, row.layout.width, row.layout.height);
-        println!("Label: x={}, y={}, w={}, h={}", l.layout.x, l.layout.y, l.layout.width, l.layout.height);
-        println!("BtnA:  x={}, y={}, w={}, h={}", ba.layout.x, ba.layout.y, ba.layout.width, ba.layout.height);
-        println!("BtnB:  x={}, y={}, w={}, h={}", bb.layout.x, bb.layout.y, bb.layout.width, bb.layout.height);
+        println!(
+            "Row box: x={}, y={}, w={}, h={}",
+            row.layout.x, row.layout.y, row.layout.width, row.layout.height
+        );
+        println!(
+            "Label: x={}, y={}, w={}, h={}",
+            l.layout.x, l.layout.y, l.layout.width, l.layout.height
+        );
+        println!(
+            "BtnA:  x={}, y={}, w={}, h={}",
+            ba.layout.x, ba.layout.y, ba.layout.width, ba.layout.height
+        );
+        println!(
+            "BtnB:  x={}, y={}, w={}, h={}",
+            bb.layout.x, bb.layout.y, bb.layout.width, bb.layout.height
+        );
 
         // Check that buttons don't overlap
         // BtnA should start after label + gap

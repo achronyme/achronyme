@@ -40,11 +40,11 @@ pub const MAX_CALL_DEPTH: usize = 10000;
 /// Virtual Machine
 pub struct VM {
     // --- Thread-Local State (No Locks) ---
-    
     /// Call stack - directly owned by the thread's VM instance
     pub(crate) frames: Vec<InternalCallFrame>,
 
     /// Generator states (ID -> suspended frame)
+    #[allow(dead_code)]
     pub(crate) generators: HashMap<usize, SuspendedFrame>,
 
     /// Current module file path (for resolving relative imports)
@@ -57,7 +57,6 @@ pub struct VM {
     pub(crate) tracking_effect: Option<Shared<EffectState>>,
 
     // --- Shared State (Thread-Safe) ---
-
     /// Global variables - Shared across threads
     pub(crate) globals: Shared<HashMap<String, Value>>,
 
@@ -101,7 +100,7 @@ impl VM {
             current_module: None,
             active_effects: Vec::new(),
             tracking_effect: None,
-            
+
             globals: shared(HashMap::new()),
             builtins: Arc::new(crate::builtins::create_builtin_registry()),
             intrinsics: Arc::new(IntrinsicRegistry::new()),
@@ -121,7 +120,7 @@ impl VM {
             current_module: None,
             active_effects: Vec::new(),
             tracking_effect: None,
-            
+
             globals: self.globals.clone(),
             builtins: self.builtins.clone(),
             intrinsics: self.intrinsics.clone(),
@@ -215,10 +214,10 @@ impl VM {
                                 // We need to access frame mutably, but we also need to index self.frames
                                 // Splitting borrow is tricky with Vec index.
                                 // We can just take the last frame since we are unwinding stack top-down.
-                                
+
                                 // Peek at the last frame
                                 let has_handler = self.frames[idx].handlers.last().is_some();
-                                
+
                                 if has_handler {
                                     let frame = &mut self.frames[idx];
                                     let handler = frame.handlers.pop().unwrap();
@@ -287,7 +286,12 @@ impl VM {
                                 _ => continue,
                             }
                         }
-                        _ => return Err(VmError::Runtime(format!("Value not awaitable: {:?}", value))),
+                        _ => {
+                            return Err(VmError::Runtime(format!(
+                                "Value not awaitable: {:?}",
+                                value
+                            )))
+                        }
                     }
                 }
             }
@@ -594,9 +598,7 @@ impl VM {
                 return Ok(ExecutionResult::Continue);
             }
 
-            return Err(VmError::Runtime(
-                "Invalid generator type".to_string(),
-            ));
+            return Err(VmError::Runtime("Invalid generator type".to_string()));
         }
 
         Err(VmError::Runtime(format!(

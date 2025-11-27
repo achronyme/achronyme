@@ -58,7 +58,16 @@ impl SoftwareRenderer {
         state: RenderState,
     ) {
         // Clear with dark background
-        Self::fill_rect_static(buffer, self.width, self.height, 0, 0, self.width, self.height, 0xFF1A1A1A);
+        Self::fill_rect_static(
+            buffer,
+            self.width,
+            self.height,
+            0,
+            0,
+            self.width,
+            self.height,
+            0xFF1A1A1A,
+        );
 
         // Render tree recursively
         self.render_node_with_state(buffer, tree, root, &state);
@@ -125,8 +134,16 @@ impl SoftwareRenderer {
             }
             NodeContent::Text(text) => {
                 let text_color = style.text_color.unwrap_or(0xFFFFFFFF);
-                let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
-                let weight = if style.font_bold { FontWeight::Bold } else { FontWeight::Regular };
+                let font_size = if style.font_size > 0.0 {
+                    style.font_size
+                } else {
+                    14.0
+                };
+                let weight = if style.font_bold {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Regular
+                };
                 let align = match style.text_align.as_deref() {
                     Some("center") => TextAlign::Center,
                     Some("right") => TextAlign::Right,
@@ -150,8 +167,16 @@ impl SoftwareRenderer {
             NodeContent::Button { label } => {
                 // Button background already drawn above
                 let text_color = style.text_color.unwrap_or(0xFFFFFFFF);
-                let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
-                let weight = if style.font_bold { FontWeight::Bold } else { FontWeight::Regular };
+                let font_size = if style.font_size > 0.0 {
+                    style.font_size
+                } else {
+                    14.0
+                };
+                let weight = if style.font_bold {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Regular
+                };
                 self.text_renderer.render(
                     buffer,
                     self.width,
@@ -170,8 +195,15 @@ impl SoftwareRenderer {
             NodeContent::TextInput { id, placeholder } => {
                 self.render_text_input(buffer, x, y, w, h, *id, placeholder, style, is_hovered);
             }
-            NodeContent::Slider { id, min, max, value } => {
-                self.render_slider(buffer, x, y, w, h, *id, *min, *max, *value, style, is_hovered);
+            NodeContent::Slider {
+                id,
+                min,
+                max,
+                value,
+            } => {
+                self.render_slider(
+                    buffer, x, y, w, h, *id, *min, *max, *value, style, is_hovered,
+                );
             }
             NodeContent::Checkbox { id, label, checked } => {
                 self.render_checkbox(buffer, x, y, w, h, *id, label, *checked, style, is_hovered);
@@ -182,7 +214,12 @@ impl SoftwareRenderer {
             NodeContent::Separator => {
                 self.render_separator(buffer, x, y, w, h, style);
             }
-            NodeContent::Plot { title, x_label, y_label, series } => {
+            NodeContent::Plot {
+                title,
+                x_label,
+                y_label,
+                series,
+            } => {
                 self.render_plot(buffer, x, y, w, h, title, x_label, y_label, series, style);
             }
         }
@@ -390,7 +427,11 @@ impl SoftwareRenderer {
     ) {
         // Background
         let bg_color = style.background_color.unwrap_or(0xFF2D2D2D);
-        let bg_color = if is_hovered { self.lighten_color(bg_color, 0.1) } else { bg_color };
+        let bg_color = if is_hovered {
+            self.lighten_color(bg_color, 0.1)
+        } else {
+            bg_color
+        };
         if style.border_radius > 0.0 {
             self.fill_rounded_rect(buffer, x, y, w, h, style.border_radius, bg_color);
         } else {
@@ -398,12 +439,20 @@ impl SoftwareRenderer {
         }
 
         // Border
-        let border_color = if is_hovered { 0xFF60A5FA } else { style.border_color.unwrap_or(0xFF4B5563) };
+        let border_color = if is_hovered {
+            0xFF60A5FA
+        } else {
+            style.border_color.unwrap_or(0xFF4B5563)
+        };
         self.stroke_rect(buffer, x, y, w, h, 1, border_color);
 
         // Placeholder text (grey, left-aligned with padding)
         let text_color = 0xFF9CA3AF; // Grey for placeholder
-        let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
+        let font_size = if style.font_size > 0.0 {
+            style.font_size
+        } else {
+            14.0
+        };
         let padding = 8;
         self.text_renderer.render(
             buffer,
@@ -445,13 +494,25 @@ impl SoftwareRenderer {
 
         // Calculate fill width based on value
         let range = max - min;
-        let normalized = if range > 0.0 { ((value - min) / range).clamp(0.0, 1.0) } else { 0.0 };
+        let normalized = if range > 0.0 {
+            ((value - min) / range).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let fill_width = ((w as f64) * normalized) as u32;
 
         // Filled portion (blue)
         let fill_color = 0xFF3B82F6;
         if fill_width > 0 {
-            self.fill_rounded_rect(buffer, x, track_y, fill_width, track_height, 3.0, fill_color);
+            self.fill_rounded_rect(
+                buffer,
+                x,
+                track_y,
+                fill_width,
+                track_height,
+                3.0,
+                fill_color,
+            );
         }
 
         // Thumb (circle)
@@ -481,8 +542,20 @@ impl SoftwareRenderer {
 
         // Checkbox box
         let box_bg = if checked { 0xFF3B82F6 } else { 0xFF374151 };
-        let box_bg = if is_hovered { self.lighten_color(box_bg, 0.15) } else { box_bg };
-        self.fill_rounded_rect(buffer, x, box_y, box_size as u32, box_size as u32, 4.0, box_bg);
+        let box_bg = if is_hovered {
+            self.lighten_color(box_bg, 0.15)
+        } else {
+            box_bg
+        };
+        self.fill_rounded_rect(
+            buffer,
+            x,
+            box_y,
+            box_size as u32,
+            box_size as u32,
+            4.0,
+            box_bg,
+        );
 
         // Checkmark if checked
         if checked {
@@ -496,11 +569,23 @@ impl SoftwareRenderer {
 
         // Border
         let border_color = if is_hovered { 0xFF60A5FA } else { 0xFF4B5563 };
-        self.stroke_rect(buffer, x, box_y, box_size as u32, box_size as u32, 1, border_color);
+        self.stroke_rect(
+            buffer,
+            x,
+            box_y,
+            box_size as u32,
+            box_size as u32,
+            1,
+            border_color,
+        );
 
         // Label text
         let text_color = style.text_color.unwrap_or(0xFFFFFFFF);
-        let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
+        let font_size = if style.font_size > 0.0 {
+            style.font_size
+        } else {
+            14.0
+        };
         let label_x = x + box_size + 8;
         self.text_renderer.render(
             buffer,
@@ -611,10 +696,18 @@ impl SoftwareRenderer {
 
         for s in series {
             for &(px, py) in &s.data {
-                if px < min_x { min_x = px; }
-                if px > max_x { max_x = px; }
-                if py < min_y { min_y = py; }
-                if py > max_y { max_y = py; }
+                if px < min_x {
+                    min_x = px;
+                }
+                if px > max_x {
+                    max_x = px;
+                }
+                if py < min_y {
+                    min_y = py;
+                }
+                if py > max_y {
+                    max_y = py;
+                }
             }
         }
 
@@ -665,7 +758,15 @@ impl SoftwareRenderer {
         }
 
         // Border around plot area
-        self.stroke_rect(buffer, plot_x, plot_y, plot_w as u32, plot_h as u32, 1, 0xFF4B5563);
+        self.stroke_rect(
+            buffer,
+            plot_x,
+            plot_y,
+            plot_w as u32,
+            plot_h as u32,
+            1,
+            0xFF4B5563,
+        );
     }
 
     /// Draw a filled circle
