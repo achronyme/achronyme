@@ -60,12 +60,6 @@ impl RegisterWindow {
     pub fn set(&mut self, idx: u8, value: Value) -> Result<(), VmError> {
         let idx = idx as usize;
         if idx >= self.registers.len() {
-            eprintln!(
-                "ERROR: Trying to set R{} but only {} registers available",
-                idx,
-                self.registers.len()
-            );
-            eprintln!("       Value: {:?}", value);
             return Err(VmError::InvalidRegister(idx as u8));
         }
         self.registers[idx] = value;
@@ -78,6 +72,12 @@ impl RegisterWindow {
         self.registers
             .get_mut(idx as usize)
             .ok_or(VmError::InvalidRegister(idx))
+    }
+
+    /// Get the number of registers
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.registers.len()
     }
 }
 

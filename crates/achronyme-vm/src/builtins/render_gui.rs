@@ -973,11 +973,6 @@ pub fn vm_ui_quit(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
 /// config is a record with: title, x_label, y_label, series
 /// series is an array of: { name, kind: "line"|"scatter", data: [[x,y],...], color, radius }
 pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
-    eprintln!("[DEBUG ui_plot] Called with {} args", args.len());
-    if let Some(arg0) = args.get(0) {
-        eprintln!("[DEBUG ui_plot] arg0 type: {:?}", std::mem::discriminant(arg0));
-    }
-
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_plot called outside of gui_run".to_string(),
@@ -986,7 +981,6 @@ pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 
     let (title, x_label, y_label, series, style_str) = if let Some(Value::Record(r)) = args.get(0) {
         let r = r.read();
-        eprintln!("[DEBUG ui_plot] Parsing record with keys: {:?}", r.keys().collect::<Vec<_>>());
         let title = match r.get("title") {
             Some(Value::String(s)) => s.clone(),
             _ => String::new(),
@@ -1003,7 +997,6 @@ pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
             Some(Value::String(s)) => s.clone(),
             _ => String::new(),
         };
-        eprintln!("[DEBUG ui_plot] title='{}', style='{}'", title, style_str);
 
         // Parse series array
         let mut plot_series = Vec::new();
@@ -1050,7 +1043,6 @@ pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
                         }
                     }
 
-                    eprintln!("[DEBUG ui_plot] Series '{}' has {} data points", name, data.len());
                     plot_series.push(PlotSeries {
                         name,
                         kind,
@@ -1060,14 +1052,10 @@ pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
                     });
                 }
             }
-        } else {
-            eprintln!("[DEBUG ui_plot] No 'series' Vector found in record");
         }
-        eprintln!("[DEBUG ui_plot] Total series: {}", plot_series.len());
 
         (title, x_label, y_label, plot_series, style_str)
     } else {
-        eprintln!("[DEBUG ui_plot] args[0] is not a Record");
         (String::new(), "X".to_string(), "Y".to_string(), Vec::new(), String::new())
     };
 

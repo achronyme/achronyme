@@ -1,4 +1,7 @@
 //! Reactive system built-ins (Signals, Effects)
+//!
+//! This module uses VM-based tracking context instead of thread-local storage
+//! to support multi-threaded scenarios (e.g., spawned async tasks modifying signals).
 
 use crate::error::VmError;
 use crate::value::Value;
@@ -7,10 +10,8 @@ use achronyme_types::sync::{shared, Arc, Shared};
 use achronyme_types::value::{EffectState, SignalState};
 use std::cell::RefCell;
 
-// Thread-local global tracking context
-// Stores the current effect being executed, if any.
+// Thread-local callback for legacy GUI notification (kept for backwards compatibility)
 thread_local! {
-    static TRACKING_CONTEXT: RefCell<Option<Shared<EffectState>>> = RefCell::new(None);
     // Callback to notify external systems (like GUI) when a signal changes
     static SIGNAL_NOTIFIER: RefCell<Option<Box<dyn Fn()>>> = RefCell::new(None);
 }
@@ -81,23 +82,20 @@ pub fn vm_effect(vm: &VM, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Helper to run an effect and track dependencies
+/// Uses VM-based tracking context to support multi-threaded execution (e.g., spawned tasks)
 fn run_effect(vm: &VM, effect: Shared<EffectState>) -> Result<(), VmError> {
     // 1. Cleanup: Unsubscribe from previous dependencies
     cleanup_effect(&effect);
 
-    // 2. Set tracking context
-    TRACKING_CONTEXT.with(|ctx| {
-        *ctx.borrow_mut() = Some(effect.clone());
-    });
+    // 2. Set tracking context in VM (thread-safe, works across spawned tasks)
+    vm.set_tracking_effect(Some(effect.clone()));
 
     // 3. Execute the callback
     let callback = effect.read().callback.clone();
     let result = vm.call_value(&callback, &[]);
 
     // 4. Clear tracking context
-    TRACKING_CONTEXT.with(|ctx| {
-        *ctx.borrow_mut() = None;
-    });
+    vm.set_tracking_effect(None);
 
     // Propagate error if execution failed
     result.map(|_| ())
@@ -126,7 +124,8 @@ fn cleanup_effect(effect_rc: &Shared<EffectState>) {
 // === Signal Methods ===
 
 /// Signal.value -> Value (Getter)
-pub fn vm_signal_get(_vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
+/// Uses VM-based tracking context to support multi-threaded execution (e.g., spawned tasks)
+pub fn vm_signal_get(vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Value, VmError> {
     if !args.is_empty() {
         return Err(VmError::Runtime("get() expects 0 arguments".to_string()));
     }
@@ -135,40 +134,28 @@ pub fn vm_signal_get(_vm: &VM, signal_val: &Value, args: &[Value]) -> Result<Val
         Value::Signal(state_rc) => {
             let mut state = state_rc.write();
 
-            // Track dependency if inside an effect
-            TRACKING_CONTEXT.with(|ctx| {
-                if let Some(current_effect) = &*ctx.borrow() {
-                    // Subscribe current effect to this signal (Weak ref)
-                    let weak_effect = Arc::downgrade(current_effect);
-                    state.subscribers.push(weak_effect);
+            // Track dependency if inside an effect (using VM-based context, thread-safe)
+            if let Some(current_effect) = vm.get_tracking_effect() {
+                // Subscribe current effect to this signal (Weak ref)
+                let weak_effect = Arc::downgrade(&current_effect);
+                state.subscribers.push(weak_effect);
 
-                    // Add signal to effect's dependencies (Strong ref)
-                    // We assume vm_signal_get is called with the signal Value which contains state_rc
-                    // But we have state_rc here. We need to add state_rc to effect.
+                // Add signal to effect's dependencies (Strong ref)
+                // run_effect drops the tracking_effect lock before call_value,
+                // so effect is NOT locked when running callback. Safe to write lock.
+                let mut effect = current_effect.write();
 
-                    // Note: To avoid double locking effect, we need to be careful.
-                    // current_effect is Shared<EffectState>.
-                    // ctx.borrow() returns Ref<Option<Shared<...>>>.
-                    let effect_rc = current_effect.clone();
-
-                    // Now we can write lock the effect state
-                    // run_effect holds a borrow on effect? No, it drops read lock before call_value.
-                    // So effect is NOT locked when running callback. Safe to write lock.
-
-                    let mut effect = effect_rc.write();
-                    // Store dependency if not already there (avoid dupes in same run)
-                    // We check ptr_eq on the Arc inside dependencies
-                    if let Value::Signal(original_rc) = signal_val {
-                        let already_dep = effect
-                            .dependencies
-                            .iter()
-                            .any(|d| Arc::ptr_eq(d, original_rc));
-                        if !already_dep {
-                            effect.dependencies.push(original_rc.clone());
-                        }
+                // Store dependency if not already there (avoid dupes in same run)
+                if let Value::Signal(original_rc) = signal_val {
+                    let already_dep = effect
+                        .dependencies
+                        .iter()
+                        .any(|d| Arc::ptr_eq(d, original_rc));
+                    if !already_dep {
+                        effect.dependencies.push(original_rc.clone());
                     }
                 }
-            });
+            }
 
             Ok(state.value.clone())
         }

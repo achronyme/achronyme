@@ -53,12 +53,32 @@ impl VM {
             )));
         }
 
+        // Remember the current frame depth before calling builtin
+        let pre_call_depth = self.state.read().frames.len();
+
         // Call the native function
         let native_fn = metadata.func;
         let result = native_fn(self, &args)?;
 
-        // Store result in destination register
-        self.set_register(dest, result)?;
+        // Verify we're still at the same stack depth before storing result
+        let post_call_depth = self.state.read().frames.len();
+
+        // Only store result if stack depth is the same
+        // If depth changed, we're in a different execution context
+        if pre_call_depth == post_call_depth {
+            self.set_register(dest, result)?;
+        } else {
+            // Stack depth changed - this happens when builtins like ui_box
+            // trigger callbacks that leave frames on the stack
+            // Pop excess frames to restore correct state
+            let mut state = self.state.write();
+            while state.frames.len() > pre_call_depth {
+                state.frames.pop();
+            }
+            drop(state);
+            // Now try to store the result
+            self.set_register(dest, result)?;
+        }
 
         Ok(ExecutionResult::Continue)
     }

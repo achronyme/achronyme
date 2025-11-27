@@ -322,7 +322,7 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("ui_label", render_gui::vm_ui_label, 2);
     registry.register("ui_button", render_gui::vm_ui_button, 2);
     registry.register("ui_box", render_gui::vm_ui_box, 2);
-    registry.register("ui_plot", render_gui::vm_ui_plot, 2);
+    registry.register("ui_plot", render_gui::vm_ui_plot, 1);
     registry.register("ui_text_input", render_gui::vm_ui_text_input, 2);
     registry.register("ui_slider", render_gui::vm_ui_slider, 4);
     registry.register("ui_checkbox", render_gui::vm_ui_checkbox, 3);

@@ -53,6 +53,12 @@ pub struct VM {
 
     /// Configuration
     config: Shared<VMConfig>,
+
+    /// Shared signal notifier - all child VMs share this with parent.
+    /// This allows the notifier to be set at any time (e.g., when GUI starts)
+    /// and all VMs (including previously spawned children) will see it.
+    /// Uses Shared (Arc<RwLock>) so the reference is shared, not copied.
+    signal_notifier: Shared<Option<Arc<dyn SignalNotifier>>>,
 }
 
 /// Mutable execution state, protected by RwLock
@@ -75,10 +81,6 @@ pub struct VMState {
     /// When an effect callback is running, this holds that effect so that
     /// signal reads can automatically register dependencies.
     pub(crate) tracking_effect: Option<Shared<EffectState>>,
-
-    /// Callback to notify external systems (like GUI) when signals change.
-    /// This replaces the thread_local SIGNAL_NOTIFIER.
-    pub(crate) signal_notifier: Option<Arc<dyn SignalNotifier>>,
 }
 
 /// Configuration that rarely changes
@@ -105,7 +107,6 @@ impl VM {
                 current_module: None,
                 active_effects: Vec::new(),
                 tracking_effect: None,
-                signal_notifier: None,
             }),
             globals: shared(HashMap::new()),
             builtins: Arc::new(crate::builtins::create_builtin_registry()),
@@ -114,10 +115,19 @@ impl VM {
                 precision: None, // Full precision by default
                 epsilon: 1e-10,  // Default epsilon threshold
             }),
+            signal_notifier: shared(None),
         }
     }
 
-    /// Create a child VM that shares globals
+    /// Create a child VM that shares globals and signal notifier
+    ///
+    /// The child VM shares the same `signal_notifier` reference as the parent,
+    /// so if the parent sets a notifier later (e.g., when GUI starts), the child
+    /// will automatically see it. This enables patterns like:
+    /// ```
+    /// spawn(animator)  // Child created before GUI
+    /// gui_run(app)     // GUI sets notifier - child sees it too
+    /// ```
     pub fn new_child(&self) -> Self {
         Self {
             state: shared(VMState {
@@ -126,15 +136,16 @@ impl VM {
                 current_module: None,
                 active_effects: Vec::new(),
                 tracking_effect: None,
-                signal_notifier: None,
             }),
             globals: self.globals.clone(),
             builtins: self.builtins.clone(),
             intrinsics: self.intrinsics.clone(),
             config: self.config.clone(),
+            // Share the same notifier reference (not a copy of the value)
+            // This allows notifier to be set after child creation
+            signal_notifier: self.signal_notifier.clone(),
         }
     }
-
     // --- Reactive Context Methods ---
 
     /// Set the current tracking effect (called when entering an effect callback)
@@ -148,13 +159,19 @@ impl VM {
     }
 
     /// Register a signal notifier callback (called by GUI systems)
+    ///
+    /// This notifier is shared between parent and all child VMs, so setting it
+    /// on the parent will make it visible to all children (even those created earlier).
     pub fn set_signal_notifier(&self, notifier: Option<Arc<dyn SignalNotifier>>) {
-        self.state.write().signal_notifier = notifier;
+        *self.signal_notifier.write() = notifier;
     }
 
     /// Notify that a signal has changed (called after signal.set)
+    ///
+    /// This reads from the shared notifier, so it works correctly even when called
+    /// from a child VM that was created before the notifier was set.
     pub fn notify_signal_change(&self) {
-        if let Some(notifier) = &self.state.read().signal_notifier {
+        if let Some(notifier) = &*self.signal_notifier.read() {
             notifier.notify();
         }
     }
@@ -678,24 +695,24 @@ impl VM {
                 let mut frame = gen_frame;
                 frame.return_register = Some(result_reg);
                 frame.generator = Some(gen_value.clone());
-                
+
                 {
                     let mut vm_state = self.state.write();
                     vm_state.frames.push(frame);
                 }
 
-                Ok(ExecutionResult::Continue)
-            } else {
-                Err(VmError::Runtime(
-                    "Invalid generator type".to_string(),
-                ))
+                return Ok(ExecutionResult::Continue);
             }
-        } else {
-            Err(VmError::Runtime(format!(
-                "Cannot resume non-generator value: {:?}",
-                gen_value
-            )))
+
+            return Err(VmError::Runtime(
+                "Invalid generator type".to_string(),
+            ));
         }
+
+        Err(VmError::Runtime(format!(
+            "Cannot resume non-generator value: {:?}",
+            gen_value
+        )))
     }
 
     /// Set the global precision
@@ -753,7 +770,6 @@ impl VM {
                             caller_frame.registers.set(return_reg, value)?;
                         }
                     }
-                } else {
                     let mut result_map = HashMap::new();
                     result_map.insert("value".to_string(), Value::Null);
                     result_map.insert("done".to_string(), Value::Boolean(true));
