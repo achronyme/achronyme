@@ -29,6 +29,31 @@ fn reset_widget_id_counter() {
     WIDGET_ID_COUNTER.store(1, Ordering::SeqCst);
 }
 
+/// Parse hex color string to u32 ARGB
+/// Supports: "#RGB", "#RRGGBB", "#AARRGGBB"
+fn parse_hex_color(s: &str) -> u32 {
+    let s = s.trim_start_matches('#');
+    match s.len() {
+        3 => {
+            // #RGB -> #FFRRGGBB
+            let r = u32::from_str_radix(&s[0..1], 16).unwrap_or(0);
+            let g = u32::from_str_radix(&s[1..2], 16).unwrap_or(0);
+            let b = u32::from_str_radix(&s[2..3], 16).unwrap_or(0);
+            0xFF000000 | (r * 17) << 16 | (g * 17) << 8 | (b * 17)
+        }
+        6 => {
+            // #RRGGBB -> #FFRRGGBB
+            let rgb = u32::from_str_radix(s, 16).unwrap_or(0);
+            0xFF000000 | rgb
+        }
+        8 => {
+            // #AARRGGBB
+            u32::from_str_radix(s, 16).unwrap_or(0xFF3B82F6)
+        }
+        _ => 0xFF3B82F6, // Default blue
+    }
+}
+
 // --- Thread-Local State for UI Building ---
 // During the render callback, we store the AuiApp being built
 // and a stack of parent node IDs for nesting containers.
@@ -948,6 +973,11 @@ pub fn vm_ui_quit(_vm: &VM, _args: &[Value]) -> Result<Value, VmError> {
 /// config is a record with: title, x_label, y_label, series
 /// series is an array of: { name, kind: "line"|"scatter", data: [[x,y],...], color, radius }
 pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
+    eprintln!("[DEBUG ui_plot] Called with {} args", args.len());
+    if let Some(arg0) = args.get(0) {
+        eprintln!("[DEBUG ui_plot] arg0 type: {:?}", std::mem::discriminant(arg0));
+    }
+
     if !has_build_context() {
         return Err(VmError::Runtime(
             "ui_plot called outside of gui_run".to_string(),
@@ -992,6 +1022,7 @@ pub fn vm_ui_plot(_vm: &VM, args: &[Value]) -> Result<Value, VmError> {
                     };
                     let color = match sr.get("color") {
                         Some(Value::Number(n)) => *n as u32,
+                        Some(Value::String(s)) => parse_hex_color(s),
                         _ => 0xFF3B82F6, // Default blue
                     };
                     let radius = match sr.get("radius") {

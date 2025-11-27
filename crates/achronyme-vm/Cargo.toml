@@ -10,7 +10,6 @@ license = "MIT"
 # Core dependencies
 achronyme-parser = { path = "../achronyme-parser" }
 achronyme-types = { path = "../achronyme-types" }
-achronyme-gui = { path = "../achronyme-gui" }
 achronyme-render = { path = "../achronyme-render" }
 tokio = { version = "1.41", features = ["full"] }
 futures = "0.3"

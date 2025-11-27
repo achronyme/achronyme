@@ -414,6 +414,9 @@ impl AuiApp {
             return;
         };
 
+        // Track if the value was modified (not just cursor movement)
+        let mut value_changed = false;
+
         match &mut node.content {
             node::NodeContent::TextInput { value, cursor, .. } => {
                 match &key_event.logical_key {
@@ -422,10 +425,12 @@ impl AuiApp {
                         let char_str = c.as_str();
                         value.insert_str(*cursor, char_str);
                         *cursor += char_str.len();
+                        value_changed = true;
                     }
                     Key::Named(NamedKey::Space) => {
                         value.insert_str(*cursor, " ");
                         *cursor += 1;
+                        value_changed = true;
                     }
                     Key::Named(NamedKey::Backspace) => {
                         if *cursor > 0 {
@@ -436,11 +441,13 @@ impl AuiApp {
                                 .unwrap_or(0);
                             value.remove(prev);
                             *cursor = prev;
+                            value_changed = true;
                         }
                     }
                     Key::Named(NamedKey::Delete) => {
                         if *cursor < value.len() {
                             value.remove(*cursor);
+                            value_changed = true;
                         }
                     }
                     Key::Named(NamedKey::ArrowLeft) => {
@@ -470,6 +477,11 @@ impl AuiApp {
                 self.request_redraw();
             }
             _ => {}
+        }
+
+        // Mark as modified if value changed (so signal sync picks it up)
+        if value_changed {
+            self.mark_modified(focused);
         }
     }
 

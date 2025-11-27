@@ -18,7 +18,6 @@ pub mod concurrency;
 pub mod debug;
 pub mod encoding;
 pub mod env;
-pub mod gui;
 pub mod render_gui;
 pub mod hof;
 pub mod io;
