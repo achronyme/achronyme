@@ -8,6 +8,8 @@ pub enum RuntimeError {
     InvalidOperand,
     DivisionByZero,
     TypeMismatch(String),
+    ArityMismatch(String),
+    AssertionFailed,
     Unknown(String),
 }
 

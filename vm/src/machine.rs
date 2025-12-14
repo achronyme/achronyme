@@ -1,7 +1,8 @@
 
 use crate::opcode::{OpCode, instruction::*};
+use crate::native::{NativeObj, NativeFn};
 use crate::error::RuntimeError;
-use memory::{Heap, Value, value::{TAG_NUMBER, TAG_COMPLEX}};
+use memory::{Heap, Value, value::{TAG_NUMBER, TAG_COMPLEX, TAG_NATIVE, TAG_FUNCTION}};
 use num_complex::Complex64;
 use std::collections::HashMap;
 
@@ -18,17 +19,56 @@ pub struct VM {
     pub frames: Vec<CallFrame>,
     pub globals: HashMap<u32, GlobalEntry>,
     pub interner: HashMap<String, u32>,
+    pub natives: Vec<NativeObj>,
 }
 
 impl VM {
     pub fn new() -> Self {
-        Self {
+        let mut vm = Self {
             heap: Heap::new(),
             stack: Vec::with_capacity(2048),
             frames: Vec::with_capacity(64),
             globals: HashMap::new(),
             interner: HashMap::new(),
-        }
+            natives: Vec::new(),
+        };
+
+        // Preamble: Core Intrinsics
+        vm.define_native("print", crate::stdlib::core::native_print, -1);
+        vm.define_native("len", crate::stdlib::core::native_len, 1);
+        vm.define_native("typeof", crate::stdlib::core::native_typeof, 1);
+        vm.define_native("assert", crate::stdlib::core::native_assert, 1); // 1 arg implementation
+        
+        vm
+    }
+
+    pub fn define_native(&mut self, name: &str, func: NativeFn, arity: isize) {
+        let name_string = name.to_string();
+        
+        // 1. Intern string (ensure it exists in Heap and Interner)
+        let name_handle = if let Some(&h) = self.interner.get(&name_string) {
+            h
+        } else {
+            let h = self.heap.alloc_string(name_string.clone());
+            self.interner.insert(name_string.clone(), h);
+            h
+        };
+
+        // 2. Register Native Object
+        let native = NativeObj {
+            name: name_string,
+            func,
+            arity,
+        };
+        self.natives.push(native);
+        let native_idx = (self.natives.len() - 1) as u32;
+        
+        // 3. Register in Globals
+        let val = Value::native(native_idx);
+        self.globals.insert(name_handle, GlobalEntry {
+            value: val,
+            mutable: false, // Natives are constant
+        });
     }
     
     pub fn interpret(&mut self) -> Result<(), RuntimeError> {
@@ -66,7 +106,13 @@ impl VM {
                      let val = func.constants.get(bx).cloned().unwrap_or(Value::nil());
                      self.set_reg(base, a, val);
                  },
-                 
+                OpCode::Move => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let val = self.get_reg(base, b);
+                    self.set_reg(base, a, val);
+                },
+
                  OpCode::Add => {
                      let a = decode_a(instruction) as usize;
                      let b = decode_b(instruction) as usize;
@@ -192,7 +238,39 @@ impl VM {
                      let res = Value::complex(self.heap.alloc_complex(c));
                      self.set_reg(base, a, res);
                  },
-                 
+                OpCode::Call => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    
+                    let func_val = self.get_reg(base, b);
+                    let args_start = base + b + 1;
+                    let args_count = c;
+
+                    if args_start + args_count > self.stack.len() {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
+
+                    if func_val.is_native() {
+                        let handle = func_val.as_handle().unwrap();
+                        let (func, arity) = {
+                            let n = self.natives.get(handle as usize).ok_or(RuntimeError::FunctionNotFound)?;
+                            (n.func, n.arity)
+                        };
+
+                        if arity != -1 && arity as usize != args_count {
+                            return Err(RuntimeError::ArityMismatch(format!("Expected {} args, got {}", arity, args_count)));
+                        }
+
+                        let args: Vec<Value> = self.stack[args_start .. args_start + args_count].to_vec();
+                        let res = func(self, &args)?;
+                        self.set_reg(base, a, res);
+                    } else if func_val.is_function() {
+                        return Err(RuntimeError::Unknown("Script function calls not implemented yet".into()));
+                    } else {
+                        return Err(RuntimeError::TypeMismatch("Call target must be Function or Native".into()));
+                    }
+                },
                  OpCode::Return => {
                      let a = decode_a(instruction) as usize;
                      let _ret_val = self.get_reg(base, a);

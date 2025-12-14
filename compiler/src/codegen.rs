@@ -113,9 +113,26 @@ impl Compiler {
             },
             Rule::print_stmt => {
                  let expr = inner.into_inner().next().unwrap();
-                 let val_reg = self.compile_expr(expr)?;
-                 // Print
-                 self.emit_abc(OpCode::Print, val_reg, 0, 0);
+                 
+                 // 1. Prepare Call Frame: Func Reg, Arg Reg
+                 let func_reg = self.alloc_reg()?;
+                 let arg_reg = self.alloc_reg()?; // Must be func_reg + 1
+
+                 // 2. Load "print"
+                 let handle = self.intern_string("print");
+                 let name_idx = self.add_constant(Value::string(handle));
+                 self.emit_abx(OpCode::GetGlobal, func_reg, name_idx as u16);
+
+                 // 3. Compile Argument
+                 let expr_reg = self.compile_expr(expr)?;
+                 
+                 // 4. Move result to Arg position
+                 self.emit_abc(OpCode::Move, arg_reg, expr_reg, 0);
+
+                 // 5. Call
+                 // Call(Dest=func_reg, Func=func_reg, ArgCount=1)
+                 // Args start at B+1 (arg_reg)
+                 self.emit_abc(OpCode::Call, func_reg, func_reg, 1);
             },
             Rule::expr_stmt => {
                  let expr = inner.into_inner().next().unwrap();

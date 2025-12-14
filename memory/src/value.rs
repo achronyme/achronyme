@@ -18,6 +18,7 @@ pub const TAG_MAP:     u64 = 6;
 pub const TAG_FUNCTION:u64 = 7;
 pub const TAG_TENSOR:  u64 = 8;
 pub const TAG_COMPLEX: u64 = 9;
+pub const TAG_NATIVE:  u64 = 10;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -82,6 +83,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn native(handle: u32) -> Self {
+        Value::make_obj(TAG_NATIVE, handle)
+    }
+
+    #[inline]
     fn make_obj(tag: u64, handle: u32) -> Self {
         // Shift Tag to bits 32-35 (lowest 4 bits of high 32)
         // Check plan: QNAN | (Tag << 32) | Handle
@@ -139,6 +145,9 @@ impl Value {
 
     #[inline]
     pub fn is_complex(&self) -> bool { self.tag() == TAG_COMPLEX }
+
+    #[inline]
+    pub fn is_native(&self) -> bool { self.tag() == TAG_NATIVE }
 
     #[inline]
     pub fn is_numeric(&self) -> bool {
@@ -210,6 +219,8 @@ impl fmt::Debug for Value {
             write!(f, "Tensor({})", self.as_handle().unwrap())
         } else if self.is_complex() {
             write!(f, "Complex({})", self.as_handle().unwrap())
+        } else if self.is_native() {
+            write!(f, "NativeFn({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }

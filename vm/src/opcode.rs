@@ -39,6 +39,8 @@ pub enum OpCode {
     // ===== Functions =====
     /// Return: return R[A]
     Return = 54,
+    /// Call: R[A] = Call(R[B], R[B+1]...R[B+C-1])
+    Call = 55,
 
     // ===== Global Variables =====
     /// Define mutable global: Global[K[Bx]] = R[A]
@@ -75,6 +77,7 @@ impl OpCode {
             16 => Some(OpCode::Neg),
             17 => Some(OpCode::Sqrt),
             54 => Some(OpCode::Return),
+            55 => Some(OpCode::Call),
             98 => Some(OpCode::DefGlobalVar),
             99 => Some(OpCode::DefGlobalLet),
             100 => Some(OpCode::GetGlobal),
@@ -105,6 +108,7 @@ impl OpCode {
             OpCode::Neg => "NEG",
             OpCode::Sqrt => "SQRT",
             OpCode::Return => "RETURN",
+            OpCode::Call => "CALL",
             OpCode::DefGlobalVar => "DEF_GLOBAL_VAR",
             OpCode::DefGlobalLet => "DEF_GLOBAL_LET",
             OpCode::GetGlobal => "GET_GLOBAL",
