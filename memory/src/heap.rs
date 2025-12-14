@@ -1,9 +1,9 @@
 use crate::Value;
-use std::collections::{HashMap, HashSet};
 use num_complex::Complex64;
+use std::collections::{HashMap, HashSet};
 
 // Placeholder types for now
-pub type RealTensor = (); 
+pub type RealTensor = ();
 
 #[derive(Debug, Clone)]
 pub struct Function {
@@ -32,13 +32,13 @@ pub struct Heap {
     // Typed Arenas
     pub strings: Arena<String>,
     pub lists: Arena<Vec<Value>>,
-    pub maps: Arena<HashMap<String, Value>>, 
+    pub maps: Arena<HashMap<String, Value>>,
     pub functions: Arena<Function>,
     pub tensors: Arena<RealTensor>,
     pub complexes: Arena<Complex64>,
-    
+
     // Mark State (One set per arena type)
-    pub marked_strings: HashSet<u32>, 
+    pub marked_strings: HashSet<u32>,
     pub marked_lists: HashSet<u32>,
     pub marked_maps: HashSet<u32>,
     pub marked_functions: HashSet<u32>,
@@ -59,7 +59,7 @@ impl Heap {
             functions: Arena::new(),
             tensors: Arena::new(),
             complexes: Arena::new(),
-            
+
             marked_strings: HashSet::new(),
             marked_lists: HashSet::new(),
             marked_maps: HashSet::new(),
@@ -79,7 +79,7 @@ impl Heap {
             // In a real VM, we might trigger it, but 'collect_garbage' usually needs VM roots.
             // We'll leave the trigger to the VM loop or return a status if needed.
         }
-        
+
         if let Some(idx) = self.strings.free_indices.pop() {
             self.strings.data[idx as usize] = s;
             idx
@@ -101,72 +101,86 @@ impl Heap {
             index
         }
     }
-    
+
     // Tracing (Mark Phase) logic
     pub fn trace(&mut self, roots: Vec<Value>) {
         let mut worklist = roots;
-        
+
         while let Some(val) = worklist.pop() {
-            if !val.is_obj() { continue; }
+            if !val.is_obj() {
+                continue;
+            }
             let handle = val.as_handle().unwrap();
-            
+
             // Dispatch by tag to check marking status
             let should_process = match val.type_tag() {
                 crate::value::TAG_STRING => {
                     if !self.marked_strings.contains(&handle) {
                         self.marked_strings.insert(handle);
                         true
-                    } else { false }
-                },
+                    } else {
+                        false
+                    }
+                }
                 crate::value::TAG_LIST => {
                     if !self.marked_lists.contains(&handle) {
                         self.marked_lists.insert(handle);
                         true
-                    } else { false }
-                },
+                    } else {
+                        false
+                    }
+                }
                 crate::value::TAG_FUNCTION => {
                     if !self.marked_functions.contains(&handle) {
                         self.marked_functions.insert(handle);
                         true
-                    } else { false }
-                },
+                    } else {
+                        false
+                    }
+                }
                 crate::value::TAG_COMPLEX => {
                     if !self.marked_complexes.contains(&handle) {
                         self.marked_complexes.insert(handle);
                         // Complex has no children to trace
                         false
-                    } else { false }
-                },
+                    } else {
+                        false
+                    }
+                }
                 crate::value::TAG_MAP => {
                     if !self.marked_maps.contains(&handle) {
                         self.marked_maps.insert(handle);
                         true
-                    } else { false }
-                },
+                    } else {
+                        false
+                    }
+                }
                 crate::value::TAG_TENSOR => {
                     if !self.marked_tensors.contains(&handle) {
                         self.marked_tensors.insert(handle);
                         false // Assumed no children for now
-                    } else { false }
-                },
+                    } else {
+                        false
+                    }
+                }
                 _ => false,
             };
-            
+
             if should_process {
                 // If we jus marked it, we need to add its children to worklist.
                 // We clone the children containers (List/Function constants) to avoid &mut self conflicts.
                 // Value is Copy (u64), so Vec<Value> clone is efficient (memcpy).
                 match val.type_tag() {
                     crate::value::TAG_LIST => {
-                         if let Some(l) = self.lists.data.get(handle as usize) {
-                             worklist.extend(l.clone()); 
-                         }
-                    },
+                        if let Some(l) = self.lists.data.get(handle as usize) {
+                            worklist.extend(l.clone());
+                        }
+                    }
                     crate::value::TAG_FUNCTION => {
-                         if let Some(f) = self.functions.data.get(handle as usize) {
-                             worklist.extend(f.constants.clone());
-                         }
-                    },
+                        if let Some(f) = self.functions.data.get(handle as usize) {
+                            worklist.extend(f.constants.clone());
+                        }
+                    }
                     crate::value::TAG_MAP => {
                         // For Map, we need to trace values. Keys are strings (implied marked if we trace keys?)
                         // If keys are interned strings managed by heap, we must mark them too!
@@ -190,14 +204,13 @@ impl Heap {
         }
     }
 
-    
     pub fn sweep(&mut self) {
         // Strings
         for i in 0..self.strings.data.len() {
             let idx = i as u32;
             if !self.marked_strings.contains(&idx) && !self.strings.free_indices.contains(&idx) {
-               self.strings.free_indices.push(idx);
-               self.strings.data[i] = String::new(); // Free memory
+                self.strings.free_indices.push(idx);
+                self.strings.data[i] = String::new(); // Free memory
             }
         }
         self.marked_strings.clear();
@@ -205,37 +218,44 @@ impl Heap {
         // Lists
         for i in 0..self.lists.data.len() {
             let idx = i as u32;
-             if !self.marked_lists.contains(&idx) && !self.lists.free_indices.contains(&idx) {
-               self.lists.free_indices.push(idx);
-               self.lists.data[i] = Vec::new(); // Free memory
+            if !self.marked_lists.contains(&idx) && !self.lists.free_indices.contains(&idx) {
+                self.lists.free_indices.push(idx);
+                self.lists.data[i] = Vec::new(); // Free memory
             }
         }
         self.marked_lists.clear();
-        
+
         // Functions
-         for i in 0..self.functions.data.len() {
+        for i in 0..self.functions.data.len() {
             let idx = i as u32;
-             if !self.marked_functions.contains(&idx) && !self.functions.free_indices.contains(&idx) {
-               self.functions.free_indices.push(idx);
-               // We replace with dummy
-               self.functions.data[i] = Function { name: String::new(), arity: 0, chunk: vec![], constants: vec![] };
+            if !self.marked_functions.contains(&idx) && !self.functions.free_indices.contains(&idx)
+            {
+                self.functions.free_indices.push(idx);
+                // We replace with dummy
+                self.functions.data[i] = Function {
+                    name: String::new(),
+                    arity: 0,
+                    chunk: vec![],
+                    constants: vec![],
+                };
             }
         }
         self.marked_functions.clear();
-        
-         // Complexes
-         for i in 0..self.complexes.data.len() {
+
+        // Complexes
+        for i in 0..self.complexes.data.len() {
             let idx = i as u32;
-             if !self.marked_complexes.contains(&idx) && !self.complexes.free_indices.contains(&idx) {
-               self.complexes.free_indices.push(idx);
-               // Complex is Copy, just leave it or zero it?
-               // It doesn't hold heap memory itself, so just marking as free is enough for reuse.
-               // Overwriting with default might help debugging.
-               self.complexes.data[i] = Complex64::default();
+            if !self.marked_complexes.contains(&idx) && !self.complexes.free_indices.contains(&idx)
+            {
+                self.complexes.free_indices.push(idx);
+                // Complex is Copy, just leave it or zero it?
+                // It doesn't hold heap memory itself, so just marking as free is enough for reuse.
+                // Overwriting with default might help debugging.
+                self.complexes.data[i] = Complex64::default();
             }
         }
         self.marked_complexes.clear();
-        
+
         // Reset GC threshold just in case
         self.bytes_allocated = 0; // Approximate reset or sophisticated recalculation
     }
@@ -260,7 +280,8 @@ impl Heap {
     }
 
     pub fn alloc_function(&mut self, f: Function) -> u32 {
-        self.bytes_allocated += f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
+        self.bytes_allocated +=
+            f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
         if let Some(idx) = self.functions.free_indices.pop() {
             self.functions.data[idx as usize] = f;
             idx

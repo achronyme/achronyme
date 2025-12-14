@@ -3,15 +3,15 @@
 //! This module contains the Virtual Machine implementation segmented into
 //! focused submodules for maintainability and scalability.
 
-mod frame;
-mod vm;
-mod stack;
 mod arithmetic;
 mod control;
+mod frame;
+mod gc;
 mod globals;
 mod native;
 mod promotion;
-mod gc;
+mod stack;
+mod vm;
 
 // Public API
 pub use frame::CallFrame;

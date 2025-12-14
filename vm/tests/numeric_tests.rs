@@ -1,7 +1,7 @@
-use vm::{VM, CallFrame};
 use memory::{Function, Value};
-use vm::opcode::{OpCode, instruction::*};
 use num_complex::Complex64;
+use vm::opcode::{instruction::*, OpCode};
+use vm::{CallFrame, VM};
 
 fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
     let mut vm = VM::new();
@@ -12,7 +12,11 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
         constants,
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
     vm
 }
@@ -38,10 +42,10 @@ fn test_real_complex_promotion() {
         encode_abc(OpCode::Add.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    
+
     let mut vm = VM::new();
     let c_idx = vm.heap.alloc_complex(Complex64::new(0.0, 2.0));
-    
+
     let func = Function {
         name: "test".to_string(),
         arity: 0,
@@ -49,9 +53,13 @@ fn test_real_complex_promotion() {
         constants: vec![Value::number(1.0), Value::complex(c_idx)],
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
-    
+
     let val = vm.stack[2];
     if val.is_complex() {
         let idx = val.as_handle().unwrap();
@@ -71,10 +79,10 @@ fn test_complex_times_complex_demote() {
         encode_abc(OpCode::Mul.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    
+
     let mut vm = VM::new();
     let c_idx = vm.heap.alloc_complex(Complex64::new(0.0, 1.0));
-    
+
     let func = Function {
         name: "test".to_string(),
         arity: 0,
@@ -82,9 +90,13 @@ fn test_complex_times_complex_demote() {
         constants: vec![Value::complex(c_idx)],
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
-    
+
     assert_eq!(vm.stack[2].as_number(), Some(-1.0));
 }
 
@@ -98,7 +110,7 @@ fn test_ieee754_infinity() {
     ];
     let constants = vec![Value::number(1.0), Value::number(0.0)];
     let vm = run_simple(chunk, constants);
-    
+
     let val = vm.stack[2];
     if let Some(n) = val.as_number() {
         assert!(n.is_infinite() && n > 0.0);
@@ -117,12 +129,12 @@ fn test_ieee754_nan() {
     ];
     let constants = vec![Value::number(0.0)];
     let vm = run_simple(chunk, constants);
-    
+
     let val = vm.stack[2];
     if let Some(n) = val.as_number() {
         assert!(n.is_nan());
     } else {
-         panic!("Expected Number, got {:?}", val);
+        panic!("Expected Number, got {:?}", val);
     }
 }
 
@@ -142,9 +154,13 @@ fn test_sqrt_negative_promotes() {
         constants,
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
-    
+
     let val = vm.stack[1];
     if val.is_complex() {
         let idx = val.as_handle().unwrap();

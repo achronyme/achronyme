@@ -1,6 +1,6 @@
-use crate::opcode::{OpCode, instruction::*};
 use crate::error::RuntimeError;
 use crate::globals::GlobalEntry;
+use crate::opcode::{instruction::*, OpCode};
 
 use super::stack::StackOps;
 
@@ -44,8 +44,13 @@ impl GlobalOps for super::vm::VM {
                 let name_handle = c.as_handle().unwrap();
 
                 let mutable = op == OpCode::DefGlobalVar;
-                self.globals
-                    .insert(name_handle, GlobalEntry { value: val, mutable });
+                self.globals.insert(
+                    name_handle,
+                    GlobalEntry {
+                        value: val,
+                        mutable,
+                    },
+                );
             }
 
             OpCode::GetGlobal => {

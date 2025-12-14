@@ -1,12 +1,12 @@
-use clap::Parser;
 use anyhow::Result;
+use clap::Parser;
 
 mod args;
 mod commands;
 mod repl;
 
 use args::{Cli, Commands};
-use commands::{run, compile, disassemble};
+use commands::{compile, disassemble, run};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

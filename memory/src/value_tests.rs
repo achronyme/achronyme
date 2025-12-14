@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 mod tests {
     use crate::Value;
@@ -24,7 +23,7 @@ mod tests {
         // Should be a number type, but the value is NaN
         assert!(v.is_number());
         assert!(v.as_number().unwrap().is_nan());
-        
+
         // Ensure it doesn't look like a TAG
         assert!(!v.is_nil());
         assert!(!v.is_bool());

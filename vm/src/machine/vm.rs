@@ -1,17 +1,17 @@
-use crate::opcode::{OpCode, instruction::*};
 use crate::error::RuntimeError;
 use crate::globals::GlobalEntry;
 use crate::native::NativeObj;
+use crate::opcode::{instruction::*, OpCode};
 use memory::{Heap, Value};
 use std::collections::HashMap;
 
-use super::frame::CallFrame;
-use super::stack::StackOps;
-use super::native::NativeRegistry;
-use super::gc::GarbageCollector;
 use super::arithmetic::ArithmeticOps;
 use super::control::ControlFlowOps;
+use super::frame::CallFrame;
+use super::gc::GarbageCollector;
 use super::globals::GlobalOps;
+use super::native::NativeRegistry;
+use super::stack::StackOps;
 
 /// The Virtual Machine struct
 pub struct VM {

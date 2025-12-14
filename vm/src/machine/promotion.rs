@@ -1,5 +1,8 @@
 use crate::error::RuntimeError;
-use memory::{Value, value::{TAG_NUMBER, TAG_COMPLEX}};
+use memory::{
+    value::{TAG_COMPLEX, TAG_NUMBER},
+    Value,
+};
 use num_complex::Complex64;
 
 /// Trait for type promotion operations
@@ -39,7 +42,10 @@ impl TypePromotion for super::vm::VM {
             (TAG_NUMBER, TAG_COMPLEX) => {
                 let a = left.as_number().unwrap();
                 let idx = right.as_handle().unwrap();
-                let cb = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                let cb = self
+                    .heap
+                    .get_complex(idx)
+                    .ok_or(RuntimeError::InvalidOperand)?;
                 let ca = Complex64::new(a, 0.0);
                 let result = complex_op(ca, cb);
                 if result.im.abs() < 1e-15 {
@@ -50,7 +56,10 @@ impl TypePromotion for super::vm::VM {
             }
             (TAG_COMPLEX, TAG_NUMBER) => {
                 let idx = left.as_handle().unwrap();
-                let ca = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                let ca = self
+                    .heap
+                    .get_complex(idx)
+                    .ok_or(RuntimeError::InvalidOperand)?;
                 let b = right.as_number().unwrap();
                 let cb = Complex64::new(b, 0.0);
                 let result = complex_op(ca, cb);
@@ -63,8 +72,14 @@ impl TypePromotion for super::vm::VM {
             (TAG_COMPLEX, TAG_COMPLEX) => {
                 let idx_a = left.as_handle().unwrap();
                 let idx_b = right.as_handle().unwrap();
-                let ca = self.heap.get_complex(idx_a).ok_or(RuntimeError::InvalidOperand)?;
-                let cb = self.heap.get_complex(idx_b).ok_or(RuntimeError::InvalidOperand)?;
+                let ca = self
+                    .heap
+                    .get_complex(idx_a)
+                    .ok_or(RuntimeError::InvalidOperand)?;
+                let cb = self
+                    .heap
+                    .get_complex(idx_b)
+                    .ok_or(RuntimeError::InvalidOperand)?;
                 let result = complex_op(ca, cb);
                 if result.im.abs() < 1e-15 {
                     Ok(Value::number(result.re))
@@ -72,7 +87,9 @@ impl TypePromotion for super::vm::VM {
                     Ok(Value::complex(self.heap.alloc_complex(result)))
                 }
             }
-            _ => Err(RuntimeError::TypeMismatch("Operands must be numeric".into())),
+            _ => Err(RuntimeError::TypeMismatch(
+                "Operands must be numeric".into(),
+            )),
         }
     }
 }

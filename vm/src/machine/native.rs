@@ -1,5 +1,5 @@
-use crate::native::{NativeObj, NativeFn};
 use crate::globals::GlobalEntry;
+use crate::native::{NativeFn, NativeObj};
 use memory::Value;
 
 /// Trait for native function registration
@@ -32,10 +32,13 @@ impl NativeRegistry for super::vm::VM {
 
         // 3. Register in Globals
         let val = Value::native(native_idx);
-        self.globals.insert(name_handle, GlobalEntry {
-            value: val,
-            mutable: false, // Natives are constant
-        });
+        self.globals.insert(
+            name_handle,
+            GlobalEntry {
+                value: val,
+                mutable: false, // Natives are constant
+            },
+        );
     }
 
     fn bootstrap_natives(&mut self) {

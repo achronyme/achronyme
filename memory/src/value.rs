@@ -8,17 +8,17 @@ const QNAN: u64 = 0x7ffc000000000000;
 
 // Tags live in bits 32-35 (4 bits)
 // 0 = Double (implicitly, if QNAN bits are not set)
-pub const TAG_NUMBER:  u64 = 0; // Helper for type_tag()
-pub const TAG_NIL:     u64 = 1; 
-pub const TAG_FALSE:   u64 = 2;
-pub const TAG_TRUE:    u64 = 3;
-pub const TAG_STRING:  u64 = 4;
-pub const TAG_LIST:    u64 = 5;
-pub const TAG_MAP:     u64 = 6;
-pub const TAG_FUNCTION:u64 = 7;
-pub const TAG_TENSOR:  u64 = 8;
+pub const TAG_NUMBER: u64 = 0; // Helper for type_tag()
+pub const TAG_NIL: u64 = 1;
+pub const TAG_FALSE: u64 = 2;
+pub const TAG_TRUE: u64 = 3;
+pub const TAG_STRING: u64 = 4;
+pub const TAG_LIST: u64 = 5;
+pub const TAG_MAP: u64 = 6;
+pub const TAG_FUNCTION: u64 = 7;
+pub const TAG_TENSOR: u64 = 8;
 pub const TAG_COMPLEX: u64 = 9;
-pub const TAG_NATIVE:  u64 = 10;
+pub const TAG_NATIVE: u64 = 10;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -94,7 +94,6 @@ impl Value {
         Value(QNAN | (tag << 32) | (handle as u64))
     }
 
-
     // --- Checkers ---
 
     #[inline]
@@ -114,7 +113,7 @@ impl Value {
 
     #[inline]
     fn tag(&self) -> u64 {
-        (self.0 >> 32) & 0xF 
+        (self.0 >> 32) & 0xF
     }
 
     #[inline]
@@ -129,25 +128,39 @@ impl Value {
     }
 
     #[inline]
-    pub fn is_string(&self) -> bool { self.tag() == TAG_STRING }
+    pub fn is_string(&self) -> bool {
+        self.tag() == TAG_STRING
+    }
 
     #[inline]
-    pub fn is_list(&self) -> bool { self.tag() == TAG_LIST }
-    
-    #[inline]
-    pub fn is_map(&self) -> bool { self.tag() == TAG_MAP }
+    pub fn is_list(&self) -> bool {
+        self.tag() == TAG_LIST
+    }
 
     #[inline]
-    pub fn is_function(&self) -> bool { self.tag() == TAG_FUNCTION }
-    
-    #[inline]
-    pub fn is_tensor(&self) -> bool { self.tag() == TAG_TENSOR }
+    pub fn is_map(&self) -> bool {
+        self.tag() == TAG_MAP
+    }
 
     #[inline]
-    pub fn is_complex(&self) -> bool { self.tag() == TAG_COMPLEX }
+    pub fn is_function(&self) -> bool {
+        self.tag() == TAG_FUNCTION
+    }
 
     #[inline]
-    pub fn is_native(&self) -> bool { self.tag() == TAG_NATIVE }
+    pub fn is_tensor(&self) -> bool {
+        self.tag() == TAG_TENSOR
+    }
+
+    #[inline]
+    pub fn is_complex(&self) -> bool {
+        self.tag() == TAG_COMPLEX
+    }
+
+    #[inline]
+    pub fn is_native(&self) -> bool {
+        self.tag() == TAG_NATIVE
+    }
 
     #[inline]
     pub fn is_numeric(&self) -> bool {
@@ -184,9 +197,13 @@ impl Value {
 
     #[inline]
     pub fn as_bool(&self) -> Option<bool> {
-        if self.tag() == TAG_TRUE { Some(true) }
-        else if self.tag() == TAG_FALSE { Some(false) }
-        else { None }
+        if self.tag() == TAG_TRUE {
+            Some(true)
+        } else if self.tag() == TAG_FALSE {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     #[inline]

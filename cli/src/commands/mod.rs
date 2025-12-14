@@ -1,3 +1,3 @@
-pub mod run;
 pub mod compile;
 pub mod disassemble;
+pub mod run;

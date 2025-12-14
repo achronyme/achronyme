@@ -1,19 +1,19 @@
-use vm::{VM, CallFrame};
-use memory::{Function, Value};
 use compiler::Compiler;
+use memory::{Function, Value};
+use vm::{CallFrame, VM};
 
 #[test]
 fn test_execution_end_to_end() {
     let source = "1 + 2 * 3";
-    
+
     // 1. Compile
     let mut compiler = Compiler::new();
     let bytecode = compiler.compile(source).expect("Compilation failed");
     let constants = compiler.constants;
-    
+
     // 2. Setup VM
     let mut vm = VM::new();
-    
+
     // 3. Create Function
     let func = Function {
         name: "main".to_string(),
@@ -21,9 +21,9 @@ fn test_execution_end_to_end() {
         chunk: bytecode,
         constants: constants,
     };
-    
+
     let func_idx = vm.heap.alloc_function(func);
-    
+
     // 4. Create Call Frame
     let frame = CallFrame {
         closure: func_idx,
@@ -31,10 +31,10 @@ fn test_execution_end_to_end() {
         base: 0,
     };
     vm.frames.push(frame);
-    
+
     // 5. Run
     vm.interpret().expect("Runtime error");
-    
+
     // 6. Check Result (R4 based on alloc_reg order and reuse logic, but see below)
     // 1 -> R0
     // 2 -> R1
@@ -42,7 +42,7 @@ fn test_execution_end_to_end() {
     // 2*3 -> R3 (new reg)
     // 1+R3 -> R4 (new reg)
     // Return R4
-    
+
     let result = vm.stack.get(4).cloned();
     if let Some(val) = result {
         if let Some(n) = val.as_number() {

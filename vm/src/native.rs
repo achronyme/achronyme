@@ -1,6 +1,6 @@
+use crate::error::RuntimeError;
 use crate::machine::VM;
 use memory::Value;
-use crate::error::RuntimeError;
 
 // The unified signature for ALL extensions (Internal or External)
 // args: Slice of values from the stack.

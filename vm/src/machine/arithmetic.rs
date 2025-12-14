@@ -1,10 +1,10 @@
-use crate::opcode::{OpCode, instruction::*};
 use crate::error::RuntimeError;
+use crate::opcode::{instruction::*, OpCode};
 use memory::Value;
 use num_complex::Complex64;
 
-use super::stack::StackOps;
 use super::promotion::TypePromotion;
+use super::stack::StackOps;
 
 /// Trait for arithmetic instruction handlers
 pub trait ArithmeticOps {
@@ -100,7 +100,10 @@ impl ArithmeticOps for super::vm::VM {
                     Value::number(-vb.as_number().unwrap())
                 } else if vb.is_complex() {
                     let idx = vb.as_handle().unwrap();
-                    let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                    let c = self
+                        .heap
+                        .get_complex(idx)
+                        .ok_or(RuntimeError::InvalidOperand)?;
                     let neg = -c;
                     Value::complex(self.heap.alloc_complex(neg))
                 } else {
@@ -123,7 +126,10 @@ impl ArithmeticOps for super::vm::VM {
                     }
                 } else if vb.is_complex() {
                     let idx = vb.as_handle().unwrap();
-                    let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                    let c = self
+                        .heap
+                        .get_complex(idx)
+                        .ok_or(RuntimeError::InvalidOperand)?;
                     let sqrt_c = c.sqrt();
                     Value::complex(self.heap.alloc_complex(sqrt_c))
                 } else {

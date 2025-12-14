@@ -1,5 +1,5 @@
-use crate::opcode::{OpCode, instruction::*};
 use crate::error::RuntimeError;
+use crate::opcode::{instruction::*, OpCode};
 use memory::Value;
 
 use super::stack::StackOps;
@@ -12,7 +12,7 @@ pub trait ControlFlowOps {
         instruction: u32,
         base: usize,
     ) -> Result<(), RuntimeError>;
-    
+
     fn call_native(
         &mut self,
         func_val: Value,
