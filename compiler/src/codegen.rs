@@ -245,6 +245,11 @@ impl Compiler {
     // Rudimentary reset for expression boundaries needed usually
     
     fn add_constant(&mut self, val: Value) -> usize {
+        if let Some(idx) = self.constants.iter().position(|c| c == &val) {
+            return idx;
+        }
+
+        // Add new constant
         self.constants.push(val);
         self.constants.len() - 1
     }
