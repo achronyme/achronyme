@@ -1,8 +1,0 @@
-[package]
-name = "achronyme-lsp-core"
-version = "0.1.0"
-edition = "2021"
-description = "Core LSP functionality for Achronyme language"
-
-[dependencies]
-once_cell = "1.18"

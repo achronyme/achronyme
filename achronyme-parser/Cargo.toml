@@ -1,0 +1,8 @@
+[package]
+name = "achronyme-parser"
+version = "0.7.0"
+edition = "2021"
+
+[dependencies]
+pest = "2.6"
+pest_derive = "2.6"

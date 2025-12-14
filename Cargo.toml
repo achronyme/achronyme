@@ -1,43 +1,14 @@
 [workspace]
-resolver = "2"
 members = [
-    "crates/achronyme-parser",
-    "crates/achronyme-types",
-    "crates/achronyme-cli",
-    "crates/achronyme-lsp",
-    "crates/achronyme-lsp-core",
-    "crates/achronyme-vm",
-    "crates/achronyme-gui",
+    "memory",
+    "vm",
+    "compiler",
+    "achronyme-parser", "cli",
 ]
-default-members = [
-    "crates/achronyme-parser",
-    "crates/achronyme-types",
-]
-
-[workspace.dependencies]
-# Error handling
-thiserror = "1.0"
-anyhow = "1.0"
-
-# Linear algebra
-ndarray = { version = "0.15", features = ["blas", "serde"] }
-ndarray-linalg = "0.16"
-blas-src = { version = "0.8", features = ["openblas"] }
-lapack-src = { version = "0.8", features = ["openblas"] }
-
-# DSP
-rustfft = "6.0"
-num-complex = "0.4"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Testing
-proptest = "1.0"       # Property-based testing
-criterion = "0.5"      # Benchmarking
+resolver = "2"
 
 [profile.release]
-opt-level = 3
 lto = true
+opt-level = 3
 codegen-units = 1
+panic = "abort"

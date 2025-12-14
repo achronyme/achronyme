@@ -1,6 +1,0 @@
-let funcion1 = (a, b) => do {
-    let suma = a + b;
-    suma * suma
-}
-
-export { funcion1 }

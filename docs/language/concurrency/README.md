@@ -1,4 +1,0 @@
-- [Concurrency](./concurrency/async-await.md)
-  - [Async/Await](./concurrency/async-await.md)
-  - [Primitives](./concurrency/primitives.md)
-  - [Reactive System](./concurrency/reactivity.md)
