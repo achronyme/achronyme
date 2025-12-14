@@ -71,6 +71,14 @@ pub enum SignalBinding {
     Slider(Shared<SignalState>),
     /// Checkbox bound to a boolean signal
     Checkbox(Shared<SignalState>),
+    /// Radio button bound to a number signal (index)
+    RadioButton(Shared<SignalState>),
+    /// Dropdown bound to a number signal (selected index)
+    Dropdown(Shared<SignalState>),
+    /// Tab header bound to a number signal (active index)
+    TabHeader(Shared<SignalState>),
+    /// Modal visibility bound to a boolean signal
+    Modal(Shared<SignalState>),
 }
 
 #[allow(dead_code)]
@@ -234,6 +242,66 @@ fn sync_signals_from_app(
                     }
                 }
             }
+            SignalBinding::RadioButton(sig_rc) => {
+                if let Some(selected) = app.get_radio_selected(node_id) {
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::Number(n) = sig.value {
+                            n as usize
+                        } else {
+                            0
+                        }
+                    };
+                    if old_val != selected {
+                        let _ = set_signal_value(vm, sig_rc, Value::Number(selected as f64));
+                    }
+                }
+            }
+            SignalBinding::Dropdown(sig_rc) => {
+                if let Some(selected) = app.get_dropdown_selected(node_id) {
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::Number(n) = sig.value {
+                            n as usize
+                        } else {
+                            0
+                        }
+                    };
+                    if old_val != selected {
+                        let _ = set_signal_value(vm, sig_rc, Value::Number(selected as f64));
+                    }
+                }
+            }
+            SignalBinding::TabHeader(sig_rc) => {
+                if let Some(active) = app.get_tab_active(node_id) {
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::Number(n) = sig.value {
+                            n as usize
+                        } else {
+                            0
+                        }
+                    };
+                    if old_val != active {
+                        let _ = set_signal_value(vm, sig_rc, Value::Number(active as f64));
+                    }
+                }
+            }
+            SignalBinding::Modal(sig_rc) => {
+                if let Some(visible) = app.get_modal_visible(node_id) {
+                    let old_val = {
+                        let sig = sig_rc.read();
+                        if let Value::Boolean(b) = sig.value {
+                            b
+                        } else {
+                            false
+                        }
+                    };
+                    if old_val != visible {
+                        let _ = set_signal_value(vm, sig_rc, Value::Boolean(visible));
+                    }
+                }
+            }
         }
     }
 }
@@ -267,6 +335,30 @@ fn sync_signals_to_app(
                 let sig = sig_rc.read();
                 if let Value::Boolean(checked) = sig.value {
                     app.set_checkbox_checked(node_id, checked);
+                }
+            }
+            SignalBinding::RadioButton(sig_rc) => {
+                let sig = sig_rc.read();
+                if let Value::Number(selected) = sig.value {
+                    app.set_radio_selected(node_id, selected as usize);
+                }
+            }
+            SignalBinding::Dropdown(sig_rc) => {
+                let sig = sig_rc.read();
+                if let Value::Number(selected) = sig.value {
+                    app.set_dropdown_selected(node_id, selected as usize);
+                }
+            }
+            SignalBinding::TabHeader(sig_rc) => {
+                let sig = sig_rc.read();
+                if let Value::Number(active) = sig.value {
+                    app.set_tab_active(node_id, active as usize);
+                }
+            }
+            SignalBinding::Modal(sig_rc) => {
+                let sig = sig_rc.read();
+                if let Value::Boolean(visible) = sig.value {
+                    app.set_modal_visible(node_id, visible);
                 }
             }
         }
@@ -531,6 +623,9 @@ fn run_with_callback(
                         // Get the clicked buttons before clearing
                         let pending_clicks: Vec<u64> = self.clicked_buttons.borrow().clone();
 
+                        // Get pending radio clicks before rebuild
+                        let pending_radio: Vec<(u64, usize)> = self.app.get_pending_radio_clicks().to_vec();
+
                         // Clear the tree but keep window/renderer state
                         self.app.clear_tree();
 
@@ -588,6 +683,20 @@ fn run_with_callback(
                         // Clear clicked buttons after first rebuild (they've been processed)
                         self.clicked_buttons.borrow_mut().clear();
                         self.app.clear_clicked_buttons();
+
+                        // Process pending radio clicks - update signals for any radio buttons that were clicked
+                        if !pending_radio.is_empty() {
+                            use crate::builtins::reactive::set_signal_value;
+                            for (widget_id, new_index) in &pending_radio {
+                                // Find the binding for this widget
+                                if let Some(binding) = self.last_bindings.get(widget_id) {
+                                    if let SignalBinding::RadioButton(sig_rc) = binding {
+                                        let _ = set_signal_value(self.vm, sig_rc, Value::Number(*new_index as f64));
+                                    }
+                                }
+                            }
+                            self.app.clear_pending_radio_clicks();
+                        }
 
                         // Check if a signal was modified during render (e.g., button click)
                         // If so, we need another rebuild to reflect the new signal values
@@ -955,14 +1064,311 @@ pub fn vm_ui_combobox(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(false))
 }
 
-pub fn vm_ui_radio(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
-    // TODO: Implement radio
-    Ok(Value::Boolean(false))
+/// ui_radio(signal, options, style) - Create a group of radio buttons
+/// signal is a Number signal for the selected index (0-based)
+/// options is an array of strings for the labels
+pub fn vm_ui_radio(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if !has_build_context() {
+        return Err(VmError::Runtime(
+            "ui_radio called outside of gui_run".to_string(),
+        ));
+    }
+
+    // Get signal for selected index
+    let (selected, signal_opt) = match args.get(0) {
+        Some(Value::Signal(sig_rc)) => {
+            let sig = sig_rc.read();
+            let v = match &sig.value {
+                Value::Number(n) => *n as usize,
+                _ => 0,
+            };
+            drop(sig);
+            (v, Some(sig_rc.clone()))
+        }
+        Some(Value::Number(n)) => (*n as usize, None),
+        _ => (0, None),
+    };
+
+    // Get options array
+    let options: Vec<String> = match args.get(1) {
+        Some(Value::Vector(arr)) => {
+            let arr = arr.read();
+            arr.iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    _ => format!("{:?}", v),
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+
+    let style_str = parse_style_string(args.get(2).unwrap_or(&Value::Null));
+
+    // Create a container for all radio buttons
+    with_build_context(|ctx| {
+        // Create container with flex-col layout
+        let container_style = if style_str.is_empty() {
+            "flex-col gap-2".to_string()
+        } else {
+            format!("flex-col gap-2 {}", style_str)
+        };
+        let container = ctx.app.add_container(&container_style);
+
+        if let Some(parent) = ctx.current_parent() {
+            ctx.app.add_child(parent, container);
+        } else {
+            ctx.app.set_root(container);
+        }
+
+        // Create radio buttons as children
+        for (index, label) in options.iter().enumerate() {
+            let widget_id = next_widget_id();
+            let radio_id = ctx.app.add_radio_button(
+                widget_id,
+                label,
+                index,
+                selected,
+                "h-6", // Default height for each radio
+            );
+            ctx.app.add_child(container, radio_id);
+
+            // Register signal binding for each radio button
+            if let Some(sig) = signal_opt.clone() {
+                ctx.bind_signal(widget_id, radio_id, SignalBinding::RadioButton(sig));
+            } else {
+                ctx.register_widget(widget_id, radio_id);
+            }
+        }
+    })?;
+
+    Ok(Value::Number(selected as f64))
 }
 
-pub fn vm_ui_tabs(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {
-    // TODO: Implement tabs
+/// ui_dropdown(signal, options, placeholder, style) - Create a dropdown selector
+/// signal: Signal<Number> for selected index
+/// options: Array of strings for options
+/// placeholder: String to show when nothing selected
+pub fn vm_ui_dropdown(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if !has_build_context() {
+        return Err(VmError::Runtime(
+            "ui_dropdown called outside of gui_run".to_string(),
+        ));
+    }
+
+    // Get signal for selected index
+    let (selected, signal_opt) = match args.get(0) {
+        Some(Value::Signal(sig_rc)) => {
+            let sig = sig_rc.read();
+            let v = match &sig.value {
+                Value::Number(n) => *n as usize,
+                _ => 0,
+            };
+            drop(sig);
+            (v, Some(sig_rc.clone()))
+        }
+        Some(Value::Number(n)) => (*n as usize, None),
+        _ => (0, None),
+    };
+
+    // Get options array
+    let options: Vec<String> = match args.get(1) {
+        Some(Value::Vector(arr)) => {
+            let arr = arr.read();
+            arr.iter()
+                .filter_map(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+        _ => vec![],
+    };
+
+    // Get placeholder
+    let placeholder = match args.get(2) {
+        Some(Value::String(s)) => s.clone(),
+        _ => "Select...".to_string(),
+    };
+
+    let style_str = parse_style_string(args.get(3).unwrap_or(&Value::Null));
+
+    with_build_context(|ctx| {
+        let widget_id = next_widget_id();
+        let dropdown_id = ctx.app.add_dropdown(
+            widget_id,
+            options,
+            selected,
+            &placeholder,
+            &style_str,
+        );
+
+        if let Some(parent) = ctx.current_parent() {
+            ctx.app.add_child(parent, dropdown_id);
+        } else {
+            ctx.app.set_root(dropdown_id);
+        }
+
+        if let Some(sig) = signal_opt {
+            ctx.bind_signal(widget_id, dropdown_id, SignalBinding::Dropdown(sig));
+        } else {
+            ctx.register_widget(widget_id, dropdown_id);
+        }
+    })?;
+
+    Ok(Value::Number(selected as f64))
+}
+
+/// ui_tabs(signal, tabs, style) - Create a tab header
+/// signal: Signal<Number> for active tab index
+/// tabs: Array of strings for tab labels
+pub fn vm_ui_tabs(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if !has_build_context() {
+        return Err(VmError::Runtime(
+            "ui_tabs called outside of gui_run".to_string(),
+        ));
+    }
+
+    // Get signal for active tab
+    let (active, signal_opt) = match args.get(0) {
+        Some(Value::Signal(sig_rc)) => {
+            let sig = sig_rc.read();
+            let v = match &sig.value {
+                Value::Number(n) => *n as usize,
+                _ => 0,
+            };
+            drop(sig);
+            (v, Some(sig_rc.clone()))
+        }
+        Some(Value::Number(n)) => (*n as usize, None),
+        _ => (0, None),
+    };
+
+    // Get tabs array
+    let tabs: Vec<String> = match args.get(1) {
+        Some(Value::Vector(arr)) => {
+            let arr = arr.read();
+            arr.iter()
+                .filter_map(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+        _ => vec![],
+    };
+
+    let style_str = parse_style_string(args.get(2).unwrap_or(&Value::Null));
+
+    with_build_context(|ctx| {
+        let widget_id = next_widget_id();
+        let tab_id = ctx.app.add_tab_header(
+            widget_id,
+            tabs,
+            active,
+            &style_str,
+        );
+
+        if let Some(parent) = ctx.current_parent() {
+            ctx.app.add_child(parent, tab_id);
+        } else {
+            ctx.app.set_root(tab_id);
+        }
+
+        if let Some(sig) = signal_opt {
+            ctx.bind_signal(widget_id, tab_id, SignalBinding::TabHeader(sig));
+        } else {
+            ctx.register_widget(widget_id, tab_id);
+        }
+    })?;
+
+    Ok(Value::Number(active as f64))
+}
+
+/// ui_tooltip(text, style) - Create a tooltip (typically attached to a parent element)
+pub fn vm_ui_tooltip(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if !has_build_context() {
+        return Err(VmError::Runtime(
+            "ui_tooltip called outside of gui_run".to_string(),
+        ));
+    }
+
+    let text = match args.get(0) {
+        Some(Value::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+
+    let visible = match args.get(1) {
+        Some(Value::Boolean(b)) => *b,
+        _ => false,
+    };
+
+    let style_str = parse_style_string(args.get(2).unwrap_or(&Value::Null));
+
+    with_build_context(|ctx| {
+        let tooltip_id = ctx.app.add_tooltip(&text, visible, &style_str);
+
+        if let Some(parent) = ctx.current_parent() {
+            ctx.app.add_child(parent, tooltip_id);
+        } else {
+            ctx.app.set_root(tooltip_id);
+        }
+    })?;
+
     Ok(Value::Null)
+}
+
+/// ui_modal(signal, title, style) - Create a modal dialog
+/// signal: Signal<Boolean> for visibility
+/// title: Modal title
+/// Note: Content is rendered as children using ui_box inside the modal
+pub fn vm_ui_modal(_vm: &mut VM, args: &[Value]) -> Result<Value, VmError> {
+    if !has_build_context() {
+        return Err(VmError::Runtime(
+            "ui_modal called outside of gui_run".to_string(),
+        ));
+    }
+
+    // Get signal for visibility
+    let (visible, signal_opt) = match args.get(0) {
+        Some(Value::Signal(sig_rc)) => {
+            let sig = sig_rc.read();
+            let v = match &sig.value {
+                Value::Boolean(b) => *b,
+                _ => false,
+            };
+            drop(sig);
+            (v, Some(sig_rc.clone()))
+        }
+        Some(Value::Boolean(b)) => (*b, None),
+        _ => (false, None),
+    };
+
+    let title = match args.get(1) {
+        Some(Value::String(s)) => s.clone(),
+        _ => "Modal".to_string(),
+    };
+
+    let style_str = parse_style_string(args.get(2).unwrap_or(&Value::Null));
+
+    with_build_context(|ctx| {
+        let widget_id = next_widget_id();
+        let modal_id = ctx.app.add_modal(widget_id, &title, visible, &style_str);
+
+        if let Some(parent) = ctx.current_parent() {
+            ctx.app.add_child(parent, modal_id);
+        } else {
+            ctx.app.set_root(modal_id);
+        }
+
+        if let Some(sig) = signal_opt {
+            ctx.bind_signal(widget_id, modal_id, SignalBinding::Modal(sig));
+        } else {
+            ctx.register_widget(widget_id, modal_id);
+        }
+    })?;
+
+    Ok(Value::Boolean(visible))
 }
 
 pub fn vm_ui_collapsing(_vm: &mut VM, _args: &[Value]) -> Result<Value, VmError> {

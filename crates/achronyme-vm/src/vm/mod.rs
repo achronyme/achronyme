@@ -655,21 +655,15 @@ impl VM {
                 gen_state.complete(Some(value.clone()));
                 drop(gen_state);
 
-                if frame.function.is_async {
-                    if let Some(return_reg) = frame.return_register {
-                        if let Some(caller_frame) = self.frames.last_mut() {
-                            caller_frame.registers.set(return_reg, value)?;
-                        }
-                    }
-                    let mut result_map = HashMap::new();
-                    result_map.insert("value".to_string(), Value::Null);
-                    result_map.insert("done".to_string(), Value::Boolean(true));
-                    let result_record = Value::Record(shared(result_map));
+                // For ALL generators (async or not), return {value, done: true} when completed
+                let mut result_map = HashMap::new();
+                result_map.insert("value".to_string(), value);
+                result_map.insert("done".to_string(), Value::Boolean(true));
+                let result_record = Value::Record(shared(result_map));
 
-                    if let Some(return_reg) = frame.return_register {
-                        if let Some(caller_frame) = self.frames.last_mut() {
-                            caller_frame.registers.set(return_reg, result_record)?;
-                        }
+                if let Some(return_reg) = frame.return_register {
+                    if let Some(caller_frame) = self.frames.last_mut() {
+                        caller_frame.registers.set(return_reg, result_record)?;
                     }
                 }
 

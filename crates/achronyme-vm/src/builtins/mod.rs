@@ -327,8 +327,11 @@ pub fn create_builtin_registry() -> BuiltinRegistry {
     registry.register("ui_slider", render_gui::vm_ui_slider, 4);
     registry.register("ui_checkbox", render_gui::vm_ui_checkbox, 3);
     registry.register("ui_combobox", render_gui::vm_ui_combobox, 3);
-    registry.register("ui_radio", render_gui::vm_ui_radio, 4);
-    registry.register("ui_tabs", render_gui::vm_ui_tabs, 4);
+    registry.register("ui_radio", render_gui::vm_ui_radio, -1); // 2-3 args
+    registry.register("ui_dropdown", render_gui::vm_ui_dropdown, -1); // 3-4 args
+    registry.register("ui_tabs", render_gui::vm_ui_tabs, -1); // 2-3 args
+    registry.register("ui_tooltip", render_gui::vm_ui_tooltip, 3);
+    registry.register("ui_modal", render_gui::vm_ui_modal, 3);
     registry.register("ui_collapsing", render_gui::vm_ui_collapsing, 3);
     registry.register("ui_scroll_area", render_gui::vm_ui_scroll_area, 2);
     registry.register("ui_progress_bar", render_gui::vm_ui_progress_bar, 2);

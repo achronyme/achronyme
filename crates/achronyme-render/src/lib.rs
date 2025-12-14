@@ -97,6 +97,7 @@ enum ControlAction {
     Focus(u64),
     Modified(u64),
     ButtonClick(u64),
+    RadioClick(u64, usize), // (widget_id, new_selected_index)
 }
 
 /// The main application state
@@ -141,6 +142,9 @@ pub struct AuiApp {
     pending_slider_drag: Option<f32>,
     /// Pending mouse press (queued during rebuild): (x, y, button)
     pending_mouse_press: Option<(f32, f32)>,
+    /// Pending radio button clicks: (widget_id, new_selected_index)
+    /// These persist across rebuilds so radio clicks aren't lost during animation
+    pending_radio_clicks: Vec<(u64, usize)>,
     /// Flag to request app quit
     quit_requested: bool,
 
@@ -184,6 +188,7 @@ impl AuiApp {
             rebuilding: false,
             pending_slider_drag: None,
             pending_mouse_press: None,
+            pending_radio_clicks: Vec::new(),
             quit_requested: false,
 
             #[cfg(feature = "wgpu-backend")]
@@ -309,6 +314,26 @@ impl AuiApp {
         self.add_node(node::NodeContent::ProgressBar { progress }, style_str)
     }
 
+    /// Add a radio button with style string
+    pub fn add_radio_button(
+        &mut self,
+        id: u64,
+        label: &str,
+        index: usize,
+        selected: usize,
+        style_str: &str,
+    ) -> NodeId {
+        self.add_node(
+            node::NodeContent::RadioButton {
+                id,
+                label: label.to_string(),
+                index,
+                selected,
+            },
+            style_str,
+        )
+    }
+
     /// Add a separator with style string
     pub fn add_separator(&mut self, style_str: &str) -> NodeId {
         self.add_node(node::NodeContent::Separator, style_str)
@@ -333,6 +358,79 @@ impl AuiApp {
                 series,
                 x_range,
                 y_range,
+            },
+            style_str,
+        )
+    }
+
+    /// Add a dropdown selector with style string
+    pub fn add_dropdown(
+        &mut self,
+        id: u64,
+        options: Vec<String>,
+        selected: usize,
+        placeholder: &str,
+        style_str: &str,
+    ) -> NodeId {
+        self.add_node(
+            node::NodeContent::Dropdown {
+                id,
+                options,
+                selected,
+                open: false,
+                placeholder: placeholder.to_string(),
+            },
+            style_str,
+        )
+    }
+
+    /// Add a tab header with style string
+    pub fn add_tab_header(
+        &mut self,
+        id: u64,
+        tabs: Vec<String>,
+        active: usize,
+        style_str: &str,
+    ) -> NodeId {
+        self.add_node(
+            node::NodeContent::TabHeader {
+                id,
+                tabs,
+                active,
+            },
+            style_str,
+        )
+    }
+
+    /// Add a tooltip container with style string
+    pub fn add_tooltip(
+        &mut self,
+        text: &str,
+        visible: bool,
+        style_str: &str,
+    ) -> NodeId {
+        self.add_node(
+            node::NodeContent::Tooltip {
+                text: text.to_string(),
+                visible,
+            },
+            style_str,
+        )
+    }
+
+    /// Add a modal dialog with style string
+    pub fn add_modal(
+        &mut self,
+        id: u64,
+        title: &str,
+        visible: bool,
+        style_str: &str,
+    ) -> NodeId {
+        self.add_node(
+            node::NodeContent::Modal {
+                id,
+                visible,
+                title: title.to_string(),
             },
             style_str,
         )
@@ -427,6 +525,31 @@ impl AuiApp {
     /// Clear clicked buttons (call at the start of each frame)
     pub fn clear_clicked_buttons(&mut self) {
         self.clicked_buttons.clear();
+    }
+
+    /// Get pending radio button clicks (widget_id, new_selected_index)
+    /// These persist across rebuilds so radio clicks during animation aren't lost
+    pub fn get_pending_radio_clicks(&self) -> &[(u64, usize)] {
+        &self.pending_radio_clicks
+    }
+
+    /// Clear pending radio clicks (call after processing them)
+    pub fn clear_pending_radio_clicks(&mut self) {
+        self.pending_radio_clicks.clear();
+    }
+
+    /// Apply pending radio clicks to the tree
+    /// Call this after rebuild to update radio button states
+    pub fn apply_pending_radio_clicks(&mut self) {
+        for (widget_id, new_index) in self.pending_radio_clicks.clone() {
+            if let Some(&node_id) = self.widget_to_node.get(&widget_id) {
+                if let Some(node) = self.tree.get_mut(node_id) {
+                    if let node::NodeContent::RadioButton { selected, .. } = &mut node.content {
+                        *selected = new_index;
+                    }
+                }
+            }
+        }
     }
 
     /// Check if a widget was modified by user input this frame (by widget_id)
@@ -713,8 +836,66 @@ impl AuiApp {
                         None
                     }
                 }
+                node::NodeContent::RadioButton {
+                    id,
+                    index,
+                    selected,
+                    ..
+                } => {
+                    // Select this radio button (update selected to this index)
+                    let new_index = *index;
+                    *selected = new_index;
+                    // Use RadioClick so click persists across rebuilds during animation
+                    Some(ControlAction::RadioClick(*id, new_index))
+                }
                 node::NodeContent::Button { id, .. } => {
                     Some(ControlAction::ButtonClick(*id))
+                }
+                node::NodeContent::Dropdown {
+                    id,
+                    open,
+                    ..
+                } => {
+                    if *open {
+                        // Click on dropdown list - toggle closed
+                        // Selection of items would need local_y coordinate
+                        *open = false;
+                        Some(ControlAction::Modified(*id))
+                    } else {
+                        // Toggle dropdown open
+                        *open = true;
+                        None
+                    }
+                }
+                node::NodeContent::TabHeader {
+                    id,
+                    tabs,
+                    active,
+                } => {
+                    // Calculate which tab was clicked based on local_x
+                    let font_size = node.style.font_size.max(14.0);
+                    let h_padding = 16.0;
+                    let mut tab_x = 0.0f32;
+
+                    for (i, tab) in tabs.iter().enumerate() {
+                        let tab_width = tab.len() as f32 * font_size * 0.6 + h_padding * 2.0;
+                        if local_x >= tab_x && local_x < tab_x + tab_width {
+                            *active = i;
+                            return; // Return early after finding the clicked tab
+                        }
+                        tab_x += tab_width;
+                    }
+                    Some(ControlAction::Modified(*id))
+                }
+                node::NodeContent::Modal { id, visible, .. } => {
+                    // Click on modal close button area
+                    let width = node.layout.width;
+                    if local_x >= width - 40.0 && _local_y <= 48.0 {
+                        *visible = false;
+                        Some(ControlAction::Modified(*id))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             }
@@ -731,6 +912,11 @@ impl AuiApp {
                 }
                 ControlAction::ButtonClick(widget_id) => {
                     self.clicked_buttons.push(widget_id);
+                }
+                ControlAction::RadioClick(widget_id, new_index) => {
+                    // Store radio click to persist across rebuilds
+                    self.pending_radio_clicks.push((widget_id, new_index));
+                    self.mark_widget_modified(widget_id);
                 }
             }
         }
@@ -811,6 +997,17 @@ impl AuiApp {
         })
     }
 
+    /// Get the selected index of a radio button
+    pub fn get_radio_selected(&self, node_id: NodeId) -> Option<usize> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::RadioButton { selected, .. } = &node.content {
+                Some(*selected)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Set the value of a text input
     pub fn set_text_input_value(&mut self, node_id: NodeId, new_value: &str) {
         if let Some(node) = self.tree.get_mut(node_id) {
@@ -838,6 +1035,88 @@ impl AuiApp {
         if let Some(node) = self.tree.get_mut(node_id) {
             if let node::NodeContent::Checkbox { checked, .. } = &mut node.content {
                 *checked = new_checked;
+            }
+        }
+    }
+
+    /// Set the selected index of a radio button group
+    pub fn set_radio_selected(&mut self, node_id: NodeId, new_selected: usize) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::RadioButton { selected, .. } = &mut node.content {
+                *selected = new_selected;
+            }
+        }
+    }
+
+    /// Get the selected index of a dropdown
+    pub fn get_dropdown_selected(&self, node_id: NodeId) -> Option<usize> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::Dropdown { selected, .. } = &node.content {
+                Some(*selected)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Set the selected index of a dropdown
+    pub fn set_dropdown_selected(&mut self, node_id: NodeId, new_selected: usize) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::Dropdown { selected, options, .. } = &mut node.content {
+                if new_selected < options.len() {
+                    *selected = new_selected;
+                }
+            }
+        }
+    }
+
+    /// Get the active tab index
+    pub fn get_tab_active(&self, node_id: NodeId) -> Option<usize> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::TabHeader { active, .. } = &node.content {
+                Some(*active)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Set the active tab index
+    pub fn set_tab_active(&mut self, node_id: NodeId, new_active: usize) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::TabHeader { active, tabs, .. } = &mut node.content {
+                if new_active < tabs.len() {
+                    *active = new_active;
+                }
+            }
+        }
+    }
+
+    /// Get the visibility of a modal
+    pub fn get_modal_visible(&self, node_id: NodeId) -> Option<bool> {
+        self.tree.get(node_id).and_then(|node| {
+            if let node::NodeContent::Modal { visible, .. } = &node.content {
+                Some(*visible)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Set the visibility of a modal
+    pub fn set_modal_visible(&mut self, node_id: NodeId, new_visible: bool) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::Modal { visible, .. } = &mut node.content {
+                *visible = new_visible;
+            }
+        }
+    }
+
+    /// Set the tooltip visibility
+    pub fn set_tooltip_visible(&mut self, node_id: NodeId, new_visible: bool) {
+        if let Some(node) = self.tree.get_mut(node_id) {
+            if let node::NodeContent::Tooltip { visible, .. } = &mut node.content {
+                *visible = new_visible;
             }
         }
     }

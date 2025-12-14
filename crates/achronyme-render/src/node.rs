@@ -61,6 +61,17 @@ pub enum NodeContent {
         /// Progress value (0.0 to 1.0)
         progress: f32,
     },
+    /// A radio button (part of a group)
+    RadioButton {
+        /// Unique ID for state management
+        id: u64,
+        /// Label text
+        label: String,
+        /// Index of this option in the group
+        index: usize,
+        /// Currently selected index in the group
+        selected: usize,
+    },
     /// A visual separator line
     Separator,
     /// A plot/chart for data visualization
@@ -77,6 +88,44 @@ pub enum NodeContent {
         x_range: Option<(f64, f64)>,
         /// Fixed Y-axis range (min, max) - None means auto-scale from data
         y_range: Option<(f64, f64)>,
+    },
+    /// A dropdown selector
+    Dropdown {
+        /// Unique ID for state management
+        id: u64,
+        /// List of options to display
+        options: Vec<String>,
+        /// Currently selected index
+        selected: usize,
+        /// Whether the dropdown is currently open
+        open: bool,
+        /// Placeholder text when nothing selected
+        placeholder: String,
+    },
+    /// A tab container header (the tab buttons)
+    TabHeader {
+        /// Unique ID for state management
+        id: u64,
+        /// Tab labels
+        tabs: Vec<String>,
+        /// Currently active tab index
+        active: usize,
+    },
+    /// A tooltip container (shows content on hover)
+    Tooltip {
+        /// The tooltip text to show
+        text: String,
+        /// Whether the tooltip is currently visible
+        visible: bool,
+    },
+    /// A modal dialog overlay
+    Modal {
+        /// Unique ID for state management
+        id: u64,
+        /// Whether the modal is visible
+        visible: bool,
+        /// Modal title
+        title: String,
     },
 }
 
@@ -370,6 +419,101 @@ impl UiNode {
                 border_radius: 8.0,
                 text_color: Some(0xFFFFFFFF),
                 font_size: 12.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a dropdown selector node
+    pub fn dropdown(id: u64, options: Vec<String>, placeholder: impl Into<String>) -> Self {
+        Self {
+            content: NodeContent::Dropdown {
+                id,
+                options,
+                selected: 0,
+                open: false,
+                placeholder: placeholder.into(),
+            },
+            style: NodeStyle {
+                background_color: Some(0xFF2D2D2D),
+                text_color: Some(0xFFFFFFFF),
+                border_color: Some(0xFF4B5563),
+                border_width: 1.0,
+                border_radius: 4.0,
+                font_size: 14.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a tab header node
+    pub fn tab_header(id: u64, tabs: Vec<String>) -> Self {
+        Self {
+            content: NodeContent::TabHeader {
+                id,
+                tabs,
+                active: 0,
+            },
+            style: NodeStyle {
+                background_color: Some(0xFF1F2937),
+                text_color: Some(0xFFFFFFFF),
+                font_size: 14.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a tooltip node
+    pub fn tooltip(text: impl Into<String>) -> Self {
+        Self {
+            content: NodeContent::Tooltip {
+                text: text.into(),
+                visible: false,
+            },
+            style: NodeStyle {
+                background_color: Some(0xF0111827),
+                text_color: Some(0xFFFFFFFF),
+                border_radius: 4.0,
+                font_size: 12.0,
+                ..Default::default()
+            },
+            layout: ComputedLayout::default(),
+            taffy_node: None,
+            parent: None,
+            children: Vec::new(),
+            dirty: true,
+        }
+    }
+
+    /// Create a modal dialog node
+    pub fn modal(id: u64, title: impl Into<String>) -> Self {
+        Self {
+            content: NodeContent::Modal {
+                id,
+                visible: false,
+                title: title.into(),
+            },
+            style: NodeStyle {
+                background_color: Some(0xFF1F2937),
+                text_color: Some(0xFFFFFFFF),
+                border_radius: 8.0,
+                font_size: 14.0,
+                shadow_level: 4,
                 ..Default::default()
             },
             layout: ComputedLayout::default(),

@@ -1179,6 +1179,14 @@ impl WgpuRenderer {
             NodeContent::ProgressBar { progress } => {
                 self.render_progress_bar(x, y, w, h, *progress, style);
             }
+            NodeContent::RadioButton {
+                label,
+                index,
+                selected,
+                ..
+            } => {
+                self.render_radio_button(x, y, w, h, label, *index, *selected, style, is_hovered);
+            }
             NodeContent::Separator => {
                 let color = style.background_color.unwrap_or(0xFF4B5563);
                 self.push_rect(x, y, w, h.max(1.0), color, 0.0, 0.0, 0);
@@ -1212,6 +1220,28 @@ impl WgpuRenderer {
                 y_range,
             } => {
                 self.render_plot(x, y, w, h, title, x_label, y_label, series, *x_range, *y_range, style);
+            }
+            NodeContent::Dropdown {
+                options,
+                selected,
+                open,
+                placeholder,
+                ..
+            } => {
+                self.render_dropdown(x, y, w, h, options, *selected, *open, placeholder, style, is_hovered);
+            }
+            NodeContent::TabHeader { tabs, active, .. } => {
+                self.render_tab_header(x, y, w, h, tabs, *active, style, is_hovered);
+            }
+            NodeContent::Tooltip { text, visible } => {
+                if *visible {
+                    self.render_tooltip(x, y, text, style);
+                }
+            }
+            NodeContent::Modal { visible, title, .. } => {
+                if *visible {
+                    self.render_modal_overlay(x, y, w, h, title, style);
+                }
             }
         }
 
@@ -1310,6 +1340,80 @@ impl WgpuRenderer {
         self.push_text(
             label,
             x + box_size + 8.0,
+            y,
+            200.0,
+            h,
+            font_size,
+            color,
+            TextAlign::Left,
+            FontWeight::Regular,
+        );
+    }
+
+    fn render_radio_button(
+        &mut self,
+        x: f32,
+        y: f32,
+        _w: f32,
+        h: f32,
+        label: &str,
+        index: usize,
+        selected: usize,
+        style: &NodeStyle,
+        is_hovered: bool,
+    ) {
+        let is_selected = index == selected;
+        let circle_size = 18.0;
+        let circle_y = y + (h - circle_size) / 2.0;
+        let circle_x = x;
+
+        // Outer circle (border)
+        let bg_color = if is_selected { 0xFF3B82F6 } else { 0xFF374151 };
+        let bg_color = if is_hovered {
+            Self::lighten_color(bg_color, 0.15)
+        } else {
+            bg_color
+        };
+        let border_color = if is_hovered { 0xFF60A5FA } else { 0xFF4B5563 };
+
+        // Draw outer circle (use high border_radius for circle effect)
+        self.push_rect(
+            circle_x,
+            circle_y,
+            circle_size,
+            circle_size,
+            bg_color,
+            circle_size / 2.0, // Full circle
+            1.0,
+            border_color,
+        );
+
+        // Inner dot when selected
+        if is_selected {
+            let dot_size = 8.0;
+            let dot_offset = (circle_size - dot_size) / 2.0;
+            self.push_rect(
+                circle_x + dot_offset,
+                circle_y + dot_offset,
+                dot_size,
+                dot_size,
+                0xFFFFFFFF,
+                dot_size / 2.0, // Full circle
+                0.0,
+                0,
+            );
+        }
+
+        // Label
+        let color = style.text_color.unwrap_or(0xFFFFFFFF);
+        let font_size = if style.font_size > 0.0 {
+            style.font_size
+        } else {
+            14.0
+        };
+        self.push_text(
+            label,
+            x + circle_size + 8.0,
             y,
             200.0,
             h,
@@ -1660,6 +1764,265 @@ impl WgpuRenderer {
         } else {
             format!("{:.2}", val)
         }
+    }
+
+    fn render_dropdown(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        options: &[String],
+        selected: usize,
+        open: bool,
+        placeholder: &str,
+        style: &NodeStyle,
+        is_hovered: bool,
+    ) {
+        // Main dropdown button
+        let bg_color = style.background_color.unwrap_or(0xFF2D2D2D);
+        let bg_color = if is_hovered {
+            Self::lighten_color(bg_color, 0.1)
+        } else {
+            bg_color
+        };
+        let border_color = if open {
+            0xFF3B82F6
+        } else {
+            style.border_color.unwrap_or(0xFF4B5563)
+        };
+        let border_width = style.border_width.max(1.0);
+        let radius = style.border_radius;
+
+        self.push_rect(x, y, w, h, bg_color, radius, border_width, border_color);
+
+        // Selected text or placeholder
+        let text = if selected < options.len() {
+            &options[selected]
+        } else {
+            placeholder
+        };
+        let text_color = if selected < options.len() {
+            style.text_color.unwrap_or(0xFFFFFFFF)
+        } else {
+            0xFF9CA3AF // Dimmed for placeholder
+        };
+        let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
+        let padding = 12.0;
+
+        self.push_text(
+            text,
+            x + padding,
+            y,
+            w - padding * 2.0 - 24.0, // Leave space for arrow
+            h,
+            font_size,
+            text_color,
+            TextAlign::Left,
+            FontWeight::Regular,
+        );
+
+        // Dropdown arrow
+        let arrow_x = x + w - 24.0;
+        let arrow_y = y + h / 2.0;
+        let arrow_color = style.text_color.unwrap_or(0xFFFFFFFF);
+        // Draw a simple V shape using two lines
+        self.push_line(arrow_x, arrow_y - 3.0, arrow_x + 6.0, arrow_y + 3.0, 2.0, arrow_color);
+        self.push_line(arrow_x + 6.0, arrow_y + 3.0, arrow_x + 12.0, arrow_y - 3.0, 2.0, arrow_color);
+
+        // If open, render dropdown list
+        if open {
+            let item_height = h;
+            let list_height = options.len() as f32 * item_height;
+            let list_y = y + h;
+
+            // Dropdown list background
+            self.push_rect(x, list_y, w, list_height, 0xFF1F2937, radius, border_width, border_color);
+
+            // Render each option
+            for (i, option) in options.iter().enumerate() {
+                let item_y = list_y + i as f32 * item_height;
+                let item_bg = if i == selected {
+                    0xFF3B82F6
+                } else {
+                    0x00000000
+                };
+                if item_bg != 0 {
+                    self.push_rect(x + 2.0, item_y + 2.0, w - 4.0, item_height - 4.0, item_bg, radius - 2.0, 0.0, 0);
+                }
+                self.push_text(
+                    option,
+                    x + padding,
+                    item_y,
+                    w - padding * 2.0,
+                    item_height,
+                    font_size,
+                    0xFFFFFFFF,
+                    TextAlign::Left,
+                    FontWeight::Regular,
+                );
+            }
+        }
+    }
+
+    fn render_tab_header(
+        &mut self,
+        x: f32,
+        y: f32,
+        _w: f32,
+        h: f32,
+        tabs: &[String],
+        active: usize,
+        style: &NodeStyle,
+        _is_hovered: bool,
+    ) {
+        let bg_color = style.background_color.unwrap_or(0xFF1F2937);
+        let font_size = if style.font_size > 0.0 { style.font_size } else { 14.0 };
+        let h_padding = 16.0;
+        let mut tab_x = x;
+
+        for (i, tab) in tabs.iter().enumerate() {
+            let is_active = i == active;
+
+            // Measure tab width
+            let tab_width = tab.len() as f32 * font_size * 0.6 + h_padding * 2.0;
+
+            // Tab background
+            let tab_bg = if is_active {
+                0xFF3B82F6
+            } else {
+                bg_color
+            };
+            let radius = if is_active { 4.0 } else { 0.0 };
+
+            self.push_rect(tab_x, y, tab_width, h, tab_bg, radius, 0.0, 0);
+
+            // Tab text
+            let text_color = if is_active {
+                0xFFFFFFFF
+            } else {
+                0xFF9CA3AF
+            };
+            self.push_text(
+                tab,
+                tab_x,
+                y,
+                tab_width,
+                h,
+                font_size,
+                text_color,
+                TextAlign::Center,
+                FontWeight::Regular,
+            );
+
+            tab_x += tab_width;
+        }
+
+        // Underline for active tab indicator
+        // (The active tab already has a colored background)
+    }
+
+    fn render_tooltip(
+        &mut self,
+        x: f32,
+        y: f32,
+        text: &str,
+        style: &NodeStyle,
+    ) {
+        let bg_color = style.background_color.unwrap_or(0xF0111827);
+        let text_color = style.text_color.unwrap_or(0xFFFFFFFF);
+        let font_size = if style.font_size > 0.0 { style.font_size } else { 12.0 };
+        let padding = 8.0;
+        let radius = style.border_radius.max(4.0);
+
+        // Estimate tooltip size
+        let text_width = text.len() as f32 * font_size * 0.6;
+        let text_height = font_size * 1.4;
+        let tooltip_w = text_width + padding * 2.0;
+        let tooltip_h = text_height + padding * 2.0;
+
+        // Position tooltip above the element (offset upward)
+        let tooltip_x = x;
+        let tooltip_y = y - tooltip_h - 4.0;
+
+        // Background with shadow effect
+        self.push_rect(tooltip_x + 2.0, tooltip_y + 2.0, tooltip_w, tooltip_h, 0x40000000, radius, 0.0, 0);
+        self.push_rect(tooltip_x, tooltip_y, tooltip_w, tooltip_h, bg_color, radius, 0.0, 0);
+
+        // Text
+        self.push_text(
+            text,
+            tooltip_x + padding,
+            tooltip_y,
+            tooltip_w - padding * 2.0,
+            tooltip_h,
+            font_size,
+            text_color,
+            TextAlign::Left,
+            FontWeight::Regular,
+        );
+    }
+
+    fn render_modal_overlay(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        title: &str,
+        style: &NodeStyle,
+    ) {
+        // Semi-transparent overlay background (full screen would need special handling)
+        // For now, just render the modal box
+
+        let bg_color = style.background_color.unwrap_or(0xFF1F2937);
+        let text_color = style.text_color.unwrap_or(0xFFFFFFFF);
+        let font_size = if style.font_size > 0.0 { style.font_size } else { 16.0 };
+        let radius = style.border_radius.max(8.0);
+        let shadow_level = style.shadow_level.max(3);
+
+        // Shadow
+        let shadow_offset = shadow_level as f32 * 2.0;
+        let shadow_blur = shadow_level as f32 * 4.0;
+        self.push_rect(
+            x + shadow_offset,
+            y + shadow_offset,
+            w,
+            h,
+            0x60000000,
+            radius + shadow_blur,
+            0.0,
+            0,
+        );
+
+        // Modal background
+        self.push_rect(x, y, w, h, bg_color, radius, 1.0, 0xFF4B5563);
+
+        // Title bar
+        let title_height = 48.0;
+        self.push_rect(x, y, w, title_height, 0xFF111827, radius, 0.0, 0);
+
+        // Title text
+        self.push_text(
+            title,
+            x + 16.0,
+            y,
+            w - 64.0, // Leave space for close button
+            title_height,
+            font_size,
+            text_color,
+            TextAlign::Left,
+            FontWeight::Bold,
+        );
+
+        // Close button (X)
+        let close_x = x + w - 40.0;
+        let close_y = y + 12.0;
+        let close_size = 24.0;
+        self.push_rect(close_x, close_y, close_size, close_size, 0xFF374151, close_size / 2.0, 0.0, 0);
+        // Draw X
+        self.push_line(close_x + 6.0, close_y + 6.0, close_x + close_size - 6.0, close_y + close_size - 6.0, 2.0, 0xFFFFFFFF);
+        self.push_line(close_x + close_size - 6.0, close_y + 6.0, close_x + 6.0, close_y + close_size - 6.0, 2.0, 0xFFFFFFFF);
     }
 
     fn lighten_color(color: Color, factor: f32) -> Color {

@@ -1,0 +1,84 @@
+// 44-waveforms.soc
+// Two Waveforms with Animation
+println("Starting Wave Test...")
+
+let PI = 3.14159265358979
+let TAU = 2 * PI
+
+let frequency = signal(1.0)
+let amplitude = signal(1.0)
+let phase = signal(0.0)
+let wave_type = signal(0)
+let wave_data = signal([])
+
+// Generate wave data
+effect(() => do {
+    let f = frequency.value
+    let a = amplitude.value
+    let p = phase.value
+    let wt = wave_type.value
+
+    let points = []
+    let i = 0
+    while (i < 100) {
+        let t = i / 12.5
+        let tp = t * f + p
+        let y = if (wt == 0) {
+            a * sin(TAU * tp)
+        } else {
+            let ph = tp % 1.0
+            if (ph < 0.5) { a } else { -a }
+        }
+        points = push(points, [t, y])
+        i = i + 1
+    }
+    wave_data.set(points)
+})
+
+// Animator
+let animator = async () => do {
+    while (true) {
+        await sleep(16)
+        phase.set(phase.peek() + 0.02)
+    }
+}
+spawn(animator)
+
+let wave_options = ["Sine", "Square"]
+
+let app = () => do {
+    ui_box("bg-[#1a1a1a] w-[800px] h-[650px] p-4 flex-col gap-4", () => do {
+        ui_label("Wave Test with Animation", "text-white text-2xl")
+
+        ui_box("bg-[#111111] h-[300px] p-2", () => do {
+            ui_plot({
+                title: '${wave_data.value[0]}',
+                x_label: "Time",
+                y_label: "Amplitude",
+                style: "w-full h-full",
+                x_range: [0, 8],
+                y_range: [-2, 2],
+                series: [{
+                    kind: "line",
+                    name: "Wave",
+                    data: wave_data.value,
+                    color: "#00ffff"
+                }]
+            })
+        })
+
+        ui_box("flex-col gap-2", () => do {
+            ui_label("Wave Type", "text-white font-bold")
+            ui_radio(wave_type, wave_options)
+        })
+
+        ui_label("Frequency: " + str(frequency.value) + " Hz", "text-white")
+        ui_slider(frequency, 0.5, 3.0, "w-full")
+
+        ui_label("Amplitude: " + str(amplitude.value), "text-white")
+        ui_slider(amplitude, 0.5, 2.0, "w-full")
+    })
+}
+
+gui_run(app, { title: "Wave Test", width: 820, height: 700 })
+println("Done")

@@ -177,6 +177,16 @@ pub enum MeasureContext {
     Separator,
     /// Plot/Chart
     Plot,
+    /// Radio button with label
+    RadioButton { label: String, font_size: f32 },
+    /// Dropdown selector
+    Dropdown { selected_text: String, font_size: f32 },
+    /// Tab header
+    TabHeader { tabs: Vec<String>, font_size: f32 },
+    /// Tooltip
+    Tooltip { text: String, font_size: f32 },
+    /// Modal dialog
+    Modal,
 }
 
 /// The layout engine that wraps Taffy and syncs with our UiTree
@@ -255,6 +265,30 @@ impl LayoutEngine {
             NodeContent::ProgressBar { .. } => MeasureContext::ProgressBar,
             NodeContent::Separator => MeasureContext::Separator,
             NodeContent::Plot { .. } => MeasureContext::Plot,
+            NodeContent::RadioButton { label, .. } => MeasureContext::RadioButton {
+                label: label.clone(),
+                font_size: node.style.font_size,
+            },
+            NodeContent::Dropdown { options, selected, placeholder, .. } => {
+                let selected_text = if *selected < options.len() {
+                    options[*selected].clone()
+                } else {
+                    placeholder.clone()
+                };
+                MeasureContext::Dropdown {
+                    selected_text,
+                    font_size: node.style.font_size,
+                }
+            }
+            NodeContent::TabHeader { tabs, .. } => MeasureContext::TabHeader {
+                tabs: tabs.clone(),
+                font_size: node.style.font_size,
+            },
+            NodeContent::Tooltip { text, .. } => MeasureContext::Tooltip {
+                text: text.clone(),
+                font_size: node.style.font_size,
+            },
+            NodeContent::Modal { .. } => MeasureContext::Modal,
         };
 
         // Get children IDs
@@ -505,6 +539,90 @@ fn measure_node(
             Size {
                 width: known_dimensions.width.unwrap_or(400.0),
                 height: known_dimensions.height.unwrap_or(200.0),
+            }
+        }
+        Some(MeasureContext::RadioButton { label, font_size }) => {
+            // Radio button: radio circle + gap + label
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let (text_width, text_height) =
+                text_renderer.measure(label, actual_font_size, FontWeight::Regular);
+            let radio_size = 18.0;
+            let gap = 8.0;
+            Size {
+                width: known_dimensions
+                    .width
+                    .unwrap_or(radio_size + gap + text_width + 8.0),
+                height: known_dimensions
+                    .height
+                    .unwrap_or(text_height.max(radio_size) + 8.0),
+            }
+        }
+        Some(MeasureContext::Dropdown { selected_text, font_size }) => {
+            // Dropdown: text + dropdown arrow
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let (text_width, text_height) =
+                text_renderer.measure(selected_text, actual_font_size, FontWeight::Regular);
+            let arrow_width = 24.0;
+            let h_padding = 12.0;
+            let v_padding = 8.0;
+            Size {
+                width: known_dimensions
+                    .width
+                    .unwrap_or(text_width + arrow_width + h_padding * 2.0),
+                height: known_dimensions
+                    .height
+                    .unwrap_or(text_height + v_padding * 2.0),
+            }
+        }
+        Some(MeasureContext::TabHeader { tabs, font_size }) => {
+            // Tab header: sum of all tab widths
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let mut total_width = 0.0;
+            let mut max_height = 0.0f32;
+            let h_padding = 16.0;
+            let v_padding = 10.0;
+            for tab in tabs {
+                let (tw, th) = text_renderer.measure(tab, actual_font_size, FontWeight::Regular);
+                total_width += tw + h_padding * 2.0;
+                max_height = max_height.max(th);
+            }
+            Size {
+                width: known_dimensions.width.unwrap_or(total_width),
+                height: known_dimensions.height.unwrap_or(max_height + v_padding * 2.0),
+            }
+        }
+        Some(MeasureContext::Tooltip { text, font_size }) => {
+            // Tooltip: text with padding
+            let actual_font_size = if *font_size <= 0.0 {
+                DEFAULT_FONT_SIZE
+            } else {
+                *font_size
+            };
+            let (text_width, text_height) =
+                text_renderer.measure(text, actual_font_size, FontWeight::Regular);
+            let padding = 8.0;
+            Size {
+                width: known_dimensions.width.unwrap_or(text_width + padding * 2.0),
+                height: known_dimensions.height.unwrap_or(text_height + padding * 2.0),
+            }
+        }
+        Some(MeasureContext::Modal) => {
+            // Modal has default size but usually overridden
+            Size {
+                width: known_dimensions.width.unwrap_or(400.0),
+                height: known_dimensions.height.unwrap_or(300.0),
             }
         }
     }
