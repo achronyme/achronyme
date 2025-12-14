@@ -40,6 +40,18 @@ pub enum OpCode {
     /// Return: return R[A]
     Return = 54,
 
+    // ===== Global Variables =====
+    /// Define mutable global: Global[K[Bx]] = R[A]
+    DefGlobalVar = 98,
+    /// Define immutable global: Global[K[Bx]] = R[A]
+    DefGlobalLet = 99,
+    /// Get global: R[A] = Global[K[Bx]]
+    GetGlobal = 100,
+    /// Set global: Global[K[Bx]] = R[A]
+    SetGlobal = 101,
+    /// Print: print R[A]
+    Print = 102,
+
     // ===== Complex Numbers =====
     /// New complex: R[A] = Complex(R[B], R[C])
     NewComplex = 140,
@@ -63,6 +75,11 @@ impl OpCode {
             16 => Some(OpCode::Neg),
             17 => Some(OpCode::Sqrt),
             54 => Some(OpCode::Return),
+            98 => Some(OpCode::DefGlobalVar),
+            99 => Some(OpCode::DefGlobalLet),
+            100 => Some(OpCode::GetGlobal),
+            101 => Some(OpCode::SetGlobal),
+            102 => Some(OpCode::Print),
             140 => Some(OpCode::NewComplex),
             255 => Some(OpCode::Nop),
             _ => None,
@@ -88,6 +105,11 @@ impl OpCode {
             OpCode::Neg => "NEG",
             OpCode::Sqrt => "SQRT",
             OpCode::Return => "RETURN",
+            OpCode::DefGlobalVar => "DEF_GLOBAL_VAR",
+            OpCode::DefGlobalLet => "DEF_GLOBAL_LET",
+            OpCode::GetGlobal => "GET_GLOBAL",
+            OpCode::SetGlobal => "SET_GLOBAL",
+            OpCode::Print => "PRINT",
             OpCode::NewComplex => "NEW_COMPLEX",
             OpCode::Nop => "NOP",
         }

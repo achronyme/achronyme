@@ -29,6 +29,13 @@ pub fn run_file(path: &str) -> Result<()> {
                     let n = file.read_f64::<LittleEndian>()?;
                     constants.push(Value::Number(n));
                 }
+                1 => {
+                    let len = file.read_u32::<LittleEndian>()?;
+                    let mut bytes = vec![0u8; len as usize];
+                    file.read_exact(&mut bytes)?;
+                    let s = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("Invalid UTF-8 string constant"))?;
+                    constants.push(Value::String(s));
+                }
                 _ => return Err(anyhow::anyhow!("Unknown constant tag: {}", tag)),
             }
         }
@@ -146,6 +153,12 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                      file.write_u8(0)?;
                      file.write_f64::<LittleEndian>(*n)?;
                  }
+                 Value::String(s) => {
+                     file.write_u8(1)?;
+                     let bytes = s.as_bytes();
+                     file.write_u32::<LittleEndian>(bytes.len() as u32)?;
+                     file.write_all(bytes)?;
+                 }
                  _ => return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c)),
              }
         }
@@ -194,7 +207,7 @@ fn format_value(val: &Value, vm: &VM) -> String {
                 format!("Complex({})", idx)
             }
         }
-        Value::String(idx) => format!("String({})", idx),
+        Value::String(s) => s.clone(),
         Value::List(idx) => format!("List({})", idx),
         Value::Map(idx) => format!("Map({})", idx),
         Value::Function(idx) => format!("Function({})", idx),

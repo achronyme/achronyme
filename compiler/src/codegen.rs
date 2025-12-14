@@ -34,17 +34,86 @@ impl Compiler {
     pub fn compile(&mut self, source: &str) -> Result<Vec<u32>, CompilerError> {
         let pairs = parse_expression(source).map_err(|e| CompilerError::ParseError(e.to_string()))?;
         
-        // We expect a single top-level expression for now
         for pair in pairs {
             if pair.as_rule() == Rule::EOI {
                 continue;
             }
-            let res_reg = self.compile_expr(pair)?;
-            // Implicit return of the last expression result
-            self.emit_abc(OpCode::Return, res_reg, 0, 0);
+            // Now the top level is (stmt ~ ";"?)*
+            // The grammar calls it 'program', but parse_expression likely infers rule from 'Grammar::program'? 
+            // Wait, parse_expression name is misleading if it parses 'program'. 
+            // Assuming the trait or helper uses Rule::program as entry.
+            // If pair is 'stmt', compile it.
+            // If input is "stmt stmt", pest returns multiple pairs if rule is (stmt)*.
+            // Let's assume pair is 'stmt'.
+             match pair.as_rule() {
+                 Rule::stmt => self.compile_stmt(pair)?,
+                 Rule::expr => { // Fallback if grammar allows expr at top (it does via expr_stmt)
+                     let reg = self.compile_expr(pair)?;
+                     // Implicit print/return? No, statement does 'Print'.
+                     // For pure expr stmt, we discard result unless REPL.
+                     // But simpler: just compile it. 
+                 }
+                 _ => {
+                      // Maybe whitespace or comments if not silent?
+                 }
+             }
         }
         
+        // Final return
+        self.emit_abc(OpCode::Return, 0, 0, 0); // Return Nil/0
+        
         Ok(self.bytecode.clone())
+    }
+
+    fn compile_stmt(&mut self, pair: Pair<Rule>) -> Result<(), CompilerError> {
+        let inner = pair.into_inner().next().unwrap();
+        match inner.as_rule() {
+            Rule::let_decl => {
+                let mut p = inner.into_inner();
+                let name = p.next().unwrap().as_str().to_string();
+                let expr = p.next().unwrap();
+                
+                let val_reg = self.compile_expr(expr)?;
+                let name_idx = self.add_constant(Value::String(name));
+                
+                // DefGlobalLet R[val_reg], Name[name_idx]
+                self.emit_abx(OpCode::DefGlobalLet, val_reg, name_idx as u16);
+            },
+            Rule::mut_decl => {
+                let mut p = inner.into_inner();
+                let name = p.next().unwrap().as_str().to_string();
+                let expr = p.next().unwrap();
+                
+                let val_reg = self.compile_expr(expr)?;
+                let name_idx = self.add_constant(Value::String(name));
+                
+                // DefGlobalVar
+                self.emit_abx(OpCode::DefGlobalVar, val_reg, name_idx as u16);
+            },
+            Rule::assignment => {
+                let mut p = inner.into_inner();
+                let name = p.next().unwrap().as_str().to_string();
+                let expr = p.next().unwrap();
+                
+                let val_reg = self.compile_expr(expr)?;
+                let name_idx = self.add_constant(Value::String(name));
+                
+                // SetGlobal
+                self.emit_abx(OpCode::SetGlobal, val_reg, name_idx as u16);
+            },
+            Rule::print_stmt => {
+                 let expr = inner.into_inner().next().unwrap();
+                 let val_reg = self.compile_expr(expr)?;
+                 // Print
+                 self.emit_abc(OpCode::Print, val_reg, 0, 0);
+            },
+            Rule::expr_stmt => {
+                 let expr = inner.into_inner().next().unwrap();
+                 let _ = self.compile_expr(expr)?;
+            },
+            _ => return Err(CompilerError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
+        }
+        Ok(())
     }
 
     fn compile_expr(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
@@ -58,6 +127,14 @@ impl Compiler {
                 match inner.as_rule() {
                     Rule::number => self.compile_number(inner),
                     Rule::complex => self.compile_complex(inner),
+                    Rule::identifier => {
+                        let name = inner.as_str().to_string();
+                        let reg = self.alloc_reg()?;
+                        let name_idx = self.add_constant(Value::String(name));
+                        // GetGlobal
+                        self.emit_abx(OpCode::GetGlobal, reg, name_idx as u16);
+                        Ok(reg)
+                    },
                     Rule::expr => self.compile_expr(inner), // ( expr )
                     _ => Err(CompilerError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
                 }

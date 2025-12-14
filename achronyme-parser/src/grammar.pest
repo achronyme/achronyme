@@ -12,9 +12,30 @@ number = @{
 
 complex = @{ number ~ "i" }
 
+// Identifiers
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+keyword = @{ "let" | "mut" | "print" }
+
+// Statements
+stmt = {
+    let_decl
+  | mut_decl
+  | assignment
+  | print_stmt
+  | expr_stmt
+}
+
+let_decl = { "let" ~ identifier ~ "=" ~ expr }
+mut_decl = { "mut" ~ identifier ~ "=" ~ expr }
+assignment = { identifier ~ "=" ~ expr }
+print_stmt = { "print" ~ "(" ~ expr ~ ")" }
+expr_stmt = { expr }
+
+// Updated Primary (includes identifier)
 primary = {
     complex
   | number
+  | identifier
   | "(" ~ expr ~ ")"
 }
 
@@ -37,7 +58,7 @@ atom = _{ primary }
 power = { atom ~ (pow ~ power)? }
 
 // Multiplicative
-unary = _{ power } // Add unary minus later if needed, e.g. "-" ~ unary
+unary = _{ power } // Add unary minus later if needed
 multiplicative = { unary ~ ((mul | div) ~ unary)* }
 
 // Additive
@@ -46,4 +67,4 @@ additive = { multiplicative ~ ((add | sub) ~ multiplicative)* }
 expr = { additive }
 
 // Entry point
-program = { SOI ~ expr ~ EOI }
+program = { SOI ~ (stmt ~ ";"?)* ~ EOI }

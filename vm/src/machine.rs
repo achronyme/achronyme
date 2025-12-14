@@ -11,11 +11,17 @@ pub struct CallFrame {
     pub base: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct GlobalEntry {
+    pub value: Value,
+    pub mutable: bool,
+}
+
 pub struct VM {
     pub heap: Heap,
     pub stack: Vec<Value>, 
     pub frames: Vec<CallFrame>,
-    pub globals: Vec<Value>,
+    pub globals: HashMap<String, GlobalEntry>,
     pub interner: HashMap<String, u32>,
 }
 
@@ -25,7 +31,7 @@ impl VM {
             heap: Heap::new(),
             stack: Vec::with_capacity(2048),
             frames: Vec::with_capacity(64),
-            globals: Vec::new(),
+            globals: HashMap::new(),
             interner: HashMap::new(),
         }
     }
@@ -110,14 +116,14 @@ impl VM {
                      
                      // Custom handling for Pow to support (-1)^0.5 -> Complex
                      // We can't use standard binary_op blindly because typical f64::powf returns NaN for negative base
-                     match (vb, vc) {
+                     match (&vb, &vc) {
                          (Value::Number(x), Value::Number(y)) => {
                              // Try real power first
-                             let res_real = x.powf(y);
-                             if res_real.is_nan() && x < 0.0 {
+                             let res_real = x.powf(*y);
+                             if res_real.is_nan() && *x < 0.0 {
                                  // Promotion case: (-4)^0.5 = 2i
-                                 let cx = Complex64::new(x, 0.0);
-                                 let cy = Complex64::new(y, 0.0);
+                                 let cx = Complex64::new(*x, 0.0);
+                                 let cy = Complex64::new(*y, 0.0);
                                  let res_complex = cx.powc(cy);
                                  // Alloc complex
                                  let res = Value::Complex(self.heap.alloc_complex(res_complex));
@@ -199,6 +205,74 @@ impl VM {
                      let a = decode_a(instruction) as usize;
                      let _ret_val = self.get_reg(base, a);
                      self.frames.pop();
+                 },
+
+                 // ===== Global Variables =====
+                 OpCode::DefGlobalVar | OpCode::DefGlobalLet => {
+                     let a = decode_a(instruction) as usize;
+                     let bx = decode_bx(instruction) as usize;
+                     let val = self.get_reg(base, a);
+                     
+                     // Resolve Name from Constant Pool (Value::String owns the string now)
+                     let name_val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
+                     let name = if let Value::String(s) = name_val {
+                          s
+                     } else {
+                          return Err(RuntimeError::TypeMismatch("Global name must be a string".into()));
+                     };
+                     
+                     let mutable = op == OpCode::DefGlobalVar;
+                     self.globals.insert(name, GlobalEntry { value: val, mutable });
+                 },
+                 
+                 OpCode::GetGlobal => {
+                     let a = decode_a(instruction) as usize;
+                     let bx = decode_bx(instruction) as usize;
+                     
+                     // Resolve Name
+                     let name_val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
+                     let name = if let Value::String(s) = name_val {
+                          s
+                     } else {
+                          return Err(RuntimeError::TypeMismatch("Global name must be a string".into()));
+                     };
+                     
+                     if let Some(entry) = self.globals.get(&name) {
+                         self.set_reg(base, a, entry.value.clone());
+                     } else {
+                         return Err(RuntimeError::Unknown(format!("Undefined global variable: {}", name)));
+                     }
+                 },
+                 
+                 OpCode::SetGlobal => {
+                     let a = decode_a(instruction) as usize;
+                     let bx = decode_bx(instruction) as usize;
+                     let val = self.get_reg(base, a);
+                     
+                     // Resolve Name
+                     let name_val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
+                     let name = if let Value::String(s) = name_val {
+                          s
+                     } else {
+                          return Err(RuntimeError::TypeMismatch("Global name must be a string".into()));
+                     };
+                     
+                     if let Some(entry) = self.globals.get_mut(&name) {
+                         if entry.mutable {
+                             entry.value = val;
+                         } else {
+                             return Err(RuntimeError::Unknown(format!("Cannot assign to immutable global '{}'", name)));
+                         }
+                     } else {
+                         return Err(RuntimeError::Unknown(format!("Undefined global variable: {}", name)));
+                     }
+                 },
+
+                 OpCode::Print => {
+                     let a = decode_a(instruction) as usize;
+                     let val = self.get_reg(base, a);
+                     // Simple debug print for now
+                     println!("{:?}", val);
                  },
                  
                  _ => return Err(RuntimeError::Unknown(format!("Unimplemented opcode {:?}", op))),

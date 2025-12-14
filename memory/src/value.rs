@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     // --- Primitivos (Viven en el stack/registros) ---
     Nil,
@@ -6,7 +6,7 @@ pub enum Value {
     Number(f64),
     
     // --- Handles (Índices a las Arenas del Heap) ---
-    String(u32),   
+    String(String),   
     List(u32),     
     Map(u32),      
     Function(u32), 
