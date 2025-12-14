@@ -8,7 +8,7 @@ use pest::Parser;
 #[grammar = "grammar.pest"]
 pub struct AchronymeParser;
 
-pub fn parse_expression(input: &str) -> std::result::Result<pest::iterators::Pairs<Rule>, pest::error::Error<Rule>> {
+pub fn parse_expression(input: &str) -> std::result::Result<pest::iterators::Pairs<'_, Rule>, pest::error::Error<Rule>> {
     let mut pairs = AchronymeParser::parse(Rule::program, input)?;
     // The program rule returns { SOI, expr, EOI } (plus implicit whitespace).
     // We want to return the inner `expr` pairs.
