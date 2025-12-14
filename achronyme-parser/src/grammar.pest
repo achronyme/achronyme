@@ -1,0 +1,48 @@
+// ============================================================================
+// Achronyme SOC Language Grammar - Simplified (Arithmetic & Complex Only)
+// ============================================================================
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+// Literals
+number = @{
+    "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}
+
+complex = @{ number ~ "i" }
+
+primary = {
+    complex
+  | number
+  | "(" ~ expr ~ ")"
+}
+
+// Operators
+add = { "+" }
+sub = { "-" }
+mul = { "*" }
+div = { "/" }
+pow = { "^" }
+
+// Precedence (Lowest to Highest)
+// 1. Add/Sub
+// 2. Mul/Div
+// 3. Pow
+// 4. Primary
+
+atom = _{ primary }
+
+// Power (Right associative)
+power = { atom ~ (pow ~ power)? }
+
+// Multiplicative
+unary = _{ power } // Add unary minus later if needed, e.g. "-" ~ unary
+multiplicative = { unary ~ ((mul | div) ~ unary)* }
+
+// Additive
+additive = { multiplicative ~ ((add | sub) ~ multiplicative)* }
+
+expr = { additive }
+
+// Entry point
+program = _{ SOI ~ expr ~ EOI }
