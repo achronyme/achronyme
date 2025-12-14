@@ -33,6 +33,8 @@ pub enum OpCode {
     Pow = 15,
     /// Negation: R[A] = -R[B]
     Neg = 16,
+    /// Square root: R[A] = sqrt(R[B])
+    Sqrt = 17,
 
     // ===== Functions =====
     /// Return: return R[A]
@@ -59,6 +61,7 @@ impl OpCode {
             13 => Some(OpCode::Div),
             15 => Some(OpCode::Pow),
             16 => Some(OpCode::Neg),
+            17 => Some(OpCode::Sqrt),
             54 => Some(OpCode::Return),
             140 => Some(OpCode::NewComplex),
             255 => Some(OpCode::Nop),
@@ -83,6 +86,7 @@ impl OpCode {
             OpCode::Div => "DIV",
             OpCode::Pow => "POW",
             OpCode::Neg => "NEG",
+            OpCode::Sqrt => "SQRT",
             OpCode::Return => "RETURN",
             OpCode::NewComplex => "NEW_COMPLEX",
             OpCode::Nop => "NOP",

@@ -4,4 +4,4 @@ version = "0.7.0"
 edition = "2021"
 
 [dependencies]
-# No dependencies for now, clean slate
+num-complex = "0.4"

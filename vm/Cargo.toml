@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 memory = { path = "../memory" }
+num-complex = "0.4"
 
 [dev-dependencies]
 compiler = { path = "../compiler" }

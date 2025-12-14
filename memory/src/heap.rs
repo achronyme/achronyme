@@ -1,5 +1,6 @@
 use crate::Value;
 use std::collections::HashMap;
+use num_complex::Complex64;
 
 // Placeholder types for now
 pub type RealTensor = (); 
@@ -19,6 +20,7 @@ pub struct Heap {
     pub maps: Vec<HashMap<String, Value>>, 
     pub functions: Vec<Function>,
     pub tensors: Vec<RealTensor>,
+    pub complexes: Vec<Complex64>,
     
     // Gestión de memoria
     pub bytes_allocated: usize,
@@ -33,14 +35,15 @@ impl Heap {
             maps: Vec::new(),
             functions: Vec::new(),
             tensors: Vec::new(),
+            complexes: Vec::new(),
             bytes_allocated: 0,
-            next_gc: 1024 * 1024, // 1MB start
+            next_gc: 1024 * 1024,
         }
     }
 
     pub fn alloc_string(&mut self, s: String) -> u32 {
         let index = self.strings.len() as u32;
-        self.bytes_allocated += s.capacity(); // Rough estimate
+        self.bytes_allocated += s.capacity();
         self.strings.push(s);
         index
     }
@@ -52,13 +55,10 @@ impl Heap {
         index
     }
     
-    // TODO: Add other allocators and GC logic
     pub fn collect_garbage(&mut self) {
-        // Mark-and-Sweep generic implementation to be added
         println!("GC: Running collection...");
     }
 
-    // --- Accessors ---
     pub fn get_string(&self, index: u32) -> Option<&String> {
         self.strings.get(index as usize)
     }
@@ -80,5 +80,16 @@ impl Heap {
 
     pub fn get_function(&self, index: u32) -> Option<&Function> {
         self.functions.get(index as usize)
+    }
+
+    pub fn alloc_complex(&mut self, c: Complex64) -> u32 {
+        let index = self.complexes.len() as u32;
+        self.bytes_allocated += std::mem::size_of::<Complex64>();
+        self.complexes.push(c);
+        index
+    }
+
+    pub fn get_complex(&self, index: u32) -> Option<Complex64> {
+        self.complexes.get(index as usize).copied()
     }
 }
