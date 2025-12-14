@@ -103,6 +103,40 @@ impl VM {
                      let res = self.binary_op(vb, vc, |x, y| x / y, |x, y| x / y)?;
                      self.set_reg(base, a, res);
                  },
+
+                 OpCode::Pow => {
+                     let a = decode_a(instruction) as usize;
+                     let b = decode_b(instruction) as usize;
+                     let c = decode_c(instruction) as usize;
+                     let vb = self.get_reg(base, b);
+                     let vc = self.get_reg(base, c);
+                     
+                     // Custom handling for Pow to support (-1)^0.5 -> Complex
+                     // We can't use standard binary_op blindly because typical f64::powf returns NaN for negative base
+                     match (vb, vc) {
+                         (Value::Number(x), Value::Number(y)) => {
+                             // Try real power first
+                             let res_real = x.powf(y);
+                             if res_real.is_nan() && x < 0.0 {
+                                 // Promotion case: (-4)^0.5 = 2i
+                                 let cx = Complex64::new(x, 0.0);
+                                 let cy = Complex64::new(y, 0.0);
+                                 let res_complex = cx.powc(cy);
+                                 // Alloc complex
+                                 let res = Value::Complex(self.heap.alloc_complex(res_complex));
+                                 self.set_reg(base, a, res);
+                             } else {
+                                 // Standard real result (might be NaN for other reasons like 0/0, that's fine)
+                                 self.set_reg(base, a, Value::Number(res_real));
+                             }
+                         }
+                         _ => {
+                             // Fallback to standard binary_op for Complex mixed cases which handles promotion
+                             let res = self.binary_op(vb, vc, |x, y| x.powf(y), |x, y| x.powc(y))?;
+                             self.set_reg(base, a, res);
+                         }
+                     }
+                 },
                  
                  OpCode::Neg => {
                      let a = decode_a(instruction) as usize;
