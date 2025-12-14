@@ -24,16 +24,14 @@
 
 ## 3. Compiler Improvements
 
-### Register Allocation (High Priority)
-- [ ] **Register Reuse (Hygiene)**: The current allocator (`alloc_reg`) simply increments `reg_top` until it hits 255. It does not free registers when scopes end.
-    - *Target*: Implement a "Simple Liveness Analysis" or Stack-based tracking within the register allocator. When a variable goes out of scope (or a temp is consumed), its register index should be marked as "free" for reuse.
+### Architecture & Debugging
+- [ ] **Debug Symbol Table (Critical for DX)**: The move to O(1) globals removed variable names from the VM runtime.
+    - *Target*: Create a separate "Debug Symbol Map" (Index -> Name) used only during error reporting (panics) and disassembly, so errors say "Undefined variable 'x'" instead of "Global index 5 out of bounds".
 - [ ] **Constant Pool Deduplication**: While implemented for numbers, ensure string constants and complex numbers are strictly deduplicated across the entire compilation unit.
 
-### Architecture & Debugging
-- [ ] **Debug Symbol Table**: The move to O(1) globals removed variable names from the VM runtime.
-    - *Target*: Create a separate "Debug Symbol Map" (Index -> Name) used only during error reporting (panics) and disassembly, so errors say "Undefined variable 'x'" instead of "Global index 5 out of bounds".
-- [ ] **Control Flow (Loops)**: `if/else` logic is complete.
-    - *Target*: Implement `while` and `for` loops using the existing `Jump` opcodes.
+### Features
+- [ ] **Control Flow (Iterators)**: `while` loops are complete.
+    - *Target*: Implement `for` loops (desugaring to `while` or native iterator protocol).
 - [ ] **Closures & Upvalues**: `CallFrame` has a `closure` field, but the compiler does not yet support capturing local variables from outer scopes (Upvalues).
     - *Target*: Implement `make_closure`, `get_upvalue`, and `set_upvalue` opcodes.
 

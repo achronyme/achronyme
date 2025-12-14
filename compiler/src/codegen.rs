@@ -120,6 +120,7 @@ impl Compiler {
                 // DefGlobalLet R[val_reg], Slot[idx]
                 // Bx is now raw index, NOT constant pool index
                 self.emit_abx(OpCode::DefGlobalLet, val_reg, idx);
+                self.free_reg(val_reg); // Statement consumes
             }
             Rule::mut_decl => {
                 let mut p = inner.into_inner();
@@ -138,6 +139,8 @@ impl Compiler {
 
                 // DefGlobalVar
                 self.emit_abx(OpCode::DefGlobalVar, val_reg, idx);
+                self.free_reg(val_reg); // Statement consumes the reg
+
             }
             Rule::assignment => {
                 let mut p = inner.into_inner();
@@ -154,6 +157,7 @@ impl Compiler {
 
                 // SetGlobal
                 self.emit_abx(OpCode::SetGlobal, val_reg, idx);
+                self.free_reg(val_reg); // Statement consumes
             }
             Rule::print_stmt => {
                 let expr = inner.into_inner().next().unwrap();
@@ -170,13 +174,18 @@ impl Compiler {
                 self.emit_abx(OpCode::GetGlobal, func_reg, print_idx);
 
                 // 3. Compile Argument
-                let expr_reg = self.compile_expr(expr)?;
+                self.compile_expr_into(expr, arg_reg)?;
 
-                // 4. Move result to Arg position
-                self.emit_abc(OpCode::Move, arg_reg, expr_reg, 0);
-
-                // 5. Call
+                // 4. Call
                 self.emit_abc(OpCode::Call, func_reg, func_reg, 1);
+                
+                // Hygiene: Free args AND func_reg? 
+                // Call result replaces func_reg. 
+                // arg_reg is func_reg+1.
+                // We should free `arg_reg` from compiler tracking perspective.
+                self.free_reg(arg_reg);
+                self.free_reg(func_reg); // Result is discarded in print_stmt
+
             }
             Rule::print_stmt => {
                 let expr = inner.into_inner().next().unwrap();
@@ -265,9 +274,10 @@ impl Compiler {
             // Iterate backwards through operators
             while let Some(op) = ops.pop() {
                 let left_reg = regs.pop().unwrap();
-                let res_reg = self.alloc_reg()?;
-                self.emit_abc(op, res_reg, left_reg, right_reg);
-                right_reg = res_reg; // Result becomes the right operand for the next op
+                // Reuse left_reg as result
+                self.emit_abc(op, left_reg, left_reg, right_reg);
+                self.free_reg(right_reg); // Hygiene
+                right_reg = left_reg; // Result becomes the right operand for the next op
             }
 
             Ok(right_reg)
@@ -286,9 +296,9 @@ impl Compiler {
                     _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
                 };
 
-                let res_reg = self.alloc_reg()?;
-                self.emit_abc(opcode, res_reg, left_reg, right_reg);
-                left_reg = res_reg;
+                // REUSE left_reg as target (Accumulator pattern)
+                self.emit_abc(opcode, left_reg, left_reg, right_reg);
+                self.free_reg(right_reg); // Hygiene: Free the right operand (since it was just on top)
             }
             Ok(left_reg)
         }
@@ -321,6 +331,7 @@ impl Compiler {
     }
 
     fn compile_block(&mut self, pair: Pair<Rule>, target_reg: u8) -> Result<(), CompilerError> {
+        let initial_reg_top = self.reg_top; // Snapshot
         self.begin_scope();
         let stmts = pair.into_inner();
         let mut last_processed = false;
@@ -361,6 +372,7 @@ impl Compiler {
         }
 
         self.end_scope();
+        self.reg_top = initial_reg_top; // Restore (Hygiene)
         Ok(())
     }
 
@@ -378,6 +390,7 @@ impl Compiler {
 
         // 2. Jump if False -> Else
         let jump_else = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+        self.free_reg(cond_reg); // Hygiene: Condition not needed in body
 
         // 3. Then Block
         self.compile_block(then_block, target_reg)?;
@@ -415,11 +428,50 @@ impl Compiler {
         Ok(target_reg)
     }
 
+    fn compile_while(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // while expr block
+        let mut inner = pair.into_inner();
+        let cond_expr = inner.next().unwrap();
+        let body_block = inner.next().unwrap();
+
+        let start_label = self.bytecode.len();
+
+        // 1. Compile Condition
+        let cond_reg = self.compile_expr(cond_expr)?;
+
+        // 2. Jump if False -> End
+        let jump_end = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+        
+        self.free_reg(cond_reg); // Hygiene
+
+        // 3. Body
+        // While loops technically return Nil usually? Or last value?
+        // Common pattern: return Nil.
+        // We allocate a dummy register for body result (discarded for now)
+        let body_reg = self.alloc_reg()?;
+        self.compile_block(body_block, body_reg)?;
+        self.free_reg(body_reg); // Hygiene
+
+        // 4. Jump -> Start
+        let jump_idx = self.bytecode.len() as u16;
+        self.emit_abx(OpCode::Jump, 0, start_label as u16);
+
+        // 5. Patch End
+        self.patch_jump(jump_end);
+
+        // 6. Return Nil
+        let target_reg = self.alloc_reg()?;
+        self.emit_abx(OpCode::LoadNil, target_reg, 0);
+
+        Ok(target_reg)
+    }
+
     // Specialized compile_expr that targets a register
     fn compile_expr_into(&mut self, pair: Pair<Rule>, target: u8) -> Result<(), CompilerError> {
         let reg = self.compile_expr(pair)?;
         if reg != target {
             self.emit_abc(OpCode::Move, target, reg, 0);
+            self.free_reg(reg); // Hygiene: Free the temp register
         }
         Ok(())
     }
@@ -439,9 +491,9 @@ impl Compiler {
                 _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
             };
 
-            let res_reg = self.alloc_reg()?;
-            self.emit_abc(opcode, res_reg, left_reg, right_reg);
-            left_reg = res_reg;
+            // Reuse left_reg
+            self.emit_abc(opcode, left_reg, left_reg, right_reg);
+            self.free_reg(right_reg); // Hygiene
         }
 
         Ok(left_reg)
@@ -467,7 +519,7 @@ impl Compiler {
         }
 
         // 'next' is now postfix_expr (the term)
-        let mut reg = self.compile_expr(next)?;
+        let reg = self.compile_expr(next)?;
 
         // Apply ops in reverse (right-to-left associativty essentially for prefixes?
         // Actually - - 5 is -(-5). So inner-most first.
@@ -476,9 +528,7 @@ impl Compiler {
         for _op in ops {
             // Check op type if we have more than one (e.g. ! or -)
             // currently only "-"
-            let new_reg = self.alloc_reg()?;
-            self.emit_abc(OpCode::Neg, new_reg, reg, 0); // Neg uses B reg
-            reg = new_reg;
+            self.emit_abc(OpCode::Neg, reg, reg, 0); // In-place Negation
         }
 
         Ok(reg)
@@ -532,6 +582,7 @@ impl Compiler {
                 Ok(reg)
             }
             Rule::if_expr => self.compile_if(inner),
+            Rule::while_expr => self.compile_while(inner),
             Rule::identifier => {
                 let name = inner.as_str().to_string();
                 let reg = self.alloc_reg()?;
@@ -587,6 +638,10 @@ impl Compiler {
         self.emit_abx(OpCode::LoadConst, val_reg, v_idx as u16);
 
         self.emit_abc(OpCode::NewComplex, reg, zero_reg, val_reg);
+        
+        // Hygiene
+        self.free_reg(val_reg);
+        self.free_reg(zero_reg);
 
         Ok(reg)
     }
@@ -600,6 +655,18 @@ impl Compiler {
         }
         self.reg_top += 1;
         Ok(r)
+    }
+
+    fn free_reg(&mut self, reg: u8) {
+        // Register Hygiene: Ensure we are freeing the most recently allocated register.
+        assert_eq!(
+            reg,
+            self.reg_top - 1,
+            "Register Hygiene Error: Tried to free {} but top is {}",
+            reg,
+            self.reg_top
+        );
+        self.reg_top -= 1;
     }
 
     // Rudimentary reset for expression boundaries needed usually

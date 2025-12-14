@@ -15,3 +15,9 @@ use compiler::Compiler;
 let mut compiler = Compiler::new();
 let bytecode = compiler.compile("1 + 2").unwrap();
 ```
+
+## Features
+
+- **Control Flow**: `if`, `while`, `block` expressions.
+- **Register Hygiene**: Uses a LIFO (Stack) register allocation strategy to minimize register pressure and prevent leaks. All temporary registers are strictly freed after use.
+- **Scope Management**: Blocks create new scopes. Variables declared inside blocks are automatically freed when the scope ends.

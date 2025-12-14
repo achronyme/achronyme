@@ -15,6 +15,12 @@ This crate is divided into the following modules:
 
 - **NaN Boxing**: Uses NaN-boxed `Value` types (via `memory` crate).
 - **Globals**: Supports mutable (`var`) and immutable (`let`) globals via `DefGlobalVar`/`DefGlobalLet`.
+- **Control Flow**:
+    - `Jump` (Unconditional)
+    - `JumpIfFalse` (Used for `if` and `while`)
+    - Control flow is implemented via absolute jump targets (u16 index in bytecode).
+    - `LoadTrue`, `LoadFalse`, `LoadNil` for boolean/nil literals.
+
 
 
 ## Adding Instructions

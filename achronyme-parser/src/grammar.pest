@@ -29,7 +29,7 @@ complex    = @{ number ~ "i" }
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
-keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" }
+keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" }
 
 // 1. Define Literals
 nil_lit   = { "nil" }
@@ -39,12 +39,14 @@ false_lit = { "false" }
 // 2. Control Flow Expressions
 block = { "{" ~ stmt* ~ "}" }
 if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
+while_expr = { "while" ~ expr ~ block }
 
 atom = {
     nil_lit
   | true_lit
   | false_lit
   | if_expr
+  | while_expr
   | block
   | complex
   | number
