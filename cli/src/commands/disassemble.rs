@@ -10,6 +10,11 @@ pub fn disassemble_file(path: &str) -> Result<()> {
         .compile(&content)
         .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
 
+    let mut inv_globals = std::collections::HashMap::new();
+    for (name, idx) in &compiler.global_symbols {
+        inv_globals.insert(*idx, name);
+    }
+
     println!("== Disassembly of {} ==", path);
     for (i, inst) in bytecode.iter().enumerate() {
         let op_byte = decode_opcode(*inst);
@@ -45,8 +50,8 @@ pub fn disassemble_file(path: &str) -> Result<()> {
             | Some(OpCode::DefGlobalVar)
             | Some(OpCode::GetGlobal)
             | Some(OpCode::SetGlobal) => {
-                let val = compiler.constants.get(bx as usize);
-                println!("{:04} {:<12} R{}, Name[{}] ({:?})", i, name, a, bx, val);
+                let sym_name = inv_globals.get(&bx).map(|s| s.as_str()).unwrap_or("?");
+                println!("{:04} {:<12} R{}, Name[{}] ('{}')", i, name, a, bx, sym_name);
             }
             _ => {
                 println!("{:04} {:<12} A={} B={} C={} Bx={}", i, name, a, b, c, bx);

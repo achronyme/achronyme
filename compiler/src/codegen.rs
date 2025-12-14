@@ -58,6 +58,29 @@ impl Compiler {
         }
     }
 
+    pub fn append_debug_symbols(&self, buffer: &mut Vec<u8>) {
+        // 1. Invert Name->Index to (Index, Name) for serialization
+        let mut symbols: Vec<(&u16, &String)> = self
+            .global_symbols
+            .iter()
+            .map(|(k, v)| (v, k))
+            .collect();
+
+        // 2. Sort by Index (Deterministic output is mandatory for build reproducibility)
+        symbols.sort_by_key(|&(idx, _)| *idx);
+
+        // 3. Write Section
+        buffer.extend_from_slice(&[0xDB, 0x67]); // Magic "DBg"
+        buffer.extend_from_slice(&(symbols.len() as u16).to_le_bytes());
+
+        for (index, name) in symbols {
+            let name_bytes = name.as_bytes();
+            buffer.extend_from_slice(&index.to_le_bytes());
+            buffer.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            buffer.extend_from_slice(name_bytes);
+        }
+    }
+
     pub fn compile(&mut self, source: &str) -> Result<Vec<u32>, CompilerError> {
         let pairs =
             parse_expression(source).map_err(|e| CompilerError::ParseError(e.to_string()))?;

@@ -63,6 +63,13 @@ pub fn run_file(path: &str) -> Result<()> {
         }
 
         let mut vm = VM::new();
+
+        // Try load debug symbols (Sidecar)
+        let mut debug_bytes = Vec::new();
+        // Read until EOF
+        if file.read_to_end(&mut debug_bytes).is_ok() && !debug_bytes.is_empty() {
+             vm.load_debug_section(&debug_bytes);
+        }
         let func = Function {
             name: "main".to_string(),
             arity: 0,
@@ -92,7 +99,15 @@ pub fn run_file(path: &str) -> Result<()> {
         let mut vm = VM::new();
 
         // Transfer strings from compiler to VM
-        vm.heap.import_strings(compiler.interner.strings); // UPDATED REFERENCE
+        vm.heap.import_strings(compiler.interner.strings);
+        
+        // Transfer Debug Symbols (Source Mode)
+        let mut debug_map = std::collections::HashMap::new();
+        for (name, idx) in &compiler.global_symbols {
+            debug_map.insert(*idx, name.clone());
+        }
+        vm.debug_symbols = Some(debug_map);
+
         let func = Function {
             name: "main".to_string(),
             arity: 0,

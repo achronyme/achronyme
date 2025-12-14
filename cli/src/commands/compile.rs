@@ -41,6 +41,11 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             file.write_u32::<LittleEndian>(*inst)?;
         }
 
+        // Append Debug Symbols (Sidecar)
+        let mut debug_buffer = Vec::new();
+        compiler.append_debug_symbols(&mut debug_buffer);
+        file.write_all(&debug_buffer)?;
+
         println!("Saved binary to {}", out_path);
     }
     Ok(())

@@ -21,6 +21,9 @@ pub struct VM {
     pub globals: Vec<GlobalEntry>,
     pub interner: HashMap<String, u32>,
     pub natives: Vec<NativeObj>,
+    
+    // Passive Debug Symbols (Sidecar)
+    pub debug_symbols: Option<HashMap<u16, String>>,
 }
 
 impl VM {
@@ -33,6 +36,7 @@ impl VM {
             globals: Vec::with_capacity(64),
             interner: HashMap::new(),
             natives: Vec::new(),
+            debug_symbols: None,
         };
 
         // Bootstrap native functions
@@ -189,5 +193,54 @@ impl VM {
             }
         }
         Ok(())
+    }
+
+    /// Sidecar Loader: Parses debug symbols from raw bytes
+    pub fn load_debug_section(&mut self, bytes: &[u8]) {
+        if bytes.len() < 4 {
+            return; // Not enough bytes for Header + Count
+        }
+
+        let mut cursor = 0;
+
+        // 1. Check Magic (0xDB 0x67)
+        if bytes[cursor] != 0xDB || bytes[cursor + 1] != 0x67 {
+            return; // Invalid or missing section
+        }
+        cursor += 2;
+
+        // 2. Read Count
+        let count = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]);
+        cursor += 2;
+
+        let mut map = HashMap::new();
+
+        for _ in 0..count {
+            if cursor + 4 > bytes.len() {
+                break; // Truncated
+            }
+
+            // Global Index
+            let global_idx = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]);
+            cursor += 2;
+
+            // Name Length
+            let name_len = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]) as usize;
+            cursor += 2;
+
+            if cursor + name_len > bytes.len() {
+                break; // Truncated name
+            }
+
+            // Name Bytes
+            let name_bytes = &bytes[cursor..cursor + name_len];
+            cursor += name_len;
+
+            if let Ok(name) = std::str::from_utf8(name_bytes) {
+                map.insert(global_idx, name.to_string());
+            }
+        }
+
+        self.debug_symbols = Some(map);
     }
 }
