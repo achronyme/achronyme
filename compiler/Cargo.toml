@@ -1,0 +1,9 @@
+[package]
+name = "compiler"
+version = "0.7.0"
+edition = "2021"
+
+[dependencies]
+memory = { path = "../memory" }
+vm = { path = "../vm" }
+achronyme-parser = { path = "../achronyme-parser" }

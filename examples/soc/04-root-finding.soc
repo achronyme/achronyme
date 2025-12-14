@@ -1,8 +1,0 @@
-// --- Root Finding Tests ---
-
-// Test 1: Bisection method
-// Find root of x^2 - 4 = 0 in [0, 5]
-// Expected: 2.0
-let root1 = solve(x => x^2 - 4, 0, 5, 1e-6)
-
-root1

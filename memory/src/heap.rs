@@ -1,0 +1,66 @@
+use crate::Value;
+use std::collections::HashMap;
+
+// Placeholder types for now
+pub type Closure = (); 
+pub type RealTensor = (); 
+
+pub struct Heap {
+    // Arenas tipadas: Vectores contiguos de datos reales
+    pub strings: Vec<String>,
+    pub lists: Vec<Vec<Value>>,
+    pub maps: Vec<HashMap<String, Value>>, 
+    pub functions: Vec<Closure>,
+    pub tensors: Vec<RealTensor>,
+    
+    // Gestión de memoria
+    pub bytes_allocated: usize,
+    pub next_gc: usize,
+}
+
+impl Heap {
+    pub fn new() -> Self {
+        Self {
+            strings: Vec::new(),
+            lists: Vec::new(),
+            maps: Vec::new(),
+            functions: Vec::new(),
+            tensors: Vec::new(),
+            bytes_allocated: 0,
+            next_gc: 1024 * 1024, // 1MB start
+        }
+    }
+
+    pub fn alloc_string(&mut self, s: String) -> u32 {
+        let index = self.strings.len() as u32;
+        self.bytes_allocated += s.capacity(); // Rough estimate
+        self.strings.push(s);
+        index
+    }
+
+    pub fn alloc_list(&mut self, l: Vec<Value>) -> u32 {
+        let index = self.lists.len() as u32;
+        self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
+        self.lists.push(l);
+        index
+    }
+    
+    // TODO: Add other allocators and GC logic
+    pub fn collect_garbage(&mut self) {
+        // Mark-and-Sweep generic implementation to be added
+        println!("GC: Running collection...");
+    }
+
+    // --- Accessors ---
+    pub fn get_string(&self, index: u32) -> Option<&String> {
+        self.strings.get(index as usize)
+    }
+
+    pub fn get_list(&self, index: u32) -> Option<&Vec<Value>> {
+        self.lists.get(index as usize)
+    }
+
+    pub fn get_list_mut(&mut self, index: u32) -> Option<&mut Vec<Value>> {
+        self.lists.get_mut(index as usize)
+    }
+}

@@ -1,3 +1,0 @@
-let makeAdder = (n) => (b) => n + b
-
-export { makeAdder }
