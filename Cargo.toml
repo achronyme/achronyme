@@ -3,7 +3,7 @@ members = [
     "memory",
     "vm",
     "compiler",
-    "achronyme-parser",
+    "achronyme-parser", "cli",
 ]
 resolver = "2"
 
