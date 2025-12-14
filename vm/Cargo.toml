@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 memory = { path = "../memory" }
+
+[dev-dependencies]
+compiler = { path = "../compiler" }

@@ -2,15 +2,22 @@ use crate::Value;
 use std::collections::HashMap;
 
 // Placeholder types for now
-pub type Closure = (); 
 pub type RealTensor = (); 
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub name: String,
+    pub arity: u8,
+    pub chunk: Vec<u32>,
+    pub constants: Vec<Value>,
+}
 
 pub struct Heap {
     // Arenas tipadas: Vectores contiguos de datos reales
     pub strings: Vec<String>,
     pub lists: Vec<Vec<Value>>,
     pub maps: Vec<HashMap<String, Value>>, 
-    pub functions: Vec<Closure>,
+    pub functions: Vec<Function>,
     pub tensors: Vec<RealTensor>,
     
     // Gestión de memoria
@@ -62,5 +69,16 @@ impl Heap {
 
     pub fn get_list_mut(&mut self, index: u32) -> Option<&mut Vec<Value>> {
         self.lists.get_mut(index as usize)
+    }
+
+    pub fn alloc_function(&mut self, f: Function) -> u32 {
+        let index = self.functions.len() as u32;
+        self.bytes_allocated += f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
+        self.functions.push(f);
+        index
+    }
+
+    pub fn get_function(&self, index: u32) -> Option<&Function> {
+        self.functions.get(index as usize)
     }
 }
