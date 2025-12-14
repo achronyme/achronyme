@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeError {
     StackOverflow,
@@ -8,6 +7,8 @@ pub enum RuntimeError {
     InvalidOperand,
     DivisionByZero,
     TypeMismatch(String),
+    ArityMismatch(String),
+    AssertionFailed,
     Unknown(String),
 }
 

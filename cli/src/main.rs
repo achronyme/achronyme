@@ -1,19 +1,20 @@
-use clap::Parser;
 use anyhow::Result;
+use clap::Parser;
 
 mod args;
-mod runner;
+mod commands;
 mod repl;
 
 use args::{Cli, Commands};
+use commands::{compile, disassemble, run};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Run { path } => runner::run_file(path),
-        Commands::Disassemble { path } => runner::disassemble_file(path),
-        Commands::Compile { path, output } => runner::compile_file(path, output.as_deref()),
+        Commands::Run { path } => run::run_file(path),
+        Commands::Disassemble { path } => disassemble::disassemble_file(path),
+        Commands::Compile { path, output } => compile::compile_file(path, output.as_deref()),
         Commands::Repl => repl::run_repl(),
     }
 }

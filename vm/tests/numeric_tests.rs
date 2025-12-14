@@ -1,7 +1,7 @@
-use vm::{VM, CallFrame};
 use memory::{Function, Value};
-use vm::opcode::{OpCode, instruction::*};
 use num_complex::Complex64;
+use vm::opcode::{instruction::*, OpCode};
+use vm::{CallFrame, VM};
 
 fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
     let mut vm = VM::new();
@@ -12,7 +12,11 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
         constants,
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
     vm
 }
@@ -25,9 +29,9 @@ fn test_real_addition() {
         encode_abc(OpCode::Add.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    let constants = vec![Value::Number(1.0), Value::Number(2.0)];
+    let constants = vec![Value::number(1.0), Value::number(2.0)];
     let vm = run_simple(chunk, constants);
-    assert_eq!(vm.stack[2], Value::Number(3.0));
+    assert_eq!(vm.stack[2].as_number(), Some(3.0));
 }
 
 #[test]
@@ -38,27 +42,32 @@ fn test_real_complex_promotion() {
         encode_abc(OpCode::Add.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    
+
     let mut vm = VM::new();
     let c_idx = vm.heap.alloc_complex(Complex64::new(0.0, 2.0));
-    
+
     let func = Function {
         name: "test".to_string(),
         arity: 0,
         chunk,
-        constants: vec![Value::Number(1.0), Value::Complex(c_idx)],
+        constants: vec![Value::number(1.0), Value::complex(c_idx)],
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
-    
-    match vm.stack[2] {
-        Value::Complex(idx) => {
-            let c = vm.heap.get_complex(idx).unwrap();
-            assert!((c.re - 1.0).abs() < 1e-10);
-            assert!((c.im - 2.0).abs() < 1e-10);
-        }
-        _ => panic!("Expected Complex, got {:?}", vm.stack[2]),
+
+    let val = vm.stack[2];
+    if val.is_complex() {
+        let idx = val.as_handle().unwrap();
+        let c = vm.heap.get_complex(idx).unwrap();
+        assert!((c.re - 1.0).abs() < 1e-10);
+        assert!((c.im - 2.0).abs() < 1e-10);
+    } else {
+        panic!("Expected Complex, got {:?}", val);
     }
 }
 
@@ -70,21 +79,25 @@ fn test_complex_times_complex_demote() {
         encode_abc(OpCode::Mul.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    
+
     let mut vm = VM::new();
     let c_idx = vm.heap.alloc_complex(Complex64::new(0.0, 1.0));
-    
+
     let func = Function {
         name: "test".to_string(),
         arity: 0,
         chunk,
-        constants: vec![Value::Complex(c_idx)],
+        constants: vec![Value::complex(c_idx)],
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
-    
-    assert_eq!(vm.stack[2], Value::Number(-1.0));
+
+    assert_eq!(vm.stack[2].as_number(), Some(-1.0));
 }
 
 #[test]
@@ -95,11 +108,14 @@ fn test_ieee754_infinity() {
         encode_abc(OpCode::Div.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    let constants = vec![Value::Number(1.0), Value::Number(0.0)];
+    let constants = vec![Value::number(1.0), Value::number(0.0)];
     let vm = run_simple(chunk, constants);
-    match vm.stack[2] {
-        Value::Number(n) => assert!(n.is_infinite() && n > 0.0),
-        _ => panic!("Expected Number"),
+
+    let val = vm.stack[2];
+    if let Some(n) = val.as_number() {
+        assert!(n.is_infinite() && n > 0.0);
+    } else {
+        panic!("Expected Number, got {:?}", val);
     }
 }
 
@@ -111,11 +127,14 @@ fn test_ieee754_nan() {
         encode_abc(OpCode::Div.as_u8(), 2, 0, 1),
         encode_abc(OpCode::Return.as_u8(), 2, 0, 0),
     ];
-    let constants = vec![Value::Number(0.0)];
+    let constants = vec![Value::number(0.0)];
     let vm = run_simple(chunk, constants);
-    match vm.stack[2] {
-        Value::Number(n) => assert!(n.is_nan()),
-        _ => panic!("Expected Number"),
+
+    let val = vm.stack[2];
+    if let Some(n) = val.as_number() {
+        assert!(n.is_nan());
+    } else {
+        panic!("Expected Number, got {:?}", val);
     }
 }
 
@@ -126,7 +145,7 @@ fn test_sqrt_negative_promotes() {
         encode_abc(OpCode::Sqrt.as_u8(), 1, 0, 0),
         encode_abc(OpCode::Return.as_u8(), 1, 0, 0),
     ];
-    let constants = vec![Value::Number(-4.0)];
+    let constants = vec![Value::number(-4.0)];
     let mut vm = VM::new();
     let func = Function {
         name: "test".to_string(),
@@ -135,15 +154,20 @@ fn test_sqrt_negative_promotes() {
         constants,
     };
     let func_idx = vm.heap.alloc_function(func);
-    vm.frames.push(CallFrame { closure: func_idx, ip: 0, base: 0 });
+    vm.frames.push(CallFrame {
+        closure: func_idx,
+        ip: 0,
+        base: 0,
+    });
     vm.interpret().expect("Runtime error");
-    
-    match vm.stack[1] {
-        Value::Complex(idx) => {
-            let c = vm.heap.get_complex(idx).unwrap();
-            assert!((c.re).abs() < 1e-10);
-            assert!((c.im - 2.0).abs() < 1e-10);
-        }
-        _ => panic!("Expected Complex, got {:?}", vm.stack[1]),
+
+    let val = vm.stack[1];
+    if val.is_complex() {
+        let idx = val.as_handle().unwrap();
+        let c = vm.heap.get_complex(idx).unwrap();
+        assert!((c.re).abs() < 1e-10);
+        assert!((c.im - 2.0).abs() < 1e-10);
+    } else {
+        panic!("Expected Complex, got {:?}", val);
     }
 }
