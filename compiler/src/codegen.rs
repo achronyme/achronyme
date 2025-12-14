@@ -129,27 +129,12 @@ impl Compiler {
     fn compile_expr(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         match pair.as_rule() {
             Rule::expr => self.compile_expr(pair.into_inner().next().unwrap()),
-            Rule::additive => self.compile_binary(pair, OpCode::Add, OpCode::Sub),
-            Rule::multiplicative => self.compile_binary(pair, OpCode::Mul, OpCode::Div),
-            Rule::power => self.compile_binary(pair, OpCode::Pow, OpCode::Nop), // ToDo: Chaining
-            Rule::primary => {
-                let inner = pair.into_inner().next().unwrap();
-                match inner.as_rule() {
-                    Rule::number => self.compile_number(inner),
-                    Rule::complex => self.compile_complex(inner),
-                    Rule::identifier => {
-                        let name = inner.as_str().to_string();
-                        let reg = self.alloc_reg()?;
-                        let handle = self.intern_string(&name);
-                        let name_idx = self.add_constant(Value::string(handle));
-                        // GetGlobal
-                        self.emit_abx(OpCode::GetGlobal, reg, name_idx as u16);
-                        Ok(reg)
-                    },
-                    Rule::expr => self.compile_expr(inner), // ( expr )
-                    _ => Err(CompilerError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
-                }
-            }
+            Rule::add_expr => self.compile_binary(pair, OpCode::Add, OpCode::Sub),
+            Rule::mul_expr => self.compile_binary(pair, OpCode::Mul, OpCode::Div),
+            Rule::pow_expr => self.compile_binary(pair, OpCode::Pow, OpCode::Nop),
+            Rule::prefix_expr => self.compile_prefix(pair),
+            Rule::postfix_expr => self.compile_postfix(pair),
+            Rule::atom => self.compile_atom(pair),
             _ => {
                 let rule = pair.as_rule();
                 let mut inner = pair.into_inner();
@@ -162,7 +147,7 @@ impl Compiler {
         }
     }
 
-    // Handles logic for additive, multiplicative, power (left associative for add/mul)
+    // Handles logic for add_expr, mul_expr, pow_expr
     fn compile_binary(&mut self, pair: Pair<Rule>, op1: OpCode, op2: OpCode) -> Result<u8, CompilerError> {
         let mut pairs = pair.into_inner();
         let mut left_reg = self.compile_expr(pairs.next().unwrap())?;
@@ -177,22 +162,83 @@ impl Compiler {
                 _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
             };
 
-            // Result in a new register or reuse left? 
-            // For SSA-like simplicity, we can reuse left if it's a temp, but let's alloc new for safety first.
             let res_reg = self.alloc_reg()?;
             self.emit_abc(opcode, res_reg, left_reg, right_reg);
-            
-            // Free the operand registers (simplified)
-            // In a real allocator we'd define liveness. Here we assume stack discipline:
-            // if left_reg and right_reg were just allocated, we can conceptually "pop" them if result replaces them.
-            // But strict stack register machine requires care. 
-            // Strategy: Accumulate into `res_reg` which becomes the new `left_reg` for next iteration.
-            
-            // Optimization: Reuse left_reg if it is the top temp?
-            // Let's just return res_reg for now.
             left_reg = res_reg;
         }
         Ok(left_reg)
+    }
+
+    fn compile_prefix(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // prefix_expr = { unary_op* ~ postfix_expr }
+        let mut inner = pair.into_inner();
+        
+        // We might have multiple unary ops: - - - 5
+        // Or zero. 
+        // Strategy: Recursively apply? Or strictly unary_op then expr?
+        // Grammar: unary_op* ~ postfix_expr
+        // Pest iterates them in order.
+        
+        // We collect unary ops first
+        let mut ops = Vec::new();
+        let mut next = inner.next().unwrap();
+        
+        while next.as_rule() == Rule::unary_op {
+            ops.push(next);
+            next = inner.next().unwrap();
+        }
+        
+        // 'next' is now postfix_expr (the term)
+        let mut reg = self.compile_expr(next)?;
+        
+        // Apply ops in reverse (right-to-left associativty essentially for prefixes? 
+        // Actually - - 5 is -(-5). So inner-most first.
+        // But we have the value in 'reg'. We just wrap it.
+        // If we have [- , -], we do neg(neg(val)).
+        for _op in ops {
+            // Check op type if we have more than one (e.g. !)
+            // currently only "-"
+            let new_reg = self.alloc_reg()?;
+            self.emit_abc(OpCode::Neg, new_reg, reg, 0); // Neg uses B reg
+            reg = new_reg;
+        }
+        
+        Ok(reg)
+    }
+
+    fn compile_postfix(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // postfix_expr = { atom ~ (postfix_op)* }
+        let mut inner = pair.into_inner();
+        let atom_pair = inner.next().unwrap();
+        let mut reg = self.compile_expr(atom_pair)?; // Compile the atom
+        
+        // Handle suffixes (calls, index)
+        for op in inner {
+             match op.as_rule() {
+                 // Rule::call_op => { ... }
+                 _ => return Err(CompilerError::UnexpectedRule(format!("Postfix: {:?}", op.as_rule()))),
+             }
+        }
+        
+        Ok(reg)
+    }
+
+    fn compile_atom(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        let inner = pair.into_inner().next().unwrap();
+        match inner.as_rule() {
+            Rule::number => self.compile_number(inner),
+            Rule::complex => self.compile_complex(inner),
+            Rule::identifier => {
+                let name = inner.as_str().to_string();
+                let reg = self.alloc_reg()?;
+                let handle = self.intern_string(&name);
+                let name_idx = self.add_constant(Value::string(handle));
+                self.emit_abx(OpCode::GetGlobal, reg, name_idx as u16);
+                Ok(reg)
+            },
+            Rule::expr => self.compile_expr(inner),
+            _ => Err(CompilerError::UnexpectedRule(format!("{:?}", inner.as_rule()))),
+        }
     }
 
     fn compile_number(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
@@ -200,8 +246,6 @@ impl Compiler {
         let val = s.parse::<f64>().map_err(|_| CompilerError::InvalidNumber)?;
         
         let reg = self.alloc_reg()?;
-        // Optimization: if fitting in load_imm_i8? 
-        // For now always LoadConst
         let const_idx = self.add_constant(Value::number(val));
         
         if const_idx <= 0xFFFF {
@@ -214,29 +258,20 @@ impl Compiler {
     }
 
     fn compile_complex(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-         // "3i" -> number part is "3"
          let s = pair.as_str();
          let num_str = &s[..s.len()-1]; // Remove 'i'
          let val = num_str.parse::<f64>().map_err(|_| CompilerError::InvalidComplex)?;
-         
-         // In new VM, Complex might be a value type or object. 
-         // Assuming we can treat it as basic for now or need NewComplex opcode.
-         // OpCode::NewComplex R[A] = Complex(R[B], R[C])
-         // For "3i", real is 0, imag is 3.
          
          let reg = self.alloc_reg()?;
          let zero_reg = self.alloc_reg()?;
          let val_reg = self.alloc_reg()?;
          
-         // Load 0
          let z_idx = self.add_constant(Value::number(0.0));
          self.emit_abx(OpCode::LoadConst, zero_reg, z_idx as u16);
          
-         // Load Val
          let v_idx = self.add_constant(Value::number(val));
          self.emit_abx(OpCode::LoadConst, val_reg, v_idx as u16);
          
-         // NewComplex
          self.emit_abc(OpCode::NewComplex, reg, zero_reg, val_reg);
          
          Ok(reg)
