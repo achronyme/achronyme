@@ -1,4 +1,1 @@
-let a = 10
-let b = 10
-let c = 10
-a + b + c
+let a = 10 + 20 + 30

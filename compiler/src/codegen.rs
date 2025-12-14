@@ -1,4 +1,5 @@
 use crate::error::CompilerError;
+use crate::interner::StringInterner;
 use memory::Value;
 use achronyme_parser::{parse_expression, Rule};
 use vm::opcode::{OpCode, instruction::{encode_abc, encode_abx}};
@@ -20,12 +21,8 @@ pub struct Compiler {
     // Simple register allocator state
     reg_top: u8,
 
-    // String Internet
-    // Maps "string" -> u32 (handle)
-    // The real strings are stored in the heap, but for now
-    // we save them here to pass them to the VM
-    pub strings: Vec<String>,   // String arena
-    string_cache: HashMap<String, u32>, // Cache for duplicate strings
+    // String Interner
+    pub interner: StringInterner,
 }
 
 impl Compiler {
@@ -36,8 +33,7 @@ impl Compiler {
             bytecode: Vec::new(),
             constants: Vec::new(),
             reg_top: 0,
-            strings: Vec::new(),
-            string_cache: HashMap::new(),
+            interner: StringInterner::new(),
         }
     }
     
@@ -270,16 +266,7 @@ impl Compiler {
     }
 
     fn intern_string(&mut self, s:&str) -> u32 {
-        // Check if string already exist
-        if let Some(&handle) = self.string_cache.get(s) {
-            return handle;
-        }
-
-        // If not exist, add it to the arena
-        let handle = self.strings.len() as u32;
-        self.strings.push(s.to_string());
-        self.string_cache.insert(s.to_string(), handle);
-        handle
+        self.interner.intern(s)
     }
 
     fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {

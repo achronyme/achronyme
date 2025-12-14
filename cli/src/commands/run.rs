@@ -1,9 +1,22 @@
 use anyhow::{Result, Context};
 use std::fs;
 use compiler::Compiler;
-use vm::{VM, CallFrame, OpCode};
-use vm::opcode::instruction::*;
+use vm::{VM, CallFrame};
 use memory::{Function, Value};
+
+use vm::opcode::instruction::decode_opcode;
+use vm::opcode::OpCode; // Used in formatting if needed, though run_file mostly runs.
+
+// Need format_value logic. It was local in runner.rs.
+// I will duplicate it here or move it to a shared utils or vm method?
+// Since `Value::fmt` exists (Debug), but the user wants `format_value`.
+// Ideally updating `Value::Display` or similar.
+// For now, I'll put `format_value` here or make it a helper in `vm` or `cli`.
+// Let's put it in `vm` would be best, but I can't easily change `vm` right deeply now.
+// I'll copy it here for now to avoid cross-crate dependency cycles if any (cli depends on vm, so vm can't depend on cli).
+// BUT `vm` has `Value` and `VM`. `format_value` takes `&Value` and `&VM`.
+// It strictly belongs in `vm` or `cli` utils.
+// I'll make a private helper here for now.
 
 pub fn run_file(path: &str) -> Result<()> {
     let content = fs::read_to_string(path).unwrap_or_default();
@@ -33,9 +46,8 @@ pub fn run_file(path: &str) -> Result<()> {
                     let len = file.read_u32::<LittleEndian>()?;
                     let mut bytes = vec![0u8; len as usize];
                     file.read_exact(&mut bytes)?;
-                    let s = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("Invalid UTF-8 string constant"))?;
+                    let _s = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("Invalid UTF-8 string constant"))?;
                     return Err(anyhow::anyhow!("String deserialization not yet supported with interning"));
-
                 }
                 _ => return Err(anyhow::anyhow!("Unknown constant tag: {}", tag)),
             }
@@ -65,13 +77,12 @@ pub fn run_file(path: &str) -> Result<()> {
         Ok(())
     } else {
         let mut compiler = Compiler::new();
-        // Compile using the refactored compiler which returns distinct error type
         let bytecode = compiler.compile(&content).map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
         
         let mut vm = VM::new();
 
         // Transfer strings from compiler to VM
-        vm.heap.import_strings(compiler.strings);
+        vm.heap.import_strings(compiler.interner.strings); // UPDATED REFERENCE
         let func = Function {
             name: "main".to_string(),
             arity: 0,
@@ -94,83 +105,6 @@ pub fn run_file(path: &str) -> Result<()> {
         
         Ok(())
     }
-}
-
-pub fn disassemble_file(path: &str) -> Result<()> {
-    let content = fs::read_to_string(path).context("Failed to read file")?;
-    let mut compiler = Compiler::new();
-    let bytecode = compiler.compile(&content).map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
-    
-    println!("== Disassembly of {} ==", path);
-    for (i, inst) in bytecode.iter().enumerate() {
-        let op_byte = decode_opcode(*inst);
-        let name = OpCode::from_u8(op_byte)
-            .map(|op| op.name())
-            .unwrap_or("UNKNOWN");
-            
-        let a = decode_a(*inst);
-        let b = decode_b(*inst);
-        let c = decode_c(*inst);
-        let bx = decode_bx(*inst);
-        
-        match OpCode::from_u8(op_byte) {
-            Some(OpCode::LoadConst) => {
-                 let val = compiler.constants.get(bx as usize);
-                 println!("{:04} {:<12} R{}, K[{}] ({:?})", i, name, a, bx, val);
-            }
-            Some(OpCode::Return) => {
-                 println!("{:04} {:<12} R{}", i, name, a);
-            }
-            Some(OpCode::Add) | Some(OpCode::Sub) | Some(OpCode::Mul) | Some(OpCode::Div) | Some(OpCode::Pow) | Some(OpCode::NewComplex) => {
-                 println!("{:04} {:<12} R{}, R{}, R{}", i, name, a, b, c);
-            }
-            Some(OpCode::Move) | Some(OpCode::Neg) => {
-                 println!("{:04} {:<12} R{}, R{}", i, name, a, b);
-            }
-            _ => {
-                 println!("{:04} {:<12} A={} B={} C={} Bx={}", i, name, a, b, c, bx);
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
-    let content = fs::read_to_string(path).context("Failed to read file")?;
-    let mut compiler = Compiler::new();
-    let bytecode = compiler.compile(&content).map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
-    
-    println!("Compiled {} instructions.", bytecode.len());
-    
-    if let Some(out_path) = output {
-        use std::io::Write;
-        use byteorder::{WriteBytesExt, LittleEndian};
-        
-        let mut file = fs::File::create(out_path).context("Failed to create output file")?;
-        
-        file.write_all(b"ACH\x07")?; 
-        
-        file.write_u32::<LittleEndian>(compiler.constants.len() as u32)?;
-        for c in &compiler.constants {
-             if let Some(n) = c.as_number() {
-                 file.write_u8(0)?;
-                 file.write_f64::<LittleEndian>(n)?;
-             } else if c.is_string() {
-                 file.write_u8(1)?;
-                 return Err(anyhow::anyhow!("String serialization needs update"));
-             } else {
-                 return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c));
-             }
-        }
-        
-        file.write_u32::<LittleEndian>(bytecode.len() as u32)?;
-        for inst in &bytecode {
-            file.write_u32::<LittleEndian>(*inst)?;
-        }
-        
-        println!("Saved binary to {}", out_path);
-    }
-    Ok(())
 }
 
 use memory::value::*;

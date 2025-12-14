@@ -11,12 +11,7 @@ pub struct CallFrame {
     pub base: usize,
 }
 
-#[derive(Clone, Debug)]
-pub struct GlobalEntry {
-    pub value: Value,
-    pub mutable: bool,
-}
-
+use crate::globals::GlobalEntry;
 pub struct VM {
     pub heap: Heap,
     pub stack: Vec<Value>, 
