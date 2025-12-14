@@ -92,4 +92,8 @@ impl Heap {
     pub fn get_complex(&self, index: u32) -> Option<Complex64> {
         self.complexes.get(index as usize).copied()
     }
+
+    pub fn import_strings(&mut self, strings: Vec<String>) {
+        self.strings = strings;
+    }
 }

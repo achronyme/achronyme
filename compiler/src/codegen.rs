@@ -3,6 +3,7 @@ use memory::Value;
 use achronyme_parser::{parse_expression, Rule};
 use vm::opcode::{OpCode, instruction::{encode_abc, encode_abx}};
 use pest::iterators::Pair;
+use std::collections::HashMap;
 
 pub struct Local {
     pub name: String,       
@@ -18,6 +19,13 @@ pub struct Compiler {
     
     // Simple register allocator state
     reg_top: u8,
+
+    // String Internet
+    // Maps "string" -> u32 (handle)
+    // The real strings are stored in the heap, but for now
+    // we save them here to pass them to the VM
+    pub strings: Vec<String>,   // String arena
+    string_cache: HashMap<String, u32>, // Cache for duplicate strings
 }
 
 impl Compiler {
@@ -28,6 +36,8 @@ impl Compiler {
             bytecode: Vec::new(),
             constants: Vec::new(),
             reg_top: 0,
+            strings: Vec::new(),
+            string_cache: HashMap::new(),
         }
     }
     
@@ -74,7 +84,9 @@ impl Compiler {
                 let expr = p.next().unwrap();
                 
                 let val_reg = self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(name));
+
+                let handle = self.intern_string(&name);
+                let name_idx = self.add_constant(Value::String(handle));
                 
                 // DefGlobalLet R[val_reg], Name[name_idx]
                 self.emit_abx(OpCode::DefGlobalLet, val_reg, name_idx as u16);
@@ -85,7 +97,8 @@ impl Compiler {
                 let expr = p.next().unwrap();
                 
                 let val_reg = self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(name));
+                let handle = self.intern_string(&name);
+                let name_idx = self.add_constant(Value::String(handle));
                 
                 // DefGlobalVar
                 self.emit_abx(OpCode::DefGlobalVar, val_reg, name_idx as u16);
@@ -96,7 +109,8 @@ impl Compiler {
                 let expr = p.next().unwrap();
                 
                 let val_reg = self.compile_expr(expr)?;
-                let name_idx = self.add_constant(Value::String(name));
+                let handle = self.intern_string(&name);
+                let name_idx = self.add_constant(Value::String(handle));
                 
                 // SetGlobal
                 self.emit_abx(OpCode::SetGlobal, val_reg, name_idx as u16);
@@ -130,7 +144,8 @@ impl Compiler {
                     Rule::identifier => {
                         let name = inner.as_str().to_string();
                         let reg = self.alloc_reg()?;
-                        let name_idx = self.add_constant(Value::String(name));
+                        let handle = self.intern_string(&name);
+                        let name_idx = self.add_constant(Value::String(handle));
                         // GetGlobal
                         self.emit_abx(OpCode::GetGlobal, reg, name_idx as u16);
                         Ok(reg)
@@ -252,6 +267,19 @@ impl Compiler {
         // Add new constant
         self.constants.push(val);
         self.constants.len() - 1
+    }
+
+    fn intern_string(&mut self, s:&str) -> u32 {
+        // Check if string already exist
+        if let Some(&handle) = self.string_cache.get(s) {
+            return handle;
+        }
+
+        // If not exist, add it to the arena
+        let handle = self.strings.len() as u32;
+        self.strings.push(s.to_string());
+        self.string_cache.insert(s.to_string(), handle);
+        handle
     }
 
     fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {

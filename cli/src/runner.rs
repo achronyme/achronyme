@@ -34,7 +34,8 @@ pub fn run_file(path: &str) -> Result<()> {
                     let mut bytes = vec![0u8; len as usize];
                     file.read_exact(&mut bytes)?;
                     let s = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("Invalid UTF-8 string constant"))?;
-                    constants.push(Value::String(s));
+                    return Err(anyhow::anyhow!("String deserialization not yet supported with interning"));
+
                 }
                 _ => return Err(anyhow::anyhow!("Unknown constant tag: {}", tag)),
             }
@@ -68,6 +69,9 @@ pub fn run_file(path: &str) -> Result<()> {
         let bytecode = compiler.compile(&content).map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
         
         let mut vm = VM::new();
+
+        // Transfer strings from compiler to VM
+        vm.heap.import_strings(compiler.strings);
         let func = Function {
             name: "main".to_string(),
             arity: 0,
@@ -149,17 +153,15 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         file.write_u32::<LittleEndian>(compiler.constants.len() as u32)?;
         for c in &compiler.constants {
              match c {
-                 Value::Number(n) => {
-                     file.write_u8(0)?;
-                     file.write_f64::<LittleEndian>(*n)?;
-                 }
-                 Value::String(s) => {
-                     file.write_u8(1)?;
-                     let bytes = s.as_bytes();
-                     file.write_u32::<LittleEndian>(bytes.len() as u32)?;
-                     file.write_all(bytes)?;
-                 }
-                 _ => return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c)),
+                Value::Number(n) => {
+                    file.write_u8(0)?;
+                    file.write_f64::<LittleEndian>(*n)?;
+                }
+                Value::String(s) => {
+                    file.write_u8(1)?;
+                    return Err(anyhow::anyhow!("String serialization needs update"));
+                }
+                _ => return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c)),
              }
         }
         
@@ -207,7 +209,11 @@ fn format_value(val: &Value, vm: &VM) -> String {
                 format!("Complex({})", idx)
             }
         }
-        Value::String(s) => s.clone(),
+        Value::String(handle) => {
+            vm.heap.get_string(*handle)
+                .map(|s| s.clone())
+                .unwrap_or_else(|| format!("String({})", handle))
+        },
         Value::List(idx) => format!("List({})", idx),
         Value::Map(idx) => format!("Map({})", idx),
         Value::Function(idx) => format!("Function({})", idx),

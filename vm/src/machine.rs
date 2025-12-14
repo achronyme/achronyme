@@ -21,7 +21,7 @@ pub struct VM {
     pub heap: Heap,
     pub stack: Vec<Value>, 
     pub frames: Vec<CallFrame>,
-    pub globals: HashMap<String, GlobalEntry>,
+    pub globals: HashMap<u32, GlobalEntry>,
     pub interner: HashMap<String, u32>,
 }
 
@@ -213,33 +213,28 @@ impl VM {
                      let bx = decode_bx(instruction) as usize;
                      let val = self.get_reg(base, a);
                      
-                     // Resolve Name from Constant Pool (Value::String owns the string now)
-                     let name_val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
-                     let name = if let Value::String(s) = name_val {
-                          s
-                     } else {
-                          return Err(RuntimeError::TypeMismatch("Global name must be a string".into()));
+                     let name_handle = match func.constants.get(bx) {
+                         Some(Value::String(handle)) => *handle,
+                         _ => return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into())),
                      };
                      
                      let mutable = op == OpCode::DefGlobalVar;
-                     self.globals.insert(name, GlobalEntry { value: val, mutable });
+                     self.globals.insert(name_handle, GlobalEntry { value: val, mutable });
                  },
                  
                  OpCode::GetGlobal => {
                      let a = decode_a(instruction) as usize;
                      let bx = decode_bx(instruction) as usize;
                      
-                     // Resolve Name
-                     let name_val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
-                     let name = if let Value::String(s) = name_val {
-                          s
-                     } else {
-                          return Err(RuntimeError::TypeMismatch("Global name must be a string".into()));
+                     let name_handle = match func.constants.get(bx) {
+                         Some(Value::String(handle)) => *handle,
+                         _ => return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into())),
                      };
                      
-                     if let Some(entry) = self.globals.get(&name) {
+                     if let Some(entry) = self.globals.get(&name_handle) {
                          self.set_reg(base, a, entry.value.clone());
                      } else {
+                         let name = self.heap.get_string(name_handle).cloned().unwrap_or("???".to_string());
                          return Err(RuntimeError::Unknown(format!("Undefined global variable: {}", name)));
                      }
                  },
@@ -249,21 +244,20 @@ impl VM {
                      let bx = decode_bx(instruction) as usize;
                      let val = self.get_reg(base, a);
                      
-                     // Resolve Name
-                     let name_val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
-                     let name = if let Value::String(s) = name_val {
-                          s
-                     } else {
-                          return Err(RuntimeError::TypeMismatch("Global name must be a string".into()));
+                     let name_handle = match func.constants.get(bx) {
+                         Some(Value::String(handle)) => *handle,
+                         _ => return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into())),
                      };
                      
-                     if let Some(entry) = self.globals.get_mut(&name) {
+                     if let Some(entry) = self.globals.get_mut(&name_handle) {
                          if entry.mutable {
                              entry.value = val;
                          } else {
+                             let name = self.heap.get_string(name_handle).cloned().unwrap_or("???".to_string());
                              return Err(RuntimeError::Unknown(format!("Cannot assign to immutable global '{}'", name)));
                          }
                      } else {
+                         let name = self.heap.get_string(name_handle).cloned().unwrap_or("???".to_string());
                          return Err(RuntimeError::Unknown(format!("Undefined global variable: {}", name)));
                      }
                  },
