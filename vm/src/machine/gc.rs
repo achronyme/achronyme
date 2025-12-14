@@ -29,7 +29,7 @@ impl GarbageCollector for super::vm::VM {
         roots.extend_from_slice(&self.stack);
 
         // 2. Globals
-        for entry in self.globals.values() {
+        for entry in &self.globals {
             roots.push(entry.value);
         }
 

@@ -17,6 +17,12 @@ pub enum OpCode {
     // ===== Constants & Moves =====
     /// Load constant from pool: R[A] = K[Bx]
     LoadConst = 0,
+    /// Load True: R[A] = true
+    LoadTrue = 1,
+    /// Load False: R[A] = false
+    LoadFalse = 2,
+    /// Load Nil: R[A] = nil
+    LoadNil = 3,
     /// Move register: R[A] = R[B]
     Move = 5,
 
@@ -35,6 +41,14 @@ pub enum OpCode {
     Neg = 16,
     /// Square root: R[A] = sqrt(R[B])
     Sqrt = 17,
+
+    // ===== Comparison =====
+    /// Equal: R[A] = R[B] == R[C]
+    Eq = 20,
+    /// Less Than: R[A] = R[B] < R[C]
+    Lt = 21,
+    /// Greater Than: R[A] = R[B] > R[C]
+    Gt = 22,
 
     // ===== Functions =====
     /// Return: return R[A]
@@ -58,6 +72,12 @@ pub enum OpCode {
     /// New complex: R[A] = Complex(R[B], R[C])
     NewComplex = 140,
 
+    // ===== Flow Control =====
+    /// Unconditional Jump: IP = Bx
+    Jump = 60,
+    /// Jump if False: If !R[A] then IP = Bx
+    JumpIfFalse = 61,
+
     // ===== Special =====
     /// No operation
     Nop = 255,
@@ -68,6 +88,9 @@ impl OpCode {
     pub fn from_u8(byte: u8) -> Option<Self> {
         match byte {
             0 => Some(OpCode::LoadConst),
+            1 => Some(OpCode::LoadTrue),
+            2 => Some(OpCode::LoadFalse),
+            3 => Some(OpCode::LoadNil),
             5 => Some(OpCode::Move),
             10 => Some(OpCode::Add),
             11 => Some(OpCode::Sub),
@@ -76,8 +99,13 @@ impl OpCode {
             15 => Some(OpCode::Pow),
             16 => Some(OpCode::Neg),
             17 => Some(OpCode::Sqrt),
+            20 => Some(OpCode::Eq),
+            21 => Some(OpCode::Lt),
+            22 => Some(OpCode::Gt),
             54 => Some(OpCode::Return),
             55 => Some(OpCode::Call),
+            60 => Some(OpCode::Jump),
+            61 => Some(OpCode::JumpIfFalse),
             98 => Some(OpCode::DefGlobalVar),
             99 => Some(OpCode::DefGlobalLet),
             100 => Some(OpCode::GetGlobal),
@@ -99,6 +127,9 @@ impl OpCode {
     pub fn name(self) -> &'static str {
         match self {
             OpCode::LoadConst => "LOAD_CONST",
+            OpCode::LoadTrue => "LOAD_TRUE",
+            OpCode::LoadFalse => "LOAD_FALSE",
+            OpCode::LoadNil => "LOAD_NIL",
             OpCode::Move => "MOVE",
             OpCode::Add => "ADD",
             OpCode::Sub => "SUB",
@@ -107,8 +138,13 @@ impl OpCode {
             OpCode::Pow => "POW",
             OpCode::Neg => "NEG",
             OpCode::Sqrt => "SQRT",
+            OpCode::Eq => "EQ",
+            OpCode::Lt => "LT",
+            OpCode::Gt => "GT",
             OpCode::Return => "RETURN",
             OpCode::Call => "CALL",
+            OpCode::Jump => "JUMP",
+            OpCode::JumpIfFalse => "JUMP_IF_FALSE",
             OpCode::DefGlobalVar => "DEF_GLOBAL_VAR",
             OpCode::DefGlobalLet => "DEF_GLOBAL_LET",
             OpCode::GetGlobal => "GET_GLOBAL",
