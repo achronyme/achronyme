@@ -86,7 +86,7 @@ impl Compiler {
                 let val_reg = self.compile_expr(expr)?;
 
                 let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::String(handle));
+                let name_idx = self.add_constant(Value::string(handle));
                 
                 // DefGlobalLet R[val_reg], Name[name_idx]
                 self.emit_abx(OpCode::DefGlobalLet, val_reg, name_idx as u16);
@@ -98,7 +98,7 @@ impl Compiler {
                 
                 let val_reg = self.compile_expr(expr)?;
                 let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::String(handle));
+                let name_idx = self.add_constant(Value::string(handle));
                 
                 // DefGlobalVar
                 self.emit_abx(OpCode::DefGlobalVar, val_reg, name_idx as u16);
@@ -110,7 +110,7 @@ impl Compiler {
                 
                 let val_reg = self.compile_expr(expr)?;
                 let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::String(handle));
+                let name_idx = self.add_constant(Value::string(handle));
                 
                 // SetGlobal
                 self.emit_abx(OpCode::SetGlobal, val_reg, name_idx as u16);
@@ -145,7 +145,7 @@ impl Compiler {
                         let name = inner.as_str().to_string();
                         let reg = self.alloc_reg()?;
                         let handle = self.intern_string(&name);
-                        let name_idx = self.add_constant(Value::String(handle));
+                        let name_idx = self.add_constant(Value::string(handle));
                         // GetGlobal
                         self.emit_abx(OpCode::GetGlobal, reg, name_idx as u16);
                         Ok(reg)
@@ -206,7 +206,7 @@ impl Compiler {
         let reg = self.alloc_reg()?;
         // Optimization: if fitting in load_imm_i8? 
         // For now always LoadConst
-        let const_idx = self.add_constant(Value::Number(val));
+        let const_idx = self.add_constant(Value::number(val));
         
         if const_idx <= 0xFFFF {
             self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
@@ -233,11 +233,11 @@ impl Compiler {
          let val_reg = self.alloc_reg()?;
          
          // Load 0
-         let z_idx = self.add_constant(Value::Number(0.0));
+         let z_idx = self.add_constant(Value::number(0.0));
          self.emit_abx(OpCode::LoadConst, zero_reg, z_idx as u16);
          
          // Load Val
-         let v_idx = self.add_constant(Value::Number(val));
+         let v_idx = self.add_constant(Value::number(val));
          self.emit_abx(OpCode::LoadConst, val_reg, v_idx as u16);
          
          // NewComplex

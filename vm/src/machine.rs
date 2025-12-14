@@ -1,7 +1,7 @@
 
 use crate::opcode::{OpCode, instruction::*};
 use crate::error::RuntimeError;
-use memory::{Heap, Value};
+use memory::{Heap, Value, value::{TAG_NUMBER, TAG_COMPLEX}};
 use num_complex::Complex64;
 use std::collections::HashMap;
 
@@ -63,7 +63,7 @@ impl VM {
                  OpCode::LoadConst => {
                      let a = decode_a(instruction) as usize;
                      let bx = decode_bx(instruction) as usize;
-                     let val = func.constants.get(bx).cloned().unwrap_or(Value::Nil);
+                     let val = func.constants.get(bx).cloned().unwrap_or(Value::nil());
                      self.set_reg(base, a, val);
                  },
                  
@@ -114,30 +114,27 @@ impl VM {
                      let vb = self.get_reg(base, b);
                      let vc = self.get_reg(base, c);
                      
-                     // Custom handling for Pow to support (-1)^0.5 -> Complex
-                     // We can't use standard binary_op blindly because typical f64::powf returns NaN for negative base
-                     match (&vb, &vc) {
-                         (Value::Number(x), Value::Number(y)) => {
-                             // Try real power first
-                             let res_real = x.powf(*y);
-                             if res_real.is_nan() && *x < 0.0 {
-                                 // Promotion case: (-4)^0.5 = 2i
-                                 let cx = Complex64::new(*x, 0.0);
-                                 let cy = Complex64::new(*y, 0.0);
-                                 let res_complex = cx.powc(cy);
-                                 // Alloc complex
-                                 let res = Value::Complex(self.heap.alloc_complex(res_complex));
-                                 self.set_reg(base, a, res);
-                             } else {
-                                 // Standard real result (might be NaN for other reasons like 0/0, that's fine)
-                                 self.set_reg(base, a, Value::Number(res_real));
-                             }
-                         }
-                         _ => {
-                             // Fallback to standard binary_op for Complex mixed cases which handles promotion
-                             let res = self.binary_op(vb, vc, |x, y| x.powf(y), |x, y| x.powc(y))?;
-                             self.set_reg(base, a, res);
-                         }
+                     if vb.is_number() && vc.is_number() {
+                          let x = vb.as_number().unwrap();
+                          let y = vc.as_number().unwrap();
+                          
+                          let res_real = x.powf(y);
+                          if res_real.is_nan() && x < 0.0 {
+                              // Promotion case: (-4)^0.5 = 2i
+                              let cx = Complex64::new(x, 0.0);
+                              let cy = Complex64::new(y, 0.0);
+                              let res_complex = cx.powc(cy);
+                              // Alloc complex
+                              let res = Value::complex(self.heap.alloc_complex(res_complex));
+                              self.set_reg(base, a, res);
+                          } else {
+                              // Standard real result
+                              self.set_reg(base, a, Value::number(res_real));
+                          }
+                     } else {
+                          // Fallback to standard binary_op for Complex mixed cases which handles promotion
+                          let res = self.binary_op(vb, vc, |x, y| x.powf(y), |x, y| x.powc(y))?;
+                          self.set_reg(base, a, res);
                      }
                  },
                  
@@ -145,14 +142,15 @@ impl VM {
                      let a = decode_a(instruction) as usize;
                      let b = decode_b(instruction) as usize;
                      let vb = self.get_reg(base, b);
-                     let res = match vb {
-                         Value::Number(n) => Value::Number(-n),
-                         Value::Complex(idx) => {
-                             let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
-                             let neg = -c;
-                             Value::Complex(self.heap.alloc_complex(neg))
-                         }
-                         _ => return Err(RuntimeError::TypeMismatch("Neg".into())),
+                     let res = if vb.is_number() {
+                         Value::number(-vb.as_number().unwrap())
+                     } else if vb.is_complex() {
+                         let idx = vb.as_handle().unwrap();
+                         let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                         let neg = -c;
+                         Value::complex(self.heap.alloc_complex(neg))
+                     } else {
+                         return Err(RuntimeError::TypeMismatch("Neg".into()));
                      };
                      self.set_reg(base, a, res);
                  },
@@ -161,21 +159,21 @@ impl VM {
                      let a = decode_a(instruction) as usize;
                      let b = decode_b(instruction) as usize;
                      let vb = self.get_reg(base, b);
-                     let res = match vb {
-                         Value::Number(n) => {
-                             if n < 0.0 {
-                                 let c = Complex64::new(0.0, (-n).sqrt());
-                                 Value::Complex(self.heap.alloc_complex(c))
-                             } else {
-                                 Value::Number(n.sqrt())
-                             }
+                     let res = if vb.is_number() {
+                         let n = vb.as_number().unwrap();
+                         if n < 0.0 {
+                             let c = Complex64::new(0.0, (-n).sqrt());
+                             Value::complex(self.heap.alloc_complex(c))
+                         } else {
+                             Value::number(n.sqrt())
                          }
-                         Value::Complex(idx) => {
-                             let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
-                             let sqrt_c = c.sqrt();
-                             Value::Complex(self.heap.alloc_complex(sqrt_c))
-                         }
-                         _ => return Err(RuntimeError::TypeMismatch("Sqrt".into())),
+                     } else if vb.is_complex() {
+                         let idx = vb.as_handle().unwrap();
+                         let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                         let sqrt_c = c.sqrt();
+                         Value::complex(self.heap.alloc_complex(sqrt_c))
+                     } else {
+                         return Err(RuntimeError::TypeMismatch("Sqrt".into()));
                      };
                      self.set_reg(base, a, res);
                  },
@@ -187,17 +185,11 @@ impl VM {
                      let vb = self.get_reg(base, b);
                      let vc = self.get_reg(base, c);
                      
-                     let re = match vb {
-                         Value::Number(n) => n,
-                         _ => return Err(RuntimeError::TypeMismatch("NewComplex: real part must be Number".into())),
-                     };
-                     let im = match vc {
-                         Value::Number(n) => n,
-                         _ => return Err(RuntimeError::TypeMismatch("NewComplex: imag part must be Number".into())),
-                     };
+                     let re = if vb.is_number() { vb.as_number().unwrap() } else { return Err(RuntimeError::TypeMismatch("NewComplex: real part must be Number".into())); };
+                     let im = if vc.is_number() { vc.as_number().unwrap() } else { return Err(RuntimeError::TypeMismatch("NewComplex: imag part must be Number".into())); };
                      
                      let c = Complex64::new(re, im);
-                     let res = Value::Complex(self.heap.alloc_complex(c));
+                     let res = Value::complex(self.heap.alloc_complex(c));
                      self.set_reg(base, a, res);
                  },
                  
@@ -213,10 +205,11 @@ impl VM {
                      let bx = decode_bx(instruction) as usize;
                      let val = self.get_reg(base, a);
                      
-                     let name_handle = match func.constants.get(bx) {
-                         Some(Value::String(handle)) => *handle,
-                         _ => return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into())),
-                     };
+                     let c = func.constants.get(bx).ok_or(RuntimeError::InvalidOperand)?;
+                     if !c.is_string() {
+                         return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into()));
+                     }
+                     let name_handle = c.as_handle().unwrap();
                      
                      let mutable = op == OpCode::DefGlobalVar;
                      self.globals.insert(name_handle, GlobalEntry { value: val, mutable });
@@ -226,10 +219,11 @@ impl VM {
                      let a = decode_a(instruction) as usize;
                      let bx = decode_bx(instruction) as usize;
                      
-                     let name_handle = match func.constants.get(bx) {
-                         Some(Value::String(handle)) => *handle,
-                         _ => return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into())),
-                     };
+                     let c = func.constants.get(bx).ok_or(RuntimeError::InvalidOperand)?;
+                     if !c.is_string() {
+                         return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into()));
+                     }
+                     let name_handle = c.as_handle().unwrap();
                      
                      if let Some(entry) = self.globals.get(&name_handle) {
                          self.set_reg(base, a, entry.value.clone());
@@ -244,10 +238,11 @@ impl VM {
                      let bx = decode_bx(instruction) as usize;
                      let val = self.get_reg(base, a);
                      
-                     let name_handle = match func.constants.get(bx) {
-                         Some(Value::String(handle)) => *handle,
-                         _ => return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into())),
-                     };
+                     let c = func.constants.get(bx).ok_or(RuntimeError::InvalidOperand)?;
+                     if !c.is_string() {
+                         return Err(RuntimeError::TypeMismatch("Global name must be a string handle".into()));
+                     }
+                     let name_handle = c.as_handle().unwrap();
                      
                      if let Some(entry) = self.globals.get_mut(&name_handle) {
                          if entry.mutable {
@@ -282,53 +277,60 @@ impl VM {
         F: Fn(f64, f64) -> f64,
         G: Fn(Complex64, Complex64) -> Complex64,
     {
-        match (left, right) {
-            // Direct f64 arithmetic for IEEE754 compliance (NaN, Infinity)
-            (Value::Number(a), Value::Number(b)) => {
-                Ok(Value::Number(f64_op(a, b)))
+        match (left.type_tag(), right.type_tag()) {
+            (TAG_NUMBER, TAG_NUMBER) => {
+                let a = left.as_number().unwrap();
+                let b = right.as_number().unwrap();
+                Ok(Value::number(f64_op(a, b)))
             }
-            (Value::Number(a), Value::Complex(idx)) => {
+            (TAG_NUMBER, TAG_COMPLEX) => {
+                let a = left.as_number().unwrap();
+                let idx = right.as_handle().unwrap();
                 let cb = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
                 let ca = Complex64::new(a, 0.0);
                 let result = complex_op(ca, cb);
                 if result.im.abs() < 1e-15 {
-                    Ok(Value::Number(result.re))
+                    Ok(Value::number(result.re))
                 } else {
-                    Ok(Value::Complex(self.heap.alloc_complex(result)))
+                    Ok(Value::complex(self.heap.alloc_complex(result)))
                 }
             }
-            (Value::Complex(idx), Value::Number(b)) => {
+            (TAG_COMPLEX, TAG_NUMBER) => {
+                let idx = left.as_handle().unwrap();
                 let ca = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
+                let b = right.as_number().unwrap();
                 let cb = Complex64::new(b, 0.0);
                 let result = complex_op(ca, cb);
                 if result.im.abs() < 1e-15 {
-                    Ok(Value::Number(result.re))
+                    Ok(Value::number(result.re))
                 } else {
-                    Ok(Value::Complex(self.heap.alloc_complex(result)))
+                    Ok(Value::complex(self.heap.alloc_complex(result)))
                 }
             }
-            (Value::Complex(idx_a), Value::Complex(idx_b)) => {
+            (TAG_COMPLEX, TAG_COMPLEX) => {
+                let idx_a = left.as_handle().unwrap();
+                let idx_b = right.as_handle().unwrap();
                 let ca = self.heap.get_complex(idx_a).ok_or(RuntimeError::InvalidOperand)?;
                 let cb = self.heap.get_complex(idx_b).ok_or(RuntimeError::InvalidOperand)?;
                 let result = complex_op(ca, cb);
                 if result.im.abs() < 1e-15 {
-                    Ok(Value::Number(result.re))
+                    Ok(Value::number(result.re))
                 } else {
-                    Ok(Value::Complex(self.heap.alloc_complex(result)))
+                    Ok(Value::complex(self.heap.alloc_complex(result)))
                 }
             }
-            _ => Err(RuntimeError::TypeMismatch("Operands must be numeric".into())),
+            _ => Err(RuntimeError::TypeMismatch("Operands must be numeric".into()))
         }
     }
     
     fn get_reg(&self, base: usize, reg: usize) -> Value {
-        self.stack.get(base + reg).cloned().unwrap_or(Value::Nil)
+        self.stack.get(base + reg).cloned().unwrap_or(Value::nil())
     }
     
     fn set_reg(&mut self, base: usize, reg: usize, val: Value) {
         let idx = base + reg;
         if idx >= self.stack.len() {
-            self.stack.resize(idx + 1, Value::Nil);
+            self.stack.resize(idx + 1, Value::nil());
         }
         self.stack[idx] = val;
     }

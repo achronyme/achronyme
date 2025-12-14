@@ -27,7 +27,7 @@ pub fn run_file(path: &str) -> Result<()> {
             match tag {
                 0 => {
                     let n = file.read_f64::<LittleEndian>()?;
-                    constants.push(Value::Number(n));
+                    constants.push(Value::number(n));
                 }
                 1 => {
                     let len = file.read_u32::<LittleEndian>()?;
@@ -152,16 +152,14 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         
         file.write_u32::<LittleEndian>(compiler.constants.len() as u32)?;
         for c in &compiler.constants {
-             match c {
-                Value::Number(n) => {
-                    file.write_u8(0)?;
-                    file.write_f64::<LittleEndian>(*n)?;
-                }
-                Value::String(s) => {
-                    file.write_u8(1)?;
-                    return Err(anyhow::anyhow!("String serialization needs update"));
-                }
-                _ => return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c)),
+             if let Some(n) = c.as_number() {
+                 file.write_u8(0)?;
+                 file.write_f64::<LittleEndian>(n)?;
+             } else if c.is_string() {
+                 file.write_u8(1)?;
+                 return Err(anyhow::anyhow!("String serialization needs update"));
+             } else {
+                 return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c));
              }
         }
         
@@ -175,21 +173,26 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+use memory::value::*;
+
 fn format_value(val: &Value, vm: &VM) -> String {
-    match val {
-        Value::Nil => "nil".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => {
+    match val.type_tag() {
+        TAG_NIL => "nil".to_string(),
+        TAG_FALSE => "false".to_string(),
+        TAG_TRUE => "true".to_string(),
+        TAG_NUMBER => {
+            let n = val.as_number().unwrap();
             if n.is_nan() {
                 "NaN".to_string()
             } else if n.is_infinite() {
-                if *n > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }
+                if n > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }
             } else {
                 format!("{}", n)
             }
-        }
-        Value::Complex(idx) => {
-            if let Some(c) = vm.heap.get_complex(*idx) {
+        },
+        TAG_COMPLEX => {
+            let idx = val.as_handle().unwrap();
+            if let Some(c) = vm.heap.get_complex(idx) {
                 if c.im.abs() < 1e-15 {
                     format!("{}", c.re)
                 } else if c.re.abs() < 1e-15 {
@@ -208,15 +211,17 @@ fn format_value(val: &Value, vm: &VM) -> String {
             } else {
                 format!("Complex({})", idx)
             }
-        }
-        Value::String(handle) => {
-            vm.heap.get_string(*handle)
+        },
+        TAG_STRING => {
+            let handle = val.as_handle().unwrap();
+            vm.heap.get_string(handle)
                 .map(|s| s.clone())
                 .unwrap_or_else(|| format!("String({})", handle))
         },
-        Value::List(idx) => format!("List({})", idx),
-        Value::Map(idx) => format!("Map({})", idx),
-        Value::Function(idx) => format!("Function({})", idx),
-        Value::Tensor(idx) => format!("Tensor({})", idx),
+        TAG_LIST => format!("List({})", val.as_handle().unwrap()),
+        TAG_MAP => format!("Map({})", val.as_handle().unwrap()),
+        TAG_FUNCTION => format!("Function({})", val.as_handle().unwrap()),
+        TAG_TENSOR => format!("Tensor({})", val.as_handle().unwrap()),
+        _ => format!("Unknown(Bits: {:x})", val.0),
     }
 }
