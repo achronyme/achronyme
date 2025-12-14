@@ -37,7 +37,7 @@ true_lit  = { "true" }
 false_lit = { "false" }
 
 // 2. Control Flow Expressions
-block = { "{" ~ stmt* ~ "}" }
+block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
 if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
 while_expr = { "while" ~ expr ~ block }
 
@@ -61,17 +61,16 @@ atom = {
 // It matches an Atom followed by ZERO or more suffixes.
 // SCALABILITY: When adding function calls `()` or indexing `[]`, add them to 
 // search `postfix_op` below (commented out for now).
-// postfix_expr = { atom ~ (postfix_op)* }
-postfix_expr = { atom }
+// 2. POSTFIX: Operations that attach to the RIGHT of an atom (calls, index).
+// ----------------------------------------------------------------------------
+postfix_expr = { atom ~ (postfix_op)* }
 
-// Currently empty, but structured for expansion.
-// postfix_op = _{ 
-//    call_op 
-//    | index_op 
-// }
+postfix_op = _{ 
+   call_op 
+   // | index_op 
+}
 
-// Placeholder for future function calls (commented out until needed)
-// call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 
 // ============================================================================
 // LAYER 3: PREFIX EXPRESSIONS (Unary Operators)

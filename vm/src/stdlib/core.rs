@@ -99,3 +99,9 @@ pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     }
     Ok(Value::nil())
 }
+
+pub fn native_time(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    let now = std::time::SystemTime::now();
+    let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
+    Ok(Value::number(duration.as_secs_f64()))
+}

@@ -564,9 +564,32 @@ impl Compiler {
         let mut reg = self.compile_expr(atom_pair)?; // Compile the atom
 
         // Handle suffixes (calls, index)
-        if let Some(op) = inner.next() {
+        // Handle suffixes (calls)
+        // Note: Grammar defines `postfix_op*`, so we iterate
+        while let Some(op) = inner.next() {
             match op.as_rule() {
-                // Rule::call_op => { ... }
+                Rule::call_op => {
+                    let mut arg_count = 0;
+                    for arg in op.into_inner() {
+                        // Compile argument, it lands in the next register (reg + 1 + i)
+                        let _arg_reg = self.compile_expr(arg)?;
+                        arg_count += 1;
+                    }
+
+                    if arg_count > 255 {
+                        return Err(CompilerError::TooManyConstants); // Limitation of ABC format
+                    }
+
+                    // Call R[reg], ReturnTo R[reg], ArgCount
+                    self.emit_abc(OpCode::Call, reg, reg, arg_count as u8);
+
+                    // Hygiene: Free arguments (Stack LIFO)
+                    // We allocated `arg_count` registers on top of `reg`.
+                    for _ in 0..arg_count {
+                         // Verify we are freeing the top
+                         self.free_reg(self.reg_top - 1);
+                    }
+                }
                 _ => {
                     return Err(CompilerError::UnexpectedRule(format!(
                         "Postfix: {:?}",
