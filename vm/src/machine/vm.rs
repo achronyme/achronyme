@@ -91,12 +91,79 @@ impl VM {
                     self.handle_globals(op, instruction, base, closure_idx)?;
                 }
 
+                // Control Flow - Jumps
+                Jump => {
+                    let dest = decode_bx(instruction) as usize;
+                    self.frames[frame_idx].ip = dest;
+                }
+
+                JumpIfFalse => {
+                    let a = decode_a(instruction) as usize;
+                    let dest = decode_bx(instruction) as usize;
+                    let val = self.get_reg(base, a);
+                    if val.is_falsey() {
+                        self.frames[frame_idx].ip = dest;
+                    }
+                }
+
+                Eq => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    let v1 = self.get_reg(base, b);
+                    let v2 = self.get_reg(base, c);
+                    self.set_reg(base, a, Value::bool(v1 == v2));
+                }
+
+                Lt => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    let v1 = self.get_reg(base, b);
+                    let v2 = self.get_reg(base, c);
+                    
+                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                        self.set_reg(base, a, Value::bool(n1 < n2));
+                    } else {
+                        return Err(RuntimeError::TypeMismatch("Expected numbers for < comparison".to_string()));
+                    }
+                }
+
+                Gt => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    let v1 = self.get_reg(base, b);
+                    let v2 = self.get_reg(base, c);
+
+                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                        self.set_reg(base, a, Value::bool(n1 > n2));
+                    } else {
+                        return Err(RuntimeError::TypeMismatch("Expected numbers for > comparison".to_string()));
+                    }
+                }
+
                 // Constants & Moves
                 LoadConst => {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
                     let val = func.constants.get(bx).cloned().unwrap_or(Value::nil());
                     self.set_reg(base, a, val);
+                }
+
+                LoadTrue => {
+                    let a = decode_a(instruction) as usize;
+                    self.set_reg(base, a, Value::true_val());
+                }
+
+                LoadFalse => {
+                    let a = decode_a(instruction) as usize;
+                    self.set_reg(base, a, Value::false_val());
+                }
+
+                LoadNil => {
+                    let a = decode_a(instruction) as usize;
+                    self.set_reg(base, a, Value::nil());
                 }
 
                 Move => {

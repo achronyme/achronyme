@@ -178,9 +178,16 @@ impl Compiler {
                 // 5. Call
                 self.emit_abc(OpCode::Call, func_reg, func_reg, 1);
             }
-            Rule::expr_stmt => {
+            Rule::print_stmt => {
                 let expr = inner.into_inner().next().unwrap();
                 let _ = self.compile_expr(expr)?;
+                // Print in stdlib usually? 
+                // Ah, previous implementation emited Call "print". 
+                // Keep it consistent.
+            }
+            // Rule::expr_stmt => ... removed
+            Rule::expr => {
+                 let _ = self.compile_expr(inner)?;
             }
             _ => {
                 return Err(CompilerError::UnexpectedRule(format!(
@@ -195,6 +202,7 @@ impl Compiler {
     fn compile_expr(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         match pair.as_rule() {
             Rule::expr => self.compile_expr(pair.into_inner().next().unwrap()),
+            Rule::cmp_expr => self.compile_comparison(pair),
             Rule::add_expr => self.compile_binary(pair, OpCode::Add, OpCode::Sub, false),
             Rule::mul_expr => self.compile_binary(pair, OpCode::Mul, OpCode::Div, false),
             Rule::pow_expr => self.compile_binary(pair, OpCode::Pow, OpCode::Nop, true),
@@ -286,6 +294,159 @@ impl Compiler {
         }
     }
 
+    // --- Control Flow Helpers ---
+
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.scope_depth -= 1;
+        // Simple pop locals (future: reuse regs)
+        // self.locals.retain(|l| l.depth <= self.scope_depth);
+    }
+
+    fn emit_jump(&mut self, op: OpCode, a: u8) -> usize {
+        self.emit_abx(op, a, 0xFFFF);
+        self.bytecode.len() - 1
+    }
+
+    fn patch_jump(&mut self, idx: usize) {
+        let jump_target = self.bytecode.len() as u16;
+        let instr = self.bytecode[idx];
+        // Re-encode with new Bx
+        let opcode = (instr >> 24) as u8;
+        let a = ((instr >> 16) & 0xFF) as u8;
+        self.bytecode[idx] = encode_abx(opcode, a, jump_target);
+    }
+
+    fn compile_block(&mut self, pair: Pair<Rule>, target_reg: u8) -> Result<(), CompilerError> {
+        self.begin_scope();
+        let stmts = pair.into_inner();
+        let mut last_processed = false;
+
+        // Collect all stmts to handle 'last one' logic
+        let stmt_list: Vec<Pair<Rule>> = stmts.collect();
+        let len = stmt_list.len();
+
+        for (i, stmt) in stmt_list.into_iter().enumerate() {
+            let is_last = i == len - 1;
+
+            if is_last {
+                // If specific rules, treat as expr?
+                // stmt is { let | mut | assign | print | expr }
+                // We peek inside
+                let inner = stmt.clone().into_inner().next().unwrap();
+                match inner.as_rule() {
+                    Rule::expr => {
+                        // Directly compile into target
+                        let _ = self.compile_expr_into(inner, target_reg)?;
+                    }
+                    _ => {
+                        // Statement: compile then load nil
+                        self.compile_stmt(stmt)?;
+                        self.emit_abx(OpCode::LoadNil, target_reg, 0);
+                    }
+                }
+                last_processed = true;
+            } else {
+                // Not last, just execute side effects
+                self.compile_stmt(stmt)?;
+            }
+        }
+
+        if !last_processed {
+             // Empty block?
+             self.emit_abx(OpCode::LoadNil, target_reg, 0);
+        }
+
+        self.end_scope();
+        Ok(())
+    }
+
+    fn compile_if(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // if expr block (else block_or_if)?
+        let mut inner = pair.into_inner();
+        let cond_expr = inner.next().unwrap();
+        let then_block = inner.next().unwrap();
+        let else_part = inner.next(); // Optional
+
+        let target_reg = self.alloc_reg()?;
+
+        // 1. Compile Condition
+        let cond_reg = self.compile_expr(cond_expr)?;
+
+        // 2. Jump if False -> Else
+        let jump_else = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+
+        // 3. Then Block
+        self.compile_block(then_block, target_reg)?;
+
+        // 4. Jump -> End
+        let jump_end = self.emit_jump(OpCode::Jump, 0);
+
+        // 5. Else Start
+        self.patch_jump(jump_else);
+
+        if let Some(else_pair) = else_part {
+             // else_pair rule is implicit in grammar?
+             // ("else" ~ (block | if_expr))?
+             // Pest often flattens this if not atomic?
+             // inner.next() gave the block or if_expr directly?
+             // Let's check logic.
+             // If implicit: `else_part` is the block or if_expr.
+             match else_pair.as_rule() {
+                 Rule::block => self.compile_block(else_pair, target_reg)?,
+                 Rule::if_expr => {
+                     // Recurse: write result to target_reg
+                     let res = self.compile_if(else_pair)?;
+                     self.emit_abc(OpCode::Move, target_reg, res, 0);
+                 },
+                 _ => return Err(CompilerError::UnexpectedRule(format!("Else: {:?}", else_pair.as_rule())))
+             }
+        } else {
+             // Implicit else -> Nil
+             self.emit_abx(OpCode::LoadNil, target_reg, 0);
+        }
+
+        // 6. End
+        self.patch_jump(jump_end);
+
+        Ok(target_reg)
+    }
+
+    // Specialized compile_expr that targets a register
+    fn compile_expr_into(&mut self, pair: Pair<Rule>, target: u8) -> Result<(), CompilerError> {
+        let reg = self.compile_expr(pair)?;
+        if reg != target {
+            self.emit_abc(OpCode::Move, target, reg, 0);
+        }
+        Ok(())
+    }
+
+    fn compile_comparison(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        let mut pairs = pair.into_inner();
+        let mut left_reg = self.compile_expr(pairs.next().unwrap())?;
+
+        while let Some(op_pair) = pairs.next() {
+            let right_pair = pairs.next().ok_or(CompilerError::MissingOperand)?;
+            let right_reg = self.compile_expr(right_pair)?;
+
+            let opcode = match op_pair.as_str() {
+                "==" => OpCode::Eq,
+                "<" => OpCode::Lt,
+                ">" => OpCode::Gt,
+                _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
+            };
+
+            let res_reg = self.alloc_reg()?;
+            self.emit_abc(opcode, res_reg, left_reg, right_reg);
+            left_reg = res_reg;
+        }
+
+        Ok(left_reg)
+    }
+
     fn compile_prefix(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         // prefix_expr = { unary_op* ~ postfix_expr }
         let mut inner = pair.into_inner();
@@ -350,6 +511,27 @@ impl Compiler {
         match inner.as_rule() {
             Rule::number => self.compile_number(inner),
             Rule::complex => self.compile_complex(inner),
+            Rule::true_lit => {
+                let reg = self.alloc_reg()?;
+                self.emit_abx(OpCode::LoadTrue, reg, 0);
+                Ok(reg)
+            }
+            Rule::false_lit => {
+                let reg = self.alloc_reg()?;
+                self.emit_abx(OpCode::LoadFalse, reg, 0);
+                Ok(reg)
+            }
+            Rule::nil_lit => {
+                let reg = self.alloc_reg()?;
+                self.emit_abx(OpCode::LoadNil, reg, 0);
+                Ok(reg)
+            }
+            Rule::block => {
+                let reg = self.alloc_reg()?;
+                self.compile_block(inner, reg)?;
+                Ok(reg)
+            }
+            Rule::if_expr => self.compile_if(inner),
             Rule::identifier => {
                 let name = inner.as_str().to_string();
                 let reg = self.alloc_reg()?;

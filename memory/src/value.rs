@@ -207,6 +207,21 @@ impl Value {
     }
 
     #[inline]
+    pub fn true_val() -> Self {
+        Value(QNAN | (TAG_TRUE << 32))
+    }
+
+    #[inline]
+    pub fn false_val() -> Self {
+        Value(QNAN | (TAG_FALSE << 32))
+    }
+
+    #[inline]
+    pub fn is_falsey(&self) -> bool {
+        self.is_nil() || (self.tag() == TAG_FALSE)
+    }
+
+    #[inline]
     pub fn as_handle(&self) -> Option<u32> {
         if self.is_obj() {
             Some((self.0 & 0xFFFFFFFF) as u32)

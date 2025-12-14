@@ -12,3 +12,6 @@ Thumbs.db
 .vscode
 .idea
 *.swp
+
+# Auxiliary
+changes.txt
