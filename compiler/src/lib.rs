@@ -35,6 +35,9 @@ impl Compiler {
         
         // We expect a single top-level expression for now
         for pair in pairs {
+            if pair.as_rule() == Rule::EOI {
+                continue;
+            }
             let res_reg = self.compile_expr(pair)?;
             // Implicit return of the last expression result
             self.emit_abc(OpCode::Return, res_reg, 0, 0);

@@ -4,7 +4,7 @@ use std::fs;
 
 use compiler::Compiler;
 use vm::{VM, CallFrame};
-use memory::Function;
+use memory::{Function, Value};
 use vm::opcode::{OpCode, instruction::*};
 
 #[derive(Parser)]
@@ -47,28 +47,64 @@ fn main() -> Result<()> {
     }
 }
 
+/// Format a Value for user-friendly display
+fn format_value(val: &Value, vm: &VM) -> String {
+    match val {
+        Value::Nil => "nil".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => {
+            if n.is_nan() {
+                "NaN".to_string()
+            } else if n.is_infinite() {
+                if *n > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }
+            } else {
+                format!("{}", n)
+            }
+        }
+        Value::Complex(idx) => {
+            if let Some(c) = vm.heap.get_complex(*idx) {
+                if c.im.abs() < 1e-15 {
+                    format!("{}", c.re)
+                } else if c.re.abs() < 1e-15 {
+                    if c.im == 1.0 {
+                        "i".to_string()
+                    } else if c.im == -1.0 {
+                        "-i".to_string()
+                    } else {
+                        format!("{}i", c.im)
+                    }
+                } else if c.im >= 0.0 {
+                    format!("{} + {}i", c.re, c.im)
+                } else {
+                    format!("{} - {}i", c.re, c.im.abs())
+                }
+            } else {
+                format!("Complex({})", idx)
+            }
+        }
+        Value::String(idx) => format!("String({})", idx),
+        Value::List(idx) => format!("List({})", idx),
+        Value::Map(idx) => format!("Map({})", idx),
+        Value::Function(idx) => format!("Function({})", idx),
+        Value::Tensor(idx) => format!("Tensor({})", idx),
+    }
+}
+
 fn run_file(path: &str) -> Result<()> {
-    // Detect binary valid magic? For now just try to parse text, if fail try binary?
-    // Or check extension.
-    let content = fs::read_to_string(path).unwrap_or_default(); // Might be binary
+    let content = fs::read_to_string(path).unwrap_or_default();
     
-    // Simple heuristic: If it compiles, run it.
-    // Real implementation should check magic bytes or extension.
     if path.ends_with(".achb") {
         use std::io::Read;
         use byteorder::{ReadBytesExt, LittleEndian};
         
-        // Read file
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
         
-        // 1. Magic + Version
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)?;
         if &magic != b"ACH\x07" {
             return Err(anyhow::anyhow!("Invalid binary magic or version"));
         }
         
-        // 2. Constants
         let const_count = file.read_u32::<LittleEndian>()?;
         let mut constants = Vec::with_capacity(const_count as usize);
         for _ in 0..const_count {
@@ -76,20 +112,18 @@ fn run_file(path: &str) -> Result<()> {
             match tag {
                 0 => {
                     let n = file.read_f64::<LittleEndian>()?;
-                    constants.push(memory::Value::Number(n));
+                    constants.push(Value::Number(n));
                 }
                 _ => return Err(anyhow::anyhow!("Unknown constant tag: {}", tag)),
             }
         }
         
-        // 3. Bytecode
         let code_len = file.read_u32::<LittleEndian>()?;
         let mut bytecode = Vec::with_capacity(code_len as usize);
         for _ in 0..code_len {
             bytecode.push(file.read_u32::<LittleEndian>()?);
         }
         
-        // Execute
         let mut vm = VM::new();
         let func = Function {
             name: "main".to_string(),
@@ -103,14 +137,13 @@ fn run_file(path: &str) -> Result<()> {
         vm.interpret().map_err(|e| anyhow::anyhow!("Runtime Error: {}", e))?;
         
         if let Some(val) = vm.stack.last() {
-            println!("Result: {:?}", val);
+            println!("{}", format_value(val, &vm));
         }
         Ok(())
     } else {
         let mut compiler = Compiler::new();
         let bytecode = compiler.compile(&content).map_err(|e| anyhow::anyhow!(e))?;
         
-        // Setup VM
         let mut vm = VM::new();
         let func = Function {
             name: "main".to_string(),
@@ -128,12 +161,8 @@ fn run_file(path: &str) -> Result<()> {
         
         vm.interpret().map_err(|e| anyhow::anyhow!("Runtime Error: {}", e))?;
         
-        // Print result if any (top of stack)
-        // Only if not popped? The compiler returns R[A]. But VM pops frame? 
-        // Our VM pops frame. So result is lost unless we store it or print it.
-        // For testing we will print the last value on stack if stack not empty.
         if let Some(val) = vm.stack.last() {
-            println!("Result: {:?}", val);
+            println!("{}", format_value(val, &vm));
         }
         
         Ok(())
@@ -157,8 +186,6 @@ fn disassemble_file(path: &str) -> Result<()> {
         let c = decode_c(*inst);
         let bx = decode_bx(*inst);
         
-        // Heuristic for format
-        // LoadConst use ABx
         match OpCode::from_u8(op_byte) {
             Some(OpCode::LoadConst) => {
                  let val = compiler.constants.get(bx as usize);
@@ -194,28 +221,25 @@ fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         
         let mut file = fs::File::create(out_path).context("Failed to create output file")?;
         
-        // 1. Magic + Version
         file.write_all(b"ACH\x07")?; 
         
-        // 2. Constants
         file.write_u32::<LittleEndian>(compiler.constants.len() as u32)?;
         for c in &compiler.constants {
              match c {
-                 memory::Value::Number(n) => {
-                     file.write_u8(0)?; // Tag 0 = Number
+                 Value::Number(n) => {
+                     file.write_u8(0)?;
                      file.write_f64::<LittleEndian>(*n)?;
                  }
                  _ => return Err(anyhow::anyhow!("Unsupported constant type for serialization: {:?}", c)),
              }
         }
         
-        // 3. Bytecode
         file.write_u32::<LittleEndian>(bytecode.len() as u32)?;
         for inst in &bytecode {
             file.write_u32::<LittleEndian>(*inst)?;
         }
         
-        println!("Saved string binary to {}", out_path);
+        println!("Saved binary to {}", out_path);
     }
     Ok(())
 }

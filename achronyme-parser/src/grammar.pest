@@ -3,6 +3,7 @@
 // ============================================================================
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // Literals
 number = @{
@@ -45,4 +46,4 @@ additive = { multiplicative ~ ((add | sub) ~ multiplicative)* }
 expr = { additive }
 
 // Entry point
-program = _{ SOI ~ expr ~ EOI }
+program = { SOI ~ expr ~ EOI }
