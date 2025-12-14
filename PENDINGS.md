@@ -3,7 +3,7 @@
 ## 1. Virtual Machine Optimizations
 
 ### Critical Performance
-- [ ] **Optimize Global Variable Access**: Currently, `globals` is implemented as a `HashMap<u32, GlobalEntry>`. This requires hashing on every access.
+- [x] **Optimize Global Variable Access**: Currently, `globals` is implemented as a `HashMap<u32, GlobalEntry>`. This requires hashing on every access.
     - *Target*: Convert globals to a flat `Vec<GlobalEntry>` and resolve indices at compile-time to allow O(1) direct array access.
 - [ ] **Remove Stack Bounds Checking**: The `set_reg` and `get_reg` methods in `VM` use `Vec::get` and `Vec::resize`, which incur runtime bounds checking overhead per instruction.
     - *Target*: Use `unsafe` raw pointers or a pre-allocated fixed-size array (`[Value; STACK_MAX]`) for the stack once the VM is stable.

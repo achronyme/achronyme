@@ -18,7 +18,7 @@ pub struct VM {
     pub heap: Heap,
     pub stack: Vec<Value>,
     pub frames: Vec<CallFrame>,
-    pub globals: HashMap<u32, GlobalEntry>,
+    pub globals: Vec<GlobalEntry>,
     pub interner: HashMap<String, u32>,
     pub natives: Vec<NativeObj>,
 }
@@ -30,7 +30,7 @@ impl VM {
             heap: Heap::new(),
             stack: Vec::with_capacity(2048),
             frames: Vec::with_capacity(64),
-            globals: HashMap::new(),
+            globals: Vec::with_capacity(64),
             interner: HashMap::new(),
             natives: Vec::new(),
         };

@@ -185,7 +185,7 @@ impl Heap {
                         // For Map, we need to trace values. Keys are strings (implied marked if we trace keys?)
                         // If keys are interned strings managed by heap, we must mark them too!
                         if let Some(m) = self.maps.data.get(handle as usize) {
-                            for (k, v) in m.iter() {
+                            for (_k, v) in m.iter() {
                                 worklist.push(v.clone());
                                 // We might need to mark the string key if it's dynamic?
                                 // Currently keys are String in HashMap<String, Value>.

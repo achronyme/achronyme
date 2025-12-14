@@ -21,20 +21,38 @@ pub struct Compiler {
     pub bytecode: Vec<u32>, // Using u32 for 4-byte instructions
     pub constants: Vec<Value>,
 
+    // Global Symbol Table (Name -> Index)
+    pub global_symbols: HashMap<String, u16>,
+    pub next_global_idx: u16,
+
     // Simple register allocator state
-    reg_top: u8,
+    pub reg_top: u8,
 
     // String Interner
     pub interner: StringInterner,
 }
 
+use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
+
 impl Compiler {
     pub fn new() -> Self {
+        let mut global_symbols = HashMap::new();
+
+        // Phase 1: Pre-populate Natives (Must align with VM)
+        // Dynamic Population from SSOT
+        for (index, meta) in NATIVE_TABLE.iter().enumerate() {
+            global_symbols.insert(meta.name.to_string(), index as u16);
+        }
+
+        let next_global_idx = USER_GLOBAL_START; // Start user globals after natives
+
         Self {
             locals: Vec::new(),
             scope_depth: 0,
             bytecode: Vec::new(),
             constants: Vec::new(),
+            global_symbols,
+            next_global_idx,
             reg_top: 0,
             interner: StringInterner::new(),
         }
@@ -86,11 +104,22 @@ impl Compiler {
 
                 let val_reg = self.compile_expr(expr)?;
 
-                let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::string(handle));
+                // Allocate slot or use existing?
+                // For now: Always allocate new slot.
+                // Note: This simple approach leaks slots if you re-declare 'x' in REPL
+                // but keeps implementation simple for O(1).
 
-                // DefGlobalLet R[val_reg], Name[name_idx]
-                self.emit_abx(OpCode::DefGlobalLet, val_reg, name_idx as u16);
+                if self.next_global_idx == u16::MAX {
+                    return Err(CompilerError::TooManyConstants); // Reuse error or make new one
+                }
+
+                let idx = self.next_global_idx;
+                self.next_global_idx += 1;
+                self.global_symbols.insert(name, idx);
+
+                // DefGlobalLet R[val_reg], Slot[idx]
+                // Bx is now raw index, NOT constant pool index
+                self.emit_abx(OpCode::DefGlobalLet, val_reg, idx);
             }
             Rule::mut_decl => {
                 let mut p = inner.into_inner();
@@ -98,11 +127,17 @@ impl Compiler {
                 let expr = p.next().unwrap();
 
                 let val_reg = self.compile_expr(expr)?;
-                let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::string(handle));
+
+                if self.next_global_idx == u16::MAX {
+                    return Err(CompilerError::TooManyConstants);
+                }
+
+                let idx = self.next_global_idx;
+                self.next_global_idx += 1;
+                self.global_symbols.insert(name, idx);
 
                 // DefGlobalVar
-                self.emit_abx(OpCode::DefGlobalVar, val_reg, name_idx as u16);
+                self.emit_abx(OpCode::DefGlobalVar, val_reg, idx);
             }
             Rule::assignment => {
                 let mut p = inner.into_inner();
@@ -110,11 +145,15 @@ impl Compiler {
                 let expr = p.next().unwrap();
 
                 let val_reg = self.compile_expr(expr)?;
-                let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::string(handle));
+
+                // Lookup global index
+                let idx = *self.global_symbols.get(&name).ok_or_else(|| {
+                    // This is now a COMPILER ERROR, not runtime!
+                    CompilerError::UnknownOperator(format!("Undefined global variable: {}", name))
+                })?;
 
                 // SetGlobal
-                self.emit_abx(OpCode::SetGlobal, val_reg, name_idx as u16);
+                self.emit_abx(OpCode::SetGlobal, val_reg, idx);
             }
             Rule::print_stmt => {
                 let expr = inner.into_inner().next().unwrap();
@@ -123,10 +162,12 @@ impl Compiler {
                 let func_reg = self.alloc_reg()?;
                 let arg_reg = self.alloc_reg()?; // Must be func_reg + 1
 
-                // 2. Load "print"
-                let handle = self.intern_string("print");
-                let name_idx = self.add_constant(Value::string(handle));
-                self.emit_abx(OpCode::GetGlobal, func_reg, name_idx as u16);
+                // 2. Load "print" (Pre-defined at index 0)
+                let print_idx = *self
+                    .global_symbols
+                    .get("print")
+                    .expect("Natives not initialized");
+                self.emit_abx(OpCode::GetGlobal, func_reg, print_idx);
 
                 // 3. Compile Argument
                 let expr_reg = self.compile_expr(expr)?;
@@ -135,8 +176,6 @@ impl Compiler {
                 self.emit_abc(OpCode::Move, arg_reg, expr_reg, 0);
 
                 // 5. Call
-                // Call(Dest=func_reg, Func=func_reg, ArgCount=1)
-                // Args start at B+1 (arg_reg)
                 self.emit_abc(OpCode::Call, func_reg, func_reg, 1);
             }
             Rule::expr_stmt => {
@@ -156,9 +195,9 @@ impl Compiler {
     fn compile_expr(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         match pair.as_rule() {
             Rule::expr => self.compile_expr(pair.into_inner().next().unwrap()),
-            Rule::add_expr => self.compile_binary(pair, OpCode::Add, OpCode::Sub),
-            Rule::mul_expr => self.compile_binary(pair, OpCode::Mul, OpCode::Div),
-            Rule::pow_expr => self.compile_binary(pair, OpCode::Pow, OpCode::Nop),
+            Rule::add_expr => self.compile_binary(pair, OpCode::Add, OpCode::Sub, false),
+            Rule::mul_expr => self.compile_binary(pair, OpCode::Mul, OpCode::Div, false),
+            Rule::pow_expr => self.compile_binary(pair, OpCode::Pow, OpCode::Nop, true),
             Rule::prefix_expr => self.compile_prefix(pair),
             Rule::postfix_expr => self.compile_postfix(pair),
             Rule::atom => self.compile_atom(pair),
@@ -183,25 +222,68 @@ impl Compiler {
         pair: Pair<Rule>,
         op1: OpCode,
         op2: OpCode,
+        is_right_associative: bool,
     ) -> Result<u8, CompilerError> {
-        let mut pairs = pair.into_inner();
-        let mut left_reg = self.compile_expr(pairs.next().unwrap())?;
+        if is_right_associative {
+            // Right-associative (e.g., Power: 2^3^2 = 2^(3^2))
+            let mut pairs = pair.into_inner();
+            let first_pair = pairs.next().unwrap();
 
-        while let Some(op_pair) = pairs.next() {
-            let right_pair = pairs.next().ok_or(CompilerError::MissingOperand)?;
-            let right_reg = self.compile_expr(right_pair)?;
+            // 1. Collect all operands (registers)
+            let mut regs = vec![self.compile_expr(first_pair)?];
+            let mut ops = Vec::new();
 
-            let opcode = match op_pair.as_str() {
-                "+" | "*" | "^" => op1,
-                "-" | "/" => op2,
-                _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
-            };
+            // 2. Collect all operators and subsequent operands
+            while let Some(op_pair) = pairs.next() {
+                let right_pair = pairs.next().ok_or(CompilerError::MissingOperand)?;
 
-            let res_reg = self.alloc_reg()?;
-            self.emit_abc(opcode, res_reg, left_reg, right_reg);
-            left_reg = res_reg;
+                let opcode = match op_pair.as_str() {
+                    "+" | "*" | "^" => op1,
+                    "-" | "/" => op2,
+                    _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
+                };
+
+                ops.push(opcode);
+                regs.push(self.compile_expr(right_pair)?);
+            }
+
+            // 3. Fold Right-to-Left
+            if ops.is_empty() {
+                return Ok(regs[0]);
+            }
+
+            let mut right_reg = regs.pop().unwrap(); // Start with the last operand
+
+            // Iterate backwards through operators
+            while let Some(op) = ops.pop() {
+                let left_reg = regs.pop().unwrap();
+                let res_reg = self.alloc_reg()?;
+                self.emit_abc(op, res_reg, left_reg, right_reg);
+                right_reg = res_reg; // Result becomes the right operand for the next op
+            }
+
+            Ok(right_reg)
+        } else {
+            // Left-associative (Standard: 1-2-3 = (1-2)-3)
+            let mut pairs = pair.into_inner();
+            let mut left_reg = self.compile_expr(pairs.next().unwrap())?;
+
+            while let Some(op_pair) = pairs.next() {
+                let right_pair = pairs.next().ok_or(CompilerError::MissingOperand)?;
+                let right_reg = self.compile_expr(right_pair)?;
+
+                let opcode = match op_pair.as_str() {
+                    "+" | "*" | "^" => op1,
+                    "-" | "/" => op2,
+                    _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
+                };
+
+                let res_reg = self.alloc_reg()?;
+                self.emit_abc(opcode, res_reg, left_reg, right_reg);
+                left_reg = res_reg;
+            }
+            Ok(left_reg)
         }
-        Ok(left_reg)
     }
 
     fn compile_prefix(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
@@ -231,7 +313,7 @@ impl Compiler {
         // But we have the value in 'reg'. We just wrap it.
         // If we have [- , -], we do neg(neg(val)).
         for _op in ops {
-            // Check op type if we have more than one (e.g. !)
+            // Check op type if we have more than one (e.g. ! or -)
             // currently only "-"
             let new_reg = self.alloc_reg()?;
             self.emit_abc(OpCode::Neg, new_reg, reg, 0); // Neg uses B reg
@@ -247,7 +329,6 @@ impl Compiler {
         let atom_pair = inner.next().unwrap();
         let mut reg = self.compile_expr(atom_pair)?; // Compile the atom
 
-        // Handle suffixes (calls, index)
         // Handle suffixes (calls, index)
         if let Some(op) = inner.next() {
             match op.as_rule() {
@@ -272,9 +353,14 @@ impl Compiler {
             Rule::identifier => {
                 let name = inner.as_str().to_string();
                 let reg = self.alloc_reg()?;
-                let handle = self.intern_string(&name);
-                let name_idx = self.add_constant(Value::string(handle));
-                self.emit_abx(OpCode::GetGlobal, reg, name_idx as u16);
+
+                // Lookup global index
+                let idx = *self.global_symbols.get(&name).ok_or_else(|| {
+                    CompilerError::UnknownOperator(format!("Undefined global variable: {}", name))
+                })?;
+
+                // GetGlobal R[reg], Slot[idx]
+                self.emit_abx(OpCode::GetGlobal, reg, idx);
                 Ok(reg)
             }
             Rule::expr => self.compile_expr(inner),

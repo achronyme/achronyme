@@ -9,4 +9,5 @@ pub use machine::{CallFrame, VM};
 pub use opcode::OpCode;
 pub mod native;
 pub use native::{NativeFn, NativeObj};
+pub mod specs;
 pub mod stdlib;
