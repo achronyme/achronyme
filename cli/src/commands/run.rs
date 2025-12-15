@@ -29,9 +29,11 @@ pub fn run_file(path: &str) -> Result<()> {
 
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)?;
-        if &magic != b"ACH\x07" {
+        if &magic != b"ACH\x08" {
             return Err(anyhow::anyhow!("Invalid binary magic or version"));
         }
+
+        let max_slots = file.read_u16::<LittleEndian>()?;
 
         // --- String Table ---
         let str_count = file.read_u32::<LittleEndian>()?;
@@ -85,6 +87,7 @@ pub fn run_file(path: &str) -> Result<()> {
         let func = Function {
             name: "main".to_string(),
             arity: 0,
+            max_slots,
             chunk: bytecode,
             constants,
         };
@@ -125,6 +128,7 @@ pub fn run_file(path: &str) -> Result<()> {
             arity: 0,
             chunk: bytecode,
             constants: compiler.constants,
+            max_slots: compiler.max_reg_touched,
         };
         let func_idx = vm.heap.alloc_function(func);
 

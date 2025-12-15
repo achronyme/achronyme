@@ -47,9 +47,30 @@ impl ControlFlowOps for super::vm::VM {
                 if func_val.is_native() {
                     self.call_native(func_val, args_start, args_count, base, a)?;
                 } else if func_val.is_function() {
-                    return Err(RuntimeError::Unknown(
-                        "Script function calls not implemented yet".into(),
-                    ));
+                    let handle = func_val.as_handle().unwrap();
+                    let func = self.heap.get_function(handle).ok_or(RuntimeError::FunctionNotFound)?;
+                    
+                    // 1. Check arity (optional but good)
+                    if func.arity as usize != args_count {
+                         return Err(RuntimeError::ArityMismatch(format!("Expected {} args, got {}", func.arity, args_count)));
+                    }
+
+                    // 2. Calculate New Base Pointer
+                    // BP = args_start (The arguments become the locals R0..Rn of the new frame)
+                    let new_bp = args_start;
+
+                    // 3. THE GOLDEN CHECK
+                    // Check if stack has space for this function's PEAK requirement
+                    if new_bp + (func.max_slots as usize) >= crate::machine::vm::STACK_MAX {
+                         return Err(RuntimeError::StackOverflow);
+                    }
+
+                    // 4. Push Frame
+                    self.frames.push(crate::machine::frame::CallFrame {
+                        closure: handle,
+                        ip: 0,
+                        base: new_bp,
+                    });
                 } else {
                     return Err(RuntimeError::TypeMismatch(
                         "Call target must be Function or Native".into(),

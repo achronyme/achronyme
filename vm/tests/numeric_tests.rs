@@ -8,6 +8,7 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
     let func = Function {
         name: "test".to_string(),
         arity: 0,
+        max_slots: 0,
         chunk,
         constants,
     };
@@ -49,6 +50,7 @@ fn test_real_complex_promotion() {
     let func = Function {
         name: "test".to_string(),
         arity: 0,
+        max_slots: 0,
         chunk,
         constants: vec![Value::number(1.0), Value::complex(c_idx)],
     };
@@ -86,6 +88,7 @@ fn test_complex_times_complex_demote() {
     let func = Function {
         name: "test".to_string(),
         arity: 0,
+        max_slots: 0,
         chunk,
         constants: vec![Value::complex(c_idx)],
     };
@@ -150,6 +153,7 @@ fn test_sqrt_negative_promotes() {
     let func = Function {
         name: "test".to_string(),
         arity: 0,
+        max_slots: 0,
         chunk,
         constants,
     };

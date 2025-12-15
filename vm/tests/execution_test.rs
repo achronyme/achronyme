@@ -18,6 +18,7 @@ fn test_execution_end_to_end() {
     let func = Function {
         name: "main".to_string(),
         arity: 0,
+        max_slots: compiler.max_reg_touched,
         chunk: bytecode,
         constants: constants,
     };
@@ -35,15 +36,8 @@ fn test_execution_end_to_end() {
     // 5. Run
     vm.interpret().expect("Runtime error");
 
-    // 6. Check Result (R4 based on alloc_reg order and reuse logic, but see below)
-    // 1 -> R0
-    // 2 -> R1
-    // 3 -> R2
-    // 2*3 -> R3 (new reg)
-    // 1+R3 -> R4 (new reg)
-    // Return R4
-
-    let result = vm.stack.get(4).cloned();
+    // Result should be in R0 due to accumulator pattern
+    let result = vm.stack.get(0).cloned();
     if let Some(val) = result {
         if let Some(n) = val.as_number() {
             assert_eq!(n, 7.0);
@@ -51,6 +45,6 @@ fn test_execution_end_to_end() {
             panic!("Expected number 7.0, got {:?}", val);
         }
     } else {
-        panic!("Stack too short to find result at R4");
+        panic!("Stack too short to find result at R0");
     }
 }

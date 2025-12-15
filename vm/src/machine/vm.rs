@@ -26,12 +26,17 @@ pub struct VM {
     pub debug_symbols: Option<HashMap<u16, String>>,
 }
 
+pub const STACK_MAX: usize = 65_536;
+
 impl VM {
     /// Create a new VM instance with bootstrapped native functions
     pub fn new() -> Self {
+        // Pre-allocate fixed-size stack
+        let stack = vec![Value::nil(); STACK_MAX];
+        
         let mut vm = Self {
             heap: Heap::new(),
-            stack: Vec::with_capacity(2048),
+            stack,
             frames: Vec::with_capacity(64),
             globals: Vec::with_capacity(64),
             interner: HashMap::new(),
@@ -63,6 +68,15 @@ impl VM {
 
     /// Main interpretation loop
     pub fn interpret(&mut self) -> Result<(), RuntimeError> {
+        // Validation: Check checking initial frame fits
+        if let Some(frame) = self.frames.last() {
+            let func = self.heap.get_function(frame.closure)
+                .ok_or(RuntimeError::FunctionNotFound)?;
+             if frame.base + (func.max_slots as usize) >= STACK_MAX {
+                 return Err(RuntimeError::StackOverflow);
+             }
+        }
+
         while !self.frames.is_empty() {
             // GC Check
             if self.heap.should_collect() {

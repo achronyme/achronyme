@@ -27,6 +27,7 @@ pub struct Compiler {
 
     // Simple register allocator state
     pub reg_top: u8,
+    pub max_reg_touched: u16, // <--- NEW
 
     // String Interner
     pub interner: StringInterner,
@@ -54,6 +55,7 @@ impl Compiler {
             global_symbols,
             next_global_idx,
             reg_top: 0,
+            max_reg_touched: 0,
             interner: StringInterner::new(),
         }
     }
@@ -100,7 +102,7 @@ impl Compiler {
                 Rule::stmt => self.compile_stmt(pair)?,
                 Rule::expr => {
                     // Fallback if grammar allows expr at top (it does via expr_stmt)
-                    let reg = self.compile_expr(pair)?;
+                    let _ = self.compile_expr(pair)?;
                     // Implicit print/return? No, statement does 'Print'.
                     // For pure expr stmt, we discard result unless REPL.
                     // But simpler: just compile it.
@@ -210,14 +212,6 @@ impl Compiler {
                 self.free_reg(func_reg); // Result is discarded in print_stmt
 
             }
-            Rule::print_stmt => {
-                let expr = inner.into_inner().next().unwrap();
-                let _ = self.compile_expr(expr)?;
-                // Print in stdlib usually? 
-                // Ah, previous implementation emited Call "print". 
-                // Keep it consistent.
-            }
-            // Rule::expr_stmt => ... removed
             Rule::expr => {
                  let _ = self.compile_expr(inner)?;
             }
@@ -307,7 +301,7 @@ impl Compiler {
         } else {
             // Left-associative (Standard: 1-2-3 = (1-2)-3)
             let mut pairs = pair.into_inner();
-            let mut left_reg = self.compile_expr(pairs.next().unwrap())?;
+            let left_reg = self.compile_expr(pairs.next().unwrap())?;
 
             while let Some(op_pair) = pairs.next() {
                 let right_pair = pairs.next().ok_or(CompilerError::MissingOperand)?;
@@ -476,7 +470,6 @@ impl Compiler {
         self.free_reg(body_reg); // Hygiene
 
         // 4. Jump -> Start
-        let jump_idx = self.bytecode.len() as u16;
         self.emit_abx(OpCode::Jump, 0, start_label as u16);
 
         // 5. Patch End
@@ -722,6 +715,12 @@ impl Compiler {
             return Err(CompilerError::RegisterOverflow);
         }
         self.reg_top += 1;
+        
+        // Track High Water Mark
+        if (self.reg_top as u16) > self.max_reg_touched {
+            self.max_reg_touched = self.reg_top as u16;
+        }
+
         Ok(r)
     }
 

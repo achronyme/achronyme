@@ -18,7 +18,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
 
         let mut file = fs::File::create(out_path).context("Failed to create output file")?;
 
-        file.write_all(b"ACH\x07")?;
+        file.write_all(b"ACH\x08")?;
+        
+        // Metadata
+        file.write_u16::<LittleEndian>(compiler.max_reg_touched)?;
 
         // --- String Table ---
         let strings = &compiler.interner.strings;
