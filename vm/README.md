@@ -6,7 +6,9 @@ The Virtual Machine crate for the Achronyme language.
 
 This crate is divided into the following modules:
 
-- **machine.rs**: Contains the `VM` struct and the main interpretation loop.
+- **machine/vm.rs**: Contains the `VM` struct and the main interpretation loop.
+- **machine/control.rs**: Function call/return handling (`Call`, `Return`, `Closure`).
+- **machine/frame.rs**: `CallFrame` for function call stack management.
 - **opcode.rs**: Defines the instruction set (`OpCode` enum).
 - **error.rs**: Defines `RuntimeError` types.
 - **globals.rs**: Defines `GlobalEntry` for global variable storage.
@@ -14,18 +16,20 @@ This crate is divided into the following modules:
 ## Features
 
 - **NaN Boxing**: Uses NaN-boxed `Value` types (via `memory` crate).
-- **Globals**: Supports mutable (`var`) and immutable (`let`) globals via `DefGlobalVar`/`DefGlobalLet`.
+- **Flat Prototype Table**: `vm.prototypes: Vec<u32>` for O(1) function dispatch.
+- **Function Calls**: 
+    - `Call A, B, C` - Call function in R[B] with C args, result to R[A].
+    - `Closure A, Bx` - Load prototype[Bx] into R[A].
+    - `Return A, B` - Return R[A] if B=1, else nil.
+- **Stack Safety**: Validates `new_bp + func.max_slots < STACK_MAX` before each call.
+- **Globals**: Supports mutable (`var`) and immutable (`let`) globals.
 - **Control Flow**:
     - `Jump` (Unconditional)
     - `JumpIfFalse` (Used for `if` and `while`)
-    - Control flow is implemented via absolute jump targets (u16 index in bytecode).
-    - `LoadTrue`, `LoadFalse`, `LoadNil` for boolean/nil literals.
-
-
 
 ## Adding Instructions
 
-1.  Add the variant to `OpCode` enum in `opcode.rs`.
-2.  Implement encoding/decoding in `opcode.rs`.
-3.  Add the case to the `match op` block in `machine.rs`.
-4.  Write tests in `machine.rs` or `lib.rs` (via integration tests).
+1. Add the variant to `OpCode` enum in `opcode.rs`.
+2. Implement encoding/decoding in `opcode.rs`.
+3. Add the case to the `match op` block in `machine.rs` or `control.rs`.
+4. Write tests in the `tests/` directory.

@@ -22,14 +22,14 @@
 ## 3. Compiler & Features
 
 ### Architecture & Debugging (Priority)
-- [ ] **Debug Symbol Table**: The move to O(1) globals removed variable names from runtime errors.
-    - *Target*: Create a separate "Debug Symbol Map" (Index -> Name) for error reporting ("Undefined variable 'x'") and disassembly.
-- [x] **String Literals**: The grammar currently lacks string literals (only identifiers/keywords).
-    - *Target*: Implement string parsing `grammar.pest`, compilation to `Value::String` handles via Interner. (COMPLETED)
+- [x] **Debug Symbol Table**: The move to O(1) globals removed variable names from runtime errors.
+    - *Completed*: Implemented sidecar debug symbol map with binary serialization.
 
 ### Language Features
-- [ ] **User-Defined Functions (`fn`)**: Not yet implemented.
-    - *CRITICAL*: When implementing, `Compiler::new()` must accept `arity` and initialize `reg_top = arity` and `max_reg_touched = arity as u16` to avoid argument/local collision.
+- [x] **User-Defined Functions (`fn`)**: Implemented with flat prototype architecture.
+    - Recursion, nested functions, anonymous functions all supported.
+    - `return` statement for explicit returns.
+- [x] **String Literals**: Implemented with interner and binary serialization.
 - [ ] **Control Flow (For Loops)**: Syntactic sugar for `while`.
 - [ ] **Closures & Upvalues**: `CallFrame` has a `closure` field, but capturing is missing.
     - *Target*: Implement `make_closure`, `get_upvalue`, `set_upvalue`.
@@ -41,6 +41,19 @@
 - [ ] **FFI/Native Interface**: The `NativeFn` signature is rigid.
     - *Target*: Safer binding macros.
 - [ ] **Serialization**:
-    - *Target*: Complete binary format serialization (`.achb`) for Complex numbers. (Strings are now supported).
+    - *Target*: Complete binary format serialization (`.achb`) for Complex numbers.
 - [ ] **Pretty Printing (VM::val_to_string)**:
     - *Target*: Add support for `Map` type once implemented.
+
+## 5. Security & Architecture (PR3 Recommendations)
+
+### Security
+- [ ] **Allocation Bomb Protection (DoS)**: Validate sizes during binary deserialization.
+    - *Risk*: Malicious `.achb` file could declare 4GB name_len with 1KB file, causing OOM.
+    - *Target*: Add sanity checks: `if name_len > 1024 { return Err("Name too long"); }`.
+
+### Architecture
+- [ ] **Decouple Loader**: `cli/src/commands/run.rs` knows too many VM internals.
+    - *Target*: Create `vm.load_executable(reader: impl Read)` method. CLI should be "dumb".
+- [ ] **Named Constants for Tags**: Replace magic numbers (`0`, `1`, `255`) in serialization.
+    - *Target*: Define `CONST_NUMBER = 0`, `CONST_STRING = 1` shared between compiler/VM.

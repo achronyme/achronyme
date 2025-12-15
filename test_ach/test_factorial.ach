@@ -1,0 +1,10 @@
+fn factorial(n) {
+    if n < 2 { 
+        1 
+    } else { 
+        n * factorial(n - 1) 
+    }
+}
+
+print(factorial(5)) // Debería imprimir 120
+print(factorial(10)) // 3628800
