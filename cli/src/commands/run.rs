@@ -68,6 +68,59 @@ pub fn run_file(path: &str) -> Result<()> {
             }
         }
 
+        // --- Prototypes (Function Table) ---
+        let proto_count = file.read_u32::<LittleEndian>()?;
+        let mut proto_funcs = Vec::with_capacity(proto_count as usize);
+        for _ in 0..proto_count {
+            // Name
+            let name_len = file.read_u32::<LittleEndian>()? as usize;
+            let mut name_bytes = vec![0u8; name_len];
+            file.read_exact(&mut name_bytes)?;
+            let name = String::from_utf8(name_bytes)
+                .map_err(|_| anyhow::anyhow!("Invalid UTF-8 in function name"))?;
+            
+            // Arity and max_slots
+            let arity = file.read_u8()?;
+            let proto_max_slots = file.read_u16::<LittleEndian>()?;
+            
+            // Proto constants
+            let proto_const_count = file.read_u32::<LittleEndian>()?;
+            let mut proto_constants = Vec::with_capacity(proto_const_count as usize);
+            for _ in 0..proto_const_count {
+                let tag = file.read_u8()?;
+                match tag {
+                    0 => {
+                        let n = file.read_f64::<LittleEndian>()?;
+                        proto_constants.push(Value::number(n));
+                    }
+                    1 => {
+                        let handle = file.read_u32::<LittleEndian>()?;
+                        proto_constants.push(Value::string(handle));
+                    }
+                    255 => {
+                        proto_constants.push(Value::nil());
+                    }
+                    _ => return Err(anyhow::anyhow!("Unknown proto constant tag: {}", tag)),
+                }
+            }
+            
+            // Proto bytecode
+            let proto_code_len = file.read_u32::<LittleEndian>()?;
+            let mut proto_bytecode = Vec::with_capacity(proto_code_len as usize);
+            for _ in 0..proto_code_len {
+                proto_bytecode.push(file.read_u32::<LittleEndian>()?);
+            }
+            
+            proto_funcs.push(Function {
+                name,
+                arity,
+                max_slots: proto_max_slots,
+                chunk: proto_bytecode,
+                constants: proto_constants,
+            });
+        }
+
+        // --- Main Bytecode ---
         let code_len = file.read_u32::<LittleEndian>()?;
         let mut bytecode = Vec::with_capacity(code_len as usize);
         for _ in 0..code_len {
@@ -77,6 +130,12 @@ pub fn run_file(path: &str) -> Result<()> {
         let mut vm = VM::new();
         // Sync VM Heap
         vm.heap.import_strings(strings);
+        
+        // Load prototypes into VM
+        for proto in proto_funcs {
+            let handle = vm.heap.alloc_function(proto);
+            vm.prototypes.push(handle);
+        }
 
         // Try load debug symbols (Sidecar)
         let mut debug_bytes = Vec::new();
