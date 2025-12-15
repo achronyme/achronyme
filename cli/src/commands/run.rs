@@ -33,6 +33,21 @@ pub fn run_file(path: &str) -> Result<()> {
             return Err(anyhow::anyhow!("Invalid binary magic or version"));
         }
 
+        // --- String Table ---
+        let str_count = file.read_u32::<LittleEndian>()?;
+        let mut strings = Vec::with_capacity(str_count as usize);
+
+        for _ in 0..str_count {
+            let len = file.read_u32::<LittleEndian>()?;
+            let mut bytes = vec![0u8; len as usize];
+            file.read_exact(&mut bytes)?;
+            
+            let s = String::from_utf8(bytes)
+                .map_err(|_| anyhow::anyhow!("Invalid UTF-8 in binary"))?;
+            strings.push(s);
+        }
+
+        // --- Constants ---
         let const_count = file.read_u32::<LittleEndian>()?;
         let mut constants = Vec::with_capacity(const_count as usize);
         for _ in 0..const_count {
@@ -43,14 +58,9 @@ pub fn run_file(path: &str) -> Result<()> {
                     constants.push(Value::number(n));
                 }
                 1 => {
-                    let len = file.read_u32::<LittleEndian>()?;
-                    let mut bytes = vec![0u8; len as usize];
-                    file.read_exact(&mut bytes)?;
-                    let _s = String::from_utf8(bytes)
-                        .map_err(|_| anyhow::anyhow!("Invalid UTF-8 string constant"))?;
-                    return Err(anyhow::anyhow!(
-                        "String deserialization not yet supported with interning"
-                    ));
+                    // Read Handle -> Create Value
+                    let handle = file.read_u32::<LittleEndian>()?;
+                    constants.push(Value::string(handle));
                 }
                 _ => return Err(anyhow::anyhow!("Unknown constant tag: {}", tag)),
             }
@@ -63,6 +73,8 @@ pub fn run_file(path: &str) -> Result<()> {
         }
 
         let mut vm = VM::new();
+        // Sync VM Heap
+        vm.heap.import_strings(strings);
 
         // Try load debug symbols (Sidecar)
         let mut debug_bytes = Vec::new();

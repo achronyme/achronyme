@@ -606,6 +606,7 @@ impl Compiler {
         let inner = pair.into_inner().next().unwrap();
         match inner.as_rule() {
             Rule::number => self.compile_number(inner),
+            Rule::string => self.compile_string(inner),
             Rule::complex => self.compile_complex(inner),
             Rule::true_lit => {
                 let reg = self.alloc_reg()?;
@@ -689,6 +690,27 @@ impl Compiler {
         self.free_reg(val_reg);
         self.free_reg(zero_reg);
 
+        Ok(reg)
+    }
+
+    fn compile_string(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        let raw = pair.as_str(); 
+        // grammar: string = ${ "\"" ~ inner ~ "\"" }
+        // Safety: Grammar guarantees quotes.
+        let content = &raw[1..raw.len() - 1]; 
+        
+        let handle = self.intern_string(content);
+        // Value::string creates a tagged value with payload = handle
+        let val = Value::string(handle);
+        let const_idx = self.add_constant(val);
+        
+        let reg = self.alloc_reg()?;
+        if const_idx <= 0xFFFF {
+            self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        } else {
+            return Err(CompilerError::TooManyConstants);
+        }
+        
         Ok(reg)
     }
 

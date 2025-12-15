@@ -2,13 +2,12 @@ use crate::error::RuntimeError;
 use crate::machine::VM;
 use memory::Value;
 
-pub fn native_print(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     for (i, arg) in args.iter().enumerate() {
         if i > 0 {
             print!(" ");
         }
-        // TODO: Implement cleaner Display for Value
-        print!("{:?}", arg);
+        print!("{}", vm.val_to_string(arg));
     }
     println!();
     Ok(Value::nil())

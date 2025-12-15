@@ -50,9 +50,14 @@ atom = {
   | block
   | complex
   | number
+  | string
   | identifier
   | "(" ~ expr ~ ")"
 }
+
+// String Literal
+string = ${ "\"" ~ inner ~ "\"" }
+inner  = @{ (!"\"" ~ ANY)* }
 
 // ============================================================================
 // LAYER 2: POSTFIX EXPRESSIONS (The Chaining Layer)

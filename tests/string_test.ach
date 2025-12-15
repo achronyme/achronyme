@@ -1,0 +1,5 @@
+let s = "Hello Clean World 🚀";
+print(s);
+print(10 + 20);
+print(true);
+print(nil);

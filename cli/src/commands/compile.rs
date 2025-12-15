@@ -20,6 +20,16 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
 
         file.write_all(b"ACH\x07")?;
 
+        // --- String Table ---
+        let strings = &compiler.interner.strings;
+        file.write_u32::<LittleEndian>(strings.len() as u32)?;
+        for s in strings {
+            let bytes = s.as_bytes();
+            file.write_u32::<LittleEndian>(bytes.len() as u32)?;
+            file.write_all(bytes)?;
+        }
+
+        // --- Constants ---
         file.write_u32::<LittleEndian>(compiler.constants.len() as u32)?;
         for c in &compiler.constants {
             if let Some(n) = c.as_number() {
@@ -27,7 +37,9 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                 file.write_f64::<LittleEndian>(n)?;
             } else if c.is_string() {
                 file.write_u8(1)?;
-                return Err(anyhow::anyhow!("String serialization needs update"));
+                // Payload is the handle
+                let handle = c.as_handle().expect("String value must have handle");
+                file.write_u32::<LittleEndian>(handle)?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Unsupported constant type for serialization: {:?}",

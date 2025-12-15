@@ -45,6 +45,22 @@ impl VM {
         vm
     }
 
+    /// Helper to format values for display (Clean UX)
+    pub fn val_to_string(&self, val: &Value) -> String {
+        match val {
+            v if v.is_string() => {
+                let handle = v.as_handle().unwrap();
+                self.heap.get_string(handle).cloned().unwrap_or("<bad string>".into())
+            },
+            v if v.is_number() => format!("{}", v.as_number().unwrap()),
+            v if v.is_bool() => format!("{}", v.as_bool().unwrap()),
+            v if v.is_nil() => "nil".to_string(),
+            v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
+            v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
+            _ => format!("{:?}", val), // Fallback
+        }
+    }
+
     /// Main interpretation loop
     pub fn interpret(&mut self) -> Result<(), RuntimeError> {
         while !self.frames.is_empty() {
