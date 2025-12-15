@@ -29,7 +29,7 @@ complex    = @{ number ~ "i" }
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
-keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" }
+keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" }
 
 // 1. Define Literals
 nil_lit   = { "nil" }
@@ -41,12 +41,17 @@ block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
 if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
 while_expr = { "while" ~ expr ~ block }
 
+// 3. Function Definition (parsed as expression for first-class functions)
+param_list = { identifier ~ ("," ~ identifier)* }
+fn_expr = { "fn" ~ identifier? ~ "(" ~ param_list? ~ ")" ~ block }
+
 atom = {
     nil_lit
   | true_lit
   | false_lit
   | if_expr
   | while_expr
+  | fn_expr
   | block
   | complex
   | number
@@ -126,8 +131,11 @@ stmt = {
   | mut_decl
   | assignment
   | print_stmt
+  | return_stmt
   | expr
 }
+
+return_stmt = { "return" ~ expr? }
 
 // Optional semicolon support for hygiene
 stmt_terminator = _{ ";" }

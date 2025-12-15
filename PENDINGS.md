@@ -3,8 +3,8 @@
 ## 1. Virtual Machine Optimizations
 
 ### Critical Performance
-- [ ] **Remove Stack Bounds Checking**: The `set_reg` and `get_reg` methods in `VM` use `Vec::get` and `Vec::resize`.
-    - *Target*: Use `unsafe` raw pointers or a pre-allocated fixed-size array (`[Value; STACK_MAX]`) once the VM is stable.
+- [x] **Remove Stack Bounds Checking**: The `set_reg` and `get_reg` methods in `VM` use `Vec::get` and `Vec::resize`.
+    - *Completed*: Using `unsafe` with pre-allocated fixed-size stack (64KB). `debug_assert!` for development safety.
 - [ ] **Instruction Dispatch**: The main loop uses a Rust `match` statement.
     - *Target*: Investigate "Computed GOTO" or "Threaded Code".
 
@@ -28,6 +28,8 @@
     - *Target*: Implement string parsing `grammar.pest`, compilation to `Value::String` handles via Interner. (COMPLETED)
 
 ### Language Features
+- [ ] **User-Defined Functions (`fn`)**: Not yet implemented.
+    - *CRITICAL*: When implementing, `Compiler::new()` must accept `arity` and initialize `reg_top = arity` and `max_reg_touched = arity as u16` to avoid argument/local collision.
 - [ ] **Control Flow (For Loops)**: Syntactic sugar for `while`.
 - [ ] **Closures & Upvalues**: `CallFrame` has a `closure` field, but capturing is missing.
     - *Target*: Implement `make_closure`, `get_upvalue`, `set_upvalue`.

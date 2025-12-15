@@ -8,7 +8,7 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
     let func = Function {
         name: "test".to_string(),
         arity: 0,
-        max_slots: 0,
+        max_slots: 255, // Safe default for manual bytecode tests
         chunk,
         constants,
     };
@@ -17,6 +17,7 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
         closure: func_idx,
         ip: 0,
         base: 0,
+        dest_reg: 0,
     });
     vm.interpret().expect("Runtime error");
     vm
@@ -59,6 +60,7 @@ fn test_real_complex_promotion() {
         closure: func_idx,
         ip: 0,
         base: 0,
+        dest_reg: 0,
     });
     vm.interpret().expect("Runtime error");
 
@@ -97,6 +99,7 @@ fn test_complex_times_complex_demote() {
         closure: func_idx,
         ip: 0,
         base: 0,
+        dest_reg: 0,
     });
     vm.interpret().expect("Runtime error");
 
@@ -162,6 +165,7 @@ fn test_sqrt_negative_promotes() {
         closure: func_idx,
         ip: 0,
         base: 0,
+        dest_reg: 0,
     });
     vm.interpret().expect("Runtime error");
 

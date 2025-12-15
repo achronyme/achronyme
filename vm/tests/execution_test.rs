@@ -9,7 +9,7 @@ fn test_execution_end_to_end() {
     // 1. Compile
     let mut compiler = Compiler::new();
     let bytecode = compiler.compile(source).expect("Compilation failed");
-    let constants = compiler.constants;
+    let main_func = compiler.compilers.last().expect("No main compiler");
 
     // 2. Setup VM
     let mut vm = VM::new();
@@ -18,9 +18,9 @@ fn test_execution_end_to_end() {
     let func = Function {
         name: "main".to_string(),
         arity: 0,
-        max_slots: compiler.max_reg_touched,
+        max_slots: main_func.max_slots,
         chunk: bytecode,
-        constants: constants,
+        constants: main_func.constants.clone(),
     };
 
     let func_idx = vm.heap.alloc_function(func);
@@ -30,6 +30,7 @@ fn test_execution_end_to_end() {
         closure: func_idx,
         ip: 0,
         base: 0,
+        dest_reg: 0,
     };
     vm.frames.push(frame);
 

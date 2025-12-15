@@ -96,6 +96,7 @@ pub fn run_file(path: &str) -> Result<()> {
             closure: func_idx,
             ip: 0,
             base: 0,
+            dest_reg: 0, // Top-level script, unused
         });
 
         vm.interpret()
@@ -123,12 +124,21 @@ pub fn run_file(path: &str) -> Result<()> {
         }
         vm.debug_symbols = Some(debug_map);
 
+        // Get constants and max_slots from the main function compiler
+        let main_func = compiler.compilers.last().expect("No main compiler");
+        
+        // Allocate ALL prototypes on heap (flat global architecture)
+        for proto in &compiler.prototypes {
+            let handle = vm.heap.alloc_function(proto.clone());
+            vm.prototypes.push(handle);
+        }
+        
         let func = Function {
             name: "main".to_string(),
             arity: 0,
             chunk: bytecode,
-            constants: compiler.constants,
-            max_slots: compiler.max_reg_touched,
+            constants: main_func.constants.clone(),
+            max_slots: main_func.max_slots,
         };
         let func_idx = vm.heap.alloc_function(func);
 
@@ -136,6 +146,7 @@ pub fn run_file(path: &str) -> Result<()> {
             closure: func_idx,
             ip: 0,
             base: 0,
+            dest_reg: 0, // Top-level script, unused
         });
 
         vm.interpret()

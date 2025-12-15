@@ -15,21 +15,91 @@ pub struct Local {
     pub is_captured: bool,
 }
 
-pub struct Compiler {
+/// State specific to ONE function being compiled
+pub struct FunctionCompiler {
+    pub name: String,
+    pub arity: u8,
     pub locals: Vec<Local>,
     pub scope_depth: u32,
-    pub bytecode: Vec<u32>, // Using u32 for 4-byte instructions
+    pub bytecode: Vec<u32>,
     pub constants: Vec<Value>,
+    
+    // Register allocator state
+    pub reg_top: u8,
+    pub max_slots: u16,
+}
 
+impl FunctionCompiler {
+    /// Creates a new function compiler. 
+    /// CRITICAL: reg_top starts at arity to avoid argument/local collision.
+    pub fn new(name: String, arity: u8) -> Self {
+        Self {
+            name,
+            arity,
+            locals: Vec::new(),
+            scope_depth: 0,
+            bytecode: Vec::new(),
+            constants: Vec::new(),
+            reg_top: arity,        // Reserve R0..R(arity-1) for arguments
+            max_slots: arity as u16,
+        }
+    }
+    
+    fn alloc_reg(&mut self) -> Result<u8, CompilerError> {
+        let r = self.reg_top;
+        if r == 255 {
+            return Err(CompilerError::RegisterOverflow);
+        }
+        self.reg_top += 1;
+        
+        // Track High Water Mark
+        if (self.reg_top as u16) > self.max_slots {
+            self.max_slots = self.reg_top as u16;
+        }
+
+        Ok(r)
+    }
+
+    fn free_reg(&mut self, reg: u8) {
+        assert_eq!(
+            reg,
+            self.reg_top - 1,
+            "Register Hygiene Error: Tried to free {} but top is {}",
+            reg,
+            self.reg_top
+        );
+        self.reg_top -= 1;
+    }
+
+    fn add_constant(&mut self, val: Value) -> usize {
+        if let Some(idx) = self.constants.iter().position(|c| c == &val) {
+            return idx;
+        }
+        self.constants.push(val);
+        self.constants.len() - 1
+    }
+
+    fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {
+        self.bytecode.push(encode_abc(op.as_u8(), a, b, c));
+    }
+
+    fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) {
+        self.bytecode.push(encode_abx(op.as_u8(), a, bx));
+    }
+}
+
+/// The main compiler orchestrator
+pub struct Compiler {
+    pub compilers: Vec<FunctionCompiler>, // LIFO Stack of function compilers
+    
+    // FLAT list of ALL function prototypes (global indices)
+    pub prototypes: Vec<memory::Function>,
+    
     // Global Symbol Table (Name -> Index)
     pub global_symbols: HashMap<String, u16>,
     pub next_global_idx: u16,
 
-    // Simple register allocator state
-    pub reg_top: u8,
-    pub max_reg_touched: u16, // <--- NEW
-
-    // String Interner
+    // String Interner (shared across all functions)
     pub interner: StringInterner,
 }
 
@@ -39,25 +109,33 @@ impl Compiler {
     pub fn new() -> Self {
         let mut global_symbols = HashMap::new();
 
-        // Phase 1: Pre-populate Natives (Must align with VM)
-        // Dynamic Population from SSOT
+        // Pre-populate Natives from SSOT
         for (index, meta) in NATIVE_TABLE.iter().enumerate() {
             global_symbols.insert(meta.name.to_string(), index as u16);
         }
 
-        let next_global_idx = USER_GLOBAL_START; // Start user globals after natives
+        let next_global_idx = USER_GLOBAL_START;
+        
+        // Start with a "main" function compiler (arity=0 for top-level script)
+        let main_compiler = FunctionCompiler::new("main".to_string(), 0);
 
         Self {
-            locals: Vec::new(),
-            scope_depth: 0,
-            bytecode: Vec::new(),
-            constants: Vec::new(),
+            compilers: vec![main_compiler],
+            prototypes: Vec::new(),
             global_symbols,
             next_global_idx,
-            reg_top: 0,
-            max_reg_touched: 0,
             interner: StringInterner::new(),
         }
+    }
+    
+    /// Returns a mutable reference to the current (top) function compiler
+    fn current(&mut self) -> &mut FunctionCompiler {
+        self.compilers.last_mut().expect("Compiler stack underflow")
+    }
+    
+    /// Returns an immutable reference to the current function compiler
+    fn current_ref(&self) -> &FunctionCompiler {
+        self.compilers.last().expect("Compiler stack underflow")
     }
 
     pub fn append_debug_symbols(&self, buffer: &mut Vec<u8>) {
@@ -102,10 +180,9 @@ impl Compiler {
                 Rule::stmt => self.compile_stmt(pair)?,
                 Rule::expr => {
                     // Fallback if grammar allows expr at top (it does via expr_stmt)
-                    let _ = self.compile_expr(pair)?;
-                    // Implicit print/return? No, statement does 'Print'.
-                    // For pure expr stmt, we discard result unless REPL.
-                    // But simpler: just compile it.
+                    let reg = self.compile_expr(pair)?;
+                    // IMPORTANT: Free the "zombie" register to prevent bloat
+                    self.free_reg(reg);
                 }
                 _ => {
                     // Maybe whitespace or comments if not silent?
@@ -116,7 +193,7 @@ impl Compiler {
         // Final return
         self.emit_abc(OpCode::Return, 0, 0, 0); // Return Nil/0
 
-        Ok(self.bytecode.clone())
+        Ok(self.current().bytecode.clone())
     }
 
     fn compile_stmt(&mut self, pair: Pair<Rule>) -> Result<(), CompilerError> {
@@ -212,8 +289,22 @@ impl Compiler {
                 self.free_reg(func_reg); // Result is discarded in print_stmt
 
             }
+            Rule::return_stmt => {
+                // return expr?
+                let mut inner_iter = inner.into_inner();
+                if let Some(expr) = inner_iter.next() {
+                    // Compile expression and return its value
+                    let reg = self.compile_expr(expr)?;
+                    self.emit_abc(OpCode::Return, reg, 1, 0); // 1 = has value
+                } else {
+                    // Return nil
+                    self.emit_abc(OpCode::Return, 0, 0, 0); // 0 = no value (nil)
+                }
+            }
             Rule::expr => {
-                 let _ = self.compile_expr(inner)?;
+                let reg = self.compile_expr(inner)?;
+                // IMPORTANT: Free the "zombie" register to prevent bloat
+                self.free_reg(reg);
             }
             _ => {
                 return Err(CompilerError::UnexpectedRule(format!(
@@ -323,32 +414,23 @@ impl Compiler {
 
     // --- Control Flow Helpers ---
 
-    fn begin_scope(&mut self) {
-        self.scope_depth += 1;
-    }
-
-    fn end_scope(&mut self) {
-        self.scope_depth -= 1;
-        // Simple pop locals (future: reuse regs)
-        // self.locals.retain(|l| l.depth <= self.scope_depth);
-    }
-
     fn emit_jump(&mut self, op: OpCode, a: u8) -> usize {
         self.emit_abx(op, a, 0xFFFF);
-        self.bytecode.len() - 1
+        self.current().bytecode.len() - 1
     }
 
     fn patch_jump(&mut self, idx: usize) {
-        let jump_target = self.bytecode.len() as u16;
-        let instr = self.bytecode[idx];
+        let bytecode = &mut self.current().bytecode;
+        let jump_target = bytecode.len() as u16;
+        let instr = bytecode[idx];
         // Re-encode with new Bx
         let opcode = (instr >> 24) as u8;
         let a = ((instr >> 16) & 0xFF) as u8;
-        self.bytecode[idx] = encode_abx(opcode, a, jump_target);
+        bytecode[idx] = encode_abx(opcode, a, jump_target);
     }
 
     fn compile_block(&mut self, pair: Pair<Rule>, target_reg: u8) -> Result<(), CompilerError> {
-        let initial_reg_top = self.reg_top; // Snapshot
+        let initial_reg_top = self.current().reg_top; // Snapshot
         self.begin_scope();
         let stmts = pair.into_inner();
         let mut last_processed = false;
@@ -389,7 +471,7 @@ impl Compiler {
         }
 
         self.end_scope();
-        self.reg_top = initial_reg_top; // Restore (Hygiene)
+        self.current().reg_top = initial_reg_top; // Restore (Hygiene)
         Ok(())
     }
 
@@ -451,7 +533,7 @@ impl Compiler {
         let cond_expr = inner.next().unwrap();
         let body_block = inner.next().unwrap();
 
-        let start_label = self.bytecode.len();
+        let start_label = self.current().bytecode.len();
 
         // 1. Compile Condition
         let cond_reg = self.compile_expr(cond_expr)?;
@@ -479,6 +561,92 @@ impl Compiler {
         let target_reg = self.alloc_reg()?;
         self.emit_abx(OpCode::LoadNil, target_reg, 0);
 
+        Ok(target_reg)
+    }
+
+    /// Compile function expression: fn name?(params) block
+    fn compile_fn_expr(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // ROBUST PARSING: Iterate and match rules, don't assume positions
+        let mut name = "lambda".to_string();
+        let mut params: Vec<String> = vec![];
+        let mut block_pair = None;
+        
+        for item in pair.into_inner() {
+            match item.as_rule() {
+                Rule::identifier => name = item.as_str().to_string(),
+                Rule::param_list => {
+                    params = item.into_inner().map(|id| id.as_str().to_string()).collect();
+                }
+                Rule::block => block_pair = Some(item),
+                _ => {} // Ignore unexpected rules
+            }
+        }
+        
+        let block = block_pair.ok_or_else(|| {
+            CompilerError::UnexpectedRule("Function must have a block".to_string())
+        })?;
+        
+        let arity = params.len() as u8;
+        
+        // 2. CRITICAL FIX: Reserve global slot BEFORE compiling body
+        //    This enables recursion: fn fib(n) { ... fib(n-1) ... }
+        let global_idx = if name != "lambda" {
+            if self.next_global_idx == u16::MAX {
+                return Err(CompilerError::TooManyConstants);
+            }
+            let idx = self.next_global_idx;
+            self.next_global_idx += 1;
+            self.global_symbols.insert(name.clone(), idx);
+            Some(idx)
+        } else {
+            None
+        };
+        
+        // 3. PUSH: Create new FunctionCompiler for this function
+        self.compilers.push(FunctionCompiler::new(name.clone(), arity));
+        
+        // 4. Register parameters as locals (they're already in R0..R(arity-1))
+        for param in &params {
+            self.current().locals.push(Local {
+                name: param.clone(),
+                depth: 0,
+                is_captured: false,
+            });
+        }
+        
+        // 5. Compile the block
+        let body_reg = self.alloc_reg()?;
+        self.compile_block(block, body_reg)?;
+        
+        // 6. Implicit return (if no explicit return was hit)
+        self.emit_abc(OpCode::Return, body_reg, 1, 0);
+        
+        // 7. POP: Finalize the function
+        let mut compiled_func = self.compilers.pop().expect("Compiler stack underflow");
+        compiled_func.max_slots = compiled_func.max_slots.max(compiled_func.reg_top as u16);
+        
+        // 8. Create Function object 
+        let func = memory::Function {
+            name: compiled_func.name,
+            arity: compiled_func.arity,
+            max_slots: compiled_func.max_slots,
+            chunk: compiled_func.bytecode,
+            constants: compiled_func.constants,
+        };
+        
+        // 9. Store function in GLOBAL prototypes list (flat architecture)
+        let global_func_idx = self.prototypes.len();
+        self.prototypes.push(func);
+        
+        // 10. Emit Closure instruction with GLOBAL function index
+        let target_reg = self.alloc_reg()?;
+        self.emit_abx(OpCode::Closure, target_reg, global_func_idx as u16);
+        
+        // 11. Define global using pre-reserved slot
+        if let Some(idx) = global_idx {
+            self.emit_abx(OpCode::DefGlobalLet, target_reg, idx);
+        }
+        
         Ok(target_reg)
     }
 
@@ -579,8 +747,9 @@ impl Compiler {
                     // Hygiene: Free arguments (Stack LIFO)
                     // We allocated `arg_count` registers on top of `reg`.
                     for _ in 0..arg_count {
-                         // Verify we are freeing the top
-                         self.free_reg(self.reg_top - 1);
+                         // Extract reg_top first to avoid double mutable borrow
+                         let top = self.current().reg_top - 1;
+                         self.free_reg(top);
                     }
                 }
                 _ => {
@@ -623,18 +792,26 @@ impl Compiler {
             }
             Rule::if_expr => self.compile_if(inner),
             Rule::while_expr => self.compile_while(inner),
+            Rule::fn_expr => self.compile_fn_expr(inner),
             Rule::identifier => {
                 let name = inner.as_str().to_string();
                 let reg = self.alloc_reg()?;
 
-                // Lookup global index
-                let idx = *self.global_symbols.get(&name).ok_or_else(|| {
-                    CompilerError::UnknownOperator(format!("Undefined global variable: {}", name))
-                })?;
+                // 1. First check locals (including function parameters)
+                if let Some(local_reg) = self.resolve_local(&name) {
+                    // Local variable - just MOVE from its register
+                    self.emit_abc(OpCode::Move, reg, local_reg, 0);
+                    Ok(reg)
+                } else {
+                    // 2. Fall back to global lookup
+                    let idx = *self.global_symbols.get(&name).ok_or_else(|| {
+                        CompilerError::UnknownOperator(format!("Undefined variable: {}", name))
+                    })?;
 
-                // GetGlobal R[reg], Slot[idx]
-                self.emit_abx(OpCode::GetGlobal, reg, idx);
-                Ok(reg)
+                    // GetGlobal R[reg], Slot[idx]
+                    self.emit_abx(OpCode::GetGlobal, reg, idx);
+                    Ok(reg)
+                }
             }
             Rule::expr => self.compile_expr(inner),
             _ => Err(CompilerError::UnexpectedRule(format!(
@@ -707,45 +884,18 @@ impl Compiler {
         Ok(reg)
     }
 
-    // --- Helpers ---
+    // --- Helpers (Delegate to Current FunctionCompiler) ---
 
     fn alloc_reg(&mut self) -> Result<u8, CompilerError> {
-        let r = self.reg_top;
-        if r == 255 {
-            return Err(CompilerError::RegisterOverflow);
-        }
-        self.reg_top += 1;
-        
-        // Track High Water Mark
-        if (self.reg_top as u16) > self.max_reg_touched {
-            self.max_reg_touched = self.reg_top as u16;
-        }
-
-        Ok(r)
+        self.current().alloc_reg()
     }
 
     fn free_reg(&mut self, reg: u8) {
-        // Register Hygiene: Ensure we are freeing the most recently allocated register.
-        assert_eq!(
-            reg,
-            self.reg_top - 1,
-            "Register Hygiene Error: Tried to free {} but top is {}",
-            reg,
-            self.reg_top
-        );
-        self.reg_top -= 1;
+        self.current().free_reg(reg)
     }
 
-    // Rudimentary reset for expression boundaries needed usually
-
     fn add_constant(&mut self, val: Value) -> usize {
-        if let Some(idx) = self.constants.iter().position(|c| c == &val) {
-            return idx;
-        }
-
-        // Add new constant
-        self.constants.push(val);
-        self.constants.len() - 1
+        self.current().add_constant(val)
     }
 
     fn intern_string(&mut self, s: &str) -> u32 {
@@ -753,10 +903,32 @@ impl Compiler {
     }
 
     fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {
-        self.bytecode.push(encode_abc(op.as_u8(), a, b, c));
+        self.current().emit_abc(op, a, b, c)
     }
 
     fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) {
-        self.bytecode.push(encode_abx(op.as_u8(), a, bx));
+        self.current().emit_abx(op, a, bx)
+    }
+    
+    /// Resolve a local variable by name. Returns Some(register_index) if found, None otherwise.
+    /// CRITICAL: Iterate in reverse (LIFO) so inner scopes shadow outer scopes.
+    fn resolve_local(&self, name: &str) -> Option<u8> {
+        let current = self.current_ref();
+        for (i, local) in current.locals.iter().enumerate().rev() {
+            if local.name == name {
+                return Some(i as u8);
+            }
+        }
+        None
+    }
+    
+    // --- Scope Helpers (Delegate) ---
+    
+    fn begin_scope(&mut self) {
+        self.current().scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.current().scope_depth -= 1;
     }
 }

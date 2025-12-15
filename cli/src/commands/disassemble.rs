@@ -29,7 +29,8 @@ pub fn disassemble_file(path: &str) -> Result<()> {
 
         match OpCode::from_u8(op_byte) {
             Some(OpCode::LoadConst) => {
-                let val = compiler.constants.get(bx as usize);
+                let main_func = compiler.compilers.last().expect("No main compiler");
+                let val = main_func.constants.get(bx as usize);
                 println!("{:04} {:<12} R{}, K[{}] ({:?})", i, name, a, bx, val);
             }
             Some(OpCode::Return) => {

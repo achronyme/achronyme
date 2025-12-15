@@ -55,6 +55,8 @@ pub enum OpCode {
     Return = 54,
     /// Call: R[A] = Call(R[B], R[B+1]...R[B+C-1])
     Call = 55,
+    /// Closure: R[A] = Closure(K[Bx]) - Load function from constant pool
+    Closure = 56,
 
     // ===== Global Variables =====
     /// Define mutable global: Global[K[Bx]] = R[A]
@@ -104,6 +106,7 @@ impl OpCode {
             22 => Some(OpCode::Gt),
             54 => Some(OpCode::Return),
             55 => Some(OpCode::Call),
+            56 => Some(OpCode::Closure),
             60 => Some(OpCode::Jump),
             61 => Some(OpCode::JumpIfFalse),
             98 => Some(OpCode::DefGlobalVar),
@@ -143,6 +146,7 @@ impl OpCode {
             OpCode::Gt => "GT",
             OpCode::Return => "RETURN",
             OpCode::Call => "CALL",
+            OpCode::Closure => "CLOSURE",
             OpCode::Jump => "JUMP",
             OpCode::JumpIfFalse => "JUMP_IF_FALSE",
             OpCode::DefGlobalVar => "DEF_GLOBAL_VAR",

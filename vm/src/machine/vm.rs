@@ -22,6 +22,9 @@ pub struct VM {
     pub interner: HashMap<String, u32>,
     pub natives: Vec<NativeObj>,
     
+    /// Function prototypes (handles) for O(1) CLOSURE lookup
+    pub prototypes: Vec<u32>,
+    
     // Passive Debug Symbols (Sidecar)
     pub debug_symbols: Option<HashMap<u16, String>>,
 }
@@ -41,6 +44,7 @@ impl VM {
             globals: Vec::with_capacity(64),
             interner: HashMap::new(),
             natives: Vec::new(),
+            prototypes: Vec::new(),
             debug_symbols: None,
         };
 
@@ -212,6 +216,19 @@ impl VM {
                     let val = self.get_reg(base, a);
                     // Simple debug print for now
                     println!("{:?}", val);
+                }
+
+                Closure => {
+                    let a = decode_a(instruction) as usize;
+                    let bx = decode_bx(instruction) as usize;
+                    
+                    // O(1) direct lookup into prototypes table
+                    let func_val = if bx < self.prototypes.len() {
+                        Value::function(self.prototypes[bx])
+                    } else {
+                        Value::nil() // Error: invalid prototype index
+                    };
+                    self.set_reg(base, a, func_val);
                 }
 
                 _ => {
