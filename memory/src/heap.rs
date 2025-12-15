@@ -9,6 +9,7 @@ pub type RealTensor = ();
 pub struct Function {
     pub name: String,
     pub arity: u8,
+    pub max_slots: u16, // <--- NEW: Peak register usage
     pub chunk: Vec<u32>,
     pub constants: Vec<Value>,
 }
@@ -235,6 +236,7 @@ impl Heap {
                 self.functions.data[i] = Function {
                     name: String::new(),
                     arity: 0,
+                    max_slots: 0,
                     chunk: vec![],
                     constants: vec![],
                 };

@@ -3,43 +3,57 @@
 ## 1. Virtual Machine Optimizations
 
 ### Critical Performance
-- [ ] **Remove Stack Bounds Checking**: The `set_reg` and `get_reg` methods in `VM` use `Vec::get` and `Vec::resize`, which incur runtime bounds checking overhead per instruction.
-    - *Target*: Use `unsafe` raw pointers or a pre-allocated fixed-size array (`[Value; STACK_MAX]`) for the stack once the VM is stable.
+- [x] **Remove Stack Bounds Checking**: The `set_reg` and `get_reg` methods in `VM` use `Vec::get` and `Vec::resize`.
+    - *Completed*: Using `unsafe` with pre-allocated fixed-size stack (64KB). `debug_assert!` for development safety.
 - [ ] **Instruction Dispatch**: The main loop uses a Rust `match` statement.
-    - *Target*: Investigate "Computed GOTO" or "Threaded Code" techniques if Rust stable allows it (or via assembly shim) to reduce branch prediction misses.
+    - *Target*: Investigate "Computed GOTO" or "Threaded Code".
 
 ### Arithmetic & Types
-- [ ] **Inline Caching for Binary Ops**: The `binary_op` function checks types (Number vs Complex) on every execution.
-    - *Target*: Implement monomorphic inline caching (MIC) or specialized opcodes (e.g., `ADD_FLOAT`, `ADD_COMPLEX`) emitted by the compiler when types can be inferred.
+- [ ] **Inline Caching for Binary Ops**: Check types (Number vs Complex) incurs overhead.
+    - *Target*: Implement monomorphic inline caching (MIC) or specialized opcodes.
 
 ## 2. Memory Management (GC & Heap)
 
-- [ ] **String Interning Overhead**: The current `interner` duplicates strings (one in `StringInterner`, one in `Heap` arena).
-    - *Target*: Unify storage so the Interner just holds references/indices to the Heap's string arena to reduce memory footprint.
-- [ ] **GC Trigger Strategy**: `should_collect()` is currently based on a naive byte threshold.
-    - *Target*: Implement a more sophisticated stress metric (allocations per cycle) or generational logic (Nursery/Tenured) to prevent "GC thrashing".
+- [ ] **GC Trigger Strategy**: `should_collect()` uses a naive byte threshold.
+    - *Target*: Implement stress metric (allocations per cycle) or generational logic.
 - [ ] **Map & List Implementation**:
-    - *Target*: Maps are currently using Rust's `HashMap`. Requires a custom definition to interact properly with the GC (tracing keys/values).
-    - *Target*: Lists are `Vec<Value>`. They need efficient resizing and potentially a specialized array type for numeric-only lists (bytearrays/floatarrays).
+    - *Target*: Maps (custom definition tracing keys/values) and Lists (efficient resizing).
 
-## 3. Compiler Improvements
+## 3. Compiler & Features
 
-### Register Allocation (High Priority)
-- [ ] **Register Reuse (Hygiene)**: The current allocator (`alloc_reg`) simply increments `reg_top` until it hits 255. It does not free registers when scopes end.
-    - *Target*: Implement a "Simple Liveness Analysis" or Stack-based tracking within the register allocator. When a variable goes out of scope (or a temp is consumed), its register index should be marked as "free" for reuse.
-- [ ] **Constant Pool Deduplication**: While implemented for numbers, ensure string constants and complex numbers are strictly deduplicated across the entire compilation unit.
+### Architecture & Debugging (Priority)
+- [x] **Debug Symbol Table**: The move to O(1) globals removed variable names from runtime errors.
+    - *Completed*: Implemented sidecar debug symbol map with binary serialization.
 
-### Architecture & Debugging
-- [ ] **Debug Symbol Table**: The move to O(1) globals removed variable names from the VM runtime.
-    - *Target*: Create a separate "Debug Symbol Map" (Index -> Name) used only during error reporting (panics) and disassembly, so errors say "Undefined variable 'x'" instead of "Global index 5 out of bounds".
-- [ ] **Control Flow (Loops)**: `if/else` logic is complete.
-    - *Target*: Implement `while` and `for` loops using the existing `Jump` opcodes.
-- [ ] **Closures & Upvalues**: `CallFrame` has a `closure` field, but the compiler does not yet support capturing local variables from outer scopes (Upvalues).
-    - *Target*: Implement `make_closure`, `get_upvalue`, and `set_upvalue` opcodes.
+### Language Features
+- [x] **User-Defined Functions (`fn`)**: Implemented with flat prototype architecture.
+    - Recursion, nested functions, anonymous functions all supported.
+    - `return` statement for explicit returns.
+- [x] **String Literals**: Implemented with interner and binary serialization.
+- [ ] **Control Flow (For Loops)**: Syntactic sugar for `while`.
+- [ ] **Closures & Upvalues**: `CallFrame` has a `closure` field, but capturing is missing.
+    - *Target*: Implement `make_closure`, `get_upvalue`, `set_upvalue`.
+- [ ] **Escaped Characters**: Current parser does not support escaped quotes (`\"`).
+    - *Target*: Update `grammar.pest` atoms to handle escape sequences.
 
 ## 4. Native & Standard Library
 
 - [ ] **FFI/Native Interface**: The `NativeFn` signature is rigid.
-    - *Target*: Create a safer binding macro system to automatically convert `Value` to Rust types (f64, string, etc.) inside native functions without manual unwrapping.
+    - *Target*: Safer binding macros.
 - [ ] **Serialization**:
-    - *Target*: Complete binary format serialization for Strings and Complex numbers (currently returns error in `run.rs`).
+    - *Target*: Complete binary format serialization (`.achb`) for Complex numbers.
+- [ ] **Pretty Printing (VM::val_to_string)**:
+    - *Target*: Add support for `Map` type once implemented.
+
+## 5. Security & Architecture (PR3 Recommendations)
+
+### Security
+- [ ] **Allocation Bomb Protection (DoS)**: Validate sizes during binary deserialization.
+    - *Risk*: Malicious `.achb` file could declare 4GB name_len with 1KB file, causing OOM.
+    - *Target*: Add sanity checks: `if name_len > 1024 { return Err("Name too long"); }`.
+
+### Architecture
+- [ ] **Decouple Loader**: `cli/src/commands/run.rs` knows too many VM internals.
+    - *Target*: Create `vm.load_executable(reader: impl Read)` method. CLI should be "dumb".
+- [ ] **Named Constants for Tags**: Replace magic numbers (`0`, `1`, `255`) in serialization.
+    - *Target*: Define `CONST_NUMBER = 0`, `CONST_STRING = 1` shared between compiler/VM.

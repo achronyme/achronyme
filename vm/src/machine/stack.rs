@@ -7,17 +7,27 @@ pub trait StackOps {
 }
 
 impl StackOps for super::vm::VM {
-    #[inline]
+    #[inline(always)]
     fn get_reg(&self, base: usize, reg: usize) -> Value {
-        self.stack.get(base + reg).cloned().unwrap_or(Value::nil())
+        // Safety Sandwich: Bounds check in debug builds only
+        debug_assert!(
+            base + reg < self.stack.len(),
+            "VM OOB Read: Index {} >= Len {}",
+            base + reg,
+            self.stack.len()
+        );
+        unsafe { *self.stack.get_unchecked(base + reg) }
     }
 
-    #[inline]
+    #[inline(always)]
     fn set_reg(&mut self, base: usize, reg: usize, val: Value) {
-        let idx = base + reg;
-        if idx >= self.stack.len() {
-            self.stack.resize(idx + 1, Value::nil());
-        }
-        self.stack[idx] = val;
+        // Safety Sandwich: Bounds check in debug builds only
+        debug_assert!(
+            base + reg < self.stack.len(),
+            "VM OOB Write: Index {} >= Len {}",
+            base + reg,
+            self.stack.len()
+        );
+        unsafe { *self.stack.get_unchecked_mut(base + reg) = val; }
     }
 }

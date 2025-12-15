@@ -29,7 +29,7 @@ complex    = @{ number ~ "i" }
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
-keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" }
+keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" }
 
 // 1. Define Literals
 nil_lit   = { "nil" }
@@ -37,20 +37,32 @@ true_lit  = { "true" }
 false_lit = { "false" }
 
 // 2. Control Flow Expressions
-block = { "{" ~ stmt* ~ "}" }
+block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
 if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
+while_expr = { "while" ~ expr ~ block }
+
+// 3. Function Definition (parsed as expression for first-class functions)
+param_list = { identifier ~ ("," ~ identifier)* }
+fn_expr = { "fn" ~ identifier? ~ "(" ~ param_list? ~ ")" ~ block }
 
 atom = {
     nil_lit
   | true_lit
   | false_lit
   | if_expr
+  | while_expr
+  | fn_expr
   | block
   | complex
   | number
+  | string
   | identifier
   | "(" ~ expr ~ ")"
 }
+
+// String Literal
+string = ${ "\"" ~ inner ~ "\"" }
+inner  = @{ (!"\"" ~ ANY)* }
 
 // ============================================================================
 // LAYER 2: POSTFIX EXPRESSIONS (The Chaining Layer)
@@ -59,17 +71,16 @@ atom = {
 // It matches an Atom followed by ZERO or more suffixes.
 // SCALABILITY: When adding function calls `()` or indexing `[]`, add them to 
 // search `postfix_op` below (commented out for now).
-// postfix_expr = { atom ~ (postfix_op)* }
-postfix_expr = { atom }
+// 2. POSTFIX: Operations that attach to the RIGHT of an atom (calls, index).
+// ----------------------------------------------------------------------------
+postfix_expr = { atom ~ (postfix_op)* }
 
-// Currently empty, but structured for expansion.
-// postfix_op = _{ 
-//    call_op 
-//    | index_op 
-// }
+postfix_op = _{ 
+   call_op 
+   // | index_op 
+}
 
-// Placeholder for future function calls (commented out until needed)
-// call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 
 // ============================================================================
 // LAYER 3: PREFIX EXPRESSIONS (Unary Operators)
@@ -120,8 +131,11 @@ stmt = {
   | mut_decl
   | assignment
   | print_stmt
+  | return_stmt
   | expr
 }
+
+return_stmt = { "return" ~ expr? }
 
 // Optional semicolon support for hygiene
 stmt_terminator = _{ ";" }

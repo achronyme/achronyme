@@ -1,0 +1,9 @@
+fn outer() {
+    fn inner() {
+        print("Inner function")
+        return 42
+    }
+    return inner()
+}
+
+print(outer())

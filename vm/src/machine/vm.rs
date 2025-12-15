@@ -21,18 +21,31 @@ pub struct VM {
     pub globals: Vec<GlobalEntry>,
     pub interner: HashMap<String, u32>,
     pub natives: Vec<NativeObj>,
+    
+    /// Function prototypes (handles) for O(1) CLOSURE lookup
+    pub prototypes: Vec<u32>,
+    
+    // Passive Debug Symbols (Sidecar)
+    pub debug_symbols: Option<HashMap<u16, String>>,
 }
+
+pub const STACK_MAX: usize = 65_536;
 
 impl VM {
     /// Create a new VM instance with bootstrapped native functions
     pub fn new() -> Self {
+        // Pre-allocate fixed-size stack
+        let stack = vec![Value::nil(); STACK_MAX];
+        
         let mut vm = Self {
             heap: Heap::new(),
-            stack: Vec::with_capacity(2048),
+            stack,
             frames: Vec::with_capacity(64),
             globals: Vec::with_capacity(64),
             interner: HashMap::new(),
             natives: Vec::new(),
+            prototypes: Vec::new(),
+            debug_symbols: None,
         };
 
         // Bootstrap native functions
@@ -41,8 +54,33 @@ impl VM {
         vm
     }
 
+    /// Helper to format values for display (Clean UX)
+    pub fn val_to_string(&self, val: &Value) -> String {
+        match val {
+            v if v.is_string() => {
+                let handle = v.as_handle().unwrap();
+                self.heap.get_string(handle).cloned().unwrap_or("<bad string>".into())
+            },
+            v if v.is_number() => format!("{}", v.as_number().unwrap()),
+            v if v.is_bool() => format!("{}", v.as_bool().unwrap()),
+            v if v.is_nil() => "nil".to_string(),
+            v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
+            v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
+            _ => format!("{:?}", val), // Fallback
+        }
+    }
+
     /// Main interpretation loop
     pub fn interpret(&mut self) -> Result<(), RuntimeError> {
+        // Validation: Check checking initial frame fits
+        if let Some(frame) = self.frames.last() {
+            let func = self.heap.get_function(frame.closure)
+                .ok_or(RuntimeError::FunctionNotFound)?;
+             if frame.base + (func.max_slots as usize) >= STACK_MAX {
+                 return Err(RuntimeError::StackOverflow);
+             }
+        }
+
         while !self.frames.is_empty() {
             // GC Check
             if self.heap.should_collect() {
@@ -180,6 +218,19 @@ impl VM {
                     println!("{:?}", val);
                 }
 
+                Closure => {
+                    let a = decode_a(instruction) as usize;
+                    let bx = decode_bx(instruction) as usize;
+                    
+                    // O(1) direct lookup into prototypes table
+                    let func_val = if bx < self.prototypes.len() {
+                        Value::function(self.prototypes[bx])
+                    } else {
+                        Value::nil() // Error: invalid prototype index
+                    };
+                    self.set_reg(base, a, func_val);
+                }
+
                 _ => {
                     return Err(RuntimeError::Unknown(format!(
                         "Unimplemented opcode {:?}",
@@ -189,5 +240,54 @@ impl VM {
             }
         }
         Ok(())
+    }
+
+    /// Sidecar Loader: Parses debug symbols from raw bytes
+    pub fn load_debug_section(&mut self, bytes: &[u8]) {
+        if bytes.len() < 4 {
+            return; // Not enough bytes for Header + Count
+        }
+
+        let mut cursor = 0;
+
+        // 1. Check Magic (0xDB 0x67)
+        if bytes[cursor] != 0xDB || bytes[cursor + 1] != 0x67 {
+            return; // Invalid or missing section
+        }
+        cursor += 2;
+
+        // 2. Read Count
+        let count = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]);
+        cursor += 2;
+
+        let mut map = HashMap::new();
+
+        for _ in 0..count {
+            if cursor + 4 > bytes.len() {
+                break; // Truncated
+            }
+
+            // Global Index
+            let global_idx = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]);
+            cursor += 2;
+
+            // Name Length
+            let name_len = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]) as usize;
+            cursor += 2;
+
+            if cursor + name_len > bytes.len() {
+                break; // Truncated name
+            }
+
+            // Name Bytes
+            let name_bytes = &bytes[cursor..cursor + name_len];
+            cursor += name_len;
+
+            if let Ok(name) = std::str::from_utf8(name_bytes) {
+                map.insert(global_idx, name.to_string());
+            }
+        }
+
+        self.debug_symbols = Some(map);
     }
 }

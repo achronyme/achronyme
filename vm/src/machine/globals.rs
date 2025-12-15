@@ -55,9 +55,16 @@ impl GlobalOps for super::vm::VM {
             OpCode::GetGlobal => {
                 let a = decode_a(instruction) as usize;
                 if bx >= self.globals.len() {
+                    let name = self
+                        .debug_symbols
+                        .as_ref()
+                        .and_then(|map| map.get(&(bx as u16)))
+                        .map(|s| format!("'{}'", s))
+                        .unwrap_or_else(|| format!("Index {}", bx));
+
                     return Err(RuntimeError::Unknown(format!(
-                        "Global index {} out of bounds (Uninitialized?)",
-                        bx
+                        "Undefined global variable: {} (Index {})",
+                        name, bx
                     )));
                 }
                 let entry = &self.globals[bx];
@@ -69,9 +76,16 @@ impl GlobalOps for super::vm::VM {
                 let val = self.get_reg(base, a);
 
                 if bx >= self.globals.len() {
+                     let name = self
+                        .debug_symbols
+                        .as_ref()
+                        .and_then(|map| map.get(&(bx as u16)))
+                        .map(|s| format!("'{}'", s))
+                        .unwrap_or_else(|| format!("Index {}", bx));
+
                     return Err(RuntimeError::Unknown(format!(
-                        "Global index {} out of bounds (Uninitialized?)",
-                        bx
+                        "Undefined global variable: {} (Index {})",
+                        name, bx
                     )));
                 }
 
@@ -79,9 +93,16 @@ impl GlobalOps for super::vm::VM {
                 if entry.mutable {
                     entry.value = val;
                 } else {
+                     let name = self
+                        .debug_symbols
+                        .as_ref()
+                        .and_then(|map| map.get(&(bx as u16)))
+                        .map(|s| format!("'{}'", s))
+                        .unwrap_or_else(|| format!("Index {}", bx));
+
                     return Err(RuntimeError::Unknown(format!(
-                        "Cannot assign to immutable global at index {}",
-                        bx
+                        "Cannot assign to immutable global: {} (Index {})",
+                        name, bx
                     )));
                 }
             }

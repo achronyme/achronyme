@@ -29,10 +29,27 @@ pub fn run_file(path: &str) -> Result<()> {
 
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)?;
-        if &magic != b"ACH\x07" {
+        if &magic != b"ACH\x08" {
             return Err(anyhow::anyhow!("Invalid binary magic or version"));
         }
 
+        let max_slots = file.read_u16::<LittleEndian>()?;
+
+        // --- String Table ---
+        let str_count = file.read_u32::<LittleEndian>()?;
+        let mut strings = Vec::with_capacity(str_count as usize);
+
+        for _ in 0..str_count {
+            let len = file.read_u32::<LittleEndian>()?;
+            let mut bytes = vec![0u8; len as usize];
+            file.read_exact(&mut bytes)?;
+            
+            let s = String::from_utf8(bytes)
+                .map_err(|_| anyhow::anyhow!("Invalid UTF-8 in binary"))?;
+            strings.push(s);
+        }
+
+        // --- Constants ---
         let const_count = file.read_u32::<LittleEndian>()?;
         let mut constants = Vec::with_capacity(const_count as usize);
         for _ in 0..const_count {
@@ -43,19 +60,67 @@ pub fn run_file(path: &str) -> Result<()> {
                     constants.push(Value::number(n));
                 }
                 1 => {
-                    let len = file.read_u32::<LittleEndian>()?;
-                    let mut bytes = vec![0u8; len as usize];
-                    file.read_exact(&mut bytes)?;
-                    let _s = String::from_utf8(bytes)
-                        .map_err(|_| anyhow::anyhow!("Invalid UTF-8 string constant"))?;
-                    return Err(anyhow::anyhow!(
-                        "String deserialization not yet supported with interning"
-                    ));
+                    // Read Handle -> Create Value
+                    let handle = file.read_u32::<LittleEndian>()?;
+                    constants.push(Value::string(handle));
                 }
                 _ => return Err(anyhow::anyhow!("Unknown constant tag: {}", tag)),
             }
         }
 
+        // --- Prototypes (Function Table) ---
+        let proto_count = file.read_u32::<LittleEndian>()?;
+        let mut proto_funcs = Vec::with_capacity(proto_count as usize);
+        for _ in 0..proto_count {
+            // Name
+            let name_len = file.read_u32::<LittleEndian>()? as usize;
+            let mut name_bytes = vec![0u8; name_len];
+            file.read_exact(&mut name_bytes)?;
+            let name = String::from_utf8(name_bytes)
+                .map_err(|_| anyhow::anyhow!("Invalid UTF-8 in function name"))?;
+            
+            // Arity and max_slots
+            let arity = file.read_u8()?;
+            let proto_max_slots = file.read_u16::<LittleEndian>()?;
+            
+            // Proto constants
+            let proto_const_count = file.read_u32::<LittleEndian>()?;
+            let mut proto_constants = Vec::with_capacity(proto_const_count as usize);
+            for _ in 0..proto_const_count {
+                let tag = file.read_u8()?;
+                match tag {
+                    0 => {
+                        let n = file.read_f64::<LittleEndian>()?;
+                        proto_constants.push(Value::number(n));
+                    }
+                    1 => {
+                        let handle = file.read_u32::<LittleEndian>()?;
+                        proto_constants.push(Value::string(handle));
+                    }
+                    255 => {
+                        proto_constants.push(Value::nil());
+                    }
+                    _ => return Err(anyhow::anyhow!("Unknown proto constant tag: {}", tag)),
+                }
+            }
+            
+            // Proto bytecode
+            let proto_code_len = file.read_u32::<LittleEndian>()?;
+            let mut proto_bytecode = Vec::with_capacity(proto_code_len as usize);
+            for _ in 0..proto_code_len {
+                proto_bytecode.push(file.read_u32::<LittleEndian>()?);
+            }
+            
+            proto_funcs.push(Function {
+                name,
+                arity,
+                max_slots: proto_max_slots,
+                chunk: proto_bytecode,
+                constants: proto_constants,
+            });
+        }
+
+        // --- Main Bytecode ---
         let code_len = file.read_u32::<LittleEndian>()?;
         let mut bytecode = Vec::with_capacity(code_len as usize);
         for _ in 0..code_len {
@@ -63,9 +128,25 @@ pub fn run_file(path: &str) -> Result<()> {
         }
 
         let mut vm = VM::new();
+        // Sync VM Heap
+        vm.heap.import_strings(strings);
+        
+        // Load prototypes into VM
+        for proto in proto_funcs {
+            let handle = vm.heap.alloc_function(proto);
+            vm.prototypes.push(handle);
+        }
+
+        // Try load debug symbols (Sidecar)
+        let mut debug_bytes = Vec::new();
+        // Read until EOF
+        if file.read_to_end(&mut debug_bytes).is_ok() && !debug_bytes.is_empty() {
+             vm.load_debug_section(&debug_bytes);
+        }
         let func = Function {
             name: "main".to_string(),
             arity: 0,
+            max_slots,
             chunk: bytecode,
             constants,
         };
@@ -74,6 +155,7 @@ pub fn run_file(path: &str) -> Result<()> {
             closure: func_idx,
             ip: 0,
             base: 0,
+            dest_reg: 0, // Top-level script, unused
         });
 
         vm.interpret()
@@ -92,12 +174,30 @@ pub fn run_file(path: &str) -> Result<()> {
         let mut vm = VM::new();
 
         // Transfer strings from compiler to VM
-        vm.heap.import_strings(compiler.interner.strings); // UPDATED REFERENCE
+        vm.heap.import_strings(compiler.interner.strings);
+        
+        // Transfer Debug Symbols (Source Mode)
+        let mut debug_map = std::collections::HashMap::new();
+        for (name, idx) in &compiler.global_symbols {
+            debug_map.insert(*idx, name.clone());
+        }
+        vm.debug_symbols = Some(debug_map);
+
+        // Get constants and max_slots from the main function compiler
+        let main_func = compiler.compilers.last().expect("No main compiler");
+        
+        // Allocate ALL prototypes on heap (flat global architecture)
+        for proto in &compiler.prototypes {
+            let handle = vm.heap.alloc_function(proto.clone());
+            vm.prototypes.push(handle);
+        }
+        
         let func = Function {
             name: "main".to_string(),
             arity: 0,
             chunk: bytecode,
-            constants: compiler.constants,
+            constants: main_func.constants.clone(),
+            max_slots: main_func.max_slots,
         };
         let func_idx = vm.heap.alloc_function(func);
 
@@ -105,6 +205,7 @@ pub fn run_file(path: &str) -> Result<()> {
             closure: func_idx,
             ip: 0,
             base: 0,
+            dest_reg: 0, // Top-level script, unused
         });
 
         vm.interpret()
