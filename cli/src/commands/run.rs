@@ -117,6 +117,7 @@ pub fn run_file(path: &str) -> Result<()> {
                 max_slots: proto_max_slots,
                 chunk: proto_bytecode,
                 constants: proto_constants,
+                upvalue_info: vec![],
             });
         }
 
@@ -149,10 +150,16 @@ pub fn run_file(path: &str) -> Result<()> {
             max_slots,
             chunk: bytecode,
             constants,
+            upvalue_info: vec![],
         };
         let func_idx = vm.heap.alloc_function(func);
+        let closure_idx = vm.heap.alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        });
+        
         vm.frames.push(CallFrame {
-            closure: func_idx,
+            closure: closure_idx,
             ip: 0,
             base: 0,
             dest_reg: 0, // Top-level script, unused
@@ -198,11 +205,16 @@ pub fn run_file(path: &str) -> Result<()> {
             chunk: bytecode,
             constants: main_func.constants.clone(),
             max_slots: main_func.max_slots,
+            upvalue_info: vec![],
         };
         let func_idx = vm.heap.alloc_function(func);
+        let closure_idx = vm.heap.alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        });
 
         vm.frames.push(CallFrame {
-            closure: func_idx,
+            closure: closure_idx,
             ip: 0,
             base: 0,
             dest_reg: 0, // Top-level script, unused

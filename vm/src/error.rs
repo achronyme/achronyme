@@ -10,6 +10,8 @@ pub enum RuntimeError {
     ArityMismatch(String),
     AssertionFailed,
     Unknown(String),
+    OutOfBounds(String),
+    SystemError(String),
 }
 
 impl From<String> for RuntimeError {
