@@ -1,7 +1,8 @@
 fn outer() {
+    let secreto = 42
     fn inner() {
-        print("Inner function")
-        return 42
+        print(secreto)
+        return secreto
     }
     return inner()
 }

@@ -15,6 +15,12 @@ pub struct Local {
     pub is_captured: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpvalueInfo {
+    pub is_local: bool,
+    pub index: u8,
+}
+
 /// State specific to ONE function being compiled
 pub struct FunctionCompiler {
     pub name: String,
@@ -23,6 +29,7 @@ pub struct FunctionCompiler {
     pub scope_depth: u32,
     pub bytecode: Vec<u32>,
     pub constants: Vec<Value>,
+    pub upvalues: Vec<UpvalueInfo>,
     
     // Register allocator state
     pub reg_top: u8,
@@ -40,6 +47,7 @@ impl FunctionCompiler {
             scope_depth: 0,
             bytecode: Vec::new(),
             constants: Vec::new(),
+            upvalues: Vec::new(),
             reg_top: arity,        // Reserve R0..R(arity-1) for arguments
             max_slots: arity as u16,
         }
@@ -71,6 +79,7 @@ impl FunctionCompiler {
         self.reg_top -= 1;
     }
 
+
     fn add_constant(&mut self, val: Value) -> usize {
         if let Some(idx) = self.constants.iter().position(|c| c == &val) {
             return idx;
@@ -79,12 +88,31 @@ impl FunctionCompiler {
         self.constants.len() - 1
     }
 
+    fn add_upvalue(&mut self, is_local: bool, index: u8) -> u8 {
+        for (i, upval) in self.upvalues.iter().enumerate() {
+            if upval.is_local == is_local && upval.index == index {
+                return i as u8;
+            }
+        }
+        self.upvalues.push(UpvalueInfo { is_local, index });
+        (self.upvalues.len() - 1) as u8
+    }
+
     fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {
         self.bytecode.push(encode_abc(op.as_u8(), a, b, c));
     }
 
     fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) {
         self.bytecode.push(encode_abx(op.as_u8(), a, bx));
+    }
+
+    fn resolve_local(&self, name: &str) -> Option<u8> {
+        for (i, local) in self.locals.iter().enumerate().rev() {
+            if local.name == name {
+                return Some(i as u8);
+            }
+        }
+        None
     }
 }
 
@@ -631,7 +659,10 @@ impl Compiler {
             arity: compiled_func.arity,
             max_slots: compiled_func.max_slots,
             chunk: compiled_func.bytecode,
+
             constants: compiled_func.constants,
+            // Convert UpvalueInfo struct to raw bytes [is_local, index, ...]
+            upvalue_info: compiled_func.upvalues.iter().flat_map(|u| vec![u.is_local as u8, u.index]).collect(),
         };
         
         // 9. Store function in GLOBAL prototypes list (flat architecture)
@@ -801,9 +832,14 @@ impl Compiler {
                 if let Some(local_reg) = self.resolve_local(&name) {
                     // Local variable - just MOVE from its register
                     self.emit_abc(OpCode::Move, reg, local_reg, 0);
+
+                    Ok(reg)
+                } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, &name) {
+                    // 2. Upvalue lookup
+                    self.emit_abx(OpCode::GetUpvalue, reg, upval_idx as u16);
                     Ok(reg)
                 } else {
-                    // 2. Fall back to global lookup
+                    // 3. Fall back to global lookup
                     let idx = *self.global_symbols.get(&name).ok_or_else(|| {
                         CompilerError::UnknownOperator(format!("Undefined variable: {}", name))
                     })?;
@@ -911,14 +947,32 @@ impl Compiler {
     }
     
     /// Resolve a local variable by name. Returns Some(register_index) if found, None otherwise.
-    /// CRITICAL: Iterate in reverse (LIFO) so inner scopes shadow outer scopes.
     fn resolve_local(&self, name: &str) -> Option<u8> {
-        let current = self.current_ref();
-        for (i, local) in current.locals.iter().enumerate().rev() {
-            if local.name == name {
-                return Some(i as u8);
-            }
+        self.current_ref().resolve_local(name)
+    }
+
+    fn resolve_upvalue(&mut self, compiler_idx: usize, name: &str) -> Option<u8> {
+        if compiler_idx == 0 {
+            return None;
         }
+
+        let parent_idx = compiler_idx - 1;
+
+        // 1. Resolve in Parent Local
+        // Use a block to limit borrow scope
+        let local_idx = self.compilers[parent_idx].resolve_local(name);
+        
+        if let Some(idx) = local_idx {
+            // Mark captured
+            self.compilers[parent_idx].locals[idx as usize].is_captured = true;
+            return Some(self.compilers[compiler_idx].add_upvalue(true, idx));
+        }
+
+        // 2. Resolve in Parent Upvalue (Recursive)
+        if let Some(upval_idx) = self.resolve_upvalue(parent_idx, name) {
+            return Some(self.compilers[compiler_idx].add_upvalue(false, upval_idx));
+        }
+
         None
     }
     

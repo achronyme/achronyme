@@ -18,7 +18,7 @@ use vm::opcode::instruction::decode_opcode; // Used in formatting if needed, tho
 // It strictly belongs in `vm` or `cli` utils.
 // I'll make a private helper here for now.
 
-pub fn run_file(path: &str) -> Result<()> {
+pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
     let content = fs::read_to_string(path).unwrap_or_default();
 
     if path.ends_with(".achb") {
@@ -117,6 +117,7 @@ pub fn run_file(path: &str) -> Result<()> {
                 max_slots: proto_max_slots,
                 chunk: proto_bytecode,
                 constants: proto_constants,
+                upvalue_info: vec![],
             });
         }
 
@@ -128,6 +129,7 @@ pub fn run_file(path: &str) -> Result<()> {
         }
 
         let mut vm = VM::new();
+        vm.stress_mode = stress_gc;
         // Sync VM Heap
         vm.heap.import_strings(strings);
         
@@ -149,10 +151,16 @@ pub fn run_file(path: &str) -> Result<()> {
             max_slots,
             chunk: bytecode,
             constants,
+            upvalue_info: vec![],
         };
         let func_idx = vm.heap.alloc_function(func);
+        let closure_idx = vm.heap.alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        });
+        
         vm.frames.push(CallFrame {
-            closure: func_idx,
+            closure: closure_idx,
             ip: 0,
             base: 0,
             dest_reg: 0, // Top-level script, unused
@@ -172,6 +180,7 @@ pub fn run_file(path: &str) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
 
         let mut vm = VM::new();
+        vm.stress_mode = stress_gc;
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);
@@ -198,11 +207,16 @@ pub fn run_file(path: &str) -> Result<()> {
             chunk: bytecode,
             constants: main_func.constants.clone(),
             max_slots: main_func.max_slots,
+            upvalue_info: vec![],
         };
         let func_idx = vm.heap.alloc_function(func);
+        let closure_idx = vm.heap.alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        });
 
         vm.frames.push(CallFrame {
-            closure: func_idx,
+            closure: closure_idx,
             ip: 0,
             base: 0,
             dest_reg: 0, // Top-level script, unused

@@ -50,6 +50,11 @@ pub enum OpCode {
     /// Greater Than: R[A] = R[B] > R[C]
     Gt = 22,
 
+    // ===== Closures =====
+    GetUpvalue = 34,
+    SetUpvalue = 35,
+    CloseUpvalue = 36,
+
     // ===== Functions =====
     /// Return: return R[A]
     Return = 54,
@@ -104,6 +109,9 @@ impl OpCode {
             20 => Some(OpCode::Eq),
             21 => Some(OpCode::Lt),
             22 => Some(OpCode::Gt),
+            34 => Some(OpCode::GetUpvalue),
+            35 => Some(OpCode::SetUpvalue),
+            36 => Some(OpCode::CloseUpvalue),
             54 => Some(OpCode::Return),
             55 => Some(OpCode::Call),
             56 => Some(OpCode::Closure),
@@ -144,6 +152,9 @@ impl OpCode {
             OpCode::Eq => "EQ",
             OpCode::Lt => "LT",
             OpCode::Gt => "GT",
+            OpCode::GetUpvalue => "GET_UPVALUE",
+            OpCode::SetUpvalue => "SET_UPVALUE",
+            OpCode::CloseUpvalue => "CLOSE_UPVALUE",
             OpCode::Return => "RETURN",
             OpCode::Call => "CALL",
             OpCode::Closure => "CLOSURE",

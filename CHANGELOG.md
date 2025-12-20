@@ -17,6 +17,18 @@
 - **Natives**:
     - Funciones `print`, `len`, `typeof`, `assert`, `time`.
     - Arquitectura SSOT (Single Source of Truth) para sincronizar índices VM/Compiler.
+- **Closures & Upvalues**:
+    - Soporte completo para funciones de primera clase con `Closure` objects.
+    - Captura léxica de variables (`Upvalues`) con soporte para estado mutable compartido.
+    - `Upvalue` management: Open (stack) vs Closed (heap) optimizado.
+- **Memory Management (GC Stress Mode)**:
+    - `--stress-gc` flag CLI testing OOM stability.
+    - "Inversion of Control" architecture for safe GC triggering.
+- **Security Hardening**:
+    - **Stack Pinning**: Migración a `Box<[Value]>` para evitar UAF en `open_upvalues`.
+    - **VM Reset**: Limpieza automática de "Zombie Upvalues" en caso de pánico.
+    - **DoS Prevention**: `Result` propagation en lugar de `panic!` en accesos al stack.
+    - **GC Rooting**: Rastreo explícito de `open_upvalues` para evitar corrupción de memoria.
 - **Developer Experience**:
     - **Debug Symbol Table (Sidecar)**: Mapeo de nombres de variables en binarios `.achb` para reportes de error detallados sin penalizar el rendimiento ("Happy Path" O(1)).
     - **Disassembler**: Soporte para mostrar nombres de variables globales en lugar de índices crudos.

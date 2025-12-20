@@ -14,6 +14,9 @@ pub enum Commands {
     Run {
         /// Path to the file (.ach or .achb)
         path: String,
+        /// Force GC on every allocation (Stress Mode)
+        #[arg(long)]
+        stress_gc: bool,
     },
     /// Disassemble a source file or binary
     Disassemble {

@@ -14,10 +14,11 @@
 
 ## 2. Memory Management (GC & Heap)
 
-- [ ] **GC Trigger Strategy**: `should_collect()` uses a naive byte threshold.
-    - *Target*: Implement stress metric (allocations per cycle) or generational logic.
-- [ ] **Map & List Implementation**:
+- [x] **GC Trigger Strategy**: `should_collect()` uses a naive byte threshold.
+    - *Completed*: Implemented "2x Rule" and `stress_mode` validation.
+- [ ] **Map & List Implementation** (Task 3):
     - *Target*: Maps (custom definition tracing keys/values) and Lists (efficient resizing).
+    - *Status*: Next Priority.
 
 ## 3. Compiler & Features
 
@@ -31,8 +32,8 @@
     - `return` statement for explicit returns.
 - [x] **String Literals**: Implemented with interner and binary serialization.
 - [ ] **Control Flow (For Loops)**: Syntactic sugar for `while`.
-- [ ] **Closures & Upvalues**: `CallFrame` has a `closure` field, but capturing is missing.
-    - *Target*: Implement `make_closure`, `get_upvalue`, `set_upvalue`.
+- [x] **Closures & Upvalues**: `CallFrame` has a `closure` field, but capturing is missing.
+    - *Completed*: Implemented `Closure` opcode, `capture_upvalue`, `close_upvalues`, and GC rooting.
 - [ ] **Escaped Characters**: Current parser does not support escaped quotes (`\"`).
     - *Target*: Update `grammar.pest` atoms to handle escape sequences.
 

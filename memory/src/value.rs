@@ -4,7 +4,7 @@ use std::fmt;
 // S EEEE... Q TTT ... Payload ...
 // QNAN = Exponent all 1s + Quiet bit (0x0008000000000000)
 // We use a high base to avoid real QNaNs.
-const QNAN: u64 = 0x7ffc000000000000;
+pub const QNAN: u64 = 0x7ffc000000000000;
 
 // Tags live in bits 32-35 (4 bits)
 // 0 = Double (implicitly, if QNAN bits are not set)
@@ -19,6 +19,7 @@ pub const TAG_FUNCTION: u64 = 7;
 pub const TAG_TENSOR: u64 = 8;
 pub const TAG_COMPLEX: u64 = 9;
 pub const TAG_NATIVE: u64 = 10;
+pub const TAG_CLOSURE: u64 = 11;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -85,6 +86,11 @@ impl Value {
     #[inline]
     pub fn native(handle: u32) -> Self {
         Value::make_obj(TAG_NATIVE, handle)
+    }
+
+    #[inline]
+    pub fn closure(handle: u32) -> Self {
+        Value::make_obj(TAG_CLOSURE, handle)
     }
 
     #[inline]
@@ -160,6 +166,11 @@ impl Value {
     #[inline]
     pub fn is_native(&self) -> bool {
         self.tag() == TAG_NATIVE
+    }
+
+    #[inline]
+    pub fn is_closure(&self) -> bool {
+        self.tag() == TAG_CLOSURE
     }
 
     #[inline]
@@ -253,6 +264,8 @@ impl fmt::Debug for Value {
             write!(f, "Complex({})", self.as_handle().unwrap())
         } else if self.is_native() {
             write!(f, "NativeFn({})", self.as_handle().unwrap())
+        } else if self.is_closure() {
+            write!(f, "Closure({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }

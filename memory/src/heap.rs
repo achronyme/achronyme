@@ -6,12 +6,29 @@ use std::collections::{HashMap, HashSet};
 pub type RealTensor = ();
 
 #[derive(Debug, Clone)]
+pub struct Upvalue {
+    pub location: *mut Value, // Points to stack (Open) or &closed (Closed)
+    pub closed: Value,
+    pub next_open: Option<u32>, // Index into upvalues arena
+}
+
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub function: u32,
+    pub upvalues: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
     pub arity: u8,
     pub max_slots: u16, // <--- NEW: Peak register usage
     pub chunk: Vec<u32>,
     pub constants: Vec<Value>,
+    // Upvalue rules (static analysis)
+    // (is_local, index)
+    // stored flat: [is_local_1, index_1, is_local_2, index_2...]
+    pub upvalue_info: Vec<u8>, 
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +52,8 @@ pub struct Heap {
     pub lists: Arena<Vec<Value>>,
     pub maps: Arena<HashMap<String, Value>>,
     pub functions: Arena<Function>,
+    pub upvalues: Arena<Box<Upvalue>>, // Boxed for stable addresses
+    pub closures: Arena<Closure>,
     pub tensors: Arena<RealTensor>,
     pub complexes: Arena<Complex64>,
 
@@ -43,12 +62,15 @@ pub struct Heap {
     pub marked_lists: HashSet<u32>,
     pub marked_maps: HashSet<u32>,
     pub marked_functions: HashSet<u32>,
+    pub marked_upvalues: HashSet<u32>,
+    pub marked_closures: HashSet<u32>,
     pub marked_tensors: HashSet<u32>,
     pub marked_complexes: HashSet<u32>,
 
     // GC Metrics
     pub bytes_allocated: usize,
     pub next_gc_threshold: usize,
+    pub request_gc: bool,
 }
 
 impl Heap {
@@ -58,6 +80,8 @@ impl Heap {
             lists: Arena::new(),
             maps: Arena::new(),
             functions: Arena::new(),
+            upvalues: Arena::new(),
+            closures: Arena::new(),
             tensors: Arena::new(),
             complexes: Arena::new(),
 
@@ -65,21 +89,68 @@ impl Heap {
             marked_lists: HashSet::new(),
             marked_maps: HashSet::new(),
             marked_functions: HashSet::new(),
+            marked_upvalues: HashSet::new(),
+            marked_closures: HashSet::new(),
             marked_tensors: HashSet::new(),
             marked_complexes: HashSet::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
+            request_gc: false,
         }
+    }
+
+    pub fn check_gc(&mut self) {
+        if self.bytes_allocated > self.next_gc_threshold {
+            self.request_gc = true;
+        }
+    }
+
+    pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
+        self.bytes_allocated += std::mem::size_of::<Upvalue>();
+        self.check_gc();
+        if let Some(idx) = self.upvalues.free_indices.pop() {
+            self.upvalues.data[idx as usize] = Box::new(val);
+            idx
+        } else {
+            let index = self.upvalues.data.len() as u32;
+            self.upvalues.data.push(Box::new(val));
+            index
+        }
+    }
+
+    pub fn get_upvalue(&self, index: u32) -> Option<&Upvalue> {
+        self.upvalues.data.get(index as usize).map(|b| &**b)
+    }
+
+    pub fn get_upvalue_mut(&mut self, index: u32) -> Option<&mut Upvalue> {
+        self.upvalues.data.get_mut(index as usize).map(|b| &mut **b)
+    }
+
+    pub fn alloc_closure(&mut self, c: Closure) -> u32 {
+        self.bytes_allocated += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
+        self.check_gc();
+        if let Some(idx) = self.closures.free_indices.pop() {
+            self.closures.data[idx as usize] = c;
+            idx
+        } else {
+            let index = self.closures.data.len() as u32;
+            self.closures.data.push(c);
+            index
+        }
+    }
+
+    pub fn get_closure(&self, index: u32) -> Option<&Closure> {
+        self.closures.data.get(index as usize)
+    }
+
+    pub fn get_closure_mut(&mut self, index: u32) -> Option<&mut Closure> {
+        self.closures.data.get_mut(index as usize)
     }
 
     pub fn alloc_string(&mut self, s: String) -> u32 {
         self.bytes_allocated += s.capacity();
-        if self.should_collect() {
-            // Signal GC needed? For now we just check.
-            // In a real VM, we might trigger it, but 'collect_garbage' usually needs VM roots.
-            // We'll leave the trigger to the VM loop or return a status if needed.
-        }
+        self.check_gc();
 
         if let Some(idx) = self.strings.free_indices.pop() {
             self.strings.data[idx as usize] = s;
@@ -93,6 +164,7 @@ impl Heap {
 
     pub fn alloc_list(&mut self, l: Vec<Value>) -> u32 {
         self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
+        self.check_gc();
         if let Some(idx) = self.lists.free_indices.pop() {
             self.lists.data[idx as usize] = l;
             idx
@@ -139,6 +211,14 @@ impl Heap {
                         false
                     }
                 }
+                crate::value::TAG_CLOSURE => {
+                    if !self.marked_closures.contains(&handle) {
+                        self.marked_closures.insert(handle);
+                        true
+                    } else {
+                        false
+                    }
+                }
                 crate::value::TAG_COMPLEX => {
                     if !self.marked_complexes.contains(&handle) {
                         self.marked_complexes.insert(handle);
@@ -180,6 +260,23 @@ impl Heap {
                     crate::value::TAG_FUNCTION => {
                         if let Some(f) = self.functions.data.get(handle as usize) {
                             worklist.extend(f.constants.clone());
+                        }
+                    }
+                    crate::value::TAG_CLOSURE => {
+                        if let Some(c) = self.closures.data.get(handle as usize) {
+                            // 1. Mark Function
+                            worklist.push(Value::function(c.function));
+                            // 2. Mark Upvalues
+                            for &up_idx in &c.upvalues {
+                                if !self.marked_upvalues.contains(&up_idx) {
+                                    self.marked_upvalues.insert(up_idx);
+                                    // Trace value inside upvalue (if closed, it matters)
+                                    // If open, it's stack or Nil, safe to trace
+                                    if let Some(u) = self.upvalues.data.get(up_idx as usize) {
+                                        worklist.push(u.closed);
+                                    }
+                                }
+                            }
                         }
                     }
                     crate::value::TAG_MAP => {
@@ -239,10 +336,39 @@ impl Heap {
                     max_slots: 0,
                     chunk: vec![],
                     constants: vec![],
+                    upvalue_info: vec![],
                 };
             }
         }
         self.marked_functions.clear();
+
+        // Closures
+        for i in 0..self.closures.data.len() {
+            let idx = i as u32;
+            if !self.marked_closures.contains(&idx) && !self.closures.free_indices.contains(&idx) {
+                self.closures.free_indices.push(idx);
+                self.closures.data[i] = Closure {
+                     function: 0,
+                     upvalues: vec![]
+                };
+            }
+        }
+        self.marked_closures.clear();
+
+        // Upvalues
+        for i in 0..self.upvalues.data.len() {
+            let idx = i as u32;
+            if !self.marked_upvalues.contains(&idx) && !self.upvalues.free_indices.contains(&idx) {
+                 self.upvalues.free_indices.push(idx);
+                 // We can't easily "reset" a Box with Dummy, but we can overwrite data
+                 self.upvalues.data[i] = Box::new(Upvalue {
+                     location: std::ptr::null_mut(),
+                     closed: Value::nil(),
+                     next_open: None
+                 });
+            }
+        }
+        self.marked_upvalues.clear();
 
         // Complexes
         for i in 0..self.complexes.data.len() {
@@ -284,6 +410,7 @@ impl Heap {
     pub fn alloc_function(&mut self, f: Function) -> u32 {
         self.bytes_allocated +=
             f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
+        self.check_gc();
         if let Some(idx) = self.functions.free_indices.pop() {
             self.functions.data[idx as usize] = f;
             idx
@@ -300,6 +427,7 @@ impl Heap {
 
     pub fn alloc_complex(&mut self, c: Complex64) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Complex64>();
+        self.check_gc();
         if let Some(idx) = self.complexes.free_indices.pop() {
             self.complexes.data[idx as usize] = c;
             idx

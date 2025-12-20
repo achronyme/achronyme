@@ -9,10 +9,31 @@ pub trait GarbageCollector {
 impl GarbageCollector for super::vm::VM {
     fn collect_garbage(&mut self) {
         let _before = self.heap.bytes_allocated;
-        // println!("-- GC Begin (Allocated: {} bytes) --", before);
+        if self.stress_mode {
+            println!("-- GC Triggered (Stress Mode) --");
+        } else {
+             // println!("-- GC Begin (Allocated: {} bytes) --", _before);
+        }
 
         let roots = self.mark_roots();
         self.heap.trace(roots);
+
+        // CRITICAL: Mark Open Upvalues (GC Rooting Fix)
+        // These are indices, so we must mark them manually in the heap set.
+        let mut open_idx = self.open_upvalues;
+        while let Some(idx) = open_idx {
+            if !self.heap.marked_upvalues.contains(&idx) {
+                self.heap.marked_upvalues.insert(idx);
+            }
+            // Traverse list. If next is hidden in heap, retrieving it is safe 
+            // because we just marked 'idx' (it won't be swept).
+             if let Some(upval) = self.heap.get_upvalue(idx) {
+                open_idx = upval.next_open;
+            } else {
+                break;
+            }
+        }
+
         self.heap.sweep();
 
         // Dynamic Threshold: Double it or set reasonable limits

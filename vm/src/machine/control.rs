@@ -46,10 +46,12 @@ impl ControlFlowOps for super::vm::VM {
 
                 if func_val.is_native() {
                     self.call_native(func_val, args_start, args_count, base, a)?;
-                } else if func_val.is_function() {
+                } else if func_val.is_closure() {
                     let handle = func_val.as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("Expected function handle".into()))?;
-                    let func = self.heap.get_function(handle).ok_or(RuntimeError::FunctionNotFound)?;
+                        .ok_or_else(|| RuntimeError::TypeMismatch("Expected closure handle".into()))?;
+                        
+                    let closure = self.heap.get_closure(handle).ok_or(RuntimeError::FunctionNotFound)?;
+                    let func = self.heap.get_function(closure.function).ok_or(RuntimeError::FunctionNotFound)?;
                     
                     // 1. Check arity (optional but good)
                     if func.arity as usize != args_count {
@@ -69,14 +71,14 @@ impl ControlFlowOps for super::vm::VM {
                     // 4. Push Frame with dest_reg = caller's base + A (where result goes)
                     let dest_reg = base + a;
                     self.frames.push(crate::machine::frame::CallFrame {
-                        closure: handle,
+                        closure: handle, // Points to Closure
                         ip: 0,
                         base: new_bp,
                         dest_reg,
                     });
                 } else {
                     return Err(RuntimeError::TypeMismatch(
-                        "Call target must be Function or Native".into(),
+                        "Call target must be Closure or Native".into(),
                     ));
                 }
             }
@@ -86,11 +88,18 @@ impl ControlFlowOps for super::vm::VM {
                 let b = decode_b(instruction) as usize; // 1 if has value, 0 if nil
                 
                 // Get return value
+
                 let ret_val = if b == 1 {
                     self.get_reg(base, a)
                 } else {
                     Value::nil()
                 };
+                
+                // Close Upvalues for current frame
+                // "base" is the start of the current frame (R0)
+                // Any upvalue pointing to base or higher is now invalid/closed
+                let ptr = self.get_reg_ptr(base, 0)?;
+                self.close_upvalues(ptr);
                 
                 // Pop current frame and get its dest_reg
                 if let Some(frame) = self.frames.pop() {
