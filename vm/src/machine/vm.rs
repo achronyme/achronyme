@@ -29,6 +29,9 @@ pub struct VM {
 
     /// Head of the linked list of open upvalues (Index into Heap.upvalues)
     pub open_upvalues: Option<u32>,
+
+    /// If true, GC will run on every possible occasion (for testing)
+    pub stress_mode: bool,
     
     // Passive Debug Symbols (Sidecar)
     pub debug_symbols: Option<HashMap<u16, String>>,
@@ -51,6 +54,7 @@ impl VM {
             natives: Vec::new(),
             prototypes: Vec::new(),
             open_upvalues: None,
+            stress_mode: false,
             debug_symbols: None,
         };
 
@@ -104,9 +108,11 @@ impl VM {
         }
 
         while !self.frames.is_empty() {
-            // GC Check
-            if self.heap.should_collect() {
-                self.collect_garbage();
+            // GC Check Point
+            // If allocations happened, heap.request_gc might be set
+            if self.heap.request_gc || self.stress_mode {
+                 self.collect_garbage();
+                 self.heap.request_gc = false;
             }
 
             let frame_idx = self.frames.len() - 1;

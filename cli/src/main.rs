@@ -12,7 +12,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Run { path } => run::run_file(path),
+        Commands::Run { path, stress_gc } => run::run_file(path, *stress_gc),
         Commands::Disassemble { path } => disassemble::disassemble_file(path),
         Commands::Compile { path, output } => compile::compile_file(path, output.as_deref()),
         Commands::Repl => repl::run_repl(),

@@ -9,7 +9,11 @@ pub trait GarbageCollector {
 impl GarbageCollector for super::vm::VM {
     fn collect_garbage(&mut self) {
         let _before = self.heap.bytes_allocated;
-        // println!("-- GC Begin (Allocated: {} bytes) --", before);
+        if self.stress_mode {
+            println!("-- GC Triggered (Stress Mode) --");
+        } else {
+             // println!("-- GC Begin (Allocated: {} bytes) --", _before);
+        }
 
         let roots = self.mark_roots();
         self.heap.trace(roots);

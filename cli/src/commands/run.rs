@@ -18,7 +18,7 @@ use vm::opcode::instruction::decode_opcode; // Used in formatting if needed, tho
 // It strictly belongs in `vm` or `cli` utils.
 // I'll make a private helper here for now.
 
-pub fn run_file(path: &str) -> Result<()> {
+pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
     let content = fs::read_to_string(path).unwrap_or_default();
 
     if path.ends_with(".achb") {
@@ -129,6 +129,7 @@ pub fn run_file(path: &str) -> Result<()> {
         }
 
         let mut vm = VM::new();
+        vm.stress_mode = stress_gc;
         // Sync VM Heap
         vm.heap.import_strings(strings);
         
@@ -179,6 +180,7 @@ pub fn run_file(path: &str) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
 
         let mut vm = VM::new();
+        vm.stress_mode = stress_gc;
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);

@@ -70,6 +70,7 @@ pub struct Heap {
     // GC Metrics
     pub bytes_allocated: usize,
     pub next_gc_threshold: usize,
+    pub request_gc: bool,
 }
 
 impl Heap {
@@ -95,11 +96,19 @@ impl Heap {
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
+            request_gc: false,
+        }
+    }
+
+    pub fn check_gc(&mut self) {
+        if self.bytes_allocated > self.next_gc_threshold {
+            self.request_gc = true;
         }
     }
 
     pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Upvalue>();
+        self.check_gc();
         if let Some(idx) = self.upvalues.free_indices.pop() {
             self.upvalues.data[idx as usize] = Box::new(val);
             idx
@@ -120,6 +129,7 @@ impl Heap {
 
     pub fn alloc_closure(&mut self, c: Closure) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
+        self.check_gc();
         if let Some(idx) = self.closures.free_indices.pop() {
             self.closures.data[idx as usize] = c;
             idx
@@ -140,11 +150,7 @@ impl Heap {
 
     pub fn alloc_string(&mut self, s: String) -> u32 {
         self.bytes_allocated += s.capacity();
-        if self.should_collect() {
-            // Signal GC needed? For now we just check.
-            // In a real VM, we might trigger it, but 'collect_garbage' usually needs VM roots.
-            // We'll leave the trigger to the VM loop or return a status if needed.
-        }
+        self.check_gc();
 
         if let Some(idx) = self.strings.free_indices.pop() {
             self.strings.data[idx as usize] = s;
@@ -158,6 +164,7 @@ impl Heap {
 
     pub fn alloc_list(&mut self, l: Vec<Value>) -> u32 {
         self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
+        self.check_gc();
         if let Some(idx) = self.lists.free_indices.pop() {
             self.lists.data[idx as usize] = l;
             idx
@@ -403,6 +410,7 @@ impl Heap {
     pub fn alloc_function(&mut self, f: Function) -> u32 {
         self.bytes_allocated +=
             f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
+        self.check_gc();
         if let Some(idx) = self.functions.free_indices.pop() {
             self.functions.data[idx as usize] = f;
             idx
@@ -419,6 +427,7 @@ impl Heap {
 
     pub fn alloc_complex(&mut self, c: Complex64) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Complex64>();
+        self.check_gc();
         if let Some(idx) = self.complexes.free_indices.pop() {
             self.complexes.data[idx as usize] = c;
             idx
