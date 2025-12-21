@@ -1,0 +1,19 @@
+
+// 1. Listas
+let list = [10, 20, 30]
+print(list[1]) // 20
+
+// 2. Mapas
+let persona = {
+    nombre: "Juan",
+    "edad real": 30
+}
+print(persona.nombre)
+print(persona["edad real"])
+
+// 3. Asignación Compleja
+list[0] = 99
+persona.nombre = "Pedro"
+
+print(list[0]) // 99
+print(persona.nombre) // Pedro

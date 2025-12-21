@@ -35,6 +35,9 @@ keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "
 nil_lit   = { "nil" }
 true_lit  = { "true" }
 false_lit = { "false" }
+list_literal = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
+map_pair     = { (identifier | string) ~ ":" ~ expr }
+map_literal  = { "{" ~ (map_pair ~ ("," ~ map_pair)*)? ~ ","? ~ "}" }
 
 // 2. Control Flow Expressions
 block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
@@ -46,9 +49,11 @@ param_list = { identifier ~ ("," ~ identifier)* }
 fn_expr = { "fn" ~ identifier? ~ "(" ~ param_list? ~ ")" ~ block }
 
 atom = {
-    nil_lit
+  | nil_lit
   | true_lit
   | false_lit
+  | list_literal
+  | map_literal
   | if_expr
   | while_expr
   | fn_expr
@@ -77,8 +82,10 @@ postfix_expr = { atom ~ (postfix_op)* }
 
 postfix_op = _{ 
    call_op 
-   // | index_op 
+   | index_op 
 }
+
+index_op = { "[" ~ expr ~ "]" | "." ~ identifier }
 
 call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 
@@ -122,7 +129,7 @@ expr = { cmp_expr }
 
 let_decl   = { "let" ~ identifier ~ "=" ~ expr }
 mut_decl   = { "mut" ~ identifier ~ "=" ~ expr }
-assignment = { identifier ~ "=" ~ expr }
+assignment = { postfix_expr ~ "=" ~ expr }
 print_stmt = { "print" ~ "(" ~ expr ~ ")" }
 // expr_stmt  = { expr } // Removed, direct expr in stmt
 
