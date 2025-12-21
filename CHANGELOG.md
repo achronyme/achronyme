@@ -3,6 +3,7 @@
 ## [Unreleased] - Current Dev
 
 ### Added (Features)
+- **Complex Number Serialization**: Full support for serializing and deserializing `Complex` numbers in `.achb` binaries. Introduced `SER_TAG_COMPLEX` (9) and `ComplexTable`.
 - **User-Defined Functions**:
     - Declaración: `fn name(params) { body }` y funciones anónimas `fn (x) { x * 2 }`.
     - Recursión completa: `fn fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }`.

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use compiler::Compiler;
 use memory::Value;
 use std::fs;
-use vm::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
+use vm::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL, SER_TAG_COMPLEX};
 
 pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
@@ -33,6 +33,14 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             file.write_u32::<LittleEndian>(bytes.len() as u32)?;
             file.write_all(bytes)?;
         }
+        
+        // --- Complex Table ---
+        let complexes = &compiler.complexes;
+        file.write_u32::<LittleEndian>(complexes.len() as u32)?;
+        for c in complexes {
+            file.write_f64::<LittleEndian>(c.re)?;
+            file.write_f64::<LittleEndian>(c.im)?;
+        }
 
         // --- Constants ---
         let main_func = compiler.compilers.last().expect("No main compiler");
@@ -45,6 +53,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                 file.write_u8(SER_TAG_STRING)?;
                 // Payload is the handle
                 let handle = c.as_handle().expect("String value must have handle");
+                file.write_u32::<LittleEndian>(handle)?;
+            } else if c.is_complex() {
+                file.write_u8(SER_TAG_COMPLEX)?;
+                let handle = c.as_handle().expect("Complex value must have handle");
                 file.write_u32::<LittleEndian>(handle)?;
             } else if c.is_nil() {
                 file.write_u8(SER_TAG_NIL)?;
@@ -77,6 +89,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                 } else if c.is_string() {
                     file.write_u8(SER_TAG_STRING)?;
                     let handle = c.as_handle().expect("String value must have handle");
+                    file.write_u32::<LittleEndian>(handle)?;
+                } else if c.is_complex() {
+                    file.write_u8(SER_TAG_COMPLEX)?;
+                    let handle = c.as_handle().expect("Complex value must have handle");
                     file.write_u32::<LittleEndian>(handle)?;
                 } else {
                     file.write_u8(SER_TAG_NIL)?;

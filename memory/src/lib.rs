@@ -5,4 +5,5 @@ pub mod value;
 mod value_tests;
 
 pub use heap::{Function, Heap, Upvalue, Closure};
-pub use value::{Value, QNAN, TAG_NIL, TAG_TRUE, TAG_FALSE, TAG_STRING, TAG_LIST, TAG_MAP, TAG_FUNCTION, TAG_CLOSURE, TAG_NATIVE};
+pub use value::{Value, QNAN, TAG_NIL, TAG_TRUE, TAG_FALSE, TAG_STRING, TAG_LIST, TAG_MAP, TAG_FUNCTION, TAG_CLOSURE, TAG_NATIVE, TAG_COMPLEX};
+pub use num_complex::Complex64;

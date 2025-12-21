@@ -19,8 +19,6 @@ use vm::opcode::instruction::decode_opcode; // Used in formatting if needed, tho
 // I'll make a private helper here for now.
 
 pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
-    let content = fs::read_to_string(path).unwrap_or_default();
-
     if path.ends_with(".achb") {
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
         
@@ -39,6 +37,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
         }
         Ok(())
     } else {
+        let content = fs::read_to_string(path).context("Failed to source file")?;
         let mut compiler = Compiler::new();
         let bytecode = compiler
             .compile(&content)

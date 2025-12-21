@@ -473,4 +473,9 @@ impl Heap {
         self.strings.data = strings;
         self.strings.free_indices.clear();
     }
+
+    pub fn import_complexes(&mut self, complexes: Vec<Complex64>) {
+        self.complexes.data = complexes;
+        self.complexes.free_indices.clear();
+    }
 }

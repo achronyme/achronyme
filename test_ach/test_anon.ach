@@ -1,1 +1,0 @@
-print((fn (x) { return x * 2 })(5))
