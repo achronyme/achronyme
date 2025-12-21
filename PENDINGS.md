@@ -16,9 +16,9 @@
 
 - [x] **GC Trigger Strategy**: `should_collect()` uses a naive byte threshold.
     - *Completed*: Implemented "2x Rule" and `stress_mode` validation.
-- [ ] **Map & List Implementation** (Task 3):
-    - *Target*: Maps (custom definition tracing keys/values) and Lists (efficient resizing).
-    - *Status*: Next Priority.
+- [x] **Map & List Implementation** (Task 3):
+    - *Completed*: Supported `[...]` and `{...}` literals, indexing (`a[i]`), and smart assignment (`a[i] = v`).
+    - *Features*: Allocator-aware Heap, Strict type checking (Map keys must be strings).
 
 ## 3. Compiler & Features
 
