@@ -28,15 +28,15 @@
 
 ## 4. Native & Standard Library
 
-- [ ] **FFI/Native Interface**: The `NativeFn` signature is rigid.
-    - *Target*: Safer binding macros.
+- [x] **FFI/Native Interface**: The `NativeFn` signature is rigid.
+    - *Completed*: Implemented robust stdlib in `vm/src/stdlib/core.rs`.
+    - `len`, `push`, `pop`, `keys` with arity/type safety.
 - [x] **Serialization**:
     - *Completed*: Implemented binary format support for Complex numbers (`SER_TAG_COMPLEX` = 9).
     - Added `ComplexTable` to `.achb` format (re, im).
-- [/] **Pretty Printing (VM::val_to_string)**:
-    - *Completed*: Complex numbers (`5i`, `1+2i`). Strings, Numbers, Nils.
-    - *Pending*: Recursive map/list printing.
-    - *Target*: Add support for `Map` type once implemented.
+- [x] **Pretty Printing (VM::val_to_string)**:
+    - *Completed*: Complex numbers, Strings, Numbers, Nils, Lists, Maps.
+    - Added `VM::val_to_string` support for deep recursion.
 
 ## 5. Security & Architecture (PR3 Recommendations)
 

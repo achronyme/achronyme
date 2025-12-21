@@ -37,7 +37,21 @@
     - **GC Rooting**: Rastreo explícito de `open_upvalues` para evitar corrupción de memoria.
 - **Developer Experience**:
     - **Debug Symbol Table (Sidecar)**: Mapeo de nombres de variables en binarios `.achb` para reportes de error detallados sin penalizar el rendimiento ("Happy Path" O(1)).
-    - **Disassembler**: Soporte para mostrar nombres de variables globales en lugar de índices crudos.
+    - **Disassembler**: Soporte para mostrar nombres de variables globales en lugar de variables crudos.
+
+### Stdlib Robustness (Phase 3)
+- **Robust Native Functions**:
+    - `len(obj)`: Polymorphic (String, List, Map).
+    - `push(list, item)`: Type-safe mutation.
+    - `pop(list)`: Safe mutation with `nil` on empty.
+    - `keys(map)`: Validated map introspection.
+- **Engineering Standards**:
+    - Validation of ArityStrict, Type Safety Defensivo (`is_X()` before `as_X()`).
+    - **Memory Hygiene**: Strict borrow checker compliance (no `&` to Heap while `alloc`).
+
+### Fixed
+- **VM Equality (Critical)**: `OpCode::Eq` (`==`) now performs **Deep Equality** for Strings and Complex numbers instead of reference equality.
+- `values_equal`: Helper for recursive value comparison.
 
 ### Changed (Architecture & Performance)
 - **Flat Prototype Architecture**: Funciones almacenadas en tabla global plana con índices O(1) en lugar de jerarquía anidada.
