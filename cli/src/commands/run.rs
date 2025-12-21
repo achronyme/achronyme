@@ -19,8 +19,6 @@ use vm::opcode::instruction::decode_opcode; // Used in formatting if needed, tho
 // I'll make a private helper here for now.
 
 pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
-    let content = fs::read_to_string(path).unwrap_or_default();
-
     if path.ends_with(".achb") {
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
         
@@ -35,10 +33,11 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Runtime Error: {:?}", e))?;
 
         if let Some(val) = vm.stack.last() {
-            println!("{}", format_value(val, &vm));
+            println!("{}", vm.val_to_string(val));
         }
         Ok(())
     } else {
+        let content = fs::read_to_string(path).context("Failed to source file")?;
         let mut compiler = Compiler::new();
         let bytecode = compiler
             .compile(&content)
@@ -49,6 +48,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);
+        vm.heap.import_complexes(compiler.complexes);
         
         // Transfer Debug Symbols (Source Mode)
         let mut debug_map = std::collections::HashMap::new();
@@ -91,7 +91,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Runtime Error: {:?}", e))?;
 
         if let Some(val) = vm.stack.last() {
-            println!("{}", format_value(val, &vm));
+            println!("{}", vm.val_to_string(val));
         }
 
         Ok(())
@@ -100,58 +100,4 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
 use memory::value::*;
 
-fn format_value(val: &Value, vm: &VM) -> String {
-    match val.type_tag() {
-        TAG_NIL => "nil".to_string(),
-        TAG_FALSE => "false".to_string(),
-        TAG_TRUE => "true".to_string(),
-        TAG_NUMBER => {
-            let n = val.as_number().unwrap();
-            if n.is_nan() {
-                "NaN".to_string()
-            } else if n.is_infinite() {
-                if n > 0.0 {
-                    "Infinity".to_string()
-                } else {
-                    "-Infinity".to_string()
-                }
-            } else {
-                format!("{}", n)
-            }
-        }
-        TAG_COMPLEX => {
-            let idx = val.as_handle().unwrap();
-            if let Some(c) = vm.heap.get_complex(idx) {
-                if c.im.abs() < 1e-15 {
-                    format!("{}", c.re)
-                } else if c.re.abs() < 1e-15 {
-                    if c.im == 1.0 {
-                        "i".to_string()
-                    } else if c.im == -1.0 {
-                        "-i".to_string()
-                    } else {
-                        format!("{}i", c.im)
-                    }
-                } else if c.im >= 0.0 {
-                    format!("{} + {}i", c.re, c.im)
-                } else {
-                    format!("{} - {}i", c.re, c.im.abs())
-                }
-            } else {
-                format!("Complex({})", idx)
-            }
-        }
-        TAG_STRING => {
-            let handle = val.as_handle().unwrap();
-            vm.heap
-                .get_string(handle)
-                .map(|s| s.clone())
-                .unwrap_or_else(|| format!("String({})", handle))
-        }
-        TAG_LIST => format!("List({})", val.as_handle().unwrap()),
-        TAG_MAP => format!("Map({})", val.as_handle().unwrap()),
-        TAG_FUNCTION => format!("Function({})", val.as_handle().unwrap()),
-        TAG_TENSOR => format!("Tensor({})", val.as_handle().unwrap()),
-        _ => format!("Unknown(Bits: {:x})", val.0),
-    }
-}
+

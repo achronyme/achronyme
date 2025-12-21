@@ -1,8 +1,8 @@
 use std::io::Read;
 use byteorder::{LittleEndian, ReadBytesExt};
-use crate::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
+use crate::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL, SER_TAG_COMPLEX};
 use crate::{VM, CallFrame};
-use memory::{Function, Closure, Value};
+use memory::{Function, Closure, Value, Complex64};
 
 
 #[derive(Debug)]
@@ -59,6 +59,23 @@ impl VM {
         // Sync Strings to Heap
         self.heap.import_strings(strings);
 
+
+
+        // --- Complex Table ---
+        let complex_count = reader.read_u32::<LittleEndian>()?;
+        if complex_count > 1_000_000 {
+            return Err(LoaderError::Security(format!("Complex count too large: {}", complex_count)));
+        }
+        let mut complexes = Vec::with_capacity(complex_count as usize);
+        for _ in 0..complex_count {
+            let re = reader.read_f64::<LittleEndian>()?;
+            let im = reader.read_f64::<LittleEndian>()?;
+            complexes.push(Complex64::new(re, im));
+        }
+        
+        // Sync Complexes to Heap
+        self.heap.import_complexes(complexes);
+
         // --- Constants ---
         let const_count = reader.read_u32::<LittleEndian>()?;
          if const_count > 1_000_000 {
@@ -76,6 +93,10 @@ impl VM {
                     // Read Handle -> Create Value
                     let handle = reader.read_u32::<LittleEndian>()?;
                     constants.push(Value::string(handle));
+                }
+                SER_TAG_COMPLEX => {
+                    let handle = reader.read_u32::<LittleEndian>()?;
+                    constants.push(Value::complex(handle));
                 }
                 SER_TAG_NIL => {
                     constants.push(Value::nil());
@@ -122,6 +143,10 @@ impl VM {
                     SER_TAG_STRING => {
                         let handle = reader.read_u32::<LittleEndian>()?;
                         proto_constants.push(Value::string(handle));
+                    }
+                    SER_TAG_COMPLEX => {
+                        let handle = reader.read_u32::<LittleEndian>()?;
+                        proto_constants.push(Value::complex(handle));
                     }
                     SER_TAG_NIL => {
                         proto_constants.push(Value::nil());

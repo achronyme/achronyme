@@ -15,33 +15,100 @@ pub fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 
 pub fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "len() takes exactly 1 argument".into(),
-        ));
+        return Err(RuntimeError::ArityMismatch("len() takes exactly 1 argument".into()));
     }
     let val = &args[0];
+    
+    // [STANDARD]: Polymorphic dispatch based on tags
     if val.is_string() {
-        let handle = val.as_handle().unwrap();
-        let s = vm
-            .heap
-            .get_string(handle)
-            .ok_or(RuntimeError::Unknown("String not found".into()))?;
+        let handle = val.as_handle().unwrap(); // Safe: guarded by is_string()
+        let s = vm.heap.get_string(handle).ok_or(RuntimeError::SystemError("Dangling string handle".into()))?;
         Ok(Value::number(s.len() as f64))
     } else if val.is_list() {
         let handle = val.as_handle().unwrap();
-        let l = vm
-            .heap
-            .get_list(handle)
-            .ok_or(RuntimeError::Unknown("List not found".into()))?;
+        let l = vm.heap.get_list(handle).ok_or(RuntimeError::SystemError("Dangling list handle".into()))?;
         Ok(Value::number(l.len() as f64))
     } else if val.is_map() {
-        // Placeholder until Map is fully exposed in Heap
-        Err(RuntimeError::TypeMismatch(
-            "Map length not yet supported via native".into(),
-        ))
+        let handle = val.as_handle().unwrap();
+        let m = vm.heap.get_map(handle).ok_or(RuntimeError::SystemError("Dangling map handle".into()))?;
+        Ok(Value::number(m.len() as f64))
     } else {
-        Err(RuntimeError::TypeMismatch("Expected String or List".into()))
+        Err(RuntimeError::TypeMismatch("len() expects String, List, or Map".into()))
     }
+}
+
+pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::ArityMismatch("push(list, item) takes exactly 2 arguments".into()));
+    }
+    
+    let target = args[0];
+    let item = args[1];
+
+    if !target.is_list() {
+        return Err(RuntimeError::TypeMismatch("First argument to push must be a List".into()));
+    }
+
+    let handle = target.as_handle().unwrap();
+    // [STANDARD]: Mutable access required. Fails cleanly if handle is invalid.
+    let list = vm.heap.get_list_mut(handle)
+        .ok_or(RuntimeError::SystemError("List corrupted or missing".into()))?;
+    
+    list.push(item);
+    
+    Ok(Value::nil()) // Void return
+}
+
+pub fn native_pop(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch("pop(list) takes exactly 1 argument".into()));
+    }
+
+    let target = args[0];
+    if !target.is_list() {
+        return Err(RuntimeError::TypeMismatch("Argument to pop must be a List".into()));
+    }
+
+    let handle = target.as_handle().unwrap();
+    let list = vm.heap.get_list_mut(handle)
+        .ok_or(RuntimeError::SystemError("List corrupted or missing".into()))?;
+
+    // [STANDARD]: Safe handling of empty lists (returns Nil, implies Option-like behavior)
+    let val = list.pop().unwrap_or(Value::nil());
+    Ok(val)
+}
+
+pub fn native_keys(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch("keys(map) takes exactly 1 argument".into()));
+    }
+
+    let target = args[0];
+    if !target.is_map() {
+        return Err(RuntimeError::TypeMismatch("Argument to keys must be a Map".into()));
+    }
+
+    let map_handle = target.as_handle().unwrap();
+
+    // [CRITICAL]: Scope Limiting for Borrow Checker Compliance
+    // Step 1: Read keys (Immutable Borrow). Copy to temp vector.
+    let keys_raw: Vec<String> = {
+        let map = vm.heap.get_map(map_handle).ok_or(RuntimeError::SystemError("Map corrupted".into()))?;
+        map.keys().cloned().collect() // Clone strings to own them
+    }; 
+    // Scope ends here. Immutable borrow dropped.
+
+    // Step 2: Allocate strings (Mutable Borrow of Heap).
+    let mut key_values = Vec::with_capacity(keys_raw.len());
+    for k in keys_raw {
+        let handle = vm.heap.alloc_string(k);
+        key_values.push(Value::string(handle));
+    }
+
+    // Step 3: Allocate list (Mutable Borrow of Heap).
+    let list_handle = vm.heap.alloc_list(key_values);
+    
+    Ok(Value::list(list_handle))
 }
 
 pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

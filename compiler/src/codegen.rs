@@ -1,7 +1,7 @@
 use crate::error::CompilerError;
 use crate::interner::StringInterner;
 use achronyme_parser::{parse_expression, Rule};
-use memory::Value;
+use memory::{Value, Complex64};
 use pest::iterators::Pair;
 use std::collections::HashMap;
 use vm::opcode::{
@@ -129,6 +129,9 @@ pub struct Compiler {
 
     // String Interner (shared across all functions)
     pub interner: StringInterner,
+
+    // Complex Number Arena (shared)
+    pub complexes: Vec<Complex64>,
 }
 
 use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
@@ -153,6 +156,7 @@ impl Compiler {
             global_symbols,
             next_global_idx,
             interner: StringInterner::new(),
+            complexes: Vec::new(),
         }
     }
     
@@ -1019,21 +1023,26 @@ impl Compiler {
             .parse::<f64>()
             .map_err(|_| CompilerError::InvalidComplex)?;
 
-        let reg = self.alloc_reg()?;
-        let zero_reg = self.alloc_reg()?;
-        let val_reg = self.alloc_reg()?;
-
-        let z_idx = self.add_constant(Value::number(0.0));
-        self.emit_abx(OpCode::LoadConst, zero_reg, z_idx as u16);
-
-        let v_idx = self.add_constant(Value::number(val));
-        self.emit_abx(OpCode::LoadConst, val_reg, v_idx as u16);
-
-        self.emit_abc(OpCode::NewComplex, reg, zero_reg, val_reg);
+        // Construct the complex number (0 + val*i)
+        let c = Complex64::new(0.0, val);
         
-        // Hygiene
-        self.free_reg(val_reg);
-        self.free_reg(zero_reg);
+        // Deduplicate/Intern in the compiler's list
+        let complex_handle = if let Some(idx) = self.complexes.iter().position(|&existing| existing == c) {
+            idx as u32
+        } else {
+            let idx = self.complexes.len() as u32;
+            self.complexes.push(c);
+            idx
+        };
+
+        let val = Value::complex(complex_handle);
+        let const_idx = self.add_constant(val);
+
+        let reg = self.alloc_reg()?;
+        if const_idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants);
+        }
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
 
         Ok(reg)
     }
@@ -1041,10 +1050,12 @@ impl Compiler {
     fn compile_string(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         let raw = pair.as_str(); 
         // grammar: string = ${ "\"" ~ inner ~ "\"" }
-        // Safety: Grammar guarantees quotes.
-        let content = &raw[1..raw.len() - 1]; 
+        // The raw string includes the surrounding quotes
+        let inner_content = &raw[1..raw.len() - 1]; 
         
-        let handle = self.intern_string(content);
+        let processed = Self::unescape_string(inner_content);
+        
+        let handle = self.intern_string(&processed);
         // Value::string creates a tagged value with payload = handle
         let val = Value::string(handle);
         let const_idx = self.add_constant(val);
@@ -1057,6 +1068,38 @@ impl Compiler {
         }
         
         Ok(reg)
+    }
+
+
+    fn unescape_string(raw: &str) -> String {
+        let mut result = String::with_capacity(raw.len());
+        let mut chars = raw.chars();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    // If we find an unknown escape (e.g., \a), 
+                    // we treat it as literal or ignore it. 
+                    // Safe standard: keep the backslash.
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => {
+                        // Backslash at the end of string with nothing else (rare checking grammar)
+                        result.push('\\');
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
     }
 
     fn compile_dot_key(&mut self, name: &str) -> Result<u8, CompilerError> {

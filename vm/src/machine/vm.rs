@@ -92,7 +92,58 @@ impl VM {
             v if v.is_nil() => "nil".to_string(),
             v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
             v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
+            v if v.is_complex() => {
+                let idx = v.as_handle().unwrap();
+                if let Some(c) = self.heap.get_complex(idx) {
+                    if c.im.abs() < 1e-15 {
+                        format!("{}", c.re)
+                    } else if c.re.abs() < 1e-15 {
+                        if c.im == 1.0 {
+                            "i".to_string()
+                        } else if c.im == -1.0 {
+                            "-i".to_string()
+                        } else {
+                            format!("{}i", c.im)
+                        }
+                    } else if c.im >= 0.0 {
+                        format!("{} + {}i", c.re, c.im)
+                    } else {
+                        format!("{} - {}i", c.re, c.im.abs())
+                    }
+                } else {
+                    format!("Complex({})", idx)
+                }
+            },
             _ => format!("{:?}", val), // Fallback
+        }
+    }
+
+    /// Deep equality check for runtime values
+    pub fn values_equal(&self, v1: Value, v2: Value) -> bool {
+        if v1 == v2 {
+            return true; // Same identity (or primitive value)
+        }
+
+        if v1.is_string() && v2.is_string() {
+            let h1 = v1.as_handle().unwrap();
+            let h2 = v2.as_handle().unwrap();
+            let s1 = self.heap.get_string(h1);
+            let s2 = self.heap.get_string(h2);
+            match (s1, s2) {
+                (Some(str1), Some(str2)) => str1 == str2,
+                _ => false,
+            }
+        } else if v1.is_complex() && v2.is_complex() {
+            let h1 = v1.as_handle().unwrap();
+            let h2 = v2.as_handle().unwrap();
+            let c1 = self.heap.get_complex(h1);
+            let c2 = self.heap.get_complex(h2);
+            match (c1, c2) {
+                (Some(cx1), Some(cx2)) => cx1 == cx2,
+                _ => false,
+            }
+        } else {
+            false
         }
     }
 
@@ -179,7 +230,7 @@ impl VM {
                     let c = decode_c(instruction) as usize;
                     let v1 = self.get_reg(base, b);
                     let v2 = self.get_reg(base, c);
-                    self.set_reg(base, a, Value::bool(v1 == v2));
+                    self.set_reg(base, a, Value::bool(self.values_equal(v1, v2)));
                 }
 
                 Lt => {
@@ -243,8 +294,7 @@ impl VM {
                 Print => {
                     let a = decode_a(instruction) as usize;
                     let val = self.get_reg(base, a);
-                    // Simple debug print for now
-                    println!("{:?}", val);
+                    println!("{}", self.val_to_string(&val));
                 }
 
 
