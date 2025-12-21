@@ -79,6 +79,16 @@ pub enum OpCode {
     /// New complex: R[A] = Complex(R[B], R[C])
     NewComplex = 140,
 
+    // ===== Data Structures =====
+    /// Build List: R[A] = [ R[B], ..., R[B+C-1] ]
+    BuildList = 150,
+    /// Build Map: R[A] = { R[B]: R[B+1], ... }
+    BuildMap = 151,
+    /// Get Index: R[A] = R[B][R[C]]
+    GetIndex = 152,
+    /// Set Index: R[A][R[B]] = R[C]
+    SetIndex = 153,
+
     // ===== Flow Control =====
     /// Unconditional Jump: IP = Bx
     Jump = 60,
@@ -123,6 +133,10 @@ impl OpCode {
             101 => Some(OpCode::SetGlobal),
             102 => Some(OpCode::Print),
             140 => Some(OpCode::NewComplex),
+            150 => Some(OpCode::BuildList),
+            151 => Some(OpCode::BuildMap),
+            152 => Some(OpCode::GetIndex),
+            153 => Some(OpCode::SetIndex),
             255 => Some(OpCode::Nop),
             _ => None,
         }
@@ -166,6 +180,10 @@ impl OpCode {
             OpCode::SetGlobal => "SET_GLOBAL",
             OpCode::Print => "PRINT",
             OpCode::NewComplex => "NEW_COMPLEX",
+            OpCode::BuildList => "BUILD_LIST",
+            OpCode::BuildMap => "BUILD_MAP",
+            OpCode::GetIndex => "GET_INDEX",
+            OpCode::SetIndex => "SET_INDEX",
             OpCode::Nop => "NOP",
         }
     }

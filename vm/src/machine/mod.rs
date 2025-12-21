@@ -5,6 +5,7 @@
 
 mod arithmetic;
 mod control;
+mod data;
 mod frame;
 mod gc;
 mod globals;
