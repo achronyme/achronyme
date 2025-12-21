@@ -37,7 +37,10 @@
     - **GC Rooting**: Rastreo explícito de `open_upvalues` para evitar corrupción de memoria.
 - **Developer Experience**:
     - **Debug Symbol Table (Sidecar)**: Mapeo de nombres de variables en binarios `.achb` para reportes de error detallados sin penalizar el rendimiento ("Happy Path" O(1)).
-    - **Disassembler**: Soporte para mostrar nombres de variables globales en lugar de variables crudos.
+- **Disassembler**: Soporte para mostrar nombres de variables globales en lugar de variables crudos.
+- **String Escapes**: Soporte completo para secuencias de escape en strings:
+    - Newlines (`\n`, `\r`), Tabs (`\t`), Quotes (`\"`), Backslash (`\\`).
+    - Implementado mediante `grammar.pest` (parsing) y `codegen.rs` (transformación `unescape_string`).
 
 ### Stdlib Robustness (Phase 3)
 - **Robust Native Functions**:

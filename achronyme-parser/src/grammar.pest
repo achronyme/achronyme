@@ -65,9 +65,15 @@ atom = {
   | "(" ~ expr ~ ")"
 }
 
-// String Literal
+// String literal con soporte de escapes
 string = ${ "\"" ~ inner ~ "\"" }
-inner  = @{ (!"\"" ~ ANY)* }
+inner  = @{ char* }
+char   = {
+    // 1. Cualquier cosa que NO sea comilla ni barra invertida
+    !("\"" | "\\") ~ ANY
+    // 2. Secuencias de escape comunes
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+}
 
 // ============================================================================
 // LAYER 2: POSTFIX EXPRESSIONS (The Chaining Layer)

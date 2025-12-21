@@ -1050,10 +1050,12 @@ impl Compiler {
     fn compile_string(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         let raw = pair.as_str(); 
         // grammar: string = ${ "\"" ~ inner ~ "\"" }
-        // Safety: Grammar guarantees quotes.
-        let content = &raw[1..raw.len() - 1]; 
+        // The raw string includes the surrounding quotes
+        let inner_content = &raw[1..raw.len() - 1]; 
         
-        let handle = self.intern_string(content);
+        let processed = Self::unescape_string(inner_content);
+        
+        let handle = self.intern_string(&processed);
         // Value::string creates a tagged value with payload = handle
         let val = Value::string(handle);
         let const_idx = self.add_constant(val);
@@ -1066,6 +1068,38 @@ impl Compiler {
         }
         
         Ok(reg)
+    }
+
+
+    fn unescape_string(raw: &str) -> String {
+        let mut result = String::with_capacity(raw.len());
+        let mut chars = raw.chars();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    // If we find an unknown escape (e.g., \a), 
+                    // we treat it as literal or ignore it. 
+                    // Safe standard: keep the backslash.
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => {
+                        // Backslash at the end of string with nothing else (rare checking grammar)
+                        result.push('\\');
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
     }
 
     fn compile_dot_key(&mut self, name: &str) -> Result<u8, CompilerError> {

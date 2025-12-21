@@ -23,8 +23,9 @@
 ### Language Features
 - [ ] **Control Flow (For Loops)**: Syntactic sugar for `while`.
 
-- [ ] **Escaped Characters**: Current parser does not support escaped quotes (`\"`).
-    - *Target*: Update `grammar.pest` atoms to handle escape sequences.
+- [x] **Escaped Characters**: Current parser does not support escaped quotes (`\"`).
+    - *Completed*: Updated `grammar.pest` to support escapes via `inner` rule.
+    - Added `unescape_string` in compiler to handle `\n`, `\r`, `\t`, `\"`, `\\`.
 
 ## 4. Native & Standard Library
 
