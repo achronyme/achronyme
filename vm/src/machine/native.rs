@@ -52,6 +52,9 @@ impl NativeRegistry for super::vm::VM {
                 "typeof" => crate::stdlib::core::native_typeof,
                 "assert" => crate::stdlib::core::native_assert,
                 "time"   => crate::stdlib::core::native_time,
+                "push"   => crate::stdlib::core::native_push,
+                "pop"    => crate::stdlib::core::native_pop,
+                "keys"   => crate::stdlib::core::native_keys,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 

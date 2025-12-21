@@ -14,6 +14,10 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
     NativeMeta { name: "typeof", arity: 1  }, // Index 2
     NativeMeta { name: "assert", arity: 1  }, // Index 3
     NativeMeta { name: "time",   arity: 0  }, // Index 4
+    // Collections
+    NativeMeta { name: "push",   arity: 2  }, // Index 5
+    NativeMeta { name: "pop",    arity: 1  }, // Index 6
+    NativeMeta { name: "keys",   arity: 1  }, // Index 7
 ];
 
 // Helper to get start index for user globals
