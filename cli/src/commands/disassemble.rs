@@ -30,8 +30,39 @@ pub fn disassemble_file(path: &str) -> Result<()> {
         match OpCode::from_u8(op_byte) {
             Some(OpCode::LoadConst) => {
                 let main_func = compiler.compilers.last().expect("No main compiler");
-                let val = main_func.constants.get(bx as usize);
-                println!("{:04} {:<12} R{}, K[{}] ({:?})", i, name, a, bx, val);
+                let val_opt = main_func.constants.get(bx as usize);
+                
+                let val_str = if let Some(val) = val_opt {
+                    if val.is_complex() {
+                         let handle = val.as_handle().unwrap();
+                         if let Some(c) = compiler.complexes.get(handle as usize) {
+                             if c.im.abs() < 1e-15 {
+                                 format!("{}", c.re)
+                             } else if c.re.abs() < 1e-15 {
+                                 if c.im == 1.0 { "i".to_string() }
+                                 else if c.im == -1.0 { "-i".to_string() }
+                                 else { format!("{}i", c.im) }
+                             } else {
+                                 format!("{} + {}i", c.re, c.im)
+                             }
+                         } else {
+                             format!("{:?}", val)
+                         }
+                    } else if val.is_string() {
+                         let handle = val.as_handle().unwrap();
+                         if let Some(s) = compiler.interner.strings.get(handle as usize) {
+                             format!("\"{}\"", s)
+                         } else {
+                             format!("{:?}", val)
+                         }
+                    } else {
+                        format!("{:?}", val)
+                    }
+                } else {
+                    "None".to_string()
+                };
+
+                println!("{:04} {:<12} R{}, K[{}] ({})", i, name, a, bx, val_str);
             }
             Some(OpCode::Return) => {
                 println!("{:04} {:<12} R{}", i, name, a);

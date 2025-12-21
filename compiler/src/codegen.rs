@@ -1023,21 +1023,26 @@ impl Compiler {
             .parse::<f64>()
             .map_err(|_| CompilerError::InvalidComplex)?;
 
-        let reg = self.alloc_reg()?;
-        let zero_reg = self.alloc_reg()?;
-        let val_reg = self.alloc_reg()?;
-
-        let z_idx = self.add_constant(Value::number(0.0));
-        self.emit_abx(OpCode::LoadConst, zero_reg, z_idx as u16);
-
-        let v_idx = self.add_constant(Value::number(val));
-        self.emit_abx(OpCode::LoadConst, val_reg, v_idx as u16);
-
-        self.emit_abc(OpCode::NewComplex, reg, zero_reg, val_reg);
+        // Construct the complex number (0 + val*i)
+        let c = Complex64::new(0.0, val);
         
-        // Hygiene
-        self.free_reg(val_reg);
-        self.free_reg(zero_reg);
+        // Deduplicate/Intern in the compiler's list
+        let complex_handle = if let Some(idx) = self.complexes.iter().position(|&existing| existing == c) {
+            idx as u32
+        } else {
+            let idx = self.complexes.len() as u32;
+            self.complexes.push(c);
+            idx
+        };
+
+        let val = Value::complex(complex_handle);
+        let const_idx = self.add_constant(val);
+
+        let reg = self.alloc_reg()?;
+        if const_idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants);
+        }
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
 
         Ok(reg)
     }

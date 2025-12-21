@@ -92,6 +92,28 @@ impl VM {
             v if v.is_nil() => "nil".to_string(),
             v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
             v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
+            v if v.is_complex() => {
+                let idx = v.as_handle().unwrap();
+                if let Some(c) = self.heap.get_complex(idx) {
+                    if c.im.abs() < 1e-15 {
+                        format!("{}", c.re)
+                    } else if c.re.abs() < 1e-15 {
+                        if c.im == 1.0 {
+                            "i".to_string()
+                        } else if c.im == -1.0 {
+                            "-i".to_string()
+                        } else {
+                            format!("{}i", c.im)
+                        }
+                    } else if c.im >= 0.0 {
+                        format!("{} + {}i", c.re, c.im)
+                    } else {
+                        format!("{} - {}i", c.re, c.im.abs())
+                    }
+                } else {
+                    format!("Complex({})", idx)
+                }
+            },
             _ => format!("{:?}", val), // Fallback
         }
     }
@@ -243,8 +265,7 @@ impl VM {
                 Print => {
                     let a = decode_a(instruction) as usize;
                     let val = self.get_reg(base, a);
-                    // Simple debug print for now
-                    println!("{:?}", val);
+                    println!("{}", self.val_to_string(&val));
                 }
 
 

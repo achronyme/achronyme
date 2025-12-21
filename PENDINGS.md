@@ -33,7 +33,9 @@
 - [x] **Serialization**:
     - *Completed*: Implemented binary format support for Complex numbers (`SER_TAG_COMPLEX` = 9).
     - Added `ComplexTable` to `.achb` format (re, im).
-- [ ] **Pretty Printing (VM::val_to_string)**:
+- [/] **Pretty Printing (VM::val_to_string)**:
+    - *Completed*: Complex numbers (`5i`, `1+2i`). Strings, Numbers, Nils.
+    - *Pending*: Recursive map/list printing.
     - *Target*: Add support for `Map` type once implemented.
 
 ## 5. Security & Architecture (PR3 Recommendations)
