@@ -8,6 +8,7 @@ pub enum CompilerError {
     UnexpectedRule(String),
     MissingOperand,
     RegisterOverflow,
+    CompilerLimitation(String),
 }
 
 impl From<String> for CompilerError {

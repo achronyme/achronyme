@@ -8,6 +8,7 @@ use std::ptr;
 
 use super::arithmetic::ArithmeticOps;
 use super::control::ControlFlowOps;
+use super::data::DataOps;
 use super::frame::CallFrame;
 use super::gc::GarbageCollector;
 use super::globals::GlobalOps;
@@ -248,7 +249,13 @@ impl VM {
 
 
 
-                GetUpvalue => {
+
+
+            BuildList | BuildMap | GetIndex | SetIndex => {
+                self.handle_data(op, instruction, base)?;
+            }
+
+            OpCode::GetUpvalue => {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
                     

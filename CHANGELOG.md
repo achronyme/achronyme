@@ -14,6 +14,11 @@
     - Condicionales: `if` / `else` como expresiones (retornan valor).
     - Iteración: Bucle `while`.
     - Operadores: Comparadores `==`, `<`, `>`.
+- **Dynamic Data Structures** (Task 3):
+    - **Listas**: Sintaxis `[1, 2, 3]`, acceso `list[0]`.
+    - **Mapas**: Sintaxis `{ key: "val" }`, acceso `map.key` o `map["key"]`.
+    - **Smart Assignment**: Soporte para asignar a índices `list[0] = 5` y `map.key = "new"`.
+    - **Strict Typing**: Claves de mapas deben ser Strings (runtime check).
 - **Natives**:
     - Funciones `print`, `len`, `typeof`, `assert`, `time`.
     - Arquitectura SSOT (Single Source of Truth) para sincronizar índices VM/Compiler.

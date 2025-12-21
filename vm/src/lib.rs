@@ -11,3 +11,5 @@ pub mod native;
 pub use native::{NativeFn, NativeObj};
 pub mod specs;
 pub mod stdlib;
+pub mod loader;
+pub use loader::LoaderError;

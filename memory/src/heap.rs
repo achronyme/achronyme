@@ -175,6 +175,33 @@ impl Heap {
         }
     }
 
+    pub fn alloc_map(&mut self, m: HashMap<String, Value>) -> u32 {
+        // Approximate memory usage: Base struct + (Key + Value) * capacity
+        // Note: This is an estimation. Allocators are complex.
+        let estimated_size = std::mem::size_of::<HashMap<String, Value>>() 
+            + m.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<Value>());
+        
+        self.bytes_allocated += estimated_size;
+        self.check_gc();
+
+        if let Some(idx) = self.maps.free_indices.pop() {
+            self.maps.data[idx as usize] = m;
+            idx
+        } else {
+            let index = self.maps.data.len() as u32;
+            self.maps.data.push(m);
+            index
+        }
+    }
+
+    pub fn get_map(&self, index: u32) -> Option<&HashMap<String, Value>> {
+        self.maps.data.get(index as usize)
+    }
+
+    pub fn get_map_mut(&mut self, index: u32) -> Option<&mut HashMap<String, Value>> {
+        self.maps.data.get_mut(index as usize)
+    }
+
     // Tracing (Mark Phase) logic
     pub fn trace(&mut self, roots: Vec<Value>) {
         let mut worklist = roots;

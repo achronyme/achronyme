@@ -274,20 +274,66 @@ impl Compiler {
             }
             Rule::assignment => {
                 let mut p = inner.into_inner();
-                let name = p.next().unwrap().as_str().to_string();
-                let expr = p.next().unwrap();
+                let lhs_pair = p.next().unwrap(); // postfix_expr
+                let rhs_pair = p.next().unwrap();
 
-                let val_reg = self.compile_expr(expr)?;
+                let mut lhs_inner = lhs_pair.into_inner();
+                let atom = lhs_inner.next().unwrap();
+                let mut suffixes: Vec<Pair<Rule>> = lhs_inner.collect();
 
-                // Lookup global index
-                let idx = *self.global_symbols.get(&name).ok_or_else(|| {
-                    // This is now a COMPILER ERROR, not runtime!
-                    CompilerError::UnknownOperator(format!("Undefined global variable: {}", name))
-                })?;
+                if suffixes.is_empty() {
+                    // Simple Identifier Assignment
+                    let atom_inner = atom.into_inner().next().unwrap();
+                    if atom_inner.as_rule() != Rule::identifier {
+                         return Err(CompilerError::UnexpectedRule("LHS atom must be identifier".into()));
+                    }
+                    let name = atom_inner.as_str().to_string();
 
-                // SetGlobal
-                self.emit_abx(OpCode::SetGlobal, val_reg, idx);
-                self.free_reg(val_reg); // Statement consumes
+                    let val_reg = self.compile_expr(rhs_pair)?;
+
+                    if let Some(local_reg) = self.resolve_local(&name) {
+                         self.emit_abc(OpCode::Move, local_reg, val_reg, 0);
+                    } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, &name) {
+                         self.emit_abx(OpCode::SetUpvalue, val_reg, upval_idx as u16);
+                    } else {
+                         let idx = *self.global_symbols.get(&name).ok_or_else(|| {
+                              CompilerError::UnknownOperator(format!("Undefined global variable: {}", name))
+                         })?;
+                         self.emit_abx(OpCode::SetGlobal, val_reg, idx);
+                    }
+                    self.free_reg(val_reg);
+                } else {
+                    // Complex Assignment (Index)
+                    let last_op = suffixes.pop().unwrap();
+                    if last_op.as_rule() != Rule::index_op {
+                        return Err(CompilerError::UnexpectedRule("Cannot assign to function call".into()));
+                    }
+
+                    // 1. Compile Target
+                    let target_reg = self.compile_expr(atom)?;
+                    for op in suffixes {
+                        self.compile_postfix_op(target_reg, op)?;
+                    }
+
+                    // 2. Compile Key
+                    let inner_op = last_op.into_inner().next().unwrap();
+                    let key_reg = match inner_op.as_rule() {
+                        Rule::expr => self.compile_expr(inner_op)?,
+                        Rule::identifier => self.compile_dot_key(inner_op.as_str())?,
+                         _ => return Err(CompilerError::UnexpectedRule(format!("{:?}", inner_op.as_rule())))
+                    };
+
+                    // 3. Compile Value
+                    let val_reg = self.compile_expr(rhs_pair)?;
+
+                    // 4. Emit SetIndex
+                    self.emit_abc(OpCode::SetIndex, target_reg, key_reg, val_reg);
+
+                    // 5. Hygiene
+                    self.free_reg(val_reg);
+                    self.free_reg(key_reg);
+                    self.free_reg(target_reg);
+                }
             }
             Rule::print_stmt => {
                 let expr = inner.into_inner().next().unwrap();
@@ -749,47 +795,45 @@ impl Compiler {
         Ok(reg)
     }
 
+    fn compile_postfix_op(&mut self, reg: u8, op: Pair<Rule>) -> Result<(), CompilerError> {
+        match op.as_rule() {
+             Rule::call_op => {
+                let mut arg_count = 0;
+                for arg in op.into_inner() {
+                    let _arg_reg = self.compile_expr(arg)?;
+                    arg_count += 1;
+                }
+                if arg_count > 255 { return Err(CompilerError::TooManyConstants); }
+                self.emit_abc(OpCode::Call, reg, reg, arg_count as u8);
+                for _ in 0..arg_count {
+                     let top = self.current().reg_top - 1;
+                     self.free_reg(top);
+                }
+             }
+             Rule::index_op => {
+                 let inner_op = op.into_inner().next().unwrap();
+                 let key_reg = match inner_op.as_rule() {
+                      Rule::expr => self.compile_expr(inner_op)?,
+                      Rule::identifier => self.compile_dot_key(inner_op.as_str())?,
+                       _ => return Err(CompilerError::UnexpectedRule(format!("{:?}", inner_op.as_rule())))
+                 };
+                 self.emit_abc(OpCode::GetIndex, reg, reg, key_reg);
+                 self.free_reg(key_reg);
+             }
+             _ => return Err(CompilerError::UnexpectedRule(format!("Postfix: {:?}", op.as_rule())))
+        }
+        Ok(())
+    }
+
     fn compile_postfix(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         // postfix_expr = { atom ~ (postfix_op)* }
         let mut inner = pair.into_inner();
         let atom_pair = inner.next().unwrap();
-        let mut reg = self.compile_expr(atom_pair)?; // Compile the atom
+        let reg = self.compile_expr(atom_pair)?; // Compile the atom
 
         // Handle suffixes (calls, index)
-        // Handle suffixes (calls)
-        // Note: Grammar defines `postfix_op*`, so we iterate
         while let Some(op) = inner.next() {
-            match op.as_rule() {
-                Rule::call_op => {
-                    let mut arg_count = 0;
-                    for arg in op.into_inner() {
-                        // Compile argument, it lands in the next register (reg + 1 + i)
-                        let _arg_reg = self.compile_expr(arg)?;
-                        arg_count += 1;
-                    }
-
-                    if arg_count > 255 {
-                        return Err(CompilerError::TooManyConstants); // Limitation of ABC format
-                    }
-
-                    // Call R[reg], ReturnTo R[reg], ArgCount
-                    self.emit_abc(OpCode::Call, reg, reg, arg_count as u8);
-
-                    // Hygiene: Free arguments (Stack LIFO)
-                    // We allocated `arg_count` registers on top of `reg`.
-                    for _ in 0..arg_count {
-                         // Extract reg_top first to avoid double mutable borrow
-                         let top = self.current().reg_top - 1;
-                         self.free_reg(top);
-                    }
-                }
-                _ => {
-                    return Err(CompilerError::UnexpectedRule(format!(
-                        "Postfix: {:?}",
-                        op.as_rule()
-                    )))
-                }
-            }
+            self.compile_postfix_op(reg, op)?;
         }
 
         Ok(reg)
@@ -816,6 +860,8 @@ impl Compiler {
                 self.emit_abx(OpCode::LoadNil, reg, 0);
                 Ok(reg)
             }
+            Rule::list_literal => self.compile_list(inner),
+            Rule::map_literal => self.compile_map(inner),
             Rule::block => {
                 let reg = self.alloc_reg()?;
                 self.compile_block(inner, reg)?;
@@ -855,6 +901,99 @@ impl Compiler {
                 inner.as_rule()
             ))),
         }
+    }
+
+    fn compile_list(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        let inside = pair.into_inner();
+        let target_reg = self.alloc_reg()?;
+
+        let mut count = 0;
+        let start_reg = self.current().reg_top;
+
+        for expr in inside {
+            let reg = self.compile_expr(expr)?;
+            // Verify contiguity (sanity check)
+            if reg != start_reg + count {
+                return Err(CompilerError::CompilerLimitation("Register allocation fragmentation in list literal".into()));
+            }
+            count += 1;
+        }
+        
+        if count > 255 {
+            return Err(CompilerError::TooManyConstants); // Reuse for size limit
+        }
+
+        // R[A] = List(R[B]...R[B+C-1])
+        // If count == 0, B is irrelevant, we pass 0
+        self.emit_abc(OpCode::BuildList, target_reg, start_reg, count);
+
+        // Cleanup: Free all element registers
+        for _ in 0..count {
+            let top = self.current().reg_top - 1;
+            self.free_reg(top);
+        }
+
+        Ok(target_reg)
+    }
+
+    fn compile_map(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        let inside = pair.into_inner(); // map_pairs
+        let target_reg = self.alloc_reg()?;
+
+        // Count is number of PAIRS. Total regs = 2 * count.
+        let mut count = 0;
+        let start_reg = self.current().reg_top;
+
+        for map_pair in inside {
+            let mut pair_inner = map_pair.into_inner();
+            let key_node = pair_inner.next().unwrap();
+            let value_node = pair_inner.next().unwrap();
+
+            // 1. Compile Key (Must be String)
+            let raw_s = key_node.as_str();
+            let key_slice = match key_node.as_rule() {
+                Rule::identifier => raw_s,
+                Rule::string => &raw_s[1..raw_s.len()-1], // Strip quotes
+                _ => return Err(CompilerError::UnexpectedRule("Map key must be identifier or string".into()))
+            };
+
+            // Intern and LoadConst
+            let key_handle = self.intern_string(key_slice);
+            let key_val = Value::string(key_handle);
+            let const_idx = self.add_constant(key_val);
+
+            let key_reg = self.alloc_reg()?;
+            if const_idx > 0xFFFF { return Err(CompilerError::TooManyConstants); }
+            self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16);
+
+             // Verify contiguity
+             // expected: start_reg + (count*2)
+             if key_reg != start_reg + (count * 2) {
+                 return Err(CompilerError::CompilerLimitation("Register fragmentation in map key".into()));
+             }
+
+            // 2. Compile Value
+            let val_reg = self.compile_expr(value_node)?;
+            if val_reg != key_reg + 1 {
+                 return Err(CompilerError::CompilerLimitation("Register fragmentation in map value".into()));
+            }
+
+            count += 1;
+        }
+
+        if count > 255 {
+            return Err(CompilerError::TooManyConstants);
+        }
+
+        self.emit_abc(OpCode::BuildMap, target_reg, start_reg, count);
+
+        // Cleanup: Free 2*count regs
+        for _ in 0..(count * 2) {
+            let top = self.current().reg_top - 1;
+            self.free_reg(top);
+        }
+
+        Ok(target_reg)
     }
 
     fn compile_number(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
@@ -918,6 +1057,18 @@ impl Compiler {
         }
         
         Ok(reg)
+    }
+
+    fn compile_dot_key(&mut self, name: &str) -> Result<u8, CompilerError> {
+        let handle = self.intern_string(name);
+        let val = Value::string(handle);
+        let const_idx = self.add_constant(val);
+        let r = self.alloc_reg()?;
+        if const_idx > 0xFFFF { 
+            return Err(CompilerError::TooManyConstants); 
+        }
+        self.emit_abx(OpCode::LoadConst, r, const_idx as u16);
+        Ok(r)
     }
 
     // --- Helpers (Delegate to Current FunctionCompiler) ---
