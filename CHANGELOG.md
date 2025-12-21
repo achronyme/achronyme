@@ -14,6 +14,11 @@
     - Expresiones de bloque: `{ stmt; expr }` retornan la última expresión.
     - Condicionales: `if` / `else` como expresiones (retornan valor).
     - Iteración: Bucle `while`.
+    - **Advanced Control Flow**:
+        - `for x in list/map`: Iteradores sintácticos con `OP_GET_ITER`/`OP_FOR_ITER`.
+        - `forever { ... }`: Loop infinito optimizado.
+        - `break` / `continue`: Salto de control estructurado.
+        - `mut`: Palabra clave para variables mutables explícitas (diferente de `let`).
     - Operadores: Comparadores `==`, `<`, `>`.
 - **Dynamic Data Structures** (Task 3):
     - **Listas**: Sintaxis `[1, 2, 3]`, acceso `list[0]`.
@@ -72,6 +77,8 @@
 - Recursividad infinita en `compile_if` (corregido target passing).
 - Shadowing de variables: ahora respeta alcance léxico (LIFO).
 - Parsing robusto de funciones: maneja todos los edge cases (`fn () {}`, `fn {}`, etc.).
+- **Scope Management**: Fixed bug where locals were not popping from compiler stack at end of block (`forever` loop fix).
+- **Register Contiguity**: Implemented `alloc_contiguous` to guarantee safe register adjacency for iterators.
 
 ### Performance
 - **Benchmark** (10M iteraciones de loop vacío):
