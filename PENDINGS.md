@@ -55,5 +55,5 @@
 ### Architecture
 - [x] **Decouple Loader**: `cli/src/commands/run.rs` knows too many VM internals.
     - *Completed*: Moved all binary loading logic to `vm::loader::load_executable`. CLI is now agnostic.
-- [ ] **Named Constants for Tags**: Replace magic numbers (`0`, `1`, `255`) in serialization.
-    - *Target*: Define `CONST_NUMBER = 0`, `CONST_STRING = 1` shared between compiler/VM.
+- [x] **Named Constants for Tags**: Replace magic numbers (`0`, `1`, `255`) in serialization.
+    - *Completed*: Defined `SER_TAG_NUMBER`, `SER_TAG_STRING`, `SER_TAG_NIL` in `vm/src/specs.rs` as SSOT.

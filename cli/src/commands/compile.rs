@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use compiler::Compiler;
 use memory::Value;
 use std::fs;
+use vm::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
 
 pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
@@ -38,13 +39,15 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         file.write_u32::<LittleEndian>(main_func.constants.len() as u32)?;
         for c in &main_func.constants {
             if let Some(n) = c.as_number() {
-                file.write_u8(0)?;
+                file.write_u8(SER_TAG_NUMBER)?;
                 file.write_f64::<LittleEndian>(n)?;
             } else if c.is_string() {
-                file.write_u8(1)?;
+                file.write_u8(SER_TAG_STRING)?;
                 // Payload is the handle
                 let handle = c.as_handle().expect("String value must have handle");
                 file.write_u32::<LittleEndian>(handle)?;
+            } else if c.is_nil() {
+                file.write_u8(SER_TAG_NIL)?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Unsupported constant type for serialization: {:?}",
@@ -69,14 +72,14 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             file.write_u32::<LittleEndian>(proto.constants.len() as u32)?;
             for c in &proto.constants {
                 if let Some(n) = c.as_number() {
-                    file.write_u8(0)?;
+                    file.write_u8(SER_TAG_NUMBER)?;
                     file.write_f64::<LittleEndian>(n)?;
                 } else if c.is_string() {
-                    file.write_u8(1)?;
+                    file.write_u8(SER_TAG_STRING)?;
                     let handle = c.as_handle().expect("String value must have handle");
                     file.write_u32::<LittleEndian>(handle)?;
                 } else {
-                    file.write_u8(255)?;
+                    file.write_u8(SER_TAG_NIL)?;
                 }
             }
             

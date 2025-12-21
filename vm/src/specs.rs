@@ -18,3 +18,9 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
 
 // Helper to get start index for user globals
 pub const USER_GLOBAL_START: u16 = NATIVE_TABLE.len() as u16;
+
+// --- SERIALIZATION CONTRACT ---
+// Binary Format Tags (v1)
+pub const SER_TAG_NUMBER: u8 = 0;
+pub const SER_TAG_STRING: u8 = 1;
+pub const SER_TAG_NIL:    u8 = 255;

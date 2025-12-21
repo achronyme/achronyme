@@ -1,5 +1,6 @@
 use std::io::Read;
 use byteorder::{LittleEndian, ReadBytesExt};
+use crate::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
 use crate::{VM, CallFrame};
 use memory::{Function, Closure, Value};
 
@@ -67,14 +68,17 @@ impl VM {
         for _ in 0..const_count {
             let tag = reader.read_u8()?;
             match tag {
-                0 => {
+                SER_TAG_NUMBER => {
                     let n = reader.read_f64::<LittleEndian>()?;
                     constants.push(Value::number(n));
                 }
-                1 => {
+                SER_TAG_STRING => {
                     // Read Handle -> Create Value
                     let handle = reader.read_u32::<LittleEndian>()?;
                     constants.push(Value::string(handle));
+                }
+                SER_TAG_NIL => {
+                    constants.push(Value::nil());
                 }
                 _ => return Err(LoaderError::Format(format!("Unknown constant tag: {}", tag))),
             }
@@ -111,15 +115,15 @@ impl VM {
             for _ in 0..proto_const_count {
                 let tag = reader.read_u8()?;
                 match tag {
-                    0 => {
+                    SER_TAG_NUMBER => {
                         let n = reader.read_f64::<LittleEndian>()?;
                         proto_constants.push(Value::number(n));
                     }
-                    1 => {
+                    SER_TAG_STRING => {
                         let handle = reader.read_u32::<LittleEndian>()?;
                         proto_constants.push(Value::string(handle));
                     }
-                    255 => {
+                    SER_TAG_NIL => {
                         proto_constants.push(Value::nil());
                     }
                     _ => return Err(LoaderError::Format(format!("Unknown proto constant tag: {}", tag))),
