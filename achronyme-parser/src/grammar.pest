@@ -29,7 +29,7 @@ complex    = @{ number ~ "i" }
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
-keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" }
+keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" }
 
 // 1. Define Literals
 nil_lit   = { "nil" }
@@ -43,6 +43,8 @@ map_literal  = { "{" ~ (map_pair ~ ("," ~ map_pair)*)? ~ ","? ~ "}" }
 block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
 if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
 while_expr = { "while" ~ expr ~ block }
+for_expr   = { "for" ~ identifier ~ "in" ~ expr ~ block }
+forever_expr = { "forever" ~ block }
 
 // 3. Function Definition (parsed as expression for first-class functions)
 param_list = { identifier ~ ("," ~ identifier)* }
@@ -56,6 +58,8 @@ atom = {
   | map_literal
   | if_expr
   | while_expr
+  | for_expr
+  | forever_expr
   | fn_expr
   | block
   | complex
@@ -138,6 +142,8 @@ mut_decl   = { "mut" ~ identifier ~ "=" ~ expr }
 assignment = { postfix_expr ~ "=" ~ expr }
 print_stmt = { "print" ~ "(" ~ expr ~ ")" }
 // expr_stmt  = { expr } // Removed, direct expr in stmt
+break_stmt = { "break" }
+continue_stmt = { "continue" }
 
 stmt = {
     let_decl
@@ -145,6 +151,8 @@ stmt = {
   | assignment
   | print_stmt
   | return_stmt
+  | break_stmt
+  | continue_stmt
   | expr
 }
 

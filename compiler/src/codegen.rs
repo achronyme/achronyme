@@ -13,12 +13,20 @@ pub struct Local {
     pub name: String,
     pub depth: u32,
     pub is_captured: bool,
+    pub reg: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpvalueInfo {
     pub is_local: bool,
     pub index: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoopContext {
+    pub scope_depth: u32,
+    pub start_label: usize,
+    pub break_jumps: Vec<usize>,
 }
 
 /// State specific to ONE function being compiled
@@ -30,6 +38,7 @@ pub struct FunctionCompiler {
     pub bytecode: Vec<u32>,
     pub constants: Vec<Value>,
     pub upvalues: Vec<UpvalueInfo>,
+    pub loop_stack: Vec<LoopContext>,
     
     // Register allocator state
     pub reg_top: u8,
@@ -48,11 +57,25 @@ impl FunctionCompiler {
             bytecode: Vec::new(),
             constants: Vec::new(),
             upvalues: Vec::new(),
+            loop_stack: Vec::new(),
             reg_top: arity,        // Reserve R0..R(arity-1) for arguments
             max_slots: arity as u16,
         }
     }
     
+    fn alloc_contiguous(&mut self, count: u8) -> Result<u8, CompilerError> {
+        let start = self.reg_top;
+        if (start as usize) + (count as usize) > 255 {
+             return Err(CompilerError::RegisterOverflow);
+        }
+        self.reg_top += count;
+        
+        if (self.reg_top as u16) > self.max_slots {
+            self.max_slots = self.reg_top as u16;
+        }
+        Ok(start)
+    }
+
     fn alloc_reg(&mut self) -> Result<u8, CompilerError> {
         let r = self.reg_top;
         if r == 255 {
@@ -106,10 +129,10 @@ impl FunctionCompiler {
         self.bytecode.push(encode_abx(op.as_u8(), a, bx));
     }
 
-    fn resolve_local(&self, name: &str) -> Option<u8> {
+    fn resolve_local(&self, name: &str) -> Option<(usize, u8)> {
         for (i, local) in self.locals.iter().enumerate().rev() {
             if local.name == name {
-                return Some(i as u8);
+                return Some((i, local.reg));
             }
         }
         None
@@ -238,23 +261,24 @@ impl Compiler {
 
                 let val_reg = self.compile_expr(expr)?;
 
-                // Allocate slot or use existing?
-                // For now: Always allocate new slot.
-                // Note: This simple approach leaks slots if you re-declare 'x' in REPL
-                // but keeps implementation simple for O(1).
-
-                if self.next_global_idx == u16::MAX {
-                    return Err(CompilerError::TooManyConstants); // Reuse error or make new one
+                if self.current().scope_depth > 0 {
+                    let depth = self.current().scope_depth;
+                    self.current().locals.push(Local {
+                        name,
+                        depth,
+                        is_captured: false,
+                        reg: val_reg,
+                    });
+                } else {
+                    if self.next_global_idx == u16::MAX {
+                        return Err(CompilerError::TooManyConstants);
+                    }
+                    let idx = self.next_global_idx;
+                    self.next_global_idx += 1;
+                    self.global_symbols.insert(name, idx);
+                    self.emit_abx(OpCode::DefGlobalLet, val_reg, idx);
+                    self.free_reg(val_reg);
                 }
-
-                let idx = self.next_global_idx;
-                self.next_global_idx += 1;
-                self.global_symbols.insert(name, idx);
-
-                // DefGlobalLet R[val_reg], Slot[idx]
-                // Bx is now raw index, NOT constant pool index
-                self.emit_abx(OpCode::DefGlobalLet, val_reg, idx);
-                self.free_reg(val_reg); // Statement consumes
             }
             Rule::mut_decl => {
                 let mut p = inner.into_inner();
@@ -263,17 +287,24 @@ impl Compiler {
 
                 let val_reg = self.compile_expr(expr)?;
 
-                if self.next_global_idx == u16::MAX {
-                    return Err(CompilerError::TooManyConstants);
+                if self.current().scope_depth > 0 {
+                    let depth = self.current().scope_depth;
+                    self.current().locals.push(Local {
+                        name,
+                        depth,
+                        is_captured: false,
+                        reg: val_reg,
+                    });
+                } else {
+                    if self.next_global_idx == u16::MAX {
+                        return Err(CompilerError::TooManyConstants);
+                    }
+                    let idx = self.next_global_idx;
+                    self.next_global_idx += 1;
+                    self.global_symbols.insert(name, idx);
+                    self.emit_abx(OpCode::DefGlobalVar, val_reg, idx);
+                    self.free_reg(val_reg);
                 }
-
-                let idx = self.next_global_idx;
-                self.next_global_idx += 1;
-                self.global_symbols.insert(name, idx);
-
-                // DefGlobalVar
-                self.emit_abx(OpCode::DefGlobalVar, val_reg, idx);
-                self.free_reg(val_reg); // Statement consumes the reg
 
             }
             Rule::assignment => {
@@ -367,6 +398,8 @@ impl Compiler {
                 self.free_reg(func_reg); // Result is discarded in print_stmt
 
             }
+            Rule::break_stmt => self.compile_break()?,
+            Rule::continue_stmt => self.compile_continue()?,
             Rule::return_stmt => {
                 // return expr?
                 let mut inner_iter = inner.into_inner();
@@ -403,6 +436,8 @@ impl Compiler {
             Rule::pow_expr => self.compile_binary(pair, OpCode::Pow, OpCode::Nop, true),
             Rule::prefix_expr => self.compile_prefix(pair),
             Rule::postfix_expr => self.compile_postfix(pair),
+            Rule::for_expr => self.compile_for(pair),
+            Rule::forever_expr => self.compile_forever(pair),
             Rule::atom => self.compile_atom(pair),
             _ => {
                 let rule = pair.as_rule();
@@ -507,6 +542,22 @@ impl Compiler {
         bytecode[idx] = encode_abx(opcode, a, jump_target);
     }
 
+    fn enter_loop(&mut self, start_label: usize) {
+        let depth = self.current().scope_depth;
+        self.current().loop_stack.push(LoopContext {
+            scope_depth: depth,
+            start_label,
+            break_jumps: Vec::new(),
+        });
+    }
+
+    fn exit_loop(&mut self) {
+        let loop_ctx = self.current().loop_stack.pop().expect("Loop stack underflow");
+        for jump_idx in loop_ctx.break_jumps {
+             self.patch_jump(jump_idx);
+        }
+    }
+
     fn compile_block(&mut self, pair: Pair<Rule>, target_reg: u8) -> Result<(), CompilerError> {
         let initial_reg_top = self.current().reg_top; // Snapshot
         self.begin_scope();
@@ -579,12 +630,6 @@ impl Compiler {
         self.patch_jump(jump_else);
 
         if let Some(else_pair) = else_part {
-             // else_pair rule is implicit in grammar?
-             // ("else" ~ (block | if_expr))?
-             // Pest often flattens this if not atomic?
-             // inner.next() gave the block or if_expr directly?
-             // Let's check logic.
-             // If implicit: `else_part` is the block or if_expr.
              match else_pair.as_rule() {
                  Rule::block => self.compile_block(else_pair, target_reg)?,
                  Rule::if_expr => {
@@ -605,6 +650,187 @@ impl Compiler {
         Ok(target_reg)
     }
 
+    fn compile_break(&mut self) -> Result<(), CompilerError> {
+        
+        let loop_ctx = self.current_ref().loop_stack.last()
+            .ok_or(CompilerError::CompileError("break outside of loop".into()))?;
+        
+        let target_depth = loop_ctx.scope_depth;
+        
+        // emits OP_CLOSE_UPVALUE for locals that are captured and going out of scope
+        // We find the *lowest* register index among variables that need closing.
+        // In Lua/Achronyme (assumption), CLOSE(A) closes all upvalues >= R[A].
+        
+        // Scan locals from current scope down to loop scope
+        let mut close_threshold = None;
+        
+        for (i, local) in self.current().locals.iter().enumerate().rev() {
+            if local.depth <= target_depth {
+                break; 
+            }
+            if local.is_captured {
+                close_threshold = Some(i as u8);
+            }
+        }
+        
+        if let Some(reg) = close_threshold {
+            self.emit_abx(OpCode::CloseUpvalue, reg, 0); 
+            // Bx usually unused for CloseUpvalue? Or maybe just A?
+            // OpCode::CloseUpvalue def: CloseUpvalue = 36.
+            // Using implicit encoding.
+        }
+        
+        // Emit Jump (placeholder)
+        let jump = self.emit_jump(OpCode::Jump, 0);
+        
+        // Add to break_jumps
+        self.current().loop_stack.last_mut().unwrap().break_jumps.push(jump);
+        
+        Ok(())
+    }
+
+    fn compile_continue(&mut self) -> Result<(), CompilerError> {
+        
+        let loop_ctx = self.current_ref().loop_stack.last()
+            .ok_or(CompilerError::CompileError("continue outside of loop".into()))?;
+            
+        let target_depth = loop_ctx.scope_depth;
+        let start_label = loop_ctx.start_label;
+        
+        // Hygiene: Close upvalues
+        let mut close_threshold = None;
+        for (i, local) in self.current().locals.iter().enumerate().rev() {
+            if local.depth <= target_depth {
+                break;
+            }
+            if local.is_captured {
+                close_threshold = Some(i as u8);
+            }
+        }
+        if let Some(reg) = close_threshold {
+            self.emit_abx(OpCode::CloseUpvalue, reg, 0);
+        }
+        
+        // Jump to start
+        self.emit_abx(OpCode::Jump, 0, start_label as u16);
+        
+        Ok(())
+    }
+
+    fn compile_for(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // for identifier in expr block
+        let mut inner = pair.into_inner();
+        let var_name = inner.next().unwrap().as_str().to_string();
+
+        let iterable_expr = inner.next().unwrap();
+        let body_block = inner.next().unwrap();
+
+        // 1. Compile Iterable
+        let iter_src_reg = self.compile_expr(iterable_expr)?;
+        
+        // 2. Allocate Iterator Register (holds the iterator STATE) + Value Register
+        // We need 2 contiguous registers: R[iter] and R[iter+1] (value)
+        let iter_reg = self.alloc_contiguous(2)?;
+        let val_reg = iter_reg + 1;
+        
+        // 3. Emit GetIter R[iter_reg] = Iter(R[iter_src_reg])
+        // We use A=iter_reg, B=iter_src_reg
+        self.emit_abc(OpCode::GetIter, iter_reg, iter_src_reg, 0); 
+                                     // Actually usually GetIter might consume or borrow.
+                                     // Let's assume hygiene allows freeing source if GetIter creates a new object
+                                     // or moves it.
+        
+        // 4. Start Label
+        let start_label = self.current().bytecode.len();
+        self.enter_loop(start_label);
+        
+        // 5. Emit ForIter
+        // R[iter_reg] points to iterator.
+        // We need a jump target if finished.
+        let jump_exit_idx = self.emit_jump(OpCode::ForIter, iter_reg);
+        
+        // 6. Extract Value
+        // Assumption: ForIter pushed value to R[iter_reg + 1]?
+        // Or ForIter *is* the assignment? 
+        // Logic: ForIter A, Bx. 
+        // If has next: R[A+1] = val. PC++.
+        // If done: Jump Bx.
+        
+        // We need to define the loop variable in the scope.
+        // We need to define the loop variable in the scope.
+        self.begin_scope();
+        
+        // Local variable 'var_name' maps to R[iter_reg + 1] (already allocated via alloc_contiguous)
+        
+        // Register local
+        // Register local
+        // Register local
+        let depth = self.current().scope_depth;
+        self.current().locals.push(Local {
+            name: var_name,
+            depth,
+            is_captured: false,
+            reg: val_reg,
+        });
+
+        // 7. Compile Body (result ignored usually)
+        // We pass a dummy target, but careful: compile_block creates its own scope?
+        // compile_block logic: "self.begin_scope(); ... self.end_scope();"
+        // We already opened a scope for the loop variable, so the body block should probably 
+        // be compiled *inside* this scope?
+        // compile_block calls begin_scope. So we have:
+        // Scope(ForVar) -> Scope(Block).
+        // That's fine.
+        
+        let body_target = self.alloc_reg()?;
+        self.compile_block(body_block, body_target)?;
+        self.free_reg(body_target);
+        
+        // 8. Loop Back
+        self.emit_abx(OpCode::Jump, 0, start_label as u16);
+        
+        // 9. Patch Exit
+        self.patch_jump(jump_exit_idx);
+        
+        // 10. Exit Loop Scope
+        self.end_scope(); // Pops 'var_name' local
+        
+        // Hygiene: free val_reg and iter_reg (2 slots)
+        self.free_reg(val_reg);
+        
+        self.exit_loop();
+
+        self.free_reg(iter_reg);
+        self.free_reg(iter_src_reg);
+        
+        // Return Nil
+        let target_reg = self.alloc_reg()?;
+        self.emit_abx(OpCode::LoadNil, target_reg, 0);
+        Ok(target_reg)
+    }
+
+    fn compile_forever(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // forever block
+        let block = pair.into_inner().next().unwrap();
+        
+        let start_label = self.current().bytecode.len();
+        self.enter_loop(start_label);
+        
+        let body_reg = self.alloc_reg()?;
+        self.compile_block(block, body_reg)?;
+        self.free_reg(body_reg);
+        
+        self.emit_abx(OpCode::Jump, 0, start_label as u16);
+        
+        self.exit_loop();
+        
+        let target_reg = self.alloc_reg()?;
+        self.emit_abx(OpCode::LoadNil, target_reg, 0);
+        Ok(target_reg)
+    }
+
+
+
     fn compile_while(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         // while expr block
         let mut inner = pair.into_inner();
@@ -622,9 +848,10 @@ impl Compiler {
         self.free_reg(cond_reg); // Hygiene
 
         // 3. Body
-        // While loops technically return Nil usually? Or last value?
-        // Common pattern: return Nil.
-        // We allocate a dummy register for body result (discarded for now)
+        
+        // Enter Loop context
+        self.enter_loop(start_label);
+        
         let body_reg = self.alloc_reg()?;
         self.compile_block(body_block, body_reg)?;
         self.free_reg(body_reg); // Hygiene
@@ -634,6 +861,9 @@ impl Compiler {
 
         // 5. Patch End
         self.patch_jump(jump_end);
+        
+        // Exit Loop context (backpatch breaks)
+        self.exit_loop();
 
         // 6. Return Nil
         let target_reg = self.alloc_reg()?;
@@ -684,11 +914,12 @@ impl Compiler {
         self.compilers.push(FunctionCompiler::new(name.clone(), arity));
         
         // 4. Register parameters as locals (they're already in R0..R(arity-1))
-        for param in &params {
+        for (i, param) in params.iter().enumerate() {
             self.current().locals.push(Local {
                 name: param.clone(),
                 depth: 0,
                 is_captured: false,
+                reg: i as u8,
             });
         }
         
@@ -743,7 +974,7 @@ impl Compiler {
 
     fn compile_comparison(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         let mut pairs = pair.into_inner();
-        let mut left_reg = self.compile_expr(pairs.next().unwrap())?;
+        let left_reg = self.compile_expr(pairs.next().unwrap())?;
 
         while let Some(op_pair) = pairs.next() {
             let right_pair = pairs.next().ok_or(CompilerError::MissingOperand)?;
@@ -874,6 +1105,8 @@ impl Compiler {
             Rule::if_expr => self.compile_if(inner),
             Rule::while_expr => self.compile_while(inner),
             Rule::fn_expr => self.compile_fn_expr(inner),
+            Rule::for_expr => self.compile_for(inner),
+            Rule::forever_expr => self.compile_forever(inner),
             Rule::identifier => {
                 let name = inner.as_str().to_string();
                 let reg = self.alloc_reg()?;
@@ -942,16 +1175,32 @@ impl Compiler {
 
     fn compile_map(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         let inside = pair.into_inner(); // map_pairs
+        
+        // 1. Collect pairs to count them and pre-allocate registers
+        let pairs: Vec<_> = inside.collect();
+        let count = pairs.len();
+        
+        if count > 127 { // 255 / 2 approx
+             return Err(CompilerError::TooManyConstants); // Reuse error
+        }
+
         let target_reg = self.alloc_reg()?;
+        
+        // 2. Allocate contiguous block for keys and values (2 * count)
+        // If count is 0, we simply build map from start_reg (which will be target_reg+1 effectively, but size 0)
+        let start_reg = if count > 0 {
+             self.alloc_contiguous((count * 2) as u8)?
+        } else {
+             self.current().reg_top 
+        };
 
-        // Count is number of PAIRS. Total regs = 2 * count.
-        let mut count = 0;
-        let start_reg = self.current().reg_top;
-
-        for map_pair in inside {
+        for (i, map_pair) in pairs.into_iter().enumerate() {
             let mut pair_inner = map_pair.into_inner();
             let key_node = pair_inner.next().unwrap();
             let value_node = pair_inner.next().unwrap();
+            
+            let key_reg = start_reg + (i as u8 * 2);
+            let val_reg = key_reg + 1;
 
             // 1. Compile Key (Must be String)
             let raw_s = key_node.as_str();
@@ -966,35 +1215,23 @@ impl Compiler {
             let key_val = Value::string(key_handle);
             let const_idx = self.add_constant(key_val);
 
-            let key_reg = self.alloc_reg()?;
             if const_idx > 0xFFFF { return Err(CompilerError::TooManyConstants); }
             self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16);
 
-             // Verify contiguity
-             // expected: start_reg + (count*2)
-             if key_reg != start_reg + (count * 2) {
-                 return Err(CompilerError::CompilerLimitation("Register fragmentation in map key".into()));
-             }
-
             // 2. Compile Value
-            let val_reg = self.compile_expr(value_node)?;
-            if val_reg != key_reg + 1 {
-                 return Err(CompilerError::CompilerLimitation("Register fragmentation in map value".into()));
-            }
-
-            count += 1;
+            self.compile_expr_into(value_node, val_reg)?;
         }
 
-        if count > 255 {
-            return Err(CompilerError::TooManyConstants);
-        }
-
-        self.emit_abc(OpCode::BuildMap, target_reg, start_reg, count);
+        self.emit_abc(OpCode::BuildMap, target_reg, start_reg, count as u8);
 
         // Cleanup: Free 2*count regs
-        for _ in 0..(count * 2) {
-            let top = self.current().reg_top - 1;
-            self.free_reg(top);
+        if count > 0 {
+             // We need to free backwards
+             // Top is start_reg + 2*count
+             for _ in 0..(count * 2) {
+                 let top = self.current().reg_top - 1;
+                 self.free_reg(top);
+             }
         }
 
         Ok(target_reg)
@@ -1120,6 +1357,10 @@ impl Compiler {
         self.current().alloc_reg()
     }
 
+    fn alloc_contiguous(&mut self, count: u8) -> Result<u8, CompilerError> {
+        self.current().alloc_contiguous(count)
+    }
+
     fn free_reg(&mut self, reg: u8) {
         self.current().free_reg(reg)
     }
@@ -1142,7 +1383,7 @@ impl Compiler {
     
     /// Resolve a local variable by name. Returns Some(register_index) if found, None otherwise.
     fn resolve_local(&self, name: &str) -> Option<u8> {
-        self.current_ref().resolve_local(name)
+        self.current_ref().resolve_local(name).map(|(_, r)| r)
     }
 
     fn resolve_upvalue(&mut self, compiler_idx: usize, name: &str) -> Option<u8> {
@@ -1154,12 +1395,12 @@ impl Compiler {
 
         // 1. Resolve in Parent Local
         // Use a block to limit borrow scope
-        let local_idx = self.compilers[parent_idx].resolve_local(name);
+        let local_res = self.compilers[parent_idx].resolve_local(name);
         
-        if let Some(idx) = local_idx {
+        if let Some((idx, reg)) = local_res {
             // Mark captured
-            self.compilers[parent_idx].locals[idx as usize].is_captured = true;
-            return Some(self.compilers[compiler_idx].add_upvalue(true, idx));
+            self.compilers[parent_idx].locals[idx].is_captured = true;
+            return Some(self.compilers[compiler_idx].add_upvalue(true, reg));
         }
 
         // 2. Resolve in Parent Upvalue (Recursive)
@@ -1177,6 +1418,16 @@ impl Compiler {
     }
 
     fn end_scope(&mut self) {
-        self.current().scope_depth -= 1;
+        let func = self.current();
+        func.scope_depth -= 1;
+        let current_depth = func.scope_depth;
+
+        while let Some(local) = func.locals.last() {
+            if local.depth > current_depth {
+                func.locals.pop();
+            } else {
+                break;
+            }
+        }
     }
 }

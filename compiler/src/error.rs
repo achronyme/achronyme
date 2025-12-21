@@ -9,6 +9,7 @@ pub enum CompilerError {
     MissingOperand,
     RegisterOverflow,
     CompilerLimitation(String),
+    CompileError(String),
 }
 
 impl From<String> for CompilerError {

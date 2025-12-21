@@ -94,6 +94,10 @@ pub enum OpCode {
     Jump = 60,
     /// Jump if False: If !R[A] then IP = Bx
     JumpIfFalse = 61,
+    /// Get Iterator: R[A] = Iter(R[B])
+    GetIter = 65,
+    /// For Loop Iterator: R[A].. = Next(R[A]) or Jump Bx
+    ForIter = 66,
 
     // ===== Special =====
     /// No operation
@@ -127,6 +131,8 @@ impl OpCode {
             56 => Some(OpCode::Closure),
             60 => Some(OpCode::Jump),
             61 => Some(OpCode::JumpIfFalse),
+            65 => Some(OpCode::GetIter),
+            66 => Some(OpCode::ForIter),
             98 => Some(OpCode::DefGlobalVar),
             99 => Some(OpCode::DefGlobalLet),
             100 => Some(OpCode::GetGlobal),
@@ -174,6 +180,8 @@ impl OpCode {
             OpCode::Closure => "CLOSURE",
             OpCode::Jump => "JUMP",
             OpCode::JumpIfFalse => "JUMP_IF_FALSE",
+            OpCode::GetIter => "GET_ITER",
+            OpCode::ForIter => "FOR_ITER",
             OpCode::DefGlobalVar => "DEF_GLOBAL_VAR",
             OpCode::DefGlobalLet => "DEF_GLOBAL_LET",
             OpCode::GetGlobal => "GET_GLOBAL",
