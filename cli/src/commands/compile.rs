@@ -76,11 +76,15 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                     let handle = c.as_handle().expect("String value must have handle");
                     file.write_u32::<LittleEndian>(handle)?;
                 } else {
-                    // Skip unsupported for now
                     file.write_u8(255)?;
                 }
             }
             
+            // Upvalue Info (New in v2)
+            let upvalue_count = (proto.upvalue_info.len() / 2) as u32;
+            file.write_u32::<LittleEndian>(upvalue_count)?;
+            file.write_all(&proto.upvalue_info)?;
+
             // Proto bytecode
             file.write_u32::<LittleEndian>(proto.chunk.len() as u32)?;
             for inst in &proto.chunk {

@@ -126,6 +126,15 @@ impl VM {
                 }
             }
             
+            // Upvalue Info
+            let upvalue_count = reader.read_u32::<LittleEndian>()?;
+            if upvalue_count > 1024 {
+                return Err(LoaderError::Security(format!("Too many upvalues: {}", upvalue_count)));
+            }
+            let info_len = (upvalue_count * 2) as usize;
+            let mut upvalue_info = vec![0u8; info_len];
+            reader.read_exact(&mut upvalue_info)?;
+
             // Proto bytecode
             let proto_code_len = reader.read_u32::<LittleEndian>()?;
              // Limit bytecode size per function? 1MB?
@@ -144,14 +153,7 @@ impl VM {
                 max_slots: proto_max_slots,
                 chunk: proto_bytecode,
                 constants: proto_constants,
-                upvalue_info: vec![], // TODO: Load upvalue info if present in binary format!
-                                      // WARNING: Current binary format might NOT support upvalue_info yet.
-                                      // If so, we break closures on binary load.
-                                      // Checking run.rs... run.rs initialized upvalue_info: vec![]
-                                      // So binaries DO NOT currently support closures properly?
-                                      // "proto_funcs.push(Function { ... upvalue_info: vec![] })"
-                                      // YES. Binaries are broken for closures until serialized.
-                                      // User only asked for Loader security refactor. I will reproduce existing logic.
+                upvalue_info,
             });
         }
 
