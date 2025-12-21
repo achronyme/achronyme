@@ -4,6 +4,7 @@ version = "0.7.0"
 edition = "2021"
 
 [dependencies]
+byteorder = "1.5.0"
 memory = { path = "../memory" }
 num-complex = "0.4"
 

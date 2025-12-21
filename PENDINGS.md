@@ -49,12 +49,11 @@
 ## 5. Security & Architecture (PR3 Recommendations)
 
 ### Security
-- [ ] **Allocation Bomb Protection (DoS)**: Validate sizes during binary deserialization.
-    - *Risk*: Malicious `.achb` file could declare 4GB name_len with 1KB file, causing OOM.
-    - *Target*: Add sanity checks: `if name_len > 1024 { return Err("Name too long"); }`.
+- [x] **Allocation Bomb Protection (DoS)**: Validate sizes during binary deserialization.
+    - *Completed*: Enforced `name_len <= 1024` and count limits in `vm/src/loader.rs`.
 
 ### Architecture
-- [ ] **Decouple Loader**: `cli/src/commands/run.rs` knows too many VM internals.
-    - *Target*: Create `vm.load_executable(reader: impl Read)` method. CLI should be "dumb".
+- [x] **Decouple Loader**: `cli/src/commands/run.rs` knows too many VM internals.
+    - *Completed*: Moved all binary loading logic to `vm::loader::load_executable`. CLI is now agnostic.
 - [ ] **Named Constants for Tags**: Replace magic numbers (`0`, `1`, `255`) in serialization.
     - *Target*: Define `CONST_NUMBER = 0`, `CONST_STRING = 1` shared between compiler/VM.
