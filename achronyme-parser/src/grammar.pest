@@ -29,7 +29,10 @@ complex    = @{ number ~ "i" }
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
-keyword    = @{ "let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" }
+keyword    = @{ 
+    ("let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever")
+    ~ !(ASCII_ALPHANUMERIC | "_")
+}
 
 // 1. Define Literals
 nil_lit   = { "nil" }
