@@ -32,6 +32,13 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone)]
+pub struct IteratorObj {
+    pub source: Value,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone)]
+
 pub struct Arena<T> {
     pub data: Vec<T>,
     pub free_indices: Vec<u32>,
@@ -56,6 +63,9 @@ pub struct Heap {
     pub closures: Arena<Closure>,
     pub tensors: Arena<RealTensor>,
     pub complexes: Arena<Complex64>,
+    pub iterators: Arena<IteratorObj>,
+
+    // Mark State (One set per arena type)
 
     // Mark State (One set per arena type)
     pub marked_strings: HashSet<u32>,
@@ -66,6 +76,9 @@ pub struct Heap {
     pub marked_closures: HashSet<u32>,
     pub marked_tensors: HashSet<u32>,
     pub marked_complexes: HashSet<u32>,
+    pub marked_iterators: HashSet<u32>,
+
+    // GC Metrics
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -84,6 +97,7 @@ impl Heap {
             closures: Arena::new(),
             tensors: Arena::new(),
             complexes: Arena::new(),
+            iterators: Arena::new(), /* Added */
 
             marked_strings: HashSet::new(),
             marked_lists: HashSet::new(),
@@ -93,6 +107,7 @@ impl Heap {
             marked_closures: HashSet::new(),
             marked_tensors: HashSet::new(),
             marked_complexes: HashSet::new(),
+            marked_iterators: HashSet::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -271,6 +286,14 @@ impl Heap {
                         false
                     }
                 }
+                crate::value::TAG_ITER => {
+                    if !self.marked_iterators.contains(&handle) {
+                        self.marked_iterators.insert(handle);
+                        true
+                    } else {
+                        false
+                    }
+                }
                 _ => false,
             };
 
@@ -322,6 +345,11 @@ impl Heap {
                                 // So keys are owned by HashMap. Values are traced. OK.
                             }
                         }
+                    }
+                    crate::value::TAG_ITER => {
+                         if let Some(iter) = self.iterators.data.get(handle as usize) {
+                             worklist.push(iter.source);
+                         }
                     }
                     _ => {}
                 }
@@ -411,6 +439,17 @@ impl Heap {
         }
         self.marked_complexes.clear();
 
+        // Iterators
+        for i in 0..self.iterators.data.len() {
+            let idx = i as u32;
+            if !self.marked_iterators.contains(&idx) && !self.iterators.free_indices.contains(&idx) {
+                self.iterators.free_indices.push(idx);
+                // Reset iterator (Value::nil() source)
+                self.iterators.data[i] = IteratorObj { source: Value::nil(), index: 0 };
+            }
+        }
+        self.marked_iterators.clear();
+
         // Reset GC threshold just in case
         self.bytes_allocated = 0; // Approximate reset or sophisticated recalculation
     }
@@ -477,5 +516,26 @@ impl Heap {
     pub fn import_complexes(&mut self, complexes: Vec<Complex64>) {
         self.complexes.data = complexes;
         self.complexes.free_indices.clear();
+    }
+
+    pub fn alloc_iterator(&mut self, iter: IteratorObj) -> u32 {
+        self.bytes_allocated += std::mem::size_of::<IteratorObj>();
+        self.check_gc();
+        if let Some(idx) = self.iterators.free_indices.pop() {
+            self.iterators.data[idx as usize] = iter;
+            idx
+        } else {
+            let index = self.iterators.data.len() as u32;
+            self.iterators.data.push(iter);
+            index
+        }
+    }
+
+    pub fn get_iterator(&self, index: u32) -> Option<&IteratorObj> {
+        self.iterators.data.get(index as usize)
+    }
+
+    pub fn get_iterator_mut(&mut self, index: u32) -> Option<&mut IteratorObj> {
+        self.iterators.data.get_mut(index as usize)
     }
 }

@@ -2,9 +2,9 @@ use crate::error::RuntimeError;
 use crate::globals::GlobalEntry;
 use crate::native::NativeObj;
 use crate::opcode::{instruction::*, OpCode};
-use memory::{Heap, Value, Closure, Upvalue};
+use memory::{Heap, Value, Upvalue};
 use std::collections::HashMap;
-use std::ptr;
+
 
 use super::arithmetic::ArithmeticOps;
 use super::control::ControlFlowOps;
@@ -391,6 +391,92 @@ impl VM {
                     self.set_reg(base, a, Value::closure(closure_idx));
                 }
 
+                OpCode::GetIter => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let val = self.get_reg(base, b);
+                    
+                    if val.is_iter() {
+                         self.set_reg(base, a, val);
+                    } else {
+                        let iter_obj = if val.is_list() {
+                             memory::IteratorObj { source: val, index: 0 }
+                        } else if val.is_map() {
+                             // TODO: FIXME CRITICAL: This is O(N) allocation. Replace with native iterator.
+                             // Convert Map keys to List
+                             let handle = val.as_handle().unwrap();
+                             let map_keys: Vec<String> = {
+                                 let map = self.heap.get_map(handle).ok_or(RuntimeError::SystemError("Map missing".into()))?;
+                                 map.keys().cloned().collect()
+                             };
+                             
+                             let mut val_keys = Vec::with_capacity(map_keys.len());
+                             for s in map_keys {
+                                 // Intern
+                                 let handle = if let Some(&h) = self.interner.get(&s) {
+                                     h
+                                 } else {
+                                     let h = self.heap.alloc_string(s.clone());
+                                     self.interner.insert(s, h);
+                                     h
+                                 };
+                                 val_keys.push(Value::string(handle));
+                             }
+                             
+                             let list_handle = self.heap.alloc_list(val_keys);
+                             memory::IteratorObj { source: Value::list(list_handle), index: 0 }
+                        } else {
+                             return Err(RuntimeError::TypeMismatch(format!("Value not iterable: {:?}", val)));
+                        };
+                        
+                        let handle = self.heap.alloc_iterator(iter_obj);
+                        self.set_reg(base, a, Value::iterator(handle));
+                    }
+                }
+
+                OpCode::ForIter => {
+                    let a = decode_a(instruction) as usize;
+                    let bx = decode_bx(instruction) as usize;
+                    
+                    debug_assert!(base + a + 1 < self.stack.len(), "Stack overflow in FOR_ITER: loop variable writes out of bounds");
+
+                    let iter_val = self.get_reg(base, a);
+                    if !iter_val.is_iter() {
+                         return Err(RuntimeError::TypeMismatch("Expected iterator for loop".into()));
+                    }
+                    let iter_handle = iter_val.as_handle().unwrap();
+                    
+                    // Split borrow: Get state, then access source, then update state
+                    let (source, index) = {
+                        let iter = self.heap.get_iterator(iter_handle).ok_or(RuntimeError::SystemError("Iterator missing".into()))?;
+                        (iter.source, iter.index)
+                    };
+                    
+                    let mut next_val = None;
+                    
+                    if source.is_list() {
+                         let l_handle = source.as_handle().unwrap();
+                         if let Some(list) = self.heap.get_list(l_handle) {
+                             if index < list.len() {
+                                 next_val = Some(list[index]);
+                             }
+                         }
+                    } 
+                    // Maps are converted to Lists in GetIter, so they fall into is_list() above.
+                    
+                    if let Some(val) = next_val {
+                         // Update Iterator Index
+                         if let Some(iter) = self.heap.get_iterator_mut(iter_handle) {
+                             iter.index += 1;
+                         }
+                         // Set Loop Variable at R[A+1]
+                         self.set_reg(base, a + 1, val);
+                    } else {
+                         // Done. Jump to Exit (Bx is absolute IP)
+                         self.frames[frame_idx].ip = bx; 
+                    }
+                }
+
                 _ => {
                     return Err(RuntimeError::Unknown(format!(
                         "Unimplemented opcode {:?}",
@@ -457,8 +543,10 @@ impl VM {
         if index >= self.stack.len() {
              return Err(RuntimeError::OutOfBounds(format!("Stack index {} out of bounds", index)));
         }
-        // SAFETY: Bounds checked. Box<[Value]> has stable address.
-        Ok(unsafe { self.stack.as_ptr().wrapping_add(index) as *mut Value })
+        // SAFETY: We return a raw pointer into the stack Vec.
+        // WARNING: This pointer becomes dangling if the stack reallocates (pushes/pops).
+        // The caller MUST ensure no stack growth occurs while holding this pointer.
+        Ok(self.stack.as_ptr().wrapping_add(index) as *mut Value)
     }
 
     /// Capture an upvalue for a local variable residing on the stack.

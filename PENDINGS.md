@@ -21,7 +21,9 @@
 
 
 ### Language Features
-- [ ] **Control Flow (For Loops)**: Syntactic sugar for `while`.
+- [x] **Control Flow (For Loops)**: Syntactic sugar for `while`.
+    - *Completed*: Implemented `for`, `forever`, `break`, `continue`.
+    - Added `GetIter`, `ForIter` opcodes and `IteratorObj`.
 
 - [x] **Escaped Characters**: Current parser does not support escaped quotes (`\"`).
     - *Completed*: Updated `grammar.pest` to support escapes via `inner` rule.
@@ -45,4 +47,14 @@
 
 
 ### Architecture
+
+## 6. Technical Debt (Post-Audit)
+
+- [ ] **Map Iteration Performance (Critical)**:
+    - Current `for k in map` implementation reifies all keys into a List (O(N) allocation) via `Object::keys_to_list`.
+    - *Target*: Implement opaque native iterator for Maps to avoid allocation.
+- [ ] **List Iteration Logic**:
+    - Current `for x in list` implementation needs verification on whether it copies the list or iterates efficiently.
+- [ ] **Global Mutability Check**:
+    - `SetGlobal` enforces mutability at runtime. Compiler could enforce this statically for better DX.
 

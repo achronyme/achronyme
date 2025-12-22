@@ -20,6 +20,7 @@ pub const TAG_TENSOR: u64 = 8;
 pub const TAG_COMPLEX: u64 = 9;
 pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
+pub const TAG_ITER: u64 = 12;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -91,6 +92,11 @@ impl Value {
     #[inline]
     pub fn closure(handle: u32) -> Self {
         Value::make_obj(TAG_CLOSURE, handle)
+    }
+
+    #[inline]
+    pub fn iterator(handle: u32) -> Self {
+        Value::make_obj(TAG_ITER, handle)
     }
 
     #[inline]
@@ -171,6 +177,11 @@ impl Value {
     #[inline]
     pub fn is_closure(&self) -> bool {
         self.tag() == TAG_CLOSURE
+    }
+
+    #[inline]
+    pub fn is_iter(&self) -> bool {
+        self.tag() == TAG_ITER
     }
 
     #[inline]
@@ -266,6 +277,8 @@ impl fmt::Debug for Value {
             write!(f, "NativeFn({})", self.as_handle().unwrap())
         } else if self.is_closure() {
             write!(f, "Closure({})", self.as_handle().unwrap())
+        } else if self.is_iter() {
+            write!(f, "Iterator({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }
