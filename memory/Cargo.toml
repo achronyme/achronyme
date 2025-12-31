@@ -2,6 +2,7 @@
 name = "memory"
 version = "0.7.0"
 edition = "2021"
+license = "GPL-3.0"
 
 [dependencies]
 num-complex = "0.4"
