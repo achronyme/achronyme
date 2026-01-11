@@ -21,6 +21,7 @@ pub const TAG_COMPLEX: u64 = 9;
 pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
+pub const TAG_INT: u64 = 13;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -38,6 +39,13 @@ impl Value {
         } else {
             Value(n.to_bits())
         }
+    }
+
+    #[inline]
+    pub fn int(val: i32) -> Self {
+        // SAFETY: Prevent sign extension by casting to u32 first.
+        // We only want the lower 32 bits.
+        Value(QNAN | (TAG_INT << 32) | (val as u32 as u64))
     }
 
     #[inline]
@@ -140,6 +148,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn is_int(&self) -> bool {
+        self.tag() == TAG_INT
+    }
+
+    #[inline]
     pub fn is_string(&self) -> bool {
         self.tag() == TAG_STRING
     }
@@ -186,7 +199,7 @@ impl Value {
 
     #[inline]
     pub fn is_numeric(&self) -> bool {
-        self.is_number() || self.is_complex()
+        self.is_number() || self.is_complex() || self.is_int()
     }
 
     /// Returns the type tag for this value.
@@ -215,6 +228,15 @@ impl Value {
     #[inline]
     pub fn as_f64(&self) -> Option<f64> {
         self.as_number()
+    }
+
+    #[inline]
+    pub fn as_int(&self) -> Option<i32> {
+        if self.is_int() {
+            Some((self.0 & 0xFFFFFFFF) as i32)
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -257,6 +279,8 @@ impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_number() {
             write!(f, "Number({})", self.as_number().unwrap())
+        } else if self.is_int() {
+            write!(f, "Int({})", self.as_int().unwrap())
         } else if self.is_nil() {
             write!(f, "Nil")
         } else if self.is_bool() {

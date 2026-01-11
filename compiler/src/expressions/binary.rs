@@ -42,6 +42,7 @@ impl BinaryCompiler for Compiler {
                 let opcode = match op_pair.as_str() {
                     "+" | "*" | "^" => op1,
                     "-" | "/" => op2,
+                    "%" => OpCode::Mod,
                     _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
                 };
 
@@ -78,6 +79,7 @@ impl BinaryCompiler for Compiler {
                 let opcode = match op_pair.as_str() {
                     "+" | "*" | "^" => op1,
                     "-" | "/" => op2,
+                    "%" => OpCode::Mod,
                     _ => return Err(CompilerError::UnknownOperator(op_pair.as_str().to_string())),
                 };
 

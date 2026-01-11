@@ -35,6 +35,8 @@ pub enum OpCode {
     Mul = 12,
     /// Division: R[A] = R[B] / R[C]
     Div = 13,
+    /// Modulo: R[A] = R[B] % R[C]
+    Mod = 14,
     /// Power: R[A] = R[B] ^ R[C]
     Pow = 15,
     /// Negation: R[A] = -R[B]
@@ -117,6 +119,7 @@ impl OpCode {
             11 => Some(OpCode::Sub),
             12 => Some(OpCode::Mul),
             13 => Some(OpCode::Div),
+            14 => Some(OpCode::Mod),
             15 => Some(OpCode::Pow),
             16 => Some(OpCode::Neg),
             17 => Some(OpCode::Sqrt),
@@ -166,6 +169,7 @@ impl OpCode {
             OpCode::Sub => "SUB",
             OpCode::Mul => "MUL",
             OpCode::Div => "DIV",
+            OpCode::Mod => "MOD",
             OpCode::Pow => "POW",
             OpCode::Neg => "NEG",
             OpCode::Sqrt => "SQRT",

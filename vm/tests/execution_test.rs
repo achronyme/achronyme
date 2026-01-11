@@ -21,13 +21,20 @@ fn test_execution_end_to_end() {
         max_slots: main_func.max_slots,
         chunk: bytecode,
         constants: main_func.constants.clone(),
+        upvalue_info: Vec::new(),
     };
 
     let func_idx = vm.heap.alloc_function(func);
 
+    let closure = memory::Closure {
+        function: func_idx,
+        upvalues: Vec::new(),
+    };
+    let closure_idx = vm.heap.alloc_closure(closure);
+
     // 4. Create Call Frame
     let frame = CallFrame {
-        closure: func_idx,
+        closure: closure_idx,
         ip: 0,
         base: 0,
         dest_reg: 0,
@@ -47,5 +54,46 @@ fn test_execution_end_to_end() {
         }
     } else {
         panic!("Stack too short to find result at R0");
+    }
+}
+
+#[test]
+fn test_mod_compilation() {
+    let source = "7 % 2";
+    let mut compiler = Compiler::new();
+    let bytecode = compiler.compile(source).expect("Compilation failed");
+    
+    let main_func = compiler.compilers.last().expect("No main compiler");
+    let mut vm = VM::new();
+
+    let func = Function {
+        name: "main".to_string(),
+        arity: 0,
+        max_slots: main_func.max_slots,
+        chunk: bytecode,
+        constants: main_func.constants.clone(),
+        upvalue_info: Vec::new(),
+    };
+    let func_idx = vm.heap.alloc_function(func);
+    let closure_idx = vm.heap.alloc_closure(memory::Closure { function: func_idx, upvalues: Vec::new() });
+    
+    let frame = CallFrame {
+        closure: closure_idx,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    };
+    vm.frames.push(frame);
+    
+    vm.interpret().expect("Runtime error");
+    
+    let result = vm.stack[0];
+    // Check value is 1 (Int) or 1.0 (Float)
+    if let Some(i) = result.as_int() {
+        assert_eq!(i, 1);
+    } else if let Some(f) = result.as_number() {
+         assert_eq!(f, 1.0);
+    } else {
+        panic!("Expected 1 or 1.0 result from 7 % 2");
     }
 }

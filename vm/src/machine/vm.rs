@@ -195,7 +195,7 @@ impl VM {
 
             match op {
                 // Arithmetic (delegated to arithmetic.rs)
-                Add | Sub | Mul | Div | Pow | Neg | Sqrt | NewComplex => {
+                Add | Sub | Mul | Div | Mod | Pow | Neg | Sqrt | NewComplex => {
                     self.handle_arithmetic(op, instruction, base)?;
                 }
 

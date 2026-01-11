@@ -11,10 +11,17 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
         max_slots: 255, // Safe default for manual bytecode tests
         chunk,
         constants,
+        upvalue_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
+    let closure = memory::Closure {
+        function: func_idx,
+        upvalues: Vec::new(),
+    };
+    let closure_idx = vm.heap.alloc_closure(closure);
+
     vm.frames.push(CallFrame {
-        closure: func_idx,
+        closure: closure_idx,
         ip: 0,
         base: 0,
         dest_reg: 0,
@@ -54,10 +61,17 @@ fn test_real_complex_promotion() {
         max_slots: 0,
         chunk,
         constants: vec![Value::number(1.0), Value::complex(c_idx)],
+        upvalue_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
+    let closure = memory::Closure {
+        function: func_idx,
+        upvalues: Vec::new(),
+    };
+    let closure_idx = vm.heap.alloc_closure(closure);
+
     vm.frames.push(CallFrame {
-        closure: func_idx,
+        closure: closure_idx,
         ip: 0,
         base: 0,
         dest_reg: 0,
@@ -93,10 +107,17 @@ fn test_complex_times_complex_demote() {
         max_slots: 0,
         chunk,
         constants: vec![Value::complex(c_idx)],
+        upvalue_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
+    let closure = memory::Closure {
+        function: func_idx,
+        upvalues: Vec::new(),
+    };
+    let closure_idx = vm.heap.alloc_closure(closure);
+
     vm.frames.push(CallFrame {
-        closure: func_idx,
+        closure: closure_idx,
         ip: 0,
         base: 0,
         dest_reg: 0,
@@ -159,10 +180,17 @@ fn test_sqrt_negative_promotes() {
         max_slots: 0,
         chunk,
         constants,
+        upvalue_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
+    let closure = memory::Closure {
+        function: func_idx,
+        upvalues: Vec::new(),
+    };
+    let closure_idx = vm.heap.alloc_closure(closure);
+
     vm.frames.push(CallFrame {
-        closure: func_idx,
+        closure: closure_idx,
         ip: 0,
         base: 0,
         dest_reg: 0,
