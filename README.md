@@ -6,21 +6,21 @@
 
 ---
 
-## ⚡ Key Features
+## Key Features
 
-### 🛠 Architecture & Performance
+### Architecture & Performance
 * **NaN Boxing & Pointer Tagging**: Exploits IEEE 754 floating-point standard to pack type tags, pointers, and small integers into a single 64-bit value, minimizing memory footprint and maximizing cache locality.
 * **Mark-and-Sweep Garbage Collection**: A custom-built GC that handles complex graph references and cyclic dependencies efficiently.
 * **Register-Based VM**: Reduces instruction dispatch overhead compared to traditional stack-based VMs (like EVM), offering better mapping to modern hardware registers.
 
-### 🔐 Cryptography First
+### Cryptography First
 * **Native BigInt Support**: 256-bit+ integer arithmetic handled directly in the Heap, bypassing floating-point precision errors.
 * **Tensor Acceleration**: Native support for N-Dimensional arrays allows operations like FFTs (Fast Fourier Transforms) and MSMs (Multi-Scalar Multiplications) to run at native Rust speed.
 * **Safe Memory Management**: Implements "Upvalue" closing and strict borrowing rules to prevent common memory vulnerabilities in secure environments.
 
 ---
 
-## 🏗 Technical Architecture
+## Technical Architecture
 
 ### The Value Representation (NaN Boxing)
 Achronyme uses a 64-bit tagging scheme to represent all runtime values:
@@ -37,7 +37,7 @@ Memory is managed via Typed Arenas (Slabs) to ensure memory locality for similar
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 * Rust (latest stable)
