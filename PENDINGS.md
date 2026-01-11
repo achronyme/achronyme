@@ -1,60 +1,39 @@
-# PENDING.md
+# PENDING.md - Achronyme ZK-Engine Roadmap
 
-## 1. Virtual Machine Optimizations
+## 1. Core Engine & Type System (High Priority)
+The immediate goal is to transition from a general-purpose scripting engine to a domain-specific runtime for Cryptography and Zero-Knowledge Proofs.
 
-### Critical Performance
+- [ ] **Native Integer Support (No-Float Logic)**
+    - *Context*: `f64` is unsuitable for crypto. We need precise integers.
+    - [x] Implement `TAG_INT` (SMI) for small loop counters (utilizing the 50-bit payload).
+    - [ ] Implement `TAG_BIGINT` (Heap) for 256-bit+ field elements.
+    - [ ] Update `arithmetic.rs` to handle hybrid math (SMI + BigInt promotion).
 
-- [ ] **Instruction Dispatch**: The main loop uses a Rust `match` statement.
-    - *Target*: Investigate "Computed GOTO" or "Threaded Code".
+- [ ] **Finite Field Arithmetic**
+    - *Target*: Abstract `BigInt` operations to support modular arithmetic natively (`x + y` implies `(x + y) % P`).
 
-### Arithmetic & Types
-- [ ] **Inline Caching for Binary Ops**: Check types (Number vs Complex) incurs overhead.
-    - *Target*: Implement monomorphic inline caching (MIC) or specialized opcodes.
+- [ ] **Tensor System (N-Dimensional Arrays)**
+    - *Context*: Required for polynomial representation and ML-adjacent ZK operations (FFT/MSM).
+    - [ ] Implement `TAG_TENSOR` backed by `Vec<BigInt>` in the Heap.
+    - [ ] Add `OpCode::MatMul` and `OpCode::VecAdd` for native Rust speed.
 
-## 2. Memory Management (GC & Heap)
+## 2. Memory Management (GC Hardening)
+- [ ] **Heap-Aware GC Triggers**:
+    - Current GC triggers on *allocation count*. Needs to trigger on *actual byte size* (crucial for large Tensors/BigInts).
+    - Update `Heap::alloc_*` to track `mem::size_of_val`.
 
+## 3. Virtual Machine Optimizations
+- [ ] **Map/List Iteration Performance**:
+    - *Critical*: `for k in map` currently allocates O(N) lists. Needs an opaque iterator to avoid GC pressure during heavy crypto loops.
+    - *Refactor*: Implement `IteratorObj` for Maps directly.
 
+- [ ] **Instruction Dispatch** (Lower Priority):
+    - Defer "Computed GOTO" until the Type System is stable.
 
-## 3. Compiler & Features
+## 4. Standard Library (Cryptography Domain)
+- [ ] **Native Crypto Primitives**:
+    - Implement `poseidon_hash(x)` or `pedersen_hash(x)` as native functions.
+    - Implement `verify_signature(pub_key, msg, sig)`.
 
-### Architecture & Debugging (Priority)
-
-
-### Language Features
-- [x] **Control Flow (For Loops)**: Syntactic sugar for `while`.
-    - *Completed*: Implemented `for`, `forever`, `break`, `continue`.
-    - Added `GetIter`, `ForIter` opcodes and `IteratorObj`.
-
-- [x] **Escaped Characters**: Current parser does not support escaped quotes (`\"`).
-    - *Completed*: Updated `grammar.pest` to support escapes via `inner` rule.
-    - Added `unescape_string` in compiler to handle `\n`, `\r`, `\t`, `\"`, `\\`.
-
-## 4. Native & Standard Library
-
-- [x] **FFI/Native Interface**: The `NativeFn` signature is rigid.
-    - *Completed*: Implemented robust stdlib in `vm/src/stdlib/core.rs`.
-    - `len`, `push`, `pop`, `keys` with arity/type safety.
-- [x] **Serialization**:
-    - *Completed*: Implemented binary format support for Complex numbers (`SER_TAG_COMPLEX` = 9).
-    - Added `ComplexTable` to `.achb` format (re, im).
-- [x] **Pretty Printing (VM::val_to_string)**:
-    - *Completed*: Complex numbers, Strings, Numbers, Nils, Lists, Maps.
-    - Added `VM::val_to_string` support for deep recursion.
-
-## 5. Security & Architecture (PR3 Recommendations)
-
-### Security
-
-
-### Architecture
-
-## 6. Technical Debt (Post-Audit)
-
-- [ ] **Map Iteration Performance (Critical)**:
-    - Current `for k in map` implementation reifies all keys into a List (O(N) allocation) via `Object::keys_to_list`.
-    - *Target*: Implement opaque native iterator for Maps to avoid allocation.
-- [ ] **List Iteration Logic**:
-    - Current `for x in list` implementation needs verification on whether it copies the list or iterates efficiently.
-- [ ] **Global Mutability Check**:
-    - `SetGlobal` enforces mutability at runtime. Compiler could enforce this statically for better DX.
-
+## 5. Technical Debt
+- [ ] **Global Mutability Check**: Move from runtime check to compile-time check where possible.
