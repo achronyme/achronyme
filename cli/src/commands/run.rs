@@ -1,11 +1,8 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
-use memory::{Function, Value};
+use memory::Function;
 use std::fs;
 use vm::{CallFrame, VM};
-
-use vm::opcode::OpCode;
-use vm::opcode::instruction::decode_opcode; // Used in formatting if needed, though run_file mostly runs.
 
 // Need format_value logic. It was local in runner.rs.
 // I will duplicate it here or move it to a shared utils or vm method?
@@ -21,10 +18,10 @@ use vm::opcode::instruction::decode_opcode; // Used in formatting if needed, tho
 pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
     if path.ends_with(".achb") {
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
-        
+
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        
+
         // Use the new secure loader
         vm.load_executable(&mut file)
             .map_err(|e| anyhow::anyhow!("Loader Error: {:?}", e))?;
@@ -49,7 +46,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);
         vm.heap.import_complexes(compiler.complexes);
-        
+
         // Transfer Debug Symbols (Source Mode)
         let mut debug_map = std::collections::HashMap::new();
         for (name, idx) in &compiler.global_symbols {
@@ -59,13 +56,13 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
         // Get constants and max_slots from the main function compiler
         let main_func = compiler.compilers.last().expect("No main compiler");
-        
+
         // Allocate ALL prototypes on heap (flat global architecture)
         for proto in &compiler.prototypes {
             let handle = vm.heap.alloc_function(proto.clone());
             vm.prototypes.push(handle);
         }
-        
+
         let func = Function {
             name: "main".to_string(),
             arity: 0,
@@ -97,7 +94,3 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
         Ok(())
     }
 }
-
-use memory::value::*;
-
-
