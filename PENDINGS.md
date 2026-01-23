@@ -37,3 +37,9 @@ The immediate goal is to transition from a general-purpose scripting engine to a
 
 ## 5. Technical Debt
 - [ ] **Global Mutability Check**: Move from runtime check to compile-time check where possible.
+- [ ] **Arithmetic Boilerplate Refactor**:
+    - *Context*: `arithmetic.rs` has significant code duplication for integer vs float checks.
+    - *Action*: Refactor using macros to centralize dispatch logic and improve maintainability.
+- [ ] **Integer Wrapping Semantics Review**:
+    - *Context*: Current `TAG_INT` implementation uses silent wrapping (`wrapping_add`, etc.).
+    - *Action*: Validate if this is desired for a crypto-focused VM. Consider `checked_*` with explicit overflow errors or automatic promotion to BigInt.
