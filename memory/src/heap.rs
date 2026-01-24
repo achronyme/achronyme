@@ -28,7 +28,7 @@ pub struct Function {
     // Upvalue rules (static analysis)
     // (is_local, index)
     // stored flat: [is_local_1, index_1, is_local_2, index_2...]
-    pub upvalue_info: Vec<u8>, 
+    pub upvalue_info: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +164,7 @@ impl Heap {
     }
 
     pub fn alloc_string(&mut self, s: String) -> u32 {
+        // Track capacity, not just length, as that's what the OS gave us.
         self.bytes_allocated += s.capacity();
         self.check_gc();
 
@@ -178,8 +179,11 @@ impl Heap {
     }
 
     pub fn alloc_list(&mut self, l: Vec<Value>) -> u32 {
+        // Size of the Vec structure itself is handled by arena, but we must track the heap buffer.
+        // Vec<Value> heap usage = capacity * size_of<Value>
         self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
         self.check_gc();
+
         if let Some(idx) = self.lists.free_indices.pop() {
             self.lists.data[idx as usize] = l;
             idx
@@ -191,11 +195,16 @@ impl Heap {
     }
 
     pub fn alloc_map(&mut self, m: HashMap<String, Value>) -> u32 {
-        // Approximate memory usage: Base struct + (Key + Value) * capacity
-        // Note: This is an estimation. Allocators are complex.
-        let estimated_size = std::mem::size_of::<HashMap<String, Value>>() 
-            + m.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<Value>());
-        
+        // Estimating HashMap memory is tricky.
+        // Heuristic: (Capacity * (SizeOf<String> + SizeOf<Value>)) + Overhead
+        // We assume standard load factor overhead.
+        // Base overhead for HashMap structure is negligible in arena, but bucket array flows to heap.
+        let capacity = m.capacity();
+        let entry_size = std::mem::size_of::<String>()
+            + std::mem::size_of::<Value>()
+            + std::mem::size_of::<u64>(); // + hash
+        let estimated_size = capacity * entry_size;
+
         self.bytes_allocated += estimated_size;
         self.check_gc();
 
@@ -347,9 +356,9 @@ impl Heap {
                         }
                     }
                     crate::value::TAG_ITER => {
-                         if let Some(iter) = self.iterators.data.get(handle as usize) {
-                             worklist.push(iter.source);
-                         }
+                        if let Some(iter) = self.iterators.data.get(handle as usize) {
+                            worklist.push(iter.source);
+                        }
                     }
                     _ => {}
                 }
@@ -358,11 +367,14 @@ impl Heap {
     }
 
     pub fn sweep(&mut self) {
+        let mut freed_bytes = 0;
+
         // Strings
         for i in 0..self.strings.data.len() {
             let idx = i as u32;
             if !self.marked_strings.contains(&idx) && !self.strings.free_indices.contains(&idx) {
                 self.strings.free_indices.push(idx);
+                freed_bytes += self.strings.data[i].capacity();
                 self.strings.data[i] = String::new(); // Free memory
             }
         }
@@ -373,6 +385,7 @@ impl Heap {
             let idx = i as u32;
             if !self.marked_lists.contains(&idx) && !self.lists.free_indices.contains(&idx) {
                 self.lists.free_indices.push(idx);
+                freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
                 self.lists.data[i] = Vec::new(); // Free memory
             }
         }
@@ -384,6 +397,10 @@ impl Heap {
             if !self.marked_functions.contains(&idx) && !self.functions.free_indices.contains(&idx)
             {
                 self.functions.free_indices.push(idx);
+                let f = &self.functions.data[i];
+                freed_bytes += f.chunk.capacity() * 4;
+                freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
+
                 // We replace with dummy
                 self.functions.data[i] = Function {
                     name: String::new(),
@@ -402,9 +419,12 @@ impl Heap {
             let idx = i as u32;
             if !self.marked_closures.contains(&idx) && !self.closures.free_indices.contains(&idx) {
                 self.closures.free_indices.push(idx);
+                let c = &self.closures.data[i];
+                freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
+
                 self.closures.data[i] = Closure {
-                     function: 0,
-                     upvalues: vec![]
+                    function: 0,
+                    upvalues: vec![],
                 };
             }
         }
@@ -414,13 +434,15 @@ impl Heap {
         for i in 0..self.upvalues.data.len() {
             let idx = i as u32;
             if !self.marked_upvalues.contains(&idx) && !self.upvalues.free_indices.contains(&idx) {
-                 self.upvalues.free_indices.push(idx);
-                 // We can't easily "reset" a Box with Dummy, but we can overwrite data
-                 self.upvalues.data[i] = Box::new(Upvalue {
-                     location: std::ptr::null_mut(),
-                     closed: Value::nil(),
-                     next_open: None
-                 });
+                self.upvalues.free_indices.push(idx);
+                freed_bytes += std::mem::size_of::<Upvalue>();
+
+                // We can't easily "reset" a Box with Dummy, but we can overwrite data
+                self.upvalues.data[i] = Box::new(Upvalue {
+                    location: std::ptr::null_mut(),
+                    closed: Value::nil(),
+                    next_open: None,
+                });
             }
         }
         self.marked_upvalues.clear();
@@ -431,6 +453,7 @@ impl Heap {
             if !self.marked_complexes.contains(&idx) && !self.complexes.free_indices.contains(&idx)
             {
                 self.complexes.free_indices.push(idx);
+                freed_bytes += std::mem::size_of::<Complex64>();
                 // Complex is Copy, just leave it or zero it?
                 // It doesn't hold heap memory itself, so just marking as free is enough for reuse.
                 // Overwriting with default might help debugging.
@@ -442,16 +465,29 @@ impl Heap {
         // Iterators
         for i in 0..self.iterators.data.len() {
             let idx = i as u32;
-            if !self.marked_iterators.contains(&idx) && !self.iterators.free_indices.contains(&idx) {
+            if !self.marked_iterators.contains(&idx) && !self.iterators.free_indices.contains(&idx)
+            {
                 self.iterators.free_indices.push(idx);
+                freed_bytes += std::mem::size_of::<IteratorObj>();
                 // Reset iterator (Value::nil() source)
-                self.iterators.data[i] = IteratorObj { source: Value::nil(), index: 0 };
+                self.iterators.data[i] = IteratorObj {
+                    source: Value::nil(),
+                    index: 0,
+                };
             }
         }
         self.marked_iterators.clear();
 
-        // Reset GC threshold just in case
-        self.bytes_allocated = 0; // Approximate reset or sophisticated recalculation
+        // Adjust global counter safely
+        self.bytes_allocated = self.bytes_allocated.saturating_sub(freed_bytes);
+
+        // Dynamic Threshold Adjustment:
+        // After sweep, we set new threshold to X * current_heap to avoid thrashing.
+        // E.g. grow threshold to 2x current size.
+        self.next_gc_threshold = self.bytes_allocated * 2;
+        if self.next_gc_threshold < 1024 * 1024 {
+            self.next_gc_threshold = 1024 * 1024; // Min 1MB
+        }
     }
 
     pub fn should_collect(&self) -> bool {

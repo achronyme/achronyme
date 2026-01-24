@@ -18,7 +18,7 @@ The immediate goal is to transition from a general-purpose scripting engine to a
     - [ ] Add `OpCode::MatMul` and `OpCode::VecAdd` for native Rust speed.
 
 ## 2. Memory Management (GC Hardening)
-- [ ] **Heap-Aware GC Triggers**:
+    - [x] **Heap-Aware GC Triggers**:
     - Current GC triggers on *allocation count*. Needs to trigger on *actual byte size* (crucial for large Tensors/BigInts).
     - Update `Heap::alloc_*` to track `mem::size_of_val`.
 
