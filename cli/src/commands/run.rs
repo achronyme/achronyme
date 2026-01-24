@@ -30,7 +30,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Runtime Error: {:?}", e))?;
 
         if let Some(val) = vm.stack.last() {
-            println!("{}", vm.val_to_string(val));
+            println!("Exit Status: {}", vm.val_to_string(val));
         }
         Ok(())
     } else {
@@ -88,7 +88,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Runtime Error: {:?}", e))?;
 
         if let Some(val) = vm.stack.last() {
-            println!("{}", vm.val_to_string(val));
+            println!("Exit Status: {}", vm.val_to_string(val));
         }
 
         Ok(())
