@@ -16,6 +16,37 @@ pub trait ArithmeticOps {
     ) -> Result<(), RuntimeError>;
 }
 
+/// Macro to handle binary arithmetic operations with type dispatch.
+/// Arguments:
+/// - $self: The VM instance
+/// - $instruction: The raw instruction u32
+/// - $base: The current stack base
+/// - $int_op: The integer method to call (e.g., wrapping_add)
+/// - $float_op: The closure for float/complex operations
+macro_rules! binary_arithmetic_op {
+    ($self:ident, $instruction:ident, $base:ident, $int_op:ident, $float_op:expr) => {{
+        let a = decode_a($instruction) as usize;
+        let b = decode_b($instruction) as usize;
+        let c = decode_c($instruction) as usize;
+        // Direct unsafe access via get_reg is verified safe by bytecode validation
+        let vb = $self.get_reg($base, b);
+        let vc = $self.get_reg($base, c);
+
+        if vb.is_int() && vc.is_int() {
+            // Fast Path: SMI Arithmetics (No Heap Alloc, No Float logic)
+            // SAFETY: unwrap() is safe because is_int() checked the tag.
+            let ib = vb.as_int().unwrap();
+            let ic = vc.as_int().unwrap();
+            $self.set_reg($base, a, Value::int(ib.$int_op(ic)));
+        } else {
+            // Slow Path: Promotion / Complex / Float
+            // We delegate to the unified binary_op helper which handles coercions.
+            let res = $self.binary_op(vb, vc, |x, y| $float_op(x, y), |x, y| $float_op(x, y))?;
+            $self.set_reg($base, a, res);
+        }
+    }};
+}
+
 impl ArithmeticOps for super::vm::VM {
     fn handle_arithmetic(
         &mut self,
@@ -25,57 +56,19 @@ impl ArithmeticOps for super::vm::VM {
     ) -> Result<(), RuntimeError> {
         match op {
             OpCode::Add => {
-                let a = decode_a(instruction) as usize;
-                let b = decode_b(instruction) as usize;
-                let c = decode_c(instruction) as usize;
-                let vb = self.get_reg(base, b);
-                let vc = self.get_reg(base, c);
-                
-                if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
-                    self.set_reg(base, a, Value::int(ib.wrapping_add(ic)));
-                } else {
-                    let res = self.binary_op(vb, vc, |x, y| x + y, |x, y| x + y)?;
-                    self.set_reg(base, a, res);
-                }
+                binary_arithmetic_op!(self, instruction, base, wrapping_add, |x, y| x + y);
             }
 
             OpCode::Sub => {
-                let a = decode_a(instruction) as usize;
-                let b = decode_b(instruction) as usize;
-                let c = decode_c(instruction) as usize;
-                let vb = self.get_reg(base, b);
-                let vc = self.get_reg(base, c);
-
-                if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
-                    self.set_reg(base, a, Value::int(ib.wrapping_sub(ic)));
-                } else {
-                    let res = self.binary_op(vb, vc, |x, y| x - y, |x, y| x - y)?;
-                    self.set_reg(base, a, res);
-                }
+                binary_arithmetic_op!(self, instruction, base, wrapping_sub, |x, y| x - y);
             }
 
             OpCode::Mul => {
-                let a = decode_a(instruction) as usize;
-                let b = decode_b(instruction) as usize;
-                let c = decode_c(instruction) as usize;
-                let vb = self.get_reg(base, b);
-                let vc = self.get_reg(base, c);
-
-                if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
-                    self.set_reg(base, a, Value::int(ib.wrapping_mul(ic)));
-                } else {
-                    let res = self.binary_op(vb, vc, |x, y| x * y, |x, y| x * y)?;
-                    self.set_reg(base, a, res);
-                }
+                binary_arithmetic_op!(self, instruction, base, wrapping_mul, |x, y| x * y);
             }
 
             OpCode::Div => {
+                // Div has special check for zero in Int path
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
                 let c = decode_c(instruction) as usize;
@@ -96,6 +89,7 @@ impl ArithmeticOps for super::vm::VM {
             }
 
             OpCode::Mod => {
+                // Mod has special check for zero AND special coercion rules
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
                 let c = decode_c(instruction) as usize;
@@ -115,7 +109,9 @@ impl ArithmeticOps for super::vm::VM {
                     } else if let Some(n) = vb.as_number() {
                         n
                     } else {
-                        return Err(RuntimeError::TypeMismatch("Mod operands must be numeric".into()));
+                        return Err(RuntimeError::TypeMismatch(
+                            "Mod operands must be numeric".into(),
+                        ));
                     };
 
                     let val_c = if let Some(i) = vc.as_int() {
@@ -123,7 +119,9 @@ impl ArithmeticOps for super::vm::VM {
                     } else if let Some(n) = vc.as_number() {
                         n
                     } else {
-                        return Err(RuntimeError::TypeMismatch("Mod operands must be numeric".into()));
+                        return Err(RuntimeError::TypeMismatch(
+                            "Mod operands must be numeric".into(),
+                        ));
                     };
 
                     self.set_reg(base, a, Value::number(val_b % val_c));
@@ -140,10 +138,10 @@ impl ArithmeticOps for super::vm::VM {
                 if vb.is_int() && vc.is_int() {
                     let base_val = vb.as_int().unwrap();
                     let exp_val = vc.as_int().unwrap();
-                    
+
                     if exp_val < 0 {
-                         let res = (base_val as f64).powf(exp_val as f64);
-                         self.set_reg(base, a, Value::number(res));
+                        let res = (base_val as f64).powf(exp_val as f64);
+                        self.set_reg(base, a, Value::number(res));
                     } else {
                         let res = base_val.wrapping_pow(exp_val as u32);
                         self.set_reg(base, a, Value::int(res));
@@ -174,7 +172,7 @@ impl ArithmeticOps for super::vm::VM {
                 let b = decode_b(instruction) as usize;
                 let vb = self.get_reg(base, b);
                 let res = if vb.is_int() {
-                     Value::int(vb.as_int().unwrap().wrapping_neg())
+                    Value::int(vb.as_int().unwrap().wrapping_neg())
                 } else if vb.is_number() {
                     Value::number(-vb.as_number().unwrap())
                 } else if vb.is_complex() {
@@ -195,7 +193,7 @@ impl ArithmeticOps for super::vm::VM {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
                 let vb = self.get_reg(base, b);
-                
+
                 // Int -> Float/Complex promotion
                 let (val, need_complex) = if vb.is_int() {
                     let i = vb.as_int().unwrap();
@@ -205,14 +203,17 @@ impl ArithmeticOps for super::vm::VM {
                     (n, n < 0.0)
                 } else if vb.is_complex() {
                     // Already handled logic, duplicate slightly but distinct type
-                     let idx = vb.as_handle().unwrap();
-                     let c = self.heap.get_complex(idx).ok_or(RuntimeError::InvalidOperand)?;
-                     let sqrt_c = c.sqrt();
-                     let res = Value::complex(self.heap.alloc_complex(sqrt_c));
-                     self.set_reg(base, a, res);
-                     return Ok(());
+                    let idx = vb.as_handle().unwrap();
+                    let c = self
+                        .heap
+                        .get_complex(idx)
+                        .ok_or(RuntimeError::InvalidOperand)?;
+                    let sqrt_c = c.sqrt();
+                    let res = Value::complex(self.heap.alloc_complex(sqrt_c));
+                    self.set_reg(base, a, res);
+                    return Ok(());
                 } else {
-                     return Err(RuntimeError::TypeMismatch("Sqrt".into()));
+                    return Err(RuntimeError::TypeMismatch("Sqrt".into()));
                 };
 
                 // Common Float/Int Logic
@@ -241,7 +242,7 @@ impl ArithmeticOps for super::vm::VM {
                         "NewComplex: real part must be Number/Int".into(),
                     ));
                 };
-                
+
                 let im = if vc.is_int() {
                     vc.as_int().unwrap() as f64
                 } else if vc.is_number() {
