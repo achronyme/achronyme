@@ -156,9 +156,17 @@ name = "compiler"
 version = "0.7.0"
 dependencies = [
  "achronyme-parser",
+ "constraints",
  "memory",
  "pest",
  "vm",
+]
+
+[[package]]
+name = "constraints"
+version = "0.1.0"
+dependencies = [
+ "memory",
 ]
 
 [[package]]

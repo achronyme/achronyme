@@ -8,6 +8,8 @@ pub mod control_flow;
 pub mod scopes;
 pub mod function_compiler;
 pub mod types;
+pub mod r1cs_backend;
+pub mod r1cs_error;
 
 pub use codegen::Compiler;
 pub use error::CompilerError;
