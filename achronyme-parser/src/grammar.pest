@@ -23,9 +23,6 @@ integer    = @{ ASCII_DIGIT+ }
 decimal    = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 number     = @{ "-"? ~ (decimal | integer) }
 
-// Placeholder for Complex numbers (e.g., 3i). Treated as an atom for safety.
-complex    = @{ number ~ "i" }
-
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
@@ -65,7 +62,6 @@ atom = {
   | forever_expr
   | fn_expr
   | block
-  | complex
   | number
   | string
   | identifier

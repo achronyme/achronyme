@@ -1,8 +1,7 @@
-#![allow(unused_imports)]
 use crate::error::CompilerError;
 use crate::interner::StringInterner;
 use achronyme_parser::{parse_expression, Rule};
-use memory::{Value, Complex64};
+use memory::Value;
 use pest::iterators::Pair;
 use std::collections::HashMap;
 use vm::opcode::{
@@ -38,9 +37,6 @@ pub struct Compiler {
 
     // String Interner (shared across all functions)
     pub interner: StringInterner,
-
-    // Complex Number Arena (shared)
-    pub complexes: Vec<Complex64>,
 }
 
 use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
@@ -65,7 +61,6 @@ impl Compiler {
             global_symbols,
             next_global_idx,
             interner: StringInterner::new(),
-            complexes: Vec::new(),
         }
     }
     

@@ -4,7 +4,6 @@ pub enum CompilerError {
     UnknownOperator(String),
     InvalidNumber,
     TooManyConstants,
-    InvalidComplex,
     UnexpectedRule(String),
     MissingOperand,
     RegisterOverflow,

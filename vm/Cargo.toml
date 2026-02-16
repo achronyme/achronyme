@@ -7,7 +7,6 @@ license = "GPL-3.0"
 [dependencies]
 byteorder = "1.5.0"
 memory = { path = "../memory" }
-num-complex = "0.4"
 
 [dev-dependencies]
 compiler = { path = "../compiler" }

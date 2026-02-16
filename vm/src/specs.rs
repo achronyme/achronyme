@@ -27,5 +27,4 @@ pub const USER_GLOBAL_START: u16 = NATIVE_TABLE.len() as u16;
 // Binary Format Tags (v1)
 pub const SER_TAG_NUMBER: u8 = 0;
 pub const SER_TAG_STRING: u8 = 1;
-pub const SER_TAG_COMPLEX: u8 = 9;
 pub const SER_TAG_NIL:    u8 = 255;

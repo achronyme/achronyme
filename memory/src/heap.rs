@@ -1,9 +1,5 @@
 use crate::Value;
-use num_complex::Complex64;
 use std::collections::{HashMap, HashSet};
-
-// Placeholder types for now
-pub type RealTensor = ();
 
 #[derive(Debug, Clone)]
 pub struct Upvalue {
@@ -61,8 +57,6 @@ pub struct Heap {
     pub functions: Arena<Function>,
     pub upvalues: Arena<Box<Upvalue>>, // Boxed for stable addresses
     pub closures: Arena<Closure>,
-    pub tensors: Arena<RealTensor>,
-    pub complexes: Arena<Complex64>,
     pub iterators: Arena<IteratorObj>,
 
     // Mark State (One set per arena type)
@@ -74,8 +68,6 @@ pub struct Heap {
     pub marked_functions: HashSet<u32>,
     pub marked_upvalues: HashSet<u32>,
     pub marked_closures: HashSet<u32>,
-    pub marked_tensors: HashSet<u32>,
-    pub marked_complexes: HashSet<u32>,
     pub marked_iterators: HashSet<u32>,
 
     // GC Metrics
@@ -95,9 +87,7 @@ impl Heap {
             functions: Arena::new(),
             upvalues: Arena::new(),
             closures: Arena::new(),
-            tensors: Arena::new(),
-            complexes: Arena::new(),
-            iterators: Arena::new(), /* Added */
+            iterators: Arena::new(),
 
             marked_strings: HashSet::new(),
             marked_lists: HashSet::new(),
@@ -105,8 +95,6 @@ impl Heap {
             marked_functions: HashSet::new(),
             marked_upvalues: HashSet::new(),
             marked_closures: HashSet::new(),
-            marked_tensors: HashSet::new(),
-            marked_complexes: HashSet::new(),
             marked_iterators: HashSet::new(),
 
             bytes_allocated: 0,
@@ -270,27 +258,10 @@ impl Heap {
                         false
                     }
                 }
-                crate::value::TAG_COMPLEX => {
-                    if !self.marked_complexes.contains(&handle) {
-                        self.marked_complexes.insert(handle);
-                        // Complex has no children to trace
-                        false
-                    } else {
-                        false
-                    }
-                }
                 crate::value::TAG_MAP => {
                     if !self.marked_maps.contains(&handle) {
                         self.marked_maps.insert(handle);
                         true
-                    } else {
-                        false
-                    }
-                }
-                crate::value::TAG_TENSOR => {
-                    if !self.marked_tensors.contains(&handle) {
-                        self.marked_tensors.insert(handle);
-                        false // Assumed no children for now
                     } else {
                         false
                     }
@@ -447,21 +418,6 @@ impl Heap {
         }
         self.marked_upvalues.clear();
 
-        // Complexes
-        for i in 0..self.complexes.data.len() {
-            let idx = i as u32;
-            if !self.marked_complexes.contains(&idx) && !self.complexes.free_indices.contains(&idx)
-            {
-                self.complexes.free_indices.push(idx);
-                freed_bytes += std::mem::size_of::<Complex64>();
-                // Complex is Copy, just leave it or zero it?
-                // It doesn't hold heap memory itself, so just marking as free is enough for reuse.
-                // Overwriting with default might help debugging.
-                self.complexes.data[i] = Complex64::default();
-            }
-        }
-        self.marked_complexes.clear();
-
         // Iterators
         for i in 0..self.iterators.data.len() {
             let idx = i as u32;
@@ -527,31 +483,9 @@ impl Heap {
         self.functions.data.get(index as usize)
     }
 
-    pub fn alloc_complex(&mut self, c: Complex64) -> u32 {
-        self.bytes_allocated += std::mem::size_of::<Complex64>();
-        self.check_gc();
-        if let Some(idx) = self.complexes.free_indices.pop() {
-            self.complexes.data[idx as usize] = c;
-            idx
-        } else {
-            let index = self.complexes.data.len() as u32;
-            self.complexes.data.push(c);
-            index
-        }
-    }
-
-    pub fn get_complex(&self, index: u32) -> Option<Complex64> {
-        self.complexes.data.get(index as usize).copied()
-    }
-
     pub fn import_strings(&mut self, strings: Vec<String>) {
         self.strings.data = strings;
         self.strings.free_indices.clear();
-    }
-
-    pub fn import_complexes(&mut self, complexes: Vec<Complex64>) {
-        self.complexes.data = complexes;
-        self.complexes.free_indices.clear();
     }
 
     pub fn alloc_iterator(&mut self, iter: IteratorObj) -> u32 {

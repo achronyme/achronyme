@@ -92,28 +92,6 @@ impl VM {
             v if v.is_nil() => "nil".to_string(),
             v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
             v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
-            v if v.is_complex() => {
-                let idx = v.as_handle().unwrap();
-                if let Some(c) = self.heap.get_complex(idx) {
-                    if c.im.abs() < 1e-15 {
-                        format!("{}", c.re)
-                    } else if c.re.abs() < 1e-15 {
-                        if c.im == 1.0 {
-                            "i".to_string()
-                        } else if c.im == -1.0 {
-                            "-i".to_string()
-                        } else {
-                            format!("{}i", c.im)
-                        }
-                    } else if c.im >= 0.0 {
-                        format!("{} + {}i", c.re, c.im)
-                    } else {
-                        format!("{} - {}i", c.re, c.im.abs())
-                    }
-                } else {
-                    format!("Complex({})", idx)
-                }
-            },
             _ => format!("{:?}", val), // Fallback
         }
     }
@@ -131,15 +109,6 @@ impl VM {
             let s2 = self.heap.get_string(h2);
             match (s1, s2) {
                 (Some(str1), Some(str2)) => str1 == str2,
-                _ => false,
-            }
-        } else if v1.is_complex() && v2.is_complex() {
-            let h1 = v1.as_handle().unwrap();
-            let h2 = v2.as_handle().unwrap();
-            let c1 = self.heap.get_complex(h1);
-            let c2 = self.heap.get_complex(h2);
-            match (c1, c2) {
-                (Some(cx1), Some(cx2)) => cx1 == cx2,
                 _ => false,
             }
         } else {
@@ -195,7 +164,7 @@ impl VM {
 
             match op {
                 // Arithmetic (delegated to arithmetic.rs)
-                Add | Sub | Mul | Div | Mod | Pow | Neg | Sqrt | NewComplex => {
+                Add | Sub | Mul | Div | Mod | Pow | Neg | Sqrt => {
                     self.handle_arithmetic(op, instruction, base)?;
                 }
 

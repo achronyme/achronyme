@@ -136,8 +136,6 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     // Script function
     else if val.is_native() {
         "Native"
-    } else if val.is_complex() {
-        "Complex"
     } else {
         "Unknown"
     };

@@ -5,7 +5,7 @@ use crate::expressions::ExpressionCompiler;
 use crate::functions::FunctionDefinitionCompiler; // For fn_expr
 use crate::scopes::ScopeCompiler; // For resolve_local
 use achronyme_parser::Rule;
-use memory::{Complex64, Value};
+use memory::Value;
 use pest::iterators::Pair;
 use vm::opcode::OpCode;
 
@@ -13,7 +13,6 @@ pub trait AtomCompiler {
     fn compile_atom(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
     fn compile_number(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
     fn compile_string(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
-    fn compile_complex(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
     fn compile_list(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
     fn compile_map(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
     fn compile_dot_key(&mut self, name: &str) -> Result<u8, CompilerError>;
@@ -26,7 +25,6 @@ impl AtomCompiler for Compiler {
         match inner.as_rule() {
             Rule::number => self.compile_number(inner),
             Rule::string => self.compile_string(inner),
-            Rule::complex => self.compile_complex(inner),
             Rule::true_lit => {
                 let reg = self.alloc_reg()?;
                 self.emit_abx(OpCode::LoadTrue, reg, 0);
@@ -207,38 +205,6 @@ impl AtomCompiler for Compiler {
         } else {
             return Err(CompilerError::TooManyConstants);
         }
-
-        Ok(reg)
-    }
-
-    fn compile_complex(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-        let s = pair.as_str();
-        let num_str = &s[..s.len() - 1]; // Remove 'i'
-        let val = num_str
-            .parse::<f64>()
-            .map_err(|_| CompilerError::InvalidComplex)?;
-
-        // Construct the complex number (0 + val*i)
-        let c = Complex64::new(0.0, val);
-
-        // Deduplicate/Intern in the compiler's list
-        let complex_handle =
-            if let Some(idx) = self.complexes.iter().position(|&existing| existing == c) {
-                idx as u32
-            } else {
-                let idx = self.complexes.len() as u32;
-                self.complexes.push(c);
-                idx
-            };
-
-        let val = Value::complex(complex_handle);
-        let const_idx = self.add_constant(val);
-
-        let reg = self.alloc_reg()?;
-        if const_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
-        }
-        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
 
         Ok(reg)
     }

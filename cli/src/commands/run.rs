@@ -45,7 +45,6 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);
-        vm.heap.import_complexes(compiler.complexes);
 
         // Transfer Debug Symbols (Source Mode)
         let mut debug_map = std::collections::HashMap::new();

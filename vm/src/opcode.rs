@@ -77,10 +77,6 @@ pub enum OpCode {
     /// Print: print R[A]
     Print = 102,
 
-    // ===== Complex Numbers =====
-    /// New complex: R[A] = Complex(R[B], R[C])
-    NewComplex = 140,
-
     // ===== Data Structures =====
     /// Build List: R[A] = [ R[B], ..., R[B+C-1] ]
     BuildList = 150,
@@ -141,7 +137,6 @@ impl OpCode {
             100 => Some(OpCode::GetGlobal),
             101 => Some(OpCode::SetGlobal),
             102 => Some(OpCode::Print),
-            140 => Some(OpCode::NewComplex),
             150 => Some(OpCode::BuildList),
             151 => Some(OpCode::BuildMap),
             152 => Some(OpCode::GetIndex),
@@ -191,7 +186,6 @@ impl OpCode {
             OpCode::GetGlobal => "GET_GLOBAL",
             OpCode::SetGlobal => "SET_GLOBAL",
             OpCode::Print => "PRINT",
-            OpCode::NewComplex => "NEW_COMPLEX",
             OpCode::BuildList => "BUILD_LIST",
             OpCode::BuildMap => "BUILD_MAP",
             OpCode::GetIndex => "GET_INDEX",

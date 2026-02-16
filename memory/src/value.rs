@@ -16,8 +16,6 @@ pub const TAG_STRING: u64 = 4;
 pub const TAG_LIST: u64 = 5;
 pub const TAG_MAP: u64 = 6;
 pub const TAG_FUNCTION: u64 = 7;
-pub const TAG_TENSOR: u64 = 8;
-pub const TAG_COMPLEX: u64 = 9;
 pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
@@ -80,16 +78,6 @@ impl Value {
     #[inline]
     pub fn function(handle: u32) -> Self {
         Value::make_obj(TAG_FUNCTION, handle)
-    }
-
-    #[inline]
-    pub fn tensor(handle: u32) -> Self {
-        Value::make_obj(TAG_TENSOR, handle)
-    }
-
-    #[inline]
-    pub fn complex(handle: u32) -> Self {
-        Value::make_obj(TAG_COMPLEX, handle)
     }
 
     #[inline]
@@ -173,16 +161,6 @@ impl Value {
     }
 
     #[inline]
-    pub fn is_tensor(&self) -> bool {
-        self.tag() == TAG_TENSOR
-    }
-
-    #[inline]
-    pub fn is_complex(&self) -> bool {
-        self.tag() == TAG_COMPLEX
-    }
-
-    #[inline]
     pub fn is_native(&self) -> bool {
         self.tag() == TAG_NATIVE
     }
@@ -199,7 +177,7 @@ impl Value {
 
     #[inline]
     pub fn is_numeric(&self) -> bool {
-        self.is_number() || self.is_complex() || self.is_int()
+        self.is_number() || self.is_int()
     }
 
     /// Returns the type tag for this value.
@@ -293,10 +271,6 @@ impl fmt::Debug for Value {
             write!(f, "Map({})", self.as_handle().unwrap())
         } else if self.is_function() {
             write!(f, "Function({})", self.as_handle().unwrap())
-        } else if self.is_tensor() {
-            write!(f, "Tensor({})", self.as_handle().unwrap())
-        } else if self.is_complex() {
-            write!(f, "Complex({})", self.as_handle().unwrap())
         } else if self.is_native() {
             write!(f, "NativeFn({})", self.as_handle().unwrap())
         } else if self.is_closure() {

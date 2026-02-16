@@ -8,12 +8,6 @@ fn test_integer_arithmetic() {
 }
 
 #[test]
-fn test_complex_arithmetic() {
-    let input = "3i + 5.5";
-    parse_expression(input).expect("Failed to parse complex");
-}
-
-#[test]
 fn test_grouping() {
     let input = "(1 + 2) * 3";
     parse_expression(input).expect("Failed to parse grouping");

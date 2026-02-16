@@ -33,22 +33,7 @@ pub fn disassemble_file(path: &str) -> Result<()> {
                 let val_opt = main_func.constants.get(bx as usize);
                 
                 let val_str = if let Some(val) = val_opt {
-                    if val.is_complex() {
-                         let handle = val.as_handle().unwrap();
-                         if let Some(c) = compiler.complexes.get(handle as usize) {
-                             if c.im.abs() < 1e-15 {
-                                 format!("{}", c.re)
-                             } else if c.re.abs() < 1e-15 {
-                                 if c.im == 1.0 { "i".to_string() }
-                                 else if c.im == -1.0 { "-i".to_string() }
-                                 else { format!("{}i", c.im) }
-                             } else {
-                                 format!("{} + {}i", c.re, c.im)
-                             }
-                         } else {
-                             format!("{:?}", val)
-                         }
-                    } else if val.is_string() {
+                    if val.is_string() {
                          let handle = val.as_handle().unwrap();
                          if let Some(s) = compiler.interner.strings.get(handle as usize) {
                              format!("\"{}\"", s)
@@ -71,8 +56,7 @@ pub fn disassemble_file(path: &str) -> Result<()> {
             | Some(OpCode::Sub)
             | Some(OpCode::Mul)
             | Some(OpCode::Div)
-            | Some(OpCode::Pow)
-            | Some(OpCode::NewComplex) => {
+            | Some(OpCode::Pow) => {
                 println!("{:04} {:<12} R{}, R{}, R{}", i, name, a, b, c);
             }
             Some(OpCode::Move) | Some(OpCode::Neg) => {
