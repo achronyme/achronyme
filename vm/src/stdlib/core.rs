@@ -1,6 +1,6 @@
 use crate::error::RuntimeError;
 use crate::machine::VM;
-use memory::Value;
+use memory::{FieldElement, Value};
 
 pub fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     for (i, arg) in args.iter().enumerate() {
@@ -130,11 +130,11 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         "List"
     } else if val.is_map() {
         "Map"
+    } else if val.is_field() {
+        "Field"
     } else if val.is_function() {
         "Function"
-    }
-    // Script function
-    else if val.is_native() {
+    } else if val.is_native() {
         "Native"
     } else {
         "Unknown"
@@ -150,6 +150,49 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     // Note: We are not interning this in vm.interner because it's a runtime value, not a global name.
 
     Ok(Value::string(handle))
+}
+
+pub fn native_field(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch(
+            "field() takes exactly 1 argument".into(),
+        ));
+    }
+    let val = &args[0];
+
+    let fe = if val.is_int() {
+        FieldElement::from_i64(val.as_int().unwrap() as i64)
+    } else if val.is_number() {
+        // Convert f64 to field: only accept whole numbers
+        let n = val.as_number().unwrap();
+        if n.fract() != 0.0 || n.is_nan() || n.is_infinite() {
+            return Err(RuntimeError::TypeMismatch(
+                "field() requires integer, integer-valued float, or string".into(),
+            ));
+        }
+        FieldElement::from_i64(n as i64)
+    } else if val.is_string() {
+        let handle = val.as_handle().unwrap();
+        let s = vm.heap.get_string(handle)
+            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .clone();
+        if s.starts_with("0x") || s.starts_with("0X") {
+            FieldElement::from_hex_str(&s).ok_or(RuntimeError::TypeMismatch(
+                format!("Invalid hex string for field(): '{}'", s),
+            ))?
+        } else {
+            FieldElement::from_decimal_str(&s).ok_or(RuntimeError::TypeMismatch(
+                format!("Invalid decimal string for field(): '{}'", s),
+            ))?
+        }
+    } else {
+        return Err(RuntimeError::TypeMismatch(
+            "field() expects Int, Number, or String".into(),
+        ));
+    };
+
+    let handle = vm.heap.alloc_field(fe);
+    Ok(Value::field(handle))
 }
 
 pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

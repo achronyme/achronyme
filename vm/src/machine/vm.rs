@@ -90,6 +90,13 @@ impl VM {
             v if v.is_number() => format!("{}", v.as_number().unwrap()),
             v if v.is_bool() => format!("{}", v.as_bool().unwrap()),
             v if v.is_nil() => "nil".to_string(),
+            v if v.is_field() => {
+                let handle = v.as_handle().unwrap();
+                match self.heap.get_field(handle) {
+                    Some(fe) => format!("Field({})", fe.to_decimal_string()),
+                    None => "<bad field>".into(),
+                }
+            },
             v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
             v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
             _ => format!("{:?}", val), // Fallback
@@ -109,6 +116,13 @@ impl VM {
             let s2 = self.heap.get_string(h2);
             match (s1, s2) {
                 (Some(str1), Some(str2)) => str1 == str2,
+                _ => false,
+            }
+        } else if v1.is_field() && v2.is_field() {
+            let h1 = v1.as_handle().unwrap();
+            let h2 = v2.as_handle().unwrap();
+            match (self.heap.get_field(h1), self.heap.get_field(h2)) {
+                (Some(f1), Some(f2)) => f1 == f2,
                 _ => false,
             }
         } else {

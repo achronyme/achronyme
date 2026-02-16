@@ -18,6 +18,7 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
     NativeMeta { name: "push",   arity: 2  }, // Index 5
     NativeMeta { name: "pop",    arity: 1  }, // Index 6
     NativeMeta { name: "keys",   arity: 1  }, // Index 7
+    NativeMeta { name: "field",  arity: 1  }, // Index 8
 ];
 
 // Helper to get start index for user globals
@@ -27,4 +28,5 @@ pub const USER_GLOBAL_START: u16 = NATIVE_TABLE.len() as u16;
 // Binary Format Tags (v1)
 pub const SER_TAG_NUMBER: u8 = 0;
 pub const SER_TAG_STRING: u8 = 1;
+pub const SER_TAG_FIELD:  u8 = 8;
 pub const SER_TAG_NIL:    u8 = 255;

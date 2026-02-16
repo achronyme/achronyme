@@ -16,6 +16,7 @@ pub const TAG_STRING: u64 = 4;
 pub const TAG_LIST: u64 = 5;
 pub const TAG_MAP: u64 = 6;
 pub const TAG_FUNCTION: u64 = 7;
+pub const TAG_FIELD: u64 = 8;
 pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
@@ -96,6 +97,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn field(handle: u32) -> Self {
+        Value::make_obj(TAG_FIELD, handle)
+    }
+
+    #[inline]
     fn make_obj(tag: u64, handle: u32) -> Self {
         // Shift Tag to bits 32-35 (lowest 4 bits of high 32)
         // Check plan: QNAN | (Tag << 32) | Handle
@@ -173,6 +179,11 @@ impl Value {
     #[inline]
     pub fn is_iter(&self) -> bool {
         self.tag() == TAG_ITER
+    }
+
+    #[inline]
+    pub fn is_field(&self) -> bool {
+        self.tag() == TAG_FIELD
     }
 
     #[inline]
@@ -277,6 +288,8 @@ impl fmt::Debug for Value {
             write!(f, "Closure({})", self.as_handle().unwrap())
         } else if self.is_iter() {
             write!(f, "Iterator({})", self.as_handle().unwrap())
+        } else if self.is_field() {
+            write!(f, "Field({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }

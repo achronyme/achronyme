@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::field::FieldElement;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
@@ -58,8 +59,7 @@ pub struct Heap {
     pub upvalues: Arena<Box<Upvalue>>, // Boxed for stable addresses
     pub closures: Arena<Closure>,
     pub iterators: Arena<IteratorObj>,
-
-    // Mark State (One set per arena type)
+    pub fields: Arena<FieldElement>,
 
     // Mark State (One set per arena type)
     pub marked_strings: HashSet<u32>,
@@ -69,8 +69,7 @@ pub struct Heap {
     pub marked_upvalues: HashSet<u32>,
     pub marked_closures: HashSet<u32>,
     pub marked_iterators: HashSet<u32>,
-
-    // GC Metrics
+    pub marked_fields: HashSet<u32>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -88,6 +87,7 @@ impl Heap {
             upvalues: Arena::new(),
             closures: Arena::new(),
             iterators: Arena::new(),
+            fields: Arena::new(),
 
             marked_strings: HashSet::new(),
             marked_lists: HashSet::new(),
@@ -96,6 +96,7 @@ impl Heap {
             marked_upvalues: HashSet::new(),
             marked_closures: HashSet::new(),
             marked_iterators: HashSet::new(),
+            marked_fields: HashSet::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -274,6 +275,11 @@ impl Heap {
                         false
                     }
                 }
+                crate::value::TAG_FIELD => {
+                    // Leaf type: no children to trace
+                    self.marked_fields.insert(handle);
+                    false
+                }
                 _ => false,
             };
 
@@ -434,6 +440,17 @@ impl Heap {
         }
         self.marked_iterators.clear();
 
+        // Fields (leaf type, 32 bytes each)
+        for i in 0..self.fields.data.len() {
+            let idx = i as u32;
+            if !self.marked_fields.contains(&idx) && !self.fields.free_indices.contains(&idx) {
+                self.fields.free_indices.push(idx);
+                freed_bytes += std::mem::size_of::<FieldElement>();
+                self.fields.data[i] = FieldElement::ZERO;
+            }
+        }
+        self.marked_fields.clear();
+
         // Adjust global counter safely
         self.bytes_allocated = self.bytes_allocated.saturating_sub(freed_bytes);
 
@@ -507,5 +524,22 @@ impl Heap {
 
     pub fn get_iterator_mut(&mut self, index: u32) -> Option<&mut IteratorObj> {
         self.iterators.data.get_mut(index as usize)
+    }
+
+    pub fn alloc_field(&mut self, fe: FieldElement) -> u32 {
+        self.bytes_allocated += std::mem::size_of::<FieldElement>(); // 32 bytes
+        self.check_gc();
+        if let Some(idx) = self.fields.free_indices.pop() {
+            self.fields.data[idx as usize] = fe;
+            idx
+        } else {
+            let index = self.fields.data.len() as u32;
+            self.fields.data.push(fe);
+            index
+        }
+    }
+
+    pub fn get_field(&self, index: u32) -> Option<&FieldElement> {
+        self.fields.data.get(index as usize)
     }
 }

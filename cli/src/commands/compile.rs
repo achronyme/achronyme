@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
-use memory::Value;
 use std::fs;
 use vm::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
 
@@ -82,7 +81,7 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                     file.write_u8(SER_TAG_NIL)?;
                 }
             }
-            
+
             // Upvalue Info (New in v2)
             let upvalue_count = (proto.upvalue_info.len() / 2) as u32;
             file.write_u32::<LittleEndian>(upvalue_count)?;

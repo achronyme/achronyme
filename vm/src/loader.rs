@@ -1,6 +1,6 @@
 use std::io::Read;
 use byteorder::{LittleEndian, ReadBytesExt};
-use crate::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
+use crate::specs::{SER_TAG_FIELD, SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
 use crate::{VM, CallFrame};
 use memory::{Function, Closure, Value};
 
@@ -77,6 +77,15 @@ impl VM {
                     let handle = reader.read_u32::<LittleEndian>()?;
                     constants.push(Value::string(handle));
                 }
+                SER_TAG_FIELD => {
+                    let l0 = reader.read_u64::<LittleEndian>()?;
+                    let l1 = reader.read_u64::<LittleEndian>()?;
+                    let l2 = reader.read_u64::<LittleEndian>()?;
+                    let l3 = reader.read_u64::<LittleEndian>()?;
+                    let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
+                    let handle = self.heap.alloc_field(fe);
+                    constants.push(Value::field(handle));
+                }
                 SER_TAG_NIL => {
                     constants.push(Value::nil());
                 }
@@ -122,6 +131,15 @@ impl VM {
                     SER_TAG_STRING => {
                         let handle = reader.read_u32::<LittleEndian>()?;
                         proto_constants.push(Value::string(handle));
+                    }
+                    SER_TAG_FIELD => {
+                        let l0 = reader.read_u64::<LittleEndian>()?;
+                        let l1 = reader.read_u64::<LittleEndian>()?;
+                        let l2 = reader.read_u64::<LittleEndian>()?;
+                        let l3 = reader.read_u64::<LittleEndian>()?;
+                        let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
+                        let handle = self.heap.alloc_field(fe);
+                        proto_constants.push(Value::field(handle));
                     }
                     SER_TAG_NIL => {
                         proto_constants.push(Value::nil());
