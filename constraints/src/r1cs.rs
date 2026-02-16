@@ -69,6 +69,24 @@ impl LinearCombination {
         self.terms.push((var, coeff));
     }
 
+    /// Returns true if this LC only references `Variable::ONE` (i.e., it's a pure constant).
+    pub fn is_constant(&self) -> bool {
+        self.terms.iter().all(|(var, _)| *var == Variable::ONE)
+    }
+
+    /// If this LC is a pure constant (only `Variable::ONE` terms), return the scalar value.
+    /// Returns `None` if any non-ONE variable is present.
+    pub fn constant_value(&self) -> Option<FieldElement> {
+        if !self.is_constant() {
+            return None;
+        }
+        let mut sum = FieldElement::ZERO;
+        for (_, coeff) in &self.terms {
+            sum = sum.add(coeff);
+        }
+        Some(sum)
+    }
+
     /// Evaluate the LC given a full witness assignment.
     /// witness[i] = value of variable i.
     pub fn evaluate(&self, witness: &[FieldElement]) -> FieldElement {
@@ -479,6 +497,45 @@ mod tests {
             FieldElement::from_u64(42),
         ];
         assert!(cs.verify(&witness).is_ok());
+    }
+
+    #[test]
+    fn test_constant_lc_is_constant() {
+        let lc = LinearCombination::from_constant(FieldElement::from_u64(42));
+        assert!(lc.is_constant());
+        assert_eq!(lc.constant_value(), Some(FieldElement::from_u64(42)));
+    }
+
+    #[test]
+    fn test_zero_lc_is_constant() {
+        let lc = LinearCombination::zero();
+        assert!(lc.is_constant());
+        assert_eq!(lc.constant_value(), Some(FieldElement::ZERO));
+    }
+
+    #[test]
+    fn test_variable_lc_not_constant() {
+        let lc = LinearCombination::from_variable(Variable(1));
+        assert!(!lc.is_constant());
+        assert_eq!(lc.constant_value(), None);
+    }
+
+    #[test]
+    fn test_mixed_lc_not_constant() {
+        let mut lc = LinearCombination::from_constant(FieldElement::from_u64(5));
+        lc.add_term(Variable(1), FieldElement::ONE);
+        assert!(!lc.is_constant());
+        assert_eq!(lc.constant_value(), None);
+    }
+
+    #[test]
+    fn test_constant_sum() {
+        // Adding two constants should still be constant
+        let a = LinearCombination::from_constant(FieldElement::from_u64(3));
+        let b = LinearCombination::from_constant(FieldElement::from_u64(7));
+        let sum = a + b;
+        assert!(sum.is_constant());
+        assert_eq!(sum.constant_value(), Some(FieldElement::from_u64(10)));
     }
 
     #[test]
