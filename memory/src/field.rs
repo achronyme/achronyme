@@ -346,14 +346,18 @@ impl FieldElement {
     }
 
     /// Modular inverse: self^{-1} mod p via Fermat's little theorem
-    /// Returns ZERO if self is zero (caller should check)
-    pub fn inv(&self) -> Self {
-        self.pow(&P_MINUS_2)
+    /// Returns None if self is zero (division by zero)
+    pub fn inv(&self) -> Option<Self> {
+        if self.is_zero() {
+            return None;
+        }
+        Some(self.pow(&P_MINUS_2))
     }
 
     /// Modular division: self / other mod p
-    pub fn div(&self, other: &Self) -> Self {
-        self.mul(&other.inv())
+    /// Returns None if other is zero
+    pub fn div(&self, other: &Self) -> Option<Self> {
+        Some(self.mul(&other.inv()?))
     }
 
     /// Display as canonical decimal string
@@ -511,17 +515,28 @@ mod tests {
     #[test]
     fn test_inverse() {
         let a = FieldElement::from_u64(7);
-        let inv_a = a.inv();
+        let inv_a = a.inv().unwrap();
         let product = a.mul(&inv_a);
         assert_eq!(product, FieldElement::ONE);
+    }
+
+    #[test]
+    fn test_inverse_zero_returns_none() {
+        assert!(FieldElement::ZERO.inv().is_none());
     }
 
     #[test]
     fn test_division() {
         let a = FieldElement::from_u64(42);
         let b = FieldElement::from_u64(7);
-        let c = a.div(&b);
+        let c = a.div(&b).unwrap();
         assert_eq!(c, FieldElement::from_u64(6));
+    }
+
+    #[test]
+    fn test_division_by_zero_returns_none() {
+        let a = FieldElement::from_u64(42);
+        assert!(a.div(&FieldElement::ZERO).is_none());
     }
 
     #[test]

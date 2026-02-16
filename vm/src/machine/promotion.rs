@@ -15,7 +15,7 @@ pub trait TypePromotion {
     ) -> Result<Value, RuntimeError>
     where
         F: Fn(f64, f64) -> f64,
-        G: Fn(&FieldElement, &FieldElement) -> FieldElement;
+        G: Fn(&FieldElement, &FieldElement) -> Result<FieldElement, RuntimeError>;
 }
 
 impl TypePromotion for super::vm::VM {
@@ -29,7 +29,7 @@ impl TypePromotion for super::vm::VM {
     ) -> Result<Value, RuntimeError>
     where
         F: Fn(f64, f64) -> f64,
-        G: Fn(&FieldElement, &FieldElement) -> FieldElement,
+        G: Fn(&FieldElement, &FieldElement) -> Result<FieldElement, RuntimeError>,
     {
         match (left.type_tag(), right.type_tag()) {
             (TAG_NUMBER, TAG_NUMBER) => {
@@ -59,7 +59,7 @@ impl TypePromotion for super::vm::VM {
                 let hb = right.as_handle().unwrap();
                 let fa = *self.heap.get_field(ha).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let fb = *self.heap.get_field(hb).ok_or(RuntimeError::SystemError("Field missing".into()))?;
-                let result = field_op(&fa, &fb);
+                let result = field_op(&fa, &fb)?;
                 let handle = self.heap.alloc_field(result);
                 Ok(Value::field(handle))
             }
@@ -69,7 +69,7 @@ impl TypePromotion for super::vm::VM {
                 let a = FieldElement::from_i64(left.as_int().unwrap() as i64);
                 let hb = right.as_handle().unwrap();
                 let fb = *self.heap.get_field(hb).ok_or(RuntimeError::SystemError("Field missing".into()))?;
-                let result = field_op(&a, &fb);
+                let result = field_op(&a, &fb)?;
                 let handle = self.heap.alloc_field(result);
                 Ok(Value::field(handle))
             }
@@ -77,7 +77,7 @@ impl TypePromotion for super::vm::VM {
                 let ha = left.as_handle().unwrap();
                 let fa = *self.heap.get_field(ha).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let b = FieldElement::from_i64(right.as_int().unwrap() as i64);
-                let result = field_op(&fa, &b);
+                let result = field_op(&fa, &b)?;
                 let handle = self.heap.alloc_field(result);
                 Ok(Value::field(handle))
             }

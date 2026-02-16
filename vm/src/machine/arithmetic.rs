@@ -53,19 +53,19 @@ impl ArithmeticOps for super::vm::VM {
             OpCode::Add => {
                 binary_arithmetic_op!(self, instruction, base, wrapping_add,
                     |x, y| x + y,
-                    |a: &FieldElement, b: &FieldElement| a.add(b));
+                    |a: &FieldElement, b: &FieldElement| Ok(a.add(b)));
             }
 
             OpCode::Sub => {
                 binary_arithmetic_op!(self, instruction, base, wrapping_sub,
                     |x, y| x - y,
-                    |a: &FieldElement, b: &FieldElement| a.sub(b));
+                    |a: &FieldElement, b: &FieldElement| Ok(a.sub(b)));
             }
 
             OpCode::Mul => {
                 binary_arithmetic_op!(self, instruction, base, wrapping_mul,
                     |x, y| x * y,
-                    |a: &FieldElement, b: &FieldElement| a.mul(b));
+                    |a: &FieldElement, b: &FieldElement| Ok(a.mul(b)));
             }
 
             OpCode::Div => {
@@ -85,7 +85,9 @@ impl ArithmeticOps for super::vm::VM {
                 } else {
                     let res = self.binary_op(vb, vc,
                         |x, y| x / y,
-                        |a, b| a.div(b))?;
+                        |a: &FieldElement, b: &FieldElement| {
+                            a.div(b).ok_or(RuntimeError::DivisionByZero)
+                        })?;
                     self.set_reg(base, a, res);
                 }
             }
@@ -160,7 +162,8 @@ impl ArithmeticOps for super::vm::VM {
                         [exp_val as u64, 0, 0, 0]
                     } else {
                         // Negative exp: compute inverse first, then pow with |exp|
-                        let result = fa.inv().pow(&[(-exp_val) as u64, 0, 0, 0]);
+                        let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
+                        let result = inv.pow(&[(-exp_val) as u64, 0, 0, 0]);
                         let handle = self.heap.alloc_field(result);
                         self.set_reg(base, a, Value::field(handle));
                         return Ok(());
