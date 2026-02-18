@@ -218,6 +218,25 @@ impl FieldElement {
         ])
     }
 
+    /// Convert to 32 bytes in little-endian canonical form.
+    pub fn to_le_bytes(&self) -> [u8; 32] {
+        let canonical = self.to_canonical();
+        let mut bytes = [0u8; 32];
+        for i in 0..4 {
+            bytes[i * 8..(i + 1) * 8].copy_from_slice(&canonical[i].to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Create from 32 bytes in little-endian canonical form.
+    pub fn from_le_bytes(bytes: &[u8; 32]) -> Self {
+        let mut limbs = [0u64; 4];
+        for i in 0..4 {
+            limbs[i] = u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
+        }
+        Self::from_canonical(limbs)
+    }
+
     /// Parse from decimal string
     pub fn from_decimal_str(s: &str) -> Option<Self> {
         // Parse into [u64; 4] canonical form using repeated multiply-add
@@ -592,5 +611,27 @@ mod tests {
     fn test_display() {
         let fe = FieldElement::from_u64(42);
         assert_eq!(format!("{}", fe), "42");
+    }
+
+    #[test]
+    fn test_to_le_bytes_zero() {
+        assert_eq!(FieldElement::ZERO.to_le_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_to_le_bytes_one() {
+        let mut expected = [0u8; 32];
+        expected[0] = 1;
+        assert_eq!(FieldElement::ONE.to_le_bytes(), expected);
+    }
+
+    #[test]
+    fn test_le_bytes_roundtrip() {
+        for &val in &[0u64, 1, 42, 1000, u64::MAX] {
+            let fe = FieldElement::from_u64(val);
+            let bytes = fe.to_le_bytes();
+            let recovered = FieldElement::from_le_bytes(&bytes);
+            assert_eq!(fe, recovered);
+        }
     }
 }
