@@ -13,6 +13,12 @@ pub enum R1CSError {
     UnboundedLoop,
     /// The input failed to parse as a valid Achronyme program.
     ParseError(String),
+    /// A builtin function was called with the wrong number of arguments.
+    WrongArgumentCount {
+        builtin: String,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl fmt::Display for R1CSError {
@@ -32,6 +38,13 @@ impl fmt::Display for R1CSError {
             }
             R1CSError::ParseError(msg) => {
                 write!(f, "parse error: {msg}")
+            }
+            R1CSError::WrongArgumentCount {
+                builtin,
+                expected,
+                got,
+            } => {
+                write!(f, "`{builtin}` expects {expected} arguments, got {got}")
             }
         }
     }
