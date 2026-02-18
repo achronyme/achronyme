@@ -145,6 +145,26 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
                 constrained_vars.insert(*operand);
                 taints.insert(*result, taint_of(&taints, *operand));
             }
+            Instruction::Not { result, operand } => {
+                used_vars.insert(*operand);
+                taints.insert(*result, taint_of(&taints, *operand));
+            }
+            Instruction::And { result, lhs, rhs }
+            | Instruction::Or { result, lhs, rhs }
+            | Instruction::IsEq { result, lhs, rhs }
+            | Instruction::IsNeq { result, lhs, rhs }
+            | Instruction::IsLt { result, lhs, rhs }
+            | Instruction::IsLe { result, lhs, rhs } => {
+                used_vars.insert(*lhs);
+                used_vars.insert(*rhs);
+                let t = taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs));
+                taints.insert(*result, t);
+            }
+            Instruction::Assert { result, operand } => {
+                used_vars.insert(*operand);
+                constrained_vars.insert(*operand);
+                taints.insert(*result, taint_of(&taints, *operand));
+            }
         }
     }
 

@@ -145,7 +145,127 @@ pub fn constant_fold(program: &mut IrProgram) {
                     }
                 }
             }
-            // Input, AssertEq, PoseidonHash — no folding
+            Instruction::Not { result, operand } => {
+                if let Some(v) = constants.get(operand) {
+                    let folded = if v.is_zero() {
+                        FieldElement::ONE
+                    } else {
+                        FieldElement::ZERO
+                    };
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            Instruction::And { result, lhs, rhs } => {
+                let lhs_val = constants.get(lhs).copied();
+                let rhs_val = constants.get(rhs).copied();
+                // Short-circuit: 0 && x = 0
+                if lhs_val.map_or(false, |v| v.is_zero())
+                    || rhs_val.map_or(false, |v| v.is_zero())
+                {
+                    constants.insert(*result, FieldElement::ZERO);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: FieldElement::ZERO,
+                    };
+                } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
+                    let folded = a.mul(&b);
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            Instruction::Or { result, lhs, rhs } => {
+                let lhs_val = constants.get(lhs).copied();
+                let rhs_val = constants.get(rhs).copied();
+                // Short-circuit: 1 || x = 1
+                if lhs_val.map_or(false, |v| v == FieldElement::ONE)
+                    || rhs_val.map_or(false, |v| v == FieldElement::ONE)
+                {
+                    constants.insert(*result, FieldElement::ONE);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: FieldElement::ONE,
+                    };
+                } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
+                    // a + b - a*b
+                    let folded = a.add(&b).sub(&a.mul(&b));
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            Instruction::IsEq { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
+                    let folded = if a == b {
+                        FieldElement::ONE
+                    } else {
+                        FieldElement::ZERO
+                    };
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            Instruction::IsNeq { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
+                    let folded = if a != b {
+                        FieldElement::ONE
+                    } else {
+                        FieldElement::ZERO
+                    };
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            Instruction::IsLt { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
+                    // Compare canonical representations (little-endian limbs)
+                    let la = a.to_canonical();
+                    let lb = b.to_canonical();
+                    let less = (la[3], la[2], la[1], la[0]) < (lb[3], lb[2], lb[1], lb[0]);
+                    let folded = if less {
+                        FieldElement::ONE
+                    } else {
+                        FieldElement::ZERO
+                    };
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            Instruction::IsLe { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
+                    let la = a.to_canonical();
+                    let lb = b.to_canonical();
+                    let le = (la[3], la[2], la[1], la[0]) <= (lb[3], lb[2], lb[1], lb[0]);
+                    let folded = if le {
+                        FieldElement::ONE
+                    } else {
+                        FieldElement::ZERO
+                    };
+                    constants.insert(*result, folded);
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
+                }
+            }
+            // Input, AssertEq, Assert, PoseidonHash — no folding
             _ => {}
         }
     }

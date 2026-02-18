@@ -29,13 +29,20 @@ pub fn dead_code_elimination(program: &mut IrProgram) {
                 return true;
             }
 
-            // Conservative: keep Mul, Div, Mux, PoseidonHash (they may generate constraints)
+            // Conservative: keep instructions that generate constraints
             match inst {
                 Instruction::Mul { .. }
                 | Instruction::Div { .. }
                 | Instruction::Mux { .. }
                 | Instruction::PoseidonHash { .. }
-                | Instruction::RangeCheck { .. } => return true,
+                | Instruction::RangeCheck { .. }
+                | Instruction::Not { .. }
+                | Instruction::And { .. }
+                | Instruction::Or { .. }
+                | Instruction::IsEq { .. }
+                | Instruction::IsNeq { .. }
+                | Instruction::IsLt { .. }
+                | Instruction::IsLe { .. } => return true,
                 _ => {}
             }
 
