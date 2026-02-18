@@ -34,7 +34,8 @@ pub fn dead_code_elimination(program: &mut IrProgram) {
                 Instruction::Mul { .. }
                 | Instruction::Div { .. }
                 | Instruction::Mux { .. }
-                | Instruction::PoseidonHash { .. } => return true,
+                | Instruction::PoseidonHash { .. }
+                | Instruction::RangeCheck { .. } => return true,
                 _ => {}
             }
 

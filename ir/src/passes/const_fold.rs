@@ -115,6 +115,36 @@ pub fn constant_fold(program: &mut IrProgram) {
                     }
                 }
             }
+            // RangeCheck: if operand is constant and fits in bits, propagate constant
+            Instruction::RangeCheck {
+                result,
+                operand,
+                bits,
+            } => {
+                if let Some(val) = constants.get(operand) {
+                    let limbs = val.to_canonical();
+                    let fits = if *bits >= 64 {
+                        // For ≥64 bits, check upper limbs cover the value
+                        let full_limbs_needed = (*bits / 64) as usize;
+                        let remaining_bits = *bits % 64;
+                        let mut ok = true;
+                        for i in (full_limbs_needed + 1)..4 {
+                            if limbs[i] != 0 {
+                                ok = false;
+                            }
+                        }
+                        if ok && full_limbs_needed < 4 && remaining_bits > 0 {
+                            ok = limbs[full_limbs_needed] < (1u64 << remaining_bits);
+                        }
+                        ok
+                    } else {
+                        limbs[0] < (1u64 << *bits) && limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0
+                    };
+                    if fits {
+                        constants.insert(*result, *val);
+                    }
+                }
+            }
             // Input, AssertEq, PoseidonHash — no folding
             _ => {}
         }

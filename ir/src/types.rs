@@ -77,6 +77,13 @@ pub enum Instruction {
         left: SsaVar,
         right: SsaVar,
     },
+    /// Range check: asserts operand fits in `bits` bits (0 ≤ operand < 2^bits).
+    /// Result is an alias for operand.
+    RangeCheck {
+        result: SsaVar,
+        operand: SsaVar,
+        bits: u32,
+    },
 }
 
 impl Instruction {
@@ -92,13 +99,19 @@ impl Instruction {
             | Instruction::Neg { result, .. }
             | Instruction::Mux { result, .. }
             | Instruction::AssertEq { result, .. }
-            | Instruction::PoseidonHash { result, .. } => *result,
+            | Instruction::PoseidonHash { result, .. }
+            | Instruction::RangeCheck { result, .. } => *result,
         }
     }
 
     /// Returns true if this instruction has side effects (cannot be eliminated).
     pub fn has_side_effects(&self) -> bool {
-        matches!(self, Instruction::AssertEq { .. } | Instruction::Input { .. })
+        matches!(
+            self,
+            Instruction::AssertEq { .. }
+                | Instruction::Input { .. }
+                | Instruction::RangeCheck { .. }
+        )
     }
 
     /// Returns the SSA variables used (read) by this instruction.
@@ -118,6 +131,7 @@ impl Instruction {
             } => vec![*cond, *if_true, *if_false],
             Instruction::AssertEq { lhs, rhs, .. } => vec![*lhs, *rhs],
             Instruction::PoseidonHash { left, right, .. } => vec![*left, *right],
+            Instruction::RangeCheck { operand, .. } => vec![*operand],
         }
     }
 }

@@ -138,6 +138,13 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
                 let t = taint_of(&taints, *left).merge(taint_of(&taints, *right));
                 taints.insert(*result, t);
             }
+            Instruction::RangeCheck {
+                result, operand, ..
+            } => {
+                used_vars.insert(*operand);
+                constrained_vars.insert(*operand);
+                taints.insert(*result, taint_of(&taints, *operand));
+            }
         }
     }
 

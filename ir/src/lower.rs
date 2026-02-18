@@ -479,6 +479,7 @@ impl IrLowering {
                         "assert_eq" => self.lower_assert_eq(call.clone()),
                         "poseidon" => self.lower_poseidon(call.clone()),
                         "mux" => self.lower_mux(call.clone()),
+                        "range_check" => self.lower_range_check(call.clone()),
                         _ => Err(IrError::UnsupportedOperation(format!(
                             "function call `{name}` is not supported in circuits"
                         ))),
@@ -572,6 +573,37 @@ impl IrLowering {
             cond,
             if_true,
             if_false,
+        });
+        Ok(v)
+    }
+
+    fn lower_range_check(&mut self, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 2 {
+            return Err(IrError::WrongArgumentCount {
+                builtin: "range_check".into(),
+                expected: 2,
+                got: args.len(),
+            });
+        }
+        let operand = self.lower_expr(args[0].clone())?;
+        let bits_var = self.lower_expr(args[1].clone())?;
+
+        // Second argument must be a compile-time constant
+        let bits_fe = self.get_const_value(bits_var).ok_or_else(|| {
+            IrError::UnsupportedOperation(
+                "range_check bits argument must be a constant integer".into(),
+            )
+        })?;
+        let bits = field_to_u64(&bits_fe).ok_or_else(|| {
+            IrError::UnsupportedOperation("range_check bits value too large".into())
+        })? as u32;
+
+        let v = self.program.fresh_var();
+        self.program.push(Instruction::RangeCheck {
+            result: v,
+            operand,
+            bits,
         });
         Ok(v)
     }
