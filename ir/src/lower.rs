@@ -5,8 +5,14 @@ use memory::FieldElement;
 use pest::iterators::Pair;
 use pest::Parser;
 
-use crate::error::IrError;
+use crate::error::{IrError, SourceSpan};
 use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
+
+/// Extract a source span from a pest pair.
+fn span_of(pair: &Pair<Rule>) -> Option<SourceSpan> {
+    let (line, col) = pair.as_span().start_pos().line_col();
+    Some(SourceSpan { line, col })
+}
 
 /// Lowers an Achronyme AST into an SSA IR program.
 pub struct IrLowering {
@@ -147,6 +153,7 @@ impl IrLowering {
 
     fn lower_stmt(&mut self, pair: Pair<Rule>) -> Result<Option<SsaVar>, IrError> {
         let inner = pair.into_inner().next().unwrap();
+        let sp = span_of(&inner);
         match inner.as_rule() {
             Rule::public_decl => {
                 for child in inner.into_inner() {
@@ -169,6 +176,8 @@ impl IrLowering {
                 Ok(None)
             }
             Rule::expr
+            | Rule::or_expr
+            | Rule::and_expr
             | Rule::cmp_expr
             | Rule::add_expr
             | Rule::mul_expr
@@ -180,27 +189,26 @@ impl IrLowering {
                 Ok(Some(v))
             }
             Rule::mut_decl => Err(IrError::UnsupportedOperation(
-                "mutable variables are not supported in circuits".into(),
+                "mutable variables are not supported in circuits".into(), sp,
             )),
             Rule::print_stmt => Err(IrError::UnsupportedOperation(
-                "print is not supported in circuits".into(),
+                "print is not supported in circuits".into(), sp,
             )),
             Rule::assignment => Err(IrError::UnsupportedOperation(
-                "assignment is not supported in circuits".into(),
+                "assignment is not supported in circuits".into(), sp,
             )),
             Rule::break_stmt => Err(IrError::UnsupportedOperation(
-                "break is not supported in circuits".into(),
+                "break is not supported in circuits".into(), sp,
             )),
             Rule::continue_stmt => Err(IrError::UnsupportedOperation(
-                "continue is not supported in circuits".into(),
+                "continue is not supported in circuits".into(), sp,
             )),
             Rule::return_stmt => Err(IrError::UnsupportedOperation(
-                "return is not supported in circuits".into(),
+                "return is not supported in circuits".into(), sp,
             )),
             _ => Err(IrError::UnsupportedOperation(format!(
-                "{:?}",
-                inner.as_rule()
-            ))),
+                "{:?}", inner.as_rule()
+            ), sp)),
         }
     }
 
@@ -224,6 +232,8 @@ impl IrLowering {
                 let inner = pair.into_inner().next().unwrap();
                 self.lower_expr(inner)
             }
+            Rule::or_expr => self.lower_or_expr(pair),
+            Rule::and_expr => self.lower_and_expr(pair),
             Rule::cmp_expr => self.lower_cmp_expr(pair),
             Rule::add_expr => self.lower_add_expr(pair),
             Rule::mul_expr => self.lower_mul_expr(pair),
@@ -234,7 +244,7 @@ impl IrLowering {
             _ => Err(IrError::UnsupportedOperation(format!(
                 "unsupported expression rule: {:?}",
                 pair.as_rule()
-            ))),
+            ), span_of(&pair))),
         }
     }
 
@@ -244,6 +254,7 @@ impl IrLowering {
 
     fn lower_atom(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
         let inner = pair.into_inner().next().unwrap();
+        let sp = span_of(&inner);
         match inner.as_rule() {
             Rule::number => self.lower_number(inner),
             Rule::identifier => {
@@ -251,27 +262,39 @@ impl IrLowering {
                 self.env
                     .get(name)
                     .copied()
-                    .ok_or_else(|| IrError::UndeclaredVariable(name.to_string()))
+                    .ok_or_else(|| IrError::UndeclaredVariable(name.to_string(), sp.clone()))
             }
             Rule::expr => self.lower_expr(inner),
             Rule::if_expr => self.lower_if(inner),
             Rule::for_expr => self.lower_for(inner),
             Rule::block => self.lower_block(inner),
-            Rule::while_expr | Rule::forever_expr => Err(IrError::UnboundedLoop),
+            Rule::while_expr | Rule::forever_expr => Err(IrError::UnboundedLoop(sp)),
             Rule::fn_expr => Err(IrError::UnsupportedOperation(
-                "closures are not supported in circuits".into(),
+                "closures are not supported in circuits".into(), sp,
             )),
-            Rule::string => Err(IrError::TypeNotConstrainable("string".into())),
-            Rule::true_lit | Rule::false_lit => {
-                Err(IrError::TypeNotConstrainable("bool".into()))
+            Rule::string => Err(IrError::TypeNotConstrainable("string".into(), sp)),
+            Rule::true_lit => {
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Const {
+                    result: v,
+                    value: FieldElement::ONE,
+                });
+                Ok(v)
             }
-            Rule::nil_lit => Err(IrError::TypeNotConstrainable("nil".into())),
-            Rule::list_literal => Err(IrError::TypeNotConstrainable("list".into())),
-            Rule::map_literal => Err(IrError::TypeNotConstrainable("map".into())),
+            Rule::false_lit => {
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Const {
+                    result: v,
+                    value: FieldElement::ZERO,
+                });
+                Ok(v)
+            }
+            Rule::nil_lit => Err(IrError::TypeNotConstrainable("nil".into(), sp)),
+            Rule::list_literal => Err(IrError::TypeNotConstrainable("list".into(), sp)),
+            Rule::map_literal => Err(IrError::TypeNotConstrainable("map".into(), sp)),
             _ => Err(IrError::UnsupportedOperation(format!(
-                "unsupported atom: {:?}",
-                inner.as_rule()
-            ))),
+                "unsupported atom: {:?}", inner.as_rule()
+            ), sp)),
         }
     }
 
@@ -279,7 +302,7 @@ impl IrLowering {
         let s = pair.as_str();
         if s.contains('.') {
             return Err(IrError::TypeNotConstrainable(
-                "decimal numbers are not supported in circuits".into(),
+                "decimal numbers are not supported in circuits".into(), span_of(&pair),
             ));
         }
         let (negative, digits) = if let Some(rest) = s.strip_prefix('-') {
@@ -340,9 +363,8 @@ impl IrLowering {
                 }
                 _ => {
                     return Err(IrError::UnsupportedOperation(format!(
-                        "unknown additive operator: {}",
-                        op_pair.as_str()
-                    )));
+                        "unknown additive operator: {}", op_pair.as_str()
+                    ), span_of(&op_pair)));
                 }
             }
             result = v;
@@ -374,14 +396,13 @@ impl IrLowering {
                 }
                 "%" => {
                     return Err(IrError::UnsupportedOperation(
-                        "modulo is not supported in circuits".into(),
+                        "modulo is not supported in circuits".into(), span_of(&op_pair),
                     ));
                 }
                 _ => {
                     return Err(IrError::UnsupportedOperation(format!(
-                        "unknown multiplicative operator: {}",
-                        op_pair.as_str()
-                    )));
+                        "unknown multiplicative operator: {}", op_pair.as_str()
+                    ), span_of(&op_pair)));
                 }
             }
             result = v;
@@ -397,21 +418,20 @@ impl IrLowering {
             let exp_pair = pairs.next().unwrap();
             let exp_var = self.lower_expr(exp_pair)?;
 
-            // The exponent must be a compile-time constant — look it up in the instructions
             let exp_val = self.get_const_value(exp_var).ok_or_else(|| {
                 IrError::UnsupportedOperation(
-                    "exponent must be a constant integer in circuits".into(),
+                    "exponent must be a constant integer in circuits".into(), None,
                 )
             })?;
             let exp_u64 = field_to_u64(&exp_val).ok_or_else(|| {
                 IrError::UnsupportedOperation(
-                    "exponent too large for circuit compilation".into(),
+                    "exponent too large for circuit compilation".into(), None,
                 )
             })?;
 
             if pairs.next().is_some() {
                 return Err(IrError::UnsupportedOperation(
-                    "chained exponentiation is not supported in circuits".into(),
+                    "chained exponentiation is not supported in circuits".into(), None,
                 ));
             }
 
@@ -433,12 +453,15 @@ impl IrLowering {
     fn lower_prefix_expr(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
         let mut inner = pair.into_inner();
         let mut neg_count = 0u32;
+        let mut not_count = 0u32;
         let mut last = None;
         for child in inner.by_ref() {
             match child.as_rule() {
                 Rule::unary_op => {
                     if child.as_str() == "-" {
                         neg_count += 1;
+                    } else {
+                        not_count += 1;
                     }
                 }
                 _ => {
@@ -447,17 +470,26 @@ impl IrLowering {
                 }
             }
         }
-        let operand = self.lower_expr(last.unwrap())?;
+        let mut result = self.lower_expr(last.unwrap())?;
+        // Double negation cancels out
         if neg_count % 2 == 1 {
             let v = self.program.fresh_var();
             self.program.push(Instruction::Neg {
                 result: v,
-                operand,
+                operand: result,
             });
-            Ok(v)
-        } else {
-            Ok(operand)
+            result = v;
         }
+        // Double NOT cancels out
+        if not_count % 2 == 1 {
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::Not {
+                result: v,
+                operand: result,
+            });
+            result = v;
+        }
+        Ok(result)
     }
 
     fn lower_postfix_expr(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
@@ -470,43 +502,116 @@ impl IrLowering {
                 let atom_inner = atom.clone().into_inner().next().unwrap();
                 if atom_inner.as_rule() == Rule::identifier {
                     let name = atom_inner.as_str();
+                    let sp = span_of(&atom_inner);
                     if inner.next().is_some() {
                         return Err(IrError::UnsupportedOperation(format!(
                             "chained postfix after `{name}` is not supported"
-                        )));
+                        ), sp));
                     }
                     return match name {
                         "assert_eq" => self.lower_assert_eq(call.clone()),
+                        "assert" => self.lower_assert(call.clone()),
                         "poseidon" => self.lower_poseidon(call.clone()),
                         "mux" => self.lower_mux(call.clone()),
                         "range_check" => self.lower_range_check(call.clone()),
                         _ => Err(IrError::UnsupportedOperation(format!(
                             "function call `{name}` is not supported in circuits"
-                        ))),
+                        ), span_of(&atom_inner))),
                     };
                 }
                 return Err(IrError::UnsupportedOperation(
-                    "function calls are not supported in circuits".into(),
+                    "function calls are not supported in circuits".into(), span_of(call),
                 ));
             }
             return Err(IrError::UnsupportedOperation(format!(
-                "unsupported postfix operation: {:?}",
-                call.as_rule()
-            )));
+                "unsupported postfix operation: {:?}", call.as_rule()
+            ), span_of(call)));
         }
 
         self.lower_expr(atom)
     }
 
     fn lower_cmp_expr(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
-        let mut inner = pair.into_inner();
-        let first = inner.next().unwrap();
-        let result = self.lower_expr(first)?;
+        let mut pairs = pair.into_inner();
+        let mut result = self.lower_expr(pairs.next().unwrap())?;
 
-        if inner.next().is_some() {
-            return Err(IrError::UnsupportedOperation(
-                "comparison operators are not directly supported in circuits".into(),
-            ));
+        while let Some(op_pair) = pairs.next() {
+            let right = self.lower_expr(pairs.next().unwrap())?;
+            let v = self.program.fresh_var();
+            match op_pair.as_str() {
+                "==" => {
+                    self.program.push(Instruction::IsEq {
+                        result: v, lhs: result, rhs: right,
+                    });
+                }
+                "!=" => {
+                    self.program.push(Instruction::IsNeq {
+                        result: v, lhs: result, rhs: right,
+                    });
+                }
+                "<" => {
+                    self.program.push(Instruction::IsLt {
+                        result: v, lhs: result, rhs: right,
+                    });
+                }
+                "<=" => {
+                    self.program.push(Instruction::IsLe {
+                        result: v, lhs: result, rhs: right,
+                    });
+                }
+                ">" => {
+                    // a > b  ≡  b < a
+                    self.program.push(Instruction::IsLt {
+                        result: v, lhs: right, rhs: result,
+                    });
+                }
+                ">=" => {
+                    // a >= b  ≡  b <= a
+                    self.program.push(Instruction::IsLe {
+                        result: v, lhs: right, rhs: result,
+                    });
+                }
+                _ => {
+                    return Err(IrError::UnsupportedOperation(format!(
+                        "unknown comparison operator: {}", op_pair.as_str()
+                    ), span_of(&op_pair)));
+                }
+            }
+            result = v;
+        }
+        Ok(result)
+    }
+
+    // ========================================================================
+    // Logical operators
+    // ========================================================================
+
+    fn lower_and_expr(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let mut pairs = pair.into_inner();
+        let mut result = self.lower_expr(pairs.next().unwrap())?;
+
+        while let Some(_op) = pairs.next() {
+            let right = self.lower_expr(pairs.next().unwrap())?;
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::And {
+                result: v, lhs: result, rhs: right,
+            });
+            result = v;
+        }
+        Ok(result)
+    }
+
+    fn lower_or_expr(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let mut pairs = pair.into_inner();
+        let mut result = self.lower_expr(pairs.next().unwrap())?;
+
+        while let Some(_op) = pairs.next() {
+            let right = self.lower_expr(pairs.next().unwrap())?;
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::Or {
+                result: v, lhs: result, rhs: right,
+            });
+            result = v;
         }
         Ok(result)
     }
@@ -522,6 +627,7 @@ impl IrLowering {
                 builtin: "assert_eq".into(),
                 expected: 2,
                 got: args.len(),
+                span: None,
             });
         }
         let a = self.lower_expr(args[0].clone())?;
@@ -535,6 +641,25 @@ impl IrLowering {
         Ok(v)
     }
 
+    fn lower_assert(&mut self, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 1 {
+            return Err(IrError::WrongArgumentCount {
+                builtin: "assert".into(),
+                expected: 1,
+                got: args.len(),
+                span: None,
+            });
+        }
+        let operand = self.lower_expr(args[0].clone())?;
+        let v = self.program.fresh_var();
+        self.program.push(Instruction::Assert {
+            result: v,
+            operand,
+        });
+        Ok(v)
+    }
+
     fn lower_poseidon(&mut self, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
         let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
         if args.len() != 2 {
@@ -542,6 +667,7 @@ impl IrLowering {
                 builtin: "poseidon".into(),
                 expected: 2,
                 got: args.len(),
+                span: None,
             });
         }
         let left = self.lower_expr(args[0].clone())?;
@@ -562,6 +688,7 @@ impl IrLowering {
                 builtin: "mux".into(),
                 expected: 3,
                 got: args.len(),
+                span: None,
             });
         }
         let cond = self.lower_expr(args[0].clone())?;
@@ -584,6 +711,7 @@ impl IrLowering {
                 builtin: "range_check".into(),
                 expected: 2,
                 got: args.len(),
+                span: None,
             });
         }
         let operand = self.lower_expr(args[0].clone())?;
@@ -592,11 +720,11 @@ impl IrLowering {
         // Second argument must be a compile-time constant
         let bits_fe = self.get_const_value(bits_var).ok_or_else(|| {
             IrError::UnsupportedOperation(
-                "range_check bits argument must be a constant integer".into(),
+                "range_check bits argument must be a constant integer".into(), None,
             )
         })?;
         let bits = field_to_u64(&bits_fe).ok_or_else(|| {
-            IrError::UnsupportedOperation("range_check bits value too large".into())
+            IrError::UnsupportedOperation("range_check bits value too large".into(), None)
         })? as u32;
 
         let v = self.program.fresh_var();
@@ -655,6 +783,7 @@ impl IrLowering {
         if range_or_expr.as_rule() != Rule::range_expr {
             return Err(IrError::UnsupportedOperation(
                 "for loops in circuits require a literal range (e.g., 0..5)".into(),
+                span_of(&range_or_expr),
             ));
         }
 
@@ -697,10 +826,6 @@ impl IrLowering {
     }
 
     fn lower_block(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
-        // Track which keys existed before the block. New bindings introduced
-        // inside the block are removed on exit (block scoping). Rebindings of
-        // existing variables persist — this enables accumulation across for-loop
-        // iterations (e.g., `let acc = acc + x`).
         let outer_keys: std::collections::HashSet<String> =
             self.env.keys().cloned().collect();
         let mut last_var = None;
@@ -714,6 +839,8 @@ impl IrLowering {
                             last_var = None;
                         }
                         Rule::expr
+                        | Rule::or_expr
+                        | Rule::and_expr
                         | Rule::cmp_expr
                         | Rule::add_expr
                         | Rule::mul_expr
@@ -732,10 +859,8 @@ impl IrLowering {
                 _ => {}
             }
         }
-        // Remove new bindings, keep rebindings of existing vars
         self.env.retain(|k, _| outer_keys.contains(k));
 
-        // If block has no trailing expression, return zero
         Ok(last_var.unwrap_or_else(|| {
             let v = self.program.fresh_var();
             self.program.push(Instruction::Const {
@@ -747,6 +872,7 @@ impl IrLowering {
     }
 
     fn lower_stmt_inner(&mut self, inner: Pair<Rule>) -> Result<(), IrError> {
+        let sp = span_of(&inner);
         match inner.as_rule() {
             Rule::public_decl => {
                 for child in inner.into_inner() {
@@ -765,27 +891,26 @@ impl IrLowering {
                 Ok(())
             }
             Rule::mut_decl => Err(IrError::UnsupportedOperation(
-                "mutable variables are not supported in circuits".into(),
+                "mutable variables are not supported in circuits".into(), sp,
             )),
             Rule::print_stmt => Err(IrError::UnsupportedOperation(
-                "print is not supported in circuits".into(),
+                "print is not supported in circuits".into(), sp,
             )),
             Rule::assignment => Err(IrError::UnsupportedOperation(
-                "assignment is not supported in circuits".into(),
+                "assignment is not supported in circuits".into(), sp,
             )),
             Rule::break_stmt => Err(IrError::UnsupportedOperation(
-                "break is not supported in circuits".into(),
+                "break is not supported in circuits".into(), sp,
             )),
             Rule::continue_stmt => Err(IrError::UnsupportedOperation(
-                "continue is not supported in circuits".into(),
+                "continue is not supported in circuits".into(), sp,
             )),
             Rule::return_stmt => Err(IrError::UnsupportedOperation(
-                "return is not supported in circuits".into(),
+                "return is not supported in circuits".into(), sp,
             )),
             _ => Err(IrError::UnsupportedOperation(format!(
-                "{:?}",
-                inner.as_rule()
-            ))),
+                "{:?}", inner.as_rule()
+            ), sp)),
         }
     }
 
