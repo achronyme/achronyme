@@ -104,7 +104,7 @@ call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 // ============================================================================
 // RULE: Operators that attach to the LEFT of a postfix expression.
 
-unary_op = { "-" } // Future: Add "!" here
+unary_op = { "-" | "!" }
 prefix_expr = { unary_op* ~ postfix_expr }
 
 // ============================================================================
@@ -125,13 +125,21 @@ mul_expr = { pow_expr ~ (mul_op ~ pow_expr)* }
 add_op = { "+" | "-" }
 add_expr = { mul_expr ~ (add_op ~ mul_expr)* }
 
-// Comparison
-cmp_op = { "==" | "<" | ">" }
+// Comparison (multi-char ops first to avoid prefix ambiguity)
+cmp_op = { "!=" | "<=" | ">=" | "==" | "<" | ">" }
 cmp_expr = { add_expr ~ (cmp_op ~ add_expr)* }
+
+// Logical AND
+and_op = { "&&" }
+and_expr = { cmp_expr ~ (and_op ~ cmp_expr)* }
+
+// Logical OR (lowest precedence)
+or_op = { "||" }
+or_expr = { and_expr ~ (or_op ~ and_expr)* }
 
 // ROOT EXPRESSION RULE
 // Points to the lowest precedence rule.
-expr = { cmp_expr }
+expr = { or_expr }
 
 // ============================================================================
 // STATEMENTS & PROGRAM
