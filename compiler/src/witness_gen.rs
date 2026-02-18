@@ -35,6 +35,13 @@ pub enum WitnessOp {
         target: Variable,
         operand: LinearCombination,
     },
+    /// Bit extraction: target = (source >> bit_index) & 1.
+    /// Emitted by RangeCheck boolean decomposition.
+    BitExtract {
+        target: Variable,
+        source: LinearCombination,
+        bit_index: u32,
+    },
     /// Poseidon hash: compute all ~361 internal wires by replaying the
     /// permutation natively.
     PoseidonHash {
@@ -178,6 +185,22 @@ impl WitnessGenerator {
                     variable_index: target.index(),
                 })?;
                 witness[target.index()] = inv;
+            }
+            WitnessOp::BitExtract {
+                target,
+                source,
+                bit_index,
+            } => {
+                let val = source.evaluate(witness);
+                let limbs = val.to_canonical();
+                let limb_idx = (*bit_index / 64) as usize;
+                let bit_pos = *bit_index % 64;
+                let bit = if limb_idx < 4 {
+                    (limbs[limb_idx] >> bit_pos) & 1
+                } else {
+                    0
+                };
+                witness[target.index()] = FieldElement::from_u64(bit);
             }
             WitnessOp::PoseidonHash {
                 left,

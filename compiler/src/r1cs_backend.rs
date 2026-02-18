@@ -899,6 +899,44 @@ impl R1CSCompiler {
                     self.cs.enforce_equal(a, b.clone());
                     lc_map.insert(*result, b);
                 }
+                IrInstruction::RangeCheck {
+                    result,
+                    operand,
+                    bits,
+                } => {
+                    let lc = lc_map[operand].clone();
+                    // Boolean decomposition: x = sum(b_i * 2^i), each b_i boolean
+                    // Cost: bits boolean constraints + 1 sum equality = bits+1 total
+                    let mut sum = LinearCombination::zero();
+                    for i in 0..*bits {
+                        let bit_var = self.cs.alloc_witness();
+                        // b_i * (1 - b_i) = 0  (enforces b_i ∈ {0, 1})
+                        self.cs.enforce(
+                            LinearCombination::from_variable(bit_var),
+                            LinearCombination::from_constant(FieldElement::ONE)
+                                - LinearCombination::from_variable(bit_var),
+                            LinearCombination::zero(),
+                        );
+                        let coeff = if i < 64 {
+                            FieldElement::from_u64(1u64 << i)
+                        } else {
+                            // For bits >= 64, compute 2^i via multiplication
+                            let mut pow = FieldElement::ONE;
+                            for _ in 0..i {
+                                pow = pow.add(&pow);
+                            }
+                            pow
+                        };
+                        sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+                        self.witness_ops.push(WitnessOp::BitExtract {
+                            target: bit_var,
+                            source: lc.clone(),
+                            bit_index: i,
+                        });
+                    }
+                    self.cs.enforce_equal(lc.clone(), sum);
+                    lc_map.insert(*result, lc);
+                }
                 IrInstruction::PoseidonHash {
                     result,
                     left,
