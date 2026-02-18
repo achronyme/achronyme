@@ -44,24 +44,36 @@ pub fn circuit_command(
     let source = fs::read_to_string(path)
         .with_context(|| format!("cannot read source file: {path}"))?;
 
-    // 1. Lower to IR
-    let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
-    let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
-    let mut program = IrLowering::lower_circuit(&source, &pub_refs, &wit_refs)
-        .map_err(|e| anyhow::anyhow!("IR lowering error: {e:?}"))?;
+    // 1. Lower to IR — self-contained or CLI-provided declarations
+    let mut program = if public.is_empty() && witness.is_empty() {
+        let (_, _, prog) = IrLowering::lower_self_contained(&source)
+            .map_err(|e| anyhow::anyhow!("IR lowering error: {e:?}"))?;
+        prog
+    } else {
+        let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
+        let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
+        IrLowering::lower_circuit(&source, &pub_refs, &wit_refs)
+            .map_err(|e| anyhow::anyhow!("IR lowering error: {e:?}"))?
+    };
 
     // 2. Optimize (unless --no-optimize)
     if !no_optimize {
         ir::passes::optimize(&mut program);
     }
 
-    // 3. Compile IR → R1CS
+    // 3. Analyze for under-constrained inputs
+    let warnings = ir::passes::analyze(&program);
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
+
+    // 4. Compile IR → R1CS
     let mut compiler = R1CSCompiler::new();
     compiler
         .compile_ir(&program)
         .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e:?}"))?;
 
-    // 4. Write .r1cs
+    // 5. Write .r1cs
     let r1cs_data = write_r1cs(&compiler.cs);
     fs::write(r1cs_path, &r1cs_data)
         .with_context(|| format!("cannot write {r1cs_path}"))?;
@@ -73,7 +85,7 @@ pub fn circuit_command(
         r1cs_data.len(),
     );
 
-    // 5. If --inputs provided, generate & verify witness, write .wtns
+    // 6. If --inputs provided, generate & verify witness, write .wtns
     if let Some(raw_inputs) = inputs {
         let input_map = parse_inputs(raw_inputs)?;
 
