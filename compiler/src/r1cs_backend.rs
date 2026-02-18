@@ -70,7 +70,7 @@ impl R1CSCompiler {
         self.bindings
             .get(name)
             .copied()
-            .ok_or_else(|| R1CSError::UndeclaredVariable(name.to_string()))
+            .ok_or_else(|| R1CSError::UndeclaredVariable(name.to_string(), None))
     }
 
     /// Look up a variable as a LinearCombination.
@@ -119,33 +119,40 @@ impl R1CSCompiler {
                 self.compile_expr(inner)?;
                 Ok(())
             }
-            Rule::cmp_expr | Rule::add_expr | Rule::mul_expr | Rule::pow_expr
+            Rule::or_expr | Rule::and_expr
+            | Rule::cmp_expr | Rule::add_expr | Rule::mul_expr | Rule::pow_expr
             | Rule::prefix_expr | Rule::postfix_expr | Rule::atom => {
                 self.compile_expr(inner)?;
                 Ok(())
             }
             Rule::mut_decl => Err(R1CSError::UnsupportedOperation(
                 "mutable variables are not supported in circuits".into(),
+                    None,
             )),
             Rule::print_stmt => Err(R1CSError::UnsupportedOperation(
                 "print is not supported in circuits".into(),
+                    None,
             )),
             Rule::assignment => Err(R1CSError::UnsupportedOperation(
                 "assignment is not supported in circuits".into(),
+                    None,
             )),
             Rule::break_stmt => Err(R1CSError::UnsupportedOperation(
                 "break is not supported in circuits".into(),
+                    None,
             )),
             Rule::continue_stmt => Err(R1CSError::UnsupportedOperation(
                 "continue is not supported in circuits".into(),
+                    None,
             )),
             Rule::return_stmt => Err(R1CSError::UnsupportedOperation(
                 "return is not supported in circuits".into(),
+                    None,
             )),
             _ => Err(R1CSError::UnsupportedOperation(format!(
                 "{:?}",
                 inner.as_rule()
-            ))),
+            ), None)),
         }
     }
 
@@ -168,6 +175,8 @@ impl R1CSCompiler {
                 let inner = pair.into_inner().next().unwrap();
                 self.compile_expr(inner)
             }
+            Rule::or_expr => self.compile_or_expr(pair),
+            Rule::and_expr => self.compile_and_expr(pair),
             Rule::cmp_expr => self.compile_cmp_expr(pair),
             Rule::add_expr => self.compile_add_expr(pair),
             Rule::mul_expr => self.compile_mul_expr(pair),
@@ -178,7 +187,7 @@ impl R1CSCompiler {
             _ => Err(R1CSError::UnsupportedOperation(format!(
                 "unsupported expression rule: {:?}",
                 pair.as_rule()
-            ))),
+            ), None)),
         }
     }
 
@@ -201,22 +210,22 @@ impl R1CSCompiler {
                 Ok(LinearCombination::zero())
             }
             Rule::block => self.compile_block(inner),
-            Rule::while_expr => Err(R1CSError::UnboundedLoop),
-            Rule::forever_expr => Err(R1CSError::UnboundedLoop),
+            Rule::while_expr => Err(R1CSError::UnboundedLoop(None)),
+            Rule::forever_expr => Err(R1CSError::UnboundedLoop(None)),
             Rule::fn_expr => Err(R1CSError::UnsupportedOperation(
                 "closures are not supported in circuits".into(),
+                    None,
             )),
-            Rule::string => Err(R1CSError::TypeNotConstrainable("string".into())),
-            Rule::true_lit | Rule::false_lit => {
-                Err(R1CSError::TypeNotConstrainable("bool".into()))
-            }
-            Rule::nil_lit => Err(R1CSError::TypeNotConstrainable("nil".into())),
-            Rule::list_literal => Err(R1CSError::TypeNotConstrainable("list".into())),
-            Rule::map_literal => Err(R1CSError::TypeNotConstrainable("map".into())),
+            Rule::string => Err(R1CSError::TypeNotConstrainable("string".into(), None)),
+            Rule::true_lit => Ok(LinearCombination::from_constant(FieldElement::ONE)),
+            Rule::false_lit => Ok(LinearCombination::from_constant(FieldElement::ZERO)),
+            Rule::nil_lit => Err(R1CSError::TypeNotConstrainable("nil".into(), None)),
+            Rule::list_literal => Err(R1CSError::TypeNotConstrainable("list".into(), None)),
+            Rule::map_literal => Err(R1CSError::TypeNotConstrainable("map".into(), None)),
             _ => Err(R1CSError::UnsupportedOperation(format!(
                 "unsupported atom: {:?}",
                 inner.as_rule()
-            ))),
+            ), None)),
         }
     }
 
@@ -226,6 +235,7 @@ impl R1CSCompiler {
         if s.contains('.') {
             return Err(R1CSError::TypeNotConstrainable(
                 "decimal numbers are not supported in circuits".into(),
+                None,
             ));
         }
         // Handle optional negative sign
@@ -262,7 +272,7 @@ impl R1CSCompiler {
                     return Err(R1CSError::UnsupportedOperation(format!(
                         "unknown additive operator: {}",
                         op_pair.as_str()
-                    )))
+                    ), None))
                 }
             }
         }
@@ -284,13 +294,14 @@ impl R1CSCompiler {
                 "%" => {
                     return Err(R1CSError::UnsupportedOperation(
                         "modulo is not supported in circuits".into(),
+                    None,
                     ))
                 }
                 _ => {
                     return Err(R1CSError::UnsupportedOperation(format!(
                         "unknown multiplicative operator: {}",
                         op_pair.as_str()
-                    )))
+                    ), None))
                 }
             }
         }
@@ -311,12 +322,14 @@ impl R1CSCompiler {
             let exp_val = exp_lc.constant_value().ok_or_else(|| {
                 R1CSError::UnsupportedOperation(
                     "exponent must be a constant integer in circuits".into(),
+                    None,
                 )
             })?;
             // Convert FieldElement to u64 for exponentiation
             let exp_u64 = field_to_u64(&exp_val).ok_or_else(|| {
                 R1CSError::UnsupportedOperation(
                     "exponent too large for circuit compilation".into(),
+                    None,
                 )
             })?;
             if exp_u64 == 0 {
@@ -326,6 +339,7 @@ impl R1CSCompiler {
             if pairs.next().is_some() {
                 return Err(R1CSError::UnsupportedOperation(
                     "chained exponentiation is not supported in circuits".into(),
+                    None,
                 ));
             }
             self.pow_by_squaring(&base, exp_u64)
@@ -339,15 +353,12 @@ impl R1CSCompiler {
         pair: Pair<Rule>,
     ) -> Result<LinearCombination, R1CSError> {
         let mut inner = pair.into_inner();
-        // Collect unary ops
-        let mut neg_count = 0u32;
+        let mut ops: Vec<&str> = Vec::new();
         let mut last = None;
         for child in inner.by_ref() {
             match child.as_rule() {
                 Rule::unary_op => {
-                    if child.as_str() == "-" {
-                        neg_count += 1;
-                    }
+                    ops.push(if child.as_str() == "-" { "-" } else { "!" });
                 }
                 _ => {
                     last = Some(child);
@@ -355,13 +366,26 @@ impl R1CSCompiler {
                 }
             }
         }
-        let operand = self.compile_expr(last.unwrap())?;
-        if neg_count % 2 == 1 {
-            // Negate: multiply by -1 (scalar, 0 constraints)
-            Ok(operand * FieldElement::ONE.neg())
-        } else {
-            Ok(operand)
+        let mut result = self.compile_expr(last.unwrap())?;
+        for op in ops.into_iter().rev() {
+            match op {
+                "-" => {
+                    result = result * FieldElement::ONE.neg();
+                }
+                "!" => {
+                    // Boolean enforcement: result * (1 - result) = 0
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(
+                        result.clone(),
+                        one.clone() - result.clone(),
+                        LinearCombination::zero(),
+                    );
+                    result = one - result;
+                }
+                _ => unreachable!(),
+            }
         }
+        Ok(result)
     }
 
     fn compile_postfix_expr(
@@ -383,7 +407,7 @@ impl R1CSCompiler {
                     if inner.next().is_some() {
                         return Err(R1CSError::UnsupportedOperation(format!(
                             "chained postfix after `{name}` is not supported"
-                        )));
+                        ), None));
                     }
                     return match name {
                         "assert_eq" => self.compile_assert_eq(call.clone()),
@@ -391,17 +415,18 @@ impl R1CSCompiler {
                         "mux" => self.compile_mux(call.clone()),
                         _ => Err(R1CSError::UnsupportedOperation(format!(
                             "function call `{name}` is not supported in circuits"
-                        ))),
+                        ), None)),
                     };
                 }
                 return Err(R1CSError::UnsupportedOperation(
                     "function calls are not supported in circuits".into(),
+                    None,
                 ));
             }
             return Err(R1CSError::UnsupportedOperation(format!(
                 "unsupported postfix operation: {:?}",
                 call.as_rule()
-            )));
+            ), None));
         }
 
         // No postfix ops — just compile the atom
@@ -421,7 +446,36 @@ impl R1CSCompiler {
         if inner.next().is_some() {
             return Err(R1CSError::UnsupportedOperation(
                 "comparison operators are not directly supported in circuits".into(),
+                    None,
             ));
+        }
+        Ok(result)
+    }
+
+    fn compile_and_expr(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<LinearCombination, R1CSError> {
+        let mut pairs = pair.into_inner();
+        let mut result = self.compile_expr(pairs.next().unwrap())?;
+        while let Some(_op) = pairs.next() {
+            let right = self.compile_expr(pairs.next().unwrap())?;
+            result = self.multiply_lcs(&result, &right);
+        }
+        Ok(result)
+    }
+
+    fn compile_or_expr(
+        &mut self,
+        pair: Pair<Rule>,
+    ) -> Result<LinearCombination, R1CSError> {
+        let mut pairs = pair.into_inner();
+        let mut result = self.compile_expr(pairs.next().unwrap())?;
+        while let Some(_op) = pairs.next() {
+            let right = self.compile_expr(pairs.next().unwrap())?;
+            // a || b = a + b - a*b
+            let product = self.multiply_lcs(&result, &right);
+            result = result + right - product;
         }
         Ok(result)
     }
@@ -441,6 +495,7 @@ impl R1CSCompiler {
                 builtin: "assert_eq".into(),
                 expected: 2,
                 got: args.len(),
+                span: None,
             });
         }
 
@@ -462,6 +517,7 @@ impl R1CSCompiler {
                 builtin: "poseidon".into(),
                 expected: 2,
                 got: args.len(),
+                span: None,
             });
         }
 
@@ -507,6 +563,7 @@ impl R1CSCompiler {
                 builtin: "mux".into(),
                 expected: 3,
                 got: args.len(),
+                span: None,
             });
         }
 
@@ -574,6 +631,8 @@ impl R1CSCompiler {
                             last_lc = LinearCombination::zero();
                         }
                         Rule::expr
+                        | Rule::or_expr
+                        | Rule::and_expr
                         | Rule::cmp_expr
                         | Rule::add_expr
                         | Rule::mul_expr
@@ -603,26 +662,32 @@ impl R1CSCompiler {
         match inner.as_rule() {
             Rule::mut_decl => Err(R1CSError::UnsupportedOperation(
                 "mutable variables are not supported in circuits".into(),
+                    None,
             )),
             Rule::print_stmt => Err(R1CSError::UnsupportedOperation(
                 "print is not supported in circuits".into(),
+                    None,
             )),
             Rule::assignment => Err(R1CSError::UnsupportedOperation(
                 "assignment is not supported in circuits".into(),
+                    None,
             )),
             Rule::break_stmt => Err(R1CSError::UnsupportedOperation(
                 "break is not supported in circuits".into(),
+                    None,
             )),
             Rule::continue_stmt => Err(R1CSError::UnsupportedOperation(
                 "continue is not supported in circuits".into(),
+                    None,
             )),
             Rule::return_stmt => Err(R1CSError::UnsupportedOperation(
                 "return is not supported in circuits".into(),
+                    None,
             )),
             _ => Err(R1CSError::UnsupportedOperation(format!(
                 "{:?}",
                 inner.as_rule()
-            ))),
+            ), None)),
         }
     }
 
@@ -639,6 +704,7 @@ impl R1CSCompiler {
         if range_or_expr.as_rule() != Rule::range_expr {
             return Err(R1CSError::UnsupportedOperation(
                 "for loops in circuits require a literal range (e.g., 0..5)".into(),
+                    None,
             ));
         }
 
@@ -746,7 +812,7 @@ impl R1CSCompiler {
         // Constant denominator → multiply by inverse (0 constraints)
         if let Some(scalar) = den.constant_value() {
             let inv = scalar.inv().ok_or_else(|| {
-                R1CSError::UnsupportedOperation("division by zero".into())
+                R1CSError::UnsupportedOperation("division by zero".into(), None)
             })?;
             return Ok(num.clone() * inv);
         }
@@ -764,6 +830,38 @@ impl R1CSCompiler {
             b: den_inv_lc,
         });
         Ok(LinearCombination::from_variable(out))
+    }
+
+    /// Compile an IsLt check via 253-bit decomposition.
+    /// Input: an LC representing `diff = b - a + 2^252`.
+    /// Returns an LC that is 1 if a < b, 0 otherwise (the value of bit 252).
+    fn compile_is_lt_via_bits(&mut self, diff: &LinearCombination) -> LinearCombination {
+        let num_bits = 253u32;
+        let mut sum = LinearCombination::zero();
+        let mut top_bit_lc = LinearCombination::zero();
+
+        for i in 0..num_bits {
+            let bit_var = self.cs.alloc_witness();
+            // b_i * (1 - b_i) = 0
+            self.cs.enforce(
+                LinearCombination::from_variable(bit_var),
+                LinearCombination::from_constant(FieldElement::ONE)
+                    - LinearCombination::from_variable(bit_var),
+                LinearCombination::zero(),
+            );
+            let coeff = compute_power_of_two(i);
+            sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+            self.witness_ops.push(WitnessOp::BitExtract {
+                target: bit_var,
+                source: diff.clone(),
+                bit_index: i,
+            });
+            if i == 252 {
+                top_bit_lc = LinearCombination::from_variable(bit_var);
+            }
+        }
+        self.cs.enforce_equal(diff.clone(), sum);
+        top_bit_lc
     }
 
     /// Exponentiation by squaring. O(log n) constraints.
@@ -937,6 +1035,132 @@ impl R1CSCompiler {
                     self.cs.enforce_equal(lc.clone(), sum);
                     lc_map.insert(*result, lc);
                 }
+                IrInstruction::Not { result, operand } => {
+                    let op_lc = lc_map[operand].clone();
+                    // Boolean enforcement: op * (1 - op) = 0
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(
+                        op_lc.clone(),
+                        one.clone() - op_lc.clone(),
+                        LinearCombination::zero(),
+                    );
+                    // result = 1 - op
+                    lc_map.insert(*result, one - op_lc);
+                }
+                IrInstruction::And { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    // Boolean enforcement for both operands
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(
+                        a.clone(),
+                        one.clone() - a.clone(),
+                        LinearCombination::zero(),
+                    );
+                    self.cs.enforce(
+                        b.clone(),
+                        one - b.clone(),
+                        LinearCombination::zero(),
+                    );
+                    // result = a * b
+                    let out = self.multiply_lcs(&a, &b);
+                    lc_map.insert(*result, out);
+                }
+                IrInstruction::Or { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    // Boolean enforcement for both operands
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(
+                        a.clone(),
+                        one.clone() - a.clone(),
+                        LinearCombination::zero(),
+                    );
+                    self.cs.enforce(
+                        b.clone(),
+                        one - b.clone(),
+                        LinearCombination::zero(),
+                    );
+                    // result = a + b - a*b
+                    let product = self.multiply_lcs(&a, &b);
+                    lc_map.insert(*result, a + b - product);
+                }
+                IrInstruction::IsEq { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    let diff = a - b;
+                    // IsZero gadget: alloc inv + eq_result
+                    // enforce: diff * inv = 1 - eq_result
+                    // enforce: diff * eq_result = 0
+                    let inv_var = self.cs.alloc_witness();
+                    let eq_var = self.cs.alloc_witness();
+                    self.witness_ops.push(WitnessOp::IsZero {
+                        diff: diff.clone(),
+                        target_inv: inv_var,
+                        target_result: eq_var,
+                    });
+                    let inv_lc = LinearCombination::from_variable(inv_var);
+                    let eq_lc = LinearCombination::from_variable(eq_var);
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(diff.clone(), inv_lc, one - eq_lc.clone());
+                    self.cs.enforce(diff, eq_lc.clone(), LinearCombination::zero());
+                    lc_map.insert(*result, eq_lc);
+                }
+                IrInstruction::IsNeq { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    let diff = a - b;
+                    // IsZero gadget then negate
+                    let inv_var = self.cs.alloc_witness();
+                    let eq_var = self.cs.alloc_witness();
+                    self.witness_ops.push(WitnessOp::IsZero {
+                        diff: diff.clone(),
+                        target_inv: inv_var,
+                        target_result: eq_var,
+                    });
+                    let inv_lc = LinearCombination::from_variable(inv_var);
+                    let eq_lc = LinearCombination::from_variable(eq_var);
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(diff.clone(), inv_lc, one.clone() - eq_lc.clone());
+                    self.cs.enforce(diff, eq_lc.clone(), LinearCombination::zero());
+                    // neq = 1 - eq
+                    lc_map.insert(*result, one - eq_lc);
+                }
+                IrInstruction::IsLt { result, lhs, rhs } => {
+                    // a < b via bit decomposition of (b - a + 2^252)
+                    // If a < b: diff = b-a+2^252 has bit 252 set (result=1)
+                    // If a >= b: diff = b-a+2^252 does NOT have bit 252 set (result=0)
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    let half_prime = compute_power_of_two(252);
+                    let diff = b - a + LinearCombination::from_constant(half_prime);
+                    let lt_lc = self.compile_is_lt_via_bits(&diff);
+                    lc_map.insert(*result, lt_lc);
+                }
+                IrInstruction::IsLe { result, lhs, rhs } => {
+                    // a <= b  ≡  !(b < a)  ≡  1 - IsLt(b, a)
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    let half_prime = compute_power_of_two(252);
+                    // For IsLt(b, a): diff = a - b + 2^252
+                    let diff = a - b + LinearCombination::from_constant(half_prime);
+                    let lt_lc = self.compile_is_lt_via_bits(&diff);
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    lc_map.insert(*result, one - lt_lc);
+                }
+                IrInstruction::Assert { result, operand } => {
+                    let op_lc = lc_map[operand].clone();
+                    // Boolean enforcement: op * (1 - op) = 0
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    self.cs.enforce(
+                        op_lc.clone(),
+                        one.clone() - op_lc.clone(),
+                        LinearCombination::zero(),
+                    );
+                    // Enforce op == 1
+                    self.cs.enforce_equal(op_lc.clone(), one);
+                    lc_map.insert(*result, op_lc);
+                }
                 IrInstruction::PoseidonHash {
                     result,
                     left,
@@ -977,6 +1201,19 @@ impl R1CSCompiler {
         }
 
         Ok(())
+    }
+}
+
+/// Compute 2^n as a FieldElement (for bit coefficients).
+fn compute_power_of_two(n: u32) -> FieldElement {
+    if n < 64 {
+        FieldElement::from_u64(1u64 << n)
+    } else {
+        let mut pow = FieldElement::ONE;
+        for _ in 0..n {
+            pow = pow.add(&pow);
+        }
+        pow
     }
 }
 

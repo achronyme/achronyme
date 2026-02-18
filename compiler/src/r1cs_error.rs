@@ -1,16 +1,18 @@
 use std::fmt;
 
+use ir::SourceSpan;
+
 /// Errors emitted by the R1CS compiler backend.
 #[derive(Debug)]
 pub enum R1CSError {
     /// Reference to a variable not previously declared with `public` or `witness`.
-    UndeclaredVariable(String),
+    UndeclaredVariable(String, Option<SourceSpan>),
     /// An operation that has no R1CS translation (e.g. `print`, closures).
-    UnsupportedOperation(String),
+    UnsupportedOperation(String, Option<SourceSpan>),
     /// A value type that cannot be represented as a field element (e.g. strings, lists).
-    TypeNotConstrainable(String),
+    TypeNotConstrainable(String, Option<SourceSpan>),
     /// A loop without a statically-known bound (e.g. `forever`, `while`).
-    UnboundedLoop,
+    UnboundedLoop(Option<SourceSpan>),
     /// The input failed to parse as a valid Achronyme program.
     ParseError(String),
     /// A builtin function was called with the wrong number of arguments.
@@ -18,23 +20,40 @@ pub enum R1CSError {
         builtin: String,
         expected: usize,
         got: usize,
+        span: Option<SourceSpan>,
     },
 }
 
 impl fmt::Display for R1CSError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            R1CSError::UndeclaredVariable(name) => {
-                write!(f, "undeclared variable in circuit: `{name}`")
+            R1CSError::UndeclaredVariable(name, span) => {
+                if let Some(s) = span {
+                    write!(f, "[{s}] undeclared variable in circuit: `{name}`")
+                } else {
+                    write!(f, "undeclared variable in circuit: `{name}`")
+                }
             }
-            R1CSError::UnsupportedOperation(op) => {
-                write!(f, "unsupported operation in circuit: {op}")
+            R1CSError::UnsupportedOperation(op, span) => {
+                if let Some(s) = span {
+                    write!(f, "[{s}] unsupported operation in circuit: {op}")
+                } else {
+                    write!(f, "unsupported operation in circuit: {op}")
+                }
             }
-            R1CSError::TypeNotConstrainable(ty) => {
-                write!(f, "type `{ty}` cannot be represented in a circuit")
+            R1CSError::TypeNotConstrainable(ty, span) => {
+                if let Some(s) = span {
+                    write!(f, "[{s}] type `{ty}` cannot be represented in a circuit")
+                } else {
+                    write!(f, "type `{ty}` cannot be represented in a circuit")
+                }
             }
-            R1CSError::UnboundedLoop => {
-                write!(f, "unbounded loops are not allowed in circuits")
+            R1CSError::UnboundedLoop(span) => {
+                if let Some(s) = span {
+                    write!(f, "[{s}] unbounded loops are not allowed in circuits")
+                } else {
+                    write!(f, "unbounded loops are not allowed in circuits")
+                }
             }
             R1CSError::ParseError(msg) => {
                 write!(f, "parse error: {msg}")
@@ -43,8 +62,16 @@ impl fmt::Display for R1CSError {
                 builtin,
                 expected,
                 got,
+                span,
             } => {
-                write!(f, "`{builtin}` expects {expected} arguments, got {got}")
+                if let Some(s) = span {
+                    write!(
+                        f,
+                        "[{s}] `{builtin}` expects {expected} arguments, got {got}"
+                    )
+                } else {
+                    write!(f, "`{builtin}` expects {expected} arguments, got {got}")
+                }
             }
         }
     }

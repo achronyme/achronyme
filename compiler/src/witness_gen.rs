@@ -42,6 +42,12 @@ pub enum WitnessOp {
         source: LinearCombination,
         bit_index: u32,
     },
+    /// IsZero gadget: if diff==0 then inv=0,result=1 else inv=1/diff,result=0.
+    IsZero {
+        diff: LinearCombination,
+        target_inv: Variable,
+        target_result: Variable,
+    },
     /// Poseidon hash: compute all ~361 internal wires by replaying the
     /// permutation natively.
     PoseidonHash {
@@ -201,6 +207,20 @@ impl WitnessGenerator {
                     0
                 };
                 witness[target.index()] = FieldElement::from_u64(bit);
+            }
+            WitnessOp::IsZero {
+                diff,
+                target_inv,
+                target_result,
+            } => {
+                let diff_val = diff.evaluate(witness);
+                if diff_val.is_zero() {
+                    witness[target_inv.index()] = FieldElement::ZERO;
+                    witness[target_result.index()] = FieldElement::ONE;
+                } else {
+                    witness[target_inv.index()] = diff_val.inv().unwrap();
+                    witness[target_result.index()] = FieldElement::ZERO;
+                }
             }
             WitnessOp::PoseidonHash {
                 left,
