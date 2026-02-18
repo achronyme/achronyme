@@ -55,5 +55,8 @@ pub enum Commands {
         /// Disable IR optimization passes
         #[arg(long)]
         no_optimize: bool,
+        /// Backend: "r1cs" (default) or "plonkish"
+        #[arg(long, default_value = "r1cs")]
+        backend: String,
     },
 }

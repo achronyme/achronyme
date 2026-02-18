@@ -24,6 +24,7 @@ fn main() -> Result<()> {
             witness,
             inputs,
             no_optimize,
+            backend,
         } => circuit::circuit_command(
             path,
             r1cs,
@@ -32,6 +33,7 @@ fn main() -> Result<()> {
             witness,
             inputs.as_deref(),
             *no_optimize,
+            backend,
         ),
     }
 }

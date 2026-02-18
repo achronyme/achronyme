@@ -3,6 +3,7 @@ use std::fs;
 
 use anyhow::{Context, Result};
 
+use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use constraints::{write_r1cs, write_wtns};
@@ -40,6 +41,7 @@ pub fn circuit_command(
     witness: &[String],
     inputs: Option<&str>,
     no_optimize: bool,
+    backend: &str,
 ) -> Result<()> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("cannot read source file: {path}"))?;
@@ -67,13 +69,26 @@ pub fn circuit_command(
         eprintln!("warning: {w}");
     }
 
-    // 4. Compile IR → R1CS
+    match backend {
+        "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs),
+        "plonkish" => run_plonkish_pipeline(&program, inputs),
+        _ => Err(anyhow::anyhow!(
+            "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
+        )),
+    }
+}
+
+fn run_r1cs_pipeline(
+    program: &ir::IrProgram,
+    r1cs_path: &str,
+    wtns_path: &str,
+    inputs: Option<&str>,
+) -> Result<()> {
     let mut compiler = R1CSCompiler::new();
     compiler
-        .compile_ir(&program)
+        .compile_ir(program)
         .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e:?}"))?;
 
-    // 5. Write .r1cs
     let r1cs_data = write_r1cs(&compiler.cs);
     fs::write(r1cs_path, &r1cs_data)
         .with_context(|| format!("cannot write {r1cs_path}"))?;
@@ -85,12 +100,12 @@ pub fn circuit_command(
         r1cs_data.len(),
     );
 
-    // 6. If --inputs provided, generate & verify witness, write .wtns
     if let Some(raw_inputs) = inputs {
         let input_map = parse_inputs(raw_inputs)?;
 
         let wg = WitnessGenerator::from_compiler(&compiler);
-        let witness_vec = wg.generate(&input_map)
+        let witness_vec = wg
+            .generate(&input_map)
             .map_err(|e| anyhow::anyhow!("witness generation error: {e}"))?;
 
         compiler
@@ -107,6 +122,34 @@ pub fn circuit_command(
             witness_vec.len(),
             wtns_data.len(),
         );
+    }
+
+    Ok(())
+}
+
+fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>) -> Result<()> {
+    let mut compiler = PlonkishCompiler::new();
+    compiler
+        .compile_ir(program)
+        .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
+
+    eprintln!(
+        "plonkish: {} rows, {} copies, {} lookups",
+        compiler.num_circuit_rows(),
+        compiler.system.copies.len(),
+        compiler.system.lookups.len(),
+    );
+
+    if let Some(raw_inputs) = inputs {
+        let input_map = parse_inputs(raw_inputs)?;
+        let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+        wg.generate(&input_map, &mut compiler.system.assignments)
+            .map_err(|e| anyhow::anyhow!("Plonkish witness generation error: {e}"))?;
+        compiler
+            .system
+            .verify()
+            .map_err(|e| anyhow::anyhow!("Plonkish verification error: {e}"))?;
+        eprintln!("plonkish verification: OK");
     }
 
     Ok(())
