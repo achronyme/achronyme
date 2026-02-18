@@ -1,4 +1,5 @@
 pub mod export;
+pub mod plonkish;
 pub mod poseidon;
 pub mod r1cs;
 pub mod witness;
