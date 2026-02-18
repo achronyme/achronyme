@@ -49,13 +49,13 @@ pub fn circuit_command(
     // 1. Lower to IR — self-contained or CLI-provided declarations
     let mut program = if public.is_empty() && witness.is_empty() {
         let (_, _, prog) = IrLowering::lower_self_contained(&source)
-            .map_err(|e| anyhow::anyhow!("IR lowering error: {e:?}"))?;
+            .map_err(|e| anyhow::anyhow!("IR lowering error: {e}"))?;
         prog
     } else {
         let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
         let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
         IrLowering::lower_circuit(&source, &pub_refs, &wit_refs)
-            .map_err(|e| anyhow::anyhow!("IR lowering error: {e:?}"))?
+            .map_err(|e| anyhow::anyhow!("IR lowering error: {e}"))?
     };
 
     // 2. Optimize (unless --no-optimize)
@@ -87,7 +87,7 @@ fn run_r1cs_pipeline(
     let mut compiler = R1CSCompiler::new();
     compiler
         .compile_ir(program)
-        .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
     let r1cs_data = write_r1cs(&compiler.cs);
     fs::write(r1cs_path, &r1cs_data)
