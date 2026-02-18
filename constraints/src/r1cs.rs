@@ -17,7 +17,7 @@ use memory::FieldElement;
 
 /// A reference to a wire in the constraint system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Variable(pub(crate) usize);
+pub struct Variable(pub usize);
 
 impl Variable {
     /// The constant-one wire (index 0 by R1CS convention).

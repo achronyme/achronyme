@@ -20,6 +20,7 @@ use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
 // ============================================================================
 
 /// Poseidon parameters for BN254, t=3
+#[derive(Clone)]
 pub struct PoseidonParams {
     /// State width (number of field elements in sponge state)
     pub t: usize,
