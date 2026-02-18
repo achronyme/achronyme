@@ -244,6 +244,50 @@ impl VM {
                     }
                 }
 
+                NotEq => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    let v1 = self.get_reg(base, b);
+                    let v2 = self.get_reg(base, c);
+                    self.set_reg(base, a, Value::bool(!self.values_equal(v1, v2)));
+                }
+
+                Le => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    let v1 = self.get_reg(base, b);
+                    let v2 = self.get_reg(base, c);
+
+                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                        self.set_reg(base, a, Value::bool(n1 <= n2));
+                    } else {
+                        return Err(RuntimeError::TypeMismatch("Expected numbers for <= comparison".to_string()));
+                    }
+                }
+
+                Ge => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+                    let v1 = self.get_reg(base, b);
+                    let v2 = self.get_reg(base, c);
+
+                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                        self.set_reg(base, a, Value::bool(n1 >= n2));
+                    } else {
+                        return Err(RuntimeError::TypeMismatch("Expected numbers for >= comparison".to_string()));
+                    }
+                }
+
+                LogNot => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let vb = self.get_reg(base, b);
+                    self.set_reg(base, a, Value::bool(vb.is_falsey()));
+                }
+
                 // Constants & Moves
                 LoadConst => {
                     let a = decode_a(instruction) as usize;

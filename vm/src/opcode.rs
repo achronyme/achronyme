@@ -51,6 +51,14 @@ pub enum OpCode {
     Lt = 21,
     /// Greater Than: R[A] = R[B] > R[C]
     Gt = 22,
+    /// Not Equal: R[A] = R[B] != R[C]
+    NotEq = 23,
+    /// Less Than or Equal: R[A] = R[B] <= R[C]
+    Le = 24,
+    /// Greater Than or Equal: R[A] = R[B] >= R[C]
+    Ge = 25,
+    /// Logical Not: R[A] = !R[B]
+    LogNot = 26,
 
     // ===== Closures =====
     GetUpvalue = 34,
@@ -122,6 +130,10 @@ impl OpCode {
             20 => Some(OpCode::Eq),
             21 => Some(OpCode::Lt),
             22 => Some(OpCode::Gt),
+            23 => Some(OpCode::NotEq),
+            24 => Some(OpCode::Le),
+            25 => Some(OpCode::Ge),
+            26 => Some(OpCode::LogNot),
             34 => Some(OpCode::GetUpvalue),
             35 => Some(OpCode::SetUpvalue),
             36 => Some(OpCode::CloseUpvalue),
@@ -171,6 +183,10 @@ impl OpCode {
             OpCode::Eq => "EQ",
             OpCode::Lt => "LT",
             OpCode::Gt => "GT",
+            OpCode::NotEq => "NOT_EQ",
+            OpCode::Le => "LE",
+            OpCode::Ge => "GE",
+            OpCode::LogNot => "LOG_NOT",
             OpCode::GetUpvalue => "GET_UPVALUE",
             OpCode::SetUpvalue => "SET_UPVALUE",
             OpCode::CloseUpvalue => "CLOSE_UPVALUE",

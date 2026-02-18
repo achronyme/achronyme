@@ -26,7 +26,7 @@ impl PostfixCompiler for Compiler {
                     self.emit_abc(OpCode::Neg, reg, reg, 0);
                 }
                 "!" => {
-                    // Placeholder for Not if supported later
+                    self.emit_abc(OpCode::LogNot, reg, reg, 0);
                 }
                 _ => return Err(CompilerError::UnknownOperator(op.as_str().to_string())),
             }

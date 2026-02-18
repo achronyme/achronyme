@@ -22,6 +22,8 @@ impl ExpressionCompiler for Compiler {
     fn compile_expr(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         match pair.as_rule() {
             Rule::expr => self.compile_expr(pair.into_inner().next().unwrap()),
+            Rule::or_expr => self.compile_or(pair),
+            Rule::and_expr => self.compile_and(pair),
             Rule::cmp_expr => self.compile_comparison(pair),
             Rule::add_expr => self.compile_binary(pair, OpCode::Add, OpCode::Sub, false),
             Rule::mul_expr => self.compile_binary(pair, OpCode::Mul, OpCode::Div, false),
