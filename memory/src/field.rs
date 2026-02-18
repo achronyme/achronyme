@@ -666,4 +666,94 @@ mod tests {
             assert_eq!(fe, recovered);
         }
     }
+
+    // ========================================================================
+    // External cryptographic test vectors (verified against Python pow()/mod)
+    // ========================================================================
+
+    #[test]
+    fn test_vector_inv7() {
+        // 7^(-1) mod p = 3126891838834182174606629392179610726935480628630862049099743455225115499374
+        let seven = FieldElement::from_u64(7);
+        let inv = seven.inv().unwrap();
+        let expected = FieldElement::from_decimal_str(
+            "3126891838834182174606629392179610726935480628630862049099743455225115499374",
+        ).unwrap();
+        assert_eq!(inv, expected, "inv(7) mismatch with reference vector");
+        // Cross-check: 7 * inv(7) = 1
+        assert_eq!(seven.mul(&inv), FieldElement::ONE);
+    }
+
+    #[test]
+    fn test_vector_add_near_overflow() {
+        // (p-1) + (p-1) mod p = p - 2
+        let p_minus_1 = FieldElement::from_decimal_str(
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+        ).unwrap();
+        let result = p_minus_1.add(&p_minus_1);
+        let expected = FieldElement::from_decimal_str(
+            "21888242871839275222246405745257275088548364400416034343698204186575808495615",
+        ).unwrap();
+        assert_eq!(result, expected, "(p-1)+(p-1) should be p-2");
+    }
+
+    #[test]
+    fn test_vector_large_mul() {
+        // 123456789 * 987654321 mod p = 121932631112635269
+        let a = FieldElement::from_u64(123456789);
+        let b = FieldElement::from_u64(987654321);
+        let result = a.mul(&b);
+        let expected = FieldElement::from_decimal_str("121932631112635269").unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vector_negation_one() {
+        // 0 - 1 mod p = p - 1
+        let result = FieldElement::ZERO.sub(&FieldElement::ONE);
+        let expected = FieldElement::from_decimal_str(
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+        ).unwrap();
+        assert_eq!(result, expected, "0 - 1 should be p - 1");
+    }
+
+    #[test]
+    fn test_vector_p_minus_1_squared() {
+        // (p-1) * (p-1) mod p = 1, because (-1)^2 = 1
+        let p_minus_1 = FieldElement::from_decimal_str(
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+        ).unwrap();
+        let result = p_minus_1.mul(&p_minus_1);
+        assert_eq!(result, FieldElement::ONE, "(-1)*(-1) should be 1");
+    }
+
+    #[test]
+    fn test_vector_pow_42_10() {
+        // 42^10 mod p = 17080198121677824
+        let base = FieldElement::from_u64(42);
+        let result = base.pow(&[10, 0, 0, 0]);
+        let expected = FieldElement::from_decimal_str("17080198121677824").unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vector_large_limb_mul() {
+        // (2^128 + 1) * (2^128 + 3) mod p — exercises multi-limb multiplication
+        let a = FieldElement::from_decimal_str("340282366920938463463374607431768211457").unwrap(); // 2^128+1
+        let b = FieldElement::from_decimal_str("340282366920938463463374607431768211459").unwrap(); // 2^128+3
+        let result = a.mul(&b);
+        let expected = FieldElement::from_decimal_str(
+            "6350874878119819312338956282401532411889292131244146174820061504761160007678",
+        ).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vector_montgomery_r() {
+        // 2^256 mod p = R constant = 6350874878119819312338956282401532410528162663560392320966563075034087161851
+        let r_expected = FieldElement::from_decimal_str(
+            "6350874878119819312338956282401532410528162663560392320966563075034087161851",
+        ).unwrap();
+        assert_eq!(r_expected.to_canonical(), R, "R constant must match 2^256 mod p");
+    }
 }
