@@ -1,3 +1,4 @@
+use constraints::poseidon::{poseidon_hash_circuit, PoseidonParams};
 use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
 use memory::FieldElement;
 use std::collections::HashMap;
@@ -24,6 +25,8 @@ pub struct R1CSCompiler {
     pub public_inputs: Vec<String>,
     /// Names of variables declared as private witnesses (in declaration order).
     pub witnesses: Vec<String>,
+    /// Cached Poseidon parameters. Initialized on first `poseidon()` call.
+    poseidon_params: Option<PoseidonParams>,
 }
 
 impl R1CSCompiler {
@@ -35,6 +38,7 @@ impl R1CSCompiler {
             lc_bindings: HashMap::new(),
             public_inputs: Vec::new(),
             witnesses: Vec::new(),
+            poseidon_params: None,
         }
     }
 
@@ -379,6 +383,7 @@ impl R1CSCompiler {
                     }
                     return match name {
                         "assert_eq" => self.compile_assert_eq(call.clone()),
+                        "poseidon" => self.compile_poseidon(call.clone()),
                         _ => Err(R1CSError::UnsupportedOperation(format!(
                             "function call `{name}` is not supported in circuits"
                         ))),
@@ -439,6 +444,55 @@ impl R1CSCompiler {
 
         self.cs.enforce_equal(a, b.clone());
         Ok(b)
+    }
+
+    /// Handle `poseidon(left, right)`: Poseidon 2-to-1 hash in-circuit (~360 constraints).
+    fn compile_poseidon(
+        &mut self,
+        call_op: Pair<Rule>,
+    ) -> Result<LinearCombination, R1CSError> {
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 2 {
+            return Err(R1CSError::WrongArgumentCount {
+                builtin: "poseidon".into(),
+                expected: 2,
+                got: args.len(),
+            });
+        }
+
+        let left_lc = self.compile_expr(args[0].clone())?;
+        let right_lc = self.compile_expr(args[1].clone())?;
+
+        let left_var = self.materialize_lc(&left_lc);
+        let right_var = self.materialize_lc(&right_lc);
+
+        // Lazy-init Poseidon params
+        if self.poseidon_params.is_none() {
+            self.poseidon_params = Some(PoseidonParams::bn254_t3());
+        }
+        let params = self.poseidon_params.as_ref().unwrap();
+
+        let hash_var = poseidon_hash_circuit(&mut self.cs, params, left_var, right_var);
+        Ok(LinearCombination::from_variable(hash_var))
+    }
+
+    // ========================================================================
+    // Materialization
+    // ========================================================================
+
+    /// Convert a `LinearCombination` to a `Variable`.
+    ///
+    /// If the LC is already a single variable with coefficient 1, returns it
+    /// directly (0 constraints). Otherwise allocates a fresh witness variable
+    /// and enforces equality (1 constraint).
+    fn materialize_lc(&mut self, lc: &LinearCombination) -> Variable {
+        if let Some(var) = lc.as_single_variable() {
+            return var;
+        }
+        let var = self.cs.alloc_witness();
+        self.cs
+            .enforce_equal(lc.clone(), LinearCombination::from_variable(var));
+        var
     }
 
     // ========================================================================
