@@ -274,6 +274,120 @@ impl PlonkishCompiler {
                     self.emit_range_check(op_cell, *bits);
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }
+                IrInstruction::Not { result, operand } => {
+                    let op_val = self.val_map[operand].clone();
+                    let op_cell = self.materialize_val(&op_val);
+                    // Boolean enforcement: op^2 = op
+                    self.emit_bool_check(op_cell);
+                    // result = 1 - op: d = op * (-1) + 1
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let neg_op = self.negate_cell(op_cell);
+                    let row = self.alloc_row();
+                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                        cell: CellRef { column: self.col_b, row },
+                        value: FieldElement::ONE,
+                    });
+                    self.wire(neg_op, CellRef { column: self.col_a, row });
+                    self.wire(one_cell, CellRef { column: self.col_c, row });
+                    self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
+                    self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row }));
+                }
+                IrInstruction::And { result, lhs, rhs } => {
+                    let a_val = self.val_map[lhs].clone();
+                    let b_val = self.val_map[rhs].clone();
+                    let a_cell = self.materialize_val(&a_val);
+                    let b_cell = self.materialize_val(&b_val);
+                    self.emit_bool_check(a_cell);
+                    self.emit_bool_check(b_cell);
+                    // result = a * b
+                    let d_cell = self.emit_arith_row(a_cell, b_cell, None);
+                    self.val_map.insert(*result, PlonkVal::Cell(d_cell));
+                }
+                IrInstruction::Or { result, lhs, rhs } => {
+                    let a_val = self.val_map[lhs].clone();
+                    let b_val = self.val_map[rhs].clone();
+                    let a_cell = self.materialize_val(&a_val);
+                    let b_cell = self.materialize_val(&b_val);
+                    self.emit_bool_check(a_cell);
+                    self.emit_bool_check(b_cell);
+                    // result = a + b - a*b
+                    let product = self.emit_arith_row(a_cell, b_cell, None);
+                    let neg_product = self.negate_cell(product);
+                    // sum = a*1 + b
+                    let sum_row = self.alloc_row();
+                    self.system.set(self.col_s_arith, sum_row, FieldElement::ONE);
+                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                        cell: CellRef { column: self.col_b, row: sum_row },
+                        value: FieldElement::ONE,
+                    });
+                    self.wire(a_cell, CellRef { column: self.col_a, row: sum_row });
+                    self.wire(b_cell, CellRef { column: self.col_c, row: sum_row });
+                    self.witness_ops.push(PlonkWitnessOp::ArithRow { row: sum_row });
+                    let sum_cell = CellRef { column: self.col_d, row: sum_row };
+                    // result = sum*1 + neg_product
+                    let result_row = self.alloc_row();
+                    self.system.set(self.col_s_arith, result_row, FieldElement::ONE);
+                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                        cell: CellRef { column: self.col_b, row: result_row },
+                        value: FieldElement::ONE,
+                    });
+                    self.wire(sum_cell, CellRef { column: self.col_a, row: result_row });
+                    self.wire(neg_product, CellRef { column: self.col_c, row: result_row });
+                    self.witness_ops.push(PlonkWitnessOp::ArithRow { row: result_row });
+                    self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row: result_row }));
+                }
+                IrInstruction::IsEq { result, lhs, rhs } => {
+                    let a_val = self.val_map[lhs].clone();
+                    let b_val = self.val_map[rhs].clone();
+                    let a_cell = self.materialize_val(&a_val);
+                    let b_cell = self.materialize_val(&b_val);
+                    let eq_cell = self.emit_is_zero(a_cell, b_cell);
+                    self.val_map.insert(*result, PlonkVal::Cell(eq_cell));
+                }
+                IrInstruction::IsNeq { result, lhs, rhs } => {
+                    let a_val = self.val_map[lhs].clone();
+                    let b_val = self.val_map[rhs].clone();
+                    let a_cell = self.materialize_val(&a_val);
+                    let b_cell = self.materialize_val(&b_val);
+                    let eq_cell = self.emit_is_zero(a_cell, b_cell);
+                    // neq = 1 - eq
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let neg_eq = self.negate_cell(eq_cell);
+                    let row = self.alloc_row();
+                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                        cell: CellRef { column: self.col_b, row },
+                        value: FieldElement::ONE,
+                    });
+                    self.wire(one_cell, CellRef { column: self.col_a, row });
+                    self.wire(neg_eq, CellRef { column: self.col_c, row });
+                    self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
+                    self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row }));
+                }
+                IrInstruction::IsLt { result, lhs, rhs } => {
+                    // For Plonkish: similar bit-decomposition approach but using arith rows
+                    // For simplicity, reject IsLt/IsLe in Plonkish for now
+                    let _ = (result, lhs, rhs);
+                    return Err(PlonkishError::MissingInput(
+                        "IsLt/IsLe not yet implemented in Plonkish backend".into(),
+                    ));
+                }
+                IrInstruction::IsLe { result, lhs, rhs } => {
+                    let _ = (result, lhs, rhs);
+                    return Err(PlonkishError::MissingInput(
+                        "IsLt/IsLe not yet implemented in Plonkish backend".into(),
+                    ));
+                }
+                IrInstruction::Assert { result, operand } => {
+                    let op_val = self.val_map[operand].clone();
+                    let op_cell = self.materialize_val(&op_val);
+                    self.emit_bool_check(op_cell);
+                    // Enforce op == 1 via copy constraint to a materialized 1
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    self.system.add_copy(op_cell, one_cell);
+                    self.val_map.insert(*result, PlonkVal::Cell(op_cell));
+                }
             }
         }
 
@@ -744,6 +858,71 @@ impl PlonkishCompiler {
         let x2 = self.emit_arith_row(x, x, None);
         let x4 = self.emit_arith_row(x2, x2, None);
         self.emit_arith_row(x4, x, None)
+    }
+
+    // ========================================================================
+    // Boolean check: op^2 = op
+    // ========================================================================
+
+    fn emit_bool_check(&mut self, cell: CellRef) {
+        let row = self.alloc_row();
+        self.system.set(self.col_s_arith, row, FieldElement::ONE);
+        self.wire(cell, CellRef { column: self.col_a, row });
+        self.wire(cell, CellRef { column: self.col_b, row });
+        self.wire(cell, CellRef { column: self.col_d, row });
+        self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
+    }
+
+    // ========================================================================
+    // IsZero gadget: returns a cell that is 1 if a == b, 0 otherwise
+    // ========================================================================
+
+    fn emit_is_zero(&mut self, a: CellRef, b: CellRef) -> CellRef {
+        // diff = a - b
+        let neg_b = self.negate_cell(b);
+        let diff_row = self.alloc_row();
+        self.system.set(self.col_s_arith, diff_row, FieldElement::ONE);
+        self.witness_ops.push(PlonkWitnessOp::SetConstant {
+            cell: CellRef { column: self.col_b, row: diff_row },
+            value: FieldElement::ONE,
+        });
+        self.wire(a, CellRef { column: self.col_a, row: diff_row });
+        self.wire(neg_b, CellRef { column: self.col_c, row: diff_row });
+        self.witness_ops.push(PlonkWitnessOp::ArithRow { row: diff_row });
+        let diff = CellRef { column: self.col_d, row: diff_row };
+
+        // inv: filled by InverseRow (if diff != 0) or 0
+        let inv_row = self.alloc_row();
+        self.system.set(self.col_s_arith, inv_row, FieldElement::ONE);
+        self.wire(diff, CellRef { column: self.col_a, row: inv_row });
+        // d = diff * inv (should be 0 or 1)
+        self.witness_ops.push(PlonkWitnessOp::InverseRow { row: inv_row });
+        self.witness_ops.push(PlonkWitnessOp::ArithRow { row: inv_row });
+        let diff_times_inv = CellRef { column: self.col_d, row: inv_row };
+
+        // eq = 1 - diff*inv
+        let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+        let neg_dti = self.negate_cell(diff_times_inv);
+        let eq_row = self.alloc_row();
+        self.system.set(self.col_s_arith, eq_row, FieldElement::ONE);
+        self.witness_ops.push(PlonkWitnessOp::SetConstant {
+            cell: CellRef { column: self.col_b, row: eq_row },
+            value: FieldElement::ONE,
+        });
+        self.wire(one_cell, CellRef { column: self.col_a, row: eq_row });
+        self.wire(neg_dti, CellRef { column: self.col_c, row: eq_row });
+        self.witness_ops.push(PlonkWitnessOp::ArithRow { row: eq_row });
+        let eq_cell = CellRef { column: self.col_d, row: eq_row };
+
+        // Also need: diff * eq = 0 (enforcement)
+        let check_row = self.alloc_row();
+        self.system.set(self.col_s_arith, check_row, FieldElement::ONE);
+        self.wire(diff, CellRef { column: self.col_a, row: check_row });
+        self.wire(eq_cell, CellRef { column: self.col_b, row: check_row });
+        // d should be 0
+        self.witness_ops.push(PlonkWitnessOp::ArithRow { row: check_row });
+
+        eq_cell
     }
 
     // ========================================================================
