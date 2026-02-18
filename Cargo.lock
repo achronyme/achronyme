@@ -141,6 +141,8 @@ dependencies = [
  "byteorder",
  "clap",
  "compiler",
+ "constraints",
+ "ir",
  "memory",
  "vm",
 ]
@@ -167,6 +169,8 @@ dependencies = [
 name = "constraints"
 version = "0.1.0"
 dependencies = [
+ "compiler",
+ "ir",
  "memory",
 ]
 
