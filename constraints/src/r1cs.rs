@@ -87,6 +87,21 @@ impl LinearCombination {
         Some(sum)
     }
 
+    /// If this LC is exactly `1 * var` where `var` is not the constant-one wire,
+    /// return that variable. Otherwise return `None`.
+    ///
+    /// This enables zero-cost materialization when an LC already represents
+    /// a single circuit variable.
+    pub fn as_single_variable(&self) -> Option<Variable> {
+        if self.terms.len() == 1 {
+            let (var, coeff) = &self.terms[0];
+            if *var != Variable::ONE && *coeff == FieldElement::ONE {
+                return Some(*var);
+            }
+        }
+        None
+    }
+
     /// Evaluate the LC given a full witness assignment.
     /// witness[i] = value of variable i.
     pub fn evaluate(&self, witness: &[FieldElement]) -> FieldElement {
