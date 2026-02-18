@@ -104,6 +104,79 @@ fn test_e2e_pipeline_export() {
     assert_eq!(&wtns_data[0..4], b"wtns");
 }
 
+/// Full Groth16 integration test: powers of tau → setup → prove → verify.
+/// Requires node.js and snarkjs to be installed (npx snarkjs).
+#[test]
+#[ignore]
+fn test_snarkjs_groth16_full() {
+    use compiler::r1cs_backend::R1CSCompiler;
+    use compiler::witness_gen::WitnessGenerator;
+    use ir::IrLowering;
+    use std::collections::HashMap;
+
+    let source = "assert_eq(a * b, out)";
+    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let dir = "/tmp/achronyme_groth16_test";
+    std::fs::create_dir_all(dir).unwrap();
+
+    let r1cs_path = format!("{dir}/circuit.r1cs");
+    let wtns_path = format!("{dir}/witness.wtns");
+
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("out".to_string(), FieldElement::from_u64(42));
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+
+    let run = |args: &[&str]| {
+        let output = std::process::Command::new("npx")
+            .args(args)
+            .output()
+            .expect("npx not available");
+        assert!(
+            output.status.success(),
+            "command failed: npx {}\nstderr: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    // Powers of Tau ceremony
+    let pot12 = format!("{dir}/pot12_0000.ptau");
+    let pot12_1 = format!("{dir}/pot12_0001.ptau");
+    let pot12_final = format!("{dir}/pot12_final.ptau");
+    run(&["snarkjs", "powersoftau", "new", "bn128", "12", &pot12, "-v"]);
+    run(&["snarkjs", "powersoftau", "contribute", &pot12, &pot12_1, "--name=test", "-v", "-e=random"]);
+    run(&["snarkjs", "powersoftau", "prepare", "phase2", &pot12_1, &pot12_final, "-v"]);
+
+    // Groth16 setup
+    let zkey_0 = format!("{dir}/circuit_0000.zkey");
+    let zkey_1 = format!("{dir}/circuit_0001.zkey");
+    let vkey = format!("{dir}/verification_key.json");
+    run(&["snarkjs", "groth16", "setup", &r1cs_path, &pot12_final, &zkey_0]);
+    run(&["snarkjs", "zkey", "contribute", &zkey_0, &zkey_1, "--name=test", "-v", "-e=random"]);
+    run(&["snarkjs", "zkey", "export", "verificationkey", &zkey_1, &vkey]);
+
+    // Prove and verify
+    let proof = format!("{dir}/proof.json");
+    let public_json = format!("{dir}/public.json");
+    run(&["snarkjs", "groth16", "prove", &zkey_1, &wtns_path, &proof, &public_json]);
+    run(&["snarkjs", "groth16", "verify", &vkey, &public_json, &proof]);
+
+    // Cleanup
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// snarkjs integration test (requires npx/snarkjs installed).
 #[test]
 #[ignore]
