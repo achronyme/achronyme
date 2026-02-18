@@ -84,6 +84,52 @@ pub enum Instruction {
         operand: SsaVar,
         bits: u32,
     },
+    /// Logical NOT: result = 1 - operand (operand must be boolean).
+    Not {
+        result: SsaVar,
+        operand: SsaVar,
+    },
+    /// Logical AND: result = lhs * rhs (both must be boolean).
+    And {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// Logical OR: result = lhs + rhs - lhs*rhs (both must be boolean).
+    Or {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// Equality check: result = 1 if lhs == rhs, 0 otherwise.
+    IsEq {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// Not-equal check: result = 1 if lhs != rhs, 0 otherwise.
+    IsNeq {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// Less-than check: result = 1 if lhs < rhs, 0 otherwise.
+    IsLt {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// Less-or-equal check: result = 1 if lhs <= rhs, 0 otherwise.
+    IsLe {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// Assertion: enforces operand == 1 (boolean). Side-effecting.
+    Assert {
+        result: SsaVar,
+        operand: SsaVar,
+    },
 }
 
 impl Instruction {
@@ -100,7 +146,15 @@ impl Instruction {
             | Instruction::Mux { result, .. }
             | Instruction::AssertEq { result, .. }
             | Instruction::PoseidonHash { result, .. }
-            | Instruction::RangeCheck { result, .. } => *result,
+            | Instruction::RangeCheck { result, .. }
+            | Instruction::Not { result, .. }
+            | Instruction::And { result, .. }
+            | Instruction::Or { result, .. }
+            | Instruction::IsEq { result, .. }
+            | Instruction::IsNeq { result, .. }
+            | Instruction::IsLt { result, .. }
+            | Instruction::IsLe { result, .. }
+            | Instruction::Assert { result, .. } => *result,
         }
     }
 
@@ -111,6 +165,7 @@ impl Instruction {
             Instruction::AssertEq { .. }
                 | Instruction::Input { .. }
                 | Instruction::RangeCheck { .. }
+                | Instruction::Assert { .. }
         )
     }
 
@@ -122,7 +177,15 @@ impl Instruction {
             | Instruction::Sub { lhs, rhs, .. }
             | Instruction::Mul { lhs, rhs, .. }
             | Instruction::Div { lhs, rhs, .. } => vec![*lhs, *rhs],
-            Instruction::Neg { operand, .. } => vec![*operand],
+            Instruction::Neg { operand, .. }
+            | Instruction::Not { operand, .. }
+            | Instruction::Assert { operand, .. } => vec![*operand],
+            Instruction::And { lhs, rhs, .. }
+            | Instruction::Or { lhs, rhs, .. }
+            | Instruction::IsEq { lhs, rhs, .. }
+            | Instruction::IsNeq { lhs, rhs, .. }
+            | Instruction::IsLt { lhs, rhs, .. }
+            | Instruction::IsLe { lhs, rhs, .. } => vec![*lhs, *rhs],
             Instruction::Mux {
                 cond,
                 if_true,
