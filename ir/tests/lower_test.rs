@@ -362,3 +362,142 @@ fn outer_binding_survives_block() {
     // Should succeed — y is defined in the outer scope
     assert!(!insts.is_empty());
 }
+
+// ============================================================================
+// New operators: !, &&, ||, ==, !=, <, <=, >, >=
+// ============================================================================
+
+#[test]
+fn lower_not() {
+    let insts = lower("!x", &[], &["x"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Not { .. })), 1);
+}
+
+#[test]
+fn lower_double_not() {
+    let insts = lower("!!x", &[], &["x"]);
+    // Double NOT cancels out — no Not instruction
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Not { .. })), 0);
+}
+
+#[test]
+fn lower_and() {
+    let insts = lower("x && y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::And { .. })), 1);
+}
+
+#[test]
+fn lower_or() {
+    let insts = lower("x || y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Or { .. })), 1);
+}
+
+#[test]
+fn lower_is_eq() {
+    let insts = lower("x == y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsEq { .. })), 1);
+}
+
+#[test]
+fn lower_is_neq() {
+    let insts = lower("x != y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsNeq { .. })), 1);
+}
+
+#[test]
+fn lower_is_lt() {
+    let insts = lower("x < y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsLt { .. })), 1);
+}
+
+#[test]
+fn lower_is_le() {
+    let insts = lower("x <= y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsLe { .. })), 1);
+}
+
+#[test]
+fn lower_gt_as_lt_swapped() {
+    // x > y should lower to IsLt(y, x) — swapped args
+    let insts = lower("x > y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsLt { .. })), 1);
+    // Should NOT have IsLe
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsLe { .. })), 0);
+}
+
+#[test]
+fn lower_ge_as_le_swapped() {
+    // x >= y should lower to IsLe(y, x) — swapped args
+    let insts = lower("x >= y", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsLe { .. })), 1);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsLt { .. })), 0);
+}
+
+#[test]
+fn lower_assert() {
+    let insts = lower("assert(x)", &[], &["x"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Assert { .. })), 1);
+}
+
+#[test]
+fn lower_bool_true() {
+    let insts = lower("true", &[], &[]);
+    let last = insts.last().unwrap();
+    assert!(matches!(last, Instruction::Const { value, .. } if *value == FieldElement::ONE));
+}
+
+#[test]
+fn lower_bool_false() {
+    let insts = lower("false", &[], &[]);
+    let last = insts.last().unwrap();
+    assert!(matches!(last, Instruction::Const { value, .. } if value.is_zero()));
+}
+
+#[test]
+fn lower_assert_eq_via_operators() {
+    // assert(x == y) should produce IsEq + Assert
+    let insts = lower("assert(x == y)", &[], &["x", "y"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::IsEq { .. })), 1);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Assert { .. })), 1);
+}
+
+#[test]
+fn lower_chained_and() {
+    // a && b && c — should produce 2 And instructions
+    let insts = lower("a && b && c", &[], &["a", "b", "c"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::And { .. })), 2);
+}
+
+#[test]
+fn lower_chained_or() {
+    let insts = lower("a || b || c", &[], &["a", "b", "c"]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Or { .. })), 2);
+}
+
+// ============================================================================
+// Error spans
+// ============================================================================
+
+#[test]
+fn error_has_source_span() {
+    let result = IrLowering::lower_circuit("let a = x", &[], &[]);
+    let err = result.err().expect("should fail");
+    // Should include line:col information
+    let msg = format!("{err}");
+    assert!(msg.contains("[1:"), "error should include source span, got: {msg}");
+}
+
+#[test]
+fn error_undeclared_has_span() {
+    let result = IrLowering::lower_circuit("x + 1", &[], &[]);
+    let err = result.err().expect("should fail");
+    let msg = format!("{err}");
+    assert!(msg.contains("[1:"), "undeclared error should have span, got: {msg}");
+    assert!(msg.contains("x"), "should mention variable name");
+}
+
+#[test]
+fn lower_wrong_assert_args() {
+    let result = IrLowering::lower_circuit("assert(x, y)", &[], &["x", "y"]);
+    assert!(result.is_err());
+}

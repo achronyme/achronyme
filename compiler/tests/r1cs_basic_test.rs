@@ -59,7 +59,7 @@ fn test_lookup_undeclared() {
     let rc = R1CSCompiler::new();
     let err = rc.lookup("nonexistent").unwrap_err();
     match err {
-        R1CSError::UndeclaredVariable(name) => assert_eq!(name, "nonexistent"),
+        R1CSError::UndeclaredVariable(name, _) => assert_eq!(name, "nonexistent"),
         _ => panic!("expected UndeclaredVariable"),
     }
 }

@@ -73,6 +73,7 @@ fn test_poseidon_wrong_arg_count_too_few() {
             builtin,
             expected,
             got,
+            ..
         } => {
             assert_eq!(builtin, "poseidon");
             assert_eq!(expected, 2);
@@ -229,6 +230,7 @@ fn test_mux_wrong_arg_count_too_few() {
             builtin,
             expected,
             got,
+            ..
         } => {
             assert_eq!(builtin, "mux");
             assert_eq!(expected, 3);
@@ -270,6 +272,7 @@ fn test_assert_eq_wrong_arg_count() {
             builtin,
             expected,
             got,
+            ..
         } => {
             assert_eq!(builtin, "assert_eq");
             assert_eq!(expected, 2);

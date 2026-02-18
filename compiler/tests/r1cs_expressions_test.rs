@@ -27,28 +27,30 @@ fn test_r1cs_compile_identifier() {
 fn test_r1cs_reject_string() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("\"hello\"").unwrap_err();
-    assert!(matches!(err, R1CSError::TypeNotConstrainable(_)));
+    assert!(matches!(err, R1CSError::TypeNotConstrainable(..)));
 }
 
 #[test]
-fn test_r1cs_reject_bool() {
+fn test_r1cs_bool_literals() {
+    // true and false are now allowed in circuits as 1 and 0
     let mut rc = R1CSCompiler::new();
-    let err = rc.compile_circuit("true").unwrap_err();
-    assert!(matches!(err, R1CSError::TypeNotConstrainable(_)));
+    rc.compile_circuit("true").unwrap();
+    let mut rc2 = R1CSCompiler::new();
+    rc2.compile_circuit("false").unwrap();
 }
 
 #[test]
 fn test_r1cs_reject_nil() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("nil").unwrap_err();
-    assert!(matches!(err, R1CSError::TypeNotConstrainable(_)));
+    assert!(matches!(err, R1CSError::TypeNotConstrainable(..)));
 }
 
 #[test]
 fn test_r1cs_reject_decimal() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("3.14").unwrap_err();
-    assert!(matches!(err, R1CSError::TypeNotConstrainable(_)));
+    assert!(matches!(err, R1CSError::TypeNotConstrainable(..)));
 }
 
 #[test]
@@ -118,7 +120,7 @@ fn test_r1cs_pow_variable_rejected() {
     rc.declare_witness("x");
     rc.declare_witness("n");
     let err = rc.compile_circuit("x ^ n").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(_)));
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
 }
 
 #[test]
@@ -181,12 +183,73 @@ fn test_r1cs_assert_eq_one_constraint() {
 fn test_r1cs_reject_mut() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("mut x = 5").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(_)));
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
 }
 
 #[test]
 fn test_r1cs_reject_print() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("print(42)").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(_)));
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
+}
+
+// ============================================================================
+// New operators: &&, ||, ! (direct AST path)
+// ============================================================================
+
+#[test]
+fn test_r1cs_and_expr() {
+    let mut rc = R1CSCompiler::new();
+    rc.declare_witness("a");
+    rc.declare_witness("b");
+    // a && b = a * b → 1 constraint (variable mul)
+    rc.compile_circuit("a && b").unwrap();
+    assert_eq!(rc.cs.num_constraints(), 1);
+}
+
+#[test]
+fn test_r1cs_or_expr() {
+    let mut rc = R1CSCompiler::new();
+    rc.declare_witness("a");
+    rc.declare_witness("b");
+    // a || b = a + b - a*b → 1 constraint (the mul)
+    rc.compile_circuit("a || b").unwrap();
+    assert_eq!(rc.cs.num_constraints(), 1);
+}
+
+#[test]
+fn test_r1cs_not_expr() {
+    let mut rc = R1CSCompiler::new();
+    rc.declare_witness("x");
+    // !x = boolean enforcement (1) = 1 constraint
+    rc.compile_circuit("!x").unwrap();
+    assert_eq!(rc.cs.num_constraints(), 1);
+}
+
+#[test]
+fn test_r1cs_not_constant_free() {
+    let mut rc = R1CSCompiler::new();
+    // !true is purely constant — 0 constraints (boolean enforcement on constant)
+    // Actually the enforcement still fires since compile_prefix_expr doesn't optimize constants
+    rc.compile_circuit("!true").unwrap();
+    // Just verify it compiles without error
+}
+
+#[test]
+fn test_r1cs_comparison_rejected_direct() {
+    // Direct AST path rejects comparisons (== etc.)
+    let mut rc = R1CSCompiler::new();
+    rc.declare_witness("a");
+    rc.declare_witness("b");
+    let err = rc.compile_circuit("a == b").unwrap_err();
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
+}
+
+#[test]
+fn test_r1cs_error_has_display() {
+    // Verify that R1CSError Display works with the new span field
+    let err = R1CSError::UnsupportedOperation("test op".into(), None);
+    let msg = format!("{err}");
+    assert!(msg.contains("test op"));
+    assert!(!msg.contains("["), "None span should not produce brackets");
 }

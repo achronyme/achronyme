@@ -182,3 +182,48 @@ assert_eq(h2, root)
         "Self-contained Merkle circuit should have no warnings, got: {warnings:?}"
     );
 }
+
+#[test]
+fn taint_assert_constrains() {
+    // witness a; assert(a) — a should be constrained via Assert
+    let p = prog(
+        vec![
+            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
+            Instruction::Assert { result: SsaVar(1), operand: SsaVar(0) },
+        ],
+        2,
+    );
+    let (_, warnings) = taint_analysis(&p);
+    assert!(warnings.is_empty(), "assert(a) should constrain a, got: {warnings:?}");
+}
+
+#[test]
+fn taint_is_eq_in_assert() {
+    // witness a, b; let eq = a == b; assert(eq)
+    let p = prog(
+        vec![
+            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
+            Instruction::Input { result: SsaVar(1), name: "b".into(), visibility: Visibility::Witness },
+            Instruction::IsEq { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
+            Instruction::Assert { result: SsaVar(3), operand: SsaVar(2) },
+        ],
+        4,
+    );
+    let (_, warnings) = taint_analysis(&p);
+    assert!(warnings.is_empty(), "assert(a == b) should constrain both a and b, got: {warnings:?}");
+}
+
+#[test]
+fn taint_not_unconstrained() {
+    // witness a; let b = !a — b is not constrained (no assert)
+    let p = prog(
+        vec![
+            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
+            Instruction::Not { result: SsaVar(1), operand: SsaVar(0) },
+        ],
+        2,
+    );
+    let (_, warnings) = taint_analysis(&p);
+    assert_eq!(warnings.len(), 1, "!a without constraint should warn");
+    assert!(matches!(&warnings[0], TaintWarning::UnderConstrained { name, .. } if name == "a"));
+}

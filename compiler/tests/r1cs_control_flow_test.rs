@@ -85,7 +85,7 @@ fn test_for_non_literal_rejected() {
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     let err = rc.compile_circuit("for i in a { let x = 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(_)));
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
 }
 
 // ====================================================================
@@ -255,21 +255,21 @@ fn test_while_rejected() {
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("x");
     let err = rc.compile_circuit("while x { let a = 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnboundedLoop));
+    assert!(matches!(err, R1CSError::UnboundedLoop(..)));
 }
 
 #[test]
 fn test_forever_rejected() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("forever { let a = 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnboundedLoop));
+    assert!(matches!(err, R1CSError::UnboundedLoop(..)));
 }
 
 #[test]
 fn test_fn_rejected() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_circuit("fn foo() { 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(_)));
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn test_break_rejected() {
     let mut rc = R1CSCompiler::new();
     // break inside a for loop -- still rejected in circuits
     let err = rc.compile_circuit("for i in 0..3 { break }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(_)));
+    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
 }
 
 // ====================================================================
