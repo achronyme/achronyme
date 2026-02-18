@@ -10,6 +10,7 @@ pub mod function_compiler;
 pub mod types;
 pub mod r1cs_backend;
 pub mod r1cs_error;
+pub mod witness_gen;
 
 pub use codegen::Compiler;
 pub use error::CompilerError;

@@ -8,6 +8,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 
 use crate::r1cs_error::R1CSError;
+use crate::witness_gen::WitnessOp;
 
 /// Compiles an Achronyme circuit block into an R1CS constraint system.
 ///
@@ -26,7 +27,9 @@ pub struct R1CSCompiler {
     /// Names of variables declared as private witnesses (in declaration order).
     pub witnesses: Vec<String>,
     /// Cached Poseidon parameters. Initialized on first `poseidon()` call.
-    poseidon_params: Option<PoseidonParams>,
+    pub(crate) poseidon_params: Option<PoseidonParams>,
+    /// Witness generation trace: records each intermediate variable allocation.
+    pub witness_ops: Vec<WitnessOp>,
 }
 
 impl R1CSCompiler {
@@ -39,6 +42,7 @@ impl R1CSCompiler {
             public_inputs: Vec::new(),
             witnesses: Vec::new(),
             poseidon_params: None,
+            witness_ops: Vec::new(),
         }
     }
 
@@ -473,7 +477,18 @@ impl R1CSCompiler {
         }
         let params = self.poseidon_params.as_ref().unwrap();
 
+        let internal_start = self.cs.num_variables();
         let hash_var = poseidon_hash_circuit(&mut self.cs, params, left_var, right_var);
+        let internal_count = self.cs.num_variables() - internal_start;
+
+        self.witness_ops.push(WitnessOp::PoseidonHash {
+            left: left_var,
+            right: right_var,
+            output: hash_var,
+            internal_start,
+            internal_count,
+        });
+
         Ok(LinearCombination::from_variable(hash_var))
     }
 
@@ -525,6 +540,10 @@ impl R1CSCompiler {
             return var;
         }
         let var = self.cs.alloc_witness();
+        self.witness_ops.push(WitnessOp::AssignLC {
+            target: var,
+            lc: lc.clone(),
+        });
         self.cs
             .enforce_equal(lc.clone(), LinearCombination::from_variable(var));
         var
@@ -700,6 +719,11 @@ impl R1CSCompiler {
         }
         // General case: allocate witness for product (1 constraint)
         let out = self.cs.mul_lc(a, b);
+        self.witness_ops.push(WitnessOp::Multiply {
+            target: out,
+            a: a.clone(),
+            b: b.clone(),
+        });
         LinearCombination::from_variable(out)
     }
 
@@ -720,8 +744,17 @@ impl R1CSCompiler {
         }
         // General case: inv_lc (1 constraint) + mul_lc (1 constraint) = 2 constraints
         let den_inv = self.cs.inv_lc(den);
+        self.witness_ops.push(WitnessOp::Inverse {
+            target: den_inv,
+            operand: den.clone(),
+        });
         let den_inv_lc = LinearCombination::from_variable(den_inv);
         let out = self.cs.mul_lc(num, &den_inv_lc);
+        self.witness_ops.push(WitnessOp::Multiply {
+            target: out,
+            a: num.clone(),
+            b: den_inv_lc,
+        });
         Ok(LinearCombination::from_variable(out))
     }
 
