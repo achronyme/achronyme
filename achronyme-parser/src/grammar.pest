@@ -43,7 +43,8 @@ map_literal  = { "{" ~ (map_pair ~ ("," ~ map_pair)*)? ~ ","? ~ "}" }
 block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
 if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
 while_expr = { "while" ~ expr ~ block }
-for_expr   = { "for" ~ identifier ~ "in" ~ expr ~ block }
+range_expr = { integer ~ ".." ~ integer }
+for_expr   = { "for" ~ identifier ~ "in" ~ (range_expr | expr) ~ block }
 forever_expr = { "forever" ~ block }
 
 // 3. Function Definition (parsed as expression for first-class functions)
