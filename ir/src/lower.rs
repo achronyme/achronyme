@@ -82,6 +82,65 @@ impl IrLowering {
         lowering.lower(source)
     }
 
+    /// Parse a self-contained circuit source that uses in-source `public`/`witness`
+    /// declarations. Two-pass: first collects declaration names (to ensure correct
+    /// wire ordering: public first, then witness), then processes remaining statements.
+    pub fn lower_self_contained(source: &str) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
+        let pairs = AchronymeParser::parse(Rule::program, source)
+            .map_err(|e| IrError::ParseError(e.to_string()))?;
+        let program_pair = pairs.into_iter().next().unwrap();
+        let stmts: Vec<Pair<Rule>> = program_pair
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::stmt)
+            .collect();
+
+        // Pass 1: collect declaration names
+        let mut pub_names = Vec::new();
+        let mut wit_names = Vec::new();
+        for stmt in &stmts {
+            let inner = stmt.clone().into_inner().next().unwrap();
+            match inner.as_rule() {
+                Rule::public_decl => {
+                    for child in inner.into_inner() {
+                        if child.as_rule() == Rule::identifier {
+                            pub_names.push(child.as_str().to_string());
+                        }
+                    }
+                }
+                Rule::witness_decl => {
+                    for child in inner.into_inner() {
+                        if child.as_rule() == Rule::identifier {
+                            wit_names.push(child.as_str().to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Emit Inputs in correct order: public first, then witness
+        let mut lowering = IrLowering::new();
+        for name in &pub_names {
+            lowering.declare_public(name);
+        }
+        for name in &wit_names {
+            lowering.declare_witness(name);
+        }
+
+        // Pass 2: process non-declaration statements
+        for stmt in stmts {
+            let inner = stmt.clone().into_inner().next().unwrap();
+            match inner.as_rule() {
+                Rule::public_decl | Rule::witness_decl => {} // already processed
+                _ => {
+                    lowering.lower_stmt(stmt)?;
+                }
+            }
+        }
+
+        Ok((pub_names, wit_names, lowering.program))
+    }
+
     // ========================================================================
     // Statements
     // ========================================================================
@@ -89,6 +148,22 @@ impl IrLowering {
     fn lower_stmt(&mut self, pair: Pair<Rule>) -> Result<Option<SsaVar>, IrError> {
         let inner = pair.into_inner().next().unwrap();
         match inner.as_rule() {
+            Rule::public_decl => {
+                for child in inner.into_inner() {
+                    if child.as_rule() == Rule::identifier {
+                        self.declare_public(child.as_str());
+                    }
+                }
+                Ok(None)
+            }
+            Rule::witness_decl => {
+                for child in inner.into_inner() {
+                    if child.as_rule() == Rule::identifier {
+                        self.declare_witness(child.as_str());
+                    }
+                }
+                Ok(None)
+            }
             Rule::let_decl => {
                 self.lower_let(inner)?;
                 Ok(None)
@@ -641,6 +716,22 @@ impl IrLowering {
 
     fn lower_stmt_inner(&mut self, inner: Pair<Rule>) -> Result<(), IrError> {
         match inner.as_rule() {
+            Rule::public_decl => {
+                for child in inner.into_inner() {
+                    if child.as_rule() == Rule::identifier {
+                        self.declare_public(child.as_str());
+                    }
+                }
+                Ok(())
+            }
+            Rule::witness_decl => {
+                for child in inner.into_inner() {
+                    if child.as_rule() == Rule::identifier {
+                        self.declare_witness(child.as_str());
+                    }
+                }
+                Ok(())
+            }
             Rule::mut_decl => Err(IrError::UnsupportedOperation(
                 "mutable variables are not supported in circuits".into(),
             )),
