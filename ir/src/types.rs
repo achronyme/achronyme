@@ -1,0 +1,222 @@
+use memory::FieldElement;
+
+/// An SSA variable — defined exactly once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SsaVar(pub u32);
+
+/// Whether a circuit input is public (instance) or private (witness).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Public,
+    Witness,
+}
+
+/// A single SSA instruction.
+///
+/// Each instruction defines exactly one `result` variable. The program is a
+/// flat list of these instructions — no phi-nodes needed because circuits have
+/// no dynamic branching.
+#[derive(Debug, Clone)]
+pub enum Instruction {
+    /// A compile-time constant field element.
+    Const {
+        result: SsaVar,
+        value: FieldElement,
+    },
+    /// A circuit input (public or witness).
+    Input {
+        result: SsaVar,
+        name: String,
+        visibility: Visibility,
+    },
+    /// result = lhs + rhs
+    Add {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// result = lhs - rhs
+    Sub {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// result = lhs * rhs
+    Mul {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// result = lhs / rhs
+    Div {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// result = -operand
+    Neg {
+        result: SsaVar,
+        operand: SsaVar,
+    },
+    /// result = cond ? if_true : if_false (boolean MUX)
+    Mux {
+        result: SsaVar,
+        cond: SsaVar,
+        if_true: SsaVar,
+        if_false: SsaVar,
+    },
+    /// Constraint: lhs == rhs. Result is an alias for lhs.
+    AssertEq {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+    },
+    /// result = poseidon(left, right)
+    PoseidonHash {
+        result: SsaVar,
+        left: SsaVar,
+        right: SsaVar,
+    },
+}
+
+impl Instruction {
+    /// The SSA variable defined by this instruction.
+    pub fn result_var(&self) -> SsaVar {
+        match self {
+            Instruction::Const { result, .. }
+            | Instruction::Input { result, .. }
+            | Instruction::Add { result, .. }
+            | Instruction::Sub { result, .. }
+            | Instruction::Mul { result, .. }
+            | Instruction::Div { result, .. }
+            | Instruction::Neg { result, .. }
+            | Instruction::Mux { result, .. }
+            | Instruction::AssertEq { result, .. }
+            | Instruction::PoseidonHash { result, .. } => *result,
+        }
+    }
+
+    /// Returns true if this instruction has side effects (cannot be eliminated).
+    pub fn has_side_effects(&self) -> bool {
+        matches!(self, Instruction::AssertEq { .. } | Instruction::Input { .. })
+    }
+
+    /// Returns the SSA variables used (read) by this instruction.
+    pub fn operands(&self) -> Vec<SsaVar> {
+        match self {
+            Instruction::Const { .. } | Instruction::Input { .. } => vec![],
+            Instruction::Add { lhs, rhs, .. }
+            | Instruction::Sub { lhs, rhs, .. }
+            | Instruction::Mul { lhs, rhs, .. }
+            | Instruction::Div { lhs, rhs, .. } => vec![*lhs, *rhs],
+            Instruction::Neg { operand, .. } => vec![*operand],
+            Instruction::Mux {
+                cond,
+                if_true,
+                if_false,
+                ..
+            } => vec![*cond, *if_true, *if_false],
+            Instruction::AssertEq { lhs, rhs, .. } => vec![*lhs, *rhs],
+            Instruction::PoseidonHash { left, right, .. } => vec![*left, *right],
+        }
+    }
+}
+
+/// A flat SSA program — a sequence of instructions.
+pub struct IrProgram {
+    pub instructions: Vec<Instruction>,
+    pub next_var: u32,
+}
+
+impl IrProgram {
+    pub fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            next_var: 0,
+        }
+    }
+
+    /// Allocate a fresh SSA variable.
+    pub fn fresh_var(&mut self) -> SsaVar {
+        let v = SsaVar(self.next_var);
+        self.next_var += 1;
+        v
+    }
+
+    /// Append an instruction and return its result variable.
+    pub fn push(&mut self, inst: Instruction) -> SsaVar {
+        let v = inst.result_var();
+        self.instructions.push(inst);
+        v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_var_increments() {
+        let mut p = IrProgram::new();
+        assert_eq!(p.fresh_var(), SsaVar(0));
+        assert_eq!(p.fresh_var(), SsaVar(1));
+        assert_eq!(p.fresh_var(), SsaVar(2));
+        assert_eq!(p.next_var, 3);
+    }
+
+    #[test]
+    fn result_var_extracts_correctly() {
+        let inst = Instruction::Add {
+            result: SsaVar(42),
+            lhs: SsaVar(0),
+            rhs: SsaVar(1),
+        };
+        assert_eq!(inst.result_var(), SsaVar(42));
+    }
+
+    #[test]
+    fn push_appends_and_returns_result() {
+        let mut p = IrProgram::new();
+        let v = p.fresh_var();
+        let r = p.push(Instruction::Const {
+            result: v,
+            value: FieldElement::from_u64(99),
+        });
+        assert_eq!(r, SsaVar(0));
+        assert_eq!(p.instructions.len(), 1);
+    }
+
+    #[test]
+    fn has_side_effects() {
+        let assert_inst = Instruction::AssertEq {
+            result: SsaVar(0),
+            lhs: SsaVar(1),
+            rhs: SsaVar(2),
+        };
+        assert!(assert_inst.has_side_effects());
+
+        let add_inst = Instruction::Add {
+            result: SsaVar(0),
+            lhs: SsaVar(1),
+            rhs: SsaVar(2),
+        };
+        assert!(!add_inst.has_side_effects());
+    }
+
+    #[test]
+    fn operands_returns_correct_vars() {
+        let mux = Instruction::Mux {
+            result: SsaVar(10),
+            cond: SsaVar(1),
+            if_true: SsaVar(2),
+            if_false: SsaVar(3),
+        };
+        assert_eq!(mux.operands(), vec![SsaVar(1), SsaVar(2), SsaVar(3)]);
+
+        let c = Instruction::Const {
+            result: SsaVar(0),
+            value: FieldElement::ZERO,
+        };
+        assert!(c.operands().is_empty());
+    }
+}

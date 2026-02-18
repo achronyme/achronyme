@@ -6,6 +6,7 @@ members = [
     "constraints",
     "achronyme-parser",
     "cli",
+    "ir",
 ]
 resolver = "2"
 

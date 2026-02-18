@@ -1,0 +1,10 @@
+[package]
+name = "ir"
+version = "0.7.0"
+edition = "2021"
+license = "GPL-3.0"
+
+[dependencies]
+memory = { path = "../memory" }
+achronyme-parser = { path = "../achronyme-parser" }
+pest = "2.6"
