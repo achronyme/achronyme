@@ -75,7 +75,8 @@ const fn mac(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
     (tmp as u64, (tmp >> 64) as u64)
 }
 
-/// Check if a >= b (4-limb comparison, little-endian)
+/// Check if a >= b (4-limb comparison, little-endian).
+/// NOT constant-time — only used in parsing functions (non-secret data).
 #[inline]
 fn gte(a: &[u64; 4], b: &[u64; 4]) -> bool {
     for i in (0..4).rev() {
@@ -89,16 +90,24 @@ fn gte(a: &[u64; 4], b: &[u64; 4]) -> bool {
     true // equal
 }
 
-/// Conditionally subtract modulus if value >= MODULUS
+/// Conditionally subtract modulus if value >= MODULUS (constant-time).
+///
+/// Always performs the subtraction, then uses a branchless mask to select
+/// the original or reduced value based on whether a borrow occurred.
 #[inline]
 fn subtract_modulus_if_needed(limbs: &mut [u64; 4]) {
-    if gte(limbs, &MODULUS) {
-        let (r0, borrow) = sbb(limbs[0], MODULUS[0], 0);
-        let (r1, borrow) = sbb(limbs[1], MODULUS[1], borrow);
-        let (r2, borrow) = sbb(limbs[2], MODULUS[2], borrow);
-        let (r3, _) = sbb(limbs[3], MODULUS[3], borrow);
-        *limbs = [r0, r1, r2, r3];
-    }
+    let (r0, borrow) = sbb(limbs[0], MODULUS[0], 0);
+    let (r1, borrow) = sbb(limbs[1], MODULUS[1], borrow);
+    let (r2, borrow) = sbb(limbs[2], MODULUS[2], borrow);
+    let (r3, borrow) = sbb(limbs[3], MODULUS[3], borrow);
+
+    // borrow=1 means limbs < MODULUS → keep original; borrow=0 → use reduced
+    // mask = 0xFFFF...FFFF if borrow=1, 0x0000...0000 if borrow=0
+    let mask = 0u64.wrapping_sub(borrow);
+    limbs[0] = (limbs[0] & mask) | (r0 & !mask);
+    limbs[1] = (limbs[1] & mask) | (r1 & !mask);
+    limbs[2] = (limbs[2] & mask) | (r2 & !mask);
+    limbs[3] = (limbs[3] & mask) | (r3 & !mask);
 }
 
 // ============================================================================
@@ -311,22 +320,23 @@ impl FieldElement {
         Self { limbs: result }
     }
 
-    /// Modular subtraction: (self - other) mod p
+    /// Modular subtraction: (self - other) mod p (constant-time).
+    ///
+    /// Always computes both the raw subtraction and the modular correction
+    /// (add p back), then selects via branchless mask based on borrow.
     pub fn sub(&self, other: &Self) -> Self {
         let (r0, borrow) = sbb(self.limbs[0], other.limbs[0], 0);
         let (r1, borrow) = sbb(self.limbs[1], other.limbs[1], borrow);
         let (r2, borrow) = sbb(self.limbs[2], other.limbs[2], borrow);
         let (r3, borrow) = sbb(self.limbs[3], other.limbs[3], borrow);
-        // If borrow, add p back (result was negative)
-        if borrow != 0 {
-            let (r0, carry) = adc(r0, MODULUS[0], 0);
-            let (r1, carry) = adc(r1, MODULUS[1], carry);
-            let (r2, carry) = adc(r2, MODULUS[2], carry);
-            let (r3, _) = adc(r3, MODULUS[3], carry);
-            Self { limbs: [r0, r1, r2, r3] }
-        } else {
-            Self { limbs: [r0, r1, r2, r3] }
-        }
+
+        // mask = 0xFFFF...FFFF if borrow (underflow), 0x0000...0000 otherwise
+        let mask = 0u64.wrapping_sub(borrow);
+        let (r0, carry) = adc(r0, MODULUS[0] & mask, 0);
+        let (r1, carry) = adc(r1, MODULUS[1] & mask, carry);
+        let (r2, carry) = adc(r2, MODULUS[2] & mask, carry);
+        let (r3, _) = adc(r3, MODULUS[3] & mask, carry);
+        Self { limbs: [r0, r1, r2, r3] }
     }
 
     /// Modular multiplication: (self * other) mod p
@@ -337,28 +347,50 @@ impl FieldElement {
         }
     }
 
-    /// Modular negation: (-self) mod p
+    /// Modular negation: (-self) mod p (constant-time).
+    ///
+    /// Computes p - self, then masks to zero if self was zero.
     pub fn neg(&self) -> Self {
-        if self.is_zero() {
-            return *self;
-        }
         let (r0, borrow) = sbb(MODULUS[0], self.limbs[0], 0);
         let (r1, borrow) = sbb(MODULUS[1], self.limbs[1], borrow);
         let (r2, borrow) = sbb(MODULUS[2], self.limbs[2], borrow);
         let (r3, _) = sbb(MODULUS[3], self.limbs[3], borrow);
-        Self { limbs: [r0, r1, r2, r3] }
+        // If self == 0, p - 0 = p which should be 0. Mask out if all input limbs are 0.
+        let is_nonzero = self.limbs[0] | self.limbs[1] | self.limbs[2] | self.limbs[3];
+        // mask = 0xFFFF...FFFF if nonzero, 0 if zero
+        let mask = (is_nonzero | is_nonzero.wrapping_neg()) >> 63;
+        let mask = 0u64.wrapping_sub(mask);
+        Self { limbs: [r0 & mask, r1 & mask, r2 & mask, r3 & mask] }
     }
 
-    /// Modular exponentiation: self^exp mod p (constant-time square-and-multiply)
+    /// Constant-time conditional select: returns `a` if flag==0, `b` if flag==1.
+    /// `flag` MUST be 0 or 1.
+    #[inline]
+    fn ct_select(a: &Self, b: &Self, flag: u64) -> Self {
+        let mask = 0u64.wrapping_sub(flag); // 0 or 0xFFFF...FFFF
+        Self {
+            limbs: [
+                (a.limbs[0] & !mask) | (b.limbs[0] & mask),
+                (a.limbs[1] & !mask) | (b.limbs[1] & mask),
+                (a.limbs[2] & !mask) | (b.limbs[2] & mask),
+                (a.limbs[3] & !mask) | (b.limbs[3] & mask),
+            ],
+        }
+    }
+
+    /// Modular exponentiation: self^exp mod p (constant-time).
+    ///
+    /// Always performs both square and multiply, then uses `ct_select`
+    /// to pick the result based on the exponent bit. This prevents
+    /// timing side-channels that leak exponent bits.
     pub fn pow(&self, exp: &[u64; 4]) -> Self {
         let mut result = Self::ONE;
-        // Process bits from most significant to least significant
         for i in (0..4).rev() {
             for bit in (0..64).rev() {
-                result = result.mul(&result); // square
-                if (exp[i] >> bit) & 1 == 1 {
-                    result = result.mul(self); // multiply
-                }
+                result = result.mul(&result); // always square
+                let multiplied = result.mul(self); // always multiply
+                let flag = ((exp[i] >> bit) & 1) as u64;
+                result = Self::ct_select(&result, &multiplied, flag);
             }
         }
         result
