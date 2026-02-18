@@ -12,3 +12,5 @@ byteorder = "1.5"
 memory = { path = "../memory" }
 vm = { path = "../vm" }
 compiler = { path = "../compiler" }
+constraints = { path = "../constraints" }
+ir = { path = "../ir" }

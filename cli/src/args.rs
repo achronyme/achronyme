@@ -33,4 +33,27 @@ pub enum Commands {
     },
     /// Start the REPL
     Repl,
+    /// Compile a circuit to .r1cs (and optionally generate .wtns)
+    Circuit {
+        /// Path to the source file (.ach)
+        path: String,
+        /// Output .r1cs file path
+        #[arg(long, default_value = "circuit.r1cs")]
+        r1cs: String,
+        /// Output .wtns file path
+        #[arg(long, default_value = "witness.wtns")]
+        wtns: String,
+        /// Public input variable names (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        public: Vec<String>,
+        /// Witness variable names (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        witness: Vec<String>,
+        /// Input values as name=value pairs (comma-separated, decimal or 0x hex)
+        #[arg(long)]
+        inputs: Option<String>,
+        /// Disable IR optimization passes
+        #[arg(long)]
+        no_optimize: bool,
+    },
 }
