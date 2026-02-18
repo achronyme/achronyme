@@ -384,6 +384,7 @@ impl R1CSCompiler {
                     return match name {
                         "assert_eq" => self.compile_assert_eq(call.clone()),
                         "poseidon" => self.compile_poseidon(call.clone()),
+                        "mux" => self.compile_mux(call.clone()),
                         _ => Err(R1CSError::UnsupportedOperation(format!(
                             "function call `{name}` is not supported in circuits"
                         ))),
@@ -474,6 +475,40 @@ impl R1CSCompiler {
 
         let hash_var = poseidon_hash_circuit(&mut self.cs, params, left_var, right_var);
         Ok(LinearCombination::from_variable(hash_var))
+    }
+
+    /// Handle `mux(cond, if_true, if_false)`: conditional selection (2 constraints).
+    ///
+    /// Generates:
+    /// 1. Boolean enforcement: `cond * (1 - cond) = 0`
+    /// 2. MUX: `result = cond * (if_true - if_false) + if_false`
+    fn compile_mux(
+        &mut self,
+        call_op: Pair<Rule>,
+    ) -> Result<LinearCombination, R1CSError> {
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 3 {
+            return Err(R1CSError::WrongArgumentCount {
+                builtin: "mux".into(),
+                expected: 3,
+                got: args.len(),
+            });
+        }
+
+        let cond_lc = self.compile_expr(args[0].clone())?;
+        let then_lc = self.compile_expr(args[1].clone())?;
+        let else_lc = self.compile_expr(args[2].clone())?;
+
+        // Boolean enforcement: cond * (1 - cond) = 0
+        let one = LinearCombination::from_constant(FieldElement::ONE);
+        let one_minus_cond = one - cond_lc.clone();
+        self.cs
+            .enforce(cond_lc.clone(), one_minus_cond, LinearCombination::zero());
+
+        // MUX: result = cond * (then - else) + else
+        let diff = then_lc - else_lc.clone();
+        let selected = self.multiply_lcs(&cond_lc, &diff);
+        Ok(selected + else_lc)
     }
 
     // ========================================================================
