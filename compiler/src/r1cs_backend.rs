@@ -371,21 +371,18 @@ impl R1CSCompiler {
                 let atom_inner = atom.clone().into_inner().next().unwrap();
                 if atom_inner.as_rule() == Rule::identifier {
                     let name = atom_inner.as_str();
-                    match name {
-                        "assert_eq" => {
-                            if inner.next().is_some() {
-                                return Err(R1CSError::UnsupportedOperation(
-                                    "chained postfix after assert_eq is not supported".into(),
-                                ));
-                            }
-                            return self.compile_assert_eq(call.clone());
-                        }
-                        _ => {
-                            return Err(R1CSError::UnsupportedOperation(format!(
-                                "function call `{name}` is not supported in circuits"
-                            )));
-                        }
+                    // Reject chained postfix for all builtins
+                    if inner.next().is_some() {
+                        return Err(R1CSError::UnsupportedOperation(format!(
+                            "chained postfix after `{name}` is not supported"
+                        )));
                     }
+                    return match name {
+                        "assert_eq" => self.compile_assert_eq(call.clone()),
+                        _ => Err(R1CSError::UnsupportedOperation(format!(
+                            "function call `{name}` is not supported in circuits"
+                        ))),
+                    };
                 }
                 return Err(R1CSError::UnsupportedOperation(
                     "function calls are not supported in circuits".into(),
@@ -420,28 +417,27 @@ impl R1CSCompiler {
     }
 
     // ========================================================================
-    // Postfix: assert_eq builtin
+    // Builtin compilation
     // ========================================================================
 
-    /// Handle assert_eq(a, b): enforces a == b (1 constraint).
+    /// Handle `assert_eq(a, b)`: enforces a == b (1 constraint).
     fn compile_assert_eq(
         &mut self,
         call_op: Pair<Rule>,
     ) -> Result<LinearCombination, R1CSError> {
-        let mut args = call_op.into_inner();
-        let a_pair = args
-            .next()
-            .ok_or_else(|| R1CSError::ParseError("assert_eq requires 2 arguments".into()))?;
-        let b_pair = args
-            .next()
-            .ok_or_else(|| R1CSError::ParseError("assert_eq requires 2 arguments".into()))?;
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 2 {
+            return Err(R1CSError::WrongArgumentCount {
+                builtin: "assert_eq".into(),
+                expected: 2,
+                got: args.len(),
+            });
+        }
 
-        let a = self.compile_expr(a_pair)?;
-        let b = self.compile_expr(b_pair)?;
+        let a = self.compile_expr(args[0].clone())?;
+        let b = self.compile_expr(args[1].clone())?;
 
         self.cs.enforce_equal(a, b.clone());
-
-        // Return the second operand as the result (for chaining)
         Ok(b)
     }
 
