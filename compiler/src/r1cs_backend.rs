@@ -557,6 +557,12 @@ impl R1CSCompiler {
     /// Returns the LC of the last expression, or `LC::zero()` if the block
     /// contains only statements (no trailing expression).
     fn compile_block(&mut self, pair: Pair<Rule>) -> Result<LinearCombination, R1CSError> {
+        // Track which keys existed before the block. New bindings introduced
+        // inside the block are removed on exit (block scoping). Rebindings of
+        // existing variables persist — this enables accumulation across for-loop
+        // iterations (e.g., `let acc = acc + x`).
+        let outer_keys: std::collections::HashSet<String> =
+            self.lc_bindings.keys().cloned().collect();
         let mut last_lc = LinearCombination::zero();
         for child in pair.into_inner() {
             match child.as_rule() {
@@ -587,6 +593,8 @@ impl R1CSCompiler {
                 _ => {}
             }
         }
+        // Remove new bindings, keep rebindings of existing vars
+        self.lc_bindings.retain(|k, _| outer_keys.contains(k));
         Ok(last_lc)
     }
 
@@ -792,6 +800,145 @@ impl R1CSCompiler {
             }
         }
         Ok(result)
+    }
+}
+
+// ============================================================================
+// IR → R1CS Lowering
+// ============================================================================
+
+use ir::types::{IrProgram, SsaVar, Instruction as IrInstruction, Visibility as IrVisibility};
+
+impl R1CSCompiler {
+    /// Compile an SSA IR program into R1CS constraints.
+    ///
+    /// This coexists with `compile_circuit()` — both methods build on the same
+    /// `ConstraintSystem` and helper methods (`multiply_lcs`, `divide_lcs`, etc).
+    pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError> {
+        let mut lc_map: HashMap<SsaVar, LinearCombination> = HashMap::new();
+
+        for inst in &program.instructions {
+            match inst {
+                IrInstruction::Const { result, value } => {
+                    lc_map.insert(*result, LinearCombination::from_constant(*value));
+                }
+                IrInstruction::Input {
+                    result,
+                    name,
+                    visibility,
+                } => {
+                    let var = match visibility {
+                        IrVisibility::Public => {
+                            let v = self.cs.alloc_input();
+                            self.bindings.insert(name.clone(), v);
+                            self.public_inputs.push(name.clone());
+                            v
+                        }
+                        IrVisibility::Witness => {
+                            let v = self.cs.alloc_witness();
+                            self.bindings.insert(name.clone(), v);
+                            self.witnesses.push(name.clone());
+                            v
+                        }
+                    };
+                    lc_map.insert(*result, LinearCombination::from_variable(var));
+                }
+                IrInstruction::Add { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    lc_map.insert(*result, a + b);
+                }
+                IrInstruction::Sub { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    lc_map.insert(*result, a - b);
+                }
+                IrInstruction::Neg { result, operand } => {
+                    let lc = lc_map[operand].clone();
+                    lc_map.insert(*result, lc * FieldElement::ONE.neg());
+                }
+                IrInstruction::Mul { result, lhs, rhs } => {
+                    let a = &lc_map[lhs];
+                    let b = &lc_map[rhs];
+                    let out = self.multiply_lcs(a, b);
+                    lc_map.insert(*result, out);
+                }
+                IrInstruction::Div { result, lhs, rhs } => {
+                    let a = &lc_map[lhs];
+                    let b = &lc_map[rhs];
+                    let out = self.divide_lcs(a, b)?;
+                    lc_map.insert(*result, out);
+                }
+                IrInstruction::Mux {
+                    result,
+                    cond,
+                    if_true,
+                    if_false,
+                } => {
+                    let cond_lc = lc_map[cond].clone();
+                    let then_lc = lc_map[if_true].clone();
+                    let else_lc = lc_map[if_false].clone();
+
+                    // Boolean enforcement: cond * (1 - cond) = 0
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one_minus_cond = one - cond_lc.clone();
+                    self.cs.enforce(
+                        cond_lc.clone(),
+                        one_minus_cond,
+                        LinearCombination::zero(),
+                    );
+
+                    // MUX: result = cond * (then - else) + else
+                    let diff = then_lc - else_lc.clone();
+                    let selected = self.multiply_lcs(&cond_lc, &diff);
+                    lc_map.insert(*result, selected + else_lc);
+                }
+                IrInstruction::AssertEq { result, lhs, rhs } => {
+                    let a = lc_map[lhs].clone();
+                    let b = lc_map[rhs].clone();
+                    self.cs.enforce_equal(a, b.clone());
+                    lc_map.insert(*result, b);
+                }
+                IrInstruction::PoseidonHash {
+                    result,
+                    left,
+                    right,
+                } => {
+                    let left_lc = &lc_map[left];
+                    let right_lc = &lc_map[right];
+
+                    let left_var = self.materialize_lc(left_lc);
+                    let right_var = self.materialize_lc(right_lc);
+
+                    if self.poseidon_params.is_none() {
+                        self.poseidon_params =
+                            Some(constraints::poseidon::PoseidonParams::bn254_t3());
+                    }
+                    let params = self.poseidon_params.as_ref().unwrap();
+
+                    let internal_start = self.cs.num_variables();
+                    let hash_var = constraints::poseidon::poseidon_hash_circuit(
+                        &mut self.cs,
+                        params,
+                        left_var,
+                        right_var,
+                    );
+                    let internal_count = self.cs.num_variables() - internal_start;
+
+                    self.witness_ops.push(WitnessOp::PoseidonHash {
+                        left: left_var,
+                        right: right_var,
+                        output: hash_var,
+                        internal_start,
+                        internal_count,
+                    });
+
+                    lc_map.insert(*result, LinearCombination::from_variable(hash_var));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
