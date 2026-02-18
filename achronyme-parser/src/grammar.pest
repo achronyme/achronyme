@@ -26,8 +26,8 @@ number     = @{ "-"? ~ (decimal | integer) }
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
-keyword    = @{ 
-    ("let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever")
+keyword    = @{
+    ("let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" | "public" | "witness")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -144,9 +144,13 @@ print_stmt = { "print" ~ "(" ~ expr ~ ")" }
 // expr_stmt  = { expr } // Removed, direct expr in stmt
 break_stmt = { "break" }
 continue_stmt = { "continue" }
+public_decl   = { "public" ~ identifier ~ ("," ~ identifier)* }
+witness_decl  = { "witness" ~ identifier ~ ("," ~ identifier)* }
 
 stmt = {
-    let_decl
+    public_decl
+  | witness_decl
+  | let_decl
   | mut_decl
   | assignment
   | print_stmt
