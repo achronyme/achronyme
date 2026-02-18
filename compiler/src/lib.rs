@@ -8,6 +8,7 @@ pub mod control_flow;
 pub mod scopes;
 pub mod function_compiler;
 pub mod types;
+pub mod plonkish_backend;
 pub mod r1cs_backend;
 pub mod r1cs_error;
 pub mod witness_gen;
