@@ -68,26 +68,14 @@ The immediate goal is to transition from a general-purpose scripting engine to a
 
 ### LOW — Testing & Feature Gaps
 
-- [ ] **L1: Poseidon not fully implemented in Plonkish**
-    - *Context*: Plonkish Poseidon works but has no dedicated tests.
-    - *Action*: Add Plonkish Poseidon tests and cross-backend parity checks.
-
-- [ ] **L2: No negative tests for Plonkish backend**
-    - *Context*: All Plonkish tests verify correct execution; none test rejection of invalid witnesses.
-    - *Action*: Add tests that construct invalid witnesses and verify gate/copy failures.
-
-- [ ] **L3: No cross-backend parity tests**
-    - *Context*: R1CS and Plonkish backends should produce equivalent results for the same circuit.
-    - *Action*: Add parameterized tests that compile the same IR and verify both backends accept/reject the same inputs.
-
-- [ ] **L4: Missing division-by-zero tests for all paths**
-    - *Context*: Div-by-zero is handled differently across constant/variable/witness paths.
-    - *Action*: Comprehensive test coverage for all division paths in both backends.
+- [x] **L1: Poseidon not fully implemented in Plonkish** — Fixed: 3 Plonkish Poseidon tests (single, chained, with arithmetic)
+- [x] **L2: No negative tests for Plonkish backend** — Fixed: 5 negative tests (wrong mul/eq/mux/cmp, missing input)
+- [x] **L3: No cross-backend parity tests** — Fixed: proptest parity for Poseidon, neq, lt, assert + rejection
+- [x] **L4: Missing division-by-zero tests for all paths** — Fixed: 7 tests covering both backends, computed zero, valid paths
 
 ### RESOLVED
 
-- [x] **C1: `emit_is_zero` check constraint was a tautology in Plonkish** — Fixed: `d` set to constant 0 instead of computed by ArithRow.
-- [x] **C2: `&&`/`||` in direct AST compiler lacked boolean enforcement** — Fixed: added `x * (1-x) = 0` enforcement for both operands.
-- [x] **C3: IsLt/IsLe unsound for unbounded field elements** — Fixed: 252-bit range checks on both operands in R1CS and Plonkish.
-- [x] **H4: Silent division by zero in Plonkish witness gen** — Fixed: `InverseRow` now returns error instead of silently skipping.
-- [x] **M1–M8**: All MEDIUM findings resolved (see above).
+- [x] **C1–C3**: All CRITICAL findings resolved
+- [x] **H1–H5**: All HIGH findings resolved
+- [x] **M1–M8**: All MEDIUM findings resolved
+- [x] **L1–L4**: All LOW findings resolved — full audit clean
