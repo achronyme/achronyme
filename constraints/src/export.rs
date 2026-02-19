@@ -55,15 +55,15 @@ fn write_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
 ///
 /// Wire layout: `[ONE, pub1..pubN, wit1..witM, intermediates...]`
 ///
-/// Section mapping:
-/// - `nPubOut` = `num_pub_inputs` (public outputs are the declared public vars)
-/// - `nPubIn`  = 0 (no separate "verifier inputs" concept)
+/// Section mapping (iden3 R1CS v1 spec):
+/// - `nPubOut` = 0 (Achronyme has no separate computed outputs)
+/// - `nPubIn`  = `num_pub_inputs` (public vars are verifier-supplied inputs)
 /// - `nPrvIn`  = `num_variables - 1 - num_pub_inputs`
 pub fn write_r1cs(cs: &ConstraintSystem) -> Vec<u8> {
     let n_wires = cs.num_variables() as u32;
-    let n_pub_out = cs.num_pub_inputs() as u32;
-    let n_pub_in: u32 = 0;
-    let n_prv_in = n_wires - 1 - n_pub_out;
+    let n_pub_out: u32 = 0;
+    let n_pub_in = cs.num_pub_inputs() as u32;
+    let n_prv_in = n_wires - 1 - n_pub_in;
     let n_labels = n_wires as u64;
     let n_constraints = cs.num_constraints() as u32;
 
@@ -201,10 +201,10 @@ mod tests {
         assert_eq!(n_wires, 4); // ONE, c, a, b
 
         let n_pub_out = u32::from_le_bytes(body[40..44].try_into().unwrap());
-        assert_eq!(n_pub_out, 1); // c
+        assert_eq!(n_pub_out, 0);
 
         let n_pub_in = u32::from_le_bytes(body[44..48].try_into().unwrap());
-        assert_eq!(n_pub_in, 0);
+        assert_eq!(n_pub_in, 1); // c is a public input
 
         let n_prv_in = u32::from_le_bytes(body[48..52].try_into().unwrap());
         assert_eq!(n_prv_in, 2); // a, b
@@ -314,5 +314,34 @@ mod tests {
             expected[i * 8..(i + 1) * 8].copy_from_slice(&modulus[i].to_le_bytes());
         }
         assert_eq!(BN254_PRIME_LE, expected);
+    }
+
+    #[test]
+    fn test_r1cs_zero_public_inputs() {
+        // Circuit with only witness variables, no public inputs
+        let mut cs = ConstraintSystem::new();
+        let a = cs.alloc_witness();
+        let b = cs.alloc_witness();
+        let c = cs.alloc_witness();
+        cs.enforce(
+            LinearCombination::from_variable(a),
+            LinearCombination::from_variable(b),
+            LinearCombination::from_variable(c),
+        );
+
+        let data = write_r1cs(&cs);
+        let body = &data[24..24 + 64];
+
+        let n_wires = u32::from_le_bytes(body[36..40].try_into().unwrap());
+        assert_eq!(n_wires, 4); // ONE, a, b, c
+
+        let n_pub_out = u32::from_le_bytes(body[40..44].try_into().unwrap());
+        assert_eq!(n_pub_out, 0);
+
+        let n_pub_in = u32::from_le_bytes(body[44..48].try_into().unwrap());
+        assert_eq!(n_pub_in, 0);
+
+        let n_prv_in = u32::from_le_bytes(body[48..52].try_into().unwrap());
+        assert_eq!(n_prv_in, 3); // a, b, c
     }
 }
