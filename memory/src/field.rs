@@ -206,7 +206,8 @@ impl FieldElement {
         if val >= 0 {
             Self::from_u64(val as u64)
         } else {
-            Self::from_u64((-val) as u64).neg()
+            // Use unsigned_abs() to handle i64::MIN safely ((-i64::MIN) overflows)
+            Self::from_u64(val.unsigned_abs()).neg()
         }
     }
 
