@@ -44,7 +44,11 @@ pub enum PlonkWitnessOp {
     /// Compute d = a*b + c for a given row.
     ArithRow { row: usize },
     /// Compute b = 1/a for a given row (a is already in col_a).
+    /// Errors if a == 0 (used for division).
     InverseRow { row: usize },
+    /// IsZero gadget row: if a == 0 then b=0, d=0; else b=1/a, d=1.
+    /// Unlike InverseRow, does NOT error when a == 0.
+    IsZeroRow { row: usize },
     /// Extract bit `bit_index` from the value in `source` cell and write to `target`.
     BitExtract {
         target: CellRef,
@@ -928,7 +932,7 @@ impl PlonkishCompiler {
     // ========================================================================
 
     fn emit_is_zero(&mut self, a: CellRef, b: CellRef) -> CellRef {
-        // diff = a - b
+        // diff = a - b (witness computation row, gate is tautological)
         let neg_b = self.negate_cell(b);
         let diff_row = self.alloc_row();
         self.system.set(self.col_s_arith, diff_row, FieldElement::ONE);
@@ -941,16 +945,16 @@ impl PlonkishCompiler {
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row: diff_row });
         let diff = CellRef { column: self.col_d, row: diff_row };
 
-        // inv: filled by InverseRow (if diff != 0) or 0
+        // inv row: if diff != 0 then inv=1/diff, d=1; else inv=0, d=0
+        // Uses IsZeroRow (handles diff=0 without erroring, unlike InverseRow)
         let inv_row = self.alloc_row();
         self.system.set(self.col_s_arith, inv_row, FieldElement::ONE);
         self.wire(diff, CellRef { column: self.col_a, row: inv_row });
-        // d = diff * inv (should be 0 or 1)
-        self.witness_ops.push(PlonkWitnessOp::InverseRow { row: inv_row });
-        self.witness_ops.push(PlonkWitnessOp::ArithRow { row: inv_row });
+        self.witness_ops.push(PlonkWitnessOp::IsZeroRow { row: inv_row });
+        let inv_cell = CellRef { column: self.col_b, row: inv_row };
         let diff_times_inv = CellRef { column: self.col_d, row: inv_row };
 
-        // eq = 1 - diff*inv
+        // eq = 1 - diff*inv (witness computation row)
         let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
         let neg_dti = self.negate_cell(diff_times_inv);
         let eq_row = self.alloc_row();
@@ -964,14 +968,25 @@ impl PlonkishCompiler {
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row: eq_row });
         let eq_cell = CellRef { column: self.col_d, row: eq_row };
 
-        // Enforce: diff * eq = 0
-        // We set d = 0 as a constant (NOT computed by ArithRow) so the gate
-        // s_arith * (a*b + c - d) = 0 actually constrains diff*eq = 0.
+        // CONSTRAINT 1: diff * inv + eq = 1
+        // Uses SetConstant(d=1) so the gate actually constrains the relationship.
+        // Gate: s_arith * (a*b + c - d) = 0  →  diff*inv + eq - 1 = 0
+        let enforce_row = self.alloc_row();
+        self.system.set(self.col_s_arith, enforce_row, FieldElement::ONE);
+        self.wire(diff, CellRef { column: self.col_a, row: enforce_row });
+        self.wire(inv_cell, CellRef { column: self.col_b, row: enforce_row });
+        self.wire(eq_cell, CellRef { column: self.col_c, row: enforce_row });
+        self.witness_ops.push(PlonkWitnessOp::SetConstant {
+            cell: CellRef { column: self.col_d, row: enforce_row },
+            value: FieldElement::ONE,
+        });
+
+        // CONSTRAINT 2: diff * eq = 0
+        // Uses SetConstant(d=0) so the gate constrains diff*eq = 0.
         let check_row = self.alloc_row();
         self.system.set(self.col_s_arith, check_row, FieldElement::ONE);
         self.wire(diff, CellRef { column: self.col_a, row: check_row });
         self.wire(eq_cell, CellRef { column: self.col_b, row: check_row });
-        // d = 0 (fixed constant, not computed)
         self.witness_ops.push(PlonkWitnessOp::SetConstant {
             cell: CellRef { column: self.col_d, row: check_row },
             value: FieldElement::ZERO,
@@ -1223,6 +1238,21 @@ impl PlonkishWitnessGenerator {
                     assignments.set(self.col_b, *row, inv);
                     // d = a * inv + 0 = 1
                     assignments.set(self.col_d, *row, FieldElement::ONE);
+                }
+                PlonkWitnessOp::IsZeroRow { row } => {
+                    let a_val = assignments.get(self.col_a, *row);
+                    if a_val.is_zero() {
+                        // diff == 0: inv = 0, diff*inv = 0
+                        assignments.set(self.col_b, *row, FieldElement::ZERO);
+                        assignments.set(self.col_d, *row, FieldElement::ZERO);
+                    } else {
+                        // diff != 0: inv = 1/diff, diff*inv = 1
+                        let inv = a_val.inv().ok_or_else(|| {
+                            PlonkishError::MissingInput("unexpected zero in IsZero".into())
+                        })?;
+                        assignments.set(self.col_b, *row, inv);
+                        assignments.set(self.col_d, *row, FieldElement::ONE);
+                    }
                 }
                 PlonkWitnessOp::BitExtract {
                     target,
