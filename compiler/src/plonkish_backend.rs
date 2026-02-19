@@ -45,6 +45,12 @@ pub enum PlonkWitnessOp {
     ArithRow { row: usize },
     /// Compute b = 1/a for a given row (a is already in col_a).
     InverseRow { row: usize },
+    /// Extract bit `bit_index` from the value in `source` cell and write to `target`.
+    BitExtract {
+        target: CellRef,
+        source: CellRef,
+        bit_index: u32,
+    },
 }
 
 // ============================================================================
@@ -366,18 +372,55 @@ impl PlonkishCompiler {
                     self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row }));
                 }
                 IrInstruction::IsLt { result, lhs, rhs } => {
-                    // For Plonkish: similar bit-decomposition approach but using arith rows
-                    // For simplicity, reject IsLt/IsLe in Plonkish for now
-                    let _ = (result, lhs, rhs);
-                    return Err(PlonkishError::MissingInput(
-                        "IsLt/IsLe not yet implemented in Plonkish backend".into(),
-                    ));
+                    let a_val = self.val_map[lhs].clone();
+                    let b_val = self.val_map[rhs].clone();
+                    let a_cell = self.materialize_val(&a_val);
+                    let b_cell = self.materialize_val(&b_val);
+                    let lt_cell = self.emit_is_lt(a_cell, b_cell);
+                    self.val_map.insert(*result, PlonkVal::Cell(lt_cell));
                 }
                 IrInstruction::IsLe { result, lhs, rhs } => {
-                    let _ = (result, lhs, rhs);
-                    return Err(PlonkishError::MissingInput(
-                        "IsLt/IsLe not yet implemented in Plonkish backend".into(),
-                    ));
+                    // a <= b ≡ !(b < a) ≡ 1 - IsLt(b, a)
+                    let a_val = self.val_map[lhs].clone();
+                    let b_val = self.val_map[rhs].clone();
+                    let a_cell = self.materialize_val(&a_val);
+                    let b_cell = self.materialize_val(&b_val);
+                    let lt_cell = self.emit_is_lt(b_cell, a_cell);
+                    // 1 - lt
+                    let one_cell =
+                        self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let neg_lt = self.negate_cell(lt_cell);
+                    let row = self.alloc_row();
+                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                        cell: CellRef {
+                            column: self.col_b,
+                            row,
+                        },
+                        value: FieldElement::ONE,
+                    });
+                    self.wire(
+                        one_cell,
+                        CellRef {
+                            column: self.col_a,
+                            row,
+                        },
+                    );
+                    self.wire(
+                        neg_lt,
+                        CellRef {
+                            column: self.col_c,
+                            row,
+                        },
+                    );
+                    self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
+                    self.val_map.insert(
+                        *result,
+                        PlonkVal::Cell(CellRef {
+                            column: self.col_d,
+                            row,
+                        }),
+                    );
                 }
                 IrInstruction::Assert { result, operand } => {
                     let op_val = self.val_map[operand].clone();
@@ -926,6 +969,81 @@ impl PlonkishCompiler {
     }
 
     // ========================================================================
+    // IsLt gadget: 253-bit decomposition of (b - a + 2^252)
+    // ========================================================================
+
+    /// Returns a cell that is 1 if a < b, 0 otherwise.
+    /// Uses 253-bit decomposition: bit 252 of (b - a + 2^252) indicates a < b.
+    fn emit_is_lt(&mut self, a: CellRef, b: CellRef) -> CellRef {
+        let num_bits = 253u32;
+        let half = compute_power_of_two(252);
+
+        // diff = b - a + 2^252
+        let diff_val = PlonkVal::DeferredAdd(
+            Box::new(PlonkVal::DeferredSub(
+                Box::new(PlonkVal::Cell(b)),
+                Box::new(PlonkVal::Cell(a)),
+            )),
+            Box::new(PlonkVal::Constant(half)),
+        );
+        let diff_cell = self.materialize_val(&diff_val);
+
+        // Decompose diff into 253 bits with running sum accumulation
+        let mut bit_cells = Vec::with_capacity(num_bits as usize);
+        let mut running_sum: Option<CellRef> = None;
+
+        for i in 0..num_bits {
+            let coeff = compute_power_of_two(i);
+
+            // Accumulation row: d = bit_i * 2^i + sum_prev
+            let acc_row = self.alloc_row();
+            self.system
+                .set(self.col_s_arith, acc_row, FieldElement::ONE);
+            let bit_cell = CellRef {
+                column: self.col_a,
+                row: acc_row,
+            };
+            self.witness_ops.push(PlonkWitnessOp::BitExtract {
+                target: bit_cell,
+                source: diff_cell,
+                bit_index: i,
+            });
+            self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                cell: CellRef {
+                    column: self.col_b,
+                    row: acc_row,
+                },
+                value: coeff,
+            });
+            if let Some(prev) = running_sum {
+                self.wire(
+                    prev,
+                    CellRef {
+                        column: self.col_c,
+                        row: acc_row,
+                    },
+                );
+            }
+            self.witness_ops
+                .push(PlonkWitnessOp::ArithRow { row: acc_row });
+            running_sum = Some(CellRef {
+                column: self.col_d,
+                row: acc_row,
+            });
+            bit_cells.push(bit_cell);
+
+            // Boolean enforcement: bit^2 = bit
+            self.emit_bool_check(bit_cell);
+        }
+
+        // Enforce sum == diff
+        self.system.add_copy(running_sum.unwrap(), diff_cell);
+
+        // Bit 252 is the result
+        bit_cells[252]
+    }
+
+    // ========================================================================
     // Range check: 1 lookup row
     // ========================================================================
 
@@ -1039,9 +1157,42 @@ impl PlonkishWitnessGenerator {
                         assignments.set(self.col_d, *row, FieldElement::ONE);
                     }
                 }
+                PlonkWitnessOp::BitExtract {
+                    target,
+                    source,
+                    bit_index,
+                } => {
+                    let val = assignments.get(source.column, source.row);
+                    let limbs = val.to_canonical();
+                    let limb_idx = (*bit_index / 64) as usize;
+                    let bit_pos = *bit_index % 64;
+                    let bit = if limb_idx < 4 {
+                        (limbs[limb_idx] >> bit_pos) & 1
+                    } else {
+                        0
+                    };
+                    assignments.set(
+                        target.column,
+                        target.row,
+                        FieldElement::from_u64(bit),
+                    );
+                }
             }
         }
 
         Ok(())
+    }
+}
+
+/// Compute 2^n as a FieldElement.
+fn compute_power_of_two(n: u32) -> FieldElement {
+    if n < 64 {
+        FieldElement::from_u64(1u64 << n)
+    } else {
+        let mut pow = FieldElement::ONE;
+        for _ in 0..n {
+            pow = pow.add(&pow);
+        }
+        pow
     }
 }
