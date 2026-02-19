@@ -277,7 +277,7 @@ impl PlonkishCompiler {
                 } => {
                     let op_val = self.val_map[operand].clone();
                     let op_cell = self.materialize_val(&op_val);
-                    self.emit_range_check(op_cell, *bits);
+                    self.emit_range_check(op_cell, *bits)?;
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }
                 IrInstruction::Not { result, operand } => {
@@ -1092,8 +1092,13 @@ impl PlonkishCompiler {
     // Range check: 1 lookup row
     // ========================================================================
 
-    fn emit_range_check(&mut self, operand: CellRef, bits: u32) {
-        self.ensure_range_table(bits);
+    /// Maximum bits allowed for a range table lookup.
+    /// 2^16 = 65536 rows is a reasonable ceiling; larger values should use
+    /// bit-decomposition (like the R1CS backend does).
+    const MAX_RANGE_TABLE_BITS: u32 = 16;
+
+    fn emit_range_check(&mut self, operand: CellRef, bits: u32) -> Result<(), PlonkishError> {
+        self.ensure_range_table(bits)?;
 
         let row = self.alloc_row();
         self.system.set(self.col_s_range, row, FieldElement::ONE);
@@ -1104,11 +1109,19 @@ impl PlonkishCompiler {
                 row,
             },
         );
+        Ok(())
     }
 
-    fn ensure_range_table(&mut self, bits: u32) {
+    fn ensure_range_table(&mut self, bits: u32) -> Result<(), PlonkishError> {
         if self.range_tables.contains_key(&bits) {
-            return;
+            return Ok(());
+        }
+
+        if bits > Self::MAX_RANGE_TABLE_BITS {
+            return Err(PlonkishError::MissingInput(format!(
+                "range_check bits={bits} exceeds maximum of {} (table would have 2^{bits} rows)",
+                Self::MAX_RANGE_TABLE_BITS,
+            )));
         }
 
         let table_col = self.system.alloc_fixed();
@@ -1141,6 +1154,7 @@ impl PlonkishCompiler {
 
         let idx = self.system.lookup_tables.len() - 1;
         self.range_tables.insert(bits, idx);
+        Ok(())
     }
 }
 
