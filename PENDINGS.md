@@ -50,25 +50,10 @@ The immediate goal is to transition from a general-purpose scripting engine to a
 
 ### HIGH — Cryptographic
 
-- [ ] **H1: Non-standard Poseidon round constants**
-    - *Context*: Round constants use a custom PRG instead of Grain LFSR (the Poseidon spec standard). Hashes are incompatible with other ZK implementations (circomlib, halo2, etc.).
-    - *Action*: Replace PRG with Grain LFSR for round constant generation, or document non-standard constants.
-    - *File*: `constraints/src/poseidon.rs`
-
-- [ ] **H2: Range table exponential growth in Plonkish**
-    - *Context*: `emit_range_check(x, 32)` creates a table with 2^32 rows. No upper bound enforced.
-    - *Action*: Cap `bits` parameter (e.g., max 24) or reject large values with an error.
-    - *File*: `compiler/src/plonkish_backend.rs` → `ensure_range_table()`
-
-- [ ] **H3: Unbounded for-loop static unrolling**
-    - *Context*: `for i in 0..1000000` generates 1M IR instructions with no iteration cap.
-    - *Action*: Add a configurable iteration limit (e.g., 10000) in `IrLowering` and `compile_circuit`.
-    - *File*: `ir/src/lower.rs`, `compiler/src/r1cs_backend.rs`
-
-- [ ] **H5: `from_i64(i64::MIN)` panics due to overflow**
-    - *Context*: `(-i64::MIN)` causes arithmetic overflow panic.
-    - *Action*: Handle `i64::MIN` as a special case in `FieldElement::from_i64`.
-    - *File*: `memory/src/field.rs`
+- [x] **H1: Non-standard Poseidon round constants** — Fixed: Grain LFSR (Poseidon paper Appendix E)
+- [x] **H2: Range table exponential growth in Plonkish** — Fixed: capped at 16 bits max
+- [x] **H3: Unbounded for-loop static unrolling** — Fixed: MAX_UNROLL_ITERATIONS = 10,000
+- [x] **H5: `from_i64(i64::MIN)` panics due to overflow** — Fixed: uses `unsigned_abs()`
 
 ### MEDIUM — Language & Parser
 
