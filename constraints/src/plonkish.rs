@@ -108,6 +108,9 @@ pub struct Gate {
 
 pub struct Lookup {
     pub name: String,
+    /// Optional selector expression: when present, only rows where this evaluates
+    /// to non-zero are checked. When absent, falls back to the legacy all-zero skip.
+    pub selector: Option<Expression>,
     pub input_exprs: Vec<Expression>,
     pub table_exprs: Vec<Expression>,
 }
@@ -305,6 +308,22 @@ impl PlonkishSystem {
     ) {
         self.lookups.push(Lookup {
             name: name.to_string(),
+            selector: None,
+            input_exprs,
+            table_exprs,
+        });
+    }
+
+    pub fn register_lookup_with_selector(
+        &mut self,
+        name: &str,
+        selector: Expression,
+        input_exprs: Vec<Expression>,
+        table_exprs: Vec<Expression>,
+    ) {
+        self.lookups.push(Lookup {
+            name: name.to_string(),
+            selector: Some(selector),
             input_exprs,
             table_exprs,
         });
@@ -373,14 +392,21 @@ impl PlonkishSystem {
             }
 
             for row in 0..self.num_rows {
+                // Determine row activity via explicit selector or legacy heuristic
+                if let Some(sel) = &lookup.selector {
+                    if sel.evaluate(&self.assignments, row).is_zero() {
+                        continue; // row inactive per selector
+                    }
+                }
+
                 let input: Vec<FieldElement> = lookup
                     .input_exprs
                     .iter()
                     .map(|e| e.evaluate(&self.assignments, row))
                     .collect();
 
-                // All-zero input is treated as inactive (padding row)
-                if input.iter().all(|v| v.is_zero()) {
+                // Legacy fallback: no selector → skip all-zero inputs (backward compat)
+                if lookup.selector.is_none() && input.iter().all(|v| v.is_zero()) {
                     continue;
                 }
 
@@ -717,5 +743,103 @@ mod tests {
             vec![Expression::cell(table_col, 0)],
         );
         assert!(sys.verify().is_ok());
+    }
+
+    // ================================================================
+    // H5: Selector-based lookup tests
+    // ================================================================
+
+    #[test]
+    fn test_lookup_with_selector_active_passes() {
+        // Selector=1, value=5, 5 is in table → pass
+        let mut sys = PlonkishSystem::new(4);
+        let table_col = sys.alloc_fixed();
+        let input_col = sys.alloc_advice();
+        let selector = sys.alloc_fixed();
+
+        for i in 0..4u64 {
+            sys.set(table_col, i as usize, FieldElement::from_u64(i));
+        }
+        sys.set(selector, 0, FieldElement::ONE);
+        sys.set(input_col, 0, FieldElement::from_u64(3));
+
+        sys.register_lookup_with_selector(
+            "range",
+            Expression::cell(selector, 0),
+            vec![Expression::cell(input_col, 0)],
+            vec![Expression::cell(table_col, 0)],
+        );
+        assert!(sys.verify().is_ok());
+    }
+
+    #[test]
+    fn test_lookup_with_selector_active_zero_value_passes() {
+        // Selector=1, value=0, 0 is in table → must NOT be skipped, must pass
+        let mut sys = PlonkishSystem::new(4);
+        let table_col = sys.alloc_fixed();
+        let input_col = sys.alloc_advice();
+        let selector = sys.alloc_fixed();
+
+        for i in 0..4u64 {
+            sys.set(table_col, i as usize, FieldElement::from_u64(i));
+        }
+        sys.set(selector, 0, FieldElement::ONE);
+        sys.set(input_col, 0, FieldElement::ZERO); // value=0, but row is active
+
+        sys.register_lookup_with_selector(
+            "range",
+            Expression::cell(selector, 0),
+            vec![Expression::cell(input_col, 0)],
+            vec![Expression::cell(table_col, 0)],
+        );
+        assert!(sys.verify().is_ok(), "active row with value=0 should pass (0 is in table)");
+    }
+
+    #[test]
+    fn test_lookup_with_selector_inactive_skipped() {
+        // Selector=0, value=99 (NOT in table) → inactive, should be skipped
+        let mut sys = PlonkishSystem::new(4);
+        let table_col = sys.alloc_fixed();
+        let input_col = sys.alloc_advice();
+        let selector = sys.alloc_fixed();
+
+        for i in 0..4u64 {
+            sys.set(table_col, i as usize, FieldElement::from_u64(i));
+        }
+        // Row 0: selector=0 (inactive), input=99 (not in table)
+        sys.set(selector, 0, FieldElement::ZERO);
+        sys.set(input_col, 0, FieldElement::from_u64(99));
+
+        sys.register_lookup_with_selector(
+            "range",
+            Expression::cell(selector, 0),
+            vec![Expression::cell(input_col, 0)],
+            vec![Expression::cell(table_col, 0)],
+        );
+        assert!(sys.verify().is_ok(), "inactive row should be skipped regardless of value");
+    }
+
+    #[test]
+    fn test_lookup_with_selector_active_invalid_fails() {
+        // Selector=1, value=99 (NOT in table) → must fail
+        let mut sys = PlonkishSystem::new(4);
+        let table_col = sys.alloc_fixed();
+        let input_col = sys.alloc_advice();
+        let selector = sys.alloc_fixed();
+
+        for i in 0..4u64 {
+            sys.set(table_col, i as usize, FieldElement::from_u64(i));
+        }
+        sys.set(selector, 0, FieldElement::ONE);
+        sys.set(input_col, 0, FieldElement::from_u64(99));
+
+        sys.register_lookup_with_selector(
+            "range",
+            Expression::cell(selector, 0),
+            vec![Expression::cell(input_col, 0)],
+            vec![Expression::cell(table_col, 0)],
+        );
+        let err = sys.verify().unwrap_err();
+        assert!(matches!(err, PlonkishError::LookupFailed { .. }));
     }
 }
