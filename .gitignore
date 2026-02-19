@@ -16,3 +16,6 @@ Thumbs.db
 # Auxiliary
 changes.txt
 /notes
+
+# Proptest
+**/*.proptest-regressions
