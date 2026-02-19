@@ -26,6 +26,8 @@ pub enum IrError {
     UnboundedLoop(Option<SourceSpan>),
     /// The input failed to parse.
     ParseError(String),
+    /// A variable was declared as both public and witness, or declared twice.
+    DuplicateInput(String),
     /// A builtin function was called with the wrong number of arguments.
     WrongArgumentCount {
         builtin: String,
@@ -68,6 +70,9 @@ impl fmt::Display for IrError {
             }
             IrError::ParseError(msg) => {
                 write!(f, "parse error: {msg}")
+            }
+            IrError::DuplicateInput(name) => {
+                write!(f, "duplicate input declaration: `{name}`")
             }
             IrError::WrongArgumentCount {
                 builtin,

@@ -501,3 +501,44 @@ fn lower_wrong_assert_args() {
     let result = IrLowering::lower_circuit("assert(x, y)", &[], &["x", "y"]);
     assert!(result.is_err());
 }
+
+// ============================================================================
+// H2: Duplicate input name detection
+// ============================================================================
+
+#[test]
+fn lower_circuit_duplicate_public_rejected() {
+    let result = IrLowering::lower_circuit("assert_eq(x, x)", &["x", "x"], &[]);
+    match result {
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+        }
+        Ok(_) => panic!("duplicate public name should be rejected"),
+    }
+}
+
+#[test]
+fn lower_circuit_duplicate_public_witness_rejected() {
+    let result = IrLowering::lower_circuit("assert_eq(x, x)", &["x"], &["x"]);
+    match result {
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+        }
+        Ok(_) => panic!("public+witness overlap should be rejected"),
+    }
+}
+
+#[test]
+fn lower_self_contained_duplicate_rejected() {
+    let source = "public x\nwitness x\nassert_eq(x, x)";
+    let result = IrLowering::lower_self_contained(source);
+    match result {
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+        }
+        Ok(_) => panic!("duplicate in-source declaration should be rejected"),
+    }
+}

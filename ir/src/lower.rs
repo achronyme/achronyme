@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use achronyme_parser::{AchronymeParser, Rule};
 use memory::FieldElement;
@@ -82,6 +82,13 @@ impl IrLowering {
         public: &[&str],
         witness: &[&str],
     ) -> Result<IrProgram, IrError> {
+        // Check for duplicate names across public and witness
+        let mut seen = HashSet::new();
+        for name in public.iter().chain(witness.iter()) {
+            if !seen.insert(*name) {
+                return Err(IrError::DuplicateInput(name.to_string()));
+            }
+        }
         let mut lowering = IrLowering::new();
         for name in public {
             lowering.declare_public(name);
@@ -125,6 +132,14 @@ impl IrLowering {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Check for duplicate names across public and witness
+        let mut seen = HashSet::new();
+        for name in pub_names.iter().chain(wit_names.iter()) {
+            if !seen.insert(name.as_str()) {
+                return Err(IrError::DuplicateInput(name.clone()));
             }
         }
 
