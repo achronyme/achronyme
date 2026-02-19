@@ -8,12 +8,154 @@
 /// 1. Native computation (for witness generation)
 /// 2. R1CS constraint synthesis (for proof circuits)
 ///
-/// Round constants are generated via a deterministic PRG seeded with
-/// the parameter string. For production interoperability with circomlib,
-/// swap in the Grain LFSR constants.
+/// Round constants are generated via the Grain LFSR as specified in
+/// the Poseidon paper (ePrint 2019/458, Appendix E).
 
 use memory::FieldElement;
+use memory::field::MODULUS;
 use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
+
+// ============================================================================
+// Grain LFSR (Poseidon paper, Appendix E)
+// ============================================================================
+
+/// 80-bit LFSR used to generate Poseidon round constants.
+struct GrainLfsr {
+    state: [bool; 80],
+}
+
+impl GrainLfsr {
+    /// Initialize from Poseidon parameters.
+    /// Encoding: [field_type:2][sbox:4][field_size:12][t:12][R_F:10][R_P:10][padding:30]
+    fn new(field_size: u16, t: u16, r_f: u16, r_p: u16) -> Self {
+        let mut bits = [false; 80];
+        let mut pos = 0;
+
+        // field_type = 1 (prime field): 2 bits = 01
+        bits[pos] = false;
+        bits[pos + 1] = true;
+        pos += 2;
+
+        // sbox_type = 1 (alpha=5): 4 bits = 0001
+        for i in 0..3 { bits[pos + i] = false; }
+        bits[pos + 3] = true;
+        pos += 4;
+
+        // field_size: 12 bits, MSB first
+        for i in 0..12 {
+            bits[pos + i] = (field_size >> (11 - i)) & 1 == 1;
+        }
+        pos += 12;
+
+        // t: 12 bits, MSB first
+        for i in 0..12 {
+            bits[pos + i] = (t >> (11 - i)) & 1 == 1;
+        }
+        pos += 12;
+
+        // R_F: 10 bits, MSB first
+        for i in 0..10 {
+            bits[pos + i] = (r_f >> (9 - i)) & 1 == 1;
+        }
+        pos += 10;
+
+        // R_P: 10 bits, MSB first
+        for i in 0..10 {
+            bits[pos + i] = (r_p >> (9 - i)) & 1 == 1;
+        }
+        pos += 10;
+
+        // padding: 30 bits of 1
+        for i in 0..30 {
+            bits[pos + i] = true;
+        }
+
+        let mut lfsr = Self { state: bits };
+
+        // Warmup: 160 clocks discarded
+        for _ in 0..160 {
+            lfsr.clock();
+        }
+
+        lfsr
+    }
+
+    /// Clock the LFSR once, return the new bit.
+    /// Feedback taps: {0, 13, 23, 38, 51, 62}
+    fn clock(&mut self) -> bool {
+        let new_bit = self.state[0]
+            ^ self.state[13]
+            ^ self.state[23]
+            ^ self.state[38]
+            ^ self.state[51]
+            ^ self.state[62];
+        // Shift left: drop state[0], append new_bit
+        for i in 0..79 {
+            self.state[i] = self.state[i + 1];
+        }
+        self.state[79] = new_bit;
+        new_bit
+    }
+
+    /// Self-shrinking output: emit one pseudorandom bit.
+    /// Uses pairs: if control bit = 1, emit candidate; else discard.
+    fn next_bit(&mut self) -> bool {
+        loop {
+            let control = self.clock();
+            let candidate = self.clock();
+            if control {
+                return candidate;
+            }
+        }
+    }
+
+    /// Sample a field element via rejection sampling.
+    /// Extracts `field_size` bits, interprets as big-endian integer,
+    /// rejects if >= MODULUS.
+    fn next_field_element(&mut self, field_size: usize) -> FieldElement {
+        loop {
+            // Extract field_size bits, MSB first, pack into 32 bytes big-endian
+            let mut bytes = [0u8; 32];
+            for bit_idx in 0..field_size {
+                let b = self.next_bit();
+                if b {
+                    // MSB first: bit 0 is the most significant
+                    let byte_pos = bit_idx / 8;
+                    let bit_pos = 7 - (bit_idx % 8);
+                    // Pack from the start of the array (big-endian)
+                    let offset = 32 - ((field_size + 7) / 8);
+                    bytes[offset + byte_pos] |= 1 << bit_pos;
+                }
+            }
+
+            // Interpret as little-endian limbs (convert from big-endian bytes)
+            bytes.reverse();
+            let mut limbs = [0u64; 4];
+            for i in 0..4 {
+                limbs[i] =
+                    u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
+            }
+
+            // Rejection: skip if >= MODULUS
+            if !ge_modulus(&limbs) {
+                return FieldElement::from_canonical(limbs);
+            }
+        }
+    }
+}
+
+/// Check if limbs >= MODULUS (big-endian comparison on [u64;4] little-endian limbs).
+fn ge_modulus(limbs: &[u64; 4]) -> bool {
+    for i in (0..4).rev() {
+        if limbs[i] > MODULUS[i] {
+            return true;
+        }
+        if limbs[i] < MODULUS[i] {
+            return false;
+        }
+    }
+    true // equal
+}
 
 // ============================================================================
 // Parameters
@@ -36,11 +178,16 @@ pub struct PoseidonParams {
 
 impl PoseidonParams {
     /// Standard BN254 parameters: t=3, R_f=8, R_p=57
+    ///
+    /// Round constants generated via Grain LFSR as specified in the Poseidon
+    /// paper (ePrint 2019/458, Appendix E). MDS matrix uses the standard
+    /// Cauchy construction with x=[0,1,...,t-1], y=[t,t+1,...,2t-1].
     pub fn bn254_t3() -> Self {
         let t = 3;
         let r_f = 8;
         let r_p = 57;
         let total_rounds = r_f + r_p;
+        let field_size = 254u16; // BN254 scalar field is 254-bit
 
         // --- MDS Matrix (Cauchy construction) ---
         // M[i][j] = 1 / (x_i + y_j) in the field
@@ -55,20 +202,11 @@ impl PoseidonParams {
             }
         }
 
-        // --- Round Constants (deterministic PRG) ---
-        // Seed: field element derived from parameters
-        // Method: RC[i] = seed^(i+1) where seed = from_u64(golden_ratio_prime)
-        // This ensures non-trivial, deterministic constants.
-        //
-        // NOTE: For production/interop with circomlib, replace with
-        // Grain LFSR-generated constants per the Poseidon paper.
-        let seed = FieldElement::from_u64(0x9e3779b97f4a7c15); // golden ratio * 2^64
+        // --- Round Constants (Grain LFSR, Poseidon paper Appendix E) ---
+        let mut grain = GrainLfsr::new(field_size, t as u16, r_f as u16, r_p as u16);
         let mut round_constants = Vec::with_capacity(total_rounds * t);
-        let mut current = seed;
         for _ in 0..(total_rounds * t) {
-            round_constants.push(current);
-            // Recurrence: current = current * seed + offset
-            current = current.mul(&seed).add(&FieldElement::from_u64(7));
+            round_constants.push(grain.next_field_element(field_size as usize));
         }
 
         Self {
