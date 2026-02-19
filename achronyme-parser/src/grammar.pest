@@ -27,7 +27,7 @@ identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
 keyword    = @{
-    ("let" | "mut" | "print" | "true" | "false" | "nil" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" | "public" | "witness")
+    ("let" | "mut" | "print" | "true" | "false" | "nil" | "if" | "else" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" | "public" | "witness")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -100,34 +100,40 @@ index_op = { "[" ~ expr ~ "]" | "." ~ identifier }
 call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 
 // ============================================================================
-// LAYER 3: PREFIX EXPRESSIONS (Unary Operators)
+// LAYER 3: POWER EXPRESSIONS (highest infix precedence, before prefix)
 // ============================================================================
-// RULE: Operators that attach to the LEFT of a postfix expression.
+// Power binds tighter than prefix so `-a^2` means `-(a^2)`.
+
+pow_op = { "^" }
+pow_expr = { postfix_expr ~ (pow_op ~ postfix_expr)* }
+
+// ============================================================================
+// LAYER 4: PREFIX EXPRESSIONS (Unary Operators)
+// ============================================================================
+// RULE: Operators that attach to the LEFT of a pow expression.
+// `-a^2` → `-(a^2)` following standard math convention.
 
 unary_op = { "-" | "!" }
-prefix_expr = { unary_op* ~ postfix_expr }
+prefix_expr = { unary_op* ~ pow_expr }
 
 // ============================================================================
-// LAYER 4: INFIX EXPRESSIONS (Binary Operators)
+// LAYER 5: INFIX EXPRESSIONS (Binary Operators)
 // ============================================================================
 // RULE: Standard mathematical precedence.
 // Evaluated from top (highest precedence) to bottom (lowest).
 
-// Power (Right associative)
-pow_op = { "^" }
-pow_expr = { prefix_expr ~ (pow_op ~ prefix_expr)* }
-
 // Multiplicative
 mul_op = { "*" | "/" | "%" }
-mul_expr = { pow_expr ~ (mul_op ~ pow_expr)* }
+mul_expr = { prefix_expr ~ (mul_op ~ prefix_expr)* }
 
 // Additive
 add_op = { "+" | "-" }
 add_expr = { mul_expr ~ (add_op ~ mul_expr)* }
 
 // Comparison (multi-char ops first to avoid prefix ambiguity)
+// Limited to at most ONE comparison to prevent silent bugs from `a < b < c`.
 cmp_op = { "!=" | "<=" | ">=" | "==" | "<" | ">" }
-cmp_expr = { add_expr ~ (cmp_op ~ add_expr)* }
+cmp_expr = { add_expr ~ (cmp_op ~ add_expr)? }
 
 // Logical AND
 and_op = { "&&" }
