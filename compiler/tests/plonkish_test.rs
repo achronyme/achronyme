@@ -405,3 +405,194 @@ fn test_is_lt_with_mux() {
     "#;
     compile_source(source, &["out"], &["a", "b"], &inputs);
 }
+
+// ============================================================================
+// L1: Poseidon hash tests for Plonkish backend
+// ============================================================================
+
+#[test]
+fn test_plonkish_poseidon_single() {
+    use constraints::poseidon::{poseidon_hash, PoseidonParams};
+
+    let params = PoseidonParams::bn254_t3();
+    let left = FieldElement::from_u64(1);
+    let right = FieldElement::from_u64(2);
+    let expected = poseidon_hash(&params, left, right);
+
+    let mut inputs = HashMap::new();
+    inputs.insert("l".to_string(), left);
+    inputs.insert("r".to_string(), right);
+    inputs.insert("out".to_string(), expected);
+
+    let source = "assert_eq(poseidon(l, r), out)";
+    compile_source(source, &["out"], &["l", "r"], &inputs);
+}
+
+#[test]
+fn test_plonkish_poseidon_chained() {
+    use constraints::poseidon::{poseidon_hash, PoseidonParams};
+
+    let params = PoseidonParams::bn254_t3();
+    let a = FieldElement::from_u64(10);
+    let b = FieldElement::from_u64(20);
+    let c = FieldElement::from_u64(30);
+    let h1 = poseidon_hash(&params, a, b);
+    let expected = poseidon_hash(&params, h1, c);
+
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), a);
+    inputs.insert("b".to_string(), b);
+    inputs.insert("c".to_string(), c);
+    inputs.insert("out".to_string(), expected);
+
+    let source = r#"
+        let h = poseidon(a, b)
+        assert_eq(poseidon(h, c), out)
+    "#;
+    compile_source(source, &["out"], &["a", "b", "c"], &inputs);
+}
+
+#[test]
+fn test_plonkish_poseidon_with_arithmetic() {
+    use constraints::poseidon::{poseidon_hash, PoseidonParams};
+
+    let params = PoseidonParams::bn254_t3();
+    let x = FieldElement::from_u64(5);
+    let y = FieldElement::from_u64(7);
+    let prod = x.mul(&y); // 35
+    let expected = poseidon_hash(&params, prod, y);
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), x);
+    inputs.insert("y".to_string(), y);
+    inputs.insert("out".to_string(), expected);
+
+    let source = r#"
+        let p = x * y
+        assert_eq(poseidon(p, y), out)
+    "#;
+    compile_source(source, &["out"], &["x", "y"], &inputs);
+}
+
+// ============================================================================
+// L2: Negative tests — invalid witnesses must be rejected
+// ============================================================================
+
+#[test]
+fn test_plonkish_wrong_mul_rejected() {
+    let pub_names = &["out"];
+    let wit_names = &["a", "b"];
+    let source = "assert_eq(a * b, out)";
+
+    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+    inputs.insert("out".to_string(), FieldElement::from_u64(99)); // wrong: 6*7=42
+
+    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "wrong product should be rejected"
+    );
+}
+
+#[test]
+fn test_plonkish_wrong_assert_eq_rejected() {
+    let pub_names: &[&str] = &[];
+    let wit_names = &["x", "y"];
+    let source = "assert_eq(x, y)";
+
+    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(10));
+    inputs.insert("y".to_string(), FieldElement::from_u64(20)); // x != y
+
+    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "unequal values in assert_eq should be rejected"
+    );
+}
+
+#[test]
+fn test_plonkish_wrong_mux_output_rejected() {
+    let pub_names = &["out"];
+    let wit_names = &["c", "a", "b"];
+    let source = r#"
+        let r = mux(c, a, b)
+        assert_eq(r, out)
+    "#;
+
+    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("c".to_string(), FieldElement::ONE);
+    inputs.insert("a".to_string(), FieldElement::from_u64(10));
+    inputs.insert("b".to_string(), FieldElement::from_u64(20));
+    inputs.insert("out".to_string(), FieldElement::from_u64(99)); // wrong: mux(1,10,20)=10
+
+    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "wrong mux output should be rejected"
+    );
+}
+
+#[test]
+fn test_plonkish_wrong_comparison_rejected() {
+    let pub_names = &["out"];
+    let wit_names = &["a", "b"];
+    let source = r#"
+        let r = a < b
+        assert_eq(r, out)
+    "#;
+
+    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(3));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+    inputs.insert("out".to_string(), FieldElement::ZERO); // wrong: 3 < 7 is true (1)
+
+    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "wrong comparison result should be rejected"
+    );
+}
+
+#[test]
+fn test_plonkish_missing_input_error() {
+    let program = ir::IrLowering::lower_circuit(
+        "assert_eq(x, y)",
+        &[],
+        &["x", "y"],
+    )
+    .unwrap();
+
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(5));
+    // missing "y"
+
+    let result = wg.generate(&inputs, &mut compiler.system.assignments);
+    assert!(result.is_err(), "missing input should error");
+}
