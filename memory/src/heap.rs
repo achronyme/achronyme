@@ -2,7 +2,10 @@ use crate::Value;
 use crate::field::FieldElement;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone)]
+// SAFETY: Clone intentionally omitted. A closed Upvalue holds a self-referential
+// raw pointer (`location` → `&self.closed`). Cloning would copy the pointer
+// without updating it, creating a dangling reference to the original's field.
+#[derive(Debug)]
 pub struct Upvalue {
     pub location: *mut Value, // Points to stack (Open) or &closed (Closed)
     pub closed: Value,
