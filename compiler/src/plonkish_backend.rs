@@ -957,15 +957,55 @@ impl PlonkishCompiler {
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row: eq_row });
         let eq_cell = CellRef { column: self.col_d, row: eq_row };
 
-        // Also need: diff * eq = 0 (enforcement)
+        // Enforce: diff * eq = 0
+        // We set d = 0 as a constant (NOT computed by ArithRow) so the gate
+        // s_arith * (a*b + c - d) = 0 actually constrains diff*eq = 0.
         let check_row = self.alloc_row();
         self.system.set(self.col_s_arith, check_row, FieldElement::ONE);
         self.wire(diff, CellRef { column: self.col_a, row: check_row });
         self.wire(eq_cell, CellRef { column: self.col_b, row: check_row });
-        // d should be 0
-        self.witness_ops.push(PlonkWitnessOp::ArithRow { row: check_row });
+        // d = 0 (fixed constant, not computed)
+        self.witness_ops.push(PlonkWitnessOp::SetConstant {
+            cell: CellRef { column: self.col_d, row: check_row },
+            value: FieldElement::ZERO,
+        });
 
         eq_cell
+    }
+
+    // ========================================================================
+    // 252-bit range enforcement
+    // ========================================================================
+
+    /// Enforce that `cell` holds a value in [0, 2^252).
+    /// Decomposes into 252 boolean-enforced bits and checks sum == cell.
+    fn enforce_252_range(&mut self, cell: CellRef) {
+        let num_bits = 252u32;
+        let mut running_sum: Option<CellRef> = None;
+
+        for i in 0..num_bits {
+            let coeff = compute_power_of_two(i);
+            let acc_row = self.alloc_row();
+            self.system.set(self.col_s_arith, acc_row, FieldElement::ONE);
+            let bit_cell = CellRef { column: self.col_a, row: acc_row };
+            self.witness_ops.push(PlonkWitnessOp::BitExtract {
+                target: bit_cell,
+                source: cell,
+                bit_index: i,
+            });
+            self.witness_ops.push(PlonkWitnessOp::SetConstant {
+                cell: CellRef { column: self.col_b, row: acc_row },
+                value: coeff,
+            });
+            if let Some(prev) = running_sum {
+                self.wire(prev, CellRef { column: self.col_c, row: acc_row });
+            }
+            self.witness_ops.push(PlonkWitnessOp::ArithRow { row: acc_row });
+            running_sum = Some(CellRef { column: self.col_d, row: acc_row });
+            self.emit_bool_check(bit_cell);
+        }
+        // Enforce sum == cell
+        self.system.add_copy(running_sum.unwrap(), cell);
     }
 
     // ========================================================================
@@ -974,7 +1014,11 @@ impl PlonkishCompiler {
 
     /// Returns a cell that is 1 if a < b, 0 otherwise.
     /// Uses 253-bit decomposition: bit 252 of (b - a + 2^252) indicates a < b.
+    /// Both operands are range-checked to [0, 2^252) for soundness.
     fn emit_is_lt(&mut self, a: CellRef, b: CellRef) -> CellRef {
+        // Range check both operands
+        self.enforce_252_range(a);
+        self.enforce_252_range(b);
         let num_bits = 253u32;
         // Offset is 2^252-1 so that a==b maps to diff=2^252-1 (bit 252=0).
         let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
@@ -1152,11 +1196,12 @@ impl PlonkishWitnessGenerator {
                 }
                 PlonkWitnessOp::InverseRow { row } => {
                     let a_val = assignments.get(self.col_a, *row);
-                    if let Some(inv) = a_val.inv() {
-                        assignments.set(self.col_b, *row, inv);
-                        // d = a * inv + 0 = 1
-                        assignments.set(self.col_d, *row, FieldElement::ONE);
-                    }
+                    let inv = a_val.inv().ok_or_else(|| {
+                        PlonkishError::MissingInput("division by zero".into())
+                    })?;
+                    assignments.set(self.col_b, *row, inv);
+                    // d = a * inv + 0 = 1
+                    assignments.set(self.col_d, *row, FieldElement::ONE);
                 }
                 PlonkWitnessOp::BitExtract {
                     target,
