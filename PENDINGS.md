@@ -99,62 +99,45 @@ zero constraints. A malicious prover controls all advice columns freely.
 **The R1CS backend is NOT affected** — all gadgets use `enforce()` which
 creates proper verifiable constraint equations.
 
-- [ ] **C1: IsZero gadget under-constrained** — `plonkish_backend.rs:974-993`
+- [x] **C1: IsZero gadget under-constrained** — `plonkish_backend.rs:974-993`
     - `d=1` (enforce row) and `d=0` (check row) set via `SetConstant` on advice `col_d`
-    - Gate constrains `a*b + c = d` where `d` is prover-chosen → prover forges `==`, `!=`, `<`, `<=`
-    - *Attack*: with `a=5, b=3`, prover sets `eq=1, d=1, inv=anything` → claims equality
-    - *Fix*: Use copy constraints to materialized constants, or add `col_constant` to gate poly
+    - *Fixed*: `constrain_constant()` writes to fixed column + copy constraint to advice cell
 
-- [ ] **C2: Division gadget under-constrained** — `plonkish_backend.rs:666-696`
+- [x] **C2: Division gadget under-constrained** — `plonkish_backend.rs:666-696`
     - `den * inv = 1` has `d=1` via `SetConstant` on advice → prover sets `d=0, inv=0`
-    - Gate: `den*0 + 0 - 0 = 0` satisfied → fabricated division results
-    - *Fix*: Same as C1
+    - *Fixed*: `constrain_constant()` writes to fixed column + copy constraint to advice cell
 
-- [ ] **C3: Bit decomposition coefficients not constrained** — `plonkish_backend.rs:1004-1031, 1040-1111`
+- [x] **C3: Bit decomposition coefficients not constrained** — `plonkish_backend.rs:1004-1031, 1040-1111`
     - Powers-of-two (`2^i`) set in `col_b` (advice) via `SetConstant`
-    - Prover replaces `2^i` with arbitrary coefficients → bypasses range_check, IsLt, IsLe
-    - Affects: `enforce_252_range`, `emit_is_lt`, all comparison operators
-    - *Fix*: Coefficients must go in fixed column or be copy-constrained
+    - *Fixed*: `constrain_constant()` writes to fixed column + copy constraint to advice cell
 
-- [ ] **C4: Arithmetic identity col_b not constrained** — `plonkish_backend.rs:304-306, 337-339, 521-527, 558-563`
+- [x] **C4: Arithmetic identity col_b not constrained** — `plonkish_backend.rs:304-306, 337-339, 521-527, 558-563`
     - `col_b=1` or `col_b=-1` for DeferredAdd/Sub/Neg via `SetConstant` on advice
-    - Prover sets `col_b=2` → `d = a*2 + b` instead of `d = a + b`
-    - Affects: every deferred add, sub, neg, Not, Or materialization
-    - *Fix*: Same systemic fix — incorporate `col_constant` into gate or use copy constraints
+    - *Fixed*: `constrain_constant()` writes to fixed column + copy constraint to advice cell
 
-**Recommended systemic fix**: Change gate polynomial to:
-```
-s_arith * (a * b + c + constant - d) = 0
-```
-Then use `col_constant` (fixed, verifier-committed) for values the prover must not control.
+**Systemic fix applied**: `constrain_constant()` helper writes each constant to
+`col_constant` (fixed, verifier-committed) and adds a copy constraint to the
+advice cell. Gate polynomial unchanged — copy constraints alone ensure soundness.
 
 ### HIGH — Correctness & Security
 
-- [ ] **H1: `nPubOut`/`nPubIn` inverted in R1CS export** — `export.rs:59-66`
+- [x] **H1: `nPubOut`/`nPubIn` inverted in R1CS export** — `export.rs:59-66`
     - All public vars mapped as `nPubOut`, `nPubIn=0`
-    - Breaks `snarkjs zkey export solidityverifier` (expects `nPubIn > 0`)
-    - *Fix*: Map public inputs as `nPubIn`, or add distinction between pub in/out
+    - *Fixed*: Swapped to `nPubOut=0`, `nPubIn=num_pub_inputs`
 
-- [ ] **H2: `public x` + `witness x` creates duplicate unconstrained wire** — `ir/lower.rs:37-55, 898-912`
+- [x] **H2: `public x` + `witness x` creates duplicate unconstrained wire** — `ir/lower.rs:37-55`
     - Both `declare_public` and `declare_witness` call `env.insert(name, v)` without duplicate check
-    - Second declaration overwrites env → first wire (public) orphaned, unconstrained
-    - *Fix*: Check for duplicate names in `declare_public`/`declare_witness` and error
+    - *Fixed*: `DuplicateInput` error variant; HashSet check in `lower_circuit` and `lower_self_contained`
 
-- [ ] **H3: `let` rebinding in if/else branches pollutes outer scope** — `ir/lower.rs:849-893`
-    - `lower_block` L883: `self.env.retain(|k, _| outer_keys.contains(k))` keeps old keys but with NEW values
-    - `let x = 5; if cond { let x = 10 }` → after if, `x` is `SsaVar(new)` not `SsaVar(old)`
-    - *Fix*: Snapshot env values before block, restore after `retain`
+- [x] **H3: `let` rebinding in if/else branches pollutes outer scope** — `ir/lower.rs:849-893`
+    - **False positive**: `lower_block` correctly restores env via `retain(outer_keys)`, confirmed by `if_branch_let_does_not_leak` test
 
-- [ ] **H4: And/Or short-circuit fold removes boolean enforcement** — `ir/passes/const_fold.rs:214-222, 242-250`
-    - `0 && x` folds to `Const(0)`, removing `x*(1-x)=0` enforcement for `x`
-    - If `x` is used elsewhere without separate boolean check → under-constrained
-    - Dual: `1 || x` folds to `Const(1)` same issue
-    - *Fix*: Emit standalone boolean enforcement for the non-constant operand before folding
+- [x] **H4: And/Or short-circuit fold removes boolean enforcement** — `ir/passes/const_fold.rs`
+    - **False positive**: audit fix `649c4bb` added `is_bool()` guards; short-circuit only folds on boolean constants; DCE conservatively preserves all boolean ops
 
-- [ ] **H5: Lookup zero-value bypass in Plonkish** — `plonkish.rs:382-384`
-    - `if input.iter().all(|v| v.is_zero()) { continue; }` skips both inactive rows AND `range_check(0)`
-    - Conflates "selector=0 → inactive" with "selector=1, value=0 → valid check"
-    - *Fix*: Check selector value directly instead of input expression being zero
+- [x] **H5: Lookup zero-value bypass in Plonkish** — `plonkish.rs:382-384`
+    - All-zero skip conflated inactive rows with valid `range_check(0)`
+    - *Fixed*: Added `selector` field to `Lookup`; `register_lookup_with_selector` uses explicit selector for row activity; range table uses new API
 
 ### MEDIUM — Efficiency, Robustness, Interop
 
