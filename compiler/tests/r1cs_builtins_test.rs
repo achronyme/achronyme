@@ -8,34 +8,34 @@ use memory::FieldElement;
 
 #[test]
 fn test_poseidon_constraint_count() {
-    // poseidon(a, b) with simple variables → ~360 constraints, 0 materialization
+    // poseidon(a, b) with simple variables → 360 permutation + 1 capacity = 361
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.declare_witness("b");
     rc.compile_circuit("poseidon(a, b)").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 360);
+    assert_eq!(rc.cs.num_constraints(), 361);
 }
 
 #[test]
 fn test_poseidon_chained() {
-    // poseidon(poseidon(a, b), c) → 360 + 360 = 720 constraints
+    // poseidon(poseidon(a, b), c) → (360+1) + (360+1) = 722 constraints
     // Inner poseidon returns a Variable, so outer's left materialization is free
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.declare_witness("b");
     rc.declare_witness("c");
     rc.compile_circuit("poseidon(poseidon(a, b), c)").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 720);
+    assert_eq!(rc.cs.num_constraints(), 722);
 }
 
 #[test]
 fn test_poseidon_in_loop() {
-    // for i in 0..2 { poseidon(a, b) } → 2 * 360 = 720
+    // for i in 0..2 { poseidon(a, b) } → 2 * 361 = 722
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.declare_witness("b");
     rc.compile_circuit("for i in 0..2 { poseidon(a, b) }").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 720);
+    assert_eq!(rc.cs.num_constraints(), 722);
 }
 
 #[test]
@@ -43,24 +43,24 @@ fn test_poseidon_with_expression_args() {
     // poseidon(a + b, c * d)
     // a + b → LC (needs materialization: 1 constraint)
     // c * d → mul_lc returns LC::from_variable (no materialization needed)
-    // poseidon: 360 constraints
-    // Total: 1 (materialize a+b) + 1 (c*d mul) + 360 = 362
+    // poseidon: 361 constraints (360 permutation + 1 capacity)
+    // Total: 1 (materialize a+b) + 1 (c*d mul) + 361 = 363
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.declare_witness("b");
     rc.declare_witness("c");
     rc.declare_witness("d");
     rc.compile_circuit("poseidon(a + b, c * d)").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 362);
+    assert_eq!(rc.cs.num_constraints(), 363);
 }
 
 #[test]
 fn test_poseidon_constant_arg_materialization() {
-    // poseidon(5, a) → constant 5 must be materialized (1 constraint) + 360
+    // poseidon(5, a) → constant 5 must be materialized (1 constraint) + 361
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.compile_circuit("poseidon(5, a)").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 361);
+    assert_eq!(rc.cs.num_constraints(), 362);
 }
 
 #[test]
@@ -310,12 +310,11 @@ fn test_merkle_path_composition() {
 
     // mux left: 2 (boolean + mul)
     // mux right: 2 (boolean + mul)
-    // poseidon: 360
+    // poseidon: 361 (360 permutation + 1 capacity)
     // assert_eq: 1
-    // Total: 365
     //
     // Note: mux returns an LC (selected + else), not a single variable.
     // When passed to poseidon, each mux result needs materialization (1 constraint each).
-    // So: 2 + 2 + 2 (materialization) + 360 + 1 = 367
-    assert_eq!(rc.cs.num_constraints(), 367);
+    // So: 2 + 2 + 2 (materialization) + 361 + 1 = 368
+    assert_eq!(rc.cs.num_constraints(), 368);
 }

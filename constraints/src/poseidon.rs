@@ -412,8 +412,13 @@ pub fn poseidon_hash_circuit(
     left: Variable,
     right: Variable,
 ) -> Variable {
-    // Capacity variable (always 0)
+    // Capacity variable (always 0) — constrained to prevent malicious provers
+    // from using non-zero capacity to forge hash results.
     let capacity = cs.alloc_witness();
+    cs.enforce_equal(
+        LinearCombination::from_variable(capacity),
+        LinearCombination::zero(),
+    );
 
     // Input state: [capacity, left, right]
     let input_vars = vec![capacity, left, right];
@@ -621,7 +626,8 @@ mod tests {
         // Partial rounds: 57 rounds * 1 S-box = 57 S-boxes = 171 constraints
         // Partial round materialization: 57 rounds * 2 enforce_equal = 114 constraints
         // Output materialization: 3 enforce_equal = 3 constraints
-        // Total = 72 + 171 + 114 + 3 = 360
-        assert_eq!(cs.num_constraints(), 360);
+        // Capacity constraint: 1 enforce_equal (capacity == 0)
+        // Total = 72 + 171 + 114 + 3 + 1 = 361
+        assert_eq!(cs.num_constraints(), 361);
     }
 }
