@@ -976,15 +976,16 @@ impl PlonkishCompiler {
     /// Uses 253-bit decomposition: bit 252 of (b - a + 2^252) indicates a < b.
     fn emit_is_lt(&mut self, a: CellRef, b: CellRef) -> CellRef {
         let num_bits = 253u32;
-        let half = compute_power_of_two(252);
+        // Offset is 2^252-1 so that a==b maps to diff=2^252-1 (bit 252=0).
+        let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
 
-        // diff = b - a + 2^252
+        // diff = b - a + 2^252 - 1
         let diff_val = PlonkVal::DeferredAdd(
             Box::new(PlonkVal::DeferredSub(
                 Box::new(PlonkVal::Cell(b)),
                 Box::new(PlonkVal::Cell(a)),
             )),
-            Box::new(PlonkVal::Constant(half)),
+            Box::new(PlonkVal::Constant(offset)),
         );
         let diff_cell = self.materialize_val(&diff_val);
 

@@ -1127,13 +1127,14 @@ impl R1CSCompiler {
                     lc_map.insert(*result, one - eq_lc);
                 }
                 IrInstruction::IsLt { result, lhs, rhs } => {
-                    // a < b via bit decomposition of (b - a + 2^252)
-                    // If a < b: diff = b-a+2^252 has bit 252 set (result=1)
-                    // If a >= b: diff = b-a+2^252 does NOT have bit 252 set (result=0)
+                    // a < b via bit decomposition of (b - a + 2^252 - 1)
+                    // Offset is 2^252-1 so that a==b maps to diff=2^252-1 (bit 252=0).
+                    // If a < b: diff >= 2^252, bit 252 set (result=1)
+                    // If a >= b: diff < 2^252, bit 252 clear (result=0)
                     let a = lc_map[lhs].clone();
                     let b = lc_map[rhs].clone();
-                    let half_prime = compute_power_of_two(252);
-                    let diff = b - a + LinearCombination::from_constant(half_prime);
+                    let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
+                    let diff = b - a + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff);
                     lc_map.insert(*result, lt_lc);
                 }
@@ -1141,9 +1142,9 @@ impl R1CSCompiler {
                     // a <= b  ≡  !(b < a)  ≡  1 - IsLt(b, a)
                     let a = lc_map[lhs].clone();
                     let b = lc_map[rhs].clone();
-                    let half_prime = compute_power_of_two(252);
-                    // For IsLt(b, a): diff = a - b + 2^252
-                    let diff = a - b + LinearCombination::from_constant(half_prime);
+                    let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
+                    // For IsLt(b, a): diff = a - b + 2^252 - 1
+                    let diff = a - b + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff);
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     lc_map.insert(*result, one - lt_lc);
