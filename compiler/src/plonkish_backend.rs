@@ -128,6 +128,13 @@ impl PlonkishCompiler {
         }
     }
 
+    /// Look up an SSA variable, returning an error instead of panicking.
+    fn lookup_val(&self, var: &SsaVar) -> Result<PlonkVal, PlonkishError> {
+        self.val_map.get(var).cloned().ok_or_else(|| {
+            PlonkishError::MissingInput(format!("undefined SSA variable {:?}", var))
+        })
+    }
+
     /// Compile an SSA IR program into a Plonkish constraint system.
     pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), PlonkishError> {
         for inst in &program.instructions {
@@ -170,8 +177,8 @@ impl PlonkishCompiler {
                     }
                 },
                 IrInstruction::Add { result, lhs, rhs } => {
-                    let a = self.val_map[lhs].clone();
-                    let b = self.val_map[rhs].clone();
+                    let a = self.lookup_val(lhs)?;
+                    let b = self.lookup_val(rhs)?;
                     if let (Some(av), Some(bv)) = (a.constant_value(), b.constant_value()) {
                         self.val_map
                             .insert(*result, PlonkVal::Constant(av.add(&bv)));
@@ -183,8 +190,8 @@ impl PlonkishCompiler {
                     }
                 }
                 IrInstruction::Sub { result, lhs, rhs } => {
-                    let a = self.val_map[lhs].clone();
-                    let b = self.val_map[rhs].clone();
+                    let a = self.lookup_val(lhs)?;
+                    let b = self.lookup_val(rhs)?;
                     if let (Some(av), Some(bv)) = (a.constant_value(), b.constant_value()) {
                         self.val_map
                             .insert(*result, PlonkVal::Constant(av.sub(&bv)));
@@ -196,7 +203,7 @@ impl PlonkishCompiler {
                     }
                 }
                 IrInstruction::Neg { result, operand } => {
-                    let v = self.val_map[operand].clone();
+                    let v = self.lookup_val(operand)?;
                     if let Some(cv) = v.constant_value() {
                         self.val_map.insert(*result, PlonkVal::Constant(cv.neg()));
                     } else {
@@ -205,8 +212,8 @@ impl PlonkishCompiler {
                     }
                 }
                 IrInstruction::Mul { result, lhs, rhs } => {
-                    let a = self.val_map[lhs].clone();
-                    let b = self.val_map[rhs].clone();
+                    let a = self.lookup_val(lhs)?;
+                    let b = self.lookup_val(rhs)?;
                     if let (Some(av), Some(bv)) = (a.constant_value(), b.constant_value()) {
                         self.val_map
                             .insert(*result, PlonkVal::Constant(av.mul(&bv)));
@@ -218,8 +225,8 @@ impl PlonkishCompiler {
                     }
                 }
                 IrInstruction::Div { result, lhs, rhs } => {
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     if let (Some(av), Some(bv)) = (a_val.constant_value(), b_val.constant_value())
                     {
                         if let Some(inv) = bv.inv() {
@@ -241,9 +248,9 @@ impl PlonkishCompiler {
                     if_true,
                     if_false,
                 } => {
-                    let cond_val = self.val_map[cond].clone();
-                    let t_val = self.val_map[if_true].clone();
-                    let f_val = self.val_map[if_false].clone();
+                    let cond_val = self.lookup_val(cond)?;
+                    let t_val = self.lookup_val(if_true)?;
+                    let f_val = self.lookup_val(if_false)?;
                     let cond_cell = self.materialize_val(&cond_val);
                     let t_cell = self.materialize_val(&t_val);
                     let f_cell = self.materialize_val(&f_val);
@@ -251,8 +258,8 @@ impl PlonkishCompiler {
                     self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                 }
                 IrInstruction::AssertEq { result, lhs, rhs } => {
-                    let a = self.val_map[lhs].clone();
-                    let b = self.val_map[rhs].clone();
+                    let a = self.lookup_val(lhs)?;
+                    let b = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a);
                     let b_cell = self.materialize_val(&b);
                     self.system.add_copy(a_cell, b_cell);
@@ -263,8 +270,8 @@ impl PlonkishCompiler {
                     left,
                     right,
                 } => {
-                    let left_val = self.val_map[left].clone();
-                    let right_val = self.val_map[right].clone();
+                    let left_val = self.lookup_val(left)?;
+                    let right_val = self.lookup_val(right)?;
                     let left_cell = self.materialize_val(&left_val);
                     let right_cell = self.materialize_val(&right_val);
                     let d_cell = self.emit_poseidon(left_cell, right_cell);
@@ -275,13 +282,13 @@ impl PlonkishCompiler {
                     operand,
                     bits,
                 } => {
-                    let op_val = self.val_map[operand].clone();
+                    let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val);
                     self.emit_range_check(op_cell, *bits)?;
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }
                 IrInstruction::Not { result, operand } => {
-                    let op_val = self.val_map[operand].clone();
+                    let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val);
                     // Boolean enforcement: op^2 = op
                     self.emit_bool_check(op_cell);
@@ -300,8 +307,8 @@ impl PlonkishCompiler {
                     self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row }));
                 }
                 IrInstruction::And { result, lhs, rhs } => {
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
                     self.emit_bool_check(a_cell);
@@ -311,8 +318,8 @@ impl PlonkishCompiler {
                     self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                 }
                 IrInstruction::Or { result, lhs, rhs } => {
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
                     self.emit_bool_check(a_cell);
@@ -344,16 +351,16 @@ impl PlonkishCompiler {
                     self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row: result_row }));
                 }
                 IrInstruction::IsEq { result, lhs, rhs } => {
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
                     let eq_cell = self.emit_is_zero(a_cell, b_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(eq_cell));
                 }
                 IrInstruction::IsNeq { result, lhs, rhs } => {
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
                     let eq_cell = self.emit_is_zero(a_cell, b_cell);
@@ -372,8 +379,8 @@ impl PlonkishCompiler {
                     self.val_map.insert(*result, PlonkVal::Cell(CellRef { column: self.col_d, row }));
                 }
                 IrInstruction::IsLt { result, lhs, rhs } => {
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
                     let lt_cell = self.emit_is_lt(a_cell, b_cell);
@@ -381,8 +388,8 @@ impl PlonkishCompiler {
                 }
                 IrInstruction::IsLe { result, lhs, rhs } => {
                     // a <= b ≡ !(b < a) ≡ 1 - IsLt(b, a)
-                    let a_val = self.val_map[lhs].clone();
-                    let b_val = self.val_map[rhs].clone();
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
                     let lt_cell = self.emit_is_lt(b_cell, a_cell);
@@ -423,7 +430,7 @@ impl PlonkishCompiler {
                     );
                 }
                 IrInstruction::Assert { result, operand } => {
-                    let op_val = self.val_map[operand].clone();
+                    let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val);
                     self.emit_bool_check(op_cell);
                     // Enforce op == 1 via copy constraint to a materialized 1
