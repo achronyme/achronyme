@@ -202,9 +202,9 @@ fn test_r1cs_and_expr() {
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.declare_witness("b");
-    // a && b = a * b → 1 constraint (variable mul)
+    // a && b = 2 boolean enforcements + 1 mul = 3 constraints
     rc.compile_circuit("a && b").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 1);
+    assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]
@@ -212,9 +212,9 @@ fn test_r1cs_or_expr() {
     let mut rc = R1CSCompiler::new();
     rc.declare_witness("a");
     rc.declare_witness("b");
-    // a || b = a + b - a*b → 1 constraint (the mul)
+    // a || b = 2 boolean enforcements + 1 mul = 3 constraints
     rc.compile_circuit("a || b").unwrap();
-    assert_eq!(rc.cs.num_constraints(), 1);
+    assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]

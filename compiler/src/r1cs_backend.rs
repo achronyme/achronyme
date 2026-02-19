@@ -456,10 +456,23 @@ impl R1CSCompiler {
         &mut self,
         pair: Pair<Rule>,
     ) -> Result<LinearCombination, R1CSError> {
+        let one = LinearCombination::from_constant(FieldElement::ONE);
         let mut pairs = pair.into_inner();
         let mut result = self.compile_expr(pairs.next().unwrap())?;
         while let Some(_op) = pairs.next() {
             let right = self.compile_expr(pairs.next().unwrap())?;
+            // Boolean enforcement: result * (1 - result) = 0
+            self.cs.enforce(
+                result.clone(),
+                one.clone() - result.clone(),
+                LinearCombination::zero(),
+            );
+            // Boolean enforcement: right * (1 - right) = 0
+            self.cs.enforce(
+                right.clone(),
+                one.clone() - right.clone(),
+                LinearCombination::zero(),
+            );
             result = self.multiply_lcs(&result, &right);
         }
         Ok(result)
@@ -469,10 +482,23 @@ impl R1CSCompiler {
         &mut self,
         pair: Pair<Rule>,
     ) -> Result<LinearCombination, R1CSError> {
+        let one = LinearCombination::from_constant(FieldElement::ONE);
         let mut pairs = pair.into_inner();
         let mut result = self.compile_expr(pairs.next().unwrap())?;
         while let Some(_op) = pairs.next() {
             let right = self.compile_expr(pairs.next().unwrap())?;
+            // Boolean enforcement: result * (1 - result) = 0
+            self.cs.enforce(
+                result.clone(),
+                one.clone() - result.clone(),
+                LinearCombination::zero(),
+            );
+            // Boolean enforcement: right * (1 - right) = 0
+            self.cs.enforce(
+                right.clone(),
+                one.clone() - right.clone(),
+                LinearCombination::zero(),
+            );
             // a || b = a + b - a*b
             let product = self.multiply_lcs(&result, &right);
             result = result + right - product;
@@ -832,6 +858,30 @@ impl R1CSCompiler {
         Ok(LinearCombination::from_variable(out))
     }
 
+    /// Enforce that `val` fits in 252 bits: `val ∈ [0, 2^252)`.
+    /// Decomposes into 252 boolean-enforced bits and checks sum == val.
+    fn enforce_252_range(&mut self, val: &LinearCombination) {
+        let num_bits = 252u32;
+        let mut sum = LinearCombination::zero();
+        for i in 0..num_bits {
+            let bit_var = self.cs.alloc_witness();
+            self.cs.enforce(
+                LinearCombination::from_variable(bit_var),
+                LinearCombination::from_constant(FieldElement::ONE)
+                    - LinearCombination::from_variable(bit_var),
+                LinearCombination::zero(),
+            );
+            let coeff = compute_power_of_two(i);
+            sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+            self.witness_ops.push(WitnessOp::BitExtract {
+                target: bit_var,
+                source: val.clone(),
+                bit_index: i,
+            });
+        }
+        self.cs.enforce_equal(val.clone(), sum);
+    }
+
     /// Compile an IsLt check via 253-bit decomposition.
     /// Input: an LC representing `diff = b - a + 2^252`.
     /// Returns an LC that is 1 if a < b, 0 otherwise (the value of bit 252).
@@ -1133,6 +1183,9 @@ impl R1CSCompiler {
                     // If a >= b: diff < 2^252, bit 252 clear (result=0)
                     let a = lc_map[lhs].clone();
                     let b = lc_map[rhs].clone();
+                    // Range check: both operands must be in [0, 2^252)
+                    self.enforce_252_range(&a);
+                    self.enforce_252_range(&b);
                     let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
                     let diff = b - a + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff);
@@ -1142,6 +1195,9 @@ impl R1CSCompiler {
                     // a <= b  ≡  !(b < a)  ≡  1 - IsLt(b, a)
                     let a = lc_map[lhs].clone();
                     let b = lc_map[rhs].clone();
+                    // Range check: both operands must be in [0, 2^252)
+                    self.enforce_252_range(&a);
+                    self.enforce_252_range(&b);
                     let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
                     // For IsLt(b, a): diff = a - b + 2^252 - 1
                     let diff = a - b + LinearCombination::from_constant(offset);
