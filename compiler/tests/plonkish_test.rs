@@ -596,3 +596,94 @@ fn test_plonkish_missing_input_error() {
     let result = wg.generate(&inputs, &mut compiler.system.assignments);
     assert!(result.is_err(), "missing input should error");
 }
+
+// ============================================================================
+// Soundness tests — verify IsZero gadget with equal and unequal values
+// ============================================================================
+
+#[test]
+fn test_plonkish_is_eq_equal_values() {
+    // x == y where x=5, y=5 → result should be 1 (true)
+    // This exercises the IsZeroRow witness op with diff=0
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(5));
+    inputs.insert("y".to_string(), FieldElement::from_u64(5));
+    inputs.insert("out".to_string(), FieldElement::ONE);
+
+    let source = r#"
+        let eq = x == y
+        assert_eq(eq, out)
+    "#;
+    compile_source(source, &["out"], &["x", "y"], &inputs);
+}
+
+#[test]
+fn test_plonkish_is_eq_unequal_values() {
+    // x == y where x=5, y=10 → result should be 0 (false)
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(5));
+    inputs.insert("y".to_string(), FieldElement::from_u64(10));
+    inputs.insert("out".to_string(), FieldElement::ZERO);
+
+    let source = r#"
+        let eq = x == y
+        assert_eq(eq, out)
+    "#;
+    compile_source(source, &["out"], &["x", "y"], &inputs);
+}
+
+#[test]
+fn test_plonkish_is_neq_equal_values() {
+    // x != y where x=7, y=7 → result should be 0
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(7));
+    inputs.insert("y".to_string(), FieldElement::from_u64(7));
+    inputs.insert("out".to_string(), FieldElement::ZERO);
+
+    let source = r#"
+        let neq = x != y
+        assert_eq(neq, out)
+    "#;
+    compile_source(source, &["out"], &["x", "y"], &inputs);
+}
+
+#[test]
+fn test_plonkish_is_eq_wrong_result_rejected() {
+    // x == y where x=5, y=10 but we claim result=1 (forged equality)
+    let source = "let eq = x == y\nassert_eq(eq, expected)";
+    let program = ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(5));
+    inputs.insert("y".to_string(), FieldElement::from_u64(10));
+    inputs.insert("expected".to_string(), FieldElement::ONE); // WRONG
+
+    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "claiming 5 == 10 must fail Plonkish verification"
+    );
+}
+
+#[test]
+fn test_plonkish_wrong_poseidon_rejected() {
+    let source = "assert_eq(poseidon(l, r), out)";
+    let program = ir::IrLowering::lower_circuit(source, &["out"], &["l", "r"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("l".to_string(), FieldElement::from_u64(1));
+    inputs.insert("r".to_string(), FieldElement::from_u64(2));
+    inputs.insert("out".to_string(), FieldElement::from_u64(12345)); // WRONG
+
+    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "wrong Poseidon hash should be rejected by Plonkish backend"
+    );
+}
