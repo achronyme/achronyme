@@ -487,3 +487,243 @@ proptest! {
         );
     }
 }
+
+// ============================================================================
+// L3: Cross-backend parity — both backends accept/reject same inputs
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    #[test]
+    fn prop_both_backends_agree_on_poseidon(
+        a in fe_small(),
+        b in fe_small(),
+    ) {
+        use constraints::poseidon::{poseidon_hash, PoseidonParams};
+        let params = PoseidonParams::bn254_t3();
+        let expected = poseidon_hash(&params, a, b);
+
+        both_verify(
+            &[("out", expected)],
+            &[("a", a), ("b", b)],
+            "assert_eq(poseidon(a, b), out)",
+        );
+    }
+
+    #[test]
+    fn prop_both_backends_agree_on_neq(a in fe_u64(), b in fe_u64()) {
+        let neq_val = if a.to_canonical() != b.to_canonical() {
+            FieldElement::ONE
+        } else {
+            FieldElement::ZERO
+        };
+        both_verify(
+            &[("out", neq_val)],
+            &[("a", a), ("b", b)],
+            r#"
+                let r = a != b
+                assert_eq(r, out)
+            "#,
+        );
+    }
+
+    #[test]
+    fn prop_both_backends_agree_on_lt(
+        a in (0u64..100_000).prop_map(FieldElement::from_u64),
+        b in (0u64..100_000).prop_map(FieldElement::from_u64),
+    ) {
+        let la = a.to_canonical();
+        let lb = b.to_canonical();
+        let lt_val = if (la[3], la[2], la[1], la[0]) < (lb[3], lb[2], lb[1], lb[0]) {
+            FieldElement::ONE
+        } else {
+            FieldElement::ZERO
+        };
+        both_verify(
+            &[("out", lt_val)],
+            &[("a", a), ("b", b)],
+            r#"
+                let r = a < b
+                assert_eq(r, out)
+            "#,
+        );
+    }
+
+    #[test]
+    fn prop_both_backends_agree_on_assert(
+        a in fe_small(),
+        b in fe_small(),
+    ) {
+        let prod = a.mul(&b);
+        both_verify(
+            &[("out", prod)],
+            &[("a", a), ("b", b)],
+            r#"
+                let r = a * b
+                assert_eq(r, out)
+            "#,
+        );
+    }
+}
+
+// ============================================================================
+// L3: Cross-backend rejection parity — wrong witness rejected by both
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    #[test]
+    fn prop_both_backends_reject_wrong_mul(
+        a in fe_u64(),
+        b in fe_u64(),
+        c in fe_u64(),
+    ) {
+        let correct = a.mul(&b);
+        prop_assume!(c.to_canonical() != correct.to_canonical());
+
+        let pub_names = &["out"];
+        let wit_names = &["a", "b"];
+        let source = "assert_eq(a * b, out)";
+
+        // R1CS should reject
+        {
+            let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+            let mut compiler = R1CSCompiler::new();
+            compiler.compile_ir(&program).unwrap();
+            let wg = WitnessGenerator::from_compiler(&compiler);
+            let mut inputs = HashMap::new();
+            inputs.insert("out".to_string(), c);
+            inputs.insert("a".to_string(), a);
+            inputs.insert("b".to_string(), b);
+            let w = wg.generate(&inputs).unwrap();
+            assert!(compiler.cs.verify(&w).is_err(), "R1CS should reject wrong mul");
+        }
+
+        // Plonkish should also reject
+        {
+            let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+            let mut compiler = PlonkishCompiler::new();
+            compiler.compile_ir(&program).unwrap();
+            let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+            let mut inputs = HashMap::new();
+            inputs.insert("out".to_string(), c);
+            inputs.insert("a".to_string(), a);
+            inputs.insert("b".to_string(), b);
+            wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+            assert!(compiler.system.verify().is_err(), "Plonkish should reject wrong mul");
+        }
+    }
+}
+
+// ============================================================================
+// L4: Division-by-zero tests — all paths in both backends
+// ============================================================================
+
+#[test]
+fn test_r1cs_div_by_zero_witness_error() {
+    let pub_names = &["out"];
+    let wit_names = &["a", "b"];
+    let source = "assert_eq(a / b, out)";
+
+    let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(42));
+    inputs.insert("b".to_string(), FieldElement::ZERO); // div by zero
+    inputs.insert("out".to_string(), FieldElement::ZERO);
+
+    let result = wg.generate(&inputs);
+    assert!(result.is_err(), "R1CS witness gen should error on div by zero");
+}
+
+#[test]
+fn test_plonkish_div_by_zero_witness_error() {
+    let pub_names = &["out"];
+    let wit_names = &["a", "b"];
+    let source = "assert_eq(a / b, out)";
+
+    let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(42));
+    inputs.insert("b".to_string(), FieldElement::ZERO);
+    inputs.insert("out".to_string(), FieldElement::ZERO);
+
+    let result = wg.generate(&inputs, &mut compiler.system.assignments);
+    assert!(result.is_err(), "Plonkish witness gen should error on div by zero");
+}
+
+#[test]
+fn test_r1cs_div_by_zero_in_expression() {
+    // Division where denominator is a computed zero: (a - a) = 0
+    let pub_names = &["out"];
+    let wit_names = &["a"];
+    let source = "assert_eq(a / (a - a), out)";
+
+    let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(5));
+    inputs.insert("out".to_string(), FieldElement::ZERO);
+
+    let result = wg.generate(&inputs);
+    assert!(result.is_err(), "div by computed zero should error");
+}
+
+#[test]
+fn test_r1cs_div_valid_witness_passes() {
+    // Ensure valid division works correctly
+    let a = FieldElement::from_u64(42);
+    let b = FieldElement::from_u64(7);
+    let expected = a.div(&b).unwrap();
+
+    r1cs_verify(
+        &[("out", expected)],
+        &[("a", a), ("b", b)],
+        "assert_eq(a / b, out)",
+    );
+}
+
+#[test]
+fn test_plonkish_div_valid_witness_passes() {
+    let a = FieldElement::from_u64(42);
+    let b = FieldElement::from_u64(7);
+    let expected = a.div(&b).unwrap();
+
+    plonkish_verify(
+        &[("out", expected)],
+        &[("a", a), ("b", b)],
+        "assert_eq(a / b, out)",
+    );
+}
+
+#[test]
+fn test_r1cs_div_zero_numerator_passes() {
+    // 0 / x = 0 should work
+    r1cs_verify(
+        &[("out", FieldElement::ZERO)],
+        &[("a", FieldElement::ZERO), ("b", FieldElement::from_u64(7))],
+        "assert_eq(a / b, out)",
+    );
+}
+
+#[test]
+fn test_plonkish_div_zero_numerator_passes() {
+    // 0 / x = 0 should work
+    plonkish_verify(
+        &[("out", FieldElement::ZERO)],
+        &[("a", FieldElement::ZERO), ("b", FieldElement::from_u64(7))],
+        "assert_eq(a / b, out)",
+    );
+}
