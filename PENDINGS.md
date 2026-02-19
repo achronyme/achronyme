@@ -57,44 +57,14 @@ The immediate goal is to transition from a general-purpose scripting engine to a
 
 ### MEDIUM — Language & Parser
 
-- [ ] **M1: `-a^2` parses as `(-a)^2` instead of `-(a^2)`**
-    - *Context*: Unary negation has higher precedence than `^` in the PEG grammar. Standard math convention is `-(a^2)`.
-    - *Action*: Reorder grammar so `prefix_expr` wraps `pow_expr`, not the other way around.
-    - *File*: `achronyme-parser/src/grammar.pest`
-
-- [ ] **M2: `if`/`else` missing from keyword list**
-    - *Context*: These can be used as variable identifiers: `let if = 5` is valid.
-    - *Action*: Add `if` and `else` to the keyword exclusion rule in the grammar.
-    - *File*: `achronyme-parser/src/grammar.pest`
-
-- [ ] **M3: Chained comparisons produce silent wrong results**
-    - *Context*: `a < b < c` compiles without error but doesn't mean `a < b && b < c`.
-    - *Action*: Reject chained comparisons at parse or IR level with a clear error.
-    - *File*: `achronyme-parser/src/grammar.pest` or `ir/src/lower.rs`
-
-- [ ] **M4: Constant folding misses identities**
-    - *Context*: `x * 1`, `x + 0`, `x - 0`, `x / 1` are not folded by the optimizer.
-    - *Action*: Add identity folding rules to `ir/src/passes/const_fold.rs`.
-    - *File*: `ir/src/passes/const_fold.rs`
-
-- [ ] **M5: Mux constant folding incomplete**
-    - *Context*: `Mux` only folds when cond is constant, not when both branches are equal.
-    - *Action*: Add `if t == f then result = t` rule.
-    - *File*: `ir/src/passes/const_fold.rs`
-
-- [ ] **M6: Side effects in both if/else branches always emitted**
-    - *Context*: `if c { assert_eq(a, b) } else { assert_eq(c, d) }` emits both assert_eq constraints unconditionally. The MUX only selects the return value.
-    - *Action*: Document this limitation clearly, or implement conditional constraint emission.
-    - *File*: `ir/src/lower.rs`, documentation
-
-- [ ] **M7: HashMap indexing panics in compile_ir**
-    - *Context*: `&vars[&var]` and `&lc_map[&var]` will panic if a variable is missing.
-    - *Action*: Replace with `.get()` + proper error propagation.
-    - *Files*: `compiler/src/r1cs_backend.rs`, `compiler/src/plonkish_backend.rs`
-
-- [ ] **M8: Multiple `unwrap()`/`expect()` in library code**
-    - *Context*: Potential DoS vectors through panics in parser/compiler library code.
-    - *Action*: Audit and replace with `?` or proper error handling.
+- [x] **M1: `-a^2` parses as `(-a)^2` instead of `-(a^2)`** — Fixed: reordered grammar precedence
+- [x] **M2: `if`/`else` missing from keyword list** — Fixed: added to keyword exclusion
+- [x] **M3: Chained comparisons produce silent wrong results** — Fixed: limited to single comparison
+- [x] **M4: Constant folding misses identities** — Fixed: added x+0, x*1, x-0, x/1 rules
+- [x] **M5: Mux constant folding incomplete** — Fixed: added equal-branches rule
+- [x] **M6: Side effects in both if/else branches always emitted** — Documented as known limitation
+- [x] **M7: HashMap indexing panics in compile_ir** — Fixed: lookup helpers with proper errors
+- [x] **M8: Multiple `unwrap()`/`expect()` in library code** — Fixed: replaced with `?` error propagation
 
 ### LOW — Testing & Feature Gaps
 
@@ -114,9 +84,10 @@ The immediate goal is to transition from a general-purpose scripting engine to a
     - *Context*: Div-by-zero is handled differently across constant/variable/witness paths.
     - *Action*: Comprehensive test coverage for all division paths in both backends.
 
-### RESOLVED (this session)
+### RESOLVED
 
 - [x] **C1: `emit_is_zero` check constraint was a tautology in Plonkish** — Fixed: `d` set to constant 0 instead of computed by ArithRow.
 - [x] **C2: `&&`/`||` in direct AST compiler lacked boolean enforcement** — Fixed: added `x * (1-x) = 0` enforcement for both operands.
 - [x] **C3: IsLt/IsLe unsound for unbounded field elements** — Fixed: 252-bit range checks on both operands in R1CS and Plonkish.
 - [x] **H4: Silent division by zero in Plonkish witness gen** — Fixed: `InverseRow` now returns error instead of silently skipping.
+- [x] **M1–M8**: All MEDIUM findings resolved (see above).
