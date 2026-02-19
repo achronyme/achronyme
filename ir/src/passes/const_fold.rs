@@ -189,22 +189,29 @@ pub fn constant_fold(program: &mut IrProgram) {
             }
             Instruction::Not { result, operand } => {
                 if let Some(v) = constants.get(operand) {
-                    let folded = if v.is_zero() {
-                        FieldElement::ONE
-                    } else {
-                        FieldElement::ZERO
-                    };
-                    constants.insert(*result, folded);
-                    *inst = Instruction::Const {
-                        result: *result,
-                        value: folded,
-                    };
+                    // Only fold if operand is actually boolean (0 or 1).
+                    // Non-boolean values must keep the instruction so the
+                    // boolean enforcement constraint is emitted in the circuit.
+                    if v.is_zero() || *v == FieldElement::ONE {
+                        let folded = if v.is_zero() {
+                            FieldElement::ONE
+                        } else {
+                            FieldElement::ZERO
+                        };
+                        constants.insert(*result, folded);
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: folded,
+                        };
+                    }
                 }
             }
             Instruction::And { result, lhs, rhs } => {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
-                // Short-circuit: 0 && x = 0
+                let is_bool =
+                    |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
+                // Short-circuit: 0 && x = 0 (safe: 0 is boolean)
                 if lhs_val.map_or(false, |v| v.is_zero())
                     || rhs_val.map_or(false, |v| v.is_zero())
                 {
@@ -214,18 +221,25 @@ pub fn constant_fold(program: &mut IrProgram) {
                         value: FieldElement::ZERO,
                     };
                 } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
-                    let folded = a.mul(&b);
-                    constants.insert(*result, folded);
-                    *inst = Instruction::Const {
-                        result: *result,
-                        value: folded,
-                    };
+                    // Only fold if both operands are actually boolean.
+                    // Non-boolean constants must keep the instruction so
+                    // boolean enforcement constraints are emitted.
+                    if is_bool(a) && is_bool(b) {
+                        let folded = a.mul(&b);
+                        constants.insert(*result, folded);
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: folded,
+                        };
+                    }
                 }
             }
             Instruction::Or { result, lhs, rhs } => {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
-                // Short-circuit: 1 || x = 1
+                let is_bool =
+                    |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
+                // Short-circuit: 1 || x = 1 (safe: 1 is boolean)
                 if lhs_val.map_or(false, |v| v == FieldElement::ONE)
                     || rhs_val.map_or(false, |v| v == FieldElement::ONE)
                 {
@@ -235,13 +249,16 @@ pub fn constant_fold(program: &mut IrProgram) {
                         value: FieldElement::ONE,
                     };
                 } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
-                    // a + b - a*b
-                    let folded = a.add(&b).sub(&a.mul(&b));
-                    constants.insert(*result, folded);
-                    *inst = Instruction::Const {
-                        result: *result,
-                        value: folded,
-                    };
+                    // Only fold if both operands are actually boolean.
+                    if is_bool(a) && is_bool(b) {
+                        // a + b - a*b
+                        let folded = a.add(&b).sub(&a.mul(&b));
+                        constants.insert(*result, folded);
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: folded,
+                        };
+                    }
                 }
             }
             Instruction::IsEq { result, lhs, rhs } => {
