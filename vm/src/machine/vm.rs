@@ -465,7 +465,9 @@ impl VM {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
                     
-                    debug_assert!(base + a + 1 < self.stack.len(), "Stack overflow in FOR_ITER: loop variable writes out of bounds");
+                    if base + a + 1 >= self.stack.len() {
+                        return Err(RuntimeError::StackOverflow);
+                    }
 
                     let iter_val = self.get_reg(base, a);
                     if !iter_val.is_iter() {
