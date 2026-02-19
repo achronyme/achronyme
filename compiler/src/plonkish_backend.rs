@@ -301,10 +301,7 @@ impl PlonkishCompiler {
                     let neg_op = self.negate_cell(op_cell);
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                        cell: CellRef { column: self.col_b, row },
-                        value: FieldElement::ONE,
-                    });
+                    self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE);
                     self.wire(neg_op, CellRef { column: self.col_a, row });
                     self.wire(one_cell, CellRef { column: self.col_c, row });
                     self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
@@ -334,10 +331,7 @@ impl PlonkishCompiler {
                     // sum = a*1 + b
                     let sum_row = self.alloc_row();
                     self.system.set(self.col_s_arith, sum_row, FieldElement::ONE);
-                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                        cell: CellRef { column: self.col_b, row: sum_row },
-                        value: FieldElement::ONE,
-                    });
+                    self.constrain_constant(CellRef { column: self.col_b, row: sum_row }, FieldElement::ONE);
                     self.wire(a_cell, CellRef { column: self.col_a, row: sum_row });
                     self.wire(b_cell, CellRef { column: self.col_c, row: sum_row });
                     self.witness_ops.push(PlonkWitnessOp::ArithRow { row: sum_row });
@@ -345,10 +339,7 @@ impl PlonkishCompiler {
                     // result = sum*1 + neg_product
                     let result_row = self.alloc_row();
                     self.system.set(self.col_s_arith, result_row, FieldElement::ONE);
-                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                        cell: CellRef { column: self.col_b, row: result_row },
-                        value: FieldElement::ONE,
-                    });
+                    self.constrain_constant(CellRef { column: self.col_b, row: result_row }, FieldElement::ONE);
                     self.wire(sum_cell, CellRef { column: self.col_a, row: result_row });
                     self.wire(neg_product, CellRef { column: self.col_c, row: result_row });
                     self.witness_ops.push(PlonkWitnessOp::ArithRow { row: result_row });
@@ -373,10 +364,7 @@ impl PlonkishCompiler {
                     let neg_eq = self.negate_cell(eq_cell);
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                        cell: CellRef { column: self.col_b, row },
-                        value: FieldElement::ONE,
-                    });
+                    self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE);
                     self.wire(one_cell, CellRef { column: self.col_a, row });
                     self.wire(neg_eq, CellRef { column: self.col_c, row });
                     self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
@@ -403,13 +391,7 @@ impl PlonkishCompiler {
                     let neg_lt = self.negate_cell(lt_cell);
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                        cell: CellRef {
-                            column: self.col_b,
-                            row,
-                        },
-                        value: FieldElement::ONE,
-                    });
+                    self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE);
                     self.wire(
                         one_cell,
                         CellRef {
@@ -488,6 +470,27 @@ impl PlonkishCompiler {
     }
 
     // ========================================================================
+    // Constrain constant: write to fixed column + copy constraint
+    // ========================================================================
+
+    /// Set an advice cell to a constant value with a verifier-enforced copy constraint.
+    /// 1. Records SetConstant witness op (generator fills the advice cell)
+    /// 2. Writes value to col_constant (fixed, verifier-committed)
+    /// 3. Adds copy constraint: advice cell == fixed cell
+    fn constrain_constant(&mut self, cell: CellRef, value: FieldElement) {
+        self.witness_ops
+            .push(PlonkWitnessOp::SetConstant { cell, value });
+        self.system.set(self.col_constant, cell.row, value);
+        self.system.add_copy(
+            cell,
+            CellRef {
+                column: self.col_constant,
+                row: cell.row,
+            },
+        );
+    }
+
+    // ========================================================================
     // Materialization: PlonkVal → CellRef
     // ========================================================================
 
@@ -498,14 +501,7 @@ impl PlonkishCompiler {
                 // Row: 0 * 0 + fe = fe → gate: s*(0*0 + fe - fe) = 0
                 let row = self.alloc_row();
                 self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                self.system.set(self.col_constant, row, *fe);
-                self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                    cell: CellRef {
-                        column: self.col_c,
-                        row,
-                    },
-                    value: *fe,
-                });
+                self.constrain_constant(CellRef { column: self.col_c, row }, *fe);
                 self.witness_ops
                     .push(PlonkWitnessOp::ArithRow { row });
                 CellRef {
@@ -519,13 +515,7 @@ impl PlonkishCompiler {
                 // d = a*1 + b
                 let row = self.alloc_row();
                 self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                    cell: CellRef {
-                        column: self.col_b,
-                        row,
-                    },
-                    value: FieldElement::ONE,
-                });
+                self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE);
                 self.wire(
                     a_cell,
                     CellRef {
@@ -555,13 +545,7 @@ impl PlonkishCompiler {
                 let neg_b = self.negate_cell(b_cell);
                 let row = self.alloc_row();
                 self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                    cell: CellRef {
-                        column: self.col_b,
-                        row,
-                    },
-                    value: FieldElement::ONE,
-                });
+                self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE);
                 self.wire(
                     a_cell,
                     CellRef {
@@ -601,13 +585,7 @@ impl PlonkishCompiler {
                 row,
             },
         );
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef {
-                column: self.col_b,
-                row,
-            },
-            value: FieldElement::ONE.neg(),
-        });
+        self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE.neg());
         self.witness_ops
             .push(PlonkWitnessOp::ArithRow { row });
         CellRef {
@@ -676,14 +654,8 @@ impl PlonkishCompiler {
             },
         );
         // b = inv (filled by InverseRow)
-        // d = 1 (set as constant)
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef {
-                column: self.col_d,
-                row: inv_row,
-            },
-            value: FieldElement::ONE,
-        });
+        // d = 1 (set as constant, copy-constrained to fixed column)
+        self.constrain_constant(CellRef { column: self.col_d, row: inv_row }, FieldElement::ONE);
         self.witness_ops
             .push(PlonkWitnessOp::InverseRow { row: inv_row });
         let inv_cell = CellRef {
@@ -734,13 +706,7 @@ impl PlonkishCompiler {
         let diff_row = self.alloc_row();
         self.system
             .set(self.col_s_arith, diff_row, FieldElement::ONE);
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef {
-                column: self.col_b,
-                row: diff_row,
-            },
-            value: FieldElement::ONE,
-        });
+        self.constrain_constant(CellRef { column: self.col_b, row: diff_row }, FieldElement::ONE);
         self.wire(
             t,
             CellRef {
@@ -791,13 +757,7 @@ impl PlonkishCompiler {
                     // state[i] = state[i]*1 + rc
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
-                    self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                        cell: CellRef {
-                            column: self.col_b,
-                            row,
-                        },
-                        value: FieldElement::ONE,
-                    });
+                    self.constrain_constant(CellRef { column: self.col_b, row }, FieldElement::ONE);
                     self.wire(
                         state[i],
                         CellRef {
@@ -843,13 +803,7 @@ impl PlonkishCompiler {
                 let sum01_row = self.alloc_row();
                 self.system
                     .set(self.col_s_arith, sum01_row, FieldElement::ONE);
-                self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                    cell: CellRef {
-                        column: self.col_b,
-                        row: sum01_row,
-                    },
-                    value: FieldElement::ONE,
-                });
+                self.constrain_constant(CellRef { column: self.col_b, row: sum01_row }, FieldElement::ONE);
                 self.wire(
                     prod0,
                     CellRef {
@@ -874,13 +828,7 @@ impl PlonkishCompiler {
                 let sum_all_row = self.alloc_row();
                 self.system
                     .set(self.col_s_arith, sum_all_row, FieldElement::ONE);
-                self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                    cell: CellRef {
-                        column: self.col_b,
-                        row: sum_all_row,
-                    },
-                    value: FieldElement::ONE,
-                });
+                self.constrain_constant(CellRef { column: self.col_b, row: sum_all_row }, FieldElement::ONE);
                 self.wire(
                     sum01,
                     CellRef {
@@ -936,10 +884,7 @@ impl PlonkishCompiler {
         let neg_b = self.negate_cell(b);
         let diff_row = self.alloc_row();
         self.system.set(self.col_s_arith, diff_row, FieldElement::ONE);
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef { column: self.col_b, row: diff_row },
-            value: FieldElement::ONE,
-        });
+        self.constrain_constant(CellRef { column: self.col_b, row: diff_row }, FieldElement::ONE);
         self.wire(a, CellRef { column: self.col_a, row: diff_row });
         self.wire(neg_b, CellRef { column: self.col_c, row: diff_row });
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row: diff_row });
@@ -959,38 +904,29 @@ impl PlonkishCompiler {
         let neg_dti = self.negate_cell(diff_times_inv);
         let eq_row = self.alloc_row();
         self.system.set(self.col_s_arith, eq_row, FieldElement::ONE);
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef { column: self.col_b, row: eq_row },
-            value: FieldElement::ONE,
-        });
+        self.constrain_constant(CellRef { column: self.col_b, row: eq_row }, FieldElement::ONE);
         self.wire(one_cell, CellRef { column: self.col_a, row: eq_row });
         self.wire(neg_dti, CellRef { column: self.col_c, row: eq_row });
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row: eq_row });
         let eq_cell = CellRef { column: self.col_d, row: eq_row };
 
         // CONSTRAINT 1: diff * inv + eq = 1
-        // Uses SetConstant(d=1) so the gate actually constrains the relationship.
+        // d=1 is copy-constrained to fixed column so the gate actually constrains the relationship.
         // Gate: s_arith * (a*b + c - d) = 0  →  diff*inv + eq - 1 = 0
         let enforce_row = self.alloc_row();
         self.system.set(self.col_s_arith, enforce_row, FieldElement::ONE);
         self.wire(diff, CellRef { column: self.col_a, row: enforce_row });
         self.wire(inv_cell, CellRef { column: self.col_b, row: enforce_row });
         self.wire(eq_cell, CellRef { column: self.col_c, row: enforce_row });
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef { column: self.col_d, row: enforce_row },
-            value: FieldElement::ONE,
-        });
+        self.constrain_constant(CellRef { column: self.col_d, row: enforce_row }, FieldElement::ONE);
 
         // CONSTRAINT 2: diff * eq = 0
-        // Uses SetConstant(d=0) so the gate constrains diff*eq = 0.
+        // d=0 is copy-constrained to fixed column so the gate constrains diff*eq = 0.
         let check_row = self.alloc_row();
         self.system.set(self.col_s_arith, check_row, FieldElement::ONE);
         self.wire(diff, CellRef { column: self.col_a, row: check_row });
         self.wire(eq_cell, CellRef { column: self.col_b, row: check_row });
-        self.witness_ops.push(PlonkWitnessOp::SetConstant {
-            cell: CellRef { column: self.col_d, row: check_row },
-            value: FieldElement::ZERO,
-        });
+        self.constrain_constant(CellRef { column: self.col_d, row: check_row }, FieldElement::ZERO);
 
         eq_cell
     }
@@ -1015,10 +951,7 @@ impl PlonkishCompiler {
                 source: cell,
                 bit_index: i,
             });
-            self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                cell: CellRef { column: self.col_b, row: acc_row },
-                value: coeff,
-            });
+            self.constrain_constant(CellRef { column: self.col_b, row: acc_row }, coeff);
             if let Some(prev) = running_sum {
                 self.wire(prev, CellRef { column: self.col_c, row: acc_row });
             }
@@ -1075,13 +1008,7 @@ impl PlonkishCompiler {
                 source: diff_cell,
                 bit_index: i,
             });
-            self.witness_ops.push(PlonkWitnessOp::SetConstant {
-                cell: CellRef {
-                    column: self.col_b,
-                    row: acc_row,
-                },
-                value: coeff,
-            });
+            self.constrain_constant(CellRef { column: self.col_b, row: acc_row }, coeff);
             if let Some(prev) = running_sum {
                 self.wire(
                     prev,
@@ -1167,10 +1094,10 @@ impl PlonkishCompiler {
             values,
         });
 
-        self.system.register_lookup(
+        self.system.register_lookup_with_selector(
             &format!("range_{bits}"),
-            vec![Expression::cell(self.col_s_range, 0)
-                .mul(Expression::cell(self.col_a, 0))],
+            Expression::cell(self.col_s_range, 0),
+            vec![Expression::cell(self.col_a, 0)],
             vec![Expression::cell(table_col, 0)],
         );
 
