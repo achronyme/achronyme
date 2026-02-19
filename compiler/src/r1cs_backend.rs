@@ -775,6 +775,10 @@ impl R1CSCompiler {
 
     /// Compile `if cond { a } else { b }` as a MUX constraint.
     ///
+    /// **Important**: Both branches are always compiled and all their constraints
+    /// are emitted unconditionally. The MUX only selects which *value* to return.
+    /// This is an inherent limitation of arithmetic circuits.
+    ///
     /// Generates:
     /// 1. Boolean enforcement: `cond * (1 - cond) = 0` (1 constraint)
     /// 2. MUX: `result = cond * (a - b) + b` (1 constraint for the multiplication)
@@ -977,6 +981,16 @@ impl R1CSCompiler {
     pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError> {
         let mut lc_map: HashMap<SsaVar, LinearCombination> = HashMap::new();
 
+        // Helper closure to look up SSA variables with proper error messages
+        let lookup = |map: &HashMap<SsaVar, LinearCombination>, var: &SsaVar| -> Result<LinearCombination, R1CSError> {
+            map.get(var).cloned().ok_or_else(|| {
+                R1CSError::UnsupportedOperation(
+                    format!("undefined SSA variable {:?}", var),
+                    None,
+                )
+            })
+        };
+
         for inst in &program.instructions {
             match inst {
                 IrInstruction::Const { result, value } => {
@@ -1004,29 +1018,29 @@ impl R1CSCompiler {
                     lc_map.insert(*result, LinearCombination::from_variable(var));
                 }
                 IrInstruction::Add { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     lc_map.insert(*result, a + b);
                 }
                 IrInstruction::Sub { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     lc_map.insert(*result, a - b);
                 }
                 IrInstruction::Neg { result, operand } => {
-                    let lc = lc_map[operand].clone();
+                    let lc = lookup(&lc_map, operand)?;
                     lc_map.insert(*result, lc * FieldElement::ONE.neg());
                 }
                 IrInstruction::Mul { result, lhs, rhs } => {
-                    let a = &lc_map[lhs];
-                    let b = &lc_map[rhs];
-                    let out = self.multiply_lcs(a, b);
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
+                    let out = self.multiply_lcs(&a, &b);
                     lc_map.insert(*result, out);
                 }
                 IrInstruction::Div { result, lhs, rhs } => {
-                    let a = &lc_map[lhs];
-                    let b = &lc_map[rhs];
-                    let out = self.divide_lcs(a, b)?;
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
+                    let out = self.divide_lcs(&a, &b)?;
                     lc_map.insert(*result, out);
                 }
                 IrInstruction::Mux {
@@ -1035,9 +1049,9 @@ impl R1CSCompiler {
                     if_true,
                     if_false,
                 } => {
-                    let cond_lc = lc_map[cond].clone();
-                    let then_lc = lc_map[if_true].clone();
-                    let else_lc = lc_map[if_false].clone();
+                    let cond_lc = lookup(&lc_map, cond)?;
+                    let then_lc = lookup(&lc_map, if_true)?;
+                    let else_lc = lookup(&lc_map, if_false)?;
 
                     // Boolean enforcement: cond * (1 - cond) = 0
                     let one = LinearCombination::from_constant(FieldElement::ONE);
@@ -1054,8 +1068,8 @@ impl R1CSCompiler {
                     lc_map.insert(*result, selected + else_lc);
                 }
                 IrInstruction::AssertEq { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     self.cs.enforce_equal(a, b.clone());
                     lc_map.insert(*result, b);
                 }
@@ -1064,7 +1078,7 @@ impl R1CSCompiler {
                     operand,
                     bits,
                 } => {
-                    let lc = lc_map[operand].clone();
+                    let lc = lookup(&lc_map, operand)?;
                     // Boolean decomposition: x = sum(b_i * 2^i), each b_i boolean
                     // Cost: bits boolean constraints + 1 sum equality = bits+1 total
                     let mut sum = LinearCombination::zero();
@@ -1098,7 +1112,7 @@ impl R1CSCompiler {
                     lc_map.insert(*result, lc);
                 }
                 IrInstruction::Not { result, operand } => {
-                    let op_lc = lc_map[operand].clone();
+                    let op_lc = lookup(&lc_map, operand)?;
                     // Boolean enforcement: op * (1 - op) = 0
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     self.cs.enforce(
@@ -1110,8 +1124,8 @@ impl R1CSCompiler {
                     lc_map.insert(*result, one - op_lc);
                 }
                 IrInstruction::And { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     // Boolean enforcement for both operands
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     self.cs.enforce(
@@ -1129,8 +1143,8 @@ impl R1CSCompiler {
                     lc_map.insert(*result, out);
                 }
                 IrInstruction::Or { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     // Boolean enforcement for both operands
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     self.cs.enforce(
@@ -1148,8 +1162,8 @@ impl R1CSCompiler {
                     lc_map.insert(*result, a + b - product);
                 }
                 IrInstruction::IsEq { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     let diff = a - b;
                     // IsZero gadget: alloc inv + eq_result
                     // enforce: diff * inv = 1 - eq_result
@@ -1169,8 +1183,8 @@ impl R1CSCompiler {
                     lc_map.insert(*result, eq_lc);
                 }
                 IrInstruction::IsNeq { result, lhs, rhs } => {
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     let diff = a - b;
                     // IsZero gadget then negate
                     let inv_var = self.cs.alloc_witness();
@@ -1193,8 +1207,8 @@ impl R1CSCompiler {
                     // Offset is 2^252-1 so that a==b maps to diff=2^252-1 (bit 252=0).
                     // If a < b: diff >= 2^252, bit 252 set (result=1)
                     // If a >= b: diff < 2^252, bit 252 clear (result=0)
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     // Range check: both operands must be in [0, 2^252)
                     self.enforce_252_range(&a);
                     self.enforce_252_range(&b);
@@ -1205,8 +1219,8 @@ impl R1CSCompiler {
                 }
                 IrInstruction::IsLe { result, lhs, rhs } => {
                     // a <= b  ≡  !(b < a)  ≡  1 - IsLt(b, a)
-                    let a = lc_map[lhs].clone();
-                    let b = lc_map[rhs].clone();
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
                     // Range check: both operands must be in [0, 2^252)
                     self.enforce_252_range(&a);
                     self.enforce_252_range(&b);
@@ -1218,7 +1232,7 @@ impl R1CSCompiler {
                     lc_map.insert(*result, one - lt_lc);
                 }
                 IrInstruction::Assert { result, operand } => {
-                    let op_lc = lc_map[operand].clone();
+                    let op_lc = lookup(&lc_map, operand)?;
                     // Boolean enforcement: op * (1 - op) = 0
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     self.cs.enforce(
@@ -1235,11 +1249,11 @@ impl R1CSCompiler {
                     left,
                     right,
                 } => {
-                    let left_lc = &lc_map[left];
-                    let right_lc = &lc_map[right];
+                    let left_lc = lookup(&lc_map, left)?;
+                    let right_lc = lookup(&lc_map, right)?;
 
-                    let left_var = self.materialize_lc(left_lc);
-                    let right_var = self.materialize_lc(right_lc);
+                    let left_var = self.materialize_lc(&left_lc);
+                    let right_var = self.materialize_lc(&right_lc);
 
                     if self.poseidon_params.is_none() {
                         self.poseidon_params =

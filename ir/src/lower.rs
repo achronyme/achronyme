@@ -744,6 +744,12 @@ impl IrLowering {
     // Control flow
     // ========================================================================
 
+    /// Lower `if cond { a } else { b }` as a MUX: `result = mux(cond, a, b)`.
+    ///
+    /// **Important**: Both branches are always fully lowered and all their
+    /// constraints (assert_eq, assert, etc.) are emitted unconditionally.
+    /// The MUX only selects which *value* to return. This is an inherent
+    /// limitation of arithmetic circuits — there is no conditional execution.
     fn lower_if(&mut self, pair: Pair<Rule>) -> Result<SsaVar, IrError> {
         let mut inner = pair.into_inner();
 
