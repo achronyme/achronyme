@@ -79,3 +79,156 @@ The immediate goal is to transition from a general-purpose scripting engine to a
 - [x] **H1–H5**: All HIGH findings resolved
 - [x] **M1–M8**: All MEDIUM findings resolved
 - [x] **L1–L4**: All LOW findings resolved — full audit clean
+
+---
+
+## 7. Deep Audit Findings (Phase 10 — 8-agent cryptographic & systems audit)
+
+All findings below were confirmed against the source code. Each includes
+the exact file:line where the issue was verified.
+
+### CRITICAL — Plonkish Soundness (systemic architectural flaw)
+
+All C1–C4 stem from a single root cause: `col_constant` (fixed column,
+`plonkish_backend.rs:97`) is allocated but **never referenced in the gate
+polynomial** (`plonkish_backend.rs:104-110`). The gate is:
+`s_arith * (a * b + c - d) = 0` — only uses `col_a..col_d` (all advice).
+`SetConstant` (`PlonkWitnessOp`, L43) only sets witness values; it creates
+zero constraints. A malicious prover controls all advice columns freely.
+
+**The R1CS backend is NOT affected** — all gadgets use `enforce()` which
+creates proper verifiable constraint equations.
+
+- [ ] **C1: IsZero gadget under-constrained** — `plonkish_backend.rs:974-993`
+    - `d=1` (enforce row) and `d=0` (check row) set via `SetConstant` on advice `col_d`
+    - Gate constrains `a*b + c = d` where `d` is prover-chosen → prover forges `==`, `!=`, `<`, `<=`
+    - *Attack*: with `a=5, b=3`, prover sets `eq=1, d=1, inv=anything` → claims equality
+    - *Fix*: Use copy constraints to materialized constants, or add `col_constant` to gate poly
+
+- [ ] **C2: Division gadget under-constrained** — `plonkish_backend.rs:666-696`
+    - `den * inv = 1` has `d=1` via `SetConstant` on advice → prover sets `d=0, inv=0`
+    - Gate: `den*0 + 0 - 0 = 0` satisfied → fabricated division results
+    - *Fix*: Same as C1
+
+- [ ] **C3: Bit decomposition coefficients not constrained** — `plonkish_backend.rs:1004-1031, 1040-1111`
+    - Powers-of-two (`2^i`) set in `col_b` (advice) via `SetConstant`
+    - Prover replaces `2^i` with arbitrary coefficients → bypasses range_check, IsLt, IsLe
+    - Affects: `enforce_252_range`, `emit_is_lt`, all comparison operators
+    - *Fix*: Coefficients must go in fixed column or be copy-constrained
+
+- [ ] **C4: Arithmetic identity col_b not constrained** — `plonkish_backend.rs:304-306, 337-339, 521-527, 558-563`
+    - `col_b=1` or `col_b=-1` for DeferredAdd/Sub/Neg via `SetConstant` on advice
+    - Prover sets `col_b=2` → `d = a*2 + b` instead of `d = a + b`
+    - Affects: every deferred add, sub, neg, Not, Or materialization
+    - *Fix*: Same systemic fix — incorporate `col_constant` into gate or use copy constraints
+
+**Recommended systemic fix**: Change gate polynomial to:
+```
+s_arith * (a * b + c + constant - d) = 0
+```
+Then use `col_constant` (fixed, verifier-committed) for values the prover must not control.
+
+### HIGH — Correctness & Security
+
+- [ ] **H1: `nPubOut`/`nPubIn` inverted in R1CS export** — `export.rs:59-66`
+    - All public vars mapped as `nPubOut`, `nPubIn=0`
+    - Breaks `snarkjs zkey export solidityverifier` (expects `nPubIn > 0`)
+    - *Fix*: Map public inputs as `nPubIn`, or add distinction between pub in/out
+
+- [ ] **H2: `public x` + `witness x` creates duplicate unconstrained wire** — `ir/lower.rs:37-55, 898-912`
+    - Both `declare_public` and `declare_witness` call `env.insert(name, v)` without duplicate check
+    - Second declaration overwrites env → first wire (public) orphaned, unconstrained
+    - *Fix*: Check for duplicate names in `declare_public`/`declare_witness` and error
+
+- [ ] **H3: `let` rebinding in if/else branches pollutes outer scope** — `ir/lower.rs:849-893`
+    - `lower_block` L883: `self.env.retain(|k, _| outer_keys.contains(k))` keeps old keys but with NEW values
+    - `let x = 5; if cond { let x = 10 }` → after if, `x` is `SsaVar(new)` not `SsaVar(old)`
+    - *Fix*: Snapshot env values before block, restore after `retain`
+
+- [ ] **H4: And/Or short-circuit fold removes boolean enforcement** — `ir/passes/const_fold.rs:214-222, 242-250`
+    - `0 && x` folds to `Const(0)`, removing `x*(1-x)=0` enforcement for `x`
+    - If `x` is used elsewhere without separate boolean check → under-constrained
+    - Dual: `1 || x` folds to `Const(1)` same issue
+    - *Fix*: Emit standalone boolean enforcement for the non-constant operand before folding
+
+- [ ] **H5: Lookup zero-value bypass in Plonkish** — `plonkish.rs:382-384`
+    - `if input.iter().all(|v| v.is_zero()) { continue; }` skips both inactive rows AND `range_check(0)`
+    - Conflates "selector=0 → inactive" with "selector=1, value=0 → valid check"
+    - *Fix*: Check selector value directly instead of input expression being zero
+
+### MEDIUM — Efficiency, Robustness, Interop
+
+- [ ] **M1: IsLt/IsLe ~760 constraints per comparison** — `r1cs_backend.rs:887-931, 1205-1232`
+    - Two 252-bit range checks (504 constraints) + 253-bit decomposition (254) per comparison
+    - For bounded inputs (already range-checked): reuse existing range proofs → ~66 constraints
+    - Depth-3 Merkle: ~7,099 → ~2,201 constraints possible (69% reduction)
+
+- [ ] **M2: Boolean propagation pass missing** — IR passes
+    - No tracking of known-boolean variables across instructions
+    - `Not`, `And`, `Or` always emit boolean enforcement even when operand is already boolean
+    - *Fix*: Add boolean-tracking pass that marks variables proven boolean by prior constraints
+
+- [ ] **M3: LinearCombination terms not deduplicated** — `r1cs.rs:121-148`
+    - Add/Sub extend terms vector without merging: `[(x,3),(x,-3)]` not simplified
+    - `is_constant()` returns `false` for effectively-constant LCs → unnecessary materialization
+    - *Fix*: Add `simplify()` method, call before `is_constant()`, `constant_value()`, `as_single_variable()`
+
+- [ ] **M4: `from_le_bytes` accepts values >= p silently** — `field.rs:242-248`
+    - `from_canonical` (L215) says "already reduced mod p" but doesn't check
+    - `montgomery_mul` wraps silently → different FieldElement than expected
+    - *Fix*: Add range check in `from_le_bytes`, return `Option` or reduce explicitly
+
+- [ ] **M5: Integer literals limited to u64** — `ir/lower.rs:317-319`
+    - `digits.parse::<u64>()` rejects values > 2^64
+    - Field supports ~2^254 — blocks large constants needed for crypto
+    - *Fix*: Use `from_decimal_str` for arbitrary-precision parsing
+
+- [ ] **M6: Poseidon round constants without cross-validation** — `poseidon.rs:22-158`
+    - Custom Grain LFSR generates constants — no test against reference implementation
+    - Subtle LFSR bug → incompatible hash, broken interop with circomlibjs/iden3
+    - *Fix*: Add test vector `poseidon(1, 2) == <known reference value>`
+
+- [ ] **M7: Negative numbers in `--inputs` CLI fail** — `cli/src/commands/circuit.rs`
+    - `-42` parsed incorrectly in comma-separated `--inputs "x=-42"`
+
+- [ ] **M8: Taint analysis false negatives** — `ir/passes/taint.rs`
+    - `w - w` tagged as Witness but is effectively Constant(0) → misses optimization opportunity
+
+### LOW — Design & Ergonomics
+
+- [ ] **L1: `compile_circuit()` vs `compile_ir()` feature gap** — `r1cs_backend.rs:436-453`
+    - Direct AST path rejects comparison operators (`==`, `<`, etc.)
+    - IR path supports them — same source behaves differently depending on path
+    - *Fix*: Deprecate/remove direct path, or document discrepancy
+
+- [ ] **L2: `pow_expr` is left-associative** — `grammar.pest:108`
+    - `2^3^2 = (2^3)^2 = 64` instead of mathematical convention `2^(3^2) = 512`
+    - *Fix*: Change grammar to right-recursive or document
+
+- [ ] **L3: No arrays, type system, or circuit composition**
+    - Major expressiveness gaps vs Noir (arrays+structs+generics), Circom (templates+signals)
+    - Blocks reusable subcircuit patterns and indexed witness access
+
+- [ ] **L4: MAX_UNROLL_ITERATIONS = 10,000 without memory guard** — `ir/lower.rs:13`
+    - `for i in 0..10000` generates 10K IR instructions without memory limit
+    - *Fix*: Add instruction count budget or progressive memory check
+
+### Test Coverage Gaps (P0 security-critical)
+
+- [ ] **T1: IsLt/IsLe untested near 2^252 boundary** — boundary values for 253-bit decomposition
+- [ ] **T2: Division constraint soundness vs malicious prover** — manual witness with divisor=0
+- [ ] **T3: Plonkish boolean enforcement** — no test that flag=2 fails in Plonkish mux
+- [ ] **T4: DCE safety for RangeCheck/PoseidonHash** — unused result must not be eliminated
+- [ ] **T5: Optimization soundness proptest** — optimized vs unoptimized circuits for random inputs
+
+### Test Coverage Gaps (P1 important)
+
+- [ ] **T6: Negative witness for direct AST compile path** — only IR path has negative tests
+- [ ] **T7: Poseidon zero inputs E2E** — `poseidon(0,0)` only tested natively, not through circuit pipeline
+- [ ] **T8: range_check edge cases** — bits=0, bits=1, bits=253, max valid value (2^bits-1)
+- [ ] **T9: Missing Plonkish equivalents** — for loops, if/else, poseidon with expressions, power
+- [ ] **T10: Witness corruption detection** — corrupt intermediate value, verify must fail
+- [ ] **T11: Field serialization round-trip for multi-limb values** — only single-limb tested
+- [ ] **T12: `from_decimal_str` edge cases** — "0", p, p+1, invalid chars, empty string
+- [ ] **T13: snarkjs integration tests in CI** — currently `#[ignore]`, need Node.js in CI
+- [ ] **T14: CLI integration tests** — zero test coverage for `circuit` command
