@@ -8,6 +8,10 @@ use pest::Parser;
 use crate::error::{IrError, SourceSpan};
 use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
 
+/// Maximum number of iterations allowed when statically unrolling a `for` loop.
+/// Prevents DoS via `for i in 0..1000000` which would generate millions of IR instructions.
+pub const MAX_UNROLL_ITERATIONS: u64 = 10_000;
+
 /// Extract a source span from a pest pair.
 fn span_of(pair: &Pair<Rule>) -> Option<SourceSpan> {
     let (line, col) = pair.as_span().start_pos().line_col();
@@ -799,6 +803,17 @@ impl IrLowering {
             .map_err(|_| IrError::ParseError(format!("invalid range end: {end_str}")))?;
 
         let body = inner.next().unwrap();
+
+        let iterations = end.saturating_sub(start);
+        if iterations > MAX_UNROLL_ITERATIONS {
+            return Err(IrError::UnsupportedOperation(
+                format!(
+                    "for loop range {start}..{end} has {iterations} iterations, \
+                     exceeding the maximum of {MAX_UNROLL_ITERATIONS}"
+                ),
+                span_of(&body),
+            ));
+        }
 
         let mut last = None;
         for i in start..end {

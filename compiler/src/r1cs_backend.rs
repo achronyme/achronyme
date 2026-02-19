@@ -747,6 +747,18 @@ impl R1CSCompiler {
 
         let body = inner.next().unwrap(); // block
 
+        let iterations = end.saturating_sub(start);
+        if iterations > ir::lower::MAX_UNROLL_ITERATIONS {
+            return Err(R1CSError::UnsupportedOperation(
+                format!(
+                    "for loop range {start}..{end} has {iterations} iterations, \
+                     exceeding the maximum of {}",
+                    ir::lower::MAX_UNROLL_ITERATIONS,
+                ),
+                None,
+            ));
+        }
+
         // Unroll: for each i in start..end, bind ident to constant i and compile body
         for i in start..end {
             let const_lc = LinearCombination::from_constant(FieldElement::from_u64(i));
