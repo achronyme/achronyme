@@ -218,7 +218,11 @@ impl WitnessGenerator {
                     witness[target_inv.index()] = FieldElement::ZERO;
                     witness[target_result.index()] = FieldElement::ONE;
                 } else {
-                    witness[target_inv.index()] = diff_val.inv().unwrap();
+                    // Safe: diff_val is non-zero, so inv() always returns Some
+                    let inv = diff_val.inv().ok_or(WitnessError::DivisionByZero {
+                        variable_index: target_inv.index(),
+                    })?;
+                    witness[target_inv.index()] = inv;
                     witness[target_result.index()] = FieldElement::ZERO;
                 }
             }
@@ -248,10 +252,9 @@ impl WitnessGenerator {
         internal_start: usize,
         internal_count: usize,
     ) -> Result<(), WitnessError> {
-        let params = self
-            .poseidon_params
-            .as_ref()
-            .expect("poseidon_params must be set when PoseidonHash ops exist");
+        let params = self.poseidon_params.as_ref().ok_or_else(|| {
+            WitnessError::MissingInput("poseidon parameters not initialized".into())
+        })?;
 
         let total_rounds = params.r_f + params.r_p;
         let half_f = params.r_f / 2;
