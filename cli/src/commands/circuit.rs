@@ -24,6 +24,10 @@ fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
         let val = if val_str.starts_with("0x") || val_str.starts_with("0X") {
             FieldElement::from_hex_str(val_str)
                 .context(format!("invalid hex value for {name:?}: {val_str:?}"))?
+        } else if let Some(digits) = val_str.strip_prefix('-') {
+            let abs = FieldElement::from_decimal_str(digits)
+                .context(format!("invalid decimal value for {name:?}: {val_str:?}"))?;
+            abs.neg()
         } else {
             FieldElement::from_decimal_str(val_str)
                 .context(format!("invalid decimal value for {name:?}: {val_str:?}"))?
@@ -153,4 +157,47 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>) -> Resul
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_inputs_positive_decimal() {
+        let map = parse_inputs("x=42,y=0").unwrap();
+        assert_eq!(map["x"], FieldElement::from_u64(42));
+        assert_eq!(map["y"], FieldElement::ZERO);
+    }
+
+    #[test]
+    fn parse_inputs_negative_decimal() {
+        let map = parse_inputs("x=-1").unwrap();
+        // -1 mod p = p - 1
+        assert_eq!(map["x"], FieldElement::from_u64(1).neg());
+    }
+
+    #[test]
+    fn parse_inputs_negative_large() {
+        let map = parse_inputs("a=-42,b=7").unwrap();
+        assert_eq!(map["a"], FieldElement::from_u64(42).neg());
+        assert_eq!(map["b"], FieldElement::from_u64(7));
+    }
+
+    #[test]
+    fn parse_inputs_hex() {
+        let map = parse_inputs("x=0xFF").unwrap();
+        assert_eq!(map["x"], FieldElement::from_u64(255));
+    }
+
+    #[test]
+    fn parse_inputs_empty_pair_skipped() {
+        let map = parse_inputs("x=1,,y=2").unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn parse_inputs_invalid_pair_errors() {
+        assert!(parse_inputs("no_equals").is_err());
+    }
 }
