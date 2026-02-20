@@ -141,6 +141,9 @@ impl PlonkishCompiler {
 
     /// Compile an SSA IR program into a Plonkish constraint system.
     pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), PlonkishError> {
+        // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
+        let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
+
         for inst in &program.instructions {
             match inst {
                 IrInstruction::Const { result, value } => {
@@ -289,6 +292,8 @@ impl PlonkishCompiler {
                     let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val);
                     self.emit_range_check(op_cell, *bits)?;
+                    // Record proven bound for IsLt/IsLe optimization
+                    range_bounds.insert(*operand, *bits);
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }
                 IrInstruction::Not { result, operand } => {
@@ -375,7 +380,13 @@ impl PlonkishCompiler {
                     let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
-                    let lt_cell = self.emit_is_lt(a_cell, b_cell);
+                    let bound_a = range_bounds.get(lhs).copied();
+                    let bound_b = range_bounds.get(rhs).copied();
+                    let bound = match (bound_a, bound_b) {
+                        (Some(ba), Some(bb)) => Some(ba.max(bb)),
+                        _ => None,
+                    };
+                    let lt_cell = self.emit_is_lt_bounded(a_cell, b_cell, bound);
                     self.val_map.insert(*result, PlonkVal::Cell(lt_cell));
                 }
                 IrInstruction::IsLe { result, lhs, rhs } => {
@@ -384,7 +395,13 @@ impl PlonkishCompiler {
                     let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
-                    let lt_cell = self.emit_is_lt(b_cell, a_cell);
+                    let bound_a = range_bounds.get(lhs).copied();
+                    let bound_b = range_bounds.get(rhs).copied();
+                    let bound = match (bound_a, bound_b) {
+                        (Some(ba), Some(bb)) => Some(ba.max(bb)),
+                        _ => None,
+                    };
+                    let lt_cell = self.emit_is_lt_bounded(b_cell, a_cell, bound);
                     // 1 - lt
                     let one_cell =
                         self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
@@ -932,13 +949,12 @@ impl PlonkishCompiler {
     }
 
     // ========================================================================
-    // 252-bit range enforcement
+    // N-bit range enforcement
     // ========================================================================
 
-    /// Enforce that `cell` holds a value in [0, 2^252).
-    /// Decomposes into 252 boolean-enforced bits and checks sum == cell.
-    fn enforce_252_range(&mut self, cell: CellRef) {
-        let num_bits = 252u32;
+    /// Enforce that `cell` holds a value in [0, 2^num_bits).
+    /// Decomposes into `num_bits` boolean-enforced bits and checks sum == cell.
+    fn enforce_n_range(&mut self, cell: CellRef, num_bits: u32) {
         let mut running_sum: Option<CellRef> = None;
 
         for i in 0..num_bits {
@@ -963,22 +979,29 @@ impl PlonkishCompiler {
         self.system.add_copy(running_sum.unwrap(), cell);
     }
 
+    /// Enforce that `cell` holds a value in [0, 2^252).
+    fn enforce_252_range(&mut self, cell: CellRef) {
+        self.enforce_n_range(cell, 252);
+    }
+
     // ========================================================================
-    // IsLt gadget: 253-bit decomposition of (b - a + 2^252)
+    // IsLt gadget: n-bit decomposition
     // ========================================================================
 
     /// Returns a cell that is 1 if a < b, 0 otherwise.
-    /// Uses 253-bit decomposition: bit 252 of (b - a + 2^252) indicates a < b.
-    /// Both operands are range-checked to [0, 2^252) for soundness.
-    fn emit_is_lt(&mut self, a: CellRef, b: CellRef) -> CellRef {
-        // Range check both operands
-        self.enforce_252_range(a);
-        self.enforce_252_range(b);
-        let num_bits = 253u32;
-        // Offset is 2^252-1 so that a==b maps to diff=2^252-1 (bit 252=0).
-        let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
+    /// When `bound_bits` is Some(k), both operands are assumed to be in [0, 2^k)
+    /// (from prior RangeCheck), so range checks are skipped and decomposition
+    /// uses k+1 bits. Otherwise, full 252-bit range checks + 253-bit decomp.
+    fn emit_is_lt_bounded(&mut self, a: CellRef, b: CellRef, bound_bits: Option<u32>) -> CellRef {
+        let effective_bits = bound_bits.unwrap_or_else(|| {
+            self.enforce_252_range(a);
+            self.enforce_252_range(b);
+            252
+        });
+        let num_bits = effective_bits + 1;
+        let offset = compute_power_of_two(effective_bits).sub(&FieldElement::ONE);
 
-        // diff = b - a + 2^252 - 1
+        // diff = b - a + offset
         let diff_val = PlonkVal::DeferredAdd(
             Box::new(PlonkVal::DeferredSub(
                 Box::new(PlonkVal::Cell(b)),
@@ -988,14 +1011,13 @@ impl PlonkishCompiler {
         );
         let diff_cell = self.materialize_val(&diff_val);
 
-        // Decompose diff into 253 bits with running sum accumulation
+        // Decompose diff into num_bits bits with running sum accumulation
         let mut bit_cells = Vec::with_capacity(num_bits as usize);
         let mut running_sum: Option<CellRef> = None;
 
         for i in 0..num_bits {
             let coeff = compute_power_of_two(i);
 
-            // Accumulation row: d = bit_i * 2^i + sum_prev
             let acc_row = self.alloc_row();
             self.system
                 .set(self.col_s_arith, acc_row, FieldElement::ONE);
@@ -1033,9 +1055,10 @@ impl PlonkishCompiler {
         // Enforce sum == diff
         self.system.add_copy(running_sum.unwrap(), diff_cell);
 
-        // Bit 252 is the result
-        bit_cells[252]
+        // Top bit is the result
+        bit_cells[effective_bits as usize]
     }
+
 
     // ========================================================================
     // Range check: 1 lookup row

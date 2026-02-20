@@ -874,10 +874,9 @@ impl R1CSCompiler {
         Ok(LinearCombination::from_variable(out))
     }
 
-    /// Enforce that `val` fits in 252 bits: `val ∈ [0, 2^252)`.
-    /// Decomposes into 252 boolean-enforced bits and checks sum == val.
-    fn enforce_252_range(&mut self, val: &LinearCombination) {
-        let num_bits = 252u32;
+    /// Enforce that `val` fits in `num_bits` bits: `val ∈ [0, 2^num_bits)`.
+    /// Decomposes into `num_bits` boolean-enforced bits and checks sum == val.
+    fn enforce_n_range(&mut self, val: &LinearCombination, num_bits: u32) {
         let mut sum = LinearCombination::zero();
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
@@ -898,13 +897,18 @@ impl R1CSCompiler {
         self.cs.enforce_equal(val.clone(), sum);
     }
 
-    /// Compile an IsLt check via 253-bit decomposition.
-    /// Input: an LC representing `diff = b - a + 2^252`.
-    /// Returns an LC that is 1 if a < b, 0 otherwise (the value of bit 252).
-    fn compile_is_lt_via_bits(&mut self, diff: &LinearCombination) -> LinearCombination {
-        let num_bits = 253u32;
+    /// Enforce that `val` fits in 252 bits: `val ∈ [0, 2^252)`.
+    fn enforce_252_range(&mut self, val: &LinearCombination) {
+        self.enforce_n_range(val, 252);
+    }
+
+    /// Compile an IsLt check via `num_bits`-bit decomposition.
+    /// Input: an LC representing `diff = b - a + offset`.
+    /// Returns an LC that is 1 if a < b, 0 otherwise (bit `num_bits - 1`).
+    fn compile_is_lt_via_bits(&mut self, diff: &LinearCombination, num_bits: u32) -> LinearCombination {
         let mut sum = LinearCombination::zero();
         let mut top_bit_lc = LinearCombination::zero();
+        let top_index = num_bits - 1;
 
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
@@ -922,7 +926,7 @@ impl R1CSCompiler {
                 source: diff.clone(),
                 bit_index: i,
             });
-            if i == 252 {
+            if i == top_index {
                 top_bit_lc = LinearCombination::from_variable(bit_var);
             }
         }
@@ -980,6 +984,8 @@ impl R1CSCompiler {
     /// `ConstraintSystem` and helper methods (`multiply_lcs`, `divide_lcs`, etc).
     pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError> {
         let mut lc_map: HashMap<SsaVar, LinearCombination> = HashMap::new();
+        // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
+        let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
 
         // Helper closure to look up SSA variables with proper error messages
         let lookup = |map: &HashMap<SsaVar, LinearCombination>, var: &SsaVar| -> Result<LinearCombination, R1CSError> {
@@ -1109,6 +1115,8 @@ impl R1CSCompiler {
                         });
                     }
                     self.cs.enforce_equal(lc.clone(), sum);
+                    // Record proven bound for IsLt/IsLe optimization
+                    range_bounds.insert(*operand, *bits);
                     lc_map.insert(*result, lc);
                 }
                 IrInstruction::Not { result, operand } => {
@@ -1203,31 +1211,44 @@ impl R1CSCompiler {
                     lc_map.insert(*result, one - eq_lc);
                 }
                 IrInstruction::IsLt { result, lhs, rhs } => {
-                    // a < b via bit decomposition of (b - a + 2^252 - 1)
-                    // Offset is 2^252-1 so that a==b maps to diff=2^252-1 (bit 252=0).
-                    // If a < b: diff >= 2^252, bit 252 set (result=1)
-                    // If a >= b: diff < 2^252, bit 252 clear (result=0)
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    // Range check: both operands must be in [0, 2^252)
-                    self.enforce_252_range(&a);
-                    self.enforce_252_range(&b);
-                    let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
+                    let bound_a = range_bounds.get(lhs).copied();
+                    let bound_b = range_bounds.get(rhs).copied();
+
+                    let effective_bits = match (bound_a, bound_b) {
+                        (Some(ba), Some(bb)) => ba.max(bb),
+                        _ => {
+                            if bound_a.is_none() { self.enforce_252_range(&a); }
+                            if bound_b.is_none() { self.enforce_252_range(&b); }
+                            252
+                        }
+                    };
+
+                    let offset = compute_power_of_two(effective_bits).sub(&FieldElement::ONE);
                     let diff = b - a + LinearCombination::from_constant(offset);
-                    let lt_lc = self.compile_is_lt_via_bits(&diff);
+                    let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
                     lc_map.insert(*result, lt_lc);
                 }
                 IrInstruction::IsLe { result, lhs, rhs } => {
                     // a <= b  ≡  !(b < a)  ≡  1 - IsLt(b, a)
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    // Range check: both operands must be in [0, 2^252)
-                    self.enforce_252_range(&a);
-                    self.enforce_252_range(&b);
-                    let offset = compute_power_of_two(252).sub(&FieldElement::ONE);
-                    // For IsLt(b, a): diff = a - b + 2^252 - 1
+                    let bound_a = range_bounds.get(lhs).copied();
+                    let bound_b = range_bounds.get(rhs).copied();
+
+                    let effective_bits = match (bound_a, bound_b) {
+                        (Some(ba), Some(bb)) => ba.max(bb),
+                        _ => {
+                            if bound_a.is_none() { self.enforce_252_range(&a); }
+                            if bound_b.is_none() { self.enforce_252_range(&b); }
+                            252
+                        }
+                    };
+
+                    let offset = compute_power_of_two(effective_bits).sub(&FieldElement::ONE);
                     let diff = a - b + LinearCombination::from_constant(offset);
-                    let lt_lc = self.compile_is_lt_via_bits(&diff);
+                    let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     lc_map.insert(*result, one - lt_lc);
                 }

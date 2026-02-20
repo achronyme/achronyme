@@ -987,3 +987,68 @@ fn test_plonkish_assert_non_boolean_rejected() {
         "assert(2) must fail boolean enforcement in Plonkish"
     );
 }
+
+// ============================================================================
+// M1: IsLt/IsLe bounded-input optimization tests (Plonkish)
+// ============================================================================
+
+/// Helper: compile source, return row count (proxy for circuit size).
+fn plonkish_row_count(source: &str, public: &[&str], witness: &[&str]) -> usize {
+    let program = ir::IrLowering::lower_circuit(source, public, witness).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    compiler.num_circuit_rows()
+}
+
+#[test]
+fn plonkish_is_lt_fewer_rows_with_prior_range_check() {
+    let full = plonkish_row_count("assert(a < b)", &["a"], &["b"]);
+    let opt = plonkish_row_count(
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+        &["a"],
+        &["b"],
+    );
+    assert!(
+        opt < full,
+        "bounded should use fewer rows: {opt} vs {full}"
+    );
+}
+
+#[test]
+fn plonkish_is_lt_bounded_correct() {
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(100));
+    inputs.insert("b".to_string(), FieldElement::from_u64(200));
+    compile_source(
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+        &["a"],
+        &["b"],
+        &inputs,
+    );
+}
+
+#[test]
+fn plonkish_is_le_bounded_equal() {
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(42));
+    inputs.insert("b".to_string(), FieldElement::from_u64(42));
+    compile_source(
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a <= b)",
+        &["a"],
+        &["b"],
+        &inputs,
+    );
+}
+
+#[test]
+fn plonkish_is_lt_bounded_max_values() {
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(254));
+    inputs.insert("b".to_string(), FieldElement::from_u64(255));
+    compile_source(
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+        &["a"],
+        &["b"],
+        &inputs,
+    );
+}

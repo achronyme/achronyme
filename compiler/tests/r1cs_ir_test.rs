@@ -887,3 +887,123 @@ fn ir_division_malicious_witness_forged_result_rejected() {
         "forged division result must fail verification"
     );
 }
+
+// ============================================================================
+// M1: IsLt/IsLe bounded-input optimization tests
+// ============================================================================
+
+/// Helper: compile source with given pub/wit names and return constraint count.
+fn compile_constraint_count(source: &str, public: &[&str], witness: &[&str]) -> usize {
+    let program = IrLowering::lower_circuit(source, public, witness).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    compiler.cs.num_constraints()
+}
+
+#[test]
+fn is_lt_fewer_constraints_with_prior_range_check() {
+    // Unbounded: 760 (2×253 range + 254 decomp) + 2 (assert) = 762
+    let full = compile_constraint_count("assert(a < b)", &["a"], &["b"]);
+
+    // Bounded to 8 bits: 9+9 (range_check) + 10 (9-bit decomp) + 2 (assert) = 30
+    let opt = compile_constraint_count(
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+        &["a"],
+        &["b"],
+    );
+
+    assert!(
+        opt < full,
+        "bounded should use fewer constraints: {opt} vs {full}"
+    );
+    assert!(opt <= 32, "expected ≤32 constraints with 8-bit bounds, got {opt}");
+    assert!(full >= 760, "unbounded should use ~762 constraints, got {full}");
+}
+
+#[test]
+fn is_le_fewer_constraints_with_prior_range_check() {
+    let full = compile_constraint_count("assert(a <= b)", &["a"], &["b"]);
+    let opt = compile_constraint_count(
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a <= b)",
+        &["a"],
+        &["b"],
+    );
+
+    assert!(opt < full, "bounded should use fewer: {opt} vs {full}");
+    assert!(opt <= 32, "expected ≤32 with 8-bit bounds, got {opt}");
+}
+
+#[test]
+fn is_lt_asymmetric_bounds_uses_max() {
+    // range_check(a, 8) + range_check(b, 16) → effective_bits = 16
+    // Cost: 9 + 17 + 18 + 2 = 46
+    let count = compile_constraint_count(
+        "range_check(a, 8)\nrange_check(b, 16)\nassert(a < b)",
+        &["a"],
+        &["b"],
+    );
+    assert!(count <= 48, "expected ≤48 with asymmetric bounds, got {count}");
+}
+
+#[test]
+fn is_lt_one_bounded_falls_back_to_full() {
+    // Only a is range-checked → b needs full 252-bit range check
+    // Cost: 9 (range_check a) + 253 (enforce_252 b) + 254 (decomp) + 2 = 518
+    let count = compile_constraint_count(
+        "range_check(a, 8)\nassert(a < b)",
+        &["a"],
+        &["b"],
+    );
+    // Should be less than full (saves one 252-bit range check = 253 constraints)
+    let full = compile_constraint_count("assert(a < b)", &["a"], &["b"]);
+    assert!(
+        count < full,
+        "one bounded should save one range check: {count} vs {full}"
+    );
+}
+
+#[test]
+fn is_lt_bounded_correct_values() {
+    ir_only_verify_fe(
+        &[("a", FieldElement::from_u64(100))],
+        &[("b", FieldElement::from_u64(200))],
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+    );
+}
+
+#[test]
+fn is_le_bounded_equal_values() {
+    ir_only_verify_fe(
+        &[("a", FieldElement::from_u64(42))],
+        &[("b", FieldElement::from_u64(42))],
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a <= b)",
+    );
+}
+
+#[test]
+fn is_lt_bounded_max_values_for_bits() {
+    // Both at max of 8-bit range: 254 < 255
+    ir_only_verify_fe(
+        &[("a", FieldElement::from_u64(254))],
+        &[("b", FieldElement::from_u64(255))],
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+    );
+}
+
+#[test]
+fn is_lt_bounded_zero_values() {
+    ir_only_verify_fe(
+        &[("a", FieldElement::from_u64(0))],
+        &[("b", FieldElement::from_u64(1))],
+        "range_check(a, 8)\nrange_check(b, 8)\nassert(a < b)",
+    );
+}
+
+#[test]
+fn is_lt_bounded_asymmetric_correct() {
+    ir_only_verify_fe(
+        &[("a", FieldElement::from_u64(200))],
+        &[("b", FieldElement::from_u64(50000))],
+        "range_check(a, 8)\nrange_check(b, 16)\nassert(a < b)",
+    );
+}
