@@ -869,8 +869,8 @@ impl PlonkishCompiler {
             }
         }
 
-        // Output = state[1]
-        state[1]
+        // Output = state[0] (circomlibjs convention)
+        state[0]
     }
 
     fn emit_sbox(&mut self, x: CellRef) -> CellRef {
