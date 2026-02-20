@@ -200,6 +200,7 @@ impl Instruction {
 }
 
 /// A flat SSA program — a sequence of instructions.
+#[derive(Debug)]
 pub struct IrProgram {
     pub instructions: Vec<Instruction>,
     pub next_var: u32,

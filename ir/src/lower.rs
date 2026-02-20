@@ -18,11 +18,29 @@ fn span_of(pair: &Pair<Rule>) -> Option<SourceSpan> {
     Some(SourceSpan { line, col })
 }
 
+/// A value in the lowering environment: either a single SSA variable or an array.
+#[derive(Clone, Debug)]
+enum EnvValue {
+    Scalar(SsaVar),
+    Array(Vec<SsaVar>),
+}
+
+/// A user-defined function stored for inlining.
+#[derive(Clone, Debug)]
+struct FnDef {
+    params: Vec<String>,
+    body_source: String,
+}
+
 /// Lowers an Achronyme AST into an SSA IR program.
 pub struct IrLowering {
     program: IrProgram,
-    /// Maps variable names to their current SSA variable (aliasing, not copying).
-    env: HashMap<String, SsaVar>,
+    /// Maps variable names to their current value (scalar or array).
+    env: HashMap<String, EnvValue>,
+    /// User-defined functions, inlined at each call site.
+    fn_table: HashMap<String, FnDef>,
+    /// Tracks active function calls to detect recursion.
+    call_stack: HashSet<String>,
 }
 
 impl IrLowering {
@@ -30,6 +48,8 @@ impl IrLowering {
         Self {
             program: IrProgram::new(),
             env: HashMap::new(),
+            fn_table: HashMap::new(),
+            call_stack: HashSet::new(),
         }
     }
 
@@ -41,7 +61,7 @@ impl IrLowering {
             name: name.to_string(),
             visibility: Visibility::Public,
         });
-        self.env.insert(name.to_string(), v);
+        self.env.insert(name.to_string(), EnvValue::Scalar(v));
         v
     }
 
@@ -53,8 +73,44 @@ impl IrLowering {
             name: name.to_string(),
             visibility: Visibility::Witness,
         });
-        self.env.insert(name.to_string(), v);
+        self.env.insert(name.to_string(), EnvValue::Scalar(v));
         v
+    }
+
+    /// Declare a public array of N inputs: `{name}_0` .. `{name}_{N-1}`.
+    pub fn declare_public_array(&mut self, name: &str, size: usize) -> Vec<SsaVar> {
+        let vars: Vec<SsaVar> = (0..size)
+            .map(|i| {
+                let elem_name = format!("{name}_{i}");
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Input {
+                    result: v,
+                    name: elem_name,
+                    visibility: Visibility::Public,
+                });
+                v
+            })
+            .collect();
+        self.env.insert(name.to_string(), EnvValue::Array(vars.clone()));
+        vars
+    }
+
+    /// Declare a witness array of N inputs: `{name}_0` .. `{name}_{N-1}`.
+    pub fn declare_witness_array(&mut self, name: &str, size: usize) -> Vec<SsaVar> {
+        let vars: Vec<SsaVar> = (0..size)
+            .map(|i| {
+                let elem_name = format!("{name}_{i}");
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Input {
+                    result: v,
+                    name: elem_name,
+                    visibility: Visibility::Witness,
+                });
+                v
+            })
+            .collect();
+        self.env.insert(name.to_string(), EnvValue::Array(vars.clone()));
+        vars
     }
 
     /// Parse and lower an Achronyme source string into an IR program.
@@ -77,24 +133,44 @@ impl IrLowering {
     }
 
     /// Convenience: declare inputs and lower in one call.
+    /// Names can include array syntax like `"path[3]"` to declare `path_0, path_1, path_2`.
     pub fn lower_circuit(
         source: &str,
         public: &[&str],
         witness: &[&str],
     ) -> Result<IrProgram, IrError> {
-        // Check for duplicate names across public and witness
+        // Parse array syntax and collect flat names for duplicate check
+        let pub_decls = parse_decl_specs(public)?;
+        let wit_decls = parse_decl_specs(witness)?;
+
         let mut seen = HashSet::new();
-        for name in public.iter().chain(witness.iter()) {
-            if !seen.insert(*name) {
-                return Err(IrError::DuplicateInput(name.to_string()));
+        for (name, size) in pub_decls.iter().chain(wit_decls.iter()) {
+            if let Some(n) = size {
+                for i in 0..*n {
+                    let flat = format!("{name}_{i}");
+                    if !seen.insert(flat.clone()) {
+                        return Err(IrError::DuplicateInput(flat));
+                    }
+                }
+            } else if !seen.insert(name.clone()) {
+                return Err(IrError::DuplicateInput(name.clone()));
             }
         }
+
         let mut lowering = IrLowering::new();
-        for name in public {
-            lowering.declare_public(name);
+        for (name, size) in &pub_decls {
+            if let Some(n) = size {
+                lowering.declare_public_array(name, *n);
+            } else {
+                lowering.declare_public(name);
+            }
         }
-        for name in witness {
-            lowering.declare_witness(name);
+        for (name, size) in &wit_decls {
+            if let Some(n) = size {
+                lowering.declare_witness_array(name, *n);
+            } else {
+                lowering.declare_witness(name);
+            }
         }
         lowering.lower(source)
     }
@@ -111,27 +187,72 @@ impl IrLowering {
             .filter(|p| p.as_rule() == Rule::stmt)
             .collect();
 
-        // Pass 1: collect declaration names
-        let mut pub_names = Vec::new();
-        let mut wit_names = Vec::new();
+        // Pass 1: collect declaration names (with optional array sizes)
+        // Each entry is (name, optional_size)
+        let mut pub_decls: Vec<(String, Option<usize>)> = Vec::new();
+        let mut wit_decls: Vec<(String, Option<usize>)> = Vec::new();
         for stmt in &stmts {
             let inner = stmt.clone().into_inner().next().unwrap();
             match inner.as_rule() {
                 Rule::public_decl => {
-                    for child in inner.into_inner() {
+                    let mut children = inner.into_inner().peekable();
+                    while let Some(child) = children.next() {
                         if child.as_rule() == Rule::identifier {
-                            pub_names.push(child.as_str().to_string());
+                            let name = child.as_str().to_string();
+                            let size = if children.peek().map(|p| p.as_rule()) == Some(Rule::array_size) {
+                                let size_pair = children.next().unwrap();
+                                let s = size_pair.into_inner().next().unwrap().as_str();
+                                Some(s.parse::<usize>().map_err(|_| {
+                                    IrError::ParseError(format!("invalid array size: {s}"))
+                                })?)
+                            } else {
+                                None
+                            };
+                            pub_decls.push((name, size));
                         }
                     }
                 }
                 Rule::witness_decl => {
-                    for child in inner.into_inner() {
+                    let mut children = inner.into_inner().peekable();
+                    while let Some(child) = children.next() {
                         if child.as_rule() == Rule::identifier {
-                            wit_names.push(child.as_str().to_string());
+                            let name = child.as_str().to_string();
+                            let size = if children.peek().map(|p| p.as_rule()) == Some(Rule::array_size) {
+                                let size_pair = children.next().unwrap();
+                                let s = size_pair.into_inner().next().unwrap().as_str();
+                                Some(s.parse::<usize>().map_err(|_| {
+                                    IrError::ParseError(format!("invalid array size: {s}"))
+                                })?)
+                            } else {
+                                None
+                            };
+                            wit_decls.push((name, size));
                         }
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Build flat name lists for duplicate checking and return value
+        let mut pub_names = Vec::new();
+        for (name, size) in &pub_decls {
+            if let Some(n) = size {
+                for i in 0..*n {
+                    pub_names.push(format!("{name}_{i}"));
+                }
+            } else {
+                pub_names.push(name.clone());
+            }
+        }
+        let mut wit_names = Vec::new();
+        for (name, size) in &wit_decls {
+            if let Some(n) = size {
+                for i in 0..*n {
+                    wit_names.push(format!("{name}_{i}"));
+                }
+            } else {
+                wit_names.push(name.clone());
             }
         }
 
@@ -145,11 +266,19 @@ impl IrLowering {
 
         // Emit Inputs in correct order: public first, then witness
         let mut lowering = IrLowering::new();
-        for name in &pub_names {
-            lowering.declare_public(name);
+        for (name, size) in &pub_decls {
+            if let Some(n) = size {
+                lowering.declare_public_array(name, *n);
+            } else {
+                lowering.declare_public(name);
+            }
         }
-        for name in &wit_names {
-            lowering.declare_witness(name);
+        for (name, size) in &wit_decls {
+            if let Some(n) = size {
+                lowering.declare_witness_array(name, *n);
+            } else {
+                lowering.declare_witness(name);
+            }
         }
 
         // Pass 2: process non-declaration statements
@@ -175,23 +304,19 @@ impl IrLowering {
         let sp = span_of(&inner);
         match inner.as_rule() {
             Rule::public_decl => {
-                for child in inner.into_inner() {
-                    if child.as_rule() == Rule::identifier {
-                        self.declare_public(child.as_str());
-                    }
-                }
+                self.lower_public_decl(inner)?;
                 Ok(None)
             }
             Rule::witness_decl => {
-                for child in inner.into_inner() {
-                    if child.as_rule() == Rule::identifier {
-                        self.declare_witness(child.as_str());
-                    }
-                }
+                self.lower_witness_decl(inner)?;
                 Ok(None)
             }
             Rule::let_decl => {
                 self.lower_let(inner)?;
+                Ok(None)
+            }
+            Rule::fn_decl => {
+                self.lower_fn_decl(inner)?;
                 Ok(None)
             }
             Rule::expr
@@ -231,13 +356,97 @@ impl IrLowering {
         }
     }
 
+    /// Lower a `public` declaration, supporting optional array sizes.
+    fn lower_public_decl(&mut self, pair: Pair<Rule>) -> Result<(), IrError> {
+        let mut inner = pair.into_inner();
+        while let Some(child) = inner.next() {
+            if child.as_rule() == Rule::identifier {
+                let name = child.as_str();
+                // Check for array_size following this identifier
+                if let Some(next) = inner.peek() {
+                    if next.as_rule() == Rule::array_size {
+                        let size_pair = inner.next().unwrap();
+                        let size_str = size_pair.into_inner().next().unwrap().as_str();
+                        let size: usize = size_str
+                            .parse()
+                            .map_err(|_| IrError::ParseError(format!("invalid array size: {size_str}")))?;
+                        self.declare_public_array(name, size);
+                        continue;
+                    }
+                }
+                self.declare_public(name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Lower a `witness` declaration, supporting optional array sizes.
+    fn lower_witness_decl(&mut self, pair: Pair<Rule>) -> Result<(), IrError> {
+        let mut inner = pair.into_inner();
+        while let Some(child) = inner.next() {
+            if child.as_rule() == Rule::identifier {
+                let name = child.as_str();
+                // Check for array_size following this identifier
+                if let Some(next) = inner.peek() {
+                    if next.as_rule() == Rule::array_size {
+                        let size_pair = inner.next().unwrap();
+                        let size_str = size_pair.into_inner().next().unwrap().as_str();
+                        let size: usize = size_str
+                            .parse()
+                            .map_err(|_| IrError::ParseError(format!("invalid array size: {size_str}")))?;
+                        self.declare_witness_array(name, size);
+                        continue;
+                    }
+                }
+                self.declare_witness(name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Lower a `fn` declaration: store in fn_table for later inlining.
+    fn lower_fn_decl(&mut self, pair: Pair<Rule>) -> Result<(), IrError> {
+        let mut inner = pair.into_inner();
+        let name = inner.next().unwrap().as_str().to_string();
+
+        let mut params = Vec::new();
+        let mut body_pair = None;
+        for child in inner {
+            match child.as_rule() {
+                Rule::param_list => {
+                    for param in child.into_inner() {
+                        if param.as_rule() == Rule::identifier {
+                            params.push(param.as_str().to_string());
+                        }
+                    }
+                }
+                Rule::block => {
+                    body_pair = Some(child);
+                }
+                _ => {}
+            }
+        }
+
+        let body_source = body_pair.unwrap().as_str().to_string();
+        self.fn_table.insert(name, FnDef { params, body_source });
+        Ok(())
+    }
+
     fn lower_let(&mut self, pair: Pair<Rule>) -> Result<(), IrError> {
         let mut inner = pair.into_inner();
         let name = inner.next().unwrap().as_str().to_string();
-        let expr = inner.next().unwrap();
-        let v = self.lower_expr(expr)?;
+        let rhs = inner.next().unwrap();
+
+        // Check if RHS is a bare list_literal (special array path)
+        if is_list_literal(&rhs) {
+            let elements = self.lower_list_elements(unwrap_to_list_literal(rhs))?;
+            self.env.insert(name, EnvValue::Array(elements));
+            return Ok(());
+        }
+
+        let v = self.lower_expr(rhs)?;
         // `let` is an alias — no instruction emitted, just env binding
-        self.env.insert(name, v);
+        self.env.insert(name, EnvValue::Scalar(v));
         Ok(())
     }
 
@@ -278,10 +487,15 @@ impl IrLowering {
             Rule::number => self.lower_number(inner),
             Rule::identifier => {
                 let name = inner.as_str();
-                self.env
-                    .get(name)
-                    .copied()
-                    .ok_or_else(|| IrError::UndeclaredVariable(name.to_string(), sp.clone()))
+                match self.env.get(name) {
+                    Some(EnvValue::Scalar(v)) => Ok(*v),
+                    Some(EnvValue::Array(_)) => Err(IrError::TypeMismatch {
+                        expected: "scalar".into(),
+                        got: "array".into(),
+                        span: sp,
+                    }),
+                    None => Err(IrError::UndeclaredVariable(name.to_string(), sp)),
+                }
             }
             Rule::expr => self.lower_expr(inner),
             Rule::if_expr => self.lower_if(inner),
@@ -309,7 +523,15 @@ impl IrLowering {
                 Ok(v)
             }
             Rule::nil_lit => Err(IrError::TypeNotConstrainable("nil".into(), sp)),
-            Rule::list_literal => Err(IrError::TypeNotConstrainable("list".into(), sp)),
+            Rule::list_literal => {
+                // Arrays as standalone expressions are not scalar-valued.
+                // They are only valid on the RHS of `let` (handled in lower_let).
+                Err(IrError::TypeMismatch {
+                    expected: "scalar".into(),
+                    got: "array".into(),
+                    span: sp,
+                })
+            }
             Rule::map_literal => Err(IrError::TypeNotConstrainable("map".into(), sp)),
             _ => Err(IrError::UnsupportedOperation(format!(
                 "unsupported atom: {:?}", inner.as_rule()
@@ -513,9 +735,63 @@ impl IrLowering {
         let mut inner = pair.into_inner();
         let atom = inner.next().unwrap();
 
-        let maybe_call = inner.next();
-        if let Some(ref call) = maybe_call {
-            if call.as_rule() == Rule::call_op {
+        let maybe_op = inner.next();
+        if let Some(ref op) = maybe_op {
+            // --- Array indexing: arr[idx] ---
+            if op.as_rule() == Rule::index_op {
+                let sp = span_of(op);
+                let atom_inner = atom.clone().into_inner().next().unwrap();
+                if atom_inner.as_rule() == Rule::identifier {
+                    let name = atom_inner.as_str();
+                    match self.env.get(name).cloned() {
+                        Some(EnvValue::Array(elements)) => {
+                            // The index_op contains expr (bracket form) or identifier (dot form)
+                            let idx_pair = op.clone().into_inner().next().unwrap();
+                            let idx_var = self.lower_expr(idx_pair)?;
+                            let idx_fe = self.get_const_value(idx_var).ok_or_else(|| {
+                                IrError::UnsupportedOperation(
+                                    "array index must be a compile-time constant".into(),
+                                    sp.clone(),
+                                )
+                            })?;
+                            let idx = field_to_u64(&idx_fe).ok_or_else(|| {
+                                IrError::IndexOutOfBounds {
+                                    name: name.to_string(),
+                                    index: usize::MAX,
+                                    length: elements.len(),
+                                    span: sp.clone(),
+                                }
+                            })? as usize;
+                            if idx >= elements.len() {
+                                return Err(IrError::IndexOutOfBounds {
+                                    name: name.to_string(),
+                                    index: idx,
+                                    length: elements.len(),
+                                    span: sp,
+                                });
+                            }
+                            return Ok(elements[idx]);
+                        }
+                        Some(EnvValue::Scalar(_)) => {
+                            return Err(IrError::TypeMismatch {
+                                expected: "array".into(),
+                                got: "scalar".into(),
+                                span: sp,
+                            });
+                        }
+                        None => {
+                            return Err(IrError::UndeclaredVariable(name.to_string(), sp));
+                        }
+                    }
+                }
+                return Err(IrError::UnsupportedOperation(
+                    "indexing is only supported on array identifiers".into(),
+                    sp,
+                ));
+            }
+
+            // --- Function/builtin calls ---
+            if op.as_rule() == Rule::call_op {
                 let atom_inner = atom.clone().into_inner().next().unwrap();
                 if atom_inner.as_rule() == Rule::identifier {
                     let name = atom_inner.as_str();
@@ -526,23 +802,24 @@ impl IrLowering {
                         ), sp));
                     }
                     return match name {
-                        "assert_eq" => self.lower_assert_eq(call.clone()),
-                        "assert" => self.lower_assert(call.clone()),
-                        "poseidon" => self.lower_poseidon(call.clone()),
-                        "mux" => self.lower_mux(call.clone()),
-                        "range_check" => self.lower_range_check(call.clone()),
-                        _ => Err(IrError::UnsupportedOperation(format!(
-                            "function call `{name}` is not supported in circuits"
-                        ), span_of(&atom_inner))),
+                        "assert_eq" => self.lower_assert_eq(op.clone()),
+                        "assert" => self.lower_assert(op.clone()),
+                        "poseidon" => self.lower_poseidon(op.clone()),
+                        "mux" => self.lower_mux(op.clone()),
+                        "range_check" => self.lower_range_check(op.clone()),
+                        "len" => self.lower_len(op.clone()),
+                        "poseidon_many" => self.lower_poseidon_many(op.clone()),
+                        "merkle_verify" => self.lower_merkle_verify(op.clone()),
+                        _ => self.lower_user_fn_call(name, op.clone()),
                     };
                 }
                 return Err(IrError::UnsupportedOperation(
-                    "function calls are not supported in circuits".into(), span_of(call),
+                    "function calls are not supported in circuits".into(), span_of(op),
                 ));
             }
             return Err(IrError::UnsupportedOperation(format!(
-                "unsupported postfix operation: {:?}", call.as_rule()
-            ), span_of(call)));
+                "unsupported postfix operation: {:?}", op.as_rule()
+            ), span_of(op)));
         }
 
         self.lower_expr(atom)
@@ -753,6 +1030,246 @@ impl IrLowering {
         Ok(v)
     }
 
+    fn lower_len(&mut self, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let sp = span_of(&call_op);
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 1 {
+            return Err(IrError::WrongArgumentCount {
+                builtin: "len".into(),
+                expected: 1,
+                got: args.len(),
+                span: sp,
+            });
+        }
+        let arg_name = self.resolve_identifier_name(&args[0]).ok_or_else(|| {
+            IrError::UnsupportedOperation(
+                "len() argument must be an array identifier".into(),
+                sp.clone(),
+            )
+        })?;
+        match self.env.get(&arg_name) {
+            Some(EnvValue::Array(elems)) => {
+                Ok(self.emit_const(FieldElement::from_u64(elems.len() as u64)))
+            }
+            Some(EnvValue::Scalar(_)) => Err(IrError::TypeMismatch {
+                expected: "array".into(),
+                got: "scalar".into(),
+                span: sp,
+            }),
+            None => Err(IrError::UndeclaredVariable(arg_name, sp)),
+        }
+    }
+
+    fn lower_poseidon_many(&mut self, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let sp = span_of(&call_op);
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.is_empty() {
+            return Err(IrError::WrongArgumentCount {
+                builtin: "poseidon_many".into(),
+                expected: 1,
+                got: 0,
+                span: sp,
+            });
+        }
+        let lowered: Vec<SsaVar> = args
+            .into_iter()
+            .map(|a| self.lower_expr(a))
+            .collect::<Result<_, _>>()?;
+
+        let zero = self.emit_const(FieldElement::ZERO);
+        let mut acc = if lowered.len() == 1 {
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::PoseidonHash {
+                result: v,
+                left: lowered[0],
+                right: zero,
+            });
+            v
+        } else {
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::PoseidonHash {
+                result: v,
+                left: lowered[0],
+                right: lowered[1],
+            });
+            v
+        };
+        for arg in lowered.iter().skip(2) {
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::PoseidonHash {
+                result: v,
+                left: acc,
+                right: *arg,
+            });
+            acc = v;
+        }
+        Ok(acc)
+    }
+
+    fn lower_merkle_verify(&mut self, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let sp = span_of(&call_op);
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        if args.len() != 4 {
+            return Err(IrError::WrongArgumentCount {
+                builtin: "merkle_verify".into(),
+                expected: 4,
+                got: args.len(),
+                span: sp.clone(),
+            });
+        }
+
+        // Resolve each argument: root (scalar), leaf (scalar), path (array), indices (array)
+        let root_val = self.resolve_arg_value(args[0].clone())?;
+        let leaf_val = self.resolve_arg_value(args[1].clone())?;
+        let path_val = self.resolve_arg_value(args[2].clone())?;
+        let indices_val = self.resolve_arg_value(args[3].clone())?;
+
+        let root = match root_val {
+            EnvValue::Scalar(v) => v,
+            EnvValue::Array(_) => return Err(IrError::TypeMismatch {
+                expected: "scalar".into(),
+                got: "array".into(),
+                span: sp.clone(),
+            }),
+        };
+        let mut current = match leaf_val {
+            EnvValue::Scalar(v) => v,
+            EnvValue::Array(_) => return Err(IrError::TypeMismatch {
+                expected: "scalar".into(),
+                got: "array".into(),
+                span: sp.clone(),
+            }),
+        };
+        let path = match path_val {
+            EnvValue::Array(v) => v,
+            EnvValue::Scalar(_) => return Err(IrError::TypeMismatch {
+                expected: "array".into(),
+                got: "scalar".into(),
+                span: sp.clone(),
+            }),
+        };
+        let indices = match indices_val {
+            EnvValue::Array(v) => v,
+            EnvValue::Scalar(_) => return Err(IrError::TypeMismatch {
+                expected: "array".into(),
+                got: "scalar".into(),
+                span: sp.clone(),
+            }),
+        };
+
+        if path.len() != indices.len() {
+            return Err(IrError::ArrayLengthMismatch {
+                expected: path.len(),
+                got: indices.len(),
+                span: sp,
+            });
+        }
+
+        for i in 0..path.len() {
+            // left_hash = poseidon(current, path[i])
+            let left_hash = self.program.fresh_var();
+            self.program.push(Instruction::PoseidonHash {
+                result: left_hash,
+                left: current,
+                right: path[i],
+            });
+            // right_hash = poseidon(path[i], current)
+            let right_hash = self.program.fresh_var();
+            self.program.push(Instruction::PoseidonHash {
+                result: right_hash,
+                left: path[i],
+                right: current,
+            });
+            // current = mux(indices[i], right_hash, left_hash)
+            let mux_result = self.program.fresh_var();
+            self.program.push(Instruction::Mux {
+                result: mux_result,
+                cond: indices[i],
+                if_true: right_hash,
+                if_false: left_hash,
+            });
+            current = mux_result;
+        }
+
+        // assert_eq(current, root)
+        let v = self.program.fresh_var();
+        self.program.push(Instruction::AssertEq {
+            result: v,
+            lhs: current,
+            rhs: root,
+        });
+        Ok(v)
+    }
+
+    /// Handle a call to a user-defined function (inline the body).
+    fn lower_user_fn_call(&mut self, name: &str, call_op: Pair<Rule>) -> Result<SsaVar, IrError> {
+        let sp = span_of(&call_op);
+
+        // Look up in fn_table
+        let fn_def = match self.fn_table.get(name).cloned() {
+            Some(fd) => fd,
+            None => {
+                return Err(IrError::UnsupportedOperation(
+                    format!("function `{name}` is not defined"),
+                    sp,
+                ));
+            }
+        };
+
+        // Lower arguments
+        let args: Vec<Pair<Rule>> = call_op.into_inner().collect();
+        let arg_vars: Vec<SsaVar> = args
+            .into_iter()
+            .map(|a| self.lower_expr(a))
+            .collect::<Result<_, _>>()?;
+
+        if arg_vars.len() != fn_def.params.len() {
+            return Err(IrError::WrongArgumentCount {
+                builtin: name.to_string(),
+                expected: fn_def.params.len(),
+                got: arg_vars.len(),
+                span: sp,
+            });
+        }
+
+        // Recursion guard
+        if self.call_stack.contains(name) {
+            return Err(IrError::RecursiveFunction(name.to_string()));
+        }
+        self.call_stack.insert(name.to_string());
+
+        // Save env for params and bind args
+        let saved: Vec<(String, Option<EnvValue>)> = fn_def
+            .params
+            .iter()
+            .map(|p| (p.clone(), self.env.get(p).cloned()))
+            .collect();
+        for (param, arg) in fn_def.params.iter().zip(arg_vars.iter()) {
+            self.env.insert(param.clone(), EnvValue::Scalar(*arg));
+        }
+
+        // Re-parse and lower the function body
+        let body_parsed = AchronymeParser::parse(Rule::block, &fn_def.body_source)
+            .map_err(|e| IrError::ParseError(e.to_string()))?;
+        let block = body_parsed.into_iter().next().unwrap();
+        let result = self.lower_block(block)?;
+
+        // Restore env
+        for (param, old_val) in saved {
+            match old_val {
+                Some(v) => {
+                    self.env.insert(param, v);
+                }
+                None => {
+                    self.env.remove(&param);
+                }
+            }
+        }
+
+        self.call_stack.remove(name);
+        Ok(result)
+    }
+
     // ========================================================================
     // Control flow
     // ========================================================================
@@ -803,10 +1320,33 @@ impl IrLowering {
         let ident = inner.next().unwrap().as_str().to_string();
         let range_or_expr = inner.next().unwrap();
 
+        // Check if iterating over an array identifier
         if range_or_expr.as_rule() != Rule::range_expr {
+            // Try to resolve as identifier → array
+            let sp = span_of(&range_or_expr);
+            let iterable_name = self.resolve_identifier_name(&range_or_expr);
+            if let Some(name) = iterable_name {
+                if let Some(EnvValue::Array(elems)) = self.env.get(&name).cloned() {
+                    let body = inner.next().unwrap();
+                    let mut last = None;
+                    for elem_var in &elems {
+                        self.env.insert(ident.clone(), EnvValue::Scalar(*elem_var));
+                        last = Some(self.lower_block(body.clone())?);
+                    }
+                    self.env.remove(&ident);
+                    return Ok(last.unwrap_or_else(|| {
+                        let v = self.program.fresh_var();
+                        self.program.push(Instruction::Const {
+                            result: v,
+                            value: FieldElement::ZERO,
+                        });
+                        v
+                    }));
+                }
+            }
             return Err(IrError::UnsupportedOperation(
-                "for loops in circuits require a literal range (e.g., 0..5)".into(),
-                span_of(&range_or_expr),
+                "for loops in circuits require a literal range (e.g., 0..5) or an array".into(),
+                sp,
             ));
         }
 
@@ -842,7 +1382,7 @@ impl IrLowering {
                 result: cv,
                 value: FieldElement::from_u64(i),
             });
-            self.env.insert(ident.clone(), cv);
+            self.env.insert(ident.clone(), EnvValue::Scalar(cv));
             last = Some(self.lower_block(body.clone())?);
         }
 
@@ -908,22 +1448,9 @@ impl IrLowering {
     fn lower_stmt_inner(&mut self, inner: Pair<Rule>) -> Result<(), IrError> {
         let sp = span_of(&inner);
         match inner.as_rule() {
-            Rule::public_decl => {
-                for child in inner.into_inner() {
-                    if child.as_rule() == Rule::identifier {
-                        self.declare_public(child.as_str());
-                    }
-                }
-                Ok(())
-            }
-            Rule::witness_decl => {
-                for child in inner.into_inner() {
-                    if child.as_rule() == Rule::identifier {
-                        self.declare_witness(child.as_str());
-                    }
-                }
-                Ok(())
-            }
+            Rule::public_decl => self.lower_public_decl(inner),
+            Rule::witness_decl => self.lower_witness_decl(inner),
+            Rule::fn_decl => self.lower_fn_decl(inner),
             Rule::mut_decl => Err(IrError::UnsupportedOperation(
                 "mutable variables are not supported in circuits".into(), sp,
             )),
@@ -1010,6 +1537,90 @@ impl IrLowering {
         }
         None
     }
+
+    /// Emit a constant field element and return its SSA variable.
+    fn emit_const(&mut self, value: FieldElement) -> SsaVar {
+        let v = self.program.fresh_var();
+        self.program.push(Instruction::Const { result: v, value });
+        v
+    }
+
+    /// Lower the elements of a list_literal pair into a Vec<SsaVar>.
+    fn lower_list_elements(&mut self, pair: Pair<Rule>) -> Result<Vec<SsaVar>, IrError> {
+        let sp = span_of(&pair);
+        let elements: Vec<Pair<Rule>> = pair.into_inner().collect();
+        if elements.is_empty() {
+            return Err(IrError::UnsupportedOperation(
+                "empty arrays are not allowed in circuits".into(),
+                sp,
+            ));
+        }
+        let mut vars = Vec::with_capacity(elements.len());
+        for elem in elements {
+            vars.push(self.lower_expr(elem)?);
+        }
+        Ok(vars)
+    }
+
+    /// Try to extract an identifier name from an expression pair
+    /// by walking through single-child wrappers.
+    fn resolve_identifier_name(&self, pair: &Pair<Rule>) -> Option<String> {
+        let mut current = pair.clone();
+        loop {
+            match current.as_rule() {
+                Rule::identifier => return Some(current.as_str().to_string()),
+                Rule::expr
+                | Rule::or_expr
+                | Rule::and_expr
+                | Rule::cmp_expr
+                | Rule::add_expr
+                | Rule::mul_expr
+                | Rule::pow_expr
+                | Rule::prefix_expr
+                | Rule::postfix_expr
+                | Rule::atom => {
+                    let children: Vec<Pair<Rule>> = current.into_inner().collect();
+                    if children.len() == 1 {
+                        current = children.into_iter().next().unwrap();
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// Resolve a call argument to either Scalar or Array.
+    fn resolve_arg_value(&mut self, pair: Pair<Rule>) -> Result<EnvValue, IrError> {
+        // Check if the argument is a bare identifier referencing an array
+        if let Some(name) = self.resolve_identifier_name(&pair) {
+            if let Some(ev) = self.env.get(&name) {
+                return Ok(ev.clone());
+            }
+        }
+        // Otherwise lower as scalar expression
+        let v = self.lower_expr(pair)?;
+        Ok(EnvValue::Scalar(v))
+    }
+}
+
+/// Parse declaration specs like `["x", "path[3]"]` into `[(name, optional_size)]`.
+fn parse_decl_specs(specs: &[&str]) -> Result<Vec<(String, Option<usize>)>, IrError> {
+    let mut result = Vec::new();
+    for spec in specs {
+        if let Some(bracket_pos) = spec.find('[') {
+            let name = spec[..bracket_pos].to_string();
+            let size_str = spec[bracket_pos + 1..].trim_end_matches(']');
+            let size: usize = size_str
+                .parse()
+                .map_err(|_| IrError::ParseError(format!("invalid array size in `{spec}`")))?;
+            result.push((name, Some(size)));
+        } else {
+            result.push((spec.to_string(), None));
+        }
+    }
+    Ok(result)
 }
 
 /// Try to extract a small u64 from a FieldElement.
@@ -1019,4 +1630,45 @@ fn field_to_u64(fe: &FieldElement) -> Option<u64> {
         return None;
     }
     Some(limbs[0])
+}
+
+/// Check if a pair is a list_literal wrapped in expression layers.
+fn is_list_literal(pair: &Pair<Rule>) -> bool {
+    let mut current = pair.clone();
+    loop {
+        match current.as_rule() {
+            Rule::list_literal => return true,
+            Rule::expr
+            | Rule::or_expr
+            | Rule::and_expr
+            | Rule::cmp_expr
+            | Rule::add_expr
+            | Rule::mul_expr
+            | Rule::pow_expr
+            | Rule::prefix_expr
+            | Rule::postfix_expr
+            | Rule::atom => {
+                let children: Vec<Pair<Rule>> = current.into_inner().collect();
+                if children.len() == 1 {
+                    current = children.into_iter().next().unwrap();
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// Unwrap expression wrappers to get the inner list_literal pair.
+fn unwrap_to_list_literal(pair: Pair<Rule>) -> Pair<Rule> {
+    let mut current = pair;
+    loop {
+        match current.as_rule() {
+            Rule::list_literal => return current,
+            _ => {
+                current = current.into_inner().next().unwrap();
+            }
+        }
+    }
 }

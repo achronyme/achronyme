@@ -1007,3 +1007,680 @@ fn is_lt_bounded_asymmetric_correct() {
         "range_check(a, 8)\nrange_check(b, 16)\nassert(a < b)",
     );
 }
+
+// ============================================================================
+// Arrays
+// ============================================================================
+
+/// IR-only pipeline that uses `lower_circuit` with array syntax in decl specs.
+fn ir_array_verify(
+    public: &[(&str, FieldElement)],
+    witness: &[(&str, FieldElement)],
+    pub_decls: &[&str],
+    wit_decls: &[&str],
+    source: &str,
+) {
+    let program = IrLowering::lower_circuit(source, pub_decls, wit_decls).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    for (name, val) in public {
+        inputs.insert(name.to_string(), *val);
+    }
+    for (name, val) in witness {
+        inputs.insert(name.to_string(), *val);
+    }
+
+    let w = gen.generate(&inputs).unwrap();
+    compiler
+        .cs
+        .verify(&w)
+        .expect("array pipeline witness failed verification");
+}
+
+/// Self-contained pipeline helper.
+fn ir_self_contained_verify(
+    inputs: &[(&str, FieldElement)],
+    source: &str,
+) {
+    let (_, _, program) = IrLowering::lower_self_contained(source).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut input_map = HashMap::new();
+    for (name, val) in inputs {
+        input_map.insert(name.to_string(), *val);
+    }
+
+    let w = gen.generate(&input_map).unwrap();
+    compiler
+        .cs
+        .verify(&w)
+        .expect("self-contained pipeline witness failed verification");
+}
+
+#[test]
+fn ir_array_literal_and_index() {
+    // let a = [x, y, z]; assert_eq(a[1], y)
+    ir_only_verify_fe(
+        &[],
+        &[
+            ("x", FieldElement::from_u64(10)),
+            ("y", FieldElement::from_u64(20)),
+            ("z", FieldElement::from_u64(30)),
+        ],
+        "let a = [x, y, z]\nassert_eq(a[1], y)",
+    );
+}
+
+#[test]
+fn ir_array_public_declaration() {
+    // public path[3] creates path_0, path_1, path_2
+    ir_array_verify(
+        &[
+            ("path_0", FieldElement::from_u64(1)),
+            ("path_1", FieldElement::from_u64(2)),
+            ("path_2", FieldElement::from_u64(3)),
+        ],
+        &[],
+        &["path[3]"],
+        &[],
+        "assert_eq(path[0] + path[1], path[2])",
+    );
+}
+
+#[test]
+fn ir_array_witness_declaration() {
+    // witness bits[4] creates bits_0..bits_3
+    ir_array_verify(
+        &[("sum", FieldElement::from_u64(10))],
+        &[
+            ("bits_0", FieldElement::from_u64(1)),
+            ("bits_1", FieldElement::from_u64(2)),
+            ("bits_2", FieldElement::from_u64(3)),
+            ("bits_3", FieldElement::from_u64(4)),
+        ],
+        &["sum"],
+        &["bits[4]"],
+        "assert_eq(bits[0] + bits[1] + bits[2] + bits[3], sum)",
+    );
+}
+
+#[test]
+fn ir_array_for_iteration() {
+    // for elem in arr { ... } unrolls over array elements
+    ir_only_verify_fe(
+        &[("sum", FieldElement::from_u64(60))],
+        &[
+            ("x", FieldElement::from_u64(10)),
+            ("y", FieldElement::from_u64(20)),
+            ("z", FieldElement::from_u64(30)),
+        ],
+        r#"let a = [x, y, z]
+let acc = 0
+for elem in a {
+    assert_eq(elem, elem)
+}
+assert_eq(x + y + z, sum)"#,
+    );
+}
+
+#[test]
+fn ir_array_index_out_of_bounds() {
+    let result = IrLowering::lower_circuit(
+        "let a = [x, y, z]\nassert_eq(a[5], x)",
+        &[],
+        &["x", "y", "z"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("out of bounds"),
+        "expected IndexOutOfBounds, got: {err}"
+    );
+}
+
+#[test]
+fn ir_array_dynamic_index_rejected() {
+    // a[x] where x is a witness (not compile-time constant) → error
+    let result = IrLowering::lower_circuit(
+        "let a = [y, y, y]\nassert_eq(a[x], y)",
+        &[],
+        &["x", "y"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("compile-time constant"),
+        "expected compile-time constant error, got: {err}"
+    );
+}
+
+#[test]
+fn ir_array_len_builtin() {
+    // len(arr) returns compile-time constant
+    ir_only_verify_fe(
+        &[("out", FieldElement::from_u64(3))],
+        &[
+            ("x", FieldElement::from_u64(1)),
+            ("y", FieldElement::from_u64(2)),
+            ("z", FieldElement::from_u64(3)),
+        ],
+        "let a = [x, y, z]\nassert_eq(len(a), out)",
+    );
+}
+
+#[test]
+fn ir_array_in_let_binding() {
+    // let arr = [a, b]; assert_eq(arr[0], a)
+    ir_only_verify_fe(
+        &[],
+        &[
+            ("a", FieldElement::from_u64(42)),
+            ("b", FieldElement::from_u64(99)),
+        ],
+        "let arr = [a, b]\nassert_eq(arr[0], a)\nassert_eq(arr[1], b)",
+    );
+}
+
+#[test]
+fn ir_array_empty_rejected() {
+    let result = IrLowering::lower_circuit("let a = []", &[], &[]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("empty"),
+        "expected empty array error, got: {err}"
+    );
+}
+
+#[test]
+fn ir_array_index_with_for_counter() {
+    // arr[i] where i is the for loop counter — compile-time constant
+    ir_array_verify(
+        &[("sum", FieldElement::from_u64(6))],
+        &[
+            ("arr_0", FieldElement::from_u64(1)),
+            ("arr_1", FieldElement::from_u64(2)),
+            ("arr_2", FieldElement::from_u64(3)),
+        ],
+        &["sum"],
+        &["arr[3]"],
+        r#"let total = arr[0] + arr[1] + arr[2]
+assert_eq(total, sum)"#,
+    );
+}
+
+// ============================================================================
+// Functions
+// ============================================================================
+
+#[test]
+fn ir_fn_basic_inline() {
+    // fn double(x) { x + x }  assert_eq(double(a), a + a)
+    ir_only_verify_fe(
+        &[("out", FieldElement::from_u64(20))],
+        &[("a", FieldElement::from_u64(10))],
+        "fn double(x) { x + x }\nassert_eq(double(a), out)",
+    );
+}
+
+#[test]
+fn ir_fn_multi_param() {
+    ir_only_verify_fe(
+        &[("out", FieldElement::from_u64(30))],
+        &[
+            ("a", FieldElement::from_u64(10)),
+            ("b", FieldElement::from_u64(20)),
+        ],
+        "fn add(x, y) { x + y }\nassert_eq(add(a, b), out)",
+    );
+}
+
+#[test]
+fn ir_fn_multiple_calls() {
+    // Same fn called twice, independent inlines
+    ir_only_verify_fe(
+        &[
+            ("out1", FieldElement::from_u64(20)),
+            ("out2", FieldElement::from_u64(40)),
+        ],
+        &[
+            ("a", FieldElement::from_u64(10)),
+            ("b", FieldElement::from_u64(20)),
+        ],
+        "fn double(x) { x + x }\nassert_eq(double(a), out1)\nassert_eq(double(b), out2)",
+    );
+}
+
+#[test]
+fn ir_fn_wrong_arg_count() {
+    let result = IrLowering::lower_circuit(
+        "fn double(x) { x + x }\ndouble(a, b)",
+        &[],
+        &["a", "b"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("expects 1 arguments, got 2"),
+        "expected WrongArgumentCount, got: {err}"
+    );
+}
+
+#[test]
+fn ir_fn_recursive_rejected() {
+    let result = IrLowering::lower_circuit(
+        "fn f(x) { f(x) }\nf(a)",
+        &[],
+        &["a"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("recursive"),
+        "expected RecursiveFunction, got: {err}"
+    );
+}
+
+#[test]
+fn ir_fn_mutual_recursive_rejected() {
+    let result = IrLowering::lower_circuit(
+        "fn f(x) { g(x) }\nfn g(x) { f(x) }\nf(a)",
+        &[],
+        &["a"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("recursive"),
+        "expected RecursiveFunction, got: {err}"
+    );
+}
+
+#[test]
+fn ir_fn_with_for_loop() {
+    // Function body contains a for loop
+    ir_only_verify_fe(
+        &[("out", FieldElement::from_u64(10))],
+        &[("a", FieldElement::from_u64(1))],
+        r#"fn sum10(x) {
+    let acc = 0
+    for i in 0..10 {
+        x
+    }
+}
+assert_eq(sum10(a) + 9 * a, out)"#,
+    );
+}
+
+#[test]
+fn ir_fn_with_builtins() {
+    // Function body uses poseidon
+    let program = IrLowering::lower_circuit(
+        "fn hash_pair(a, b) { poseidon(a, b) }\nhash_pair(x, y)",
+        &[],
+        &["x", "y"],
+    )
+    .unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    // Should produce same constraints as a direct poseidon call
+    assert!(
+        compiler.cs.num_constraints() >= 361,
+        "expected ~361 constraints for poseidon, got {}",
+        compiler.cs.num_constraints()
+    );
+}
+
+#[test]
+fn ir_fn_scope_isolation() {
+    // Inner let doesn't leak to caller
+    let result = IrLowering::lower_circuit(
+        "fn f(x) { let inner = x + 1\n inner }\nf(a)\nassert_eq(inner, a)",
+        &[],
+        &["a"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("undeclared") || format!("{err}").contains("inner"),
+        "expected undeclared variable error for 'inner', got: {err}"
+    );
+}
+
+#[test]
+fn ir_fn_forward_reference_rejected() {
+    // Call before definition → error
+    let result = IrLowering::lower_circuit(
+        "f(a)\nfn f(x) { x + x }",
+        &[],
+        &["a"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("not defined") || format!("{err}").contains("not supported"),
+        "expected function-not-defined error, got: {err}"
+    );
+}
+
+// ============================================================================
+// Crypto builtins
+// ============================================================================
+
+#[test]
+fn ir_poseidon_many_single() {
+    // poseidon_many(a) = poseidon(a, 0)
+    let source_many = "poseidon_many(a)";
+    let source_direct = "poseidon(a, 0)";
+
+    let prog_many = IrLowering::lower_circuit(source_many, &[], &["a"]).unwrap();
+    let prog_direct = IrLowering::lower_circuit(source_direct, &[], &["a"]).unwrap();
+
+    let mut comp_many = R1CSCompiler::new();
+    comp_many.compile_ir(&prog_many).unwrap();
+    let mut comp_direct = R1CSCompiler::new();
+    comp_direct.compile_ir(&prog_direct).unwrap();
+
+    assert_eq!(
+        comp_many.cs.num_constraints(),
+        comp_direct.cs.num_constraints(),
+        "poseidon_many(a) should have same constraints as poseidon(a, 0)"
+    );
+
+    // Verify with actual inputs
+    let gen = WitnessGenerator::from_compiler(&comp_many);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".into(), FieldElement::from_u64(42));
+    let w = gen.generate(&inputs).unwrap();
+    comp_many.cs.verify(&w).unwrap();
+}
+
+#[test]
+fn ir_poseidon_many_two() {
+    // poseidon_many(a, b) = poseidon(a, b)
+    let prog_many = IrLowering::lower_circuit("poseidon_many(a, b)", &[], &["a", "b"]).unwrap();
+    let prog_direct = IrLowering::lower_circuit("poseidon(a, b)", &[], &["a", "b"]).unwrap();
+
+    let mut comp_many = R1CSCompiler::new();
+    comp_many.compile_ir(&prog_many).unwrap();
+    let mut comp_direct = R1CSCompiler::new();
+    comp_direct.compile_ir(&prog_direct).unwrap();
+
+    assert_eq!(
+        comp_many.cs.num_constraints(),
+        comp_direct.cs.num_constraints()
+    );
+}
+
+#[test]
+fn ir_poseidon_many_three() {
+    // poseidon_many(a, b, c) = poseidon(poseidon(a, b), c)
+    let source = "poseidon_many(a, b, c)";
+    let prog = IrLowering::lower_circuit(source, &[], &["a", "b", "c"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&prog).unwrap();
+
+    // Should be ~722 constraints (2 poseidon hashes)
+    assert!(
+        compiler.cs.num_constraints() >= 722,
+        "expected ~722 constraints for 2 poseidon hashes, got {}",
+        compiler.cs.num_constraints()
+    );
+
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".into(), FieldElement::from_u64(1));
+    inputs.insert("b".into(), FieldElement::from_u64(2));
+    inputs.insert("c".into(), FieldElement::from_u64(3));
+    let w = gen.generate(&inputs).unwrap();
+    compiler.cs.verify(&w).unwrap();
+}
+
+#[test]
+fn ir_poseidon_many_empty_rejected() {
+    let result = IrLowering::lower_circuit("poseidon_many()", &[], &[]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("expects 1 arguments, got 0"),
+        "expected WrongArgumentCount, got: {err}"
+    );
+}
+
+#[test]
+fn ir_merkle_verify_depth_1() {
+    // Single sibling: merkle_verify(root, leaf, [sibling], [dir])
+    let source = r#"
+let path = [sibling]
+let dirs = [dir]
+merkle_verify(root, leaf, path, dirs)
+"#;
+    let prog = IrLowering::lower_circuit(source, &["root"], &["leaf", "sibling", "dir"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&prog).unwrap();
+
+    // At depth 1: 2 poseidon hashes + 1 mux + 1 assert_eq ≈ 725 constraints
+    let gen = WitnessGenerator::from_compiler(&compiler);
+
+    // Compute expected root: poseidon(leaf, sibling) when dir=0
+    use constraints::poseidon::PoseidonParams;
+    let params = PoseidonParams::bn254_t3();
+    let leaf = FieldElement::from_u64(42);
+    let sibling = FieldElement::from_u64(99);
+    let hash = constraints::poseidon::poseidon_hash(&params, leaf, sibling);
+
+    let mut inputs = HashMap::new();
+    inputs.insert("root".into(), hash);
+    inputs.insert("leaf".into(), leaf);
+    inputs.insert("sibling".into(), sibling);
+    inputs.insert("dir".into(), FieldElement::ZERO);
+
+    let w = gen.generate(&inputs).unwrap();
+    compiler.cs.verify(&w).unwrap();
+}
+
+#[test]
+fn ir_merkle_verify_mismatched_lengths() {
+    let source = r#"
+let path = [s0, s1, s2]
+let dirs = [d0, d1]
+merkle_verify(root, leaf, path, dirs)
+"#;
+    let result = IrLowering::lower_circuit(
+        source,
+        &["root"],
+        &["leaf", "s0", "s1", "s2", "d0", "d1"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("length mismatch"),
+        "expected ArrayLengthMismatch, got: {err}"
+    );
+}
+
+#[test]
+fn ir_merkle_verify_wrong_root_fails() {
+    let source = r#"
+let path = [sibling]
+let dirs = [dir]
+merkle_verify(root, leaf, path, dirs)
+"#;
+    let prog = IrLowering::lower_circuit(source, &["root"], &["leaf", "sibling", "dir"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&prog).unwrap();
+
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("root".into(), FieldElement::from_u64(999)); // WRONG root
+    inputs.insert("leaf".into(), FieldElement::from_u64(42));
+    inputs.insert("sibling".into(), FieldElement::from_u64(99));
+    inputs.insert("dir".into(), FieldElement::ZERO);
+
+    let w = gen.generate(&inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&w).is_err(),
+        "wrong root should fail verification"
+    );
+}
+
+// ============================================================================
+// Constraint count validation
+// ============================================================================
+
+#[test]
+fn ir_fn_inline_same_constraints() {
+    // double(a) should produce same constraints as a + a
+    let prog_fn = IrLowering::lower_circuit(
+        "fn double(x) { x + x }\nassert_eq(double(a), out)",
+        &["out"],
+        &["a"],
+    )
+    .unwrap();
+    let prog_direct = IrLowering::lower_circuit("assert_eq(a + a, out)", &["out"], &["a"]).unwrap();
+
+    let mut comp_fn = R1CSCompiler::new();
+    comp_fn.compile_ir(&prog_fn).unwrap();
+    let mut comp_direct = R1CSCompiler::new();
+    comp_direct.compile_ir(&prog_direct).unwrap();
+
+    assert_eq!(
+        comp_fn.cs.num_constraints(),
+        comp_direct.cs.num_constraints(),
+        "fn inline should have same constraint count as direct expression"
+    );
+}
+
+// ============================================================================
+// Integration: self-contained with arrays and functions
+// ============================================================================
+
+#[test]
+fn ir_self_contained_with_arrays() {
+    // public path[3] in source
+    let source = r#"
+public sum
+witness arr[3]
+assert_eq(arr[0] + arr[1] + arr[2], sum)
+"#;
+    ir_self_contained_verify(
+        &[
+            ("sum", FieldElement::from_u64(6)),
+            ("arr_0", FieldElement::from_u64(1)),
+            ("arr_1", FieldElement::from_u64(2)),
+            ("arr_2", FieldElement::from_u64(3)),
+        ],
+        source,
+    );
+}
+
+#[test]
+fn ir_self_contained_with_functions() {
+    let source = r#"
+public out
+witness a
+fn double(x) { x + x }
+assert_eq(double(a), out)
+"#;
+    ir_self_contained_verify(
+        &[
+            ("out", FieldElement::from_u64(20)),
+            ("a", FieldElement::from_u64(10)),
+        ],
+        source,
+    );
+}
+
+#[test]
+fn ir_merkle_proof_self_contained() {
+    // Full self-contained Merkle circuit using merkle_verify builtin
+    let source = r#"
+public root
+witness leaf, sibling, dir
+let path = [sibling]
+let dirs = [dir]
+merkle_verify(root, leaf, path, dirs)
+"#;
+    use constraints::poseidon::PoseidonParams;
+    let params = PoseidonParams::bn254_t3();
+    let leaf = FieldElement::from_u64(42);
+    let sibling = FieldElement::from_u64(99);
+    let hash = constraints::poseidon::poseidon_hash(&params, leaf, sibling);
+
+    ir_self_contained_verify(
+        &[
+            ("root", hash),
+            ("leaf", leaf),
+            ("sibling", sibling),
+            ("dir", FieldElement::ZERO),
+        ],
+        source,
+    );
+}
+
+#[test]
+fn ir_fn_returning_expression() {
+    // Function returns its last expression (x * x)
+    ir_only_verify_fe(
+        &[("out", FieldElement::from_u64(100))],
+        &[("a", FieldElement::from_u64(10))],
+        "fn square(x) { x * x }\nassert_eq(square(a), out)",
+    );
+}
+
+#[test]
+fn ir_array_scalar_type_mismatch() {
+    // Using a scalar as array → TypeMismatch
+    let result = IrLowering::lower_circuit(
+        "assert_eq(x[0], x)",
+        &[],
+        &["x"],
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        format!("{err}").contains("type mismatch") || format!("{err}").contains("scalar"),
+        "expected TypeMismatch for indexing scalar, got: {err}"
+    );
+}
+
+#[test]
+fn ir_array_as_bare_expression_rejected() {
+    // Array not in let binding → TypeMismatch
+    let result = IrLowering::lower_circuit(
+        "assert_eq([x, y], x)",
+        &[],
+        &["x", "y"],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn ir_merkle_verify_depth_3_builtin() {
+    // Depth-3 Merkle membership proof using merkle_verify builtin
+    let source = r#"
+let path = [s0, s1, s2]
+let dirs = [d0, d1, d2]
+merkle_verify(root, leaf, path, dirs)
+"#;
+    let prog = IrLowering::lower_circuit(
+        source,
+        &["root"],
+        &["leaf", "s0", "s1", "s2", "d0", "d1", "d2"],
+    )
+    .unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&prog).unwrap();
+
+    // Should have reasonable constraint count: 3 * (2*361 + 2) + 1 ≈ 2175
+    let nc = compiler.cs.num_constraints();
+    assert!(
+        nc >= 2000 && nc <= 3000,
+        "expected ~2175 constraints for depth-3 Merkle, got {nc}"
+    );
+}

@@ -35,6 +35,27 @@ pub enum IrError {
         got: usize,
         span: Option<SourceSpan>,
     },
+    /// Array index is out of bounds.
+    IndexOutOfBounds {
+        name: String,
+        index: usize,
+        length: usize,
+        span: Option<SourceSpan>,
+    },
+    /// Two arrays that must have the same length differ.
+    ArrayLengthMismatch {
+        expected: usize,
+        got: usize,
+        span: Option<SourceSpan>,
+    },
+    /// A function calls itself (directly or mutually).
+    RecursiveFunction(String),
+    /// A type mismatch (e.g. scalar where array expected, or vice versa).
+    TypeMismatch {
+        expected: String,
+        got: String,
+        span: Option<SourceSpan>,
+    },
 }
 
 impl fmt::Display for IrError {
@@ -87,6 +108,52 @@ impl fmt::Display for IrError {
                     )
                 } else {
                     write!(f, "`{builtin}` expects {expected} arguments, got {got}")
+                }
+            }
+            IrError::IndexOutOfBounds {
+                name,
+                index,
+                length,
+                span,
+            } => {
+                if let Some(s) = span {
+                    write!(
+                        f,
+                        "[{s}] index {index} out of bounds for array `{name}` of length {length}"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "index {index} out of bounds for array `{name}` of length {length}"
+                    )
+                }
+            }
+            IrError::ArrayLengthMismatch {
+                expected,
+                got,
+                span,
+            } => {
+                if let Some(s) = span {
+                    write!(
+                        f,
+                        "[{s}] array length mismatch: expected {expected}, got {got}"
+                    )
+                } else {
+                    write!(f, "array length mismatch: expected {expected}, got {got}")
+                }
+            }
+            IrError::RecursiveFunction(name) => {
+                write!(f, "recursive function `{name}` is not allowed in circuits")
+            }
+            IrError::TypeMismatch {
+                expected,
+                got,
+                span,
+            } => {
+                if let Some(s) = span {
+                    write!(f, "[{s}] type mismatch: expected {expected}, got {got}")
+                } else {
+                    write!(f, "type mismatch: expected {expected}, got {got}")
                 }
             }
         }

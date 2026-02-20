@@ -158,12 +158,17 @@ print_stmt = { "print" ~ "(" ~ expr ~ ")" }
 // expr_stmt  = { expr } // Removed, direct expr in stmt
 break_stmt = { "break" }
 continue_stmt = { "continue" }
-public_decl   = { "public" ~ identifier ~ ("," ~ identifier)* }
-witness_decl  = { "witness" ~ identifier ~ ("," ~ identifier)* }
+array_size    = { "[" ~ integer ~ "]" }
+public_decl   = { "public" ~ identifier ~ array_size? ~ ("," ~ identifier ~ array_size?)* }
+witness_decl  = { "witness" ~ identifier ~ array_size? ~ ("," ~ identifier ~ array_size?)* }
+
+// Named function declaration (statement, not expression)
+fn_decl = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ block }
 
 stmt = {
     public_decl
   | witness_decl
+  | fn_decl
   | let_decl
   | mut_decl
   | assignment
