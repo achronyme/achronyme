@@ -40,6 +40,38 @@ fn lower_negative_number() {
 }
 
 #[test]
+fn lower_large_integer_literal() {
+    // Value > u64::MAX: 2^64 = 18446744073709551616
+    let insts = lower("18446744073709551616", &[], &[]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Const { .. })), 1);
+    if let Instruction::Const { value, .. } = &insts[0] {
+        // 2^64 in canonical form: limbs[1] = 1, limbs[0] = 0
+        let canonical = value.to_canonical();
+        assert_eq!(canonical[0], 0);
+        assert_eq!(canonical[1], 1);
+    } else {
+        panic!("expected Const for large literal");
+    }
+}
+
+#[test]
+fn lower_very_large_integer_literal() {
+    // Value near field size: p - 1 (largest valid field element)
+    // p-1 = 21888242871839275222246405745257275088548364400416034343698204186575808495616
+    let big = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+    let insts = lower(big, &[], &[]);
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Const { .. })), 1);
+    if let Instruction::Const { value, .. } = &insts[0] {
+        assert!(!value.is_zero(), "p-1 should not be zero");
+        // p-1 + 1 = p ≡ 0 (mod p)
+        let one = FieldElement::ONE;
+        assert!(value.add(&one).is_zero(), "p-1 + 1 should be 0 mod p");
+    } else {
+        panic!("expected Const for large literal");
+    }
+}
+
+#[test]
 fn lower_identifier_lookup() {
     let insts = lower("x", &["x"], &[]);
     // Just the Input instruction for x, no extra instructions for the lookup

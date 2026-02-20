@@ -329,10 +329,8 @@ impl IrLowering {
         } else {
             (false, s)
         };
-        let val = digits
-            .parse::<u64>()
-            .map_err(|_| IrError::ParseError(format!("invalid integer: {s}")))?;
-        let fe = FieldElement::from_u64(val);
+        let fe = FieldElement::from_decimal_str(digits)
+            .ok_or_else(|| IrError::ParseError(format!("invalid integer: {s}")))?;
         let v = self.program.fresh_var();
         if negative {
             // Emit Const(val) + Neg
