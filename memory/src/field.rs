@@ -239,12 +239,16 @@ impl FieldElement {
     }
 
     /// Create from 32 bytes in little-endian canonical form.
-    pub fn from_le_bytes(bytes: &[u8; 32]) -> Self {
+    /// Returns `None` if the value is >= the BN254 prime modulus.
+    pub fn from_le_bytes(bytes: &[u8; 32]) -> Option<Self> {
         let mut limbs = [0u64; 4];
         for i in 0..4 {
             limbs[i] = u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
         }
-        Self::from_canonical(limbs)
+        if gte(&limbs, &MODULUS) {
+            return None;
+        }
+        Some(Self::from_canonical(limbs))
     }
 
     /// Parse from decimal string
@@ -663,9 +667,33 @@ mod tests {
         for &val in &[0u64, 1, 42, 1000, u64::MAX] {
             let fe = FieldElement::from_u64(val);
             let bytes = fe.to_le_bytes();
-            let recovered = FieldElement::from_le_bytes(&bytes);
+            let recovered = FieldElement::from_le_bytes(&bytes).expect("valid field element");
             assert_eq!(fe, recovered);
         }
+    }
+
+    #[test]
+    fn test_from_le_bytes_rejects_gte_modulus() {
+        // p itself should be rejected
+        let mut p_bytes = [0u8; 32];
+        for i in 0..4 {
+            p_bytes[i * 8..(i + 1) * 8].copy_from_slice(&MODULUS[i].to_le_bytes());
+        }
+        assert!(FieldElement::from_le_bytes(&p_bytes).is_none(), "p should be rejected");
+
+        // p + 1 should be rejected
+        let mut p_plus_1 = p_bytes;
+        p_plus_1[0] = p_plus_1[0].wrapping_add(1);
+        assert!(FieldElement::from_le_bytes(&p_plus_1).is_none(), "p+1 should be rejected");
+
+        // all 0xFF bytes (max 256-bit value)
+        let max_bytes = [0xFF; 32];
+        assert!(FieldElement::from_le_bytes(&max_bytes).is_none(), "2^256-1 should be rejected");
+
+        // p - 1 should be accepted (largest valid element)
+        let mut p_minus_1 = p_bytes;
+        p_minus_1[0] = p_minus_1[0].wrapping_sub(1);
+        assert!(FieldElement::from_le_bytes(&p_minus_1).is_some(), "p-1 should be accepted");
     }
 
     // ========================================================================
