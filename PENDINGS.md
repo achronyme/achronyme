@@ -141,10 +141,8 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 
 ### MEDIUM — Efficiency, Robustness, Interop
 
-- [ ] **M1: IsLt/IsLe ~760 constraints per comparison** — `r1cs_backend.rs:887-931, 1205-1232`
-    - Two 252-bit range checks (504 constraints) + 253-bit decomposition (254) per comparison
-    - For bounded inputs (already range-checked): reuse existing range proofs → ~66 constraints
-    - Depth-3 Merkle: ~7,099 → ~2,201 constraints possible (69% reduction)
+- [x] **M1: IsLt/IsLe ~760 constraints per comparison** — `r1cs_backend.rs, plonkish_backend.rs`
+    - *Fixed*: Bounded-input optimization in both backends; `effective_bits = max(bound_a, bound_b)` when both operands have prior `range_check`. Parameterized `enforce_n_range` and `compile_is_lt_via_bits`. With 8-bit bounds: 30 constraints (vs 762 unbounded).
 
 - [ ] **M2: Boolean propagation pass missing** — IR passes
     - No tracking of known-boolean variables across instructions
@@ -162,10 +160,8 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 - [x] **M5: Integer literals limited to u64** — `ir/lower.rs:317-319`
     - *Fixed*: Uses `from_decimal_str` for arbitrary-precision parsing (up to ~2^254)
 
-- [ ] **M6: Poseidon round constants without cross-validation** — `poseidon.rs:22-158`
-    - Custom Grain LFSR generates constants — no test against reference implementation
-    - Subtle LFSR bug → incompatible hash, broken interop with circomlibjs/iden3
-    - *Fix*: Add test vector `poseidon(1, 2) == <known reference value>`
+- [x] **M6: Poseidon round constants without cross-validation** — `poseidon.rs`
+    - *Fixed*: Replaced LFSR-generated constants with hardcoded circomlibjs v0.1.7 values (C[1], M[1]). Changed output from `state[1]` to `state[0]` (circomlibjs convention). Added reference test vector `poseidon(1, 2) == 7853200...`. LFSR preserved as `bn254_t3_lfsr()` for auditing. `PoseidonParams::new()` enables custom parameterizations. Test documents LFSR↔circomlibjs divergence (iden3/circomlib#75).
 
 - [x] **M7: Negative numbers in `--inputs` CLI fail** — `cli/src/commands/circuit.rs`
     - *Fixed*: `parse_inputs` strips `-` prefix, parses absolute value, applies `neg()`
