@@ -180,9 +180,11 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
     - `2^3^2 = (2^3)^2 = 64` instead of mathematical convention `2^(3^2) = 512`
     - *Fix*: Change grammar to right-recursive or document
 
-- [ ] **L3: No arrays, type system, or circuit composition**
-    - Major expressiveness gaps vs Noir (arrays+structs+generics), Circom (templates+signals)
-    - Blocks reusable subcircuit patterns and indexed witness access
+- [x] **L3: No arrays, type system, or circuit composition** *(partially resolved)*
+    - Arrays: `let a = [x, y, z]`, `a[i]` static indexing, `public/witness x[N]`, `for elem in arr`, `len(arr)`
+    - Functions: `fn f(x, y) { ... }` with inline expansion, recursion guard
+    - Builtins: `poseidon_many(...)`, `merkle_verify(root, leaf, path, indices)`
+    - *Remaining*: no structs, no generics, no type annotations
 
 - [ ] **L4: MAX_UNROLL_ITERATIONS = 10,000 without memory guard** — `ir/lower.rs:13`
     - `for i in 0..10000` generates 10K IR instructions without memory limit
