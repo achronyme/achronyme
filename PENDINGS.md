@@ -198,11 +198,11 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 
 ### Test Coverage Gaps (P0 security-critical)
 
-- [ ] **T1: IsLt/IsLe untested near 2^252 boundary** — boundary values for 253-bit decomposition
-- [ ] **T2: Division constraint soundness vs malicious prover** — manual witness with divisor=0
-- [ ] **T3: Plonkish boolean enforcement** — no test that flag=2 fails in Plonkish mux
-- [ ] **T4: DCE safety for RangeCheck/PoseidonHash** — unused result must not be eliminated
-- [ ] **T5: Optimization soundness proptest** — optimized vs unoptimized circuits for random inputs
+- [x] **T1: IsLt/IsLe untested near 2^252 boundary** — Fixed: 8 R1CS + 5 Plonkish boundary tests (adjacent max, zero-zero, zero-max, max-zero, max-equal)
+- [x] **T2: Division constraint soundness vs malicious prover** — Fixed: manual witness with divisor=0 + forged result tests
+- [x] **T3: Plonkish boolean enforcement** — Fixed: mux(flag=2) + assert(2) rejection tests
+- [x] **T4: DCE safety for RangeCheck/PoseidonHash** — Fixed: 4 IR-level tests (range_check, poseidon, assert_eq deps, unused add elimination)
+- [x] **T5: Optimization soundness proptest** — Fixed: 5 proptests comparing optimized vs unoptimized (arithmetic, const_fold, mul_by_zero, identity, comparison)
 
 ### Test Coverage Gaps (P1 important)
 
