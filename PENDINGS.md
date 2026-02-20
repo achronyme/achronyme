@@ -156,23 +156,19 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
     - `is_constant()` returns `false` for effectively-constant LCs → unnecessary materialization
     - *Fix*: Add `simplify()` method, call before `is_constant()`, `constant_value()`, `as_single_variable()`
 
-- [ ] **M4: `from_le_bytes` accepts values >= p silently** — `field.rs:242-248`
-    - `from_canonical` (L215) says "already reduced mod p" but doesn't check
-    - `montgomery_mul` wraps silently → different FieldElement than expected
-    - *Fix*: Add range check in `from_le_bytes`, return `Option` or reduce explicitly
+- [x] **M4: `from_le_bytes` accepts values >= p silently** — `field.rs:242-248`
+    - *Fixed*: Returns `Option<Self>`, rejects values ≥ p via `gte()` check
 
-- [ ] **M5: Integer literals limited to u64** — `ir/lower.rs:317-319`
-    - `digits.parse::<u64>()` rejects values > 2^64
-    - Field supports ~2^254 — blocks large constants needed for crypto
-    - *Fix*: Use `from_decimal_str` for arbitrary-precision parsing
+- [x] **M5: Integer literals limited to u64** — `ir/lower.rs:317-319`
+    - *Fixed*: Uses `from_decimal_str` for arbitrary-precision parsing (up to ~2^254)
 
 - [ ] **M6: Poseidon round constants without cross-validation** — `poseidon.rs:22-158`
     - Custom Grain LFSR generates constants — no test against reference implementation
     - Subtle LFSR bug → incompatible hash, broken interop with circomlibjs/iden3
     - *Fix*: Add test vector `poseidon(1, 2) == <known reference value>`
 
-- [ ] **M7: Negative numbers in `--inputs` CLI fail** — `cli/src/commands/circuit.rs`
-    - `-42` parsed incorrectly in comma-separated `--inputs "x=-42"`
+- [x] **M7: Negative numbers in `--inputs` CLI fail** — `cli/src/commands/circuit.rs`
+    - *Fixed*: `parse_inputs` strips `-` prefix, parses absolute value, applies `neg()`
 
 - [ ] **M8: Taint analysis false negatives** — `ir/passes/taint.rs`
     - `w - w` tagged as Witness but is effectively Constant(0) → misses optimization opportunity
