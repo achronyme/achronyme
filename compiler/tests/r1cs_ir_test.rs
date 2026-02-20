@@ -74,6 +74,36 @@ fn ir_pipeline_verify_fe(
         .expect("IR pipeline witness failed verification");
 }
 
+/// IR-only pipeline (no direct compile_circuit comparison).
+/// Used for features only supported via IR path (comparisons, etc.).
+fn ir_only_verify_fe(
+    public: &[(&str, FieldElement)],
+    witness: &[(&str, FieldElement)],
+    source: &str,
+) {
+    let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
+    let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
+    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    for (name, val) in public {
+        inputs.insert(name.to_string(), *val);
+    }
+    for (name, val) in witness {
+        inputs.insert(name.to_string(), *val);
+    }
+
+    let w = gen.generate(&inputs).unwrap();
+    compiler
+        .cs
+        .verify(&w)
+        .expect("IR-only pipeline witness failed verification");
+}
+
 /// Same but with optimization enabled.
 fn ir_pipeline_optimized_verify(
     public: &[(&str, u64)],
@@ -699,5 +729,161 @@ fn ir_or_non_boolean_input_fails() {
     assert!(
         compiler.cs.verify(&w).is_err(),
         "a=3 should fail boolean enforcement in Or operator"
+    );
+}
+
+// ============================================================================
+// T1: IsLt/IsLe boundary tests near 2^252
+// ============================================================================
+
+/// Compute 2^n as a FieldElement.
+fn pow2(n: u32) -> FieldElement {
+    let mut v = FieldElement::ONE;
+    for _ in 0..n {
+        v = v.add(&v);
+    }
+    v
+}
+
+#[test]
+fn ir_is_lt_boundary_adjacent_at_max() {
+    // a = 2^252 - 2, b = 2^252 - 1 → a < b = true
+    let max = pow2(252).sub(&FieldElement::ONE); // 2^252 - 1
+    let almost = max.sub(&FieldElement::ONE); // 2^252 - 2
+    ir_only_verify_fe(
+        &[("out", FieldElement::ONE)],
+        &[("a", almost), ("b", max)],
+        "let r = a < b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_lt_boundary_equal_values() {
+    // a = 0, b = 0 → a < b = false (diff = 2^252 - 1, bit 252 = 0)
+    ir_only_verify_fe(
+        &[("out", FieldElement::ZERO)],
+        &[("a", FieldElement::ZERO), ("b", FieldElement::ZERO)],
+        "let r = a < b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_lt_boundary_zero_vs_max() {
+    // a = 0, b = 2^252 - 1 → a < b = true (maximum valid diff)
+    let max = pow2(252).sub(&FieldElement::ONE);
+    ir_only_verify_fe(
+        &[("out", FieldElement::ONE)],
+        &[("a", FieldElement::ZERO), ("b", max)],
+        "let r = a < b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_lt_boundary_max_vs_zero() {
+    // a = 2^252 - 1, b = 0 → a < b = false
+    let max = pow2(252).sub(&FieldElement::ONE);
+    ir_only_verify_fe(
+        &[("out", FieldElement::ZERO)],
+        &[("a", max), ("b", FieldElement::ZERO)],
+        "let r = a < b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_lt_boundary_max_equal() {
+    // a = 2^252 - 1, b = 2^252 - 1 → a < b = false
+    let max = pow2(252).sub(&FieldElement::ONE);
+    ir_only_verify_fe(
+        &[("out", FieldElement::ZERO)],
+        &[("a", max), ("b", max)],
+        "let r = a < b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_le_boundary_max_equal() {
+    // a = 2^252 - 1, b = 2^252 - 1 → a <= b = true
+    let max = pow2(252).sub(&FieldElement::ONE);
+    ir_only_verify_fe(
+        &[("out", FieldElement::ONE)],
+        &[("a", max), ("b", max)],
+        "let r = a <= b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_le_boundary_max_vs_zero() {
+    // a = 2^252 - 1, b = 0 → a <= b = false
+    let max = pow2(252).sub(&FieldElement::ONE);
+    ir_only_verify_fe(
+        &[("out", FieldElement::ZERO)],
+        &[("a", max), ("b", FieldElement::ZERO)],
+        "let r = a <= b\nassert_eq(r, out)",
+    );
+}
+
+#[test]
+fn ir_is_le_boundary_zero_vs_max() {
+    // a = 0, b = 2^252 - 1 → a <= b = true
+    let max = pow2(252).sub(&FieldElement::ONE);
+    ir_only_verify_fe(
+        &[("out", FieldElement::ONE)],
+        &[("a", FieldElement::ZERO), ("b", max)],
+        "let r = a <= b\nassert_eq(r, out)",
+    );
+}
+
+// ============================================================================
+// T2: Division constraint soundness vs malicious prover
+// ============================================================================
+
+#[test]
+fn ir_division_malicious_witness_divisor_zero_rejected() {
+    // Compile a/b, then craft a witness where b=0 and a=0, claiming result=42.
+    // The constraint den * inv = 1 cannot be satisfied when den=0.
+    let source = "assert_eq(a / b, out)";
+    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    // Build witness from honest generator with valid inputs to get correct size
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut honest_inputs = HashMap::new();
+    honest_inputs.insert("a".into(), FieldElement::from_u64(42));
+    honest_inputs.insert("b".into(), FieldElement::from_u64(7));
+    honest_inputs.insert("out".into(), FieldElement::from_u64(6));
+    let mut w = gen.generate(&honest_inputs).unwrap();
+
+    // Now corrupt: set b=0 in the witness (wire index for b)
+    // Wire layout: [ONE, pub(out), wit(a), wit(b), intermediates...]
+    // b is the 4th wire (index 3)
+    w[3] = FieldElement::ZERO;
+
+    assert!(
+        compiler.cs.verify(&w).is_err(),
+        "division with divisor=0 in witness must fail constraint verification"
+    );
+}
+
+#[test]
+fn ir_division_malicious_witness_forged_result_rejected() {
+    // Honest computation: 42/7=6. Prover claims result=99.
+    let source = "assert_eq(a / b, out)";
+    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let gen = WitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".into(), FieldElement::from_u64(42));
+    inputs.insert("b".into(), FieldElement::from_u64(7));
+    inputs.insert("out".into(), FieldElement::from_u64(99)); // WRONG result
+
+    let w = gen.generate(&inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&w).is_err(),
+        "forged division result must fail verification"
     );
 }
