@@ -69,7 +69,9 @@ impl ControlFlowOps for super::vm::VM {
                     }
 
                     // 4. Push Frame with dest_reg = caller's base + A (where result goes)
-                    let dest_reg = base + a;
+                    let dest_reg = base.checked_add(a)
+                        .filter(|&d| d < crate::machine::vm::STACK_MAX)
+                        .ok_or(RuntimeError::StackOverflow)?;
                     self.frames.push(crate::machine::frame::CallFrame {
                         closure: handle, // Points to Closure
                         ip: 0,
