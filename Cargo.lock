@@ -354,7 +354,6 @@ dependencies = [
  "achronyme-parser",
  "constraints",
  "memory",
- "pest",
 ]
 
 [[package]]
