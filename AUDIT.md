@@ -286,14 +286,14 @@ If `prove_handler` is None, returns `ProveHandlerNotConfigured`. But if `frames`
 
 ---
 
-### V-10 — Interner HashMap Performance [HIGH]
+### V-10 — Interner HashMap Performance [HIGH] [FALSE POSITIVE]
 
 **File**: `vm/src/machine/vm.rs` (lines 438-478)
 **Category**: Performance
 
 String interning uses `HashMap<String, u32>`. For map iteration in GetIter, each key triggers a `.get()` lookup. With large maps, this is O(n) per key, O(n^2) total.
 
-**Fix**: Use a proper string pool with O(1) lookup and deduplication.
+**Analysis**: False positive — `HashMap::get()` is O(1) amortized. Iterating n keys with one lookup each is O(n) total, not O(n²).
 
 ---
 
