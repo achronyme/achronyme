@@ -105,6 +105,10 @@ pub enum OpCode {
     /// For Loop Iterator: R[A].. = Next(R[A]) or Jump Bx
     ForIter = 66,
 
+    // ===== ZK =====
+    /// Prove: compile + verify ZK circuit. R[A] = capture map, K[Bx] = source string.
+    Prove = 160,
+
     // ===== Special =====
     /// No operation
     Nop = 255,
@@ -153,6 +157,7 @@ impl OpCode {
             151 => Some(OpCode::BuildMap),
             152 => Some(OpCode::GetIndex),
             153 => Some(OpCode::SetIndex),
+            160 => Some(OpCode::Prove),
             255 => Some(OpCode::Nop),
             _ => None,
         }
@@ -206,6 +211,7 @@ impl OpCode {
             OpCode::BuildMap => "BUILD_MAP",
             OpCode::GetIndex => "GET_INDEX",
             OpCode::SetIndex => "SET_INDEX",
+            OpCode::Prove => "PROVE",
             OpCode::Nop => "NOP",
         }
     }

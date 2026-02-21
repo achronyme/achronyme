@@ -502,6 +502,9 @@ impl IrLowering {
             Rule::for_expr => self.lower_for(inner),
             Rule::block => self.lower_block(inner),
             Rule::while_expr | Rule::forever_expr => Err(IrError::UnboundedLoop(sp)),
+            Rule::prove_expr => Err(IrError::UnsupportedOperation(
+                "prove blocks cannot be nested inside circuits".into(), sp,
+            )),
             Rule::fn_expr => Err(IrError::UnsupportedOperation(
                 "closures are not supported in circuits".into(), sp,
             )),

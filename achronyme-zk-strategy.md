@@ -1,7 +1,7 @@
 # Achronyme → ZK DSL: Estrategia Técnica y de Mercado
 
 > Última actualización: Febrero 2026
-> Estado: Fases 0-1 completadas (R1CS scaffold + compilación aritmética, 34+ tests)
+> Estado: Fases 0-10 completadas, integración VM↔ZK Niveles 1-2 operativos, 2 auditorías resueltas. **637 tests, 2 backends, bloques `prove {}` funcionales.**
 
 ---
 
@@ -82,177 +82,170 @@ EU Digital Identity Wallet, passports ZK, pruebas de humanidad. Nicho donde un e
 
 ## 4. Arquitectura Técnica
 
-### Stack Actual (Completado)
-
-```
-┌──────────────────────────────────────────────────┐
-│              Achronyme DSL Layer                  │
-│   (pest PEG grammar, expresiones funcionales)    │
-├──────────────────────┬───────────────────────────┤
-│   Bytecode Compiler  │    R1CS Compiler          │
-│   (VM target)        │    (Circuit target)       │
-│   - closures, GC     │    - aritmética ✓         │
-│   - recursión        │    - let bindings ✓       │
-│   - strings, I/O     │    - assert_eq ✓          │
-│   - full language     │    - constant folding ✓   │
-├──────────────────────┤    - control flow (WIP)   │
-│   Register-based VM  ├───────────────────────────┤
-│   (witness calc.)    │    ConstraintSystem       │
-│                      │    - enforce(A*B=C)       │
-│                      │    - mul_lc, inv_lc       │
-│                      │    - verify(witness)      │
-└──────────────────────┴───────────────────────────┘
-         FieldElement (BN254 Montgomery, [u64;4])
-```
-
-### Arquitectura Target (Post Fase 5)
+### Stack Actual (Febrero 2026)
 
 ```
 ┌──────────────────────────────────────────────────┐
 │              Achronyme DSL Layer                  │
 │   (pest PEG grammar, funcional/matemática)       │
 ├──────────────────────────────────────────────────┤
-│            Taint Analysis Layer                   │
-│   (Public/Private propagation, under-constraint  │
-│    detection, compile-time safety guarantees)     │
+│         Taint Analysis + Bool Propagation         │
+│   (Public/Witness/Constant tracking, under-      │
+│    constraint detection, boolean optimization)    │
 ├──────────────────────────────────────────────────┤
-│            SSA Intermediate Representation        │
-│   (Constant folding, DCE, constraint dedup,      │
-│    common subexpression elimination)              │
+│         SSA Intermediate Representation           │
+│   (Const fold, DCE, bool_prop, LC simplify)       │
 ├──────────────┬──────────────┬────────────────────┤
 │   R1CS       │  Plonkish    │   (Future)         │
 │   Backend    │  Backend     │   STARK/AIR        │
 │   (Groth16)  │  (Halo2,     │                    │
-│              │   Plonky3)   │                    │
+│   574 tests  │   Plonky3)   │                    │
 ├──────────────┴──────────────┴────────────────────┤
-│   Export: .r1cs/.wtns (snarkjs), Solidity verifier│
+│  Export: .r1cs/.wtns (snarkjs compat)            │
+├──────────────────────────────────────────────────┤
+│  CLI: circuit --backend r1cs|plonkish            │
+│       run | compile | disassemble | repl         │
+└──────────────────────────────────────────────────┘
+         FieldElement (BN254 Montgomery, [u64;4])
+```
+
+### VM: Motor de Ejecución Dual
+
+```
+┌──────────────────────────────────────────────────┐
+│   NaN-Boxing Value System (64-bit tagged union)   │
+│                                                   │
+│   TAG_INT (i32)  ──→ Contadores, índices          │
+│   TAG_NUMBER (f64) → Aritmética general           │
+│   TAG_FIELD (BN254) → Crypto / ZK ←── CLAVE      │
+│   TAG_STRING ──→ I/O, debugging                   │
+│   TAG_LIST/MAP → Estructuras de datos             │
+│   TAG_CLOSURE ─→ Funciones first-class            │
+│                                                   │
+│   Promoción: INT→Field (auto), Float×Field (error)│
+├──────────────────────────────────────────────────┤
+│   Register-based VM (65K stack, mark-sweep GC)    │
+│   60+ opcodes, closures, upvalues, iterators      │
 └──────────────────────────────────────────────────┘
 ```
 
+**Estado actual**: VM y pipeline ZK están integrados a través de bloques `prove {}`. La VM ejecuta lógica general y delega secciones ZK al pipeline IR→R1CS en runtime. El IR Evaluator valida inputs antes de compilar constraints. `compile_ir_with_witness()` unifica evaluación + compilación + witness en un solo paso.
+
 ### Decisiones Arquitectónicas Clave
 
-**1. SSA IR (Fase 5)**
-Actualmente AST → R1CS directo. Después de tener circuitos funcionales (control flow + builtins), insertar un IR en Static Single Assignment entre el parser y los backends. Justificación:
-- Las variables en circuitos ZK son inmutables por definición — SSA es el mapeo natural.
-- Habilita pases de optimización agresivos: constant folding global, dead code elimination, constraint deduplication, common subexpression elimination.
-- Desacopla los backends: el mismo IR compila a R1CS (Groth16) o Plonkish (Halo2/Plonky3).
-- Cada constraint eliminada reduce gas y tiempo de prueba directamente.
+**1. SSA IR (Fase 5) ✅ Completado**
+IR en Static Single Assignment entre el parser y los backends:
+- Variables inmutables por definición — SSA es el mapeo natural.
+- Pases de optimización: constant folding global, DCE, boolean propagation.
+- Desacopla los backends: el mismo IR compila a R1CS o Plonkish.
+- Cada constraint eliminada reduce gas y tiempo de prueba.
 
-**2. Taint Analysis (Fase 2-3, incremental)**
-Sistema de tipos afín que propaga tags `Public`/`Private`/`Derived(from)` por el flujo de datos:
-- Error si un valor `Private` se usa donde se espera `Public` sin pasar por un constraint.
-- Warning si una variable declarada nunca aparece en ningún constraint (potencialmente under-constrained).
-- Garantías de soundness en compile-time, no en proving-time.
+**2. Taint Analysis (Fase 7) ✅ Completado**
+Forward + backward analysis sobre el IR:
+- Tags `Constant`/`Public`/`Witness` con propagación de merge.
+- Backward fixpoint desde `AssertEq`/`Assert` detecta variables under-constrained.
+- Warning `UnusedInput` para declaraciones nunca referenciadas.
 
 **3. NO Memory Checking Arguments**
 El reviewer externo sugirió implementar modelos de memoria offline (Permutation/Sumcheck, estilo SP1/Jolt). **Rechazado.** Eso es arquitectura de zkVM genérica, no de DSL. El modelo dual de Achronyme (VM para ejecución dinámica, circuit compiler para el subconjunto constrainable) es la solución correcta — es exactamente lo que hacen Noir (unconstrained vs constrained) y Cairo (hints vs constraints). Si en el futuro se necesitan accesos a arrays dentro de circuitos, se implementan lookup arguments puntuales.
 
-**4. Plonkish como segundo backend (Fase 8)**
-R1CS/Groth16 primero porque:
-- Compatibilidad inmediata con snarkjs (proving en browser).
-- Proofs más pequeñas (~200 bytes) y verificación más barata on-chain.
-- Ecosistema de trusted setup ceremonies ya existe.
+**4. Plonkish como segundo backend (Fase 8) ✅ Completado**
+R1CS/Groth16 primero por compatibilidad snarkjs. Plonkish operativo con custom gates, lookup tables y range checks O(1). Ambos backends auditados y con copy-constraint soundness verificada.
 
-Plonkish después porque:
-- Custom gates y lookup tables hacen bit-shifts, XORs y hashing órdenes de magnitud más eficientes.
-- Es el estándar moderno (Halo2, Plonky3).
-- El SSA IR hace viable tener múltiples backends sin reescribir el compilador.
+**5. Integración VM↔ZK: La Próxima Frontera**
+
+Análisis de viabilidad completado (Febrero 2026). El NaN-boxing se preserva — `TAG_FIELD` ya existe y coexiste con strings, listas, closures. No es necesario eliminar `f64` ni reducir la expresividad del lenguaje.
+
+*Ver sección 9 para el plan de integración detallado.*
 
 ---
 
-## 5. Roadmap de Desarrollo (8 Fases)
+## 5. Roadmap de Desarrollo
 
 ### Fases Completadas
 
 #### Fase 0: Cableado ✅
-- `R1CSCompiler` struct con `declare_public/witness`, `lookup`, `lookup_lc`
-- `ConstraintSystem` con `enforce(A*B=C)`, `enforce_equal`, `mul_lc`, `inv_lc`, `verify(witness)`
-- `R1CSError` con 5 variantes descriptivas
-- Wire layout snarkjs-compatible: `[ONE, pub1..pubN, wit1..witM, intermediates...]`
+- `R1CSCompiler`, `ConstraintSystem`, wire layout snarkjs-compatible
 
 #### Fase 1: Compilación Aritmética ✅
-- Pipeline completo expresión → `LinearCombination`
-- Constant folding: `const * var = 0 constraints`, `var * var = 1 constraint`
-- `multiply_lcs` / `divide_lcs` / `pow_by_squaring` con costos óptimos
-- `assert_eq` builtin (1 constraint)
-- Let-binding lazy (almacena LC, no materializa)
-- Negación como scalar mul (0 constraints)
-- Rechazo explícito de tipos no-constrainable (string, bool, nil, list, map)
-- **34 tests pasando** (8 básicos + 20 expresiones + 6 integración con witness verification)
+- Pipeline expresión → LC, constant folding, `multiply_lcs`/`divide_lcs`/`pow_by_squaring`
+- **34 tests**
 
-### Fases Pendientes
+#### Fase 2: Control de Flujo ✅
+- `for` con unrolling estático, `if/else` como MUX (2 constraints), blocks
+- Rechazo de `while`/`forever`/`fn`/`break`/`continue`
 
-#### Fase 2: Control de Flujo en Circuitos
-- **For con unrolling estático:** `for i in 0..N { body }` → N copias del body con `i` como constante
-- **If/Else como MUX:** `if cond { a } else { b }` → boolean check (1c) + MUX multiplication (1c) = 2 constraints
-- **Block compilation:** Secuencia de statements dentro de `{ }`
-- **Gramática:** Agregar `range_expr` (`start..end`) al parser pest
-- **Rechazo:** `while` → `UnboundedLoop`, `forever` → `UnboundedLoop`, `fn_expr` → closures no soportadas
-- **~20 tests nuevos** con verificación de witness
+#### Fase 3: Builtins ZK ✅
+- `poseidon(left, right)` (~361 constraints), `mux(cond, a, b)` (2 constraints)
+- `materialize_lc` helper, lazy PoseidonParams
+- **71 tests**
 
-#### Fase 3: Builtins ZK
-- **Dispatch de builtins** en `compile_postfix_expr`: `poseidon()`, `merkle_verify()`, `mux()`
-- **Poseidon hash circuit:** Wrapper sobre `poseidon_hash_circuit`, ~360 constraints
-- **Merkle verify:** Circuito paramétrico usando Poseidon + MUX internamente
-- **Materialización:** LCs complejas → witness variables antes de pasar a builtins
+#### Fase 4: Witness Generation ✅
+- `WitnessOp` trace + `WitnessGenerator` replay
+- Covers Multiply, Inverse, AssignLC, PoseidonHash, IsZero, BitExtract
+- **85 compiler tests, 155 workspace**
 
-#### Fase 2-3+ (Paralelo): Taint Analysis Básico
-- Tags `Public`/`Private`/`Derived` propagados en el flujo de datos
-- Error en compile-time si Private fluye a Public sin constraint
-- Warning si variable declarada nunca se constraina (under-constrained)
-- Integración incremental sobre `R1CSCompiler` existente
+#### Fase 5: SSA IR ✅
+- Crate `ir/` con `SsaVar`, `Instruction`, `IrProgram`
+- `IrLowering` (AST→IR), `compile_ir` (IR→R1CS)
+- Optimization passes: constant folding + DCE
+- **222 workspace tests**
 
-#### Fase 4: Witness Generation
-- `WitnessCalculator`: dado inputs → ejecuta circuito nativamente → llena witness completo
-- Replay de la lógica del circuit compiler pero evaluando en vez de constraining
-- Test E2E: compilar → generar witness → `cs.verify(&witness)` pasa
+#### Fase 6: Export & CLI ✅
+- `.r1cs`/`.wtns` en formato binario iden3 (snarkjs compatible)
+- CLI `circuit` subcommand con `--public`, `--witness`, `--inputs`
+- **244 workspace tests**
 
-#### Fase 5: SSA Intermediate Representation
-- IR en SSA entre parser y backends
-- Pases de optimización: constant folding global, DCE, constraint dedup, CSE
-- Nuevo crate `ir/` en el workspace
-- Los backends R1CS (y futuro Plonkish) consumen el IR, no el AST
+#### Fase 7: Demo E2E ✅
+- `public`/`witness` declaraciones in-source, `lower_self_contained()`
+- Taint analysis (forward+backward), depth-3 Merkle E2E
+- Groth16 snarkjs integration test
+- **257 workspace tests**
 
-#### Fase 6: Exportación y CLI
-- Exportar `.r1cs` y `.wtns` en formato binario snarkjs
-- CLI: `ach circuit compile`, `ach circuit witness`, `ach circuit info`
-- Pipeline completo: compile → witness → snarkjs prove → snarkjs verify
+#### Fase 8: Backend Plonkish ✅
+- `PlonkishSystem` (gates, lookups, copies), `PlonkishCompiler` (IR→Plonkish)
+- `RangeCheck`: R1CS O(bits), Plonkish O(1) via lookup
+- CLI `--backend r1cs|plonkish`
+- **301 workspace tests**
 
-#### Fase 7: Demo End-to-End
-- Merkle membership proof: compile → prove → verify con snarkjs/Groth16
-- Circuito de ejemplo documentado (`examples/merkle_membership.ach`)
-- Blog post / video técnico demostrativo
+#### Fase 9: Operadores & Audit ✅
+- `!=`, `<=`, `>=`, `&&`, `||`, `!`, `assert(expr)`, `true`/`false`
+- IsZero gadget, 253-bit decomposition para ordenamiento
+- `SourceSpan` error reporting, VM opcodes nuevos
+- Audit fix: Plonkish IsZero soundness, Poseidon capacity wire, proptest
+- **421 workspace tests** (post Phase 9c)
 
-#### Fase 8: Backend Plonkish
-- Segundo backend desde el SSA IR
-- Custom gates y lookup tables
-- Reducción de circuitos de millones a miles de constraints para operaciones bitwise/hashing
-- Base para ZKML eficiente
+#### Deep Audit (C1-C4, H1-H5, M1-M8) ✅
+- **C1-C4**: Plonkish `constrain_constant()` — copy constraints para soundness
+- **H1-H5**: R1CS nPubIn/nPubOut swap, DuplicateInput, selector-based lookups
+- **M1-M8**: Bounded IsLt/IsLe, bool propagation, LC simplify, circomlibjs Poseidon, big integer literals, negative CLI inputs, taint Sub/Div self-folding
+- **518 workspace tests** (post deep audit)
 
-### Diagrama de Dependencias
+#### Fase 10: Arrays, Functions, Crypto ✅
+- Arrays: `[a, b, c]`, `a[i]`, `public/witness x[N]`, `for elem in arr`, `len(arr)`
+- Functions: `fn f(x, y) { ... }` con inline expansion, recursion guard
+- `poseidon_many(...)` variable-arity, `merkle_verify(root, leaf, path, indices)`
+- **558 workspace tests** → **574 tras últimos fixes**
 
-```
-Fase 0 ✅ ──→ Fase 1 ✅ ──→ Fase 2 ──→ Fase 3 ──────→ Fase 4 ──→ Fase 5 ──→ Fase 6 ──→ Fase 7
-                               │           │                         │
-                               └── Taint ──┘                        │
-                                (paralelo)                          ↓
-                                                                 Fase 8
-```
+### Estado del Codebase
 
-### Hitos Clave
-
-| Después de... | Acción |
-|---------------|--------|
-| **Fase 3** | Aplicar a Ethereum Foundation ESP con demo Poseidon/Merkle circuit |
-| **Fase 5** | Blog post técnico: arquitectura SSA→R1CS, diferenciador vs competencia |
-| **Fase 7** | Demo completa E2E para hackathons (ETHLatam, ZK Hack) |
-| **Fase 8** | El backend Plonkish abre la puerta a ZKML y coprocesadores eficientes |
+| Métrica | Valor |
+|---------|-------|
+| Tests passing | 637 |
+| Backends | R1CS (Groth16) + Plonkish |
+| VM↔ZK Integration | Nivel 1 (IR Evaluator) + Nivel 2 (`prove {}` blocks) |
+| Audit findings | 100% resueltos (C1-4, H1-5, M1-8, L1-4, T1-5) |
+| Optimization passes | const_fold, DCE, bool_prop, LC simplify |
+| Export formats | .r1cs v1, .wtns v2 (snarkjs compatible) |
+| Builtins | poseidon, poseidon_many, mux, assert, assert_eq, range_check, merkle_verify, len |
+| IR instructions | 19 (Const, Input, Add, Sub, Mul, Div, Neg, Mux, AssertEq, PoseidonHash, RangeCheck, Not, And, Or, IsEq, IsNeq, IsLt, IsLe, Assert) |
+| VM opcodes | 61 (incluyendo Prove = 160) |
 
 ---
 
 ## 6. Capitalización Sin Vender Software
 
-### Tier 1: Grants ($5K-$250K, inmediato post Fase 3)
+### Tier 1: Grants ($5K-$250K)
 
 | Programa | Monto | Foco |
 |----------|-------|------|
@@ -266,7 +259,9 @@ Fase 0 ✅ ──→ Fase 1 ✅ ──→ Fase 2 ──→ Fase 3 ────�
 
 **Requisitos:** MVP funcional, repo open-source activo, proposal con milestones concretos y budget desglosado. Ciclo típico: 2-12 semanas.
 
-### Tier 2: Retroactive Public Goods Funding (post Fase 7)
+**Estado**: El proyecto ya supera los requisitos de MVP — pipeline E2E funcional, 2 backends, 574 tests, 2 auditorías completas.
+
+### Tier 2: Retroactive Public Goods Funding
 - **Optimism RPGF** — Financia retroactivamente proyectos que demostraron valor.
 - **Protocol Guild** — Contribuidores a infraestructura core de Ethereum.
 - **Octant** — Yield de staking de Golem Foundation hacia public goods.
@@ -315,7 +310,7 @@ Ventaja que la mayoría de proyectos ZK no tienen:
 1. **Dualidad de ejecución** — VM completa (closures, recursión, GC) + circuit compiler (R1CS/Plonkish). El desarrollador escribe una vez, Achronyme decide qué se prueba.
 2. **Foco matemático nativo** — Otros DSLs vienen del mundo de la programación. Achronyme viene de las matemáticas.
 3. **Seguridad en compile-time** — Taint analysis detecta circuitos under-constrained y fugas de datos privados antes de generar una sola prueba.
-4. **Testing first-class** — Cultura TDD convertida en framework de testing ZK que no existe en ningún otro DSL.
+4. **Testing first-class** — 574 tests, 2 auditorías criptográficas completas, proptest para soundness.
 5. **Posición LATAM** — Demanda creciente, poca oferta, comunidad técnica en español.
 
 ### Mercado
@@ -325,3 +320,116 @@ El mercado ZK tiene $11.7B+ en market cap. La Ethereum Foundation inyectó $32.6
 ### Principio rector
 
 **No intentes ser Noir. Sé el lenguaje que hace que las matemáticas se conviertan en pruebas cero-conocimiento de forma natural.**
+
+---
+
+## 9. Integración VM↔ZK: Plan de Convergencia
+
+### Estado actual de la VM
+
+La VM ya tiene soporte nativo para field elements a través del NaN-boxing:
+
+```
+TAG_FIELD = 8  →  Arena<FieldElement> en heap
+               →  Promoción automática INT→Field
+               →  Rechazo Float×Field (no-determinístico)
+               →  Aritmética completa: add, sub, mul, div, neg, pow
+```
+
+El NaN-boxing **se preserva** — `TAG_FIELD` coexiste con `TAG_STRING`, `TAG_LIST`, `TAG_CLOSURE`, etc. No hay necesidad de eliminar `f64` ni reducir la expresividad. Los tres tracks numéricos son complementarios:
+
+| Track | Tag | Bits | Uso |
+|-------|-----|------|-----|
+| Enteros | `TAG_INT` | i32 (32-bit) | Contadores de loop, índices |
+| Flotantes | `TAG_NUMBER` | f64 (64-bit) | Aritmética general, `sqrt()` |
+| Campo | `TAG_FIELD` | BN254 (256-bit, heap) | Crypto, witness, constraints |
+
+### Integración completada: VM↔ZK en runtime
+
+```
+Antes:
+  achronyme run program.ach     →  Bytecode → VM (ejecuta y descarta)
+  achronyme circuit program.ach →  AST → IR → R1CS/Plonkish (constraints)
+
+Ahora:
+  achronyme run program.ach     →  Bytecode → VM → prove {} → IR → R1CS → verify ✓
+  achronyme circuit program.ach →  AST → IR → eval → R1CS/Plonkish + witness
+```
+
+### Niveles de integración
+
+#### Nivel 1: IR Evaluator + Unified Witness ✅ Completado
+
+`ir::eval::evaluate()` ejecuta SSA programs con inputs concretos — validación temprana de assertions, divisiones por cero, e inputs faltantes antes de compilar constraints.
+
+`compile_ir_with_witness()` en ambos backends (R1CS + Plonkish) unifica evaluación + compilación + witness en un solo paso. Elimina la necesidad de coordinar `compile_ir()` + `WitnessGenerator` por separado.
+
+- `fill_poseidon_witness()` extraído como función standalone reutilizable
+- CLI `circuit` actualizado para usar el pipeline unificado
+- **613 tests** (39 nuevos)
+
+#### Nivel 2: Bloques `prove { }` en la VM ✅ Completado
+
+Constructo del lenguaje donde la VM ejecuta lógica general y delega secciones ZK:
+
+```
+let secret = field(42)
+let nonce = field(0)
+let h = poseidon_hash(secret, nonce)  // VM computa el hash
+
+prove {
+    witness s
+    public h
+    assert_eq(poseidon(s, 0), h)       // Circuit verifica
+}
+```
+
+**Implementación**:
+- `prove_expr` en la gramática (keyword + atom expression)
+- Opcode `Prove = 160` (ABx: R[A]=capture map, K[Bx]=source string)
+- Pre-scan en compile-time extrae nombres `public`/`witness` del bloque
+- Captura automática de variables del scope → `BuildMap` → `FieldElement` map
+- `ProveHandler` trait en VM (dependency injection), `DefaultProveHandler` en CLI
+- Pipeline: strip braces → `lower_self_contained` → optimize → `compile_ir_with_witness` → verify
+- `prove {}` evalúa a `nil`, errors se propagan como `ProveBlockFailed`
+- **637 tests** (24 nuevos, incluyendo Poseidon E2E)
+
+#### Nivel 3: Circuitos como FFI (siguiente paso)
+
+Funciones que compilan circuitos y retornan proofs como valores first-class:
+
+```
+circuit verify_age(public min_age, witness birth_year) {
+    let age = 2026 - birth_year
+    assert(age >= min_age)
+}
+
+let proof = verify_age(18, 1990)
+send_to_verifier(proof)
+```
+
+**Requiere**: circuitos como heap objects, serialización de proofs, integración con prover externo (snarkjs/arkworks).
+
+### Análisis de deuda técnica (auditoría interna, Febrero 2026)
+
+La auditoría de 6 agentes identificó áreas de mejora previas a la integración:
+
+| Área | Hallazgo | Impacto | Prioridad |
+|------|----------|---------|-----------|
+| `memory/heap.rs` | 8 métodos `alloc_*` + 8 bloques `sweep` copy-pasted | ~300 LOC eliminables con genéricos | Media |
+| `constraints/plonkish.rs` | Lookup verification O(M·N²) con `Vec::contains` | Catastrófico para tablas grandes | Alta |
+| `compiler/` | `compile_circuit()` AST-directo duplica `compile_ir()` | ~500 LOC muertos | Media |
+| `compiler/` | Bytecode compiler (`codegen.rs`) sin uso en pipeline ZK | ~1,100 LOC pero necesario para VM | Baja* |
+| `ir/lower.rs` | Monolito de 1,674 líneas, funciones re-parsean source | Escalabilidad limitada | Media |
+| Parser | ~188 referencias `Rule::*` dispersas, sin AST intermedio | Acoplamiento total al parser | Alta |
+
+*El bytecode compiler es pieza esencial de la integración VM↔ZK — `compile_prove` en `control_flow.rs` genera el opcode `Prove` que delega al pipeline IR→R1CS.
+
+### Prioridades de la próxima fase
+
+1. **Nivel 3 de integración**: Circuitos como FFI, proofs serializables
+2. **Fix lookup O(N²)** en Plonkish → `HashSet` (quick win, alta importancia)
+3. **VM nativa Poseidon** — `poseidon()` como función nativa en la VM
+4. **Eliminar `compile_circuit()` directo** (duplicado de `compile_ir()`)
+5. **AST intermedio** → desacoplar pest del resto del pipeline
+6. **Export Plonkish** → formato binario (actualmente solo R1CS exporta)

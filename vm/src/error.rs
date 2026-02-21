@@ -12,6 +12,8 @@ pub enum RuntimeError {
     Unknown(String),
     OutOfBounds(String),
     SystemError(String),
+    ProveBlockFailed(String),
+    ProveHandlerNotConfigured,
 }
 
 impl From<String> for RuntimeError {

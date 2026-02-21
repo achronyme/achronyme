@@ -3,6 +3,7 @@ use clap::Parser;
 
 mod args;
 mod commands;
+mod prove_handler;
 mod repl;
 
 use args::{Cli, Commands};

@@ -338,6 +338,7 @@ name = "ir"
 version = "0.7.0"
 dependencies = [
  "achronyme-parser",
+ "constraints",
  "memory",
  "pest",
 ]
@@ -750,6 +751,8 @@ version = "0.7.0"
 dependencies = [
  "byteorder",
  "compiler",
+ "constraints",
+ "ir",
  "memory",
 ]
 

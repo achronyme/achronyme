@@ -10,10 +10,12 @@ mod frame;
 mod gc;
 mod globals;
 mod native;
+pub mod prove;
 mod promotion;
 mod stack;
 mod vm;
 
 // Public API
 pub use frame::CallFrame;
+pub use prove::ProveHandler;
 pub use vm::VM;

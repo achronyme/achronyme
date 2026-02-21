@@ -4,6 +4,8 @@ use memory::Function;
 use std::fs;
 use vm::{CallFrame, VM};
 
+use crate::prove_handler::DefaultProveHandler;
+
 // Need format_value logic. It was local in runner.rs.
 // I will duplicate it here or move it to a shared utils or vm method?
 // Since `Value::fmt` exists (Debug), but the user wants `format_value`.
@@ -21,6 +23,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
+        vm.prove_handler = Some(Box::new(DefaultProveHandler));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -42,6 +45,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
+        vm.prove_handler = Some(Box::new(DefaultProveHandler));
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);

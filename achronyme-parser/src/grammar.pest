@@ -27,7 +27,7 @@ identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
 keyword    = @{
-    ("let" | "mut" | "print" | "true" | "false" | "nil" | "if" | "else" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" | "public" | "witness")
+    ("let" | "mut" | "print" | "true" | "false" | "nil" | "if" | "else" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" | "public" | "witness" | "prove")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -46,6 +46,7 @@ while_expr = { "while" ~ expr ~ block }
 range_expr = { integer ~ ".." ~ integer }
 for_expr   = { "for" ~ identifier ~ "in" ~ (range_expr | expr) ~ block }
 forever_expr = { "forever" ~ block }
+prove_expr = { "prove" ~ block }
 
 // 3. Function Definition (parsed as expression for first-class functions)
 param_list = { identifier ~ ("," ~ identifier)* }
@@ -61,6 +62,7 @@ atom = {
   | while_expr
   | for_expr
   | forever_expr
+  | prove_expr
   | fn_expr
   | block
   | number

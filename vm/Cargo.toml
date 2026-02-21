@@ -10,3 +10,5 @@ memory = { path = "../memory" }
 
 [dev-dependencies]
 compiler = { path = "../compiler" }
+constraints = { path = "../constraints" }
+ir = { path = "../ir" }

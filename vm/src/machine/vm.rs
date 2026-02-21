@@ -13,6 +13,7 @@ use super::frame::CallFrame;
 use super::gc::GarbageCollector;
 use super::globals::GlobalOps;
 use super::native::NativeRegistry;
+use super::prove::ProveHandler;
 use super::stack::StackOps;
 
 /// The Virtual Machine struct
@@ -33,9 +34,12 @@ pub struct VM {
 
     /// If true, GC will run on every possible occasion (for testing)
     pub stress_mode: bool,
-    
+
     // Passive Debug Symbols (Sidecar)
     pub debug_symbols: Option<HashMap<u16, String>>,
+
+    /// Handler for `prove { }` blocks (injected by CLI or host)
+    pub prove_handler: Option<Box<dyn ProveHandler>>,
 }
 
 pub const STACK_MAX: usize = 65_536;
@@ -57,6 +61,7 @@ impl VM {
             open_upvalues: None,
             stress_mode: false,
             debug_symbols: None,
+            prove_handler: None,
         };
 
         // Bootstrap native functions
@@ -327,6 +332,10 @@ impl VM {
 
 
 
+
+            Prove => {
+                self.handle_prove(instruction, base, closure_idx)?;
+            }
 
             BuildList | BuildMap | GetIndex | SetIndex => {
                 self.handle_data(op, instruction, base)?;

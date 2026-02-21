@@ -4,8 +4,10 @@ use crate::scopes::ScopeCompiler;
 use crate::expressions::ExpressionCompiler;
 use crate::statements::StatementCompiler; // For compile_stmt in block
 use crate::types::{LoopContext, Local};
-use achronyme_parser::Rule;
+use achronyme_parser::{AchronymeParser, Rule};
+use memory::Value;
 use pest::iterators::Pair;
+use pest::Parser;
 use vm::opcode::{OpCode, instruction::encode_abx};
 
 pub trait ControlFlowCompiler {
@@ -24,6 +26,9 @@ pub trait ControlFlowCompiler {
     // Statements
     fn compile_break(&mut self) -> Result<(), CompilerError>;
     fn compile_continue(&mut self) -> Result<(), CompilerError>;
+
+    // ZK
+    fn compile_prove(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
 }
 
 impl ControlFlowCompiler for Compiler {
@@ -291,4 +296,130 @@ impl ControlFlowCompiler for Compiler {
 
         Ok(target_reg)
     }
+
+    fn compile_prove(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
+        // pair is prove_expr: "prove" ~ block
+        let block = pair.into_inner().next().unwrap(); // the block
+        let block_source = block.as_str().to_string();
+
+        // Pre-scan: parse block source to find public/witness declarations
+        let capture_names = prescan_prove_declarations(&block_source)?;
+
+        // Build capture map: { "name": value, ... }
+        let count = capture_names.len();
+        if count > 127 {
+            return Err(CompilerError::CompilerLimitation(
+                "prove block captures too many variables".into(),
+            ));
+        }
+
+        let map_reg = self.alloc_reg()?;
+
+        if count > 0 {
+            let start_reg = self.alloc_contiguous((count * 2) as u8)?;
+
+            for (i, name) in capture_names.iter().enumerate() {
+                let key_reg = start_reg + (i as u8 * 2);
+                let val_reg = key_reg + 1;
+
+                // Key: string constant
+                let key_handle = self.intern_string(name);
+                let key_val = Value::string(key_handle);
+                let key_idx = self.add_constant(key_val);
+                if key_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants);
+                }
+                self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16);
+
+                // Value: resolve from current scope
+                if let Some((_, local_reg)) = self.resolve_local(name) {
+                    self.emit_abc(OpCode::Move, val_reg, local_reg, 0);
+                } else if let Some(upval_idx) =
+                    self.resolve_upvalue(self.compilers.len() - 1, name)
+                {
+                    self.emit_abx(OpCode::GetUpvalue, val_reg, upval_idx as u16);
+                } else if let Some(&global_idx) = self.global_symbols.get(name) {
+                    self.emit_abx(OpCode::GetGlobal, val_reg, global_idx);
+                } else {
+                    return Err(CompilerError::CompileError(format!(
+                        "prove: variable `{name}` not found in scope"
+                    )));
+                }
+            }
+
+            self.emit_abc(OpCode::BuildMap, map_reg, start_reg, count as u8);
+
+            // Free key/value registers
+            for _ in 0..(count * 2) {
+                let top = self.current().reg_top - 1;
+                self.free_reg(top);
+            }
+        } else {
+            // Empty capture map
+            let start = self.current().reg_top;
+            self.emit_abc(OpCode::BuildMap, map_reg, start, 0);
+        }
+
+        // Store block source as string constant
+        let src_handle = self.intern_string(&block_source);
+        let src_val = Value::string(src_handle);
+        let src_idx = self.add_constant(src_val);
+        if src_idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants);
+        }
+
+        // Emit Prove R[map_reg], K[src_idx]
+        self.emit_abx(OpCode::Prove, map_reg, src_idx as u16);
+
+        // Result is nil (handler sets R[A] = nil)
+        Ok(map_reg)
+    }
+}
+
+/// Pre-scan a prove block source to extract public/witness declaration names.
+///
+/// Parses the block as `Rule::block` and collects all identifiers from
+/// `public_decl` and `witness_decl` statements. Supports array syntax `x[N]`
+/// which expands to `x_0, x_1, ..., x_{N-1}`.
+fn prescan_prove_declarations(block_source: &str) -> Result<Vec<String>, CompilerError> {
+    let pairs = AchronymeParser::parse(Rule::block, block_source)
+        .map_err(|e| CompilerError::ParseError(format!("prove pre-scan: {e}")))?;
+
+    let block_pair = pairs.into_iter().next().unwrap();
+    let mut names = Vec::new();
+
+    for stmt in block_pair.into_inner() {
+        if stmt.as_rule() != Rule::stmt {
+            continue;
+        }
+        let inner = match stmt.into_inner().next() {
+            Some(inner) => inner,
+            None => continue,
+        };
+        match inner.as_rule() {
+            Rule::public_decl | Rule::witness_decl => {
+                let mut children = inner.into_inner().peekable();
+                while let Some(child) = children.next() {
+                    if child.as_rule() == Rule::identifier {
+                        let name = child.as_str().to_string();
+                        if children.peek().map(|p| p.as_rule()) == Some(Rule::array_size) {
+                            let size_pair = children.next().unwrap();
+                            let s = size_pair.into_inner().next().unwrap().as_str();
+                            let n: usize = s.parse().map_err(|_| {
+                                CompilerError::ParseError(format!("invalid array size: {s}"))
+                            })?;
+                            for i in 0..n {
+                                names.push(format!("{name}_{i}"));
+                            }
+                        } else {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(names)
 }

@@ -52,6 +52,7 @@ impl AtomCompiler for Compiler {
             Rule::fn_expr => self.compile_fn_expr(inner),
             Rule::for_expr => self.compile_for(inner),
             Rule::forever_expr => self.compile_forever(inner),
+            Rule::prove_expr => self.compile_prove(inner),
             Rule::identifier => {
                 let name = inner.as_str().to_string();
                 let reg = self.alloc_reg()?;
