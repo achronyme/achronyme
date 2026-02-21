@@ -11,14 +11,14 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 8 | 6 (+1 partial) | 0 | 15 |
+| memory | 7 | 7 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
 | cli | 13 | 0 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **59** | **20 (+1)** | **13** | **93** |
+| **TOTAL** | **58** | **21 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -26,12 +26,12 @@
 |----------|-------|
 | CRITICAL | 6 |
 | HIGH | 10 |
-| MEDIUM | 19 |
+| MEDIUM | 18 |
 | LOW | 24 |
 
 ---
 
-## Resolved Findings (21)
+## Resolved Findings (22)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -55,6 +55,7 @@
 | V-19 | LOW | vm | USER_GLOBAL_START coupling → compile-time `NATIVE_COUNT` assertion | `d7758e8` |
 | V-20 | LOW | vm | Missing edge case tests → 18 tests (bytecode, GC, recursion, prove) | `1d391ea` |
 | M-06 | HIGH | memory | `import_strings` missing allocation tracking → sum capacities + `check_gc()` | `d7503c8` |
+| M-07 | MEDIUM | memory | NaN boxing tag overflow → compile-time `assert!(TAG < 16)` for all 13 tags | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -79,18 +80,7 @@
 
 ## Open Findings
 
-### Memory Crate (8 open)
-
-#### M-07 — NaN Boxing Tag Validation [MEDIUM]
-
-**File**: `memory/src/value.rs` (lines 7, 24)
-**Category**: Safety
-
-Tags occupy bits 32-35 (4 bits), allowing values 0-15. With `TAG_INT = 13` and `TAG_PROOF = 9`, 14 of 16 slots are used. No compile-time assertion prevents a future tag from exceeding 15, which would cause tag aliasing.
-
-**Fix**: Add `const _: () = assert!(TAG_INT < 16, "tags must fit in 4 bits");` for all tags.
-
----
+### Memory Crate (7 open)
 
 #### M-08 — Bytes Allocated Drift via Saturation [MEDIUM]
 

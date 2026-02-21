@@ -23,6 +23,21 @@ pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
 pub const TAG_INT: u64 = 13;
 
+// Compile-time guard: all tags must fit in 4 bits (0-15)
+const _: () = assert!(TAG_NIL < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_FALSE < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_TRUE < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_STRING < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_LIST < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_MAP < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_FUNCTION < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_FIELD < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_PROOF < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_NATIVE < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_CLOSURE < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_ITER < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_INT < 16, "tag must fit in 4 bits");
+
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
 pub struct Value(pub u64);
