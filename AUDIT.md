@@ -1,8 +1,10 @@
 # Achronyme Security & Engineering Audit
 
 **Date**: 2026-02-21
+**Last updated**: 2026-02-21
 **Scope**: All 7 workspace crates — 646 tests passing at time of audit
 **Severity scale**: CRITICAL > HIGH > MEDIUM > LOW
+**Resolved**: 4 findings fixed (M-01, M-02, M-03, M-04), 1 partially (M-09)
 
 ---
 
@@ -23,47 +25,43 @@
 
 ## Memory Crate (15 findings)
 
-### M-01 — O(n) Linear Search in GC Sweep [HIGH]
+### M-01 — O(n) Linear Search in GC Sweep [HIGH] [RESOLVED]
 
-**File**: `memory/src/heap.rs` (lines 371, 382, 393, 416, 432, 449, 465, 476)
+**File**: `memory/src/heap.rs`
 **Category**: Performance
+**Resolved**: `e594a96` — Added `free_set: HashSet<u32>` to `Arena<T>` with `is_free()`, `mark_free()`, `reclaim_free()`, `clear_free()` methods. All sweep and alloc sites updated.
 
-Each sweep iteration calls `Vec::contains()` on `free_indices`, which is O(n). With n arenas and m objects per arena, GC cost is O(n*m) per cycle. A heap with 100k objects and 50 free indices would perform 5M comparisons per sweep.
-
-**Fix**: Use `HashSet<u32>` alongside the `Vec<u32>` free list. Check membership via HashSet (O(1)), pop from Vec for allocation.
+Each sweep iteration called `Vec::contains()` on `free_indices`, which was O(n). Replaced with O(1) HashSet lookup.
 
 ---
 
-### M-02 — ProofObject Strings Not Deducted on Sweep [HIGH]
+### M-02 — ProofObject Strings Not Deducted on Sweep [HIGH] [RESOLVED]
 
-**File**: `memory/src/heap.rs` (lines 478-483)
+**File**: `memory/src/heap.rs`
 **Category**: Correctness
+**Resolved**: `e4e3edb` — Sweep now deducts `size_of::<ProofObject>() + proof_json.capacity() + public_json.capacity() + vkey_json.capacity()`, symmetric with `alloc_proof()`.
 
-When a `ProofObject` is swept, only `std::mem::size_of::<ProofObject>()` (~72 bytes) is credited to `freed_bytes`. The heap-allocated strings (`proof_json`, `public_json`, `vkey_json`) — potentially tens of KB each — are dropped but not deducted from `bytes_allocated`. Over time, `bytes_allocated` drifts upward, causing premature or skipped GC cycles.
-
-**Fix**: Before clearing the ProofObject, sum up the capacity of all three strings and include that in `freed_bytes`.
-
----
-
-### M-03 — Arena Index Overflow to u32::MAX [HIGH]
-
-**File**: `memory/src/heap.rs` (lines 134, 155, 178, 194, 218, 527, 549, 570, 590)
-**Category**: Safety
-
-Arena allocation casts `data.len()` to `u32` without checking for overflow. If an arena somehow reaches 2^32 objects, the cast wraps to 0 and all subsequent allocations collide with index 0.
-
-**Fix**: Use `u32::try_from(data.len()).expect("arena overflow")` or return an error.
+Previously only ~72 bytes (struct size) were credited, ignoring string buffers (~10-15KB per proof). `bytes_allocated` drifted upward, causing premature GC.
 
 ---
 
-### M-04 — Missing Bounds Check on Arena Access (get_*) [HIGH]
+### M-03 — Arena Index Overflow to u32::MAX [HIGH] [RESOLVED]
 
-**File**: `memory/src/heap.rs` (lines 504-599)
+**File**: `memory/src/heap.rs`
 **Category**: Safety
+**Resolved**: `e4e3edb` — Centralized allocation in `Arena::alloc()` with `u32::try_from(data.len())` check. All 9 `alloc_*` methods now delegate to `Arena::alloc()`, eliminating duplicated patterns and the unchecked `as u32` cast.
 
-All `get_*` methods (e.g., `get_string`, `get_list`, `get_proof`) return `Some(&T)` for any valid index, even if that index has been freed. A stale handle after GC can read from a reused slot, silently accessing wrong data.
+Previously 9 sites cast `data.len() as u32` without overflow check.
 
-**Fix**: Check `if self.arena.free_indices.contains(&index) { return None; }` before returning. With M-01's HashSet, this becomes O(1).
+---
+
+### M-04 — Missing Bounds Check on Arena Access (get_*) [HIGH] [RESOLVED]
+
+**File**: `memory/src/heap.rs`, `vm/src/machine/gc.rs`
+**Category**: Safety
+**Resolved**: `c31ed78` — Added `Arena::get()` and `Arena::get_mut()` with `is_free()` guard. All 14 `get_*` methods now delegate to `Arena::get/get_mut`. Also fixed two pre-existing GC rooting bugs exposed by this change: `mark_roots` used `Value::function()` for closure indices (wrong tag), and `prototypes` were not rooted.
+
+Previously all `get_*` methods returned data from freed slots, allowing stale handles to silently access wrong data.
 
 ---
 
@@ -111,14 +109,13 @@ Tags occupy bits 32-35 (4 bits), allowing values 0-15. With `TAG_INT = 13` and `
 
 ---
 
-### M-09 — Code Duplication in alloc_*/sweep (8x) [MEDIUM]
+### M-09 — Code Duplication in alloc_*/sweep (8x) [MEDIUM] [PARTIALLY RESOLVED]
 
-**File**: `memory/src/heap.rs` (lines 127-599)
+**File**: `memory/src/heap.rs`
 **Category**: Maintainability
+**Partially resolved**: `e4e3edb` — `Arena::alloc()` centralized 9x alloc patterns into one method. `Arena::get/get_mut` (M-04, `c31ed78`) centralized 14x access patterns. Sweep blocks remain duplicated (type-specific cleanup logic prevents full generalization).
 
-Eight `alloc_*` functions and eight corresponding sweep blocks follow identical patterns. Any fix (e.g., M-01, M-03) must be applied in all eight places.
-
-**Fix**: Extract into a macro or generic helper function.
+Remaining: 9 sweep blocks still have per-type reset patterns (String::new vs Vec::new vs FieldElement::ZERO, etc.).
 
 ---
 
@@ -1070,12 +1067,12 @@ No operator precedence table, associativity rules, or escape sequence reference 
 9. **V-05/V-06** — Fix upvalue pointer unsoundness
 10. **L-03/L-04** — Validate cache files, fix TOCTOU
 11. **P-06** — Fix power operator associativity
-12. **M-02** — Fix ProofObject sweep accounting
+12. ~~**M-02** — Fix ProofObject sweep accounting~~ [RESOLVED `e4e3edb`]
 13. **I-02** — Replace unwrap with error handling
 
 ### Medium Priority (Robustness)
 
-14. **M-01** — HashSet for sweep free_indices
+14. ~~**M-01** — HashSet for sweep free_indices~~ [RESOLVED `e594a96`]
 15. **M-06** — Track import_strings allocation
 16. **X-02** — Bounds check in LC::evaluate()
 17. **X-03** — HashSet for lookup verification
