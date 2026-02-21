@@ -264,14 +264,14 @@ If `prove_handler` is None, returns `ProveHandlerNotConfigured`. But if `frames`
 
 ---
 
-### V-08 — GC Missing Proof Roots [HIGH]
+### V-08 — GC Missing Proof Roots [HIGH] [FALSE POSITIVE]
 
 **File**: `vm/src/machine/gc.rs` (lines 46-63)
 **Category**: Memory Safety
 
 `mark_roots()` collects stack Values as roots. These include proof handles (TAG_PROOF), which the trace function must follow to mark `ProofObject` in the heap. If `heap.trace()` doesn't handle TAG_PROOF, proofs are swept while still referenced.
 
-**Fix**: Verify that `heap.trace()` marks `TAG_PROOF` values as leaf objects (same as TAG_FIELD).
+**Analysis**: False positive — `heap.trace()` already handles `TAG_PROOF` as a leaf type (line 321-324), inserting the handle into `marked_proofs`. Identical pattern to `TAG_FIELD`.
 
 ---
 
