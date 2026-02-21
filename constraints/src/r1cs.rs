@@ -9,6 +9,8 @@
 ///   1..=n_pub   = public inputs (instance)
 ///   n_pub+1..   = private inputs + intermediate (witness)
 
+use std::collections::BTreeMap;
+
 use memory::FieldElement;
 
 // ============================================================================
@@ -69,19 +71,45 @@ impl LinearCombination {
         self.terms.push((var, coeff));
     }
 
+    /// Merge duplicate variable terms and remove zero coefficients.
+    ///
+    /// E.g. `x - x` simplifies to the empty LC (constant zero),
+    /// `3x + 5x` simplifies to `8x`.
+    pub fn simplify(&self) -> Self {
+        if self.terms.len() <= 1 {
+            return self.clone();
+        }
+        let mut map: BTreeMap<usize, FieldElement> = BTreeMap::new();
+        for (var, coeff) in &self.terms {
+            let e = map.entry(var.0).or_insert(FieldElement::ZERO);
+            *e = e.add(coeff);
+        }
+        Self {
+            terms: map
+                .into_iter()
+                .filter(|(_, c)| !c.is_zero())
+                .map(|(idx, c)| (Variable(idx), c))
+                .collect(),
+        }
+    }
+
     /// Returns true if this LC only references `Variable::ONE` (i.e., it's a pure constant).
     pub fn is_constant(&self) -> bool {
-        self.terms.iter().all(|(var, _)| *var == Variable::ONE)
+        self.simplify()
+            .terms
+            .iter()
+            .all(|(var, _)| *var == Variable::ONE)
     }
 
     /// If this LC is a pure constant (only `Variable::ONE` terms), return the scalar value.
     /// Returns `None` if any non-ONE variable is present.
     pub fn constant_value(&self) -> Option<FieldElement> {
-        if !self.is_constant() {
+        let simplified = self.simplify();
+        if !simplified.terms.iter().all(|(var, _)| *var == Variable::ONE) {
             return None;
         }
         let mut sum = FieldElement::ZERO;
-        for (_, coeff) in &self.terms {
+        for (_, coeff) in &simplified.terms {
             sum = sum.add(coeff);
         }
         Some(sum)
@@ -93,8 +121,9 @@ impl LinearCombination {
     /// This enables zero-cost materialization when an LC already represents
     /// a single circuit variable.
     pub fn as_single_variable(&self) -> Option<Variable> {
-        if self.terms.len() == 1 {
-            let (var, coeff) = &self.terms[0];
+        let simplified = self.simplify();
+        if simplified.terms.len() == 1 {
+            let (var, coeff) = &simplified.terms[0];
             if *var != Variable::ONE && *coeff == FieldElement::ONE {
                 return Some(*var);
             }
@@ -573,5 +602,51 @@ mod tests {
         let scaled = lc_x * FieldElement::from_u64(3);
         assert_eq!(scaled.terms.len(), 1);
         assert_eq!(scaled.terms[0].1, FieldElement::from_u64(3));
+    }
+
+    // M3: simplify() tests
+
+    #[test]
+    fn test_lc_simplify_cancels_vars() {
+        // x - x should simplify to constant zero
+        let x = Variable(1);
+        let lc = LinearCombination::from_variable(x) - LinearCombination::from_variable(x);
+        assert!(lc.is_constant());
+        assert_eq!(lc.constant_value(), Some(FieldElement::ZERO));
+    }
+
+    #[test]
+    fn test_lc_simplify_merges_same_var() {
+        // 3x + 5x → 8x (not single variable since coeff != 1)
+        let x = Variable(1);
+        let a = LinearCombination::from_variable(x) * FieldElement::from_u64(3);
+        let b = LinearCombination::from_variable(x) * FieldElement::from_u64(5);
+        let sum = a + b;
+        let simplified = sum.simplify();
+        assert_eq!(simplified.terms.len(), 1);
+        assert_eq!(simplified.terms[0].1, FieldElement::from_u64(8));
+        assert!(sum.as_single_variable().is_none()); // coeff is 8, not 1
+    }
+
+    #[test]
+    fn test_lc_as_single_variable_after_cancellation() {
+        // 2x - x → x (single variable)
+        let x = Variable(1);
+        let two_x = LinearCombination::from_variable(x) * FieldElement::from_u64(2);
+        let one_x = LinearCombination::from_variable(x);
+        let diff = two_x - one_x;
+        assert_eq!(diff.as_single_variable(), Some(x));
+    }
+
+    #[test]
+    fn test_lc_constant_with_cancellation() {
+        // (5*ONE + 3x) - 3x → constant 5
+        let x = Variable(1);
+        let mut a = LinearCombination::from_constant(FieldElement::from_u64(5));
+        a.add_term(x, FieldElement::from_u64(3));
+        let b = LinearCombination::from_variable(x) * FieldElement::from_u64(3);
+        let diff = a - b;
+        assert!(diff.is_constant());
+        assert_eq!(diff.constant_value(), Some(FieldElement::from_u64(5)));
     }
 }

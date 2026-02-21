@@ -664,21 +664,16 @@ fn test_plonkish_div_by_zero_witness_error() {
 #[test]
 fn test_r1cs_div_by_zero_in_expression() {
     // Division where denominator is a computed zero: (a - a) = 0
+    // With M3 (LC simplify), `a - a` is detected as constant zero at compile time,
+    // so this now errors during compilation rather than witness generation.
     let pub_names = &["out"];
     let wit_names = &["a"];
     let source = "assert_eq(a / (a - a), out)";
 
     let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
     let mut compiler = R1CSCompiler::new();
-    compiler.compile_ir(&program).unwrap();
-
-    let wg = WitnessGenerator::from_compiler(&compiler);
-    let mut inputs = HashMap::new();
-    inputs.insert("a".to_string(), FieldElement::from_u64(5));
-    inputs.insert("out".to_string(), FieldElement::ZERO);
-
-    let result = wg.generate(&inputs);
-    assert!(result.is_err(), "div by computed zero should error");
+    let result = compiler.compile_ir(&program);
+    assert!(result.is_err(), "div by computed zero should error at compile time");
 }
 
 #[test]
