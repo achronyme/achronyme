@@ -14,24 +14,24 @@
 | memory | 3 | 11 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
-| ir | 10 | 0 | 0 | 10 |
-| constraints | 6 | 1 | 2 | 9 |
+| ir | 8 | 2 | 0 | 10 |
+| constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **51** | **28 (+1)** | **13** | **93** |
+| **TOTAL** | **48** | **31 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 3 |
+| CRITICAL | 0 |
 | HIGH | 10 |
 | MEDIUM | 16 |
 | LOW | 22 |
 
 ---
 
-## Resolved Findings (29)
+## Resolved Findings (32)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -64,6 +64,9 @@
 | L-02 | CRITICAL | cli | Weak DefaultHasher cache key → SHA-256 collision-resistant hash | `512c3e0` |
 | X-01 | CRITICAL | constraints | Plonkish rotation integer underflow → bounds check before access | `039e498` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
+| I-01 | CRITICAL | ir | Mux evaluator `== ONE` → validate boolean + `!is_zero()`, `NonBooleanMuxCondition` error | `PENDING` |
+| I-02 | CRITICAL | ir | Function body reparse `unwrap()` → `.ok_or_else()` error handling | `PENDING` |
+| X-02 | CRITICAL | constraints | `LC::evaluate()` unchecked index → `.get()` with descriptive panic | `PENDING` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -225,29 +228,7 @@ Three-pass design (evaluate, compile, witness) is intentional for early validati
 
 ---
 
-### IR Crate (10 open)
-
-#### I-01 — Evaluator Mux Uses `== ONE` Instead of `!= ZERO` [CRITICAL]
-
-**File**: `ir/src/eval.rs` (lines 110-114)
-**Category**: Soundness
-
-The evaluator selects the Mux branch with `if c == FieldElement::ONE { t } else { f }`. The constraint system enforces `c*(c-1)=0`, allowing only 0 and 1. But if the evaluator receives a non-boolean c (e.g., 2), it silently selects `if_false`, while the circuit would reject the witness entirely. This creates a semantic mismatch between evaluation and constraint verification.
-
-**Fix**: Either (a) error on non-boolean c: `if !c.is_zero() && c != ONE { return Err(NonBoolean) }`, or (b) use `if !c.is_zero() { t } else { f }` to match the circuit's behavior for valid witnesses.
-
----
-
-#### I-02 — Function Body Reparse unwrap() Panic [CRITICAL]
-
-**File**: `ir/src/lower.rs` (line 1257)
-**Category**: Robustness
-
-`body_parsed.into_iter().next().unwrap()` panics if parsing returns zero pairs. The FnDef stores raw source that is re-parsed on each call. If the stored source is empty or malformed, the unwrap panics.
-
-**Fix**: Replace with `.next().ok_or_else(|| IrError::ParseError("empty function body".into()))?`.
-
----
+### IR Crate (8 open)
 
 #### I-03 — FnDef Stores Raw Source Instead of IR [HIGH]
 
@@ -337,18 +318,7 @@ Single file with all lowering logic. Consider splitting into `lower_atoms.rs`, `
 
 ---
 
-### Constraints Crate (6 open)
-
-#### X-02 — LC::evaluate() Unchecked Array Index [CRITICAL]
-
-**File**: `constraints/src/r1cs.rs` (lines 136-143)
-**Category**: Robustness
-
-`witness[var.0]` panics if `var.0 >= witness.len()`. While `ConstraintSystem::verify()` checks witness length, `evaluate()` is a public method callable with mismatched witnesses.
-
-**Fix**: Return `Result<FieldElement, EvalError>` with bounds checking, or add `debug_assert!`.
-
----
+### Constraints Crate (5 open)
 
 #### X-03 — O(N^2) Lookup Verification [HIGH]
 
@@ -666,18 +636,18 @@ No operator precedence table, associativity rules, or escape sequence reference 
 
 ### Immediate (Security-Critical)
 
-1. **L-01** — Replace hardcoded entropy with cryptographic RNG
-2. **L-02** — Replace DefaultHasher with SHA-256 for cache keys
-3. **I-01** — Fix Mux evaluator semantics
-4. **X-01** — Fix Plonkish rotation underflow
+1. ~~**L-01** — Replace hardcoded entropy with cryptographic RNG~~ ✅
+2. ~~**L-02** — Replace DefaultHasher with SHA-256 for cache keys~~ ✅
+3. ~~**I-01** — Fix Mux evaluator semantics~~ ✅
+4. ~~**X-01** — Fix Plonkish rotation underflow~~ ✅
 
 ### High Priority (Safety)
 
 5. **L-03/L-04** — Validate cache files, fix TOCTOU
 6. **P-06** — Fix power operator associativity
-7. **I-02** — Replace unwrap with error handling
-8. **M-06** — Track import_strings allocation
-9. **X-02** — Bounds check in LC::evaluate()
+7. ~~**I-02** — Replace unwrap with error handling~~ ✅
+8. ~~**M-06** — Track import_strings allocation~~ ✅
+9. ~~**X-02** — Bounds check in LC::evaluate()~~ ✅
 
 ### Medium Priority (Robustness)
 

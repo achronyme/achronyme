@@ -14,6 +14,7 @@ pub enum EvalError {
     AssertionFailed { var: SsaVar },
     AssertEqFailed { lhs: SsaVar, rhs: SsaVar },
     RangeCheckFailed { var: SsaVar, bits: u32 },
+    NonBooleanMuxCondition { var: SsaVar },
     UndefinedVar(SsaVar),
 }
 
@@ -40,6 +41,9 @@ impl fmt::Display for EvalError {
                     "range check failed: SSA var {:?} does not fit in {bits} bits",
                     var.0
                 )
+            }
+            EvalError::NonBooleanMuxCondition { var } => {
+                write!(f, "mux condition is not boolean (0 or 1) at SSA var {:?}", var.0)
             }
             EvalError::UndefinedVar(var) => write!(f, "undefined SSA var {:?}", var.0),
         }
@@ -110,7 +114,10 @@ pub fn evaluate(
                 let c = get(&values, cond)?;
                 let t = get(&values, if_true)?;
                 let f = get(&values, if_false)?;
-                let val = if c == FieldElement::ONE { t } else { f };
+                if c != FieldElement::ZERO && c != FieldElement::ONE {
+                    return Err(EvalError::NonBooleanMuxCondition { var: *cond });
+                }
+                let val = if !c.is_zero() { t } else { f };
                 values.insert(*result, val);
             }
             Instruction::PoseidonHash {
@@ -420,6 +427,26 @@ mod tests {
         });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&r], fe(20));
+    }
+
+    #[test]
+    fn eval_mux_non_boolean_error() {
+        let mut p = IrProgram::new();
+        let c = p.fresh_var();
+        let t = p.fresh_var();
+        let f = p.fresh_var();
+        let r = p.fresh_var();
+        p.push(Instruction::Const { result: c, value: fe(2) });
+        p.push(Instruction::Const { result: t, value: fe(10) });
+        p.push(Instruction::Const { result: f, value: fe(20) });
+        p.push(Instruction::Mux {
+            result: r,
+            cond: c,
+            if_true: t,
+            if_false: f,
+        });
+        let err = evaluate(&p, &empty_inputs()).unwrap_err();
+        assert!(matches!(err, EvalError::NonBooleanMuxCondition { .. }));
     }
 
     #[test]

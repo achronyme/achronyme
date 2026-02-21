@@ -133,11 +133,20 @@ impl LinearCombination {
 
     /// Evaluate the LC given a full witness assignment.
     /// witness[i] = value of variable i.
+    ///
+    /// # Panics
+    /// Panics if any variable index is out of bounds.
     pub fn evaluate(&self, witness: &[FieldElement]) -> FieldElement {
         let mut sum = FieldElement::ZERO;
         for (var, coeff) in &self.terms {
-            let val = witness[var.0];
-            sum = sum.add(&coeff.mul(&val));
+            let val = witness.get(var.0).unwrap_or_else(|| {
+                panic!(
+                    "LC::evaluate: variable index {} out of bounds (witness length {})",
+                    var.0,
+                    witness.len()
+                )
+            });
+            sum = sum.add(&coeff.mul(val));
         }
         sum
     }
@@ -448,6 +457,16 @@ mod tests {
 
         // 3*10 + 5*4 = 50
         assert_eq!(lc.evaluate(&witness), FieldElement::from_u64(50));
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn test_evaluate_oob_panics() {
+        let x = Variable(10); // index 10, way out of bounds
+        let mut lc = LinearCombination::zero();
+        lc.add_term(x, FieldElement::ONE);
+        let witness = vec![FieldElement::ONE]; // only 1 element
+        lc.evaluate(&witness);
     }
 
     #[test]

@@ -1254,7 +1254,10 @@ impl IrLowering {
         // Re-parse and lower the function body
         let body_parsed = AchronymeParser::parse(Rule::block, &fn_def.body_source)
             .map_err(|e| IrError::ParseError(e.to_string()))?;
-        let block = body_parsed.into_iter().next().unwrap();
+        let block = body_parsed
+            .into_iter()
+            .next()
+            .ok_or_else(|| IrError::ParseError("empty function body".into()))?;
         let result = self.lower_block(block)?;
 
         // Restore env
