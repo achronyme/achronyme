@@ -86,6 +86,8 @@ pub struct PlonkishCompiler {
     poseidon_params: Option<PoseidonParams>,
     // Range table bits already created
     range_tables: HashMap<u32, usize>,
+    // SSA variables proven to be boolean by bool_prop analysis
+    proven_boolean: std::collections::HashSet<SsaVar>,
 }
 
 impl PlonkishCompiler {
@@ -129,7 +131,13 @@ impl PlonkishCompiler {
             witness_ops: Vec::new(),
             poseidon_params: None,
             range_tables: HashMap::new(),
+            proven_boolean: std::collections::HashSet::new(),
         }
+    }
+
+    /// Set the proven-boolean set from bool_prop analysis.
+    pub fn set_proven_boolean(&mut self, set: std::collections::HashSet<SsaVar>) {
+        self.proven_boolean = set;
     }
 
     /// Look up an SSA variable, returning an error instead of panicking.
@@ -299,8 +307,9 @@ impl PlonkishCompiler {
                 IrInstruction::Not { result, operand } => {
                     let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val);
-                    // Boolean enforcement: op^2 = op
-                    self.emit_bool_check(op_cell);
+                    if !self.proven_boolean.contains(operand) {
+                        self.emit_bool_check(op_cell);
+                    }
                     // result = 1 - op: d = op * (-1) + 1
                     let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
                     let neg_op = self.negate_cell(op_cell);
@@ -317,8 +326,12 @@ impl PlonkishCompiler {
                     let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
-                    self.emit_bool_check(a_cell);
-                    self.emit_bool_check(b_cell);
+                    if !self.proven_boolean.contains(lhs) {
+                        self.emit_bool_check(a_cell);
+                    }
+                    if !self.proven_boolean.contains(rhs) {
+                        self.emit_bool_check(b_cell);
+                    }
                     // result = a * b
                     let d_cell = self.emit_arith_row(a_cell, b_cell, None);
                     self.val_map.insert(*result, PlonkVal::Cell(d_cell));
@@ -328,8 +341,12 @@ impl PlonkishCompiler {
                     let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val);
                     let b_cell = self.materialize_val(&b_val);
-                    self.emit_bool_check(a_cell);
-                    self.emit_bool_check(b_cell);
+                    if !self.proven_boolean.contains(lhs) {
+                        self.emit_bool_check(a_cell);
+                    }
+                    if !self.proven_boolean.contains(rhs) {
+                        self.emit_bool_check(b_cell);
+                    }
                     // result = a + b - a*b
                     let product = self.emit_arith_row(a_cell, b_cell, None);
                     let neg_product = self.negate_cell(product);
@@ -435,7 +452,9 @@ impl PlonkishCompiler {
                 IrInstruction::Assert { result, operand } => {
                     let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val);
-                    self.emit_bool_check(op_cell);
+                    if !self.proven_boolean.contains(operand) {
+                        self.emit_bool_check(op_cell);
+                    }
                     // Enforce op == 1 via copy constraint to a materialized 1
                     let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
                     self.system.add_copy(op_cell, one_cell);

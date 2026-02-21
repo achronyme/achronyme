@@ -89,6 +89,8 @@ fn run_r1cs_pipeline(
     inputs: Option<&str>,
 ) -> Result<()> {
     let mut compiler = R1CSCompiler::new();
+    let proven = ir::passes::bool_prop::compute_proven_boolean(program);
+    compiler.set_proven_boolean(proven);
     compiler
         .compile_ir(program)
         .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
@@ -133,6 +135,8 @@ fn run_r1cs_pipeline(
 
 fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>) -> Result<()> {
     let mut compiler = PlonkishCompiler::new();
+    let proven = ir::passes::bool_prop::compute_proven_boolean(program);
+    compiler.set_proven_boolean(proven);
     compiler
         .compile_ir(program)
         .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;

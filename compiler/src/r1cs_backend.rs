@@ -30,6 +30,9 @@ pub struct R1CSCompiler {
     pub(crate) poseidon_params: Option<PoseidonParams>,
     /// Witness generation trace: records each intermediate variable allocation.
     pub witness_ops: Vec<WitnessOp>,
+    /// SSA variables proven to be boolean by bool_prop analysis.
+    /// Boolean enforcement constraints are skipped for these.
+    proven_boolean: std::collections::HashSet<ir::types::SsaVar>,
 }
 
 impl R1CSCompiler {
@@ -43,7 +46,14 @@ impl R1CSCompiler {
             witnesses: Vec::new(),
             poseidon_params: None,
             witness_ops: Vec::new(),
+            proven_boolean: std::collections::HashSet::new(),
         }
+    }
+
+    /// Set the proven-boolean set from bool_prop analysis.
+    /// Variables in this set skip redundant boolean enforcement constraints.
+    pub fn set_proven_boolean(&mut self, set: std::collections::HashSet<ir::types::SsaVar>) {
+        self.proven_boolean = set;
     }
 
     /// Declare a public input variable and bind it to `name`.
@@ -1059,14 +1069,16 @@ impl R1CSCompiler {
                     let then_lc = lookup(&lc_map, if_true)?;
                     let else_lc = lookup(&lc_map, if_false)?;
 
-                    // Boolean enforcement: cond * (1 - cond) = 0
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
-                    let one_minus_cond = one - cond_lc.clone();
-                    self.cs.enforce(
-                        cond_lc.clone(),
-                        one_minus_cond,
-                        LinearCombination::zero(),
-                    );
+                    // Skip boolean enforcement if cond is proven boolean
+                    if !self.proven_boolean.contains(cond) {
+                        let one = LinearCombination::from_constant(FieldElement::ONE);
+                        let one_minus_cond = one - cond_lc.clone();
+                        self.cs.enforce(
+                            cond_lc.clone(),
+                            one_minus_cond,
+                            LinearCombination::zero(),
+                        );
+                    }
 
                     // MUX: result = cond * (then - else) + else
                     let diff = then_lc - else_lc.clone();
@@ -1121,31 +1133,36 @@ impl R1CSCompiler {
                 }
                 IrInstruction::Not { result, operand } => {
                     let op_lc = lookup(&lc_map, operand)?;
-                    // Boolean enforcement: op * (1 - op) = 0
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    self.cs.enforce(
-                        op_lc.clone(),
-                        one.clone() - op_lc.clone(),
-                        LinearCombination::zero(),
-                    );
+                    // Skip boolean enforcement if operand is proven boolean
+                    if !self.proven_boolean.contains(operand) {
+                        self.cs.enforce(
+                            op_lc.clone(),
+                            one.clone() - op_lc.clone(),
+                            LinearCombination::zero(),
+                        );
+                    }
                     // result = 1 - op
                     lc_map.insert(*result, one - op_lc);
                 }
                 IrInstruction::And { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    // Boolean enforcement for both operands
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    self.cs.enforce(
-                        a.clone(),
-                        one.clone() - a.clone(),
-                        LinearCombination::zero(),
-                    );
-                    self.cs.enforce(
-                        b.clone(),
-                        one - b.clone(),
-                        LinearCombination::zero(),
-                    );
+                    if !self.proven_boolean.contains(lhs) {
+                        self.cs.enforce(
+                            a.clone(),
+                            one.clone() - a.clone(),
+                            LinearCombination::zero(),
+                        );
+                    }
+                    if !self.proven_boolean.contains(rhs) {
+                        self.cs.enforce(
+                            b.clone(),
+                            one - b.clone(),
+                            LinearCombination::zero(),
+                        );
+                    }
                     // result = a * b
                     let out = self.multiply_lcs(&a, &b);
                     lc_map.insert(*result, out);
@@ -1153,18 +1170,21 @@ impl R1CSCompiler {
                 IrInstruction::Or { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    // Boolean enforcement for both operands
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    self.cs.enforce(
-                        a.clone(),
-                        one.clone() - a.clone(),
-                        LinearCombination::zero(),
-                    );
-                    self.cs.enforce(
-                        b.clone(),
-                        one - b.clone(),
-                        LinearCombination::zero(),
-                    );
+                    if !self.proven_boolean.contains(lhs) {
+                        self.cs.enforce(
+                            a.clone(),
+                            one.clone() - a.clone(),
+                            LinearCombination::zero(),
+                        );
+                    }
+                    if !self.proven_boolean.contains(rhs) {
+                        self.cs.enforce(
+                            b.clone(),
+                            one - b.clone(),
+                            LinearCombination::zero(),
+                        );
+                    }
                     // result = a + b - a*b
                     let product = self.multiply_lcs(&a, &b);
                     lc_map.insert(*result, a + b - product);
@@ -1254,13 +1274,15 @@ impl R1CSCompiler {
                 }
                 IrInstruction::Assert { result, operand } => {
                     let op_lc = lookup(&lc_map, operand)?;
-                    // Boolean enforcement: op * (1 - op) = 0
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    self.cs.enforce(
-                        op_lc.clone(),
-                        one.clone() - op_lc.clone(),
-                        LinearCombination::zero(),
-                    );
+                    // Skip boolean enforcement if operand is proven boolean
+                    if !self.proven_boolean.contains(operand) {
+                        self.cs.enforce(
+                            op_lc.clone(),
+                            one.clone() - op_lc.clone(),
+                            LinearCombination::zero(),
+                        );
+                    }
                     // Enforce op == 1
                     self.cs.enforce_equal(op_lc.clone(), one);
                     lc_map.insert(*result, op_lc);

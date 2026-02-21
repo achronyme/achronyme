@@ -1,3 +1,4 @@
+pub mod bool_prop;
 pub mod const_fold;
 pub mod dce;
 pub mod taint;
