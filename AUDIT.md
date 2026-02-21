@@ -16,16 +16,16 @@
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 6 | 4 | 0 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
-| cli | 11 | 2 | 0 | 13 |
+| cli | 9 | 2 | 2 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **32** | **46 (+1)** | **14** | **93** |
+| **TOTAL** | **30** | **46 (+1)** | **16** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 7 |
+| HIGH | 5 |
 | MEDIUM | 13 |
 | LOW | 12 |
 
@@ -83,7 +83,7 @@
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 
-## False Positives & Confirmed Sound (14)
+## False Positives & Confirmed Sound (16)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -101,6 +101,8 @@
 | P-13 | parser | ASCII-only identifiers is a design choice |
 | P-14 | parser | Non-nested block comments is standard (C, Java) |
 | X-03 | constraints | `verify()` is test-only; max table 2^16 rows (MAX_RANGE_TABLE_BITS=16); O(N²) not reachable |
+| L-03 | cli | Cache is in `$HOME`; attacker with write access already has user-level shell. Proofs are re-verified after generation (line 121-128) |
+| L-04 | cli | Same threat model as L-03; TOCTOU requires write access to `$HOME` which subsumes the attack |
 
 ---
 
@@ -220,29 +222,7 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 
 ---
 
-### CLI Crate (11 open)
-
-#### L-03 — Untrusted Cache Files [HIGH]
-
-**File**: `cli/src/prove_handler.rs` (lines 159-160)
-**Category**: Security
-
-Cached zkey/vkey files are loaded without any validation. An attacker with write access to `~/.achronyme/cache/` can replace them with malicious files, compromising all subsequent proofs.
-
-**Fix**: Validate file format headers, check Unix permissions (0600), optionally verify against a stored hash.
-
----
-
-#### L-04 — TOCTOU Race on Cache [HIGH]
-
-**File**: `cli/src/prove_handler.rs` (lines 159-176)
-**Category**: Security
-
-Between `.exists()` check and file use, an attacker can replace cache files with symlinks or malicious content. Two concurrent processes can also race to create the cache.
-
-**Fix**: Use advisory file locking (`flock`), or atomic rename after generation.
-
----
+### CLI Crate (9 open)
 
 #### L-05 — Temp Directory Cleanup [HIGH]
 
@@ -477,7 +457,7 @@ No operator precedence table, associativity rules, or escape sequence reference 
 
 ### High Priority (Safety)
 
-5. **L-03/L-04** — Validate cache files, fix TOCTOU
+5. ~~**L-03/L-04** — Validate cache files, fix TOCTOU~~ (false positive)
 6. **P-06** — Fix power operator associativity
 7. ~~**I-02** — Replace unwrap with error handling~~ ✅
 8. ~~**M-06** — Track import_strings allocation~~ ✅
