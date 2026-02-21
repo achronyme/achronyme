@@ -308,14 +308,14 @@ String interning uses `HashMap<String, u32>`. For map iteration in GetIter, each
 
 ---
 
-### V-12 — Closure Upvalue Capture Linear Scan [MEDIUM]
+### V-12 — Closure Upvalue Capture Linear Scan [MEDIUM] [FALSE POSITIVE]
 
 **File**: `vm/src/machine/vm.rs` (lines 599-647)
 **Category**: Performance
 
 `capture_upvalue()` linearly scans the open upvalues linked list. For deeply nested closures with many captures, this is O(n^2).
 
-**Fix**: Use a HashMap keyed by pointer/index for O(1) lookup.
+**Analysis**: False positive — the list is sorted by stack index (high→low) with early-exit, making each lookup O(k) where k is the number of open upvalues above the target slot (typically <10). This is the standard Lua/CLox design. A HashMap would add hashing overhead and require synchronization with the linked list that `close_upvalues` traverses in order.
 
 ---
 
