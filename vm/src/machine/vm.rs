@@ -538,12 +538,7 @@ impl VM {
                     }
                 }
 
-                _ => {
-                    return Err(RuntimeError::Unknown(format!(
-                        "Unimplemented opcode {:?}",
-                        op
-                    )))
-                }
+                Nop => { /* no-op */ }
             }
         }
         Ok(())

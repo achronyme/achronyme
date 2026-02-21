@@ -330,14 +330,14 @@ String interning uses `HashMap<String, u32>`. For map iteration in GetIter, each
 
 ---
 
-### V-14 — Non-Exhaustive Opcode Match [MEDIUM]
+### V-14 — Non-Exhaustive Opcode Match [MEDIUM] [RESOLVED]
 
 **File**: `vm/src/machine/vm.rs` (lines 192-532)
 **Category**: Maintainability
 
 The opcode dispatch uses `_ => Err(Unknown)` as default. Adding a new opcode without a match arm silently fails at runtime instead of compile time.
 
-**Fix**: Match on all enum variants explicitly, or add a compile-time exhaustiveness test.
+**Fix**: Replaced `_ =>` with explicit `Nop => {}` arm. The match is now exhaustive — adding a new `OpCode` variant without a dispatch arm will cause a compile error.
 
 ---
 
