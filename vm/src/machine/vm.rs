@@ -73,9 +73,8 @@ impl VM {
     /// Soft Reset: Clears stack and frames for REPL/Running new script.
     /// CRITICAL: Must close all open upvalues to prevent them from pointing to dead stack slots.
     pub fn reset(&mut self) {
-        // 1. Close ALL open upvalues
-        let stack_start = self.stack.as_ptr() as *mut Value;
-        self.close_upvalues(stack_start);
+        // 1. Close ALL open upvalues (stack index 0 = everything)
+        self.close_upvalues(0);
         
         // 2. Clear Runtime State
         self.frames.clear();
@@ -352,16 +351,18 @@ impl VM {
             OpCode::GetUpvalue => {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
-                    
+
                     let closure_idx = self.frames[frame_idx].closure;
                     let closure = self.heap.get_closure(closure_idx).ok_or(RuntimeError::FunctionNotFound)?;
                     let upval_idx = *closure.upvalues.get(bx).ok_or(RuntimeError::OutOfBounds("Upvalue index".into()))?;
                     let upval = self.heap.get_upvalue(upval_idx).ok_or(RuntimeError::SystemError("Upvalue missing from heap".into()))?;
-                    
-                    // SAFETY: location points to Stack or Closed Value.
-                    // If Closed, location points to &upval.closed. Address is stable (Box).
-                    // If Open, location points to Stack (fixed Box<[Value]>).
-                    let val = unsafe { *upval.location };
+
+                    let val = match upval.location {
+                        memory::UpvalueLocation::Open(stack_idx) => {
+                            self.get_reg(0, stack_idx)?
+                        }
+                        memory::UpvalueLocation::Closed(v) => v,
+                    };
                     self.set_reg(base, a, val)?;
                 }
 
@@ -373,16 +374,23 @@ impl VM {
                     let closure_idx = self.frames[frame_idx].closure;
                     let closure = self.heap.get_closure(closure_idx).ok_or(RuntimeError::FunctionNotFound)?;
                     let upval_idx = *closure.upvalues.get(bx).ok_or(RuntimeError::OutOfBounds("Upvalue index".into()))?;
-                    
-                    // We need mutable access to location
-                    let upval = self.heap.get_upvalue_mut(upval_idx).ok_or(RuntimeError::SystemError("Upvalue missing from heap".into()))?;
-                    unsafe { *upval.location = val; }
+                    let upval = self.heap.get_upvalue(upval_idx).ok_or(RuntimeError::SystemError("Upvalue missing from heap".into()))?;
+
+                    match upval.location {
+                        memory::UpvalueLocation::Open(stack_idx) => {
+                            self.set_reg(0, stack_idx, val)?;
+                        }
+                        memory::UpvalueLocation::Closed(_) => {
+                            let upval_mut = self.heap.get_upvalue_mut(upval_idx).ok_or(RuntimeError::SystemError("Upvalue missing from heap".into()))?;
+                            upval_mut.location = memory::UpvalueLocation::Closed(val);
+                        }
+                    }
                 }
 
                 CloseUpvalue => {
                     let a = decode_a(instruction) as usize;
-                    let ptr = self.get_reg_ptr(base, a)?; // Get addr of R[A]
-                    self.close_upvalues(ptr);
+                    let stack_idx = base + a;
+                    self.close_upvalues(stack_idx);
                 }
 
                 Closure => {
@@ -412,10 +420,9 @@ impl VM {
                         i += 2;
 
                         if is_local {
-                            // Capture from current frame
-                            // base is reg[0] of current frame
-                            let ptr = self.get_reg_ptr(base, index)?;
-                            let upval_idx = self.capture_upvalue(ptr);
+                            // Capture from current frame (base + index = absolute stack slot)
+                            let stack_idx = base + index;
+                            let upval_idx = self.capture_upvalue(stack_idx);
                             captured.push(upval_idx);
                         } else {
                             // Capture from surrounding closure (upvalue of current closure)
@@ -591,96 +598,71 @@ impl VM {
         self.debug_symbols = Some(map);
     }
 
-    /// Secure pointer access with bounds checking (Fix DoS)
-    pub fn get_reg_ptr(&self, base: usize, offset: usize) -> Result<*mut Value, RuntimeError> {
-        let index = base + offset;
-        if index >= self.stack.len() {
-             return Err(RuntimeError::OutOfBounds(format!("Stack index {} out of bounds", index)));
-        }
-        // SAFETY: We return a raw pointer into the stack Vec.
-        // WARNING: This pointer becomes dangling if the stack reallocates (pushes/pops).
-        // The caller MUST ensure no stack growth occurs while holding this pointer.
-        Ok(self.stack.as_ptr().wrapping_add(index) as *mut Value)
-    }
-
-    /// Capture an upvalue for a local variable residing on the stack.
-    fn capture_upvalue(&mut self, local: *mut Value) -> u32 {
+    /// Capture an upvalue for a local variable at `stack_idx` (absolute index).
+    fn capture_upvalue(&mut self, stack_idx: usize) -> u32 {
         let mut prev_upval_idx: Option<u32> = None;
         let mut upval_idx = self.open_upvalues;
 
         while let Some(idx) = upval_idx {
             let upval = self.heap.get_upvalue(idx).unwrap();
-            
-            // List is sorted by location (High -> Low, typically)
-            // If upval.location < local: We passed the insertion point
-            // If upval.location == local: Found it
-            
-            if upval.location == local {
-                return idx;
+
+            // Open upvalue list is sorted by stack index (high → low).
+            let loc = match upval.location {
+                memory::UpvalueLocation::Open(si) => si,
+                _ => break, // should not happen in open list
+            };
+
+            if loc == stack_idx {
+                return idx; // already captured
             }
-            
-            // Assuming Stack grows Up (addresses increase).
-            // Lua sorts list by stack level (Top/High -> Bottom/Low).
-            // So Head is Highest Address.
-            // If current (High) > local, we proceed.
-            // If current (Low) < local, we found spot (because we want to insert 'local' which is Higher than current).
-            // So loop while upval.location > local
-            
-            if upval.location < local {
-                break;
+
+            if loc < stack_idx {
+                break; // insertion point found
             }
 
             prev_upval_idx = Some(idx);
             upval_idx = upval.next_open;
         }
 
-        // Not found, create new
+        // Not found — create new open upvalue
         let created_upval = Upvalue {
-            location: local,
-            closed: Value::nil(),
-            next_open: upval_idx, // Link to next (lower)
+            location: memory::UpvalueLocation::Open(stack_idx),
+            next_open: upval_idx, // link to next (lower index)
         };
         let new_idx = self.heap.alloc_upvalue(created_upval);
 
         if let Some(prev) = prev_upval_idx {
-             // Link prev -> new
-             let prev_obj = self.heap.get_upvalue_mut(prev).unwrap();
-             prev_obj.next_open = Some(new_idx);
+            let prev_obj = self.heap.get_upvalue_mut(prev).unwrap();
+            prev_obj.next_open = Some(new_idx);
         } else {
-             // Link Head -> new
-             self.open_upvalues = Some(new_idx);
+            self.open_upvalues = Some(new_idx);
         }
-        
+
         new_idx
     }
 
-    pub fn close_upvalues(&mut self, last: *mut Value) {
-        // Close all upvalues >= last
-        // Iterate open_upvalues.
-        // If upval.location >= last:
-        //   Move From Stack To Closed
-        //   Point location to &closed
-        //   Remove from list
-        
+    /// Close all open upvalues pointing at stack index >= `last`.
+    /// Copies the stack value into the upvalue and marks it Closed.
+    pub fn close_upvalues(&mut self, last: usize) {
         while let Some(idx) = self.open_upvalues {
             let upval = self.heap.get_upvalue(idx).unwrap();
-            
-            if upval.location >= last {
-                // Move value
-                let captured_val = unsafe { *upval.location };
-                
-                // We need mut access to close it
+
+            let stack_idx = match upval.location {
+                memory::UpvalueLocation::Open(si) => si,
+                _ => break,
+            };
+
+            if stack_idx >= last {
+                // Capture value from stack
+                let captured_val = self.stack.get(stack_idx).copied().unwrap_or(Value::nil());
+
                 let upval_mut = self.heap.get_upvalue_mut(idx).unwrap();
-                upval_mut.closed = captured_val;
-                upval_mut.location = &mut upval_mut.closed as *mut Value;
-                
-                // Update Head to next
+                upval_mut.location = memory::UpvalueLocation::Closed(captured_val);
+
                 let next = upval_mut.next_open;
                 self.open_upvalues = next;
             } else {
-                // List is sorted High -> Low.
-                // If current < last, then all subsequent are < last.
-                // We can stop.
+                // List is sorted high → low; all remaining are < last.
                 break;
             }
         }

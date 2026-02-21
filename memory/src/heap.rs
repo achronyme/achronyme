@@ -2,13 +2,18 @@ use crate::Value;
 use crate::field::FieldElement;
 use std::collections::{HashMap, HashSet};
 
-// SAFETY: Clone intentionally omitted. A closed Upvalue holds a self-referential
-// raw pointer (`location` → `&self.closed`). Cloning would copy the pointer
-// without updating it, creating a dangling reference to the original's field.
-#[derive(Debug)]
+/// Where an upvalue's value lives.
+#[derive(Debug, Clone, Copy)]
+pub enum UpvalueLocation {
+    /// Index into the VM stack (open upvalue — variable still on the stack).
+    Open(usize),
+    /// Captured value (closed upvalue — variable has left the stack).
+    Closed(Value),
+}
+
+#[derive(Debug, Clone)]
 pub struct Upvalue {
-    pub location: *mut Value, // Points to stack (Open) or &closed (Closed)
-    pub closed: Value,
+    pub location: UpvalueLocation,
     pub next_open: Option<u32>, // Index into upvalues arena
 }
 
@@ -132,7 +137,7 @@ pub struct Heap {
     pub lists: Arena<Vec<Value>>,
     pub maps: Arena<HashMap<String, Value>>,
     pub functions: Arena<Function>,
-    pub upvalues: Arena<Box<Upvalue>>, // Boxed for stable addresses
+    pub upvalues: Arena<Upvalue>,
     pub closures: Arena<Closure>,
     pub iterators: Arena<IteratorObj>,
     pub fields: Arena<FieldElement>,
@@ -193,15 +198,15 @@ impl Heap {
     pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Upvalue>();
         self.check_gc();
-        self.upvalues.alloc(Box::new(val))
+        self.upvalues.alloc(val)
     }
 
     pub fn get_upvalue(&self, index: u32) -> Option<&Upvalue> {
-        self.upvalues.get(index).map(|b| &**b)
+        self.upvalues.get(index)
     }
 
     pub fn get_upvalue_mut(&mut self, index: u32) -> Option<&mut Upvalue> {
-        self.upvalues.get_mut(index).map(|b| &mut **b)
+        self.upvalues.get_mut(index)
     }
 
     pub fn alloc_closure(&mut self, c: Closure) -> u32 {
@@ -347,7 +352,9 @@ impl Heap {
                                     // Trace value inside upvalue (if closed, it matters)
                                     // If open, it's stack or Nil, safe to trace
                                     if let Some(u) = self.upvalues.data.get(up_idx as usize) {
-                                        worklist.push(u.closed);
+                                        if let UpvalueLocation::Closed(val) = u.location {
+                                            worklist.push(val);
+                                        }
                                     }
                                 }
                             }
@@ -452,12 +459,10 @@ impl Heap {
                 self.upvalues.mark_free(idx);
                 freed_bytes += std::mem::size_of::<Upvalue>();
 
-                // We can't easily "reset" a Box with Dummy, but we can overwrite data
-                self.upvalues.data[i] = Box::new(Upvalue {
-                    location: std::ptr::null_mut(),
-                    closed: Value::nil(),
+                self.upvalues.data[i] = Upvalue {
+                    location: UpvalueLocation::Closed(Value::nil()),
                     next_open: None,
-                });
+                };
             }
         }
         self.marked_upvalues.clear();

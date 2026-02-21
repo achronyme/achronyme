@@ -65,14 +65,14 @@ Previously all `get_*` methods returned data from freed slots, allowing stale ha
 
 ---
 
-### M-05 — Upvalue Self-Referential Raw Pointer [HIGH]
+### M-05 — Upvalue Self-Referential Raw Pointer [HIGH] [RESOLVED]
 
 **File**: `memory/src/heap.rs` (lines 5-13)
 **Category**: Safety
 
 `Upvalue.location` is a `*mut Value` that points either to the VM stack (open) or to `&mut self.closed` (closed). The self-referential pointer is unsound if the `Box<Upvalue>` is moved during Vec reallocation of the upvalues arena. Clone was intentionally removed to mitigate, but the fundamental issue remains.
 
-**Fix**: Replace raw pointer with an enum `Location { Stack(usize), Closed }` and resolve indirectly via the heap.
+**Fix**: Replaced `*mut Value` + `closed: Value` with `UpvalueLocation` enum (`Open(usize)` / `Closed(Value)`). Removed `Box<Upvalue>` wrapper — no longer needed since there are no self-referential pointers.
 
 ---
 
@@ -231,25 +231,25 @@ Code holds a reference to a map via `get_map(handle)`, then calls `alloc_string(
 
 ---
 
-### V-05 — Upvalue Pointer Dereference Without Validation [CRITICAL]
+### V-05 — Upvalue Pointer Dereference Without Validation [CRITICAL] [RESOLVED]
 
 **File**: `vm/src/machine/vm.rs` (lines 364, 379, 662, 667)
 **Category**: Memory Safety
 
 `unsafe { *upval.location }` dereferences a raw pointer without validating it points to valid memory. After upvalue close, `location` is set to `&mut self.closed`, creating a self-referential pointer that can be invalidated by arena growth.
 
-**Fix**: Validate pointer range against stack bounds, or replace with index-based indirection (see M-05).
+**Fix**: Replaced `*mut Value` with `UpvalueLocation` enum (`Open(usize)` / `Closed(Value)`). All `unsafe` removed from VM crate. Upvalues are no longer `Box`-wrapped. See also M-05.
 
 ---
 
-### V-06 — close_upvalues Pointer Comparison [CRITICAL]
+### V-06 — close_upvalues Pointer Comparison [CRITICAL] [RESOLVED]
 
 **File**: `vm/src/machine/vm.rs` (lines 649-678)
 **Category**: Memory Safety
 
 `upval.location >= last` compares raw pointers that may span different allocations (stack vs heap). Pointer comparison across allocations is undefined behavior in Rust. Also, `next_open.unwrap()` can panic if the linked list is corrupted, and no cycle detection is present.
 
-**Fix**: Compare by logical index instead of raw pointer. Add cycle detection guard.
+**Fix**: `close_upvalues` now takes `usize` (stack index) and compares `UpvalueLocation::Open(si)` against it — pure integer comparison, no raw pointers.
 
 ---
 
@@ -1064,7 +1064,7 @@ No operator precedence table, associativity rules, or escape sequence reference 
 
 7. ~~**V-03** — Fix ForIter mutation-during-iteration~~ [RESOLVED `40965a1`]
 8. ~~**V-04** — Fix GetIter GC-during-borrow~~ [FALSE POSITIVE]
-9. **V-05/V-06** — Fix upvalue pointer unsoundness
+9. ~~**V-05/V-06** — Fix upvalue pointer unsoundness~~ [RESOLVED]
 10. **L-03/L-04** — Validate cache files, fix TOCTOU
 11. **P-06** — Fix power operator associativity
 12. ~~**M-02** — Fix ProofObject sweep accounting~~ [RESOLVED `e4e3edb`]

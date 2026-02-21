@@ -100,8 +100,7 @@ impl ControlFlowOps for super::vm::VM {
                 // Close Upvalues for current frame
                 // "base" is the start of the current frame (R0)
                 // Any upvalue pointing to base or higher is now invalid/closed
-                let ptr = self.get_reg_ptr(base, 0)?;
-                self.close_upvalues(ptr);
+                self.close_upvalues(base);
                 
                 // Pop current frame and get its dest_reg
                 if let Some(frame) = self.frames.pop() {
