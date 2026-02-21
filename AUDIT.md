@@ -71,14 +71,14 @@
 | M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `08ac06c` |
 | M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `08ac06c` |
 | V-17 | LOW | vm | Proof equality compares all 3 fields + documented as structural | `a87efd3` |
-| C-02 | MEDIUM | compiler | `materialize_val` recursion depth limit (1,000) | `PENDING` |
-| C-03 | MEDIUM | compiler | Prove block array size bounded to 10,000 | `PENDING` |
-| C-04 | LOW | compiler | Bit extraction index invariant documented (max 255) | `PENDING` |
-| C-05 | LOW | compiler | LC cloning in `multiply_lcs` documented as necessary | `PENDING` |
-| C-06 | LOW | compiler | Unused imports removed from codegen.rs, scopes.rs, types.rs | `PENDING` |
-| C-07 | LOW | compiler | `bindings`/`lc_bindings` doc comments clarify purpose | `PENDING` |
-| C-08 | LOW | compiler | `compile_ir_with_witness` three-pass design documented | `PENDING` |
-| C-09 | LOW | compiler | `HashMap<SsaVar, LC>` documented as lookup cache | `PENDING` |
+| C-02 | MEDIUM | compiler | `materialize_val` recursion depth limit (1,000) | `fdbedc2` |
+| C-03 | MEDIUM | compiler | Prove block array size bounded to 10,000 | `fdbedc2` |
+| C-04 | LOW | compiler | Bit extraction index invariant documented (max 255) | `fdbedc2` |
+| C-05 | LOW | compiler | LC cloning in `multiply_lcs` documented as necessary | `fdbedc2` |
+| C-06 | LOW | compiler | Unused imports removed from codegen.rs, scopes.rs, types.rs | `fdbedc2` |
+| C-07 | LOW | compiler | `bindings`/`lc_bindings` doc comments clarify purpose | `fdbedc2` |
+| C-08 | LOW | compiler | `compile_ir_with_witness` three-pass design documented | `fdbedc2` |
+| C-09 | LOW | compiler | `HashMap<SsaVar, LC>` documented as lookup cache | `fdbedc2` |
 
 ## False Positives & Confirmed Sound (13)
 
