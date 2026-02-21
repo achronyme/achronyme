@@ -16,16 +16,16 @@
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 6 | 4 | 0 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
-| cli | 8 | 2 | 3 | 13 |
+| cli | 7 | 2 | 4 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **29** | **46 (+1)** | **17** | **93** |
+| **TOTAL** | **28** | **46 (+1)** | **18** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 4 |
+| HIGH | 3 |
 | MEDIUM | 13 |
 | LOW | 12 |
 
@@ -83,7 +83,7 @@
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 
-## False Positives & Confirmed Sound (17)
+## False Positives & Confirmed Sound (18)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -104,6 +104,7 @@
 | L-03 | cli | Cache is in `$HOME`; attacker with write access already has user-level shell. Proofs are re-verified after generation (line 121-128) |
 | L-04 | cli | Same threat model as L-03; TOCTOU requires write access to `$HOME` which subsumes the attack |
 | L-05 | cli | `/tmp` is typically `tmpfs` (RAM-backed); secure wiping ineffective on SSDs; snarkjs heap not zeroed either; requires root/physical access |
+| L-07 | cli | CLI arg from user's own process; no privilege boundary crossed; snarkjs validates ptau format |
 
 ---
 
@@ -223,7 +224,7 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 
 ---
 
-### CLI Crate (8 open)
+### CLI Crate (7 open)
 
 #### L-06 — HOME Environment Variable Injection [HIGH]
 
@@ -233,17 +234,6 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 `std::env::var("HOME")` is used unsanitized for cache directory. Attacker can set `HOME=/etc/vulnerable` to redirect cache writes to privileged locations.
 
 **Fix**: Validate HOME is absolute, or use `dirs::home_dir()` crate.
-
----
-
-#### L-07 — Unrestricted --ptau Path [HIGH]
-
-**File**: `cli/src/args.rs` (line 22), `cli/src/prove_handler.rs` (line 26)
-**Category**: Security
-
-`--ptau` accepts any path without validation. Path traversal (`../../etc/passwd`) or special files (`/proc/self/environ`) can be passed to snarkjs, potentially leaking data via error messages.
-
-**Fix**: Validate path is absolute, has no `..` components, exists, and is a regular file.
 
 ---
 
