@@ -391,19 +391,12 @@ impl Heap {
                         }
                     }
                     crate::value::TAG_MAP => {
-                        // For Map, we need to trace values. Keys are strings (implied marked if we trace keys?)
-                        // If keys are interned strings managed by heap, we must mark them too!
+                        // Keys are Rust-owned Strings inside HashMap<String, Value>,
+                        // NOT arena handles — they are freed when the HashMap drops.
+                        // Only values need GC tracing.
                         if let Some(m) = self.maps.data.get(handle as usize) {
-                            for (_k, v) in m.iter() {
-                                worklist.push(v.clone());
-                                // We might need to mark the string key if it's dynamic?
-                                // Currently keys are String in HashMap<String, Value>.
-                                // But Strings in Rust heap are not our Heap handles unless we intern them?
-                                // Our Heap.strings is Arena<String>.
-                                // If the Map stores raw String keys, they are native Rust heap, managed by HashMap.
-                                // We don't need to trace strict handles for them unless we store handles.
-                                // Definition: pub maps: Arena<HashMap<String, Value>>.
-                                // So keys are owned by HashMap. Values are traced. OK.
+                            for v in m.values() {
+                                worklist.push(*v);
                             }
                         }
                     }

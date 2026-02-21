@@ -11,14 +11,14 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 5 | 9 (+1 partial) | 0 | 15 |
+| memory | 4 | 10 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
 | cli | 13 | 0 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **56** | **23 (+1)** | **13** | **93** |
+| **TOTAL** | **55** | **24 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -27,11 +27,11 @@
 | CRITICAL | 6 |
 | HIGH | 10 |
 | MEDIUM | 16 |
-| LOW | 24 |
+| LOW | 23 |
 
 ---
 
-## Resolved Findings (24)
+## Resolved Findings (25)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -58,6 +58,7 @@
 | M-07 | MEDIUM | memory | NaN boxing tag overflow → compile-time `assert!(TAG < 16)` for all 13 tags | `7e01699` |
 | M-08 | MEDIUM | memory | `bytes_allocated` drift → `recount_live_bytes()` after sweep (self-correcting) | `d9dbf70` |
 | M-10 | MEDIUM | memory | Public arena/mark fields → `pub(crate)` + public accessors | `41b249f` |
+| M-11 | LOW | memory | Map tracing comment ambiguity → clarified + simplified to `m.values()` | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -82,18 +83,7 @@
 
 ## Open Findings
 
-### Memory Crate (5 open)
-
-#### M-11 — Map Tracing Comment Ambiguity [LOW]
-
-**File**: `memory/src/heap.rs` (line 342)
-**Category**: Documentation
-
-Comment questions whether map keys (owned Strings in HashMap) need tracing. They don't (they're Rust heap, not GC arena), but the ambiguity could mislead future maintainers.
-
-**Fix**: Clarify that HashMap keys are Rust-owned, not arena-allocated.
-
----
+### Memory Crate (4 open)
 
 #### M-12 — GC Threshold Hysteresis [LOW]
 
