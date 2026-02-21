@@ -17,6 +17,9 @@ pub enum Commands {
         /// Force GC on every allocation (Stress Mode)
         #[arg(long)]
         stress_gc: bool,
+        /// Path to powers-of-tau file for Groth16 proof generation
+        #[arg(long)]
+        ptau: Option<String>,
     },
     /// Disassemble a source file or binary
     Disassemble {

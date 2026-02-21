@@ -17,13 +17,13 @@ use crate::prove_handler::DefaultProveHandler;
 // It strictly belongs in `vm` or `cli` utils.
 // I'll make a private helper here for now.
 
-pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
+pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>) -> Result<()> {
     if path.ends_with(".achb") {
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler));
+        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(ptau)));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -45,7 +45,7 @@ pub fn run_file(path: &str, stress_gc: bool) -> Result<()> {
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler));
+        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(ptau)));
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);

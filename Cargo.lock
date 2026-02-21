@@ -165,6 +165,7 @@ dependencies = [
  "constraints",
  "ir",
  "memory",
+ "tempfile",
  "vm",
 ]
 
