@@ -25,8 +25,13 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
     NativeMeta { name: "proof_vkey",   arity: 1 }, // Index 11
 ];
 
+// Expected native count — update this when adding/removing natives.
+// Compile-time assertion prevents silent index shifts.
+pub const NATIVE_COUNT: usize = 12;
+const _: () = assert!(NATIVE_TABLE.len() == NATIVE_COUNT, "NATIVE_TABLE length changed — update NATIVE_COUNT");
+
 // Helper to get start index for user globals
-pub const USER_GLOBAL_START: u16 = NATIVE_TABLE.len() as u16;
+pub const USER_GLOBAL_START: u16 = NATIVE_COUNT as u16;
 
 // --- SERIALIZATION CONTRACT ---
 // Binary Format Tags (v1)
