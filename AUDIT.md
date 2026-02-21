@@ -16,16 +16,16 @@
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 6 | 4 | 0 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
-| cli | 7 | 2 | 4 | 13 |
+| cli | 6 | 2 | 5 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **28** | **46 (+1)** | **18** | **93** |
+| **TOTAL** | **27** | **46 (+1)** | **19** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 3 |
+| HIGH | 2 |
 | MEDIUM | 13 |
 | LOW | 12 |
 
@@ -83,7 +83,7 @@
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 
-## False Positives & Confirmed Sound (18)
+## False Positives & Confirmed Sound (19)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -105,6 +105,7 @@
 | L-04 | cli | Same threat model as L-03; TOCTOU requires write access to `$HOME` which subsumes the attack |
 | L-05 | cli | `/tmp` is typically `tmpfs` (RAM-backed); secure wiping ineffective on SSDs; snarkjs heap not zeroed either; requires root/physical access |
 | L-07 | cli | CLI arg from user's own process; no privilege boundary crossed; snarkjs validates ptau format |
+| L-06 | cli | `HOME` trusted by all Unix tools (git, cargo, ssh); `dirs::home_dir()` also reads `HOME`; no privilege escalation |
 
 ---
 
@@ -224,18 +225,7 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 
 ---
 
-### CLI Crate (7 open)
-
-#### L-06 — HOME Environment Variable Injection [HIGH]
-
-**File**: `cli/src/prove_handler.rs` (lines 21-23)
-**Category**: Security
-
-`std::env::var("HOME")` is used unsanitized for cache directory. Attacker can set `HOME=/etc/vulnerable` to redirect cache writes to privileged locations.
-
-**Fix**: Validate HOME is absolute, or use `dirs::home_dir()` crate.
-
----
+### CLI Crate (6 open)
 
 #### L-08 — Unsanitized snarkjs stderr [MEDIUM]
 
