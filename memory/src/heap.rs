@@ -92,6 +92,20 @@ impl<T> Arena<T> {
         self.free_indices.clear();
         self.free_set.clear();
     }
+
+    /// Insert a value, reusing a freed slot if available, or appending.
+    /// Panics if the arena grows beyond `u32::MAX` entries.
+    pub fn alloc(&mut self, val: T) -> u32 {
+        if let Some(idx) = self.reclaim_free() {
+            self.data[idx as usize] = val;
+            idx
+        } else {
+            let index = u32::try_from(self.data.len())
+                .unwrap_or_else(|_| panic!("arena capacity exceeded u32::MAX"));
+            self.data.push(val);
+            index
+        }
+    }
 }
 
 pub struct Heap {
@@ -161,14 +175,7 @@ impl Heap {
     pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Upvalue>();
         self.check_gc();
-        if let Some(idx) = self.upvalues.reclaim_free() {
-            self.upvalues.data[idx as usize] = Box::new(val);
-            idx
-        } else {
-            let index = self.upvalues.data.len() as u32;
-            self.upvalues.data.push(Box::new(val));
-            index
-        }
+        self.upvalues.alloc(Box::new(val))
     }
 
     pub fn get_upvalue(&self, index: u32) -> Option<&Upvalue> {
@@ -182,14 +189,7 @@ impl Heap {
     pub fn alloc_closure(&mut self, c: Closure) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
         self.check_gc();
-        if let Some(idx) = self.closures.reclaim_free() {
-            self.closures.data[idx as usize] = c;
-            idx
-        } else {
-            let index = self.closures.data.len() as u32;
-            self.closures.data.push(c);
-            index
-        }
+        self.closures.alloc(c)
     }
 
     pub fn get_closure(&self, index: u32) -> Option<&Closure> {
@@ -201,58 +201,25 @@ impl Heap {
     }
 
     pub fn alloc_string(&mut self, s: String) -> u32 {
-        // Track capacity, not just length, as that's what the OS gave us.
         self.bytes_allocated += s.capacity();
         self.check_gc();
-
-        if let Some(idx) = self.strings.reclaim_free() {
-            self.strings.data[idx as usize] = s;
-            idx
-        } else {
-            let index = self.strings.data.len() as u32;
-            self.strings.data.push(s);
-            index
-        }
+        self.strings.alloc(s)
     }
 
     pub fn alloc_list(&mut self, l: Vec<Value>) -> u32 {
-        // Size of the Vec structure itself is handled by arena, but we must track the heap buffer.
-        // Vec<Value> heap usage = capacity * size_of<Value>
         self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
         self.check_gc();
-
-        if let Some(idx) = self.lists.reclaim_free() {
-            self.lists.data[idx as usize] = l;
-            idx
-        } else {
-            let index = self.lists.data.len() as u32;
-            self.lists.data.push(l);
-            index
-        }
+        self.lists.alloc(l)
     }
 
     pub fn alloc_map(&mut self, m: HashMap<String, Value>) -> u32 {
-        // Estimating HashMap memory is tricky.
-        // Heuristic: (Capacity * (SizeOf<String> + SizeOf<Value>)) + Overhead
-        // We assume standard load factor overhead.
-        // Base overhead for HashMap structure is negligible in arena, but bucket array flows to heap.
         let capacity = m.capacity();
         let entry_size = std::mem::size_of::<String>()
             + std::mem::size_of::<Value>()
-            + std::mem::size_of::<u64>(); // + hash
-        let estimated_size = capacity * entry_size;
-
-        self.bytes_allocated += estimated_size;
+            + std::mem::size_of::<u64>();
+        self.bytes_allocated += capacity * entry_size;
         self.check_gc();
-
-        if let Some(idx) = self.maps.reclaim_free() {
-            self.maps.data[idx as usize] = m;
-            idx
-        } else {
-            let index = self.maps.data.len() as u32;
-            self.maps.data.push(m);
-            index
-        }
+        self.maps.alloc(m)
     }
 
     pub fn get_map(&self, index: u32) -> Option<&HashMap<String, Value>> {
@@ -509,7 +476,11 @@ impl Heap {
             let idx = i as u32;
             if !self.marked_proofs.contains(&idx) && !self.proofs.is_free(idx) {
                 self.proofs.mark_free(idx);
-                freed_bytes += std::mem::size_of::<ProofObject>();
+                let p = &self.proofs.data[i];
+                freed_bytes += std::mem::size_of::<ProofObject>()
+                    + p.proof_json.capacity()
+                    + p.public_json.capacity()
+                    + p.vkey_json.capacity();
                 self.proofs.data[i] = ProofObject {
                     proof_json: String::new(),
                     public_json: String::new(),
@@ -554,14 +525,7 @@ impl Heap {
         self.bytes_allocated +=
             f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
         self.check_gc();
-        if let Some(idx) = self.functions.reclaim_free() {
-            self.functions.data[idx as usize] = f;
-            idx
-        } else {
-            let index = self.functions.data.len() as u32;
-            self.functions.data.push(f);
-            index
-        }
+        self.functions.alloc(f)
     }
 
     pub fn get_function(&self, index: u32) -> Option<&Function> {
@@ -576,14 +540,7 @@ impl Heap {
     pub fn alloc_iterator(&mut self, iter: IteratorObj) -> u32 {
         self.bytes_allocated += std::mem::size_of::<IteratorObj>();
         self.check_gc();
-        if let Some(idx) = self.iterators.reclaim_free() {
-            self.iterators.data[idx as usize] = iter;
-            idx
-        } else {
-            let index = self.iterators.data.len() as u32;
-            self.iterators.data.push(iter);
-            index
-        }
+        self.iterators.alloc(iter)
     }
 
     pub fn get_iterator(&self, index: u32) -> Option<&IteratorObj> {
@@ -595,16 +552,9 @@ impl Heap {
     }
 
     pub fn alloc_field(&mut self, fe: FieldElement) -> u32 {
-        self.bytes_allocated += std::mem::size_of::<FieldElement>(); // 32 bytes
+        self.bytes_allocated += std::mem::size_of::<FieldElement>();
         self.check_gc();
-        if let Some(idx) = self.fields.reclaim_free() {
-            self.fields.data[idx as usize] = fe;
-            idx
-        } else {
-            let index = self.fields.data.len() as u32;
-            self.fields.data.push(fe);
-            index
-        }
+        self.fields.alloc(fe)
     }
 
     pub fn get_field(&self, index: u32) -> Option<&FieldElement> {
@@ -617,14 +567,7 @@ impl Heap {
             + p.public_json.capacity()
             + p.vkey_json.capacity();
         self.check_gc();
-        if let Some(idx) = self.proofs.reclaim_free() {
-            self.proofs.data[idx as usize] = p;
-            idx
-        } else {
-            let index = self.proofs.data.len() as u32;
-            self.proofs.data.push(p);
-            index
-        }
+        self.proofs.alloc(p)
     }
 
     pub fn get_proof(&self, index: u32) -> Option<&ProofObject> {
