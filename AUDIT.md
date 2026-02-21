@@ -16,16 +16,16 @@
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 6 | 4 | 0 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
-| cli | 9 | 2 | 2 | 13 |
+| cli | 8 | 2 | 3 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **30** | **46 (+1)** | **16** | **93** |
+| **TOTAL** | **29** | **46 (+1)** | **17** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 5 |
+| HIGH | 4 |
 | MEDIUM | 13 |
 | LOW | 12 |
 
@@ -83,7 +83,7 @@
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 
-## False Positives & Confirmed Sound (16)
+## False Positives & Confirmed Sound (17)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -103,6 +103,7 @@
 | X-03 | constraints | `verify()` is test-only; max table 2^16 rows (MAX_RANGE_TABLE_BITS=16); O(N²) not reachable |
 | L-03 | cli | Cache is in `$HOME`; attacker with write access already has user-level shell. Proofs are re-verified after generation (line 121-128) |
 | L-04 | cli | Same threat model as L-03; TOCTOU requires write access to `$HOME` which subsumes the attack |
+| L-05 | cli | `/tmp` is typically `tmpfs` (RAM-backed); secure wiping ineffective on SSDs; snarkjs heap not zeroed either; requires root/physical access |
 
 ---
 
@@ -222,18 +223,7 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 
 ---
 
-### CLI Crate (9 open)
-
-#### L-05 — Temp Directory Cleanup [HIGH]
-
-**File**: `cli/src/prove_handler.rs` (lines 90-91, 131-136)
-**Category**: Security
-
-`tempfile::tempdir()` auto-deletes on drop, but doesn't securely wipe files. Witness data and intermediate values can be recovered from disk via forensics.
-
-**Fix**: Overwrite sensitive files with zeros before deletion.
-
----
+### CLI Crate (8 open)
 
 #### L-06 — HOME Environment Variable Injection [HIGH]
 
