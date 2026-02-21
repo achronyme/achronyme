@@ -11,14 +11,14 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 6 | 8 (+1 partial) | 0 | 15 |
+| memory | 5 | 9 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
 | cli | 13 | 0 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **57** | **22 (+1)** | **13** | **93** |
+| **TOTAL** | **56** | **23 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -26,12 +26,12 @@
 |----------|-------|
 | CRITICAL | 6 |
 | HIGH | 10 |
-| MEDIUM | 17 |
+| MEDIUM | 16 |
 | LOW | 24 |
 
 ---
 
-## Resolved Findings (23)
+## Resolved Findings (24)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -57,6 +57,7 @@
 | M-06 | HIGH | memory | `import_strings` missing allocation tracking → sum capacities + `check_gc()` | `d7503c8` |
 | M-07 | MEDIUM | memory | NaN boxing tag overflow → compile-time `assert!(TAG < 16)` for all 13 tags | `7e01699` |
 | M-08 | MEDIUM | memory | `bytes_allocated` drift → `recount_live_bytes()` after sweep (self-correcting) | `d9dbf70` |
+| M-10 | MEDIUM | memory | Public arena/mark fields → `pub(crate)` + public accessors | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -81,18 +82,7 @@
 
 ## Open Findings
 
-### Memory Crate (6 open)
-
-#### M-10 — Public Fields Bypass Allocation Tracking [MEDIUM]
-
-**File**: `memory/src/heap.rs` (lines 50-84)
-**Category**: Safety
-
-`Arena.data`, `Arena.free_indices`, and all `Heap` arena fields are `pub`. External code can push objects directly, bypassing `bytes_allocated` tracking and GC invariants.
-
-**Fix**: Make arena fields `pub(crate)` or private, expose via accessor methods.
-
----
+### Memory Crate (5 open)
 
 #### M-11 — Map Tracing Comment Ambiguity [LOW]
 

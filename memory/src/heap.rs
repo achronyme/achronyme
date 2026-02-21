@@ -52,8 +52,8 @@ pub struct ProofObject {
 #[derive(Debug, Clone)]
 
 pub struct Arena<T> {
-    pub data: Vec<T>,
-    pub free_indices: Vec<u32>,
+    pub(crate) data: Vec<T>,
+    pub(crate) free_indices: Vec<u32>,
     /// O(1) membership mirror of `free_indices`. Invariant: contains the same
     /// elements as `free_indices` at all times. Maintained by `mark_free`,
     /// `reclaim_free`, and `clear_free` — direct mutation of `free_indices`
@@ -116,6 +116,11 @@ impl<T> Arena<T> {
         self.data.get_mut(idx as usize)
     }
 
+    /// Number of live (non-free) entries.
+    pub fn live_count(&self) -> usize {
+        self.data.len() - self.free_set.len()
+    }
+
     /// Insert a value, reusing a freed slot if available, or appending.
     /// Panics if the arena grows beyond `u32::MAX` entries.
     pub fn alloc(&mut self, val: T) -> u32 {
@@ -132,27 +137,27 @@ impl<T> Arena<T> {
 }
 
 pub struct Heap {
-    // Typed Arenas
-    pub strings: Arena<String>,
-    pub lists: Arena<Vec<Value>>,
-    pub maps: Arena<HashMap<String, Value>>,
-    pub functions: Arena<Function>,
-    pub upvalues: Arena<Upvalue>,
-    pub closures: Arena<Closure>,
-    pub iterators: Arena<IteratorObj>,
-    pub fields: Arena<FieldElement>,
-    pub proofs: Arena<ProofObject>,
+    // Typed Arenas — pub(crate) to prevent external bypass of allocation tracking
+    pub(crate) strings: Arena<String>,
+    pub(crate) lists: Arena<Vec<Value>>,
+    pub(crate) maps: Arena<HashMap<String, Value>>,
+    pub(crate) functions: Arena<Function>,
+    pub(crate) upvalues: Arena<Upvalue>,
+    pub(crate) closures: Arena<Closure>,
+    pub(crate) iterators: Arena<IteratorObj>,
+    pub(crate) fields: Arena<FieldElement>,
+    pub(crate) proofs: Arena<ProofObject>,
 
-    // Mark State (One set per arena type)
-    pub marked_strings: HashSet<u32>,
-    pub marked_lists: HashSet<u32>,
-    pub marked_maps: HashSet<u32>,
-    pub marked_functions: HashSet<u32>,
-    pub marked_upvalues: HashSet<u32>,
-    pub marked_closures: HashSet<u32>,
-    pub marked_iterators: HashSet<u32>,
-    pub marked_fields: HashSet<u32>,
-    pub marked_proofs: HashSet<u32>,
+    // Mark State — pub(crate) to prevent external mark manipulation
+    pub(crate) marked_strings: HashSet<u32>,
+    pub(crate) marked_lists: HashSet<u32>,
+    pub(crate) marked_maps: HashSet<u32>,
+    pub(crate) marked_functions: HashSet<u32>,
+    pub(crate) marked_upvalues: HashSet<u32>,
+    pub(crate) marked_closures: HashSet<u32>,
+    pub(crate) marked_iterators: HashSet<u32>,
+    pub(crate) marked_fields: HashSet<u32>,
+    pub(crate) marked_proofs: HashSet<u32>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -193,6 +198,31 @@ impl Heap {
         if self.bytes_allocated > self.next_gc_threshold {
             self.request_gc = true;
         }
+    }
+
+    /// Mark an upvalue index as reachable (for open upvalue rooting in GC).
+    pub fn mark_upvalue(&mut self, idx: u32) {
+        self.marked_upvalues.insert(idx);
+    }
+
+    /// Returns true if the proofs arena has any live entries.
+    pub fn has_proofs(&self) -> bool {
+        self.proofs.live_count() > 0
+    }
+
+    /// Query whether a string slot has been freed (for testing).
+    pub fn is_string_free(&self, idx: u32) -> bool {
+        self.strings.is_free(idx)
+    }
+
+    /// Query whether a list slot has been freed (for testing).
+    pub fn is_list_free(&self, idx: u32) -> bool {
+        self.lists.is_free(idx)
+    }
+
+    /// Query whether a list index is marked as reachable (for testing).
+    pub fn is_list_marked(&self, idx: u32) -> bool {
+        self.marked_lists.contains(&idx)
     }
 
     pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {

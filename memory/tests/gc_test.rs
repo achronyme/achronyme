@@ -8,9 +8,6 @@ fn test_gc_alloc_reuse_string() {
     let s1 = "Hello".to_string();
     let idx1 = heap.alloc_string(s1);
 
-    // Simulate freeing idx1 by manually manipulating the free list (White-box style)
-    // Actually, we should test sweep().
-
     // 1. Mark nothing.
     // 2. Sweep.
     // 3. idx1 should be free.
@@ -19,7 +16,7 @@ fn test_gc_alloc_reuse_string() {
     heap.sweep();
 
     // Check internal state: free_indices should have idx1
-    assert!(heap.strings.is_free(idx1));
+    assert!(heap.is_string_free(idx1));
 
     // Alloc new string, should reuse idx1
     let s2 = "World".to_string();
@@ -50,21 +47,21 @@ fn test_gc_cycle_collection() {
     // Case 1: Root holds A. Both should be alive.
     heap.trace(vec![val_a]);
     // Verify both marked
-    assert!(heap.marked_lists.contains(&a_idx));
-    assert!(heap.marked_lists.contains(&b_idx));
+    assert!(heap.is_list_marked(a_idx));
+    assert!(heap.is_list_marked(b_idx));
 
     // Reset for next pass (Sweep does this, but we want to test sweep)
     // Actually sweep clears marks.
     heap.sweep();
 
     // After sweep (with valid roots), they should still be alive (not in free list).
-    assert!(!heap.lists.is_free(a_idx));
-    assert!(!heap.lists.is_free(b_idx));
+    assert!(!heap.is_list_free(a_idx));
+    assert!(!heap.is_list_free(b_idx));
 
     // Case 2: No roots. Cycle should be collected.
     heap.trace(vec![]); // No roots
     heap.sweep();
 
-    assert!(heap.lists.is_free(a_idx));
-    assert!(heap.lists.is_free(b_idx));
+    assert!(heap.is_list_free(a_idx));
+    assert!(heap.is_list_free(b_idx));
 }

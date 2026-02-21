@@ -507,7 +507,7 @@ fn prove_returns_proof_object_when_handler_provides_proof() {
     // We can't easily inspect the stack result, but the fact that it ran
     // and print("<Proof>") didn't crash is sufficient.
     // Additionally verify the heap has a proof allocated.
-    assert!(!vm.heap.proofs.data.is_empty(), "proof should be allocated on heap");
+    assert!(vm.heap.has_proofs(), "proof should be allocated on heap");
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn proof_json_native_returns_correct_string() {
     "#;
     let vm = run_source_with_mock_proof(source).expect("should succeed");
     // Verify proof was allocated
-    assert!(!vm.heap.proofs.data.is_empty());
+    assert!(vm.heap.has_proofs());
 }
 
 #[test]
@@ -551,7 +551,7 @@ fn proof_public_native_returns_correct_string() {
         print(j)
     "#;
     let vm = run_source_with_mock_proof(source).expect("should succeed");
-    assert!(!vm.heap.proofs.data.is_empty());
+    assert!(vm.heap.has_proofs());
 }
 
 #[test]
@@ -566,7 +566,7 @@ fn proof_vkey_native_returns_correct_string() {
         print(j)
     "#;
     let vm = run_source_with_mock_proof(source).expect("should succeed");
-    assert!(!vm.heap.proofs.data.is_empty());
+    assert!(vm.heap.has_proofs());
 }
 
 #[test]
@@ -594,7 +594,7 @@ fn typeof_proof_returns_proof_string() {
         print(t)
     "#;
     let vm = run_source_with_mock_proof(source).expect("should succeed");
-    assert!(!vm.heap.proofs.data.is_empty());
+    assert!(vm.heap.has_proofs());
 }
 
 #[test]

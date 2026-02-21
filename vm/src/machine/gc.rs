@@ -22,9 +22,7 @@ impl GarbageCollector for super::vm::VM {
         // These are indices, so we must mark them manually in the heap set.
         let mut open_idx = self.open_upvalues;
         while let Some(idx) = open_idx {
-            if !self.heap.marked_upvalues.contains(&idx) {
-                self.heap.marked_upvalues.insert(idx);
-            }
+            self.heap.mark_upvalue(idx);
             // Traverse list. If next is hidden in heap, retrieving it is safe 
             // because we just marked 'idx' (it won't be swept).
              if let Some(upval) = self.heap.get_upvalue(idx) {
