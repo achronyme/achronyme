@@ -70,7 +70,7 @@
 | M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `5ebd77f` |
 | M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `08ac06c` |
 | M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `08ac06c` |
-| V-17 | LOW | vm | Proof equality compares all 3 fields + documented as structural | `PENDING` |
+| V-17 | LOW | vm | Proof equality compares all 3 fields + documented as structural | `a87efd3` |
 
 ## False Positives & Confirmed Sound (13)
 
