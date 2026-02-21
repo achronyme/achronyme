@@ -15,17 +15,17 @@
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 6 | 4 | 0 | 10 |
-| constraints | 5 | 2 | 2 | 9 |
+| constraints | 4 | 2 | 3 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **33** | **46 (+1)** | **13** | **93** |
+| **TOTAL** | **32** | **46 (+1)** | **14** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 8 |
+| HIGH | 7 |
 | MEDIUM | 13 |
 | LOW | 12 |
 
@@ -83,7 +83,7 @@
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 
-## False Positives & Confirmed Sound (13)
+## False Positives & Confirmed Sound (14)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -100,6 +100,7 @@
 | P-12 | parser | `in` keyword reservation is future-proofing, no issue |
 | P-13 | parser | ASCII-only identifiers is a design choice |
 | P-14 | parser | Non-nested block comments is standard (C, Java) |
+| X-03 | constraints | `verify()` is test-only; max table 2^16 rows (MAX_RANGE_TABLE_BITS=16); O(N²) not reachable |
 
 ---
 
@@ -173,18 +174,7 @@ Single file with all lowering logic. Consider splitting into `lower_atoms.rs`, `
 
 ---
 
-### Constraints Crate (5 open)
-
-#### X-03 — O(N^2) Lookup Verification [HIGH]
-
-**File**: `constraints/src/plonkish.rs` (lines 382-419)
-**Category**: Performance
-
-Lookup verification uses `Vec::contains()` to check membership in the table set. For N rows, this is O(N^2). With N=2^20 rows, this is ~10^12 comparisons.
-
-**Fix**: Use `HashSet<Vec<FieldElement>>` (requires FieldElement: Hash) or sorted Vec with binary search.
-
----
+### Constraints Crate (4 open)
 
 #### X-04 — Selector vs Legacy Heuristic Mixing [MEDIUM]
 
@@ -495,7 +485,7 @@ No operator precedence table, associativity rules, or escape sequence reference 
 
 ### Medium Priority (Robustness)
 
-10. **X-03** — HashSet for lookup verification
+10. ~~**X-03** — HashSet for lookup verification~~ (false positive)
 11. **L-06/L-07** — Validate HOME and --ptau paths
 12. **L-09** — Add snarkjs subprocess timeout
 13. **L-12** — Cache snarkjs_available result
