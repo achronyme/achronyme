@@ -147,12 +147,11 @@ impl DefaultProveHandler {
         r1cs_bytes: &[u8],
         r1cs_path: &Path,
     ) -> Result<(PathBuf, PathBuf), String> {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        r1cs_bytes.hash(&mut hasher);
-        let hash = hasher.finish();
+        use sha2::{Sha256, Digest};
+        let hash = Sha256::digest(r1cs_bytes);
+        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
 
-        let cache_subdir = self.cache_dir.join(format!("{hash:016x}"));
+        let cache_subdir = self.cache_dir.join(&hex);
         let zkey_path = cache_subdir.join("circuit.zkey");
         let vkey_path = cache_subdir.join("verification_key.json");
 

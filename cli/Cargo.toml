@@ -10,6 +10,7 @@ anyhow = "1.0"
 byteorder = "1.5"
 tempfile = "3"
 getrandom = "0.2"
+sha2 = "0.10"
 
 memory = { path = "../memory" }
 vm = { path = "../vm" }

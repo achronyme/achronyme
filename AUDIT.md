@@ -16,22 +16,22 @@
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
-| cli | 12 | 1 | 0 | 13 |
+| cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **53** | **26 (+1)** | **13** | **93** |
+| **TOTAL** | **52** | **27 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 5 |
+| CRITICAL | 4 |
 | HIGH | 10 |
 | MEDIUM | 16 |
 | LOW | 22 |
 
 ---
 
-## Resolved Findings (27)
+## Resolved Findings (28)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -61,6 +61,7 @@
 | M-11 | LOW | memory | Map tracing comment ambiguity → clarified + simplified to `m.values()` | `7a43535` |
 | M-12 | LOW | memory | GC threshold thrashing → `max(2× live, 1.5× prev, 1MB)` hysteresis | `a27e0c7` |
 | L-01 | CRITICAL | cli | Hardcoded entropy in trusted setup → `getrandom` 32-byte OS randomness | `3362252` |
+| L-02 | CRITICAL | cli | Weak DefaultHasher cache key → SHA-256 collision-resistant hash | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -418,18 +419,7 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 
 ---
 
-### CLI Crate (12 open)
-
-#### L-02 — Weak DefaultHasher for Cache Key [CRITICAL]
-
-**File**: `cli/src/prove_handler.rs` (lines 150-155)
-**Category**: Security
-
-`DefaultHasher` (SipHash, 64-bit) hashes R1CS bytes to create cache directory names. Birthday attack: ~2^32 circuits to find a collision, allowing cached zkey reuse across different circuits.
-
-**Fix**: Use SHA-256 (add `sha2` dependency) for collision-resistant cache keys.
-
----
+### CLI Crate (11 open)
 
 #### L-03 — Untrusted Cache Files [HIGH]
 
