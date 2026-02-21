@@ -49,7 +49,7 @@
 | V-07 | HIGH | vm | Prove handler pre-check insufficient → moved to top of `handle_prove` | — |
 | V-11 | HIGH | vm | BuildList/BuildMap bounds check → `checked_add` chains | — |
 | V-14 | MEDIUM | vm | Non-exhaustive opcode match → exhaustive dispatch | `f547ff5` |
-| V-15 | MEDIUM | vm | `as_handle().unwrap()` after type check → `let-else` fallback | `6bdc5cb` |
+| V-15 | MEDIUM | vm | `as_handle().unwrap()` after type check → `.ok_or()` in all 30 sites (6 files) | `0a314dd` |
 | V-16 | LOW | vm | ForIter R[A+1] frame overlap → `max_slots` guard | `54a8e7f` |
 | V-18 | LOW | vm | Stack not zeroed on reset → `fill(nil)` in debug builds | `b4d66d4` |
 | V-19 | LOW | vm | USER_GLOBAL_START coupling → compile-time `NATIVE_COUNT` assertion | `d7758e8` |
