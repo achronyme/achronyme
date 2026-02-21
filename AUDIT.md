@@ -68,8 +68,8 @@
 | I-02 | CRITICAL | ir | Function body reparse `unwrap()` → `.ok_or_else()` error handling | `fcd99ef` |
 | X-02 | CRITICAL | constraints | `LC::evaluate()` unchecked index → `.get()` with descriptive panic | `fcd99ef` |
 | M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `5ebd77f` |
-| M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `PENDING` |
-| M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `PENDING` |
+| M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `08ac06c` |
+| M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `08ac06c` |
 
 ## False Positives & Confirmed Sound (13)
 
