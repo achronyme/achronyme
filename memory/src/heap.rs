@@ -541,13 +541,11 @@ impl Heap {
         // at negligible cost — the sweep loop already touched every slot.
         self.bytes_allocated = self.recount_live_bytes();
 
-        // Dynamic Threshold Adjustment:
-        // After sweep, we set new threshold to X * current_heap to avoid thrashing.
-        // E.g. grow threshold to 2x current size.
-        self.next_gc_threshold = self.bytes_allocated * 2;
-        if self.next_gc_threshold < 1024 * 1024 {
-            self.next_gc_threshold = 1024 * 1024; // Min 1MB
-        }
+        // Dynamic threshold with hysteresis to prevent GC thrashing.
+        // Take the max of: 2× live heap, 1.5× previous threshold, and 1MB floor.
+        let grow = self.bytes_allocated * 2;
+        let hysteresis = self.next_gc_threshold * 3 / 2;
+        self.next_gc_threshold = grow.max(hysteresis).max(1024 * 1024);
     }
 
     /// Recompute bytes_allocated by summing live object costs.

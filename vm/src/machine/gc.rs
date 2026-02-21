@@ -33,12 +33,7 @@ impl GarbageCollector for super::vm::VM {
         }
 
         self.heap.sweep();
-
-        // Dynamic Threshold: Double it or set reasonable limits
-        self.heap.next_gc_threshold = std::cmp::max(
-            self.heap.bytes_allocated * 2,
-            1024 * 1024, // Min 1MB
-        );
+        // Threshold is set by sweep() with hysteresis — no override needed.
     }
 
     fn mark_roots(&self) -> Vec<Value> {
