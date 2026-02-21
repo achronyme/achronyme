@@ -14,24 +14,24 @@
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
-| ir | 7 | 3 | 0 | 10 |
+| ir | 6 | 4 | 0 | 10 |
 | constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **34** | **45 (+1)** | **13** | **93** |
+| **TOTAL** | **33** | **46 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 9 |
+| HIGH | 8 |
 | MEDIUM | 13 |
 | LOW | 12 |
 
 ---
 
-## Resolved Findings (46)
+## Resolved Findings (47)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -81,6 +81,7 @@
 | C-09 | LOW | compiler | `HashMap<SsaVar, LC>` documented as lookup cache | `fdbedc2` |
 | I-03 | HIGH | ir | `FnDef` re-parsed source on every call → stores `body: Block` (AST) | `0543a81` |
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
+| I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -104,18 +105,7 @@
 
 ## Open Findings
 
-### IR Crate (7 open)
-
-#### I-04 — IsLt/IsLe Limb Order Verification [HIGH]
-
-**File**: `ir/src/passes/const_fold.rs` (lines 316-350)
-**Category**: Soundness
-
-Both const_fold and evaluator compare canonical limbs as big-endian tuples: `(la[3], la[2], la[1], la[0]) < (lb[3], lb[2], lb[1], lb[0])`. This assumes `to_canonical()` returns little-endian limbs. If the assumption is wrong, all comparisons are reversed.
-
-**Fix**: Add edge-case tests: values near 2^64, 2^128, 2^192, and near the field modulus.
-
----
+### IR Crate (6 open)
 
 #### I-05 — DCE Conservatively Keeps All Logic Ops [MEDIUM]
 
