@@ -93,6 +93,24 @@ impl<T> Arena<T> {
         self.free_set.clear();
     }
 
+    /// Return a reference to the element at `idx`, or `None` if out of bounds or freed.
+    #[inline]
+    pub fn get(&self, idx: u32) -> Option<&T> {
+        if self.is_free(idx) {
+            return None;
+        }
+        self.data.get(idx as usize)
+    }
+
+    /// Return a mutable reference to the element at `idx`, or `None` if out of bounds or freed.
+    #[inline]
+    pub fn get_mut(&mut self, idx: u32) -> Option<&mut T> {
+        if self.is_free(idx) {
+            return None;
+        }
+        self.data.get_mut(idx as usize)
+    }
+
     /// Insert a value, reusing a freed slot if available, or appending.
     /// Panics if the arena grows beyond `u32::MAX` entries.
     pub fn alloc(&mut self, val: T) -> u32 {
@@ -179,11 +197,11 @@ impl Heap {
     }
 
     pub fn get_upvalue(&self, index: u32) -> Option<&Upvalue> {
-        self.upvalues.data.get(index as usize).map(|b| &**b)
+        self.upvalues.get(index).map(|b| &**b)
     }
 
     pub fn get_upvalue_mut(&mut self, index: u32) -> Option<&mut Upvalue> {
-        self.upvalues.data.get_mut(index as usize).map(|b| &mut **b)
+        self.upvalues.get_mut(index).map(|b| &mut **b)
     }
 
     pub fn alloc_closure(&mut self, c: Closure) -> u32 {
@@ -193,11 +211,11 @@ impl Heap {
     }
 
     pub fn get_closure(&self, index: u32) -> Option<&Closure> {
-        self.closures.data.get(index as usize)
+        self.closures.get(index)
     }
 
     pub fn get_closure_mut(&mut self, index: u32) -> Option<&mut Closure> {
-        self.closures.data.get_mut(index as usize)
+        self.closures.get_mut(index)
     }
 
     pub fn alloc_string(&mut self, s: String) -> u32 {
@@ -223,11 +241,11 @@ impl Heap {
     }
 
     pub fn get_map(&self, index: u32) -> Option<&HashMap<String, Value>> {
-        self.maps.data.get(index as usize)
+        self.maps.get(index)
     }
 
     pub fn get_map_mut(&mut self, index: u32) -> Option<&mut HashMap<String, Value>> {
-        self.maps.data.get_mut(index as usize)
+        self.maps.get_mut(index)
     }
 
     // Tracing (Mark Phase) logic
@@ -507,18 +525,15 @@ impl Heap {
     }
 
     pub fn get_string(&self, index: u32) -> Option<&String> {
-        // Only return if not freed? Or assume VM handle safety?
-        // Typically strict check: if free_indices.contains(index) return None.
-        // For speed, we trust the handle unless debugging.
-        self.strings.data.get(index as usize)
+        self.strings.get(index)
     }
 
     pub fn get_list(&self, index: u32) -> Option<&Vec<Value>> {
-        self.lists.data.get(index as usize)
+        self.lists.get(index)
     }
 
     pub fn get_list_mut(&mut self, index: u32) -> Option<&mut Vec<Value>> {
-        self.lists.data.get_mut(index as usize)
+        self.lists.get_mut(index)
     }
 
     pub fn alloc_function(&mut self, f: Function) -> u32 {
@@ -529,7 +544,7 @@ impl Heap {
     }
 
     pub fn get_function(&self, index: u32) -> Option<&Function> {
-        self.functions.data.get(index as usize)
+        self.functions.get(index)
     }
 
     pub fn import_strings(&mut self, strings: Vec<String>) {
@@ -544,11 +559,11 @@ impl Heap {
     }
 
     pub fn get_iterator(&self, index: u32) -> Option<&IteratorObj> {
-        self.iterators.data.get(index as usize)
+        self.iterators.get(index)
     }
 
     pub fn get_iterator_mut(&mut self, index: u32) -> Option<&mut IteratorObj> {
-        self.iterators.data.get_mut(index as usize)
+        self.iterators.get_mut(index)
     }
 
     pub fn alloc_field(&mut self, fe: FieldElement) -> u32 {
@@ -558,7 +573,7 @@ impl Heap {
     }
 
     pub fn get_field(&self, index: u32) -> Option<&FieldElement> {
-        self.fields.data.get(index as usize)
+        self.fields.get(index)
     }
 
     pub fn alloc_proof(&mut self, p: ProofObject) -> u32 {
@@ -571,6 +586,6 @@ impl Heap {
     }
 
     pub fn get_proof(&self, index: u32) -> Option<&ProofObject> {
-        self.proofs.data.get(index as usize)
+        self.proofs.get(index)
     }
 }

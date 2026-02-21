@@ -54,9 +54,14 @@ impl GarbageCollector for super::vm::VM {
             roots.push(entry.value);
         }
 
-        // 3. Call Frames (Closures/Functions)
+        // 3. Call Frames (Closures)
         for frame in &self.frames {
-            roots.push(Value::function(frame.closure));
+            roots.push(Value::closure(frame.closure));
+        }
+
+        // 4. Prototypes (compiled function templates)
+        for &proto_idx in &self.prototypes {
+            roots.push(Value::function(proto_idx));
         }
 
         roots
