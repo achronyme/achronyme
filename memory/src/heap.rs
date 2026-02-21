@@ -38,6 +38,13 @@ pub struct IteratorObj {
 }
 
 #[derive(Debug, Clone)]
+pub struct ProofObject {
+    pub proof_json: String,
+    pub public_json: String,
+    pub vkey_json: String,
+}
+
+#[derive(Debug, Clone)]
 
 pub struct Arena<T> {
     pub data: Vec<T>,
@@ -63,6 +70,7 @@ pub struct Heap {
     pub closures: Arena<Closure>,
     pub iterators: Arena<IteratorObj>,
     pub fields: Arena<FieldElement>,
+    pub proofs: Arena<ProofObject>,
 
     // Mark State (One set per arena type)
     pub marked_strings: HashSet<u32>,
@@ -73,6 +81,7 @@ pub struct Heap {
     pub marked_closures: HashSet<u32>,
     pub marked_iterators: HashSet<u32>,
     pub marked_fields: HashSet<u32>,
+    pub marked_proofs: HashSet<u32>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -91,6 +100,7 @@ impl Heap {
             closures: Arena::new(),
             iterators: Arena::new(),
             fields: Arena::new(),
+            proofs: Arena::new(),
 
             marked_strings: HashSet::new(),
             marked_lists: HashSet::new(),
@@ -100,6 +110,7 @@ impl Heap {
             marked_closures: HashSet::new(),
             marked_iterators: HashSet::new(),
             marked_fields: HashSet::new(),
+            marked_proofs: HashSet::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -283,6 +294,11 @@ impl Heap {
                     self.marked_fields.insert(handle);
                     false
                 }
+                crate::value::TAG_PROOF => {
+                    // Leaf type: no children to trace
+                    self.marked_proofs.insert(handle);
+                    false
+                }
                 _ => false,
             };
 
@@ -454,6 +470,21 @@ impl Heap {
         }
         self.marked_fields.clear();
 
+        // Proofs
+        for i in 0..self.proofs.data.len() {
+            let idx = i as u32;
+            if !self.marked_proofs.contains(&idx) && !self.proofs.free_indices.contains(&idx) {
+                self.proofs.free_indices.push(idx);
+                freed_bytes += std::mem::size_of::<ProofObject>();
+                self.proofs.data[i] = ProofObject {
+                    proof_json: String::new(),
+                    public_json: String::new(),
+                    vkey_json: String::new(),
+                };
+            }
+        }
+        self.marked_proofs.clear();
+
         // Adjust global counter safely
         self.bytes_allocated = self.bytes_allocated.saturating_sub(freed_bytes);
 
@@ -544,5 +575,25 @@ impl Heap {
 
     pub fn get_field(&self, index: u32) -> Option<&FieldElement> {
         self.fields.data.get(index as usize)
+    }
+
+    pub fn alloc_proof(&mut self, p: ProofObject) -> u32 {
+        self.bytes_allocated += std::mem::size_of::<ProofObject>()
+            + p.proof_json.capacity()
+            + p.public_json.capacity()
+            + p.vkey_json.capacity();
+        self.check_gc();
+        if let Some(idx) = self.proofs.free_indices.pop() {
+            self.proofs.data[idx as usize] = p;
+            idx
+        } else {
+            let index = self.proofs.data.len() as u32;
+            self.proofs.data.push(p);
+            index
+        }
+    }
+
+    pub fn get_proof(&self, index: u32) -> Option<&ProofObject> {
+        self.proofs.data.get(index as usize)
     }
 }

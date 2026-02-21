@@ -17,6 +17,7 @@ pub const TAG_LIST: u64 = 5;
 pub const TAG_MAP: u64 = 6;
 pub const TAG_FUNCTION: u64 = 7;
 pub const TAG_FIELD: u64 = 8;
+pub const TAG_PROOF: u64 = 9;
 pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
@@ -102,6 +103,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn proof(handle: u32) -> Self {
+        Value::make_obj(TAG_PROOF, handle)
+    }
+
+    #[inline]
     fn make_obj(tag: u64, handle: u32) -> Self {
         // Shift Tag to bits 32-35 (lowest 4 bits of high 32)
         // Check plan: QNAN | (Tag << 32) | Handle
@@ -184,6 +190,11 @@ impl Value {
     #[inline]
     pub fn is_field(&self) -> bool {
         self.tag() == TAG_FIELD
+    }
+
+    #[inline]
+    pub fn is_proof(&self) -> bool {
+        self.tag() == TAG_PROOF
     }
 
     #[inline]
@@ -290,6 +301,8 @@ impl fmt::Debug for Value {
             write!(f, "Iterator({})", self.as_handle().unwrap())
         } else if self.is_field() {
             write!(f, "Field({})", self.as_handle().unwrap())
+        } else if self.is_proof() {
+            write!(f, "Proof({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }
