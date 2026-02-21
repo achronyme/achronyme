@@ -513,8 +513,10 @@ impl Heap {
         }
         self.marked_proofs.clear();
 
-        // Adjust global counter safely
-        self.bytes_allocated = self.bytes_allocated.saturating_sub(freed_bytes);
+        // Recompute bytes_allocated from surviving objects (self-correcting).
+        // This eliminates drift from untracked mutations (push, insert, etc.)
+        // at negligible cost — the sweep loop already touched every slot.
+        self.bytes_allocated = self.recount_live_bytes();
 
         // Dynamic Threshold Adjustment:
         // After sweep, we set new threshold to X * current_heap to avoid thrashing.
@@ -523,6 +525,64 @@ impl Heap {
         if self.next_gc_threshold < 1024 * 1024 {
             self.next_gc_threshold = 1024 * 1024; // Min 1MB
         }
+    }
+
+    /// Recompute bytes_allocated by summing live object costs.
+    /// Mirrors the per-type accounting in alloc_* / sweep.
+    fn recount_live_bytes(&self) -> usize {
+        let mut total: usize = 0;
+        for (i, s) in self.strings.data.iter().enumerate() {
+            if !self.strings.is_free(i as u32) {
+                total += s.capacity();
+            }
+        }
+        for (i, l) in self.lists.data.iter().enumerate() {
+            if !self.lists.is_free(i as u32) {
+                total += l.capacity() * std::mem::size_of::<Value>();
+            }
+        }
+        for (i, f) in self.functions.data.iter().enumerate() {
+            if !self.functions.is_free(i as u32) {
+                total += f.chunk.capacity() * 4;
+                total += f.constants.capacity() * std::mem::size_of::<Value>();
+            }
+        }
+        for (i, c) in self.closures.data.iter().enumerate() {
+            if !self.closures.is_free(i as u32) {
+                total += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
+            }
+        }
+        for (i, _) in self.upvalues.data.iter().enumerate() {
+            if !self.upvalues.is_free(i as u32) {
+                total += std::mem::size_of::<Upvalue>();
+            }
+        }
+        for (i, _) in self.iterators.data.iter().enumerate() {
+            if !self.iterators.is_free(i as u32) {
+                total += std::mem::size_of::<IteratorObj>();
+            }
+        }
+        for (i, _) in self.fields.data.iter().enumerate() {
+            if !self.fields.is_free(i as u32) {
+                total += std::mem::size_of::<FieldElement>();
+            }
+        }
+        for (i, p) in self.proofs.data.iter().enumerate() {
+            if !self.proofs.is_free(i as u32) {
+                total += std::mem::size_of::<ProofObject>()
+                    + p.proof_json.capacity()
+                    + p.public_json.capacity()
+                    + p.vkey_json.capacity();
+            }
+        }
+        for (i, m) in self.maps.data.iter().enumerate() {
+            if !self.maps.is_free(i as u32) {
+                let capacity = m.capacity();
+                let entry_size = std::mem::size_of::<String>() + std::mem::size_of::<Value>();
+                total += capacity * entry_size;
+            }
+        }
+        total
     }
 
     pub fn should_collect(&self) -> bool {

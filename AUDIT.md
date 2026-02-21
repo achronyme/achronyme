@@ -11,14 +11,14 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 7 | 7 (+1 partial) | 0 | 15 |
+| memory | 6 | 8 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
 | cli | 13 | 0 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **58** | **21 (+1)** | **13** | **93** |
+| **TOTAL** | **57** | **22 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -26,12 +26,12 @@
 |----------|-------|
 | CRITICAL | 6 |
 | HIGH | 10 |
-| MEDIUM | 18 |
+| MEDIUM | 17 |
 | LOW | 24 |
 
 ---
 
-## Resolved Findings (22)
+## Resolved Findings (23)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -56,6 +56,7 @@
 | V-20 | LOW | vm | Missing edge case tests → 18 tests (bytecode, GC, recursion, prove) | `1d391ea` |
 | M-06 | HIGH | memory | `import_strings` missing allocation tracking → sum capacities + `check_gc()` | `d7503c8` |
 | M-07 | MEDIUM | memory | NaN boxing tag overflow → compile-time `assert!(TAG < 16)` for all 13 tags | `7e01699` |
+| M-08 | MEDIUM | memory | `bytes_allocated` drift → `recount_live_bytes()` after sweep (self-correcting) | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -80,18 +81,7 @@
 
 ## Open Findings
 
-### Memory Crate (7 open)
-
-#### M-08 — Bytes Allocated Drift via Saturation [MEDIUM]
-
-**File**: `memory/src/heap.rs` (line 489)
-**Category**: Correctness
-
-`saturating_sub(freed_bytes)` prevents underflow but masks accounting errors. Combined with M-02 (ProofObject undercount), `bytes_allocated` gradually diverges from reality.
-
-**Fix**: Fix M-02 first (done). Then add debug assertions that `freed_bytes <= bytes_allocated`.
-
----
+### Memory Crate (6 open)
 
 #### M-10 — Public Fields Bypass Allocation Tracking [MEDIUM]
 
