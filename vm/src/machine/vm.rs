@@ -444,7 +444,14 @@ impl VM {
                          self.set_reg(base, a, val)?;
                     } else {
                         let iter_obj = if val.is_list() {
-                             memory::IteratorObj { source: val, index: 0 }
+                             // Snapshot: clone list contents so mutations during
+                             // iteration don't cause stale reads or OOB access.
+                             let l_handle = val.as_handle().unwrap();
+                             let snapshot = self.heap.get_list(l_handle)
+                                 .ok_or(RuntimeError::SystemError("List missing".into()))?
+                                 .clone();
+                             let snap_handle = self.heap.alloc_list(snapshot);
+                             memory::IteratorObj { source: Value::list(snap_handle), index: 0 }
                         } else if val.is_map() {
                              // TODO: FIXME CRITICAL: This is O(N) allocation. Replace with native iterator.
                              // Convert Map keys to List
