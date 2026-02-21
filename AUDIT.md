@@ -253,14 +253,14 @@ Code holds a reference to a map via `get_map(handle)`, then calls `alloc_string(
 
 ---
 
-### V-07 — Prove Handler Pre-check Insufficient [HIGH]
+### V-07 — Prove Handler Pre-check Insufficient [HIGH] [RESOLVED]
 
 **File**: `vm/src/machine/prove.rs` (lines 122-129)
 **Category**: Robustness
 
 If `prove_handler` is None, returns `ProveHandlerNotConfigured`. But if `frames` is empty when the Prove opcode executes, accessing the current frame's closure fails before the handler check. Error path leaks implementation details.
 
-**Fix**: Check frames non-empty before accessing frame context in `handle_prove`.
+**Fix**: Moved `prove_handler.is_none()` check to the top of `handle_prove`, before any frame/constant pool access. Note: the frames-empty scenario is unreachable (main loop is `while !self.frames.is_empty()`).
 
 ---
 

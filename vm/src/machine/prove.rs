@@ -68,6 +68,11 @@ impl VM {
         base: usize,
         closure_idx: u32,
     ) -> Result<(), RuntimeError> {
+        // 0. Check handler is configured before doing any work
+        if self.prove_handler.is_none() {
+            return Err(RuntimeError::ProveHandlerNotConfigured);
+        }
+
         let a = decode_a(instruction) as usize;
         let bx = decode_bx(instruction) as usize;
 
@@ -118,11 +123,8 @@ impl VM {
             field_map
         };
 
-        // 3. Delegate to the handler
-        let handler = self
-            .prove_handler
-            .as_ref()
-            .ok_or(RuntimeError::ProveHandlerNotConfigured)?;
+        // 3. Delegate to the handler (unwrap safe: checked at step 0)
+        let handler = self.prove_handler.as_ref().unwrap();
 
         let result = handler
             .execute_prove(&source, &scope_values)
