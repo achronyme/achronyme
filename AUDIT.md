@@ -275,14 +275,14 @@ If `prove_handler` is None, returns `ProveHandlerNotConfigured`. But if `frames`
 
 ---
 
-### V-09 — Frames Vector Mutation During Interpret Loop [HIGH]
+### V-09 — Frames Vector Mutation During Interpret Loop [HIGH] [FALSE POSITIVE]
 
 **File**: `vm/src/machine/vm.rs` (lines 166-184)
 **Category**: Robustness
 
 `frame_idx` is computed from `self.frames.len() - 1`. If a Return pops the last frame (line 179) and the loop continues, `frame_idx` is stale and `self.frames[frame_idx]` panics on OOB.
 
-**Fix**: After pop, break the inner loop and re-fetch `frame_idx` at the top.
+**Analysis**: False positive — `frame_idx` is recomputed at the top of each `while !self.frames.is_empty()` iteration (line 165). Both `Return` (via `handle_control`) and the `ip >= chunk.len()` guard do `frames.pop()` followed by control returning to the `while` condition, which re-checks emptiness before re-entering.
 
 ---
 
