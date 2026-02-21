@@ -11,14 +11,14 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 2 | 12 (+1 partial) | 0 | 15 |
+| memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 8 | 2 | 0 | 10 |
 | constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **47** | **32 (+1)** | **13** | **93** |
+| **TOTAL** | **45** | **34 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -27,11 +27,11 @@
 | CRITICAL | 0 |
 | HIGH | 10 |
 | MEDIUM | 16 |
-| LOW | 21 |
+| LOW | 19 |
 
 ---
 
-## Resolved Findings (33)
+## Resolved Findings (35)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -68,6 +68,8 @@
 | I-02 | CRITICAL | ir | Function body reparse `unwrap()` → `.ok_or_else()` error handling | `fcd99ef` |
 | X-02 | CRITICAL | constraints | `LC::evaluate()` unchecked index → `.get()` with descriptive panic | `fcd99ef` |
 | M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `5ebd77f` |
+| M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `PENDING` |
+| M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `PENDING` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -90,30 +92,6 @@
 ---
 
 ## Open Findings
-
-### Memory Crate (2 open)
-
-#### M-14 — Field Inverse via Exponentiation [LOW]
-
-**File**: `memory/src/field.rs` (lines 406-417)
-**Category**: Performance/Design
-
-Uses Fermat's little theorem (a^(p-2) mod p), requiring ~256 field multiplications. Extended GCD would be faster but not constant-time. Current approach is correct for side-channel resistance.
-
-**Fix**: Document the constant-time tradeoff. No code change needed.
-
----
-
-#### M-15 — NaN Canonicalization [LOW]
-
-**File**: `memory/src/value.rs` (lines 34-42)
-**Category**: Design
-
-All NaN variants are mapped to `f64::NAN.to_bits()`. This is correct — Rust guarantees quiet NaN propagation. No issue.
-
-**Fix**: None needed. Document as intentional.
-
----
 
 ### VM Crate (1 open)
 

@@ -47,8 +47,12 @@ impl Value {
 
     #[inline]
     pub fn number(n: f64) -> Self {
-        // Canonización: Si es un NaN real, lo convertimos a nuestro "Number NaN" seguro
-        // para que no colisione con Tags. Usamos el QNaN estándar de float.
+        // NaN canonicalization: all NaN variants (signaling, quiet, with payload)
+        // are mapped to Rust's canonical quiet NaN (`f64::NAN.to_bits()`).
+        // This is intentional — IEEE 754 defines many NaN bit patterns, but our
+        // NaN-boxing scheme reserves specific bit patterns for tagged values.
+        // Without canonicalization, a user-supplied NaN could collide with a tag.
+        // Rust guarantees `f64::NAN` is a quiet NaN with a stable bit pattern.
         if n.is_nan() {
             Value(f64::NAN.to_bits())
         } else {

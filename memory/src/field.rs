@@ -410,8 +410,15 @@ impl FieldElement {
         result
     }
 
-    /// Modular inverse: self^{-1} mod p via Fermat's little theorem
-    /// Returns None if self is zero (division by zero)
+    /// Modular inverse: self⁻¹ mod p via Fermat's little theorem (a^(p−2) mod p).
+    ///
+    /// This requires ~256 field multiplications (one square + one conditional
+    /// multiply per exponent bit). Extended GCD would be ~40% faster but is
+    /// **not constant-time** — its runtime leaks information about the input
+    /// through branch timing. The exponentiation approach is inherently
+    /// constant-time because `pow` uses `ct_select` (branchless) for every bit.
+    ///
+    /// Returns `None` if `self` is zero.
     pub fn inv(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
