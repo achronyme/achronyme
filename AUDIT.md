@@ -67,7 +67,7 @@
 | I-01 | CRITICAL | ir | Mux evaluator `== ONE` → validate boolean + `!is_zero()`, `NonBooleanMuxCondition` error | `fcd99ef` |
 | I-02 | CRITICAL | ir | Function body reparse `unwrap()` → `.ok_or_else()` error handling | `fcd99ef` |
 | X-02 | CRITICAL | constraints | `LC::evaluate()` unchecked index → `.get()` with descriptive panic | `fcd99ef` |
-| M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `PENDING` |
+| M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `5ebd77f` |
 
 ## False Positives & Confirmed Sound (13)
 
