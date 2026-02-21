@@ -183,6 +183,7 @@ impl VM {
             }
 
             let instruction = func.chunk[ip];
+            let max_slots = func.max_slots as usize;
             self.frames[frame_idx].ip += 1;
 
             let op_byte = decode_opcode(instruction);
@@ -499,8 +500,8 @@ impl VM {
                 OpCode::ForIter => {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
-                    
-                    if base + a + 1 >= self.stack.len() {
+
+                    if a + 1 >= max_slots {
                         return Err(RuntimeError::StackOverflow);
                     }
 
