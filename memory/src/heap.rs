@@ -553,8 +553,11 @@ impl Heap {
     }
 
     pub fn import_strings(&mut self, strings: Vec<String>) {
+        let cost: usize = strings.iter().map(|s| s.capacity()).sum();
         self.strings.data = strings;
         self.strings.clear_free();
+        self.bytes_allocated += cost;
+        self.check_gc();
     }
 
     pub fn alloc_iterator(&mut self, iter: IteratorObj) -> u32 {

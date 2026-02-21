@@ -11,27 +11,27 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 9 | 5 (+1 partial) | 0 | 15 |
+| memory | 8 | 6 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
 | cli | 13 | 0 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **60** | **19 (+1)** | **13** | **93** |
+| **TOTAL** | **59** | **20 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 6 |
-| HIGH | 11 |
+| HIGH | 10 |
 | MEDIUM | 19 |
 | LOW | 24 |
 
 ---
 
-## Resolved Findings (20)
+## Resolved Findings (21)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -54,6 +54,7 @@
 | V-18 | LOW | vm | Stack not zeroed on reset → `fill(nil)` in debug builds | `b4d66d4` |
 | V-19 | LOW | vm | USER_GLOBAL_START coupling → compile-time `NATIVE_COUNT` assertion | `d7758e8` |
 | V-20 | LOW | vm | Missing edge case tests → 18 tests (bytecode, GC, recursion, prove) | `1d391ea` |
+| M-06 | HIGH | memory | `import_strings` missing allocation tracking → sum capacities + `check_gc()` | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -78,18 +79,7 @@
 
 ## Open Findings
 
-### Memory Crate (9 open)
-
-#### M-06 — import_strings Doesn't Track Allocation Cost [HIGH]
-
-**File**: `memory/src/heap.rs` (lines 537-540)
-**Category**: Correctness
-
-`import_strings()` replaces the entire strings arena but does not update `bytes_allocated`. The heap now owns potentially large strings without GC awareness, breaking threshold logic.
-
-**Fix**: Sum capacities of imported strings and add to `bytes_allocated`. Call `check_gc()` afterwards.
-
----
+### Memory Crate (8 open)
 
 #### M-07 — NaN Boxing Tag Validation [MEDIUM]
 
