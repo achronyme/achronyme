@@ -79,9 +79,10 @@ impl VM {
         // 2. Clear Runtime State
         self.frames.clear();
         self.open_upvalues = None;
-        // We don't need to zero the stack, just reset pointers if we had them.
-        // But since we write registers before reading, it's generally fine.
-        // For safety/debug, we could nil it, but it's expensive O(N).
+
+        // 3. Zero stack in debug builds to prevent stale values leaking
+        #[cfg(debug_assertions)]
+        self.stack.fill(Value::nil());
     }
 
     /// Helper to format values for display (Clean UX)
