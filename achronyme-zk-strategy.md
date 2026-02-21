@@ -1,7 +1,7 @@
 # Achronyme → ZK DSL: Estrategia Técnica y de Mercado
 
 > Última actualización: Febrero 2026
-> Estado: Fases 0-10 completadas, integración VM↔ZK Niveles 1-2 operativos, 2 auditorías resueltas. **637 tests, 2 backends, bloques `prove {}` funcionales.**
+> Estado: Fases 0-10 completadas, integración VM↔ZK Niveles 1-3 operativos, 2 auditorías resueltas. **646 tests, 2 backends, proofs Groth16 como valores first-class.**
 
 ---
 
@@ -99,7 +99,7 @@ EU Digital Identity Wallet, passports ZK, pruebas de humanidad. Nicho donde un e
 │   R1CS       │  Plonkish    │   (Future)         │
 │   Backend    │  Backend     │   STARK/AIR        │
 │   (Groth16)  │  (Halo2,     │                    │
-│   574 tests  │   Plonky3)   │                    │
+│   646 tests  │   Plonky3)   │                    │
 ├──────────────┴──────────────┴────────────────────┤
 │  Export: .r1cs/.wtns (snarkjs compat)            │
 ├──────────────────────────────────────────────────┤
@@ -118,6 +118,7 @@ EU Digital Identity Wallet, passports ZK, pruebas de humanidad. Nicho donde un e
 │   TAG_INT (i32)  ──→ Contadores, índices          │
 │   TAG_NUMBER (f64) → Aritmética general           │
 │   TAG_FIELD (BN254) → Crypto / ZK ←── CLAVE      │
+│   TAG_PROOF (Groth16) → Proofs first-class ←─ NEW │
 │   TAG_STRING ──→ I/O, debugging                   │
 │   TAG_LIST/MAP → Estructuras de datos             │
 │   TAG_CLOSURE ─→ Funciones first-class            │
@@ -129,7 +130,7 @@ EU Digital Identity Wallet, passports ZK, pruebas de humanidad. Nicho donde un e
 └──────────────────────────────────────────────────┘
 ```
 
-**Estado actual**: VM y pipeline ZK están integrados a través de bloques `prove {}`. La VM ejecuta lógica general y delega secciones ZK al pipeline IR→R1CS en runtime. El IR Evaluator valida inputs antes de compilar constraints. `compile_ir_with_witness()` unifica evaluación + compilación + witness en un solo paso.
+**Estado actual**: VM y pipeline ZK están completamente integrados. La VM ejecuta lógica general y delega secciones ZK al pipeline IR→R1CS→snarkjs en runtime. Los bloques `prove {}` generan proofs Groth16 reales como valores first-class (`TAG_PROOF`), inspeccionables via `proof_json()`, `proof_public()`, `proof_vkey()`. El IR Evaluator valida inputs antes de compilar constraints. Fallback graceful a verify-only cuando snarkjs no está disponible.
 
 ### Decisiones Arquitectónicas Clave
 
@@ -231,13 +232,16 @@ Análisis de viabilidad completado (Febrero 2026). El NaN-boxing se preserva —
 
 | Métrica | Valor |
 |---------|-------|
-| Tests passing | 637 |
+| Tests passing | 646 |
 | Backends | R1CS (Groth16) + Plonkish |
-| VM↔ZK Integration | Nivel 1 (IR Evaluator) + Nivel 2 (`prove {}` blocks) |
+| VM↔ZK Integration | Nivel 1-3 (IR Evaluator + `prove {}` + proofs first-class) |
+| Proof generation | Groth16 via snarkjs (con fallback verify-only) |
 | Audit findings | 100% resueltos (C1-4, H1-5, M1-8, L1-4, T1-5) |
 | Optimization passes | const_fold, DCE, bool_prop, LC simplify |
 | Export formats | .r1cs v1, .wtns v2 (snarkjs compatible) |
+| Value types | 10 tags (Number, Int, Nil, Bool, String, List, Map, Function, Field, **Proof**) |
 | Builtins | poseidon, poseidon_many, mux, assert, assert_eq, range_check, merkle_verify, len |
+| Natives | 12 (print, len, typeof, assert, time, push, pop, keys, field, proof_json, proof_public, proof_vkey) |
 | IR instructions | 19 (Const, Input, Add, Sub, Mul, Div, Neg, Mux, AssertEq, PoseidonHash, RangeCheck, Not, And, Or, IsEq, IsNeq, IsLt, IsLe, Assert) |
 | VM opcodes | 61 (incluyendo Prove = 160) |
 
@@ -391,24 +395,39 @@ prove {
 - Captura automática de variables del scope → `BuildMap` → `FieldElement` map
 - `ProveHandler` trait en VM (dependency injection), `DefaultProveHandler` en CLI
 - Pipeline: strip braces → `lower_self_contained` → optimize → `compile_ir_with_witness` → verify
-- `prove {}` evalúa a `nil`, errors se propagan como `ProveBlockFailed`
+- Errors se propagan como `ProveBlockFailed`
 - **637 tests** (24 nuevos, incluyendo Poseidon E2E)
 
-#### Nivel 3: Circuitos como FFI (siguiente paso)
+#### Nivel 3: Proofs como Valores First-Class ✅ Completado
 
-Funciones que compilan circuitos y retornan proofs como valores first-class:
+`prove {}` evoluciona para generar proofs Groth16 reales y devolverlos como valores first-class:
 
 ```
-circuit verify_age(public min_age, witness birth_year) {
-    let age = 2026 - birth_year
-    assert(age >= min_age)
+let secret = field(42)
+let p = prove {
+    witness secret
+    assert_eq(secret, 42)
 }
-
-let proof = verify_age(18, 1990)
-send_to_verifier(proof)
+let json = proof_json(p)    // Extraer proof serializable
+print(json)
 ```
 
-**Requiere**: circuitos como heap objects, serialización de proofs, integración con prover externo (snarkjs/arkworks).
+**Implementación**:
+- `ProofObject` struct (proof_json, public_json, vkey_json) en heap con `TAG_PROOF=9`
+- `ProveResult` enum: `VerifiedOnly` (sin snarkjs) | `Proof { ... }` (con snarkjs)
+- `DefaultProveHandler` con pipeline Groth16 completo: r1cs→ptau ceremony→zkey→prove→verify
+- Caching de `.zkey` en `~/.achronyme/cache/` por hash del r1cs
+- `snarkjs_available()` para fallback graceful
+- 3 natives: `proof_json(p)`, `proof_public(p)`, `proof_vkey(p)`
+- `--ptau <path>` flag para reusar powers-of-tau externos
+- **646 tests** (9 nuevos)
+
+#### Nivel 4: Siguiente paso
+
+- Keyword `circuit` como syntactic sugar para `fn` + `prove`
+- `verify_proof(proof, vkey)` nativo en la VM
+- Prover nativo Rust (arkworks/bellman) para eliminar dependencia de Node.js
+- Export Plonkish a formato binario
 
 ### Análisis de deuda técnica (auditoría interna, Febrero 2026)
 
@@ -427,9 +446,11 @@ La auditoría de 6 agentes identificó áreas de mejora previas a la integració
 
 ### Prioridades de la próxima fase
 
-1. **Nivel 3 de integración**: Circuitos como FFI, proofs serializables
-2. **Fix lookup O(N²)** en Plonkish → `HashSet` (quick win, alta importancia)
-3. **VM nativa Poseidon** — `poseidon()` como función nativa en la VM
-4. **Eliminar `compile_circuit()` directo** (duplicado de `compile_ir()`)
-5. **AST intermedio** → desacoplar pest del resto del pipeline
-6. **Export Plonkish** → formato binario (actualmente solo R1CS exporta)
+1. **Fix lookup O(N²)** en Plonkish → `HashSet` (quick win, alta importancia)
+2. **`verify_proof()` nativo** — verificar proofs Groth16 dentro de la VM
+3. **Prover nativo Rust** — eliminar dependencia de Node.js/snarkjs
+4. **VM nativa Poseidon** — `poseidon()` como función nativa en la VM
+5. **Eliminar `compile_circuit()` directo** (duplicado de `compile_ir()`)
+6. **AST intermedio** → desacoplar pest del resto del pipeline
+7. **Export Plonkish** → formato binario (actualmente solo R1CS exporta)
+8. **Ceremonia segura** — reemplazar entropía hardcoded en trusted setup
