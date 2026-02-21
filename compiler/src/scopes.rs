@@ -1,5 +1,4 @@
 use crate::codegen::Compiler;
-use crate::types::UpvalueInfo;
 
 pub trait ScopeCompiler {
     fn begin_scope(&mut self);

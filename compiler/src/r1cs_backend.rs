@@ -18,9 +18,12 @@ use crate::witness_gen::{fill_poseidon_witness, WitnessOp};
 pub struct R1CSCompiler {
     /// The underlying R1CS constraint system being built.
     pub cs: ConstraintSystem,
-    /// Map from Achronyme variable name → R1CS wire.
+    /// Declared variables: maps `public`/`witness` names → allocated R1CS wire.
+    /// Only contains explicitly declared circuit inputs (not `let` bindings).
     pub bindings: HashMap<String, Variable>,
-    /// Map from variable name → LinearCombination (avoids materializing sums/subtractions).
+    /// Expression cache: maps `let`-bound names → their LinearCombination.
+    /// These are lazy — no wire is allocated until the LC is used in a
+    /// multiplication or other materializing operation.
     pub lc_bindings: HashMap<String, LinearCombination>,
     /// Names of variables declared as public inputs (in declaration order).
     pub public_inputs: Vec<String>,
@@ -835,6 +838,10 @@ impl R1CSCompiler {
     /// Multiply two LCs. If either operand is a constant, uses scalar
     /// multiplication (0 constraints). Otherwise allocates a witness
     /// variable (1 constraint).
+    ///
+    /// Note: WitnessOp::Multiply clones both LCs because witness generation
+    /// needs to evaluate arbitrary linear combinations (not just single
+    /// variables). This is unavoidable when LCs are multi-term (e.g. `3*x + 5*y`).
     fn multiply_lcs(&mut self, a: &LinearCombination, b: &LinearCombination) -> LinearCombination {
         // Constant * anything → scalar mul (0 constraints)
         if let Some(scalar) = a.constant_value() {
@@ -993,6 +1000,8 @@ impl R1CSCompiler {
     /// This coexists with `compile_circuit()` — both methods build on the same
     /// `ConstraintSystem` and helper methods (`multiply_lcs`, `divide_lcs`, etc).
     pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError> {
+        // Lookup cache: SSA variable → its LinearCombination. Used for O(1)
+        // lookups only — never iterated, so HashMap ordering is irrelevant.
         let mut lc_map: HashMap<SsaVar, LinearCombination> = HashMap::new();
         // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
@@ -1322,10 +1331,15 @@ impl R1CSCompiler {
 
     /// Compile an SSA IR program and generate a witness in a single pass.
     ///
-    /// 1. Evaluates the IR with concrete inputs for early validation (catches
-    ///    assertion failures, division by zero, missing inputs before emitting constraints).
-    /// 2. Compiles IR → R1CS constraints (same as `compile_ir`).
-    /// 3. Builds the witness vector by replaying `witness_ops`.
+    /// Three-pass design (intentional):
+    /// 1. **Evaluate**: runs IR with concrete inputs for early validation — catches
+    ///    assertion failures, division by zero, and missing inputs *before* emitting
+    ///    any constraints. This avoids wasting work on invalid witnesses.
+    /// 2. **Compile**: lowers IR → R1CS constraints (same as `compile_ir`), populating
+    ///    `witness_ops` as a side-effect.
+    /// 3. **Witness**: builds the witness vector by replaying `witness_ops` with
+    ///    concrete input values. This is separate from compilation because constraint
+    ///    generation must complete before the full witness layout is known.
     pub fn compile_ir_with_witness(
         &mut self,
         program: &IrProgram,

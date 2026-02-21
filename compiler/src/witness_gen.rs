@@ -37,6 +37,7 @@ pub enum WitnessOp {
     },
     /// Bit extraction: target = (source >> bit_index) & 1.
     /// Emitted by RangeCheck boolean decomposition.
+    /// Field elements are 256 bits (4 × 64-bit limbs), so max bit_index is 255.
     BitExtract {
         target: Variable,
         source: LinearCombination,

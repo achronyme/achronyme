@@ -50,6 +50,7 @@ pub enum PlonkWitnessOp {
     /// Unlike InverseRow, does NOT error when a == 0.
     IsZeroRow { row: usize },
     /// Extract bit `bit_index` from the value in `source` cell and write to `target`.
+    /// Field elements are 256 bits (4 × 64-bit limbs), so max bit_index is 255.
     BitExtract {
         target: CellRef,
         source: CellRef,
@@ -555,6 +556,18 @@ impl PlonkishCompiler {
     // ========================================================================
 
     fn materialize_val(&mut self, val: &PlonkVal) -> CellRef {
+        self.materialize_val_depth(val, 0)
+    }
+
+    /// Recursive materialization with depth tracking to prevent stack overflow
+    /// from deeply nested deferred arithmetic (e.g. 10,000 chained additions).
+    fn materialize_val_depth(&mut self, val: &PlonkVal, depth: usize) -> CellRef {
+        const MAX_DEPTH: usize = 1_000;
+        assert!(
+            depth < MAX_DEPTH,
+            "materialize_val: recursion depth {depth} exceeds limit {MAX_DEPTH} — \
+             circuit has too many chained deferred operations"
+        );
         match val {
             PlonkVal::Cell(cell) => *cell,
             PlonkVal::Constant(fe) => {
@@ -570,8 +583,8 @@ impl PlonkishCompiler {
                 }
             }
             PlonkVal::DeferredAdd(a, b) => {
-                let a_cell = self.materialize_val(a);
-                let b_cell = self.materialize_val(b);
+                let a_cell = self.materialize_val_depth(a, depth + 1);
+                let b_cell = self.materialize_val_depth(b, depth + 1);
                 // d = a*1 + b
                 let row = self.alloc_row();
                 self.system.set(self.col_s_arith, row, FieldElement::ONE);
@@ -598,8 +611,8 @@ impl PlonkishCompiler {
                 }
             }
             PlonkVal::DeferredSub(a, b) => {
-                let a_cell = self.materialize_val(a);
-                let b_cell = self.materialize_val(b);
+                let a_cell = self.materialize_val_depth(a, depth + 1);
+                let b_cell = self.materialize_val_depth(b, depth + 1);
                 // d = a - b = a*1 + (-b)
                 // Negate b first
                 let neg_b = self.negate_cell(b_cell);
@@ -628,7 +641,7 @@ impl PlonkishCompiler {
                 }
             }
             PlonkVal::DeferredNeg(inner) => {
-                let inner_cell = self.materialize_val(inner);
+                let inner_cell = self.materialize_val_depth(inner, depth + 1);
                 self.negate_cell(inner_cell)
             }
         }

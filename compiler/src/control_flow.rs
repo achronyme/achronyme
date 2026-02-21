@@ -408,6 +408,11 @@ fn prescan_prove_declarations(block_source: &str) -> Result<Vec<String>, Compile
                             let n: usize = s.parse().map_err(|_| {
                                 CompilerError::ParseError(format!("invalid array size: {s}"))
                             })?;
+                            if n > 10_000 {
+                                return Err(CompilerError::ParseError(format!(
+                                    "array size {n} exceeds maximum of 10,000"
+                                )));
+                            }
                             for i in 0..n {
                                 names.push(format!("{name}_{i}"));
                             }

@@ -13,12 +13,12 @@
 |-------|------|----------|----------------|-------|
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 0 | 14 | 6 | 20 |
-| compiler | 8 | 1 | 0 | 9 |
+| compiler | 0 | 9 | 0 | 9 |
 | ir | 8 | 2 | 0 | 10 |
 | constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **44** | **35 (+1)** | **13** | **93** |
+| **TOTAL** | **36** | **43 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -26,12 +26,12 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 10 |
-| MEDIUM | 16 |
-| LOW | 18 |
+| MEDIUM | 14 |
+| LOW | 12 |
 
 ---
 
-## Resolved Findings (36)
+## Resolved Findings (44)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -71,6 +71,14 @@
 | M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `08ac06c` |
 | M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `08ac06c` |
 | V-17 | LOW | vm | Proof equality compares all 3 fields + documented as structural | `a87efd3` |
+| C-02 | MEDIUM | compiler | `materialize_val` recursion depth limit (1,000) | `PENDING` |
+| C-03 | MEDIUM | compiler | Prove block array size bounded to 10,000 | `PENDING` |
+| C-04 | LOW | compiler | Bit extraction index invariant documented (max 255) | `PENDING` |
+| C-05 | LOW | compiler | LC cloning in `multiply_lcs` documented as necessary | `PENDING` |
+| C-06 | LOW | compiler | Unused imports removed from codegen.rs, scopes.rs, types.rs | `PENDING` |
+| C-07 | LOW | compiler | `bindings`/`lc_bindings` doc comments clarify purpose | `PENDING` |
+| C-08 | LOW | compiler | `compile_ir_with_witness` three-pass design documented | `PENDING` |
+| C-09 | LOW | compiler | `HashMap<SsaVar, LC>` documented as lookup cache | `PENDING` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -93,96 +101,6 @@
 ---
 
 ## Open Findings
-
-### Compiler Crate (8 open)
-
-#### C-02 — Plonkish materialize_val Recursion Depth [MEDIUM]
-
-**File**: `compiler/src/plonkish_backend.rs` (lines 557-635)
-**Category**: Robustness
-
-`materialize_val()` recursively materializes `DeferredAdd/Sub/Neg` expressions. Deeply nested arithmetic (e.g., 10,000 chained additions) can cause stack overflow.
-
-**Fix**: Implement iterative materialization or add a depth limit.
-
----
-
-#### C-03 — Prove Block Array Size Unbounded [MEDIUM]
-
-**File**: `compiler/src/control_flow.rs` (lines 405-413)
-**Category**: Input Validation
-
-`public x[N]` in prove blocks parses N without upper bound. `public x[1_000_000]` allocates 1M names.
-
-**Fix**: Add `if n > 10_000 { return Err(...) }`.
-
----
-
-#### C-04 — Bit Extraction Index Documentation [LOW]
-
-**File**: `compiler/src/witness_gen.rs` (line 1387), `compiler/src/plonkish_backend.rs` (line 1257)
-**Category**: Documentation
-
-Bit extraction safely handles indices up to 255 (4 limbs * 64 bits), but no comment clarifies this invariant.
-
-**Fix**: Add comment: `// Field elements are 256 bits, max bit_index is 255`.
-
----
-
-#### C-05 — LC Cloning in multiply_lcs/divide_lcs [LOW]
-
-**File**: `compiler/src/r1cs_backend.rs` (lines 838-885)
-**Category**: Performance
-
-Witness ops clone full LinearCombinations. For LCs with many terms, this wastes memory. The ops only need the target Variable.
-
-**Fix**: Store only Variable targets in WitnessOp::Multiply/Inverse.
-
----
-
-#### C-06 — Unused Imports in codegen.rs [LOW]
-
-**File**: `compiler/src/codegen.rs` (lines 3, 19, 23-25)
-**Category**: Code Quality
-
-Several unused imports: `Local`, `UpvalueInfo`, `LoopContext`, `BinaryCompiler`, `AtomCompiler`, `PostfixCompiler`, `parse_expression`.
-
-**Fix**: Remove unused imports.
-
----
-
-#### C-07 — Dual Binding Maps Documentation [LOW]
-
-**File**: `compiler/src/r1cs_backend.rs` (lines 22-24)
-**Category**: Documentation
-
-`bindings` (Variable) and `lc_bindings` (LinearCombination) serve different purposes but naming doesn't clarify the distinction.
-
-**Fix**: Rename to `declared_vars` and `expression_cache`, or add doc comments.
-
----
-
-#### C-08 — compile_ir_with_witness Multi-Pass Design [LOW]
-
-**File**: `compiler/src/r1cs_backend.rs` (lines 1338-1432)
-**Category**: Documentation
-
-Three-pass design (evaluate, compile, witness) is intentional for early validation but undocumented.
-
-**Fix**: Add doc comment explaining the three-pass rationale.
-
----
-
-#### C-09 — HashMap Iteration in compile_ir [LOW]
-
-**File**: `compiler/src/r1cs_backend.rs` (line 996)
-**Category**: Documentation
-
-`HashMap<SsaVar, LC>` is used as a lookup cache, not iterated. No soundness issue, but the choice of HashMap vs BTreeMap is undocumented.
-
-**Fix**: Add comment clarifying it's a lookup cache with arbitrary iteration order.
-
----
 
 ### IR Crate (8 open)
 

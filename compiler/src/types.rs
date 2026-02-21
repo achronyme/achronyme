@@ -1,5 +1,3 @@
-use vm::opcode::OpCode;
-
 pub struct Local {
     pub name: String,
     pub depth: u32,

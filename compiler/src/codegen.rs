@@ -2,27 +2,11 @@ use crate::error::CompilerError;
 use crate::interner::StringInterner;
 use achronyme_parser::{parse_expression, Rule};
 use memory::Value;
-use pest::iterators::Pair;
 use std::collections::HashMap;
-use vm::opcode::{
-    instruction::{encode_abc, encode_abx},
-    OpCode,
-};
+use vm::opcode::OpCode;
 use crate::expressions::ExpressionCompiler;
-use crate::statements::StatementCompiler; 
-use crate::control_flow::ControlFlowCompiler; 
-use crate::functions::FunctionDefinitionCompiler;
-use crate::scopes::ScopeCompiler;
-use crate::statements::declarations::DeclarationCompiler;
-
-// Types and FunctionCompiler imported from modules
-use crate::types::{Local, UpvalueInfo, LoopContext};
+use crate::statements::StatementCompiler;
 use crate::function_compiler::FunctionCompiler;
-
-// Helper trait imports
-use crate::expressions::BinaryCompiler;
-use crate::expressions::AtomCompiler;
-use crate::expressions::PostfixCompiler;
 
 /// The main compiler orchestrator
 pub struct Compiler {
