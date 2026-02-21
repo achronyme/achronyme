@@ -31,11 +31,11 @@ impl DataOps for super::vm::VM {
                 // Value es Copy-cheap (u64), así que es rápido.
                 let mut list = Vec::with_capacity(count);
                 for i in 0..count {
-                    list.push(self.get_reg(base, b + i));
+                    list.push(self.get_reg(base, b + i)?);
                 }
 
                 let handle = self.heap.alloc_list(list);
-                self.set_reg(base, a, Value::list(handle));
+                self.set_reg(base, a, Value::list(handle))?;
             }
 
             OpCode::BuildMap => {
@@ -54,8 +54,8 @@ impl DataOps for super::vm::VM {
                     let key_idx = b + (i * 2);
                     let val_idx = key_idx + 1;
                     
-                    let key = self.get_reg(base, key_idx);
-                    let val = self.get_reg(base, val_idx);
+                    let key = self.get_reg(base, key_idx)?;
+                    let val = self.get_reg(base, val_idx)?;
 
                     // Validación Estricta: Las claves DEBEN ser strings.
                     // No hacemos magia de toString() implícito aquí. Sé estricto.
@@ -75,25 +75,25 @@ impl DataOps for super::vm::VM {
                 }
 
                 let handle = self.heap.alloc_map(map);
-                self.set_reg(base, a, Value::map(handle));
+                self.set_reg(base, a, Value::map(handle))?;
             }
 
             OpCode::GetIndex => {
                 // R[A] = R[B][R[C]]
-                let target = self.get_reg(base, b);
-                let key = self.get_reg(base, c);
+                let target = self.get_reg(base, b)?;
+                let key = self.get_reg(base, c)?;
 
                 if target.is_list() {
                     let handle = target.as_handle().unwrap();
                     let list = self.heap.get_list(handle)
                         .ok_or(RuntimeError::SystemError("List missing".into()))?;
-                    
+
                     if let Some(idx_float) = key.as_number() {
                         // Truncamos a entero para indexar (0-based)
                         let idx = idx_float as usize;
                         if idx < list.len() {
                             let val = list[idx];
-                            self.set_reg(base, a, val);
+                            self.set_reg(base, a, val)?;
                         } else {
                             // Lua devuelve nil, Python lanza error. 
                             // En Achronyme, seamos seguros: Error.
@@ -113,7 +113,7 @@ impl DataOps for super::vm::VM {
                         let k_str = self.heap.get_string(k_handle).unwrap();
                         
                         let val = map.get(k_str).cloned().unwrap_or(Value::nil());
-                        self.set_reg(base, a, val);
+                        self.set_reg(base, a, val)?;
                     } else {
                          return Err(RuntimeError::TypeMismatch("Map key must be a string".into()));
                     }
@@ -125,9 +125,9 @@ impl DataOps for super::vm::VM {
             OpCode::SetIndex => {
                 // R[A][R[B]] = R[C]
                 // OJO: SetIndex no modifica R[A], modifica el Objeto al que apunta R[A].
-                let target = self.get_reg(base, a);
-                let key = self.get_reg(base, b);
-                let val = self.get_reg(base, c);
+                let target = self.get_reg(base, a)?;
+                let key = self.get_reg(base, b)?;
+                let val = self.get_reg(base, c)?;
 
                 if target.is_list() {
                     let handle = target.as_handle().unwrap();

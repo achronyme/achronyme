@@ -214,7 +214,7 @@ impl VM {
                 JumpIfFalse => {
                     let a = decode_a(instruction) as usize;
                     let dest = decode_bx(instruction) as usize;
-                    let val = self.get_reg(base, a);
+                    let val = self.get_reg(base, a)?;
                     if val.is_falsey() {
                         self.frames[frame_idx].ip = dest;
                     }
@@ -224,20 +224,20 @@ impl VM {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
                     let c = decode_c(instruction) as usize;
-                    let v1 = self.get_reg(base, b);
-                    let v2 = self.get_reg(base, c);
-                    self.set_reg(base, a, Value::bool(self.values_equal(v1, v2)));
+                    let v1 = self.get_reg(base, b)?;
+                    let v2 = self.get_reg(base, c)?;
+                    self.set_reg(base, a, Value::bool(self.values_equal(v1, v2)))?;
                 }
 
                 Lt => {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
                     let c = decode_c(instruction) as usize;
-                    let v1 = self.get_reg(base, b);
-                    let v2 = self.get_reg(base, c);
-                    
+                    let v1 = self.get_reg(base, b)?;
+                    let v2 = self.get_reg(base, c)?;
+
                     if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
-                        self.set_reg(base, a, Value::bool(n1 < n2));
+                        self.set_reg(base, a, Value::bool(n1 < n2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch("Expected numbers for < comparison".to_string()));
                     }
@@ -247,11 +247,11 @@ impl VM {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
                     let c = decode_c(instruction) as usize;
-                    let v1 = self.get_reg(base, b);
-                    let v2 = self.get_reg(base, c);
+                    let v1 = self.get_reg(base, b)?;
+                    let v2 = self.get_reg(base, c)?;
 
                     if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
-                        self.set_reg(base, a, Value::bool(n1 > n2));
+                        self.set_reg(base, a, Value::bool(n1 > n2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch("Expected numbers for > comparison".to_string()));
                     }
@@ -261,20 +261,20 @@ impl VM {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
                     let c = decode_c(instruction) as usize;
-                    let v1 = self.get_reg(base, b);
-                    let v2 = self.get_reg(base, c);
-                    self.set_reg(base, a, Value::bool(!self.values_equal(v1, v2)));
+                    let v1 = self.get_reg(base, b)?;
+                    let v2 = self.get_reg(base, c)?;
+                    self.set_reg(base, a, Value::bool(!self.values_equal(v1, v2)))?;
                 }
 
                 Le => {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
                     let c = decode_c(instruction) as usize;
-                    let v1 = self.get_reg(base, b);
-                    let v2 = self.get_reg(base, c);
+                    let v1 = self.get_reg(base, b)?;
+                    let v2 = self.get_reg(base, c)?;
 
                     if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
-                        self.set_reg(base, a, Value::bool(n1 <= n2));
+                        self.set_reg(base, a, Value::bool(n1 <= n2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch("Expected numbers for <= comparison".to_string()));
                     }
@@ -284,11 +284,11 @@ impl VM {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
                     let c = decode_c(instruction) as usize;
-                    let v1 = self.get_reg(base, b);
-                    let v2 = self.get_reg(base, c);
+                    let v1 = self.get_reg(base, b)?;
+                    let v2 = self.get_reg(base, c)?;
 
                     if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
-                        self.set_reg(base, a, Value::bool(n1 >= n2));
+                        self.set_reg(base, a, Value::bool(n1 >= n2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch("Expected numbers for >= comparison".to_string()));
                     }
@@ -297,8 +297,8 @@ impl VM {
                 LogNot => {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
-                    let vb = self.get_reg(base, b);
-                    self.set_reg(base, a, Value::bool(vb.is_falsey()));
+                    let vb = self.get_reg(base, b)?;
+                    self.set_reg(base, a, Value::bool(vb.is_falsey()))?;
                 }
 
                 // Constants & Moves
@@ -306,34 +306,34 @@ impl VM {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
                     let val = func.constants.get(bx).cloned().unwrap_or(Value::nil());
-                    self.set_reg(base, a, val);
+                    self.set_reg(base, a, val)?;
                 }
 
                 LoadTrue => {
                     let a = decode_a(instruction) as usize;
-                    self.set_reg(base, a, Value::true_val());
+                    self.set_reg(base, a, Value::true_val())?;
                 }
 
                 LoadFalse => {
                     let a = decode_a(instruction) as usize;
-                    self.set_reg(base, a, Value::false_val());
+                    self.set_reg(base, a, Value::false_val())?;
                 }
 
                 LoadNil => {
                     let a = decode_a(instruction) as usize;
-                    self.set_reg(base, a, Value::nil());
+                    self.set_reg(base, a, Value::nil())?;
                 }
 
                 Move => {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
-                    let val = self.get_reg(base, b);
-                    self.set_reg(base, a, val);
+                    let val = self.get_reg(base, b)?;
+                    self.set_reg(base, a, val)?;
                 }
 
                 Print => {
                     let a = decode_a(instruction) as usize;
-                    let val = self.get_reg(base, a);
+                    let val = self.get_reg(base, a)?;
                     println!("{}", self.val_to_string(&val));
                 }
 
@@ -362,14 +362,14 @@ impl VM {
                     // If Closed, location points to &upval.closed. Address is stable (Box).
                     // If Open, location points to Stack (fixed Box<[Value]>).
                     let val = unsafe { *upval.location };
-                    self.set_reg(base, a, val);
+                    self.set_reg(base, a, val)?;
                 }
 
                 SetUpvalue => {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
-                    let val = self.get_reg(base, a);
-                    
+                    let val = self.get_reg(base, a)?;
+
                     let closure_idx = self.frames[frame_idx].closure;
                     let closure = self.heap.get_closure(closure_idx).ok_or(RuntimeError::FunctionNotFound)?;
                     let upval_idx = *closure.upvalues.get(bx).ok_or(RuntimeError::OutOfBounds("Upvalue index".into()))?;
@@ -432,16 +432,16 @@ impl VM {
                         upvalues: captured,
                     };
                     let closure_idx = self.heap.alloc_closure(closure);
-                    self.set_reg(base, a, Value::closure(closure_idx));
+                    self.set_reg(base, a, Value::closure(closure_idx))?;
                 }
 
                 OpCode::GetIter => {
                     let a = decode_a(instruction) as usize;
                     let b = decode_b(instruction) as usize;
-                    let val = self.get_reg(base, b);
-                    
+                    let val = self.get_reg(base, b)?;
+
                     if val.is_iter() {
-                         self.set_reg(base, a, val);
+                         self.set_reg(base, a, val)?;
                     } else {
                         let iter_obj = if val.is_list() {
                              memory::IteratorObj { source: val, index: 0 }
@@ -474,7 +474,7 @@ impl VM {
                         };
                         
                         let handle = self.heap.alloc_iterator(iter_obj);
-                        self.set_reg(base, a, Value::iterator(handle));
+                        self.set_reg(base, a, Value::iterator(handle))?;
                     }
                 }
 
@@ -486,7 +486,7 @@ impl VM {
                         return Err(RuntimeError::StackOverflow);
                     }
 
-                    let iter_val = self.get_reg(base, a);
+                    let iter_val = self.get_reg(base, a)?;
                     if !iter_val.is_iter() {
                          return Err(RuntimeError::TypeMismatch("Expected iterator for loop".into()));
                     }
@@ -516,7 +516,7 @@ impl VM {
                              iter.index += 1;
                          }
                          // Set Loop Variable at R[A+1]
-                         self.set_reg(base, a + 1, val);
+                         self.set_reg(base, a + 1, val)?;
                     } else {
                          // Done. Jump to Exit (Bx is absolute IP)
                          self.frames[frame_idx].ip = bx; 

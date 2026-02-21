@@ -30,7 +30,7 @@ impl GlobalOps for super::vm::VM {
         match op {
             OpCode::DefGlobalVar | OpCode::DefGlobalLet => {
                 let a = decode_a(instruction) as usize;
-                let val = self.get_reg(base, a);
+                let val = self.get_reg(base, a)?;
                 let mutable = op == OpCode::DefGlobalVar;
 
                 // Ensure capacity
@@ -68,12 +68,12 @@ impl GlobalOps for super::vm::VM {
                     )));
                 }
                 let entry = &self.globals[bx];
-                self.set_reg(base, a, entry.value.clone());
+                self.set_reg(base, a, entry.value.clone())?;
             }
 
             OpCode::SetGlobal => {
                 let a = decode_a(instruction) as usize;
-                let val = self.get_reg(base, a);
+                let val = self.get_reg(base, a)?;
 
                 if bx >= self.globals.len() {
                      let name = self

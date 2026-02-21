@@ -28,16 +28,16 @@ macro_rules! binary_arithmetic_op {
         let a = decode_a($instruction) as usize;
         let b = decode_b($instruction) as usize;
         let c = decode_c($instruction) as usize;
-        let vb = $self.get_reg($base, b);
-        let vc = $self.get_reg($base, c);
+        let vb = $self.get_reg($base, b)?;
+        let vc = $self.get_reg($base, c)?;
 
         if vb.is_int() && vc.is_int() {
             let ib = vb.as_int().unwrap();
             let ic = vc.as_int().unwrap();
-            $self.set_reg($base, a, Value::int(ib.$int_op(ic)));
+            $self.set_reg($base, a, Value::int(ib.$int_op(ic)))?;
         } else {
             let res = $self.binary_op(vb, vc, |x, y| $float_op(x, y), $field_op)?;
-            $self.set_reg($base, a, res);
+            $self.set_reg($base, a, res)?;
         }
     }};
 }
@@ -72,8 +72,8 @@ impl ArithmeticOps for super::vm::VM {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
                 let c = decode_c(instruction) as usize;
-                let vb = self.get_reg(base, b);
-                let vc = self.get_reg(base, c);
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
                     let ib = vb.as_int().unwrap();
@@ -81,14 +81,14 @@ impl ArithmeticOps for super::vm::VM {
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
-                    self.set_reg(base, a, Value::int(ib.wrapping_div(ic)));
+                    self.set_reg(base, a, Value::int(ib.wrapping_div(ic)))?;
                 } else {
                     let res = self.binary_op(vb, vc,
                         |x, y| x / y,
                         |a: &FieldElement, b: &FieldElement| {
                             a.div(b).ok_or(RuntimeError::DivisionByZero)
                         })?;
-                    self.set_reg(base, a, res);
+                    self.set_reg(base, a, res)?;
                 }
             }
 
@@ -96,8 +96,8 @@ impl ArithmeticOps for super::vm::VM {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
                 let c = decode_c(instruction) as usize;
-                let vb = self.get_reg(base, b);
-                let vc = self.get_reg(base, c);
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
                     let ib = vb.as_int().unwrap();
@@ -105,7 +105,7 @@ impl ArithmeticOps for super::vm::VM {
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
-                    self.set_reg(base, a, Value::int(ib.wrapping_rem(ic)));
+                    self.set_reg(base, a, Value::int(ib.wrapping_rem(ic)))?;
                 } else if vb.is_field() || vc.is_field() {
                     return Err(RuntimeError::TypeMismatch(
                         "Modulo not defined for Field elements".into(),
@@ -131,7 +131,7 @@ impl ArithmeticOps for super::vm::VM {
                         ));
                     };
 
-                    self.set_reg(base, a, Value::number(val_b % val_c));
+                    self.set_reg(base, a, Value::number(val_b % val_c))?;
                 }
             }
 
@@ -139,8 +139,8 @@ impl ArithmeticOps for super::vm::VM {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
                 let c = decode_c(instruction) as usize;
-                let vb = self.get_reg(base, b);
-                let vc = self.get_reg(base, c);
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
                     let base_val = vb.as_int().unwrap();
@@ -148,10 +148,10 @@ impl ArithmeticOps for super::vm::VM {
 
                     if exp_val < 0 {
                         let res = (base_val as f64).powf(exp_val as f64);
-                        self.set_reg(base, a, Value::number(res));
+                        self.set_reg(base, a, Value::number(res))?;
                     } else {
                         let res = base_val.wrapping_pow(exp_val as u32);
-                        self.set_reg(base, a, Value::int(res));
+                        self.set_reg(base, a, Value::int(res))?;
                     }
                 } else if vb.is_field() && vc.is_int() {
                     // Field ^ Int: exponentiation in the field
@@ -165,34 +165,34 @@ impl ArithmeticOps for super::vm::VM {
                         let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
                         let result = inv.pow(&[(-exp_val) as u64, 0, 0, 0]);
                         let handle = self.heap.alloc_field(result);
-                        self.set_reg(base, a, Value::field(handle));
+                        self.set_reg(base, a, Value::field(handle))?;
                         return Ok(());
                     };
                     let result = fa.pow(&exp);
                     let handle = self.heap.alloc_field(result);
-                    self.set_reg(base, a, Value::field(handle));
+                    self.set_reg(base, a, Value::field(handle))?;
                 } else {
                     let res = self.binary_op(vb, vc,
                         |x, y| x.powf(y),
                         |_, _| unreachable!())?;
-                    self.set_reg(base, a, res);
+                    self.set_reg(base, a, res)?;
                 }
             }
 
             OpCode::Neg => {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
-                let vb = self.get_reg(base, b);
+                let vb = self.get_reg(base, b)?;
                 if vb.is_int() {
-                    self.set_reg(base, a, Value::int(vb.as_int().unwrap().wrapping_neg()));
+                    self.set_reg(base, a, Value::int(vb.as_int().unwrap().wrapping_neg()))?;
                 } else if vb.is_number() {
-                    self.set_reg(base, a, Value::number(-vb.as_number().unwrap()));
+                    self.set_reg(base, a, Value::number(-vb.as_number().unwrap()))?;
                 } else if vb.is_field() {
                     let h = vb.as_handle().unwrap();
                     let fe = *self.heap.get_field(h).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                     let result = fe.neg();
                     let handle = self.heap.alloc_field(result);
-                    self.set_reg(base, a, Value::field(handle));
+                    self.set_reg(base, a, Value::field(handle))?;
                 } else {
                     return Err(RuntimeError::TypeMismatch("Neg requires numeric operand".into()));
                 }
@@ -201,7 +201,7 @@ impl ArithmeticOps for super::vm::VM {
             OpCode::Sqrt => {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize;
-                let vb = self.get_reg(base, b);
+                let vb = self.get_reg(base, b)?;
 
                 if vb.is_field() {
                     return Err(RuntimeError::TypeMismatch("Sqrt not defined for Field elements".into()));
@@ -215,7 +215,7 @@ impl ArithmeticOps for super::vm::VM {
                     return Err(RuntimeError::TypeMismatch("Sqrt requires numeric operand".into()));
                 };
 
-                self.set_reg(base, a, Value::number(val.sqrt()));
+                self.set_reg(base, a, Value::number(val.sqrt()))?;
             }
 
             _ => unreachable!(),

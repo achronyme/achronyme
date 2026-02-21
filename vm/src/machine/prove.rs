@@ -95,7 +95,7 @@ impl VM {
         };
 
         // 2. Read the capture map from R[A]
-        let map_val = self.get_reg(base, a);
+        let map_val = self.get_reg(base, a)?;
         let map_handle = map_val
             .as_handle()
             .ok_or(RuntimeError::TypeMismatch("prove capture not a map".into()))?;
@@ -131,7 +131,7 @@ impl VM {
         // 4. Set result based on handler response
         match result {
             ProveResult::VerifiedOnly => {
-                self.set_reg(base, a, Value::nil());
+                self.set_reg(base, a, Value::nil())?;
             }
             ProveResult::Proof {
                 proof_json,
@@ -144,7 +144,7 @@ impl VM {
                     vkey_json,
                 };
                 let handle = self.heap.alloc_proof(obj);
-                self.set_reg(base, a, Value::proof(handle));
+                self.set_reg(base, a, Value::proof(handle))?;
             }
         }
 

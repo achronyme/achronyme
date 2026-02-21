@@ -36,7 +36,7 @@ impl ControlFlowOps for super::vm::VM {
                 let b = decode_b(instruction) as usize;
                 let c = decode_c(instruction) as usize;
 
-                let func_val = self.get_reg(base, b);
+                let func_val = self.get_reg(base, b)?;
                 let args_start = base + b + 1;
                 let args_count = c;
 
@@ -90,7 +90,7 @@ impl ControlFlowOps for super::vm::VM {
                 // Get return value
 
                 let ret_val = if b == 1 {
-                    self.get_reg(base, a)
+                    self.get_reg(base, a)?
                 } else {
                     Value::nil()
                 };
@@ -106,7 +106,7 @@ impl ControlFlowOps for super::vm::VM {
                     // Write return value to dest_reg (absolute stack index)
                     // Only if there's still a caller (not the top-level script)
                     if !self.frames.is_empty() {
-                        self.set_reg(0, frame.dest_reg, ret_val);
+                        self.set_reg(0, frame.dest_reg, ret_val)?;
                     }
                 }
             }
@@ -143,7 +143,7 @@ impl ControlFlowOps for super::vm::VM {
 
         let args: Vec<Value> = self.stack[args_start..args_start + args_count].to_vec();
         let res = func(self, &args)?;
-        self.set_reg(base, result_reg, res);
+        self.set_reg(base, result_reg, res)?;
 
         Ok(())
     }
