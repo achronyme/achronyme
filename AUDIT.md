@@ -16,22 +16,22 @@
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
 | constraints | 7 | 0 | 2 | 9 |
-| cli | 13 | 0 | 0 | 13 |
+| cli | 12 | 1 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **54** | **25 (+1)** | **13** | **93** |
+| **TOTAL** | **53** | **26 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 6 |
+| CRITICAL | 5 |
 | HIGH | 10 |
 | MEDIUM | 16 |
 | LOW | 22 |
 
 ---
 
-## Resolved Findings (26)
+## Resolved Findings (27)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -60,6 +60,7 @@
 | M-10 | MEDIUM | memory | Public arena/mark fields → `pub(crate)` + public accessors | `41b249f` |
 | M-11 | LOW | memory | Map tracing comment ambiguity → clarified + simplified to `m.values()` | `7a43535` |
 | M-12 | LOW | memory | GC threshold thrashing → `max(2× live, 1.5× prev, 1MB)` hysteresis | `a27e0c7` |
+| L-01 | CRITICAL | cli | Hardcoded entropy in trusted setup → `getrandom` 32-byte OS randomness | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -417,18 +418,7 @@ Two row-activation rules coexist: selector-based (skip if selector=0) and legacy
 
 ---
 
-### CLI Crate (13 open)
-
-#### L-01 — Hardcoded Entropy in Trusted Setup [CRITICAL]
-
-**File**: `cli/src/prove_handler.rs` (lines 191-192, 228-229)
-**Category**: Security
-
-Both the Powers of Tau ceremony and zkey contribution use literal `"-e=entropy"` instead of cryptographically secure randomness. An attacker knowing this string can reconstruct the toxic waste and forge proofs for any statement.
-
-**Fix**: Use `getrandom` or `rand::OsRng` to generate 32+ bytes of entropy. Alternatively, pipe `/dev/urandom` to snarkjs stdin.
-
----
+### CLI Crate (12 open)
 
 #### L-02 — Weak DefaultHasher for Cache Key [CRITICAL]
 

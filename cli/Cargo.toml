@@ -9,6 +9,7 @@ clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 byteorder = "1.5"
 tempfile = "3"
+getrandom = "0.2"
 
 memory = { path = "../memory" }
 vm = { path = "../vm" }

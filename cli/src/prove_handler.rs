@@ -182,6 +182,7 @@ impl DefaultProveHandler {
                     "12",
                     ptau_0.to_str().unwrap(),
                 ])?;
+                let entropy_arg = format!("-e={}", random_entropy());
                 run_snarkjs(&[
                     "snarkjs",
                     "powersoftau",
@@ -189,7 +190,7 @@ impl DefaultProveHandler {
                     ptau_0.to_str().unwrap(),
                     ptau_1.to_str().unwrap(),
                     "--name=achronyme",
-                    "-e=entropy",
+                    &entropy_arg,
                 ])?;
                 run_snarkjs(&[
                     "snarkjs",
@@ -219,6 +220,7 @@ impl DefaultProveHandler {
             ptau_final.to_str().unwrap(),
             zkey_0.to_str().unwrap(),
         ])?;
+        let entropy_arg = format!("-e={}", random_entropy());
         run_snarkjs(&[
             "snarkjs",
             "zkey",
@@ -226,7 +228,7 @@ impl DefaultProveHandler {
             zkey_0.to_str().unwrap(),
             zkey_1.to_str().unwrap(),
             "--name=achronyme",
-            "-e=entropy",
+            &entropy_arg,
         ])?;
         run_snarkjs(&[
             "snarkjs",
@@ -246,6 +248,14 @@ impl DefaultProveHandler {
 
         Ok((zkey_path, vkey_path))
     }
+}
+
+/// Generate 32 bytes of cryptographic randomness, returned as a hex string
+/// for use as `-e=<entropy>` in snarkjs ceremonies.
+fn random_entropy() -> String {
+    let mut buf = [0u8; 32];
+    getrandom::getrandom(&mut buf).expect("OS RNG unavailable");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn snarkjs_available() -> bool {
