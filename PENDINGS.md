@@ -144,15 +144,11 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 - [x] **M1: IsLt/IsLe ~760 constraints per comparison** — `r1cs_backend.rs, plonkish_backend.rs`
     - *Fixed*: Bounded-input optimization in both backends; `effective_bits = max(bound_a, bound_b)` when both operands have prior `range_check`. Parameterized `enforce_n_range` and `compile_is_lt_via_bits`. With 8-bit bounds: 30 constraints (vs 762 unbounded).
 
-- [ ] **M2: Boolean propagation pass missing** — IR passes
-    - No tracking of known-boolean variables across instructions
-    - `Not`, `And`, `Or` always emit boolean enforcement even when operand is already boolean
-    - *Fix*: Add boolean-tracking pass that marks variables proven boolean by prior constraints
+- [x] **M2: Boolean propagation pass missing** — IR passes
+    - *Fixed*: New `ir::passes::bool_prop::compute_proven_boolean()` forward pass tracks proven-boolean SSA vars (seeds: Const(0/1), IsEq, IsNeq, IsLt, IsLe; propagates through Not, And, Or, Mux). R1CS and Plonkish backends skip redundant boolean enforcement for proven-boolean operands. Example: `assert(!(x == y))` saves 2 constraints.
 
-- [ ] **M3: LinearCombination terms not deduplicated** — `r1cs.rs:121-148`
-    - Add/Sub extend terms vector without merging: `[(x,3),(x,-3)]` not simplified
-    - `is_constant()` returns `false` for effectively-constant LCs → unnecessary materialization
-    - *Fix*: Add `simplify()` method, call before `is_constant()`, `constant_value()`, `as_single_variable()`
+- [x] **M3: LinearCombination terms not deduplicated** — `r1cs.rs`
+    - *Fixed*: `simplify()` method merges duplicate Variable terms and removes zero coefficients. `is_constant()`, `constant_value()`, `as_single_variable()` use simplified form. `x - x` now correctly detected as constant zero.
 
 - [x] **M4: `from_le_bytes` accepts values >= p silently** — `field.rs:242-248`
     - *Fixed*: Returns `Option<Self>`, rejects values ≥ p via `gte()` check
@@ -166,8 +162,8 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 - [x] **M7: Negative numbers in `--inputs` CLI fail** — `cli/src/commands/circuit.rs`
     - *Fixed*: `parse_inputs` strips `-` prefix, parses absolute value, applies `neg()`
 
-- [ ] **M8: Taint analysis false negatives** — `ir/passes/taint.rs`
-    - `w - w` tagged as Witness but is effectively Constant(0) → misses optimization opportunity
+- [x] **M8: Taint analysis false negatives** — `ir/passes/taint.rs`
+    - *Fixed*: const_fold folds `Sub(x,x)` to `Const(0)` and `Div(x,x)` to `Const(1)` (when x is known non-zero constant). Taint analysis reports `Sub/Div(x,x)` as `Constant` instead of propagating operand taint.
 
 ### LOW — Design & Ergonomics
 
