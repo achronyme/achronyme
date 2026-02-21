@@ -126,7 +126,8 @@ impl ControlFlowOps for super::vm::VM {
         base: usize,
         result_reg: usize,
     ) -> Result<(), RuntimeError> {
-        let handle = func_val.as_handle().unwrap();
+        let handle = func_val.as_handle()
+            .ok_or_else(|| RuntimeError::TypeMismatch("Expected native handle".into()))?;
         let (func, arity) = {
             let n = self
                 .natives

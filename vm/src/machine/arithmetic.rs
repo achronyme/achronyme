@@ -155,7 +155,7 @@ impl ArithmeticOps for super::vm::VM {
                     }
                 } else if vb.is_field() && vc.is_int() {
                     // Field ^ Int: exponentiation in the field
-                    let ha = vb.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
                     let fa = *self.heap.get_field(ha).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                     let exp_val = vc.as_int().unwrap();
                     let exp = if exp_val >= 0 {
@@ -188,7 +188,7 @@ impl ArithmeticOps for super::vm::VM {
                 } else if vb.is_number() {
                     self.set_reg(base, a, Value::number(-vb.as_number().unwrap()))?;
                 } else if vb.is_field() {
-                    let h = vb.as_handle().unwrap();
+                    let h = vb.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
                     let fe = *self.heap.get_field(h).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                     let result = fe.neg();
                     let handle = self.heap.alloc_field(result);

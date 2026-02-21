@@ -64,7 +64,8 @@ impl DataOps for super::vm::VM {
                     }
 
                     // Recuperar el string real del Heap
-                    let s_handle = key.as_handle().unwrap();
+                    let s_handle = key.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
                     let s = self.heap.get_string(s_handle)
                         .ok_or(RuntimeError::SystemError("String missing in heap".into()))?
                         .clone(); // Clone necesario porque HashMap es dueño de la clave
@@ -82,7 +83,8 @@ impl DataOps for super::vm::VM {
                 let key = self.get_reg(base, c)?;
 
                 if target.is_list() {
-                    let handle = target.as_handle().unwrap();
+                    let handle = target.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
                     let list = self.heap.get_list(handle)
                         .ok_or(RuntimeError::SystemError("List missing".into()))?;
 
@@ -102,13 +104,16 @@ impl DataOps for super::vm::VM {
                     }
 
                 } else if target.is_map() {
-                    let handle = target.as_handle().unwrap();
+                    let handle = target.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))?;
                     let map = self.heap.get_map(handle)
                         .ok_or(RuntimeError::SystemError("Map missing".into()))?;
 
                     if key.is_string() {
-                        let k_handle = key.as_handle().unwrap();
-                        let k_str = self.heap.get_string(k_handle).unwrap();
+                        let k_handle = key.as_handle()
+                            .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+                        let k_str = self.heap.get_string(k_handle)
+                            .ok_or(RuntimeError::SystemError("String missing".into()))?;
                         
                         let val = map.get(k_str).cloned().unwrap_or(Value::nil());
                         self.set_reg(base, a, val)?;
@@ -128,7 +133,8 @@ impl DataOps for super::vm::VM {
                 let val = self.get_reg(base, c)?;
 
                 if target.is_list() {
-                    let handle = target.as_handle().unwrap();
+                    let handle = target.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
                     // Necesitamos acceso mutable
                     let list = self.heap.get_list_mut(handle)
                         .ok_or(RuntimeError::SystemError("List missing".into()))?;
@@ -146,10 +152,12 @@ impl DataOps for super::vm::VM {
                     }
 
                 } else if target.is_map() {
-                    let handle = target.as_handle().unwrap();
+                    let handle = target.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))?;
 
                     if key.is_string() {
-                         let k_handle = key.as_handle().unwrap();
+                         let k_handle = key.as_handle()
+                             .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
                          // Clone string first to avoid double borrow of heap
                          let k_str = self.heap.get_string(k_handle)
                              .ok_or(RuntimeError::SystemError("String missing in heap".into()))?

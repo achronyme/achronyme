@@ -21,15 +21,15 @@ pub fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     
     // [STANDARD]: Polymorphic dispatch based on tags
     if val.is_string() {
-        let handle = val.as_handle().unwrap(); // Safe: guarded by is_string()
+        let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
         let s = vm.heap.get_string(handle).ok_or(RuntimeError::SystemError("Dangling string handle".into()))?;
         Ok(Value::number(s.len() as f64))
     } else if val.is_list() {
-        let handle = val.as_handle().unwrap();
+        let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
         let l = vm.heap.get_list(handle).ok_or(RuntimeError::SystemError("Dangling list handle".into()))?;
         Ok(Value::number(l.len() as f64))
     } else if val.is_map() {
-        let handle = val.as_handle().unwrap();
+        let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
         let m = vm.heap.get_map(handle).ok_or(RuntimeError::SystemError("Dangling map handle".into()))?;
         Ok(Value::number(m.len() as f64))
     } else {
@@ -49,7 +49,7 @@ pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(RuntimeError::TypeMismatch("First argument to push must be a List".into()));
     }
 
-    let handle = target.as_handle().unwrap();
+    let handle = target.as_handle().ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
     // [STANDARD]: Mutable access required. Fails cleanly if handle is invalid.
     let list = vm.heap.get_list_mut(handle)
         .ok_or(RuntimeError::SystemError("List corrupted or missing".into()))?;
@@ -69,7 +69,7 @@ pub fn native_pop(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(RuntimeError::TypeMismatch("Argument to pop must be a List".into()));
     }
 
-    let handle = target.as_handle().unwrap();
+    let handle = target.as_handle().ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
     let list = vm.heap.get_list_mut(handle)
         .ok_or(RuntimeError::SystemError("List corrupted or missing".into()))?;
 
@@ -88,7 +88,7 @@ pub fn native_keys(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(RuntimeError::TypeMismatch("Argument to keys must be a Map".into()));
     }
 
-    let map_handle = target.as_handle().unwrap();
+    let map_handle = target.as_handle().ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
 
     // [CRITICAL]: Scope Limiting for Borrow Checker Compliance
     // Step 1: Read keys (Immutable Borrow). Copy to temp vector.
@@ -174,7 +174,7 @@ pub fn native_field(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         }
         FieldElement::from_i64(n as i64)
     } else if val.is_string() {
-        let handle = val.as_handle().unwrap();
+        let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
         let s = vm.heap.get_string(handle)
             .ok_or(RuntimeError::SystemError("String missing".into()))?
             .clone();

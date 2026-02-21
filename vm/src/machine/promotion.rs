@@ -55,8 +55,8 @@ impl TypePromotion for super::vm::VM {
 
             // --- Field + Field ---
             (TAG_FIELD, TAG_FIELD) => {
-                let ha = left.as_handle().unwrap();
-                let hb = right.as_handle().unwrap();
+                let ha = left.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                let hb = right.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
                 let fa = *self.heap.get_field(ha).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let fb = *self.heap.get_field(hb).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let result = field_op(&fa, &fb)?;
@@ -67,14 +67,14 @@ impl TypePromotion for super::vm::VM {
             // --- Int + Field / Field + Int (promote Int to Field) ---
             (TAG_INT, TAG_FIELD) => {
                 let a = FieldElement::from_i64(left.as_int().unwrap() as i64);
-                let hb = right.as_handle().unwrap();
+                let hb = right.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
                 let fb = *self.heap.get_field(hb).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let result = field_op(&a, &fb)?;
                 let handle = self.heap.alloc_field(result);
                 Ok(Value::field(handle))
             }
             (TAG_FIELD, TAG_INT) => {
-                let ha = left.as_handle().unwrap();
+                let ha = left.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
                 let fa = *self.heap.get_field(ha).ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let b = FieldElement::from_i64(right.as_int().unwrap() as i64);
                 let result = field_op(&fa, &b)?;

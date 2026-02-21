@@ -89,22 +89,28 @@ impl VM {
     pub fn val_to_string(&self, val: &Value) -> String {
         match val {
             v if v.is_string() => {
-                let handle = v.as_handle().unwrap();
+                let Some(handle) = v.as_handle() else { return "<bad string>".into() };
                 self.heap.get_string(handle).cloned().unwrap_or("<bad string>".into())
             },
             v if v.is_number() => format!("{}", v.as_number().unwrap()),
             v if v.is_bool() => format!("{}", v.as_bool().unwrap()),
             v if v.is_nil() => "nil".to_string(),
             v if v.is_field() => {
-                let handle = v.as_handle().unwrap();
+                let Some(handle) = v.as_handle() else { return "<bad field>".into() };
                 match self.heap.get_field(handle) {
                     Some(fe) => format!("Field({})", fe.to_decimal_string()),
                     None => "<bad field>".into(),
                 }
             },
             v if v.is_proof() => "<Proof>".to_string(),
-            v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
-            v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
+            v if v.is_list() => {
+                let Some(handle) = v.as_handle() else { return "<bad list>".into() };
+                format!("[List:{}]", handle)
+            },
+            v if v.is_map() => {
+                let Some(handle) = v.as_handle() else { return "<bad map>".into() };
+                format!("{{Map:{}}}", handle)
+            },
             _ => format!("{:?}", val), // Fallback
         }
     }
@@ -458,7 +464,8 @@ impl VM {
                         let iter_obj = if val.is_list() {
                              // Snapshot: clone list contents so mutations during
                              // iteration don't cause stale reads or OOB access.
-                             let l_handle = val.as_handle().unwrap();
+                             let l_handle = val.as_handle()
+                                 .ok_or_else(|| RuntimeError::TypeMismatch("Expected list handle".into()))?;
                              let snapshot = self.heap.get_list(l_handle)
                                  .ok_or(RuntimeError::SystemError("List missing".into()))?
                                  .clone();
@@ -468,7 +475,8 @@ impl VM {
                              // Convert Map keys to a snapshot list.
                              // Keys are collected in an inner block to end the map
                              // borrow before any heap allocations.
-                             let handle = val.as_handle().unwrap();
+                             let handle = val.as_handle()
+                                 .ok_or_else(|| RuntimeError::TypeMismatch("Expected map handle".into()))?;
                              let map_keys: Vec<String> = {
                                  let map = self.heap.get_map(handle).ok_or(RuntimeError::SystemError("Map missing".into()))?;
                                  map.keys().cloned().collect()
@@ -510,7 +518,8 @@ impl VM {
                     if !iter_val.is_iter() {
                          return Err(RuntimeError::TypeMismatch("Expected iterator for loop".into()));
                     }
-                    let iter_handle = iter_val.as_handle().unwrap();
+                    let iter_handle = iter_val.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("Expected iterator handle".into()))?;
                     
                     // Split borrow: Get state, then access source, then update state
                     let (source, index) = {
@@ -521,7 +530,8 @@ impl VM {
                     let mut next_val = None;
                     
                     if source.is_list() {
-                         let l_handle = source.as_handle().unwrap();
+                         let l_handle = source.as_handle()
+                             .ok_or_else(|| RuntimeError::TypeMismatch("Expected list handle".into()))?;
                          if let Some(list) = self.heap.get_list(l_handle) {
                              if index < list.len() {
                                  next_val = Some(list[index]);
