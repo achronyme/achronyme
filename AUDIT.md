@@ -297,14 +297,14 @@ String interning uses `HashMap<String, u32>`. For map iteration in GetIter, each
 
 ---
 
-### V-11 — BuildList/BuildMap Insufficient Bounds Check [HIGH]
+### V-11 — BuildList/BuildMap Insufficient Bounds Check [HIGH] [RESOLVED]
 
 **File**: `vm/src/machine/data.rs` (lines 26, 48)
 **Category**: Robustness
 
 `start = base + b` can overflow if `base` is invalid. No check that `base < stack.len()` before computing `start`. Error message says "Stack underflow" when it's actually OOB.
 
-**Fix**: Validate `base < stack.len()` before computing `start`.
+**Fix**: Replaced with `checked_add` chains (`base + b + count` / `base + b + count*2`) that catch overflow and validate against `stack.len()`. Error messages now include operand values.
 
 ---
 

@@ -19,13 +19,11 @@ impl DataOps for super::vm::VM {
         match op {
             OpCode::BuildList => {
                 // R[A] = [ R[B] ... R[B+C-1] ]
-                let start = base + b;
                 let count = c;
-                
-                // Security Sandwich: Bounds check
-                if start + count > self.stack.len() {
-                    return Err(RuntimeError::OutOfBounds(format!("Stack underflow in BUILD_LIST: need {} slots", count)));
-                }
+
+                let _end = base.checked_add(b).and_then(|s| s.checked_add(count))
+                    .filter(|&e| e <= self.stack.len())
+                    .ok_or_else(|| RuntimeError::OutOfBounds(format!("BuildList: base={base} b={b} count={count} out of bounds")))?;
 
                 // Clona los valores del stack al vector. 
                 // Value es Copy-cheap (u64), así que es rápido.
@@ -41,13 +39,13 @@ impl DataOps for super::vm::VM {
             OpCode::BuildMap => {
                 // R[A] = { k1:v1, k2:v2 ... }
                 // C es la cantidad de PARES. Consumimos 2*C registros.
-                let start = base + b;
                 let count = c;
-                let total_regs = count * 2;
+                let total_regs = count.checked_mul(2)
+                    .ok_or_else(|| RuntimeError::OutOfBounds("BuildMap: pair count overflow".into()))?;
 
-                if start + total_regs > self.stack.len() {
-                     return Err(RuntimeError::OutOfBounds(format!("Stack underflow in BUILD_MAP: need {} slots", total_regs)));
-                }
+                let _end = base.checked_add(b).and_then(|s| s.checked_add(total_regs))
+                    .filter(|&e| e <= self.stack.len())
+                    .ok_or_else(|| RuntimeError::OutOfBounds(format!("BuildMap: base={base} b={b} pairs={count} out of bounds")))?;
 
                 let mut map = HashMap::with_capacity(count);
                 for i in 0..count {
