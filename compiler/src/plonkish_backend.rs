@@ -1274,15 +1274,18 @@ impl PlonkishWitnessGenerator {
     }
 }
 
-/// Compute 2^n as a FieldElement.
-fn compute_power_of_two(n: u32) -> FieldElement {
-    if n < 64 {
-        FieldElement::from_u64(1u64 << n)
-    } else {
-        let mut pow = FieldElement::ONE;
-        for _ in 0..n {
-            pow = pow.add(&pow);
-        }
-        pow
+/// Pre-computed table of 2^0 .. 2^252 as FieldElements.
+/// Initialized once on first access, O(253) total instead of O(n) per call.
+static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 253]> = std::sync::LazyLock::new(|| {
+    let mut table = [FieldElement::ZERO; 253];
+    table[0] = FieldElement::ONE;
+    for i in 1..253 {
+        table[i] = table[i - 1].add(&table[i - 1]);
     }
+    table
+});
+
+/// Look up 2^n from the pre-computed table.
+fn compute_power_of_two(n: u32) -> FieldElement {
+    POWERS_OF_TWO[n as usize]
 }
