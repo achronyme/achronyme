@@ -1,12 +1,24 @@
 use std::collections::HashMap;
 
-use memory::{FieldElement, Heap, Value};
+use memory::{FieldElement, Heap, ProofObject, Value};
 
 use crate::error::RuntimeError;
 use crate::opcode::instruction::{decode_a, decode_bx};
 
 use super::stack::StackOps;
 use super::vm::VM;
+
+/// Result of executing a `prove { }` block.
+pub enum ProveResult {
+    /// Verify-only mode (snarkjs not available)
+    VerifiedOnly,
+    /// Groth16 proof generated
+    Proof {
+        proof_json: String,
+        public_json: String,
+        vkey_json: String,
+    },
+}
 
 /// Trait for handling `prove { }` blocks at runtime.
 ///
@@ -18,7 +30,7 @@ pub trait ProveHandler {
         &self,
         source: &str,
         scope_values: &HashMap<String, FieldElement>,
-    ) -> Result<(), String>;
+    ) -> Result<ProveResult, String>;
 }
 
 /// Convert a VM `Value` to a `FieldElement` for prove block capture.
@@ -112,12 +124,29 @@ impl VM {
             .as_ref()
             .ok_or(RuntimeError::ProveHandlerNotConfigured)?;
 
-        handler
+        let result = handler
             .execute_prove(&source, &scope_values)
             .map_err(RuntimeError::ProveBlockFailed)?;
 
-        // 4. Result is nil
-        self.set_reg(base, a, Value::nil());
+        // 4. Set result based on handler response
+        match result {
+            ProveResult::VerifiedOnly => {
+                self.set_reg(base, a, Value::nil());
+            }
+            ProveResult::Proof {
+                proof_json,
+                public_json,
+                vkey_json,
+            } => {
+                let obj = ProofObject {
+                    proof_json,
+                    public_json,
+                    vkey_json,
+                };
+                let handle = self.heap.alloc_proof(obj);
+                self.set_reg(base, a, Value::proof(handle));
+            }
+        }
 
         Ok(())
     }

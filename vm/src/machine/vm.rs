@@ -102,6 +102,7 @@ impl VM {
                     None => "<bad field>".into(),
                 }
             },
+            v if v.is_proof() => "<Proof>".to_string(),
             v if v.is_list() => format!("[List:{}]", v.as_handle().unwrap()), // Basic placeholder
             v if v.is_map() => format!("{{Map:{}}}", v.as_handle().unwrap()),   // Basic placeholder
             _ => format!("{:?}", val), // Fallback
@@ -128,6 +129,13 @@ impl VM {
             let h2 = v2.as_handle().unwrap();
             match (self.heap.get_field(h1), self.heap.get_field(h2)) {
                 (Some(f1), Some(f2)) => f1 == f2,
+                _ => false,
+            }
+        } else if v1.is_proof() && v2.is_proof() {
+            let h1 = v1.as_handle().unwrap();
+            let h2 = v2.as_handle().unwrap();
+            match (self.heap.get_proof(h1), self.heap.get_proof(h2)) {
+                (Some(p1), Some(p2)) => p1.proof_json == p2.proof_json,
                 _ => false,
             }
         } else {

@@ -132,6 +132,8 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         "Map"
     } else if val.is_field() {
         "Field"
+    } else if val.is_proof() {
+        "Proof"
     } else if val.is_function() {
         "Function"
     } else if val.is_native() {
@@ -211,4 +213,52 @@ pub fn native_time(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError>
     let now = std::time::SystemTime::now();
     let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
     Ok(Value::number(duration.as_secs_f64()))
+}
+
+pub fn native_proof_json(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch("proof_json() takes exactly 1 argument".into()));
+    }
+    let val = args[0];
+    if !val.is_proof() {
+        return Err(RuntimeError::TypeMismatch("proof_json expects a Proof".into()));
+    }
+    let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+    let json = vm.heap.get_proof(handle)
+        .ok_or(RuntimeError::SystemError("proof not found".into()))?
+        .proof_json.clone();
+    let s = vm.heap.alloc_string(json);
+    Ok(Value::string(s))
+}
+
+pub fn native_proof_public(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch("proof_public() takes exactly 1 argument".into()));
+    }
+    let val = args[0];
+    if !val.is_proof() {
+        return Err(RuntimeError::TypeMismatch("proof_public expects a Proof".into()));
+    }
+    let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+    let json = vm.heap.get_proof(handle)
+        .ok_or(RuntimeError::SystemError("proof not found".into()))?
+        .public_json.clone();
+    let s = vm.heap.alloc_string(json);
+    Ok(Value::string(s))
+}
+
+pub fn native_proof_vkey(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch("proof_vkey() takes exactly 1 argument".into()));
+    }
+    let val = args[0];
+    if !val.is_proof() {
+        return Err(RuntimeError::TypeMismatch("proof_vkey expects a Proof".into()));
+    }
+    let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+    let json = vm.heap.get_proof(handle)
+        .ok_or(RuntimeError::SystemError("proof not found".into()))?
+        .vkey_json.clone();
+    let s = vm.heap.alloc_string(json);
+    Ok(Value::string(s))
 }

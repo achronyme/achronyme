@@ -5,7 +5,7 @@ pub mod opcode;
 
 pub use error::RuntimeError;
 pub use globals::GlobalEntry;
-pub use machine::{CallFrame, ProveHandler, VM};
+pub use machine::{CallFrame, ProveHandler, ProveResult, VM};
 pub use opcode::OpCode;
 pub mod native;
 pub use native::{NativeFn, NativeObj};

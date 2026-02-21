@@ -19,6 +19,10 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
     NativeMeta { name: "pop",    arity: 1  }, // Index 6
     NativeMeta { name: "keys",   arity: 1  }, // Index 7
     NativeMeta { name: "field",  arity: 1  }, // Index 8
+    // Proof inspection
+    NativeMeta { name: "proof_json",   arity: 1 }, // Index 9
+    NativeMeta { name: "proof_public", arity: 1 }, // Index 10
+    NativeMeta { name: "proof_vkey",   arity: 1 }, // Index 11
 ];
 
 // Helper to get start index for user globals
