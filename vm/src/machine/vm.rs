@@ -115,8 +115,9 @@ impl VM {
         }
 
         if v1.is_string() && v2.is_string() {
-            let h1 = v1.as_handle().unwrap();
-            let h2 = v2.as_handle().unwrap();
+            let (Some(h1), Some(h2)) = (v1.as_handle(), v2.as_handle()) else {
+                return false;
+            };
             let s1 = self.heap.get_string(h1);
             let s2 = self.heap.get_string(h2);
             match (s1, s2) {
@@ -124,15 +125,17 @@ impl VM {
                 _ => false,
             }
         } else if v1.is_field() && v2.is_field() {
-            let h1 = v1.as_handle().unwrap();
-            let h2 = v2.as_handle().unwrap();
+            let (Some(h1), Some(h2)) = (v1.as_handle(), v2.as_handle()) else {
+                return false;
+            };
             match (self.heap.get_field(h1), self.heap.get_field(h2)) {
                 (Some(f1), Some(f2)) => f1 == f2,
                 _ => false,
             }
         } else if v1.is_proof() && v2.is_proof() {
-            let h1 = v1.as_handle().unwrap();
-            let h2 = v2.as_handle().unwrap();
+            let (Some(h1), Some(h2)) = (v1.as_handle(), v2.as_handle()) else {
+                return false;
+            };
             match (self.heap.get_proof(h1), self.heap.get_proof(h2)) {
                 (Some(p1), Some(p2)) => p1.proof_json == p2.proof_json,
                 _ => false,
