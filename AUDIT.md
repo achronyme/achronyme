@@ -319,14 +319,14 @@ String interning uses `HashMap<String, u32>`. For map iteration in GetIter, each
 
 ---
 
-### V-13 — val_to_string Allocates on Every Call [MEDIUM]
+### V-13 — val_to_string Allocates on Every Call [MEDIUM] [FALSE POSITIVE]
 
 **File**: `vm/src/machine/vm.rs` (lines 88-110)
 **Category**: Performance
 
 `fe.to_decimal_string()` allocates a new String on every call. This is invoked by Print opcode, error formatting, and debugging.
 
-**Fix**: Use a reusable buffer or cache formatted strings.
+**Analysis**: False positive — `val_to_string` returns `String` by design; allocation is inherent to its purpose. Print is not a hot path. A reusable buffer would complicate the API (lifetimes, clearing) for negligible gain.
 
 ---
 
