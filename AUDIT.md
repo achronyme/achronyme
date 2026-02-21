@@ -14,24 +14,24 @@
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
-| ir | 8 | 2 | 0 | 10 |
+| ir | 7 | 3 | 0 | 10 |
 | constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
-| parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **36** | **43 (+1)** | **13** | **93** |
+| parser | 11 | 1 | 5 | 17 |
+| **TOTAL** | **34** | **45 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 10 |
-| MEDIUM | 14 |
+| HIGH | 9 |
+| MEDIUM | 13 |
 | LOW | 12 |
 
 ---
 
-## Resolved Findings (44)
+## Resolved Findings (46)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -79,6 +79,8 @@
 | C-07 | LOW | compiler | `bindings`/`lc_bindings` doc comments clarify purpose | `fdbedc2` |
 | C-08 | LOW | compiler | `compile_ir_with_witness` three-pass design documented | `fdbedc2` |
 | C-09 | LOW | compiler | `HashMap<SsaVar, LC>` documented as lookup cache | `fdbedc2` |
+| I-03 | HIGH | ir | `FnDef` re-parsed source on every call → stores `body: Block` (AST) | `0543a81` |
+| P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -102,18 +104,7 @@
 
 ## Open Findings
 
-### IR Crate (8 open)
-
-#### I-03 — FnDef Stores Raw Source Instead of IR [HIGH]
-
-**File**: `ir/src/lower.rs` (line 1255)
-**Category**: Fragility
-
-`FnDef { body_source: String }` stores raw grammar text and re-parses it on every function call. If the grammar changes between compilation passes, the re-parse may fail or produce different results. Also wasteful (parsing is repeated per call site).
-
-**Fix**: Store pre-lowered IR instructions or a serialized AST instead of raw source.
-
----
+### IR Crate (7 open)
 
 #### I-04 — IsLt/IsLe Limb Order Verification [HIGH]
 
@@ -372,7 +363,7 @@ The `--inputs` string has no length limit. A multi-GB string could exhaust memor
 
 ---
 
-### Parser Crate (12 open)
+### Parser Crate (11 open)
 
 #### P-01 — Empty Braces Ambiguity [MEDIUM]
 
@@ -415,17 +406,6 @@ No length limit on integer literals. `123...` (millions of digits) is accepted b
 `poseidon`, `assert_eq`, `mux`, `range_check`, etc. are not in the `keyword` list. A user can shadow them: `let poseidon = 42`, then `poseidon(a, b)` fails with a confusing error.
 
 **Fix**: Add builtins to keyword list, or detect and error on shadowing.
-
----
-
-#### P-05 — Rule Coupling (247 references, 44 variants) [MEDIUM]
-
-**File**: Entire codebase
-**Category**: Architecture
-
-The `Rule` enum is pattern-matched 247 times across compiler, IR, and CLI. Any grammar rename breaks everything. No AST abstraction layer exists.
-
-**Fix**: Long-term: introduce typed AST. Short-term: freeze grammar schema and document as stable API.
 
 ---
 
