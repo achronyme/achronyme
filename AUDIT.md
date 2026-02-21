@@ -58,7 +58,7 @@
 | M-07 | MEDIUM | memory | NaN boxing tag overflow → compile-time `assert!(TAG < 16)` for all 13 tags | `7e01699` |
 | M-08 | MEDIUM | memory | `bytes_allocated` drift → `recount_live_bytes()` after sweep (self-correcting) | `d9dbf70` |
 | M-10 | MEDIUM | memory | Public arena/mark fields → `pub(crate)` + public accessors | `41b249f` |
-| M-11 | LOW | memory | Map tracing comment ambiguity → clarified + simplified to `m.values()` | `PENDING` |
+| M-11 | LOW | memory | Map tracing comment ambiguity → clarified + simplified to `m.values()` | `7a43535` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
