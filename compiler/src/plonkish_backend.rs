@@ -474,6 +474,30 @@ impl PlonkishCompiler {
         Ok(())
     }
 
+    /// Compile an SSA IR program and generate a witness in a single pass.
+    ///
+    /// 1. Evaluates the IR with concrete inputs for early validation.
+    /// 2. Compiles IR → Plonkish constraints.
+    /// 3. Generates the witness by replaying ops into assignments.
+    pub fn compile_ir_with_witness(
+        &mut self,
+        program: &IrProgram,
+        inputs: &HashMap<String, FieldElement>,
+    ) -> Result<(), PlonkishError> {
+        // 1. Evaluate IR — early validation
+        let _ssa_values = ir::eval::evaluate(program, inputs)
+            .map_err(|e| PlonkishError::MissingInput(format!("evaluation error: {e}")))?;
+
+        // 2. Compile constraints
+        self.compile_ir(program)?;
+
+        // 3. Generate witness
+        let wg = PlonkishWitnessGenerator::from_compiler(self);
+        wg.generate(inputs, &mut self.system.assignments)?;
+
+        Ok(())
+    }
+
     /// Number of arithmetic rows used by the circuit (excluding table/padding rows).
     pub fn num_circuit_rows(&self) -> usize {
         self.current_row

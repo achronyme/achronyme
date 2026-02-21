@@ -3,9 +3,8 @@ use std::fs;
 
 use anyhow::{Context, Result};
 
-use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::WitnessGenerator;
 use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;
 use memory::FieldElement;
@@ -91,33 +90,30 @@ fn run_r1cs_pipeline(
     let mut compiler = R1CSCompiler::new();
     let proven = ir::passes::bool_prop::compute_proven_boolean(program);
     compiler.set_proven_boolean(proven);
-    compiler
-        .compile_ir(program)
-        .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
-
-    let r1cs_data = write_r1cs(&compiler.cs);
-    fs::write(r1cs_path, &r1cs_data)
-        .with_context(|| format!("cannot write {r1cs_path}"))?;
-    eprintln!(
-        "wrote {} ({} constraints, {} wires, {} bytes)",
-        r1cs_path,
-        compiler.cs.num_constraints(),
-        compiler.cs.num_variables(),
-        r1cs_data.len(),
-    );
 
     if let Some(raw_inputs) = inputs {
         let input_map = parse_inputs(raw_inputs)?;
 
-        let wg = WitnessGenerator::from_compiler(&compiler);
-        let witness_vec = wg
-            .generate(&input_map)
-            .map_err(|e| anyhow::anyhow!("witness generation error: {e}"))?;
+        // Unified: compile + witness in one pass (with early IR evaluation)
+        let witness_vec = compiler
+            .compile_ir_with_witness(program, &input_map)
+            .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
         compiler
             .cs
             .verify(&witness_vec)
             .map_err(|idx| anyhow::anyhow!("witness verification failed at constraint {idx}"))?;
+
+        let r1cs_data = write_r1cs(&compiler.cs);
+        fs::write(r1cs_path, &r1cs_data)
+            .with_context(|| format!("cannot write {r1cs_path}"))?;
+        eprintln!(
+            "wrote {} ({} constraints, {} wires, {} bytes)",
+            r1cs_path,
+            compiler.cs.num_constraints(),
+            compiler.cs.num_variables(),
+            r1cs_data.len(),
+        );
 
         let wtns_data = write_wtns(&witness_vec);
         fs::write(wtns_path, &wtns_data)
@@ -128,6 +124,22 @@ fn run_r1cs_pipeline(
             witness_vec.len(),
             wtns_data.len(),
         );
+    } else {
+        // No inputs: compile constraints only
+        compiler
+            .compile_ir(program)
+            .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
+
+        let r1cs_data = write_r1cs(&compiler.cs);
+        fs::write(r1cs_path, &r1cs_data)
+            .with_context(|| format!("cannot write {r1cs_path}"))?;
+        eprintln!(
+            "wrote {} ({} constraints, {} wires, {} bytes)",
+            r1cs_path,
+            compiler.cs.num_constraints(),
+            compiler.cs.num_variables(),
+            r1cs_data.len(),
+        );
     }
 
     Ok(())
@@ -137,27 +149,38 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>) -> Resul
     let mut compiler = PlonkishCompiler::new();
     let proven = ir::passes::bool_prop::compute_proven_boolean(program);
     compiler.set_proven_boolean(proven);
-    compiler
-        .compile_ir(program)
-        .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
-
-    eprintln!(
-        "plonkish: {} rows, {} copies, {} lookups",
-        compiler.num_circuit_rows(),
-        compiler.system.copies.len(),
-        compiler.system.lookups.len(),
-    );
 
     if let Some(raw_inputs) = inputs {
         let input_map = parse_inputs(raw_inputs)?;
-        let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
-        wg.generate(&input_map, &mut compiler.system.assignments)
-            .map_err(|e| anyhow::anyhow!("Plonkish witness generation error: {e}"))?;
+
+        // Unified: compile + witness in one pass (with early IR evaluation)
+        compiler
+            .compile_ir_with_witness(program, &input_map)
+            .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
+
+        eprintln!(
+            "plonkish: {} rows, {} copies, {} lookups",
+            compiler.num_circuit_rows(),
+            compiler.system.copies.len(),
+            compiler.system.lookups.len(),
+        );
+
         compiler
             .system
             .verify()
             .map_err(|e| anyhow::anyhow!("Plonkish verification error: {e}"))?;
         eprintln!("plonkish verification: OK");
+    } else {
+        compiler
+            .compile_ir(program)
+            .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
+
+        eprintln!(
+            "plonkish: {} rows, {} copies, {} lookups",
+            compiler.num_circuit_rows(),
+            compiler.system.copies.len(),
+            compiler.system.lookups.len(),
+        );
     }
 
     Ok(())

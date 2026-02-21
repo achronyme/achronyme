@@ -1,5 +1,6 @@
 pub mod types;
 pub mod error;
+pub mod eval;
 pub mod lower;
 pub mod passes;
 

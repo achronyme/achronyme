@@ -22,6 +22,8 @@ pub enum R1CSError {
         got: usize,
         span: Option<SourceSpan>,
     },
+    /// An error during IR evaluation (early validation).
+    EvalError(String),
 }
 
 impl fmt::Display for R1CSError {
@@ -73,6 +75,7 @@ impl fmt::Display for R1CSError {
                     write!(f, "`{builtin}` expects {expected} arguments, got {got}")
                 }
             }
+            R1CSError::EvalError(msg) => write!(f, "evaluation error: {msg}"),
         }
     }
 }

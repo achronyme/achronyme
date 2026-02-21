@@ -8,7 +8,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 
 use crate::r1cs_error::R1CSError;
-use crate::witness_gen::WitnessOp;
+use crate::witness_gen::{fill_poseidon_witness, WitnessOp};
 
 /// Compiles an Achronyme circuit block into an R1CS constraint system.
 ///
@@ -1327,6 +1327,108 @@ impl R1CSCompiler {
         }
 
         Ok(())
+    }
+
+    /// Compile an SSA IR program and generate a witness in a single pass.
+    ///
+    /// 1. Evaluates the IR with concrete inputs for early validation (catches
+    ///    assertion failures, division by zero, missing inputs before emitting constraints).
+    /// 2. Compiles IR → R1CS constraints (same as `compile_ir`).
+    /// 3. Builds the witness vector by replaying `witness_ops`.
+    pub fn compile_ir_with_witness(
+        &mut self,
+        program: &IrProgram,
+        inputs: &HashMap<String, FieldElement>,
+    ) -> Result<Vec<FieldElement>, R1CSError> {
+        // 1. Evaluate IR — early validation
+        let _ssa_values = ir::eval::evaluate(program, inputs)
+            .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
+
+        // 2. Compile constraints (populates witness_ops)
+        self.compile_ir(program)?;
+
+        // 3. Build witness vector
+        let mut witness = vec![FieldElement::ZERO; self.cs.num_variables()];
+        witness[0] = FieldElement::ONE;
+
+        // 3a. Fill inputs
+        for name in &self.public_inputs {
+            witness[self.bindings[name].index()] = inputs[name];
+        }
+        for name in &self.witnesses {
+            witness[self.bindings[name].index()] = inputs[name];
+        }
+
+        // 3b. Replay witness ops
+        for op in &self.witness_ops {
+            match op {
+                WitnessOp::AssignLC { target, lc } => {
+                    witness[target.index()] = lc.evaluate(&witness);
+                }
+                WitnessOp::Multiply { target, a, b } => {
+                    witness[target.index()] = a.evaluate(&witness).mul(&b.evaluate(&witness));
+                }
+                WitnessOp::Inverse { target, operand } => {
+                    let val = operand.evaluate(&witness);
+                    witness[target.index()] = val.inv().ok_or_else(|| {
+                        R1CSError::EvalError(format!(
+                            "division by zero at wire {}",
+                            target.index()
+                        ))
+                    })?;
+                }
+                WitnessOp::BitExtract {
+                    target,
+                    source,
+                    bit_index,
+                } => {
+                    let val = source.evaluate(&witness);
+                    let limbs = val.to_canonical();
+                    let li = (*bit_index / 64) as usize;
+                    let bp = *bit_index % 64;
+                    let bit = if li < 4 { (limbs[li] >> bp) & 1 } else { 0 };
+                    witness[target.index()] = FieldElement::from_u64(bit);
+                }
+                WitnessOp::IsZero {
+                    diff,
+                    target_inv,
+                    target_result,
+                } => {
+                    let d = diff.evaluate(&witness);
+                    if d.is_zero() {
+                        witness[target_inv.index()] = FieldElement::ZERO;
+                        witness[target_result.index()] = FieldElement::ONE;
+                    } else {
+                        witness[target_inv.index()] = d.inv().ok_or_else(|| {
+                            R1CSError::EvalError("IsZero inverse failed".into())
+                        })?;
+                        witness[target_result.index()] = FieldElement::ZERO;
+                    }
+                }
+                WitnessOp::PoseidonHash {
+                    left,
+                    right,
+                    internal_start,
+                    internal_count,
+                    ..
+                } => {
+                    let params = self.poseidon_params.as_ref().ok_or_else(|| {
+                        R1CSError::EvalError("poseidon params not initialized".into())
+                    })?;
+                    fill_poseidon_witness(
+                        &mut witness,
+                        params,
+                        *left,
+                        *right,
+                        *internal_start,
+                        *internal_count,
+                    )
+                    .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
+                }
+            }
+        }
+
+        Ok(witness)
     }
 }
 

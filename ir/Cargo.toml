@@ -6,5 +6,6 @@ license = "GPL-3.0"
 
 [dependencies]
 memory = { path = "../memory" }
+constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
 pest = "2.6"
