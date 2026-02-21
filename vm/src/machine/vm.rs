@@ -140,11 +140,20 @@ impl VM {
                 _ => false,
             }
         } else if v1.is_proof() && v2.is_proof() {
+            // Proof equality is structural: two proofs are equal iff all three
+            // JSON components match byte-for-byte. This is intentional — Groth16
+            // proofs include randomness, so different proofs for the same circuit
+            // and inputs will not compare equal. This matches the semantics of
+            // "same proof object" rather than "same statement proven".
             let (Some(h1), Some(h2)) = (v1.as_handle(), v2.as_handle()) else {
                 return false;
             };
             match (self.heap.get_proof(h1), self.heap.get_proof(h2)) {
-                (Some(p1), Some(p2)) => p1.proof_json == p2.proof_json,
+                (Some(p1), Some(p2)) => {
+                    p1.proof_json == p2.proof_json
+                        && p1.public_json == p2.public_json
+                        && p1.vkey_json == p2.vkey_json
+                }
                 _ => false,
             }
         } else {

@@ -12,13 +12,13 @@
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
-| vm | 1 | 13 | 6 | 20 |
+| vm | 0 | 14 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 8 | 2 | 0 | 10 |
 | constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **45** | **34 (+1)** | **13** | **93** |
+| **TOTAL** | **44** | **35 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -27,11 +27,11 @@
 | CRITICAL | 0 |
 | HIGH | 10 |
 | MEDIUM | 16 |
-| LOW | 19 |
+| LOW | 18 |
 
 ---
 
-## Resolved Findings (35)
+## Resolved Findings (36)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -70,6 +70,7 @@
 | M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `5ebd77f` |
 | M-14 | LOW | memory | Field inverse constant-time tradeoff documented in `inv()` doc comment | `08ac06c` |
 | M-15 | LOW | memory | NaN canonicalization documented as intentional in `number()` | `08ac06c` |
+| V-17 | LOW | vm | Proof equality compares all 3 fields + documented as structural | `PENDING` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -92,19 +93,6 @@
 ---
 
 ## Open Findings
-
-### VM Crate (1 open)
-
-#### V-17 — Proof Equality by JSON Only [LOW]
-
-**File**: `vm/src/machine/vm.rs` (lines 134-140)
-**Category**: Semantics
-
-Two proofs are equal iff their `proof_json` strings match. Different proofs for the same circuit or same proof serialized differently could compare incorrectly.
-
-**Fix**: Consider adding circuit identity to equality comparison, or document the semantics.
-
----
 
 ### Compiler Crate (8 open)
 
