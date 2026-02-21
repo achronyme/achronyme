@@ -49,6 +49,11 @@ pub struct ProofObject {
 pub struct Arena<T> {
     pub data: Vec<T>,
     pub free_indices: Vec<u32>,
+    /// O(1) membership mirror of `free_indices`. Invariant: contains the same
+    /// elements as `free_indices` at all times. Maintained by `mark_free`,
+    /// `reclaim_free`, and `clear_free` — direct mutation of `free_indices`
+    /// without updating this set will break sweep correctness.
+    free_set: HashSet<u32>,
 }
 
 impl<T> Arena<T> {
@@ -56,7 +61,36 @@ impl<T> Arena<T> {
         Self {
             data: Vec::new(),
             free_indices: Vec::new(),
+            free_set: HashSet::new(),
         }
+    }
+
+    /// O(1) check whether `idx` has been freed and is awaiting reuse.
+    #[inline]
+    pub fn is_free(&self, idx: u32) -> bool {
+        self.free_set.contains(&idx)
+    }
+
+    /// Mark `idx` as free. Deduplicates: if already free, this is a no-op.
+    /// O(1) amortized (HashSet insert + Vec push).
+    pub fn mark_free(&mut self, idx: u32) {
+        if self.free_set.insert(idx) {
+            self.free_indices.push(idx);
+        }
+    }
+
+    /// Pop a free index for reuse. Returns `None` if no free slots exist.
+    /// O(1) amortized (Vec pop + HashSet remove).
+    pub fn reclaim_free(&mut self) -> Option<u32> {
+        let idx = self.free_indices.pop()?;
+        self.free_set.remove(&idx);
+        Some(idx)
+    }
+
+    /// Clear all free-tracking state. Used when replacing arena contents wholesale.
+    pub fn clear_free(&mut self) {
+        self.free_indices.clear();
+        self.free_set.clear();
     }
 }
 
@@ -127,7 +161,7 @@ impl Heap {
     pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Upvalue>();
         self.check_gc();
-        if let Some(idx) = self.upvalues.free_indices.pop() {
+        if let Some(idx) = self.upvalues.reclaim_free() {
             self.upvalues.data[idx as usize] = Box::new(val);
             idx
         } else {
@@ -148,7 +182,7 @@ impl Heap {
     pub fn alloc_closure(&mut self, c: Closure) -> u32 {
         self.bytes_allocated += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
         self.check_gc();
-        if let Some(idx) = self.closures.free_indices.pop() {
+        if let Some(idx) = self.closures.reclaim_free() {
             self.closures.data[idx as usize] = c;
             idx
         } else {
@@ -171,7 +205,7 @@ impl Heap {
         self.bytes_allocated += s.capacity();
         self.check_gc();
 
-        if let Some(idx) = self.strings.free_indices.pop() {
+        if let Some(idx) = self.strings.reclaim_free() {
             self.strings.data[idx as usize] = s;
             idx
         } else {
@@ -187,7 +221,7 @@ impl Heap {
         self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
         self.check_gc();
 
-        if let Some(idx) = self.lists.free_indices.pop() {
+        if let Some(idx) = self.lists.reclaim_free() {
             self.lists.data[idx as usize] = l;
             idx
         } else {
@@ -211,7 +245,7 @@ impl Heap {
         self.bytes_allocated += estimated_size;
         self.check_gc();
 
-        if let Some(idx) = self.maps.free_indices.pop() {
+        if let Some(idx) = self.maps.reclaim_free() {
             self.maps.data[idx as usize] = m;
             idx
         } else {
@@ -368,8 +402,8 @@ impl Heap {
         // Strings
         for i in 0..self.strings.data.len() {
             let idx = i as u32;
-            if !self.marked_strings.contains(&idx) && !self.strings.free_indices.contains(&idx) {
-                self.strings.free_indices.push(idx);
+            if !self.marked_strings.contains(&idx) && !self.strings.is_free(idx) {
+                self.strings.mark_free(idx);
                 freed_bytes += self.strings.data[i].capacity();
                 self.strings.data[i] = String::new(); // Free memory
             }
@@ -379,8 +413,8 @@ impl Heap {
         // Lists
         for i in 0..self.lists.data.len() {
             let idx = i as u32;
-            if !self.marked_lists.contains(&idx) && !self.lists.free_indices.contains(&idx) {
-                self.lists.free_indices.push(idx);
+            if !self.marked_lists.contains(&idx) && !self.lists.is_free(idx) {
+                self.lists.mark_free(idx);
                 freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
                 self.lists.data[i] = Vec::new(); // Free memory
             }
@@ -390,9 +424,9 @@ impl Heap {
         // Functions
         for i in 0..self.functions.data.len() {
             let idx = i as u32;
-            if !self.marked_functions.contains(&idx) && !self.functions.free_indices.contains(&idx)
+            if !self.marked_functions.contains(&idx) && !self.functions.is_free(idx)
             {
-                self.functions.free_indices.push(idx);
+                self.functions.mark_free(idx);
                 let f = &self.functions.data[i];
                 freed_bytes += f.chunk.capacity() * 4;
                 freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
@@ -413,8 +447,8 @@ impl Heap {
         // Closures
         for i in 0..self.closures.data.len() {
             let idx = i as u32;
-            if !self.marked_closures.contains(&idx) && !self.closures.free_indices.contains(&idx) {
-                self.closures.free_indices.push(idx);
+            if !self.marked_closures.contains(&idx) && !self.closures.is_free(idx) {
+                self.closures.mark_free(idx);
                 let c = &self.closures.data[i];
                 freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
 
@@ -429,8 +463,8 @@ impl Heap {
         // Upvalues
         for i in 0..self.upvalues.data.len() {
             let idx = i as u32;
-            if !self.marked_upvalues.contains(&idx) && !self.upvalues.free_indices.contains(&idx) {
-                self.upvalues.free_indices.push(idx);
+            if !self.marked_upvalues.contains(&idx) && !self.upvalues.is_free(idx) {
+                self.upvalues.mark_free(idx);
                 freed_bytes += std::mem::size_of::<Upvalue>();
 
                 // We can't easily "reset" a Box with Dummy, but we can overwrite data
@@ -446,9 +480,9 @@ impl Heap {
         // Iterators
         for i in 0..self.iterators.data.len() {
             let idx = i as u32;
-            if !self.marked_iterators.contains(&idx) && !self.iterators.free_indices.contains(&idx)
+            if !self.marked_iterators.contains(&idx) && !self.iterators.is_free(idx)
             {
-                self.iterators.free_indices.push(idx);
+                self.iterators.mark_free(idx);
                 freed_bytes += std::mem::size_of::<IteratorObj>();
                 // Reset iterator (Value::nil() source)
                 self.iterators.data[i] = IteratorObj {
@@ -462,8 +496,8 @@ impl Heap {
         // Fields (leaf type, 32 bytes each)
         for i in 0..self.fields.data.len() {
             let idx = i as u32;
-            if !self.marked_fields.contains(&idx) && !self.fields.free_indices.contains(&idx) {
-                self.fields.free_indices.push(idx);
+            if !self.marked_fields.contains(&idx) && !self.fields.is_free(idx) {
+                self.fields.mark_free(idx);
                 freed_bytes += std::mem::size_of::<FieldElement>();
                 self.fields.data[i] = FieldElement::ZERO;
             }
@@ -473,8 +507,8 @@ impl Heap {
         // Proofs
         for i in 0..self.proofs.data.len() {
             let idx = i as u32;
-            if !self.marked_proofs.contains(&idx) && !self.proofs.free_indices.contains(&idx) {
-                self.proofs.free_indices.push(idx);
+            if !self.marked_proofs.contains(&idx) && !self.proofs.is_free(idx) {
+                self.proofs.mark_free(idx);
                 freed_bytes += std::mem::size_of::<ProofObject>();
                 self.proofs.data[i] = ProofObject {
                     proof_json: String::new(),
@@ -520,7 +554,7 @@ impl Heap {
         self.bytes_allocated +=
             f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
         self.check_gc();
-        if let Some(idx) = self.functions.free_indices.pop() {
+        if let Some(idx) = self.functions.reclaim_free() {
             self.functions.data[idx as usize] = f;
             idx
         } else {
@@ -536,13 +570,13 @@ impl Heap {
 
     pub fn import_strings(&mut self, strings: Vec<String>) {
         self.strings.data = strings;
-        self.strings.free_indices.clear();
+        self.strings.clear_free();
     }
 
     pub fn alloc_iterator(&mut self, iter: IteratorObj) -> u32 {
         self.bytes_allocated += std::mem::size_of::<IteratorObj>();
         self.check_gc();
-        if let Some(idx) = self.iterators.free_indices.pop() {
+        if let Some(idx) = self.iterators.reclaim_free() {
             self.iterators.data[idx as usize] = iter;
             idx
         } else {
@@ -563,7 +597,7 @@ impl Heap {
     pub fn alloc_field(&mut self, fe: FieldElement) -> u32 {
         self.bytes_allocated += std::mem::size_of::<FieldElement>(); // 32 bytes
         self.check_gc();
-        if let Some(idx) = self.fields.free_indices.pop() {
+        if let Some(idx) = self.fields.reclaim_free() {
             self.fields.data[idx as usize] = fe;
             idx
         } else {
@@ -583,7 +617,7 @@ impl Heap {
             + p.public_json.capacity()
             + p.vkey_json.capacity();
         self.check_gc();
-        if let Some(idx) = self.proofs.free_indices.pop() {
+        if let Some(idx) = self.proofs.reclaim_free() {
             self.proofs.data[idx as usize] = p;
             idx
         } else {

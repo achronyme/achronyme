@@ -19,7 +19,7 @@ fn test_gc_alloc_reuse_string() {
     heap.sweep();
 
     // Check internal state: free_indices should have idx1
-    assert!(heap.strings.free_indices.contains(&idx1));
+    assert!(heap.strings.is_free(idx1));
 
     // Alloc new string, should reuse idx1
     let s2 = "World".to_string();
@@ -58,13 +58,13 @@ fn test_gc_cycle_collection() {
     heap.sweep();
 
     // After sweep (with valid roots), they should still be alive (not in free list).
-    assert!(!heap.lists.free_indices.contains(&a_idx));
-    assert!(!heap.lists.free_indices.contains(&b_idx));
+    assert!(!heap.lists.is_free(a_idx));
+    assert!(!heap.lists.is_free(b_idx));
 
     // Case 2: No roots. Cycle should be collected.
     heap.trace(vec![]); // No roots
     heap.sweep();
 
-    assert!(heap.lists.free_indices.contains(&a_idx));
-    assert!(heap.lists.free_indices.contains(&b_idx));
+    assert!(heap.lists.is_free(a_idx));
+    assert!(heap.lists.is_free(b_idx));
 }
