@@ -79,8 +79,12 @@ impl Expression {
         match self {
             Expression::Constant(val) => *val,
             Expression::Cell(col, rotation) => {
-                let actual_row = (row as i64 + *rotation as i64) as usize;
-                assignments.get(*col, actual_row)
+                let actual = row as i64 + *rotation as i64;
+                if actual < 0 || actual as usize >= assignments.num_rows {
+                    FieldElement::ZERO
+                } else {
+                    assignments.get(*col, actual as usize)
+                }
             }
             Expression::Neg(inner) => inner.evaluate(assignments, row).neg(),
             Expression::Sum(a, b) => {

@@ -15,23 +15,23 @@
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 10 | 0 | 0 | 10 |
-| constraints | 7 | 0 | 2 | 9 |
+| constraints | 6 | 1 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **52** | **27 (+1)** | **13** | **93** |
+| **TOTAL** | **51** | **28 (+1)** | **13** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
-| CRITICAL | 4 |
+| CRITICAL | 3 |
 | HIGH | 10 |
 | MEDIUM | 16 |
 | LOW | 22 |
 
 ---
 
-## Resolved Findings (28)
+## Resolved Findings (29)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -62,6 +62,7 @@
 | M-12 | LOW | memory | GC threshold thrashing → `max(2× live, 1.5× prev, 1MB)` hysteresis | `a27e0c7` |
 | L-01 | CRITICAL | cli | Hardcoded entropy in trusted setup → `getrandom` 32-byte OS randomness | `3362252` |
 | L-02 | CRITICAL | cli | Weak DefaultHasher cache key → SHA-256 collision-resistant hash | `512c3e0` |
+| X-01 | CRITICAL | constraints | Plonkish rotation integer underflow → bounds check before access | `PENDING` |
 | C-01 | HIGH | compiler | O(n) power-of-two → `LazyLock` lookup table [FieldElement; 253] | `1b0c3e0` |
 
 ## False Positives & Confirmed Sound (13)
@@ -336,22 +337,7 @@ Single file with all lowering logic. Consider splitting into `lower_atoms.rs`, `
 
 ---
 
-### Constraints Crate (7 open)
-
-#### X-01 — Plonkish Rotation Integer Underflow [CRITICAL]
-
-**File**: `constraints/src/plonkish.rs` (lines 81-83)
-**Category**: Soundness
-
-```rust
-let actual_row = (row as i64 + *rotation as i64) as usize;
-```
-
-When `rotation` is negative and `|rotation| > row`, the result wraps to a huge `usize` (e.g., row=0, rotation=-1 becomes usize::MAX). The assignments table returns `FieldElement::ZERO` for out-of-bounds access, allowing a malicious prover to satisfy gates using uninitialized cells.
-
-**Fix**: Check `actual_row >= 0 && actual_row < num_rows` before accessing assignments.
-
----
+### Constraints Crate (6 open)
 
 #### X-02 — LC::evaluate() Unchecked Array Index [CRITICAL]
 
