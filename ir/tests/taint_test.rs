@@ -227,3 +227,51 @@ fn taint_not_unconstrained() {
     assert_eq!(warnings.len(), 1, "!a without constraint should warn");
     assert!(matches!(&warnings[0], TaintWarning::UnderConstrained { name, .. } if name == "a"));
 }
+
+// ============================================================================
+// M8: Sub-self and Div-self taint
+// ============================================================================
+
+#[test]
+fn taint_sub_self_is_constant() {
+    // witness w; let r = w - w → taint of r should be Constant
+    let p = prog(
+        vec![
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "w".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Sub {
+                result: SsaVar(1),
+                lhs: SsaVar(0),
+                rhs: SsaVar(0),
+            },
+        ],
+        2,
+    );
+    let (taints, _) = taint_analysis(&p);
+    assert_eq!(taints[&SsaVar(1)], Taint::Constant);
+}
+
+#[test]
+fn taint_div_self_is_constant() {
+    // witness w; let r = w / w → taint of r should be Constant
+    let p = prog(
+        vec![
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "w".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Div {
+                result: SsaVar(1),
+                lhs: SsaVar(0),
+                rhs: SsaVar(0),
+            },
+        ],
+        2,
+    );
+    let (taints, _) = taint_analysis(&p);
+    assert_eq!(taints[&SsaVar(1)], Taint::Constant);
+}

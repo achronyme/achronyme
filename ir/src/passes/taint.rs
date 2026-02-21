@@ -94,12 +94,30 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
                 inputs.push((*result, name.clone(), *visibility));
             }
             Instruction::Add { result, lhs, rhs }
-            | Instruction::Sub { result, lhs, rhs }
-            | Instruction::Mul { result, lhs, rhs }
-            | Instruction::Div { result, lhs, rhs } => {
+            | Instruction::Mul { result, lhs, rhs } => {
                 used_vars.insert(*lhs);
                 used_vars.insert(*rhs);
                 let t = taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs));
+                taints.insert(*result, t);
+            }
+            Instruction::Sub { result, lhs, rhs } => {
+                used_vars.insert(*lhs);
+                used_vars.insert(*rhs);
+                let t = if lhs == rhs {
+                    Taint::Constant
+                } else {
+                    taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs))
+                };
+                taints.insert(*result, t);
+            }
+            Instruction::Div { result, lhs, rhs } => {
+                used_vars.insert(*lhs);
+                used_vars.insert(*rhs);
+                let t = if lhs == rhs {
+                    Taint::Constant
+                } else {
+                    taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs))
+                };
                 taints.insert(*result, t);
             }
             Instruction::Neg { result, operand } => {

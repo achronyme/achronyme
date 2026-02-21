@@ -840,3 +840,83 @@ fn dce_keeps_assert() {
     // Assert has side effects — never removed
     assert_eq!(p.instructions.len(), 2);
 }
+
+// ============================================================================
+// M8: Sub-self and Div-self folding
+// ============================================================================
+
+#[test]
+fn const_fold_sub_self_is_zero() {
+    // Input(w) → Sub(w, w) → should fold to Const(0)
+    let mut p = IrProgram::new();
+    let w = p.fresh_var();
+    p.push(Instruction::Input {
+        result: w,
+        name: "w".into(),
+        visibility: ir::Visibility::Witness,
+    });
+    let r = p.fresh_var();
+    p.push(Instruction::Sub {
+        result: r,
+        lhs: w,
+        rhs: w,
+    });
+
+    const_fold::constant_fold(&mut p);
+
+    if let Instruction::Const { value, .. } = &p.instructions[1] {
+        assert_eq!(*value, FieldElement::ZERO);
+    } else {
+        panic!("expected Const(0) after folding Sub(w,w), got {:?}", p.instructions[1]);
+    }
+}
+
+#[test]
+fn const_fold_div_self_constant_is_one() {
+    // Const(5) → Div(c, c) → should fold to Const(1)
+    let mut p = IrProgram::new();
+    let c = p.fresh_var();
+    p.push(Instruction::Const {
+        result: c,
+        value: FieldElement::from_u64(5),
+    });
+    let r = p.fresh_var();
+    p.push(Instruction::Div {
+        result: r,
+        lhs: c,
+        rhs: c,
+    });
+
+    const_fold::constant_fold(&mut p);
+
+    if let Instruction::Const { value, .. } = &p.instructions[1] {
+        assert_eq!(*value, FieldElement::ONE);
+    } else {
+        panic!("expected Const(1) after folding Div(c,c), got {:?}", p.instructions[1]);
+    }
+}
+
+#[test]
+fn const_fold_div_self_witness_not_folded() {
+    // Input(w) → Div(w, w) → should NOT fold (preserve w != 0 enforcement)
+    let mut p = IrProgram::new();
+    let w = p.fresh_var();
+    p.push(Instruction::Input {
+        result: w,
+        name: "w".into(),
+        visibility: ir::Visibility::Witness,
+    });
+    let r = p.fresh_var();
+    p.push(Instruction::Div {
+        result: r,
+        lhs: w,
+        rhs: w,
+    });
+
+    const_fold::constant_fold(&mut p);
+
+    assert!(
+        matches!(&p.instructions[1], Instruction::Div { .. }),
+        "Div(w,w) for witness should NOT be folded, got {:?}", p.instructions[1]
+    );
+}
