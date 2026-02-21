@@ -114,8 +114,17 @@ fn subtract_modulus_if_needed(limbs: &mut [u64; 4]) {
 // Montgomery multiplication (CIOS — Coarsely Integrated Operand Scanning)
 // ============================================================================
 
-/// Montgomery reduction: given T (8 limbs), compute T * R^{-1} mod p
-/// Unrolled with carry2 propagation between iterations (bellman/ff pattern)
+/// Montgomery reduction: given T (8 limbs), compute T · R⁻¹ mod p.
+///
+/// Algorithm: CIOS (Coarsely Integrated Operand Scanning) variant of
+/// Montgomery reduction from [Çetin K. Koç, Tolga Acar, Burton S. Kaliski Jr.,
+/// "Analyzing and Comparing Montgomery Multiplication Algorithms", IEEE Micro,
+/// vol. 16, no. 3, pp. 26-33, June 1996]. Implementation follows the
+/// bellman/ff crate pattern (zcash/ff, commit 0.13+).
+///
+/// Each iteration computes k = rᵢ · (-p⁻¹) mod 2⁶⁴, then adds k·p to shift
+/// out one limb. After 4 iterations the lower 256 bits are zero and the upper
+/// 4 limbs hold the result, which is conditionally reduced mod p.
 fn montgomery_reduce(t: &[u64; 8]) -> [u64; 4] {
     let (r0, mut r1, mut r2, mut r3) = (t[0], t[1], t[2], t[3]);
     let (mut r4, mut r5, mut r6, mut r7) = (t[4], t[5], t[6], t[7]);
@@ -775,6 +784,28 @@ mod tests {
             "6350874878119819312338956282401532411889292131244146174820061504761160007678",
         ).unwrap();
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_montgomery_reduce_reference() {
+        // Reference: montgomery_reduce(T) = T · R⁻¹ mod p
+        // T = R (padded to 8 limbs) → result should be 1 (canonical)
+        assert_eq!(
+            montgomery_reduce(&[R[0], R[1], R[2], R[3], 0, 0, 0, 0]),
+            [1, 0, 0, 0],
+            "reduce(R) must be 1"
+        );
+        // T = R² (padded) → result should be R (Montgomery form of 1·R)
+        let r2_wide = mul_wide(&R, &R);
+        assert_eq!(
+            montgomery_reduce(&r2_wide),
+            R,
+            "reduce(R²) must be R"
+        );
+        // Cross-check: mul(a, R²) then reduce must yield a·R mod p (to_montgomery)
+        // from_u64(42) uses this path internally; verify roundtrip
+        let fe42 = FieldElement::from_u64(42);
+        assert_eq!(fe42.to_canonical()[0], 42);
     }
 
     #[test]

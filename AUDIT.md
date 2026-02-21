@@ -11,14 +11,14 @@
 
 | Crate | Open | Resolved | False Positive | Total |
 |-------|------|----------|----------------|-------|
-| memory | 3 | 11 (+1 partial) | 0 | 15 |
+| memory | 2 | 12 (+1 partial) | 0 | 15 |
 | vm | 1 | 13 | 6 | 20 |
 | compiler | 8 | 1 | 0 | 9 |
 | ir | 8 | 2 | 0 | 10 |
 | constraints | 5 | 2 | 2 | 9 |
 | cli | 11 | 2 | 0 | 13 |
 | parser | 12 | 0 | 5 | 17 |
-| **TOTAL** | **48** | **31 (+1)** | **13** | **93** |
+| **TOTAL** | **47** | **32 (+1)** | **13** | **93** |
 
 ### Open by severity
 
@@ -27,11 +27,11 @@
 | CRITICAL | 0 |
 | HIGH | 10 |
 | MEDIUM | 16 |
-| LOW | 22 |
+| LOW | 21 |
 
 ---
 
-## Resolved Findings (32)
+## Resolved Findings (33)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -67,6 +67,7 @@
 | I-01 | CRITICAL | ir | Mux evaluator `== ONE` → validate boolean + `!is_zero()`, `NonBooleanMuxCondition` error | `fcd99ef` |
 | I-02 | CRITICAL | ir | Function body reparse `unwrap()` → `.ok_or_else()` error handling | `fcd99ef` |
 | X-02 | CRITICAL | constraints | `LC::evaluate()` unchecked index → `.get()` with descriptive panic | `fcd99ef` |
+| M-13 | LOW | memory | Montgomery reduction citation + reference test vectors | `PENDING` |
 
 ## False Positives & Confirmed Sound (13)
 
@@ -90,18 +91,7 @@
 
 ## Open Findings
 
-### Memory Crate (3 open)
-
-#### M-13 — Montgomery Reduction Documentation [LOW]
-
-**File**: `memory/src/field.rs` (lines 119-159)
-**Category**: Documentation
-
-The Montgomery reduction is correct (from bellman/ff) but has no citation or proof sketch in comments. A single carry bug would corrupt all field arithmetic silently.
-
-**Fix**: Add algorithm citation and reference test vectors.
-
----
+### Memory Crate (2 open)
 
 #### M-14 — Field Inverse via Exponentiation [LOW]
 
