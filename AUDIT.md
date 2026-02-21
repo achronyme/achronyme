@@ -187,47 +187,47 @@ All NaN variants are mapped to `f64::NAN.to_bits()`. This is correct — Rust gu
 
 ## VM Crate (20 findings)
 
-### V-01 — get_reg/set_reg Without Bounds Check [CRITICAL]
+### V-01 — get_reg/set_reg Without Bounds Check [CRITICAL] [RESOLVED `dafb313`]
 
 **File**: `vm/src/machine/stack.rs` (lines 12-17)
 **Category**: Memory Safety
 
 `self.stack[base + reg]` indexes without bounds checking. Crafted bytecode with arbitrary base/reg values can read/write arbitrary stack positions.
 
-**Fix**: Add `if base + reg >= self.stack.len() { return Err(StackOverflow) }`.
+**Fix**: Changed `get_reg`/`set_reg` to use `.get()`/`.get_mut()` with `ok_or(StackOverflow)`. Updated 58 call sites across 7 files.
 
 ---
 
-### V-02 — Return Writes to Unchecked dest_reg [CRITICAL]
+### V-02 — Return Writes to Unchecked dest_reg [CRITICAL] [RESOLVED `79f1aa0`]
 
 **File**: `vm/src/machine/control.rs` (line 109)
 **Category**: Memory Safety
 
 `self.set_reg(0, frame.dest_reg, ret_val)` uses absolute addressing (base=0). If `dest_reg >= STACK_MAX`, the write is OOB. `dest_reg` is computed from `base + a` during Call without upper bound validation.
 
-**Fix**: Validate `frame.dest_reg < self.stack.len()` before Return write.
+**Fix**: Added `base.checked_add(a).filter(|&d| d < STACK_MAX)` validation at Call time.
 
 ---
 
-### V-03 — ForIter Mutation-During-Iteration [CRITICAL]
+### V-03 — ForIter Mutation-During-Iteration [CRITICAL] [RESOLVED `40965a1`]
 
 **File**: `vm/src/machine/vm.rs` (lines 481-524)
 **Category**: Memory Safety
 
 Iterator captures list handle at creation, then accesses `heap.get_list(handle)` each iteration. If the list is mutated (push/pop) during iteration, the iterator reads stale length/indices. Can cause OOB access or UAF.
 
-**Fix**: Snapshot list contents at iterator creation, or detect mutation and error.
+**Fix**: GetIter now clones list contents into a new heap-allocated snapshot at iterator creation.
 
 ---
 
-### V-04 — GetIter Map Allocation During Borrow [CRITICAL]
+### V-04 — GetIter Map Allocation During Borrow [CRITICAL] [FALSE POSITIVE]
 
 **File**: `vm/src/machine/vm.rs` (lines 449-471)
 **Category**: Memory Safety
 
 Code holds a reference to a map via `get_map(handle)`, then calls `alloc_string()` inside the same scope. Allocation may trigger GC, which can reallocate the map arena, invalidating the reference.
 
-**Fix**: Collect map keys first (ending the borrow), then allocate strings.
+**Analysis**: False positive — the existing code already collects map keys in an inner block (`{ let map = ...; keys.collect() }`) ending the borrow before any allocations. GC only sets `request_gc` flag during allocation, never runs inline.
 
 ---
 
@@ -1055,15 +1055,15 @@ No operator precedence table, associativity rules, or escape sequence reference 
 
 1. **L-01** — Replace hardcoded entropy with cryptographic RNG
 2. **L-02** — Replace DefaultHasher with SHA-256 for cache keys
-3. **V-01** — Add bounds checking to get_reg/set_reg
-4. **V-02** — Validate dest_reg before Return write
+3. ~~**V-01** — Add bounds checking to get_reg/set_reg~~ [RESOLVED `dafb313`]
+4. ~~**V-02** — Validate dest_reg before Return write~~ [RESOLVED `79f1aa0`]
 5. **I-01** — Fix Mux evaluator semantics
 6. **X-01** — Fix Plonkish rotation underflow
 
 ### High Priority (Safety)
 
-7. **V-03** — Fix ForIter mutation-during-iteration
-8. **V-04** — Fix GetIter GC-during-borrow
+7. ~~**V-03** — Fix ForIter mutation-during-iteration~~ [RESOLVED `40965a1`]
+8. ~~**V-04** — Fix GetIter GC-during-borrow~~ [FALSE POSITIVE]
 9. **V-05/V-06** — Fix upvalue pointer unsoundness
 10. **L-03/L-04** — Validate cache files, fix TOCTOU
 11. **P-06** — Fix power operator associativity

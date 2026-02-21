@@ -453,8 +453,9 @@ impl VM {
                              let snap_handle = self.heap.alloc_list(snapshot);
                              memory::IteratorObj { source: Value::list(snap_handle), index: 0 }
                         } else if val.is_map() {
-                             // TODO: FIXME CRITICAL: This is O(N) allocation. Replace with native iterator.
-                             // Convert Map keys to List
+                             // Convert Map keys to a snapshot list.
+                             // Keys are collected in an inner block to end the map
+                             // borrow before any heap allocations.
                              let handle = val.as_handle().unwrap();
                              let map_keys: Vec<String> = {
                                  let map = self.heap.get_map(handle).ok_or(RuntimeError::SystemError("Map missing".into()))?;
