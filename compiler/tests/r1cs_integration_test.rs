@@ -1,15 +1,19 @@
 use compiler::r1cs_backend::R1CSCompiler;
+use ir::IrLowering;
 use memory::FieldElement;
 
 #[test]
 fn test_r1cs_integration_simple_multiply() {
     // Circuit: prove a * b == c
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("c");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
+    let program = IrLowering::lower_circuit(
+        "let product = a * b; assert_eq(product, c)",
+        &["c"],
+        &["a", "b"],
+    )
+    .unwrap();
 
-    rc.compile_circuit("let product = a * b; assert_eq(product, c)").unwrap();
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
 
     // a * b generates 1 constraint (product wire), assert_eq generates 1
     assert_eq!(rc.cs.num_constraints(), 2);
@@ -38,12 +42,15 @@ fn test_r1cs_integration_simple_multiply() {
 #[test]
 fn test_r1cs_integration_quadratic() {
     // Circuit: prove x^2 + x + 5 == out
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("x");
+    let program = IrLowering::lower_circuit(
+        "let result = x ^ 2 + x + 5; assert_eq(result, out)",
+        &["out"],
+        &["x"],
+    )
+    .unwrap();
 
-    rc.compile_circuit("let result = x ^ 2 + x + 5; assert_eq(result, out)")
-        .unwrap();
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
 
     // x^2 = 1 constraint, assert_eq = 1 constraint
     assert_eq!(rc.cs.num_constraints(), 2);
@@ -70,12 +77,15 @@ fn test_r1cs_integration_quadratic() {
 #[test]
 fn test_r1cs_integration_scalar_operations() {
     // Circuit: prove 3*a + 2*b == out (0 mul constraints, 1 assert_eq)
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
+    let program = IrLowering::lower_circuit(
+        "assert_eq(3 * a + 2 * b, out)",
+        &["out"],
+        &["a", "b"],
+    )
+    .unwrap();
 
-    rc.compile_circuit("assert_eq(3 * a + 2 * b, out)").unwrap();
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
 
     // Only the assert_eq generates a constraint
     assert_eq!(rc.cs.num_constraints(), 1);
@@ -93,13 +103,15 @@ fn test_r1cs_integration_scalar_operations() {
 #[test]
 fn test_r1cs_integration_let_chain() {
     // Circuit: let x2 = x * x; let x3 = x2 * x; assert_eq(x3, out)
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("x");
+    let program = IrLowering::lower_circuit(
+        "let x2 = x * x; let x3 = x2 * x; assert_eq(x3, out)",
+        &["out"],
+        &["x"],
+    )
+    .unwrap();
 
-    rc.compile_circuit(
-        "let x2 = x * x; let x3 = x2 * x; assert_eq(x3, out)"
-    ).unwrap();
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
 
     // x*x = 1 constraint, x2*x = 1 constraint, assert_eq = 1 constraint
     assert_eq!(rc.cs.num_constraints(), 3);

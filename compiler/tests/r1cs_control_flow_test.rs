@@ -1,6 +1,49 @@
+use std::collections::HashMap;
+
 use compiler::r1cs_backend::R1CSCompiler;
-use compiler::r1cs_error::R1CSError;
+use compiler::witness_gen::WitnessGenerator;
+use ir::IrError;
+use ir::IrLowering;
 use memory::FieldElement;
+
+/// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
+/// Returns the R1CSCompiler so tests can inspect constraint counts etc.
+fn ir_compile(source: &str, public: &[&str], witness: &[&str]) -> Result<R1CSCompiler, String> {
+    let mut prog = IrLowering::lower_circuit(source, public, witness)
+        .map_err(|e| format!("IR: {e}"))?;
+    ir::passes::optimize(&mut prog);
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&prog).map_err(|e| format!("R1CS: {e}"))?;
+    Ok(rc)
+}
+
+/// Helper: compile source through the IR pipeline with concrete inputs,
+/// generating and verifying the witness automatically.
+fn ir_compile_and_verify(
+    source: &str,
+    public: &[(&str, u64)],
+    witness: &[(&str, u64)],
+) {
+    let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
+    let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
+
+    let mut prog = IrLowering::lower_circuit(source, &pub_names, &wit_names)
+        .expect("IR lowering failed");
+    ir::passes::optimize(&mut prog);
+
+    let mut inputs = HashMap::new();
+    for (name, val) in public.iter().chain(witness.iter()) {
+        inputs.insert(name.to_string(), FieldElement::from_u64(*val));
+    }
+
+    let mut rc = R1CSCompiler::new();
+    let w = rc
+        .compile_ir_with_witness(&prog, &inputs)
+        .expect("compile_ir_with_witness failed");
+    rc.cs
+        .verify(&w)
+        .expect("witness verification failed");
+}
 
 // ====================================================================
 // For unrolling tests
@@ -9,30 +52,24 @@ use memory::FieldElement;
 #[test]
 fn test_for_static_range_constraint_count() {
     // for i in 0..3 { let step = a * a } -> 3 mul constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    rc.compile_circuit("for i in 0..3 { let step = a * a }").unwrap();
+    let rc = ir_compile("for i in 0..3 { let step = a * a }", &[], &["a"]).unwrap();
     assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]
 fn test_for_empty_range() {
     // for i in 0..0 { ... } -> 0 iterations, 0 constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    rc.compile_circuit("for i in 0..0 { let step = a * a }").unwrap();
+    let rc = ir_compile("for i in 0..0 { let step = a * a }", &[], &["a"]).unwrap();
     assert_eq!(rc.cs.num_constraints(), 0);
 }
 
 #[test]
 fn test_for_iterator_as_constant() {
     // for i in 0..3 { let x = a * i }
-    // i=0: a*0 = constant mul -> 0 constraints
-    // i=1: a*1 = scalar mul -> 0 constraints
-    // i=2: a*2 = scalar mul -> 0 constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    rc.compile_circuit("for i in 0..3 { let x = a * i }").unwrap();
+    // i=0: a*0 -> const_fold → Const(0), no constraint
+    // i=1: a*1 -> multiply_lcs sees constant 1, scalar mul → 0 constraints
+    // i=2: a*2 -> multiply_lcs sees constant 2, scalar mul → 0 constraints
+    let rc = ir_compile("for i in 0..3 { let x = a * i }", &[], &["a"]).unwrap();
     assert_eq!(rc.cs.num_constraints(), 0, "multiplying by constant iterator should be free");
 }
 
@@ -40,52 +77,38 @@ fn test_for_iterator_as_constant() {
 fn test_for_nested() {
     // Nested for: outer 0..2, inner 0..3, body = a * a (1 constraint)
     // Total: 2 * 3 * 1 = 6 constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    rc.compile_circuit(
-        "for i in 0..2 { for j in 0..3 { let step = a * a } }"
+    let rc = ir_compile(
+        "for i in 0..2 { for j in 0..3 { let step = a * a } }",
+        &[],
+        &["a"],
     ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 6);
 }
 
 #[test]
 fn test_for_integration_with_witness() {
-    // Circuit: accumulate a * a three times, assert result
-    // for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-
-    rc.compile_circuit(
-        "for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)"
-    ).unwrap();
-
+    // Circuit: for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)
     // 3 mul inside loop + 1 mul for final a*b + 1 assert_eq = 5
+    let rc = ir_compile(
+        "for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)",
+        &["out"],
+        &["a", "b"],
+    ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 5);
 
-    // a=3, b=7: a*b = 21
-    // Wire layout: ONE, out, a, b, prod_0, prod_1, prod_2, final_prod
-    let witness = vec![
-        FieldElement::ONE,
-        FieldElement::from_u64(21), // out (public)
-        FieldElement::from_u64(3),  // a
-        FieldElement::from_u64(7),  // b
-        FieldElement::from_u64(21), // prod (iter 0)
-        FieldElement::from_u64(21), // prod (iter 1)
-        FieldElement::from_u64(21), // prod (iter 2)
-        FieldElement::from_u64(21), // final a*b
-    ];
-    assert!(rc.cs.verify(&witness).is_ok());
+    // Verify with concrete inputs: a=3, b=7, out=a*b=21
+    ir_compile_and_verify(
+        "for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)",
+        &[("out", 21)],
+        &[("a", 3), ("b", 7)],
+    );
 }
 
 #[test]
 fn test_for_non_literal_rejected() {
-    // for i in expr (not a range) -> error
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    let err = rc.compile_circuit("for i in a { let x = 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
+    // for i in expr (not a range and not an array) -> error from IR lowering
+    let err = IrLowering::lower_circuit("for i in a { let x = 1 }", &[], &["a"]).unwrap_err();
+    assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 
 // ====================================================================
@@ -95,121 +118,99 @@ fn test_for_non_literal_rejected() {
 #[test]
 fn test_if_else_two_constraints() {
     // if flag { a } else { b } -> 1 boolean check + 1 MUX mul = 2 constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.compile_circuit("if flag { a } else { b }").unwrap();
+    let rc = ir_compile(
+        "if flag { a } else { b }",
+        &[],
+        &["flag", "a", "b"],
+    ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 2);
 }
 
 #[test]
 fn test_if_without_else() {
     // if flag { a } -> else defaults to 0, still 2 constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.compile_circuit("if flag { a }").unwrap();
+    let rc = ir_compile("if flag { a }", &[], &["flag", "a"]).unwrap();
     assert_eq!(rc.cs.num_constraints(), 2);
 }
 
 #[test]
 fn test_if_else_integration_flag_one() {
-    // if flag { a } else { b } with flag=1 -> result should be a
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
+    // if flag { a } else { b } with flag=1 -> result should be a = 42
+    let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
 
-    rc.compile_circuit("let result = if flag { a } else { b }; assert_eq(result, out)")
-        .unwrap();
-
+    let rc = ir_compile(source, &["out"], &["flag", "a", "b"]).unwrap();
     // 2 (if/mux) + 1 (assert_eq) = 3
     assert_eq!(rc.cs.num_constraints(), 3);
 
     // flag=1, a=42, b=99 -> result = a = 42
-    // Wire layout: ONE, out, flag, a, b, mux_product (flag*(a-b))
-    let a_val = FieldElement::from_u64(42);
-    let b_val = FieldElement::from_u64(99);
-    let diff = a_val.sub(&b_val); // a - b
-    let witness = vec![
-        FieldElement::ONE,
-        a_val,                     // out = 42 (selected a)
-        FieldElement::ONE,         // flag = 1
-        a_val,                     // a = 42
-        b_val,                     // b = 99
-        diff,                      // flag * (a - b) = 1 * (42 - 99)
-    ];
-    assert!(rc.cs.verify(&witness).is_ok());
+    ir_compile_and_verify(
+        source,
+        &[("out", 42)],
+        &[("flag", 1), ("a", 42), ("b", 99)],
+    );
 }
 
 #[test]
 fn test_if_else_integration_flag_zero() {
-    // if flag { a } else { b } with flag=0 -> result should be b
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-
-    rc.compile_circuit("let result = if flag { a } else { b }; assert_eq(result, out)")
-        .unwrap();
+    // if flag { a } else { b } with flag=0 -> result should be b = 99
+    let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
 
     // flag=0, a=42, b=99 -> result = b = 99
-    let witness = vec![
-        FieldElement::ONE,
-        FieldElement::from_u64(99), // out = 99 (selected b)
-        FieldElement::ZERO,         // flag = 0
-        FieldElement::from_u64(42), // a
-        FieldElement::from_u64(99), // b
-        FieldElement::ZERO,         // flag * (a - b) = 0
-    ];
-    assert!(rc.cs.verify(&witness).is_ok());
+    ir_compile_and_verify(
+        source,
+        &[("out", 99)],
+        &[("flag", 0), ("a", 42), ("b", 99)],
+    );
 }
 
 #[test]
 fn test_if_else_boolean_enforcement() {
-    // if flag { a } else { b } with flag=2 -> boolean check fails
+    // if flag { a } else { b } with flag=2 -> boolean check should fail
+    //
+    // We compile the circuit without the IR evaluator (which would reject
+    // flag=2 at evaluation time), then generate the witness with a malicious
+    // flag=2 value to verify the constraint system catches it.
+    let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
+
+    let mut prog = IrLowering::lower_circuit(source, &["out"], &["flag", "a", "b"]).unwrap();
+    ir::passes::optimize(&mut prog);
+
+    // Compile constraints only (no evaluation)
     let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
+    rc.compile_ir(&prog).unwrap();
 
-    rc.compile_circuit("let result = if flag { a } else { b }; assert_eq(result, out)")
-        .unwrap();
-
-    // flag=2 violates cond*(1-cond)=0: 2*(1-2) = 2*(-1) = -2 != 0
+    // Generate witness with flag=2 (invalid boolean)
     let a_val = FieldElement::from_u64(42);
     let b_val = FieldElement::from_u64(99);
     let flag_val = FieldElement::from_u64(2);
+    // result = flag * (a - b) + b = 2 * (42 - 99) + 99 = 2*(-57) + 99 = -15
     let diff = a_val.sub(&b_val);
-    let mux_prod = flag_val.mul(&diff); // 2 * (42-99)
-    // result = mux_prod + b
+    let mux_prod = flag_val.mul(&diff);
     let result = mux_prod.add(&b_val);
-    let witness = vec![
-        FieldElement::ONE,
-        result,    // out
-        flag_val,  // flag = 2 (invalid!)
-        a_val,     // a
-        b_val,     // b
-        mux_prod,  // flag * (a - b)
-    ];
-    assert!(rc.cs.verify(&witness).is_err(), "flag=2 should fail boolean enforcement");
+
+    let mut inputs = HashMap::new();
+    inputs.insert("out".to_string(), result);
+    inputs.insert("flag".to_string(), flag_val);
+    inputs.insert("a".to_string(), a_val);
+    inputs.insert("b".to_string(), b_val);
+
+    let wg = WitnessGenerator::from_compiler(&rc);
+    let w = wg.generate(&inputs).unwrap();
+    assert!(
+        rc.cs.verify(&w).is_err(),
+        "flag=2 should fail boolean enforcement"
+    );
 }
 
 #[test]
 fn test_if_nested_mux() {
     // if c1 { a } else { if c2 { b } else { c } }
     // Outer: 2 constraints, inner: 2 constraints -> 4 total
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("c1");
-    rc.declare_witness("c2");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.declare_witness("c");
-    rc.compile_circuit("if c1 { a } else { if c2 { b } else { c } }").unwrap();
+    let rc = ir_compile(
+        "if c1 { a } else { if c2 { b } else { c } }",
+        &[],
+        &["c1", "c2", "a", "b", "c"],
+    ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 4);
 }
 
@@ -220,13 +221,11 @@ fn test_if_with_arithmetic_branches() {
     // c+d = 0 constraints (in else branch)
     // MUX = 2 constraints (boolean + mul)
     // Total = 3
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.declare_witness("c");
-    rc.declare_witness("d");
-    rc.compile_circuit("if flag { a * b } else { c + d }").unwrap();
+    let rc = ir_compile(
+        "if flag { a * b } else { c + d }",
+        &[],
+        &["flag", "a", "b", "c", "d"],
+    ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 3);
 }
 
@@ -235,14 +234,11 @@ fn test_if_else_if_chain() {
     // if c1 { a } else if c2 { b } else { c }
     // This parses as: if c1 { a } else { if c2 { b } else { c } }
     // Each if level = 2 constraints -> 4 total
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("c1");
-    rc.declare_witness("c2");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.declare_witness("c");
-    // pest grammar: "else" ~ (block | if_expr) -- "else if" matches as else + if_expr
-    rc.compile_circuit("if c1 { a } else if c2 { b } else { c }").unwrap();
+    let rc = ir_compile(
+        "if c1 { a } else if c2 { b } else { c }",
+        &[],
+        &["c1", "c2", "a", "b", "c"],
+    ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 4);
 }
 
@@ -252,32 +248,29 @@ fn test_if_else_if_chain() {
 
 #[test]
 fn test_while_rejected() {
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("x");
-    let err = rc.compile_circuit("while x { let a = 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnboundedLoop(..)));
+    let err = IrLowering::lower_circuit("while x { let a = 1 }", &[], &["x"]).unwrap_err();
+    assert!(matches!(err, IrError::UnboundedLoop(..)));
 }
 
 #[test]
 fn test_forever_rejected() {
-    let mut rc = R1CSCompiler::new();
-    let err = rc.compile_circuit("forever { let a = 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnboundedLoop(..)));
+    let err = IrLowering::lower_circuit("forever { let a = 1 }", &[], &[]).unwrap_err();
+    assert!(matches!(err, IrError::UnboundedLoop(..)));
 }
 
 #[test]
-fn test_fn_rejected() {
-    let mut rc = R1CSCompiler::new();
-    let err = rc.compile_circuit("fn foo() { 1 }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
+fn test_fn_declaration_accepted() {
+    // fn_decl is supported in the IR lowering path (it stores function definitions
+    // in the fn_table for inlining at call sites). This should succeed.
+    let rc = ir_compile("fn foo() { 1 }", &[], &[]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 0);
 }
 
 #[test]
 fn test_break_rejected() {
-    let mut rc = R1CSCompiler::new();
     // break inside a for loop -- still rejected in circuits
-    let err = rc.compile_circuit("for i in 0..3 { break }").unwrap_err();
-    assert!(matches!(err, R1CSError::UnsupportedOperation(..)));
+    let err = IrLowering::lower_circuit("for i in 0..3 { break }", &[], &[]).unwrap_err();
+    assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 
 // ====================================================================
@@ -289,12 +282,11 @@ fn test_for_with_if_inside() {
     // for i in 0..2 { if flag { a * b } else { c } }
     // Each iteration: 1 mul (a*b) + 2 MUX constraints = 3
     // 2 iterations -> 6 constraints
-    let mut rc = R1CSCompiler::new();
-    rc.declare_witness("flag");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.declare_witness("c");
-    rc.compile_circuit("for i in 0..2 { if flag { a * b } else { c } }").unwrap();
+    let rc = ir_compile(
+        "for i in 0..2 { if flag { a * b } else { c } }",
+        &[],
+        &["flag", "a", "b", "c"],
+    ).unwrap();
     assert_eq!(rc.cs.num_constraints(), 6);
 }
 
@@ -304,16 +296,12 @@ fn test_full_circuit_with_control_flow() {
     // for i in 0..2 { let step = x * x }
     // let result = if flag { x * x } else { x + 1 }
     // assert_eq(result, out)
-    let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("x");
-    rc.declare_witness("flag");
-
-    rc.compile_circuit(
+    let source =
         "for i in 0..2 { let step = x * x }; \
          let result = if flag { x * x } else { x + 1 }; \
-         assert_eq(result, out)"
-    ).unwrap();
+         assert_eq(result, out)";
+
+    let rc = ir_compile(source, &["out"], &["x", "flag"]).unwrap();
 
     // Loop: 2 * 1 = 2 constraints (x*x each iteration)
     // If: 1 (x*x in then) + 2 (boolean + MUX) = 3 constraints
@@ -322,40 +310,8 @@ fn test_full_circuit_with_control_flow() {
     assert_eq!(rc.cs.num_constraints(), 6);
 
     // flag=1, x=5: result = x*x = 25
-    // Wire layout: ONE, out, x, flag, step_0(25), step_1(25), then_mul(25), mux_prod
-    let x_val = FieldElement::from_u64(5);
-    let x_sq = FieldElement::from_u64(25);
-    // then branch = x*x = 25, else branch = x+1 = 6
-    // diff = then - else = 25 - 6 = 19
-    let else_val = x_val.add(&FieldElement::ONE); // 6
-    let diff = x_sq.sub(&else_val); // 19
-    let mux_prod = FieldElement::ONE.mul(&diff); // flag * diff = 1 * 19 = 19
-
-    let witness = vec![
-        FieldElement::ONE,    // ONE wire
-        x_sq,                 // out = 25
-        x_val,                // x = 5
-        FieldElement::ONE,    // flag = 1
-        x_sq,                 // step_0 = x*x = 25
-        x_sq,                 // step_1 = x*x = 25
-        x_sq,                 // then branch x*x = 25
-        mux_prod,             // flag * (then - else) = 19
-    ];
-    assert!(rc.cs.verify(&witness).is_ok());
+    ir_compile_and_verify(source, &[("out", 25)], &[("x", 5), ("flag", 1)]);
 
     // flag=0, x=5: result = x+1 = 6
-    let result_b = else_val; // 6
-    let mux_prod_0 = FieldElement::ZERO; // 0 * diff = 0
-
-    let witness_b = vec![
-        FieldElement::ONE,
-        result_b,              // out = 6
-        x_val,                 // x = 5
-        FieldElement::ZERO,    // flag = 0
-        x_sq,                  // step_0 = 25
-        x_sq,                  // step_1 = 25
-        x_sq,                  // then branch x*x = 25 (still computed)
-        mux_prod_0,            // flag * (then - else) = 0
-    ];
-    assert!(rc.cs.verify(&witness_b).is_ok());
+    ir_compile_and_verify(source, &[("out", 6)], &[("x", 5), ("flag", 0)]);
 }

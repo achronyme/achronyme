@@ -3,22 +3,21 @@ use std::collections::HashMap;
 use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::{WitnessError, WitnessGenerator};
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
+use ir::IrLowering;
 use memory::FieldElement;
 
-/// Helper: build compiler, declare vars, compile, generate witness, verify.
+/// Helper: build compiler via IR pipeline, generate witness, verify.
 fn compile_and_verify(
     public: &[(&str, u64)],
     witness: &[(&str, u64)],
     source: &str,
 ) {
+    let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
+    let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
+    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+
     let mut rc = R1CSCompiler::new();
-    for (name, _) in public {
-        rc.declare_public(name);
-    }
-    for (name, _) in witness {
-        rc.declare_witness(name);
-    }
-    rc.compile_circuit(source).unwrap();
+    rc.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&rc);
     let mut inputs = HashMap::new();
@@ -39,14 +38,12 @@ fn compile_and_verify_fe(
     witness: &[(&str, FieldElement)],
     source: &str,
 ) {
+    let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
+    let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
+    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+
     let mut rc = R1CSCompiler::new();
-    for (name, _) in public {
-        rc.declare_public(name);
-    }
-    for (name, _) in witness {
-        rc.declare_witness(name);
-    }
-    rc.compile_circuit(source).unwrap();
+    rc.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&rc);
     let mut inputs = HashMap::new();
@@ -83,11 +80,10 @@ fn test_simple_multiply_witness() {
 #[test]
 fn test_addition_no_ops() {
     // Circuit: 3*a + 2*b = out → all linear, 0 witness ops
+    let program = IrLowering::lower_circuit("assert_eq(3 * a + 2 * b, out)", &["out"], &["a", "b"]).unwrap();
+
     let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.compile_circuit("assert_eq(3 * a + 2 * b, out)").unwrap();
+    rc.compile_ir(&program).unwrap();
 
     assert_eq!(rc.witness_ops.len(), 0, "linear ops should produce 0 witness ops");
 
@@ -289,11 +285,10 @@ fn test_for_loop_unrolled_witness() {
 
 #[test]
 fn test_missing_input_error() {
+    let program = IrLowering::lower_circuit("assert_eq(a * b, out)", &["out"], &["a", "b"]).unwrap();
+
     let mut rc = R1CSCompiler::new();
-    rc.declare_public("out");
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.compile_circuit("assert_eq(a * b, out)").unwrap();
+    rc.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&rc);
 
@@ -317,16 +312,14 @@ fn test_missing_input_error() {
 #[test]
 fn test_witness_ops_count() {
     // a * b → 1 Multiply op
+    let program = IrLowering::lower_circuit("a * b", &[], &["a", "b"]).unwrap();
     let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.compile_circuit("a * b").unwrap();
+    rc.compile_ir(&program).unwrap();
     assert_eq!(rc.witness_ops.len(), 1);
 
     // a / b → 1 Inverse + 1 Multiply = 2 ops
+    let program = IrLowering::lower_circuit("a / b", &[], &["a", "b"]).unwrap();
     let mut rc = R1CSCompiler::new();
-    rc.declare_witness("a");
-    rc.declare_witness("b");
-    rc.compile_circuit("a / b").unwrap();
+    rc.compile_ir(&program).unwrap();
     assert_eq!(rc.witness_ops.len(), 2);
 }

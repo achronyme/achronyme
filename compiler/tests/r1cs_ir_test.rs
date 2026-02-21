@@ -5,8 +5,7 @@ use compiler::witness_gen::WitnessGenerator;
 use ir::IrLowering;
 use memory::FieldElement;
 
-/// Full pipeline: source → IR → (optimize) → R1CS → witness → verify.
-/// Also checks constraint count parity with the direct compile_circuit pipeline.
+/// Full pipeline: source → IR → R1CS → witness → verify.
 fn ir_pipeline_verify(
     public: &[(&str, u64)],
     witness: &[(&str, u64)],
@@ -30,32 +29,12 @@ fn ir_pipeline_verify_fe(
     witness: &[(&str, FieldElement)],
     source: &str,
 ) {
-    // --- Direct pipeline (reference) ---
-    let mut direct = R1CSCompiler::new();
-    for (name, _) in public {
-        direct.declare_public(name);
-    }
-    for (name, _) in witness {
-        direct.declare_witness(name);
-    }
-    direct.compile_circuit(source).unwrap();
-    let direct_constraints = direct.cs.num_constraints();
-
-    // --- IR pipeline ---
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
     let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
     let mut ir_compiler = R1CSCompiler::new();
     ir_compiler.compile_ir(&program).unwrap();
-
-    let ir_constraints = ir_compiler.cs.num_constraints();
-
-    // Constraint count parity
-    assert_eq!(
-        ir_constraints, direct_constraints,
-        "IR pipeline ({ir_constraints}) != direct pipeline ({direct_constraints}) constraint count"
-    );
 
     // Witness generation + verification
     let gen = WitnessGenerator::from_compiler(&ir_compiler);
@@ -74,7 +53,7 @@ fn ir_pipeline_verify_fe(
         .expect("IR pipeline witness failed verification");
 }
 
-/// IR-only pipeline (no direct compile_circuit comparison).
+/// IR-only pipeline (for features only supported via IR path).
 /// Used for features only supported via IR path (comparisons, etc.).
 fn ir_only_verify_fe(
     public: &[(&str, FieldElement)],

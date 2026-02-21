@@ -13,8 +13,6 @@ pub enum R1CSError {
     TypeNotConstrainable(String, Option<SourceSpan>),
     /// A loop without a statically-known bound (e.g. `forever`, `while`).
     UnboundedLoop(Option<SourceSpan>),
-    /// The input failed to parse as a valid Achronyme program.
-    ParseError(String),
     /// A builtin function was called with the wrong number of arguments.
     WrongArgumentCount {
         builtin: String,
@@ -56,9 +54,6 @@ impl fmt::Display for R1CSError {
                 } else {
                     write!(f, "unbounded loops are not allowed in circuits")
                 }
-            }
-            R1CSError::ParseError(msg) => {
-                write!(f, "parse error: {msg}")
             }
             R1CSError::WrongArgumentCount {
                 builtin,

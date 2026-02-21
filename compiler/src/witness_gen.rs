@@ -97,7 +97,7 @@ impl std::error::Error for WitnessError {}
 
 /// Generates the complete witness vector for a compiled R1CS circuit.
 ///
-/// After `R1CSCompiler::compile_circuit()`, call `WitnessGenerator::from_compiler()`
+/// After `R1CSCompiler::compile_ir()`, call `WitnessGenerator::from_compiler()`
 /// to capture the compilation trace. Then call `generate()` with concrete input
 /// values to produce a witness that satisfies `cs.verify()`.
 pub struct WitnessGenerator {
@@ -111,7 +111,7 @@ pub struct WitnessGenerator {
 impl WitnessGenerator {
     /// Build a `WitnessGenerator` from a compiled `R1CSCompiler`.
     ///
-    /// Must be called after `compile_circuit()` — captures the ops trace,
+    /// Must be called after `compile_ir()` — captures the ops trace,
     /// variable layout, and (if used) Poseidon parameters.
     pub fn from_compiler(compiler: &crate::r1cs_backend::R1CSCompiler) -> Self {
         let public_inputs: Vec<(String, Variable)> = compiler
