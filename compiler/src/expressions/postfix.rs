@@ -17,7 +17,7 @@ impl PostfixCompiler for Compiler {
         // Last item is always the expression (postfix_expr)
         let expr_pair = inner.pop().ok_or(CompilerError::UnexpectedRule("Empty prefix expr".into()))?;
         
-        let reg = self.compile_postfix(expr_pair)?;
+        let reg = self.compile_expr(expr_pair)?;
         
         // Iterating operators in reverse (innermost first)
         for op in inner.into_iter().rev() {
