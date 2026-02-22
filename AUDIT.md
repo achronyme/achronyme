@@ -15,10 +15,10 @@
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 0 | 5 | 5 | 10 |
-| constraints | 4 | 2 | 3 | 9 |
+| constraints | 3 | 2 | 4 | 9 |
 | cli | 6 | 2 | 5 | 13 |
 | parser | 10 | 1 | 6 | 17 |
-| **TOTAL** | **20** | **47 (+1)** | **25** | **93** |
+| **TOTAL** | **19** | **47 (+1)** | **26** | **93** |
 
 ### Open by severity
 
@@ -26,7 +26,7 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 2 |
-| MEDIUM | 9 |
+| MEDIUM | 8 |
 | LOW | 9 |
 
 ---
@@ -84,7 +84,7 @@
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
-## False Positives & Confirmed Sound (25)
+## False Positives & Confirmed Sound (26)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -113,23 +113,13 @@
 | I-08 | ir | By-design: arrays are data (must be non-empty for indexing), loops are control flow (zero iterations is valid unrolling) |
 | I-09 | ir | Obsolete after AST refactor: zero `Rule::` references remain in `lower.rs`; all pest matching replaced by typed AST `match` arms |
 | I-10 | ir | Obsolete after AST refactor: file reduced from 1600+ to 1316 lines; 10 precedence-layer methods collapsed into single `lower_expr` match on typed AST |
+| X-04 | constraints | Each `Lookup` has fixed `selector: Option`; mixing impossible per-instance. Compiler exclusively uses `register_lookup_with_selector`; legacy `register_lookup` only used in unit tests |
 
 ---
 
 ## Open Findings
 
-### Constraints Crate (4 open)
-
-#### X-04 — Selector vs Legacy Heuristic Mixing [MEDIUM]
-
-**File**: `constraints/src/plonkish.rs` (lines 394-411)
-**Category**: Correctness
-
-Two row-activation rules coexist: selector-based (skip if selector=0) and legacy (skip if all inputs=0). Registering the same lookup both with and without a selector can produce inconsistent verification.
-
-**Fix**: Document as undefined behavior, or enforce that all lookups for a name use the same activation mode.
-
----
+### Constraints Crate (3 open)
 
 #### X-05 — Export nPubOut Documentation [MEDIUM]
 
