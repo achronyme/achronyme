@@ -15,10 +15,10 @@
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 0 | 5 | 5 | 10 |
-| constraints | 3 | 2 | 4 | 9 |
+| constraints | 0 | 2 | 7 | 9 |
 | cli | 6 | 2 | 5 | 13 |
 | parser | 10 | 1 | 6 | 17 |
-| **TOTAL** | **19** | **47 (+1)** | **26** | **93** |
+| **TOTAL** | **16** | **47 (+1)** | **29** | **93** |
 
 ### Open by severity
 
@@ -26,8 +26,8 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 2 |
-| MEDIUM | 8 |
-| LOW | 9 |
+| MEDIUM | 7 |
+| LOW | 7 |
 
 ---
 
@@ -84,7 +84,7 @@
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
-## False Positives & Confirmed Sound (26)
+## False Positives & Confirmed Sound (29)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -114,45 +114,13 @@
 | I-09 | ir | Obsolete after AST refactor: zero `Rule::` references remain in `lower.rs`; all pest matching replaced by typed AST `match` arms |
 | I-10 | ir | Obsolete after AST refactor: file reduced from 1600+ to 1316 lines; 10 precedence-layer methods collapsed into single `lower_expr` match on typed AST |
 | X-04 | constraints | Each `Lookup` has fixed `selector: Option`; mixing impossible per-instance. Compiler exclusively uses `register_lookup_with_selector`; legacy `register_lookup` only used in unit tests |
+| X-05 | constraints | `nPubOut = 0` is correct and self-documenting; adding a doc comment for a single constant is unnecessary overhead |
+| X-07 | constraints | Test-only code; Rust's default OOB panic already includes index and length |
+| X-08 | constraints | Hardcoded compile-time hex literals that can never fail; wrapping in `Result` adds complexity with zero benefit |
 
 ---
 
 ## Open Findings
-
-### Constraints Crate (3 open)
-
-#### X-05 — Export nPubOut Documentation [MEDIUM]
-
-**File**: `constraints/src/export.rs` (lines 54-66)
-**Category**: Documentation
-
-`nPubOut = 0` is correct for Achronyme (no computed outputs), but the iden3 spec distinction between outputs and inputs is not documented. Could mislead someone extending the export.
-
-**Fix**: Add doc comment explaining the wire layout and why nPubOut is always 0.
-
----
-
-#### X-07 — WitnessBuilder No Bounds Check [LOW]
-
-**File**: `constraints/src/witness.rs` (lines 24-26)
-**Category**: Robustness
-
-`self.values[var.index()] = val` panics on OOB. Used only in test code, not public API.
-
-**Fix**: Add descriptive panic message with index and length.
-
----
-
-#### X-08 — Poseidon Hex Parsing Panics [LOW]
-
-**File**: `constraints/src/poseidon.rs` (lines 44-57)
-**Category**: Robustness
-
-`fe_from_hex()` uses `assert!` and `.unwrap()` for parsing hardcoded hex constants. In practice, these never fail since the constants are compile-time literals.
-
-**Fix**: Low priority. Optionally return `Result` for consistency.
-
----
 
 ### CLI Crate (6 open)
 
