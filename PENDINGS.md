@@ -3,14 +3,14 @@
 ## 1. Core Engine & Type System (High Priority)
 The immediate goal is to transition from a general-purpose scripting engine to a domain-specific runtime for Cryptography and Zero-Knowledge Proofs.
 
-- [ ] **Native Integer Support (No-Float Logic)**
+- [x] **Native Integer Support (No-Float Logic)**
     - *Context*: `f64` is unsuitable for crypto. We need precise integers.
     - [x] Implement `TAG_INT` (SMI) for small loop counters (utilizing the 50-bit payload).
-    - [ ] Implement `TAG_BIGINT` (Heap) for 256-bit+ field elements.
-    - [ ] Update `arithmetic.rs` to handle hybrid math (SMI + BigInt promotion).
+    - [x] ~~Implement `TAG_BIGINT` (Heap) for 256-bit+ field elements.~~ Superseded by `TAG_FIELD` with BN254 `FieldElement` on heap.
+    - [x] ~~Update `arithmetic.rs` to handle hybrid math (SMI + BigInt promotion).~~ Implemented as i60→FieldElement overflow promotion.
 
-- [ ] **Finite Field Arithmetic**
-    - *Target*: Abstract `BigInt` operations to support modular arithmetic natively (`x + y` implies `(x + y) % P`).
+- [x] **Finite Field Arithmetic**
+    - *Resolved*: `FieldElement` (BN254 scalar field, Montgomery form, `[u64; 4]` limbs) with full modular arithmetic. `field()` constructor, decimal/hex input, all ops (`+`, `-`, `*`, `/`, `neg`, `inv`).
 
 - [ ] **Tensor System (N-Dimensional Arrays)**
     - *Context*: Required for polynomial representation and ML-adjacent ZK operations (FFT/MSM).
@@ -31,18 +31,19 @@ The immediate goal is to transition from a general-purpose scripting engine to a
     - Defer "Computed GOTO" until the Type System is stable.
 
 ## 4. Standard Library (Cryptography Domain)
-- [ ] **Native Crypto Primitives**:
-    - Implement `poseidon_hash(x)` or `pedersen_hash(x)` as native functions.
-    - Implement `verify_signature(pub_key, msg, sig)`.
+- [x] **Native Crypto Primitives** *(partially resolved)*:
+    - [x] `poseidon(a, b)` — Poseidon 2-to-1 hash (circomlibjs-compatible), works in VM and circuit mode
+    - [x] `poseidon_many(a, b, c, ...)` — variable-arity left-fold Poseidon
+    - [x] `merkle_verify(root, leaf, path, indices)` — Merkle membership proof builtin
+    - [ ] `verify_signature(pub_key, msg, sig)` — not yet implemented
 
 ## 5. Technical Debt
 - [ ] **Global Mutability Check**: Move from runtime check to compile-time check where possible.
     - [x] **Arithmetic Boilerplate Refactor**:
     - *Context*: `arithmetic.rs` has significant code duplication for integer vs float checks.
     - *Action*: Refactor using macros to centralize dispatch logic and improve maintainability.
-- [ ] **Integer Wrapping Semantics Review**:
-    - *Context*: Current `TAG_INT` implementation uses silent wrapping (`wrapping_add`, etc.).
-    - *Action*: Validate if this is desired for a crypto-focused VM. Consider `checked_*` with explicit overflow errors or automatic promotion to BigInt.
+- [x] **Integer Wrapping Semantics Review**:
+    - *Resolved*: i60 overflow automatically promotes to BN254 `FieldElement` (heap-allocated). No silent wrapping — overflow is handled correctly for crypto use cases.
 
 ---
 
@@ -167,10 +168,8 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 
 ### LOW — Design & Ergonomics
 
-- [ ] **L1: `compile_circuit()` vs `compile_ir()` feature gap** — `r1cs_backend.rs:436-453`
-    - Direct AST path rejects comparison operators (`==`, `<`, etc.)
-    - IR path supports them — same source behaves differently depending on path
-    - *Fix*: Deprecate/remove direct path, or document discrepancy
+- [x] **L1: `compile_circuit()` vs `compile_ir()` feature gap** — *Resolved*
+    - `compile_circuit()` eliminated in AST refactor (~450 LOC removed). All circuit compilation goes through IR pipeline.
 
 - [ ] **L2: `pow_expr` is left-associative** — `grammar.pest:108`
     - `2^3^2 = (2^3)^2 = 64` instead of mathematical convention `2^(3^2) = 512`
@@ -196,7 +195,7 @@ advice cell. Gate polynomial unchanged — copy constraints alone ensure soundne
 
 ### Test Coverage Gaps (P1 important)
 
-- [ ] **T6: Negative witness for direct AST compile path** — only IR path has negative tests
+- [x] **T6: Negative witness for direct AST compile path** — *N/A*: direct AST compile path eliminated
 - [ ] **T7: Poseidon zero inputs E2E** — `poseidon(0,0)` only tested natively, not through circuit pipeline
 - [ ] **T8: range_check edge cases** — bits=0, bits=1, bits=253, max valid value (2^bits-1)
 - [ ] **T9: Missing Plonkish equivalents** — for loops, if/else, poseidon with expressions, power

@@ -6,8 +6,8 @@ Write readable code. Decide what gets proven. Same language for general executio
 
 ```
 cargo build --release
-cargo test --workspace     # 703 unit tests
-bash test/run_tests.sh     # 23 integration tests
+cargo test --workspace     # 718 unit tests
+bash test/run_tests.sh     # 54 integration tests
 ```
 
 ---
@@ -102,7 +102,6 @@ Source (.ach)
 
 | Type | Examples |
 |------|---------|
-| Number | `3.14`, `-0.5` |
 | Int | `42`, `-7` |
 | Bool | `true`, `false` |
 | String | `"hello"` |
@@ -306,13 +305,12 @@ achronyme/
 ├── achronyme-parser/   PEG grammar (pest), AST types, parser
 ├── ir/                 SSA intermediate representation, optimization passes
 ├── compiler/           Bytecode compiler, R1CS backend, Plonkish backend
-├── vm/                 Register-based VM (61 opcodes, NaN-boxed values)
+├── vm/                 Register-based VM (61 opcodes, tagged values)
 ├── memory/             Heap, GC, FieldElement (BN254 Montgomery)
 ├── constraints/        R1CS/Plonkish systems, Poseidon hash, binary export
 ├── cli/                CLI, native Groth16 (ark-groth16) & PlonK (halo2-KZG)
-├── examples/           Example circuits
 └── test/
-    ├── vm/             12 VM/interpreter tests
+    ├── vm/             41 VM/interpreter tests (closures, algorithms, stress)
     ├── circuit/        8 circuit compilation tests
     ├── prove/          3 prove block tests
     └── run_tests.sh    Integration test runner
@@ -322,7 +320,7 @@ achronyme/
 
 ## Status
 
-- 703 unit tests + 23 integration tests
+- 718 unit tests + 54 integration tests
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export
