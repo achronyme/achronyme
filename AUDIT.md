@@ -14,11 +14,11 @@
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
-| ir | 5 | 5 | 0 | 10 |
+| ir | 2 | 5 | 3 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
 | cli | 6 | 2 | 5 | 13 |
 | parser | 10 | 1 | 6 | 17 |
-| **TOTAL** | **25** | **47 (+1)** | **20** | **93** |
+| **TOTAL** | **22** | **47 (+1)** | **23** | **93** |
 
 ### Open by severity
 
@@ -26,8 +26,8 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 2 |
-| MEDIUM | 11 |
-| LOW | 12 |
+| MEDIUM | 9 |
+| LOW | 11 |
 
 ---
 
@@ -84,7 +84,7 @@
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
-## False Positives & Confirmed Sound (20)
+## False Positives & Confirmed Sound (23)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -108,45 +108,15 @@
 | L-07 | cli | CLI arg from user's own process; no privilege boundary crossed; snarkjs validates ptau format |
 | L-06 | cli | `HOME` trusted by all Unix tools (git, cargo, ssh); `dirs::home_dir()` also reads `HOME`; no privilege escalation |
 | P-01 | parser | By-design: `{}` as empty map is correct PEG parse; control flow (`if/while/for/fn`) references `block` directly, not through `atom`, so unaffected |
+| I-06 | ir | Already handled: `Expr::Array` in expression position returns `TypeMismatch { expected: "scalar", got: "array" }`; nested arrays like `[x, [1,2]]` are rejected at lowering |
+| I-07 | ir | Intentionally conservative: merging all Mux operand taints is sound (never misses real issues); branch-sensitive analysis is a future optimization, not a bug |
+| I-08 | ir | By-design: arrays are data (must be non-empty for indexing), loops are control flow (zero iterations is valid unrolling) |
 
 ---
 
 ## Open Findings
 
-### IR Crate (5 open)
-
-#### I-06 — Array Literal Element Type Validation [MEDIUM]
-
-**File**: `ir/src/lower.rs` (lines 1551-1565)
-**Category**: Type Safety
-
-Array literals like `[x, [1,2]]` (mixed scalar/array) are accepted at lowering but fail later during compilation. Better to catch type errors early.
-
-**Fix**: Verify all elements produce scalar `SsaVar`s, reject nested arrays.
-
----
-
-#### I-07 — Taint Analysis Mux Conservatism [MEDIUM]
-
-**File**: `ir/src/passes/taint.rs` (lines 127-139)
-**Category**: Analysis Completeness
-
-Taint analysis merges taints from all three Mux operands (cond, if_true, if_false). This is conservative: an unused witness appearing in a non-selected branch appears constrained. Not a soundness bug, but may miss under-constrained warnings.
-
-**Fix**: Document as intentionally conservative. Future: branch-sensitive taint analysis.
-
----
-
-#### I-08 — Empty Array vs Zero-Loop Inconsistency [LOW]
-
-**File**: `ir/src/lower.rs` (lines 1339-1347, 1555-1559)
-**Category**: Consistency
-
-`let a = []` is rejected ("empty arrays not allowed in circuits"), but `for i in 0..0 { }` is accepted and returns zero. Both represent empty constructs.
-
-**Fix**: Document the distinction: arrays are data (must be non-empty for indexing), loops are control flow (zero iterations is valid).
-
----
+### IR Crate (2 open)
 
 #### I-09 — ParseError Uses Debug Format for Rule [LOW]
 
