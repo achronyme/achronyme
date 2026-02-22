@@ -294,7 +294,7 @@ impl Heap {
             let handle = val.as_handle().unwrap();
 
             // Dispatch by tag to check marking status
-            let should_process = match val.type_tag() {
+            let should_process = match val.tag() {
                 crate::value::TAG_STRING => {
                     if !self.marked_strings.contains(&handle) {
                         self.marked_strings.insert(handle);
@@ -360,7 +360,7 @@ impl Heap {
                 // If we jus marked it, we need to add its children to worklist.
                 // We clone the children containers (List/Function constants) to avoid &mut self conflicts.
                 // Value is Copy (u64), so Vec<Value> clone is efficient (memcpy).
-                match val.type_tag() {
+                match val.tag() {
                     crate::value::TAG_LIST => {
                         if let Some(l) = self.lists.data.get(handle as usize) {
                             worklist.extend(l.clone());

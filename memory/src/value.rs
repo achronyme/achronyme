@@ -1,14 +1,14 @@
 use std::fmt;
 
-// --- NaN Boxing Constants ---
-// S EEEE... Q TTT ... Payload ...
-// QNAN = Exponent all 1s + Quiet bit (0x0008000000000000)
-// We use a high base to avoid real QNaNs.
-pub const QNAN: u64 = 0x7ffc000000000000;
+// --- Tagged u64 Constants ---
+// Bits 63..60 = tag  (4 bits, 16 possible types)
+// Bits 59..0  = payload (60 bits)
 
-// Tags live in bits 32-35 (4 bits)
-// 0 = Double (implicitly, if QNAN bits are not set)
-pub const TAG_NUMBER: u64 = 0; // Helper for type_tag()
+const TAG_SHIFT: u32 = 60;
+const PAYLOAD_MASK: u64 = (1u64 << 60) - 1; // 0x0FFF_FFFF_FFFF_FFFF
+
+// Tags (reassigned for clean ordering)
+pub const TAG_INT: u64 = 0;       // i60 inline (most common -> tag 0 for speed)
 pub const TAG_NIL: u64 = 1;
 pub const TAG_FALSE: u64 = 2;
 pub const TAG_TRUE: u64 = 3;
@@ -21,9 +21,14 @@ pub const TAG_PROOF: u64 = 9;
 pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
-pub const TAG_INT: u64 = 13;
+// 13-15 reserved
 
-// Compile-time guard: all tags must fit in 4 bits (0-15)
+// i60 range constants
+pub const I60_MIN: i64 = -(1i64 << 59);
+pub const I60_MAX: i64 = (1i64 << 59) - 1;
+
+// Compile-time guards
+const _: () = assert!(TAG_INT < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_NIL < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_FALSE < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_TRUE < 16, "tag must fit in 4 bits");
@@ -36,7 +41,6 @@ const _: () = assert!(TAG_PROOF < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_NATIVE < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_CLOSURE < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_ITER < 16, "tag must fit in 4 bits");
-const _: () = assert!(TAG_INT < 16, "tag must fit in 4 bits");
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -46,38 +50,21 @@ impl Value {
     // --- Constructors ---
 
     #[inline]
-    pub fn number(n: f64) -> Self {
-        // NaN canonicalization: all NaN variants (signaling, quiet, with payload)
-        // are mapped to Rust's canonical quiet NaN (`f64::NAN.to_bits()`).
-        // This is intentional — IEEE 754 defines many NaN bit patterns, but our
-        // NaN-boxing scheme reserves specific bit patterns for tagged values.
-        // Without canonicalization, a user-supplied NaN could collide with a tag.
-        // Rust guarantees `f64::NAN` is a quiet NaN with a stable bit pattern.
-        if n.is_nan() {
-            Value(f64::NAN.to_bits())
-        } else {
-            Value(n.to_bits())
-        }
-    }
-
-    #[inline]
-    pub fn int(val: i32) -> Self {
-        // SAFETY: Prevent sign extension by casting to u32 first.
-        // We only want the lower 32 bits.
-        Value(QNAN | (TAG_INT << 32) | (val as u32 as u64))
+    pub fn int(val: i64) -> Self {
+        Value((TAG_INT << TAG_SHIFT) | ((val as u64) & PAYLOAD_MASK))
     }
 
     #[inline]
     pub fn nil() -> Self {
-        Value(QNAN | (TAG_NIL << 32))
+        Value(TAG_NIL << TAG_SHIFT)
     }
 
     #[inline]
     pub fn bool(b: bool) -> Self {
         if b {
-            Value(QNAN | (TAG_TRUE << 32))
+            Value(TAG_TRUE << TAG_SHIFT)
         } else {
-            Value(QNAN | (TAG_FALSE << 32))
+            Value(TAG_FALSE << TAG_SHIFT)
         }
     }
 
@@ -128,47 +115,35 @@ impl Value {
 
     #[inline]
     fn make_obj(tag: u64, handle: u32) -> Self {
-        // Shift Tag to bits 32-35 (lowest 4 bits of high 32)
-        // Check plan: QNAN | (Tag << 32) | Handle
-        Value(QNAN | (tag << 32) | (handle as u64))
+        Value((tag << TAG_SHIFT) | (handle as u64))
     }
 
     // --- Checkers ---
 
     #[inline]
-    pub fn is_number(&self) -> bool {
-        (self.0 & QNAN) != QNAN
+    pub fn tag(&self) -> u64 {
+        (self.0 >> TAG_SHIFT) & 0xF
+    }
+
+    #[inline]
+    pub fn is_int(&self) -> bool {
+        self.tag() == TAG_INT
     }
 
     #[inline]
     pub fn is_obj(&self) -> bool {
-        self.is_not_number() && (self.tag() >= TAG_STRING)
-    }
-
-    #[inline]
-    fn is_not_number(&self) -> bool {
-        (self.0 & QNAN) == QNAN
-    }
-
-    #[inline]
-    fn tag(&self) -> u64 {
-        (self.0 >> 32) & 0xF
+        self.tag() >= TAG_STRING
     }
 
     #[inline]
     pub fn is_nil(&self) -> bool {
-        self.0 == (QNAN | (TAG_NIL << 32))
+        self.tag() == TAG_NIL
     }
 
     #[inline]
     pub fn is_bool(&self) -> bool {
         let t = self.tag();
         t == TAG_FALSE || t == TAG_TRUE
-    }
-
-    #[inline]
-    pub fn is_int(&self) -> bool {
-        self.tag() == TAG_INT
     }
 
     #[inline]
@@ -216,46 +191,21 @@ impl Value {
         self.tag() == TAG_PROOF
     }
 
-    #[inline]
-    pub fn is_numeric(&self) -> bool {
-        self.is_number() || self.is_int()
-    }
-
-    /// Returns the type tag for this value.
-    /// Returns TAG_NUMBER (0) for numbers, otherwise the specific object/primitive tag.
-    /// This allows for O(1) jump tables in match statements.
-    #[inline]
-    pub fn type_tag(&self) -> u64 {
-        if self.is_number() {
-            TAG_NUMBER
-        } else {
-            self.tag()
-        }
-    }
-
     // --- Accessors ---
 
     #[inline]
-    pub fn as_number(&self) -> Option<f64> {
-        if self.is_number() {
-            Some(f64::from_bits(self.0))
-        } else {
-            None
+    pub fn as_int(&self) -> Option<i64> {
+        if self.tag() != TAG_INT {
+            return None;
         }
-    }
-
-    #[inline]
-    pub fn as_f64(&self) -> Option<f64> {
-        self.as_number()
-    }
-
-    #[inline]
-    pub fn as_int(&self) -> Option<i32> {
-        if self.is_int() {
-            Some((self.0 & 0xFFFFFFFF) as i32)
+        let raw = self.0 & PAYLOAD_MASK;
+        // Sign-extend from bit 59
+        let extended = if raw & (1u64 << 59) != 0 {
+            raw | !PAYLOAD_MASK // fill upper bits with 1s
         } else {
-            None
-        }
+            raw
+        };
+        Some(extended as i64)
     }
 
     #[inline]
@@ -271,12 +221,12 @@ impl Value {
 
     #[inline]
     pub fn true_val() -> Self {
-        Value(QNAN | (TAG_TRUE << 32))
+        Value(TAG_TRUE << TAG_SHIFT)
     }
 
     #[inline]
     pub fn false_val() -> Self {
-        Value(QNAN | (TAG_FALSE << 32))
+        Value(TAG_FALSE << TAG_SHIFT)
     }
 
     #[inline]
@@ -296,9 +246,7 @@ impl Value {
 
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_number() {
-            write!(f, "Number({})", self.as_number().unwrap())
-        } else if self.is_int() {
+        if self.is_int() {
             write!(f, "Int({})", self.as_int().unwrap())
         } else if self.is_nil() {
             write!(f, "Nil")
