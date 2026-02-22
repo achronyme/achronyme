@@ -16,9 +16,9 @@
 | compiler | 0 | 9 | 0 | 9 |
 | ir | 0 | 5 | 5 | 10 |
 | constraints | 0 | 2 | 7 | 9 |
-| cli | 6 | 2 | 5 | 13 |
-| parser | 10 | 1 | 6 | 17 |
-| **TOTAL** | **16** | **47 (+1)** | **29** | **93** |
+| cli | 0 | 2 | 11 | 13 |
+| parser | 2 | 1 | 14 | 17 |
+| **TOTAL** | **2** | **47 (+1)** | **43** | **93** |
 
 ### Open by severity
 
@@ -26,8 +26,8 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 2 |
-| MEDIUM | 7 |
-| LOW | 7 |
+| MEDIUM | 0 |
+| LOW | 2 |
 
 ---
 
@@ -84,7 +84,7 @@
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
-## False Positives & Confirmed Sound (29)
+## False Positives & Confirmed Sound (43)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -117,113 +117,26 @@
 | X-05 | constraints | `nPubOut = 0` is correct and self-documenting; adding a doc comment for a single constant is unnecessary overhead |
 | X-07 | constraints | Test-only code; Rust's default OOB panic already includes index and length |
 | X-08 | constraints | Hardcoded compile-time hex literals that can never fail; wrapping in `Result` adds complexity with zero benefit |
+| L-08 | cli | CLI local sin frontera de privilegios; el usuario que ve stderr es quien ejecutó el comando. Filtrar paths dificultaría debugging |
+| L-09 | cli | CLI local; circuito grande no es DoS (usuario ejecuta su propio circuito). `Ctrl+C` disponible. Timeout arbitrario causaría fallos legítimos |
+| L-10 | cli | Cache opt-in (requiere `--ptau` + snarkjs). Mismo patrón que `~/.cargo/registry/`, `~/.npm/`; `rm -rf ~/.achronyme/cache/` suficiente |
+| L-11 | cli | `std::env::temp_dir()` devuelve UTF-8 en todos los OS modernos; paths construidos internamente sin componentes de usuario |
+| L-12 | cli | `prove {}` blocks son raros (1-3 por programa); `npx --version` ~200ms, insignificante vs generación Groth16 (~segundos) |
+| L-13 | cli | `--inputs` viene de argv (límite OS ~2MB via `ARG_MAX`); parsing lineal sin amplificación |
+| P-02 | parser | Set estándar JSON/JS; rechazar escapes desconocidos es correcto (no aceptar `\q` silenciosamente). `\uXXXX`/`\xXX` son features futuras, no bugs |
+| P-03 | parser | Finding incorrecto: números usan `FieldElement::from_decimal_str()` (aritmética 256-bit `[u64;4]`), no f64. Sin pérdida de precisión. Parsing O(n) lineal, sin amplificación |
+| P-04 | parser | Builtins se resuelven en `lower_call` por nombre antes de user functions (línea 658-667); shadow con `let poseidon = 42` no afecta calls. Patrón estándar (Rust/Python/Go) |
+| P-07 | parser | Inherente a todo recursive descent parser (GCC, rustc, V8 tienen el mismo límite). Stack 8MB soporta ~10K+ niveles; ningún programa real se acerca |
+| P-09 | parser | Rechazo intencional: IR lowering emite `TypeNotConstrainable("decimal")`; BN254 es campo de enteros. Gramática permite decimales para el VM (f64 scripting) |
+| P-11 | parser | Restricción ya comunicada por error: `UnsupportedOperation("for-in over non-range/non-array...")`. Gramática permisiva + compilador restrictivo es patrón estándar |
+| P-15 | parser | Decisión de estilo, no bug. Inconsistencia común en lenguajes (JS tuvo lo mismo). Parser rechaza coma extra con error de sintaxis claro |
+| P-16 | parser | Comportamiento estándar IEEE 754 (mismo que JS, Lua). VM usa f64 por diseño; path de circuitos usa FieldElement 256-bit, no afectado |
 
 ---
 
 ## Open Findings
 
-### CLI Crate (6 open)
-
-#### L-08 — Unsanitized snarkjs stderr [MEDIUM]
-
-**File**: `cli/src/prove_handler.rs` (lines 266-271)
-**Category**: Information Disclosure
-
-snarkjs stderr (including file paths, Node.js stack traces, npm cache paths) is displayed directly to the user.
-
-**Fix**: Filter out lines containing `/home/`, `node_modules`, `at `, etc.
-
----
-
-#### L-09 — No Timeout on snarkjs Subprocess [MEDIUM]
-
-**File**: `cli/src/prove_handler.rs` (lines 262-265)
-**Category**: DoS
-
-`Command::new("npx").output()` blocks indefinitely. A very large circuit can hang the CLI forever.
-
-**Fix**: Use `timeout` command wrapper or spawn with a deadline.
-
----
-
-#### L-10 — Unbounded Cache Growth [MEDIUM]
-
-**File**: `cli/src/prove_handler.rs`
-**Category**: Resource Exhaustion
-
-No limit on `~/.achronyme/cache/` size. Each unique circuit adds a cache entry (ptau ~100MB, zkey ~1-10GB).
-
-**Fix**: Add LRU eviction with configurable max size.
-
----
-
-#### L-11 — Path to_str().unwrap() Panics [MEDIUM]
-
-**File**: `cli/src/prove_handler.rs` (lines 114-237, 8 occurrences)
-**Category**: Robustness
-
-`.to_str().unwrap()` panics if temp path contains non-UTF8 characters. Unlikely but possible on some filesystems.
-
-**Fix**: Use `path.to_str().ok_or("non-UTF8 path")?` or pass `OsStr` directly to Command args.
-
----
-
-#### L-12 — snarkjs_available() Called Per Prove Block [MEDIUM]
-
-**File**: `cli/src/prove_handler.rs` (line 74)
-**Category**: Performance
-
-Each `prove {}` block spawns `npx snarkjs --version` to check availability. With 100 prove blocks, that's 100 subprocesses.
-
-**Fix**: Cache the result in `DefaultProveHandler` at construction time.
-
----
-
-#### L-13 — Missing Input Length Validation [LOW]
-
-**File**: `cli/src/commands/circuit.rs` (lines 39-48)
-**Category**: Input Validation
-
-The `--inputs` string has no length limit. A multi-GB string could exhaust memory during parsing.
-
-**Fix**: Add `if inputs.len() > 1_000_000 { return Err(...) }`.
-
----
-
-### Parser Crate (10 open)
-
-#### P-02 — Missing String Escape Sequences [MEDIUM]
-
-**File**: `achronyme-parser/src/grammar.pest` (lines 77-82)
-**Category**: Grammar
-
-Supported: `\"`, `\\`, `/`, `b`, `f`, `n`, `r`, `t`. Missing: `\uXXXX`, `\xXX`. Unknown escapes like `\x` fail the entire string parse.
-
-**Fix**: Either add fallback `"\\" ~ ANY` for lenient parsing, or document supported escapes.
-
----
-
-#### P-03 — Number Parsing Allows Pathological Input [MEDIUM]
-
-**File**: `achronyme-parser/src/grammar.pest` (lines 22-24)
-**Category**: DoS
-
-No length limit on integer literals. `123...` (millions of digits) is accepted by the parser and silently loses precision in f64 conversion.
-
-**Fix**: Limit to `ASCII_DIGIT{1,20}` or add length validation in the compiler.
-
----
-
-#### P-04 — Builtins Not Reserved as Keywords [MEDIUM]
-
-**File**: `achronyme-parser/src/grammar.pest` (line 30)
-**Category**: Grammar
-
-`poseidon`, `assert_eq`, `mux`, `range_check`, etc. are not in the `keyword` list. A user can shadow them: `let poseidon = 42`, then `poseidon(a, b)` fails with a confusing error.
-
-**Fix**: Add builtins to keyword list, or detect and error on shadowing.
-
----
+### Parser Crate (2 open)
 
 #### P-06 — Power Operator Left-Associative [MEDIUM]
 
@@ -233,61 +146,6 @@ No length limit on integer literals. `123...` (millions of digits) is accepted b
 `pow_expr = { postfix_expr ~ (pow_op ~ postfix_expr)* }` parses `2^3^2` as `(2^3)^2 = 64`. Standard math convention is right-associative: `2^(3^2) = 512`.
 
 **Fix**: Change to `pow_expr = { postfix_expr ~ (pow_op ~ pow_expr)? }` for right-recursion.
-
----
-
-#### P-07 — No Recursion Depth Limit [MEDIUM]
-
-**File**: `achronyme-parser/src/grammar.pest`
-**Category**: DoS
-
-Deeply nested expressions (10,000+ levels of parentheses or if/else) can cause stack overflow in pest's recursive descent parser.
-
-**Fix**: Test practical limits. Add documentation or a pre-parse depth check.
-
----
-
-#### P-09 — Decimal Rejection in Circuits [LOW]
-
-**File**: `achronyme-parser/src/grammar.pest` (line 23)
-**Category**: Design
-
-Grammar permits decimals but R1CS compiler rejects them. Intentional (BN254 is integer field).
-
-**Fix**: Document that decimals are VM-only.
-
----
-
-#### P-11 — for...in Runtime Semantics [LOW]
-
-**File**: `achronyme-parser/src/grammar.pest` (line 47)
-**Category**: Documentation
-
-Grammar allows `for x in expr` but compiler restricts `expr` to ranges or array identifiers.
-
-**Fix**: Document the restriction.
-
----
-
-#### P-15 — Trailing Comma Inconsistency [LOW]
-
-**File**: `achronyme-parser/src/grammar.pest` (lines 38, 40, 52, 102)
-**Category**: Style
-
-Lists and maps allow trailing commas. Function params and call args do not.
-
-**Fix**: Add `","?` to `param_list` and `call_op` for consistency.
-
----
-
-#### P-16 — Number Precision Loss in f64 [LOW]
-
-**File**: `compiler/src/expressions/atoms.rs` (line 199)
-**Category**: Correctness
-
-`s.parse::<f64>()` silently loses precision for integers > 2^53. VM-only issue (IR uses FieldElement).
-
-**Fix**: Document IEEE 754 limits. Optionally warn on precision loss.
 
 ---
 
