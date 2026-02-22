@@ -196,10 +196,10 @@ impl AtomCompiler for Compiler {
 
     fn compile_number(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
         let s = pair.as_str();
-        let val = s.parse::<f64>().map_err(|_| CompilerError::InvalidNumber)?;
+        let val: i64 = s.parse().map_err(|_| CompilerError::InvalidNumber)?;
 
         let reg = self.alloc_reg()?;
-        let const_idx = self.add_constant(Value::number(val));
+        let const_idx = self.add_constant(Value::int(val));
 
         if const_idx <= 0xFFFF {
             self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);

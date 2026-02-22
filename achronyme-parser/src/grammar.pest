@@ -37,8 +37,7 @@ COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 // FUTURE: Add list_literal [...] and map_literal { ... } here.
 
 integer    = @{ ASCII_DIGIT+ }
-decimal    = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
-number     = @{ "-"? ~ (decimal | integer) }
+number     = @{ "-"? ~ integer }
 
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
