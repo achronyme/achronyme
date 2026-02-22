@@ -3,6 +3,7 @@ use clap::Parser;
 
 mod args;
 mod commands;
+mod groth16;
 mod prove_handler;
 mod repl;
 

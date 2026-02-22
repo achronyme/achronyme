@@ -18,12 +18,16 @@ use crate::prove_handler::DefaultProveHandler;
 // I'll make a private helper here for now.
 
 pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>) -> Result<()> {
+    if ptau.is_some() {
+        eprintln!("Warning: --ptau is deprecated and ignored (native Groth16 backend does not use ptau files)");
+    }
+
     if path.ends_with(".achb") {
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(ptau)));
+        vm.prove_handler = Some(Box::new(DefaultProveHandler::new()));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -45,7 +49,7 @@ pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>) -> Result<()> {
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(ptau)));
+        vm.prove_handler = Some(Box::new(DefaultProveHandler::new()));
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);

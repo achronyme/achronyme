@@ -209,6 +209,7 @@ pub struct Constraint {
 ///
 /// Manages variable allocation, constraint collection, and
 /// witness verification.
+#[derive(Clone)]
 pub struct ConstraintSystem {
     /// Total number of variables (including ONE at index 0).
     num_variables: usize,

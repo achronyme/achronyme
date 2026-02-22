@@ -17,8 +17,8 @@ pub enum Commands {
         /// Force GC on every allocation (Stress Mode)
         #[arg(long)]
         stress_gc: bool,
-        /// Path to powers-of-tau file for Groth16 proof generation
-        #[arg(long)]
+        /// [Deprecated] Ignored — native Groth16 backend does not use ptau files
+        #[arg(long, hide = true)]
         ptau: Option<String>,
     },
     /// Disassemble a source file or binary

@@ -8,9 +8,20 @@ license = "GPL-3.0"
 clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 byteorder = "1.5"
-tempfile = "3"
 getrandom = "0.2"
 sha2 = "0.10"
+serde_json = "1"
+rand = "0.8"
+
+# Groth16 proving (ark-works ecosystem)
+ark-groth16 = "0.5"
+ark-bn254 = "0.5"
+ark-relations = "0.5"
+ark-std = "0.5"
+ark-serialize = "0.5"
+ark-ff = "0.5"
+ark-ec = "0.5"
+ark-snark = "0.5"
 
 memory = { path = "../memory" }
 vm = { path = "../vm" }

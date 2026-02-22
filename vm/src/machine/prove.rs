@@ -10,7 +10,7 @@ use super::vm::VM;
 
 /// Result of executing a `prove { }` block.
 pub enum ProveResult {
-    /// Verify-only mode (snarkjs not available)
+    /// Verify-only mode (proof generation not requested)
     VerifiedOnly,
     /// Groth16 proof generated
     Proof {
