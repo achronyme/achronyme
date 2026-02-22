@@ -172,6 +172,11 @@ impl Assignments {
             .unwrap_or(FieldElement::ZERO)
     }
 
+    /// Get the values for a column as a slice.
+    pub fn column_values(&self, col: Column) -> Option<&[FieldElement]> {
+        self.values.get(&col).map(|v| v.as_slice())
+    }
+
     /// Resize all columns to at least `num_rows` rows.
     pub fn ensure_rows(&mut self, num_rows: usize) {
         self.num_rows = self.num_rows.max(num_rows);

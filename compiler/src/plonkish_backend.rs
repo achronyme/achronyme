@@ -504,6 +504,13 @@ impl PlonkishCompiler {
         self.current_row
     }
 
+    /// Return the bit-widths of all range tables created during compilation.
+    pub fn range_tables_bits(&self) -> Vec<u32> {
+        let mut bits: Vec<u32> = self.range_tables.keys().copied().collect();
+        bits.sort();
+        bits
+    }
+
     // ========================================================================
     // Row allocation
     // ========================================================================
