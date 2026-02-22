@@ -1,0 +1,32 @@
+// Circuit: boolean and comparison operators
+witness x
+witness y
+
+// Equality / inequality
+let eq = x == y
+let neq = x != y
+
+// Ordering (x=3, y=5 expected)
+let lt = x < y
+assert(lt)
+
+let le = x <= y
+assert(le)
+
+// Negated ordering
+let gt = y > x
+assert(gt)
+
+let ge = y >= x
+assert(ge)
+
+// Logical operators
+let both = lt && gt
+assert(both)
+
+let either = (x == y) || (x < y)
+assert(either)
+
+// Logical NOT
+let not_eq = !(x == y)
+assert(not_eq)

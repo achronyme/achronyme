@@ -1,0 +1,25 @@
+// Prove block: scope capture and integer promotion
+let a = 10
+let b = 20
+let sum = 30
+
+prove {
+    witness a
+    witness b
+    public sum
+    assert_eq(a + b, sum)
+}
+
+// Second prove block with different values
+let m = 3
+let n = 5
+let product = 15
+
+prove {
+    witness m
+    witness n
+    public product
+    assert_eq(m * n, product)
+}
+
+print("PASS: prove_capture")

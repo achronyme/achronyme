@@ -1,0 +1,21 @@
+// Circuit: basic arithmetic constraints
+public out
+witness a
+witness b
+
+// Multiplication
+let product = a * b
+assert_eq(product, out)
+
+// Addition
+let sum = a + b
+let expected_sum = out + a + b - a * b
+assert_eq(sum, a + b)
+
+// Subtraction
+let diff = b - a
+assert_eq(diff, b - a)
+
+// Scalar multiplication
+let doubled = a + a
+assert_eq(doubled, a * 2)

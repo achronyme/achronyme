@@ -1,0 +1,8 @@
+// Circuit: Merkle membership proof (depth 1)
+// root = poseidon(leaf, sibling) when index = 0
+public root
+witness leaf
+witness path[1]
+witness indices[1]
+
+merkle_verify(root, leaf, path, indices)

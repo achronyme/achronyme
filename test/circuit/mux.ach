@@ -1,0 +1,9 @@
+// Circuit: mux (conditional selection)
+public out
+witness cond
+witness a
+witness b
+
+// mux(cond, a, b) selects a when cond=1, b when cond=0
+let selected = mux(cond, a, b)
+assert_eq(selected, out)

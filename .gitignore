@@ -17,5 +17,9 @@ Thumbs.db
 changes.txt
 /notes
 
+# ZK artifacts
+*.r1cs
+*.wtns
+
 # Proptest
 **/*.proptest-regressions

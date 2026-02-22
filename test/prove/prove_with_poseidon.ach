@@ -1,0 +1,14 @@
+// Prove block: Poseidon hash with known vector
+// poseidon(1, 2) = 7853200120776062878684798364095072458815029376092732009249414926327459813530
+let a = field(1)
+let b = field(2)
+let h = field("7853200120776062878684798364095072458815029376092732009249414926327459813530")
+
+prove {
+    witness a
+    witness b
+    public h
+    assert_eq(poseidon(a, b), h)
+}
+
+print("PASS: prove_with_poseidon")

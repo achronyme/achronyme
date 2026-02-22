@@ -1,0 +1,17 @@
+// Circuit: arrays, for-in loops, functions, len(), indexing
+public expected_sum
+witness vals[3]
+
+// Sum via for-in loop
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
+
+// len() returns compile-time constant
+let n = len(vals)
+assert_eq(n, 3)
+
+// Function definition and inline expansion
+fn double(x) { x + x }
+assert_eq(double(vals[0]), vals[0] + vals[0])

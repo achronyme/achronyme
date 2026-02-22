@@ -1,0 +1,13 @@
+// Prove block: minimal circuit with field values
+let x = field(6)
+let y = field(7)
+let product = field(42)
+
+prove {
+    witness x
+    witness y
+    public product
+    assert_eq(x * y, product)
+}
+
+print("PASS: basic_prove")

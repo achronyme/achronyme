@@ -1,0 +1,9 @@
+// Circuit: range checks
+witness x
+witness y
+
+// x fits in 8 bits (0..255)
+range_check(x, 8)
+
+// y fits in 16 bits (0..65535)
+range_check(y, 16)

@@ -1,0 +1,9 @@
+// Circuit: exponentiation by constant
+public x2
+public x3
+public x4
+witness x
+
+assert_eq(x ^ 2, x2)
+assert_eq(x ^ 3, x3)
+assert_eq(x ^ 4, x4)

@@ -1,0 +1,14 @@
+// Circuit: Poseidon hash
+public expected
+witness a
+witness b
+witness c
+
+// poseidon(1, 2) should equal the known circomlibjs reference vector
+let h = poseidon(a, b)
+assert_eq(h, expected)
+
+// poseidon_many(a, b, c) == poseidon(poseidon(a, b), c)
+let folded = poseidon(h, c)
+let many = poseidon_many(a, b, c)
+assert_eq(many, folded)
