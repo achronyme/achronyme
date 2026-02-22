@@ -51,9 +51,26 @@ impl ArithmeticOps for super::vm::VM {
     ) -> Result<(), RuntimeError> {
         match op {
             OpCode::Add => {
-                binary_arithmetic_op!(self, instruction, base, wrapping_add,
-                    |x, y| x + y,
-                    |a: &FieldElement, b: &FieldElement| Ok(a.add(b)));
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
+
+                if vb.is_string() || vc.is_string() {
+                    let sb = self.val_to_string(&vb);
+                    let sc = self.val_to_string(&vc);
+                    let handle = self.heap.alloc_string(sb + &sc);
+                    self.set_reg(base, a, Value::string(handle))?;
+                } else if vb.is_int() && vc.is_int() {
+                    let ib = vb.as_int().unwrap();
+                    let ic = vc.as_int().unwrap();
+                    self.set_reg(base, a, Value::int(ib.wrapping_add(ic)))?;
+                } else {
+                    let res = self.binary_op(vb, vc, |x, y| x + y,
+                        |a: &FieldElement, b: &FieldElement| Ok(a.add(b)))?;
+                    self.set_reg(base, a, res)?;
+                }
             }
 
             OpCode::Sub => {
