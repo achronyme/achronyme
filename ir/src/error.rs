@@ -76,17 +76,26 @@ impl fmt::Display for IrError {
                 }
             }
             IrError::TypeNotConstrainable(ty, span) => {
+                let msg = match ty.as_str() {
+                    "string" | "nil" => format!(
+                        "type '{ty}' cannot be used in circuits (circuits operate on field elements only)"
+                    ),
+                    "map" => "type 'map' cannot be used in circuits (circuits operate on field elements only — use arrays instead)".to_string(),
+                    "decimal" => "decimal numbers cannot be used in circuits (field arithmetic is integer-only — use whole numbers)".to_string(),
+                    _ => format!("type '{ty}' cannot be used in circuits"),
+                };
                 if let Some(s) = span {
-                    write!(f, "[{s}] type `{ty}` cannot be represented in a circuit")
+                    write!(f, "[{s}] {msg}")
                 } else {
-                    write!(f, "type `{ty}` cannot be represented in a circuit")
+                    write!(f, "{msg}")
                 }
             }
             IrError::UnboundedLoop(span) => {
+                let msg = "unbounded loops (while/forever) are not allowed in circuits (all iterations must be known at compile time for constraint generation)";
                 if let Some(s) = span {
-                    write!(f, "[{s}] unbounded loops are not allowed in circuits")
+                    write!(f, "[{s}] {msg}")
                 } else {
-                    write!(f, "unbounded loops are not allowed in circuits")
+                    write!(f, "{msg}")
                 }
             }
             IrError::ParseError(msg) => {

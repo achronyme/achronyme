@@ -7,6 +7,7 @@ fn prog(instructions: Vec<Instruction>, next_var: u32) -> IrProgram {
     IrProgram {
         instructions,
         next_var,
+        var_names: std::collections::HashMap::new(),
     }
 }
 

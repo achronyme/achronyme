@@ -10,42 +10,107 @@ use crate::types::{Instruction, IrProgram, SsaVar};
 #[derive(Debug)]
 pub enum EvalError {
     MissingInput(String),
-    DivisionByZero { var: SsaVar },
-    AssertionFailed { var: SsaVar },
-    AssertEqFailed { lhs: SsaVar, rhs: SsaVar },
-    RangeCheckFailed { var: SsaVar, bits: u32 },
-    NonBooleanMuxCondition { var: SsaVar },
+    DivisionByZero {
+        var: SsaVar,
+        dividend_name: Option<String>,
+        divisor_name: Option<String>,
+    },
+    AssertionFailed {
+        var: SsaVar,
+        name: Option<String>,
+        value: Option<FieldElement>,
+    },
+    AssertEqFailed {
+        lhs: SsaVar,
+        rhs: SsaVar,
+        lhs_name: Option<String>,
+        rhs_name: Option<String>,
+        lhs_value: Option<FieldElement>,
+        rhs_value: Option<FieldElement>,
+    },
+    RangeCheckFailed {
+        var: SsaVar,
+        bits: u32,
+        name: Option<String>,
+        value: Option<FieldElement>,
+    },
+    NonBooleanMuxCondition {
+        var: SsaVar,
+        name: Option<String>,
+        value: Option<FieldElement>,
+    },
     UndefinedVar(SsaVar),
+}
+
+/// Look up the source-level name for an SSA variable.
+fn resolve_name(program: &IrProgram, var: SsaVar) -> Option<String> {
+    program.get_name(var).map(|s| s.to_string())
 }
 
 impl fmt::Display for EvalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EvalError::MissingInput(name) => write!(f, "missing input: `{name}`"),
-            EvalError::DivisionByZero { var } => {
-                write!(f, "division by zero at SSA var {:?}", var.0)
-            }
-            EvalError::AssertionFailed { var } => {
-                write!(f, "assertion failed at SSA var {:?}", var.0)
-            }
-            EvalError::AssertEqFailed { lhs, rhs } => {
-                write!(
+            EvalError::DivisionByZero {
+                dividend_name,
+                divisor_name,
+                ..
+            } => match (dividend_name, divisor_name) {
+                (Some(a), Some(b)) => {
+                    write!(f, "division by zero when dividing '{a}' by '{b}' (which is 0)")
+                }
+                _ => write!(f, "division by zero"),
+            },
+            EvalError::AssertionFailed { name, value, .. } => match (name, value) {
+                (Some(n), Some(v)) => write!(
                     f,
-                    "assert_eq failed: SSA vars {:?} and {:?} are not equal",
-                    lhs.0, rhs.0
-                )
-            }
-            EvalError::RangeCheckFailed { var, bits } => {
-                write!(
+                    "assertion failed at '{n}' (value is {}, expected non-zero)",
+                    v.to_decimal_string()
+                ),
+                (Some(n), None) => write!(f, "assertion failed at '{n}' (expected non-zero)"),
+                _ => write!(f, "assertion failed (expected non-zero)"),
+            },
+            EvalError::AssertEqFailed {
+                lhs_name,
+                rhs_name,
+                lhs_value,
+                rhs_value,
+                ..
+            } => match (lhs_name, rhs_name, lhs_value, rhs_value) {
+                (Some(a), Some(b), Some(av), Some(bv)) => write!(
                     f,
-                    "range check failed: SSA var {:?} does not fit in {bits} bits",
-                    var.0
-                )
-            }
-            EvalError::NonBooleanMuxCondition { var } => {
-                write!(f, "mux condition is not boolean (0 or 1) at SSA var {:?}", var.0)
-            }
-            EvalError::UndefinedVar(var) => write!(f, "undefined SSA var {:?}", var.0),
+                    "assert_eq failed: '{a}' (value {}) != '{b}' (value {})",
+                    av.to_decimal_string(),
+                    bv.to_decimal_string()
+                ),
+                _ => write!(f, "assert_eq failed: values are not equal"),
+            },
+            EvalError::RangeCheckFailed {
+                bits, name, value, ..
+            } => match (name, value) {
+                (Some(n), Some(v)) => {
+                    let max_str = if *bits < 64 {
+                        format!("{}", (1u64 << bits) - 1)
+                    } else {
+                        format!("2^{bits}-1")
+                    };
+                    write!(
+                        f,
+                        "range check failed: '{n}' (value {}) does not fit in {bits} bits (max {max_str})",
+                        v.to_decimal_string()
+                    )
+                }
+                _ => write!(f, "range check failed: value does not fit in {bits} bits"),
+            },
+            EvalError::NonBooleanMuxCondition { name, value, .. } => match (name, value) {
+                (Some(n), Some(v)) => write!(
+                    f,
+                    "if/else condition must be boolean: '{n}' has value {} (expected 0 or 1)",
+                    v.to_decimal_string()
+                ),
+                _ => write!(f, "if/else condition must be boolean (expected 0 or 1)"),
+            },
+            EvalError::UndefinedVar(var) => write!(f, "undefined variable #{}", var.0),
         }
     }
 }
@@ -98,7 +163,11 @@ pub fn evaluate(
             Instruction::Div { result, lhs, rhs } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
-                let inv = b.inv().ok_or(EvalError::DivisionByZero { var: *result })?;
+                let inv = b.inv().ok_or_else(|| EvalError::DivisionByZero {
+                    var: *result,
+                    dividend_name: resolve_name(program, *lhs),
+                    divisor_name: resolve_name(program, *rhs),
+                })?;
                 values.insert(*result, a.mul(&inv));
             }
             Instruction::Neg { result, operand } => {
@@ -115,7 +184,11 @@ pub fn evaluate(
                 let t = get(&values, if_true)?;
                 let f = get(&values, if_false)?;
                 if c != FieldElement::ZERO && c != FieldElement::ONE {
-                    return Err(EvalError::NonBooleanMuxCondition { var: *cond });
+                    return Err(EvalError::NonBooleanMuxCondition {
+                        var: *cond,
+                        name: resolve_name(program, *cond),
+                        value: Some(c),
+                    });
                 }
                 let val = if !c.is_zero() { t } else { f };
                 values.insert(*result, val);
@@ -139,6 +212,10 @@ pub fn evaluate(
                     return Err(EvalError::AssertEqFailed {
                         lhs: *lhs,
                         rhs: *rhs,
+                        lhs_name: resolve_name(program, *lhs),
+                        rhs_name: resolve_name(program, *rhs),
+                        lhs_value: Some(a),
+                        rhs_value: Some(b),
                     });
                 }
                 values.insert(*result, a);
@@ -146,7 +223,11 @@ pub fn evaluate(
             Instruction::Assert { result, operand } => {
                 let v = get(&values, operand)?;
                 if v != FieldElement::ONE {
-                    return Err(EvalError::AssertionFailed { var: *operand });
+                    return Err(EvalError::AssertionFailed {
+                        var: *operand,
+                        name: resolve_name(program, *operand),
+                        value: Some(v),
+                    });
                 }
                 values.insert(*result, v);
             }
@@ -160,6 +241,8 @@ pub fn evaluate(
                     return Err(EvalError::RangeCheckFailed {
                         var: *operand,
                         bits: *bits,
+                        name: resolve_name(program, *operand),
+                        value: Some(v),
                     });
                 }
                 values.insert(*result, v);
@@ -635,5 +718,127 @@ mod tests {
         assert!(!fits_in_bits(&fe(256), 8));
         assert!(fits_in_bits(&fe(u64::MAX), 64));
         assert!(!fits_in_bits(&fe(u64::MAX), 63));
+    }
+
+    // ================================================================
+    // Educational error message tests
+    // ================================================================
+
+    #[test]
+    fn error_div_by_zero_shows_variable_names() {
+        let mut p = IrProgram::new();
+        let x = p.fresh_var();
+        p.push(Instruction::Input {
+            result: x,
+            name: "x".into(),
+            visibility: Visibility::Public,
+        });
+        p.set_name(x, "x".into());
+        let y = p.fresh_var();
+        p.push(Instruction::Input {
+            result: y,
+            name: "y".into(),
+            visibility: Visibility::Witness,
+        });
+        p.set_name(y, "y".into());
+        let r = p.fresh_var();
+        p.push(Instruction::Div { result: r, lhs: x, rhs: y });
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".into(), fe(42));
+        inputs.insert("y".into(), FieldElement::ZERO);
+
+        let err = evaluate(&p, &inputs).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("'x'"), "should mention dividend name: {msg}");
+        assert!(msg.contains("'y'"), "should mention divisor name: {msg}");
+        assert!(msg.contains("which is 0"), "should explain zero: {msg}");
+    }
+
+    #[test]
+    fn error_assert_eq_shows_names_and_values() {
+        let mut p = IrProgram::new();
+        let a = p.fresh_var();
+        p.push(Instruction::Input {
+            result: a,
+            name: "a".into(),
+            visibility: Visibility::Public,
+        });
+        p.set_name(a, "a".into());
+        let b = p.fresh_var();
+        p.push(Instruction::Input {
+            result: b,
+            name: "b".into(),
+            visibility: Visibility::Witness,
+        });
+        p.set_name(b, "b".into());
+        let r = p.fresh_var();
+        p.push(Instruction::AssertEq { result: r, lhs: a, rhs: b });
+
+        let mut inputs = HashMap::new();
+        inputs.insert("a".into(), fe(42));
+        inputs.insert("b".into(), fe(99));
+
+        let err = evaluate(&p, &inputs).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("'a'"), "should mention lhs name: {msg}");
+        assert!(msg.contains("'b'"), "should mention rhs name: {msg}");
+        assert!(msg.contains("42"), "should show lhs value: {msg}");
+        assert!(msg.contains("99"), "should show rhs value: {msg}");
+    }
+
+    #[test]
+    fn error_range_check_shows_name_value_max() {
+        let mut p = IrProgram::new();
+        let x = p.fresh_var();
+        p.push(Instruction::Input {
+            result: x,
+            name: "x".into(),
+            visibility: Visibility::Public,
+        });
+        p.set_name(x, "x".into());
+        let r = p.fresh_var();
+        p.push(Instruction::RangeCheck { result: r, operand: x, bits: 8 });
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".into(), fe(300));
+
+        let err = evaluate(&p, &inputs).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("'x'"), "should mention variable name: {msg}");
+        assert!(msg.contains("300"), "should show the value: {msg}");
+        assert!(msg.contains("255"), "should show max value: {msg}");
+    }
+
+    #[test]
+    fn error_mux_non_boolean_shows_name_and_value() {
+        let mut p = IrProgram::new();
+        let cond = p.fresh_var();
+        p.push(Instruction::Input {
+            result: cond,
+            name: "cond".into(),
+            visibility: Visibility::Witness,
+        });
+        p.set_name(cond, "cond".into());
+        let t = p.fresh_var();
+        p.push(Instruction::Const { result: t, value: fe(10) });
+        let f = p.fresh_var();
+        p.push(Instruction::Const { result: f, value: fe(20) });
+        let r = p.fresh_var();
+        p.push(Instruction::Mux {
+            result: r,
+            cond,
+            if_true: t,
+            if_false: f,
+        });
+
+        let mut inputs = HashMap::new();
+        inputs.insert("cond".into(), fe(5));
+
+        let err = evaluate(&p, &inputs).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("'cond'"), "should mention condition name: {msg}");
+        assert!(msg.contains("5"), "should show the value: {msg}");
+        assert!(msg.contains("boolean"), "should mention boolean: {msg}");
     }
 }

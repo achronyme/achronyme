@@ -62,6 +62,7 @@ impl IrLowering {
             name: name.to_string(),
             visibility: Visibility::Public,
         });
+        self.program.set_name(v, name.to_string());
         self.env.insert(name.to_string(), EnvValue::Scalar(v));
         v
     }
@@ -74,6 +75,7 @@ impl IrLowering {
             name: name.to_string(),
             visibility: Visibility::Witness,
         });
+        self.program.set_name(v, name.to_string());
         self.env.insert(name.to_string(), EnvValue::Scalar(v));
         v
     }
@@ -86,9 +88,10 @@ impl IrLowering {
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Input {
                     result: v,
-                    name: elem_name,
+                    name: elem_name.clone(),
                     visibility: Visibility::Public,
                 });
+                self.program.set_name(v, elem_name);
                 v
             })
             .collect();
@@ -104,9 +107,10 @@ impl IrLowering {
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Input {
                     result: v,
-                    name: elem_name,
+                    name: elem_name.clone(),
                     visibility: Visibility::Witness,
                 });
+                self.program.set_name(v, elem_name);
                 v
             })
             .collect();
@@ -292,27 +296,27 @@ impl IrLowering {
                 Ok(Some(v))
             }
             Stmt::MutDecl { span, .. } => Err(IrError::UnsupportedOperation(
-                "mutable variables are not supported in circuits".into(),
+                "mutable variables are not supported in circuits (circuit variables are immutable — use 'let' instead)".into(),
                 to_ir_span(span),
             )),
             Stmt::Print { span, .. } => Err(IrError::UnsupportedOperation(
-                "print is not supported in circuits".into(),
+                "print is not supported in circuits (circuits produce constraints, not output — use the VM for debugging)".into(),
                 to_ir_span(span),
             )),
             Stmt::Assignment { span, .. } => Err(IrError::UnsupportedOperation(
-                "assignment is not supported in circuits".into(),
+                "assignment is not supported in circuits (circuit variables are write-once — use a new 'let' binding instead)".into(),
                 to_ir_span(span),
             )),
             Stmt::Break { span } => Err(IrError::UnsupportedOperation(
-                "break is not supported in circuits".into(),
+                "break is not supported in circuits (loops must have statically-known bounds for unrolling)".into(),
                 to_ir_span(span),
             )),
             Stmt::Continue { span } => Err(IrError::UnsupportedOperation(
-                "continue is not supported in circuits".into(),
+                "continue is not supported in circuits (loops must have statically-known bounds for unrolling)".into(),
                 to_ir_span(span),
             )),
             Stmt::Return { span, .. } => Err(IrError::UnsupportedOperation(
-                "return is not supported in circuits".into(),
+                "return is not supported in circuits (circuits are flat constraint systems — use the final expression as the result)".into(),
                 to_ir_span(span),
             )),
         }
@@ -360,6 +364,7 @@ impl IrLowering {
 
         let v = self.lower_expr(value)?;
         // `let` is an alias — no instruction emitted, just env binding
+        self.program.set_name(v, name.to_string());
         self.env.insert(name.to_string(), EnvValue::Scalar(v));
         Ok(())
     }
@@ -414,11 +419,11 @@ impl IrLowering {
                 Err(IrError::UnboundedLoop(to_ir_span(span)))
             }
             Expr::Prove { span, .. } => Err(IrError::UnsupportedOperation(
-                "prove blocks cannot be nested inside circuits".into(),
+                "prove blocks cannot be nested inside circuits (a circuit is already generating constraints)".into(),
                 to_ir_span(span),
             )),
             Expr::FnExpr { span, .. } => Err(IrError::UnsupportedOperation(
-                "closures are not supported in circuits".into(),
+                "closures are not supported in circuits (captured variables cannot be tracked as circuit wires — use 'fn' declarations instead)".into(),
                 to_ir_span(span),
             )),
             Expr::StringLit { span, .. } => {
@@ -436,7 +441,7 @@ impl IrLowering {
                 Err(IrError::TypeNotConstrainable("map".into(), to_ir_span(span)))
             }
             Expr::DotAccess { span, .. } => Err(IrError::UnsupportedOperation(
-                "dot access is not supported in circuits".into(),
+                "dot access is not supported in circuits (use arrays with static indexing instead)".into(),
                 to_ir_span(span),
             )),
         }
@@ -445,7 +450,7 @@ impl IrLowering {
     fn lower_number(&mut self, s: &str, span: &Span) -> Result<SsaVar, IrError> {
         if s.contains('.') {
             return Err(IrError::TypeNotConstrainable(
-                "decimal numbers are not supported in circuits".into(),
+                "decimal".into(),
                 to_ir_span(span),
             ));
         }
@@ -517,7 +522,7 @@ impl IrLowering {
                 Ok(v)
             }
             BinOp::Mod => Err(IrError::UnsupportedOperation(
-                "modulo is not supported in circuits".into(),
+                "modulo is not supported in circuits (the '%' operator has no efficient field arithmetic equivalent — use range_check for bounds)".into(),
                 to_ir_span(span),
             )),
             BinOp::Pow => {
@@ -526,7 +531,7 @@ impl IrLowering {
 
                 let exp_val = self.get_const_value(exp_var).ok_or_else(|| {
                     IrError::UnsupportedOperation(
-                        "exponent must be a constant integer in circuits".into(),
+                        "exponent must be a constant integer in circuits (x^n is unrolled to n multiplications at compile time)".into(),
                         None,
                     )
                 })?;
@@ -649,7 +654,7 @@ impl IrLowering {
             Expr::Ident { name, .. } => name.as_str(),
             _ => {
                 return Err(IrError::UnsupportedOperation(
-                    "function calls are not supported in circuits".into(),
+                    "only named function calls are supported in circuits (dynamic dispatch cannot be compiled to constraints)".into(),
                     sp,
                 ));
             }
@@ -1015,7 +1020,7 @@ impl IrLowering {
                 let idx_var = self.lower_expr(index)?;
                 let idx_fe = self.get_const_value(idx_var).ok_or_else(|| {
                     IrError::UnsupportedOperation(
-                        "array index must be a compile-time constant".into(),
+                        "array index must be a compile-time constant in circuits (dynamic indexing would require expensive lookup arguments)".into(),
                         sp.clone(),
                     )
                 })?;
@@ -1155,7 +1160,7 @@ impl IrLowering {
                     }
                 }
                 Err(IrError::UnsupportedOperation(
-                    "for loops in circuits require a literal range (e.g., 0..5) or an array".into(),
+                    "for loops in circuits require a literal range (e.g., 0..5) or an array (the loop must be fully unrolled at compile time)".into(),
                     sp,
                 ))
             }

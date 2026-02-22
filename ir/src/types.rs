@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use memory::FieldElement;
 
 /// An SSA variable — defined exactly once.
@@ -204,6 +206,8 @@ impl Instruction {
 pub struct IrProgram {
     pub instructions: Vec<Instruction>,
     pub next_var: u32,
+    /// Maps SSA variables to their source-level names (for error messages).
+    pub var_names: HashMap<SsaVar, String>,
 }
 
 impl IrProgram {
@@ -211,6 +215,7 @@ impl IrProgram {
         Self {
             instructions: Vec::new(),
             next_var: 0,
+            var_names: HashMap::new(),
         }
     }
 
@@ -226,6 +231,16 @@ impl IrProgram {
         let v = inst.result_var();
         self.instructions.push(inst);
         v
+    }
+
+    /// Associate a source-level name with an SSA variable (for error messages).
+    pub fn set_name(&mut self, var: SsaVar, name: String) {
+        self.var_names.insert(var, name);
+    }
+
+    /// Look up the source-level name for an SSA variable.
+    pub fn get_name(&self, var: SsaVar) -> Option<&str> {
+        self.var_names.get(&var).map(|s| s.as_str())
     }
 }
 
