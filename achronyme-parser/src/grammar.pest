@@ -44,30 +44,30 @@ identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Reserved keywords (cannot be used as identifiers)
 keyword    = @{
-    ("let" | "mut" | "print" | "true" | "false" | "nil" | "if" | "else" | "while" | "fn" | "return" | "break" | "continue" | "for" | "in" | "forever" | "public" | "witness" | "prove")
+    ("let" | "mut" | "print" | "true" | "false" | "nil" | "if" | "else" | "while" | "fn" | "return" | "break" | "continue" | "forever" | "for" | "in" | "public" | "witness" | "prove")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
 // 1. Define Literals
-nil_lit   = { "nil" }
-true_lit  = { "true" }
-false_lit = { "false" }
+nil_lit   = { !identifier ~ "nil" }
+true_lit  = { !identifier ~ "true" }
+false_lit = { !identifier ~ "false" }
 list_literal = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 map_pair     = { (identifier | string) ~ ":" ~ expr }
 map_literal  = { "{" ~ (map_pair ~ ("," ~ map_pair)*)? ~ ","? ~ "}" }
 
 // 2. Control Flow Expressions
 block = { "{" ~ (stmt ~ stmt_terminator?)* ~ "}" }
-if_expr = { "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
-while_expr = { "while" ~ expr ~ block }
+if_expr = { !identifier ~ "if" ~ expr ~ block ~ ("else" ~ (block | if_expr))? }
+while_expr = { !identifier ~ "while" ~ expr ~ block }
 range_expr = { integer ~ ".." ~ integer }
-for_expr   = { "for" ~ identifier ~ "in" ~ (range_expr | expr) ~ block }
-forever_expr = { "forever" ~ block }
-prove_expr = { "prove" ~ block }
+for_expr   = { !identifier ~ "for" ~ identifier ~ "in" ~ (range_expr | expr) ~ block }
+forever_expr = { !identifier ~ "forever" ~ block }
+prove_expr = { !identifier ~ "prove" ~ block }
 
 // 3. Function Definition (parsed as expression for first-class functions)
 param_list = { identifier ~ ("," ~ identifier)* }
-fn_expr = { "fn" ~ identifier? ~ "(" ~ param_list? ~ ")" ~ block }
+fn_expr = { !identifier ~ "fn" ~ identifier? ~ "(" ~ param_list? ~ ")" ~ block }
 
 atom = {
   | nil_lit
@@ -170,19 +170,19 @@ expr = { or_expr }
 // STATEMENTS & PROGRAM
 // ============================================================================
 
-let_decl   = { "let" ~ identifier ~ "=" ~ expr }
-mut_decl   = { "mut" ~ identifier ~ "=" ~ expr }
+let_decl   = { !identifier ~ "let" ~ identifier ~ "=" ~ expr }
+mut_decl   = { !identifier ~ "mut" ~ identifier ~ "=" ~ expr }
 assignment = { postfix_expr ~ "=" ~ expr }
-print_stmt = { "print" ~ "(" ~ expr ~ ")" }
+print_stmt = { !identifier ~ "print" ~ "(" ~ expr ~ ")" }
 // expr_stmt  = { expr } // Removed, direct expr in stmt
-break_stmt = { "break" }
-continue_stmt = { "continue" }
+break_stmt = { !identifier ~ "break" }
+continue_stmt = { !identifier ~ "continue" }
 array_size    = { "[" ~ integer ~ "]" }
-public_decl   = { "public" ~ identifier ~ array_size? ~ ("," ~ identifier ~ array_size?)* }
-witness_decl  = { "witness" ~ identifier ~ array_size? ~ ("," ~ identifier ~ array_size?)* }
+public_decl   = { !identifier ~ "public" ~ identifier ~ array_size? ~ ("," ~ identifier ~ array_size?)* }
+witness_decl  = { !identifier ~ "witness" ~ identifier ~ array_size? ~ ("," ~ identifier ~ array_size?)* }
 
 // Named function declaration (statement, not expression)
-fn_decl = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ block }
+fn_decl = { !identifier ~ "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ block }
 
 stmt = {
     public_decl
@@ -198,7 +198,7 @@ stmt = {
   | expr
 }
 
-return_stmt = { "return" ~ expr? }
+return_stmt = { !identifier ~ "return" ~ expr? }
 
 // Optional semicolon support for hygiene
 stmt_terminator = _{ ";" }
