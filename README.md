@@ -2,7 +2,7 @@
 
 > A programming language for zero-knowledge circuits with dual execution: full VM (closures, GC, I/O) + optimized circuit compilation (R1CS/Plonkish over BN254).
 
-**646 tests** | **2 backends** | **Groth16 proofs as first-class values**
+**703 tests** | **2 backends** | **Native Groth16 & PlonK proofs as first-class values**
 
 ---
 
@@ -37,17 +37,18 @@ Unlike zkVMs (SP1, RISC Zero) that prove generic computation expensively, or res
 - Mark-and-sweep GC with typed arenas
 
 ### ZK Circuit Compilation
-- **R1CS backend** (Groth16) with snarkjs-compatible `.r1cs` / `.wtns` export
-- **Plonkish backend** with custom gates, lookup tables, copy constraints
+- **R1CS backend** — native Groth16 proofs via ark-groth16, snarkjs-compatible `.r1cs` / `.wtns` export
+- **Plonkish backend** — native KZG-PlonK proofs via halo2 (PSE), custom gates, lookup tables, copy constraints
 - SSA intermediate representation with optimization passes (const fold, DCE, boolean propagation)
 - Taint analysis: compile-time detection of under-constrained variables
 - Builtins: `poseidon`, `poseidon_many`, `mux`, `assert`, `assert_eq`, `range_check`, `merkle_verify`
 
 ### VM-ZK Integration
 - `prove {}` blocks compile circuits, generate witnesses, and verify at runtime
-- Groth16 proof generation via snarkjs with `.zkey` caching
+- Native in-process proof generation for both backends (no external dependencies)
+- `--prove-backend r1cs` (default, Groth16) or `--prove-backend plonkish` (KZG-PlonK)
 - Proofs are first-class values: `proof_json()`, `proof_public()`, `proof_vkey()`
-- Graceful fallback to verify-only when snarkjs is not available
+- KZG params and proving keys cached in `~/.achronyme/cache/`
 
 ### Architecture
 - NaN-boxed 64-bit tagged values (10 types: Number, Int, Bool, Nil, String, List, Map, Function, Field, Proof)
@@ -60,18 +61,13 @@ Unlike zkVMs (SP1, RISC Zero) that prove generic computation expensively, or res
 
 ### Prerequisites
 - Rust (latest stable)
-- Node.js + snarkjs (optional, for Groth16 proof generation)
-
-```bash
-# Install snarkjs (optional)
-npm install -g snarkjs
-```
+- No external dependencies — proof generation is fully native
 
 ### Build & Test
 
 ```bash
 cargo build --release
-cargo test --workspace  # 646 tests
+cargo test --workspace  # 703 tests
 ```
 
 ### Run a Program
@@ -80,20 +76,29 @@ cargo test --workspace  # 646 tests
 # Execute a script
 cargo run -- run examples/hello.ach
 
-# With Groth16 proof generation (requires snarkjs)
-cargo run -- run examples/proof.ach --ptau path/to/pot12.ptau
+# With prove {} blocks using Groth16 (default)
+cargo run -- run examples/proof.ach
+
+# With prove {} blocks using PlonK (halo2 KZG)
+cargo run -- run examples/proof.ach --prove-backend plonkish
 ```
 
 ### Compile a Circuit
 
 ```bash
-# Generate .r1cs and .wtns files
+# R1CS: generate .r1cs and .wtns files
 cargo run -- circuit circuit.ach \
     --public "root" \
     --witness "leaf,path_0,path_1,path_2" \
     --inputs "leaf=42,root=..."
 
-# Use with snarkjs
+# Plonkish: compile, verify, and generate KZG-PlonK proof
+cargo run -- circuit circuit.ach \
+    --backend plonkish \
+    --inputs "leaf=42,root=..." \
+    --prove
+
+# R1CS files are snarkjs-compatible
 snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit.zkey
 snarkjs groth16 prove circuit.zkey witness.wtns proof.json public.json
 snarkjs groth16 verify verification_key.json public.json proof.json
@@ -135,7 +140,7 @@ print(proof_json(proof))  // Groth16 proof, verifiable on-chain
 | `vm` | Register-based virtual machine |
 | `memory` | Heap, GC, FieldElement (BN254 Montgomery), ProofObject |
 | `constraints` | R1CS/Plonkish constraint systems, Poseidon hash, binary export |
-| `cli` | Command-line interface, snarkjs integration |
+| `cli` | Command-line interface, native Groth16 (ark-groth16) & PlonK (halo2 KZG) proving |
 
 ---
 
@@ -158,10 +163,10 @@ print(proof_json(proof))  // Groth16 proof, verifiable on-chain
 
 ## Status
 
-- **646 tests passing** across 7 crates
-- 2 ZK backends (R1CS + Plonkish), both audited
+- **703 tests passing** across 7 crates
+- 2 ZK backends with native proof generation (R1CS/Groth16 + Plonkish/KZG-PlonK)
 - Full VM-ZK integration (Levels 1-3)
-- snarkjs-compatible binary export
+- snarkjs-compatible binary export (R1CS backend)
 - 2 complete security audits resolved (C1-4, H1-5, M1-8)
 
 ## License
