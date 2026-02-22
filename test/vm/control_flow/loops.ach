@@ -1,0 +1,95 @@
+// Loops: while, forever, for..in
+
+// while with counter: sum 1..10
+mut sum = 0
+mut i = 1
+while i <= 10 {
+    sum = sum + i
+    i = i + 1
+}
+assert(sum == 55)
+
+// while with condition
+mut n = 100
+mut steps = 0
+while n > 1 {
+    if n % 2 == 0 {
+        n = n / 2
+    } else {
+        n = n * 3 + 1
+    }
+    steps = steps + 1
+}
+assert(n == 1)
+assert(steps > 0)
+
+// forever + break
+mut count = 0
+forever {
+    count = count + 1
+    if count == 5 {
+        break
+    }
+}
+assert(count == 5)
+
+// for..in on array
+mut total = 0
+for x in [1, 2, 3, 4, 5] {
+    total = total + x
+}
+assert(total == 15)
+
+// for..in on variable array
+let items = [10, 20, 30]
+mut item_sum = 0
+for v in items {
+    item_sum = item_sum + v
+}
+assert(item_sum == 60)
+
+// for..in on empty array (body never runs)
+mut ran = false
+for x in [] {
+    ran = true
+}
+assert(ran == false)
+
+// for..in with keys(map)
+let m = {a: 1, b: 2, c: 3}
+mut key_count = 0
+for k in keys(m) {
+    key_count = key_count + 1
+}
+assert(key_count == 3)
+
+// Nested loops
+mut product = 0
+mut a = 0
+while a < 3 {
+    mut b = 0
+    while b < 3 {
+        product = product + 1
+        b = b + 1
+    }
+    a = a + 1
+}
+assert(product == 9)
+
+// Nested for..in
+mut pairs = 0
+for x in [1, 2, 3] {
+    for y in [10, 20] {
+        pairs = pairs + 1
+    }
+}
+assert(pairs == 6)
+
+// While loop that never executes
+mut never = 0
+while false {
+    never = 1
+}
+assert(never == 0)
+
+print("PASS: control_flow/loops")

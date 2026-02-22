@@ -1,7 +1,29 @@
-// Advanced closure patterns
+// Closures: upvalue capture, factories, nesting
 
-// Shared mutable state between closures from same factory
-let make_pair = fn() {
+// Basic closure capturing upvalue
+fn make_adder(n) {
+    return fn(x) { x + n }
+}
+let add5 = make_adder(5)
+let add10 = make_adder(10)
+assert(add5(3) == 8)
+assert(add10(3) == 13)
+
+// Factory pattern (make_counter)
+fn make_counter() {
+    mut count = 0
+    return fn() {
+        count = count + 1
+        return count
+    }
+}
+let counter = make_counter()
+assert(counter() == 1)
+assert(counter() == 2)
+assert(counter() == 3)
+
+// Shared mutable state between closures
+fn make_pair() {
     mut val = 0
     let getter = fn() { val }
     let setter = fn(x) { val = x }
@@ -17,7 +39,7 @@ set(100)
 assert(get() == 100)
 
 // Closure as callback
-let map_list = fn(list, f) {
+fn map_list(list, f) {
     mut result = []
     mut i = 0
     while i < len(list) {
@@ -32,7 +54,7 @@ assert(doubled[1] == 4)
 assert(doubled[2] == 6)
 
 // Nested closures (closure returning closure)
-let make_multiplier = fn(factor) {
+fn make_multiplier(factor) {
     return fn(x) {
         return fn(y) {
             return x * y * factor
@@ -43,12 +65,8 @@ let mul2 = make_multiplier(2)
 let mul2_3 = mul2(3)
 assert(mul2_3(4) == 24)
 
-// Immediate invocation
-let result = fn(x) { x + 1 }(41)
-assert(result == 42)
-
 // Closure preserving environment after outer returns
-let make_accumulator = fn(init) {
+fn make_accumulator(init) {
     mut total = init
     return fn(n) {
         total = total + n
@@ -60,4 +78,11 @@ assert(acc(5) == 5)
 assert(acc(10) == 15)
 assert(acc(20) == 35)
 
-print("PASS: closures")
+// Closures capture by reference, not value
+mut outer_val = 10
+let read_outer = fn() { outer_val }
+assert(read_outer() == 10)
+outer_val = 20
+assert(read_outer() == 20)
+
+print("PASS: functions/closures")

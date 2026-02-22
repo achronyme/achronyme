@@ -1,0 +1,69 @@
+// Functions: fn decl, calling, return, arity
+
+// Named fn declaration (statement form)
+fn add(a, b) {
+    return a + b
+}
+assert(add(3, 4) == 7)
+
+// fn expression via let
+let mul = fn(a, b) {
+    return a * b
+}
+assert(mul(3, 7) == 21)
+
+// Early return
+fn abs(x) {
+    if x >= 0 { return x }
+    return -x
+}
+assert(abs(5) == 5)
+assert(abs(-5) == 5)
+assert(abs(0) == 0)
+
+// Zero-arg function
+fn greet() {
+    return "hello"
+}
+assert(greet() == "hello")
+
+// Anonymous function (implicit return of last expression)
+let double = fn(x) { x * 2 }
+assert(double(5) == 10)
+
+// Function returning a value without explicit return
+fn square(x) {
+    x * x
+}
+assert(square(4) == 16)
+
+// Multiple parameters
+fn clamp(val, lo, hi) {
+    if val < lo { return lo }
+    if val > hi { return hi }
+    return val
+}
+assert(clamp(5, 0, 10) == 5)
+assert(clamp(-1, 0, 10) == 0)
+assert(clamp(15, 0, 10) == 10)
+
+// Higher-order: fn as argument
+fn apply(f, x) {
+    return f(x)
+}
+assert(apply(fn(x) { x * x }, 5) == 25)
+
+// fn returning fn
+fn compose(f, g) {
+    return fn(x) { f(g(x)) }
+}
+let inc = fn(x) { x + 1 }
+let dbl = fn(x) { x * 2 }
+let inc_then_dbl = compose(dbl, inc)
+assert(inc_then_dbl(3) == 8)
+
+// Immediately invoked
+let result = fn(x) { x + 1 }(41)
+assert(result == 42)
+
+print("PASS: functions/basics")

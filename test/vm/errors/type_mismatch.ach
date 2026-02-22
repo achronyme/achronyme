@@ -1,0 +1,2 @@
+// Expected error: type mismatch in arithmetic
+let x = "hello" - 1

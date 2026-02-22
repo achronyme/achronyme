@@ -1,0 +1,54 @@
+// String operations: literals, escapes, concatenation, len
+
+// Basic literal
+let s = "hello"
+assert(s == "hello")
+
+// Length
+assert(len("hello") == 5)
+assert(len("") == 0)
+assert(len("a") == 1)
+
+// Escapes
+let nl = "line1\nline2"
+assert(len(nl) == 11)
+
+let tab = "a\tb"
+assert(len(tab) == 3)
+
+let escaped_quote = "say \"hi\""
+assert(len(escaped_quote) == 8)
+
+let backslash = "a\\b"
+assert(len(backslash) == 3)
+
+// typeof
+assert(typeof("x") == "String")
+assert(typeof("") == "String")
+
+// Equality
+assert("abc" == "abc")
+assert("abc" != "def")
+assert(!("abc" != "abc"))
+
+// Concatenation
+assert("hello" + " " + "world" == "hello world")
+assert("" + "abc" == "abc")
+assert("abc" + "" == "abc")
+assert("" + "" == "")
+
+// Concatenation with numbers (via string + string)
+let greeting = "count: "
+let msg = greeting + "42"
+assert(msg == "count: 42")
+
+// Multi-part concatenation
+let a = "one"
+let b = "two"
+let c = "three"
+assert(a + " " + b + " " + c == "one two three")
+
+// String in conditions
+assert(if "non-empty" { true } else { false })
+
+print("PASS: data_types/strings")

@@ -1,0 +1,52 @@
+// Number edge cases: int, float, large numbers
+
+// Integer basics
+assert(0 == 0)
+assert(1 == 1)
+assert(-1 == -1)
+assert(42 == 42)
+
+// Large integers
+assert(1000000 * 1000000 == 1000000000000)
+assert(100000 + 1 == 100001)
+assert(12345 * 2 == 24690)
+
+// Float basics
+assert(3.14 * 2.0 == 6.28)
+assert(1.0 / 3.0 * 3.0 == 1.0)
+assert(0.5 + 0.5 == 1.0)
+
+// Division producing float
+assert(7 / 2 == 3.5)
+assert(1 / 4 == 0.25)
+assert(6 / 3 == 2)
+
+// Negative arithmetic
+assert(-3 * -4 == 12)
+assert(-10 / -2 == 5)
+assert(-7 + 7 == 0)
+assert(1 * 0 == 0)
+
+// Modulo
+assert(10 % 3 == 1)
+assert(7 % 7 == 0)
+assert(100 % 7 == 2)
+assert(1 % 1 == 0)
+
+// Exponentiation
+assert(2 ^ 0 == 1)
+assert(2 ^ 1 == 2)
+assert(2 ^ 16 == 65536)
+assert(10 ^ 3 == 1000)
+
+// Mixed int/float
+assert(1 + 0.5 == 1.5)
+assert(3 * 2.0 == 6.0)
+assert(10 / 4.0 == 2.5)
+
+// Zero
+assert(0 + 0 == 0)
+assert(0 * 999 == 0)
+assert(0 - 0 == 0)
+
+print("PASS: data_types/numbers")

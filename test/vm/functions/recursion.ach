@@ -1,0 +1,55 @@
+// Recursion: fibonacci, factorial, recursive helpers
+
+// Fibonacci via named fn expression
+let fib = fn fib(n) {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+assert(fib(0) == 0)
+assert(fib(1) == 1)
+assert(fib(10) == 55)
+
+// Fibonacci via fn declaration
+fn fib2(n) {
+    if n < 2 { return n }
+    return fib2(n - 1) + fib2(n - 2)
+}
+assert(fib2(7) == 13)
+
+// Factorial
+fn factorial(n) {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+assert(factorial(0) == 1)
+assert(factorial(1) == 1)
+assert(factorial(5) == 120)
+assert(factorial(10) == 3628800)
+
+// Recursive sum of list
+fn sum_list(arr, idx) {
+    if idx >= len(arr) { return 0 }
+    return arr[idx] + sum_list(arr, idx + 1)
+}
+assert(sum_list([1, 2, 3, 4, 5], 0) == 15)
+assert(sum_list([], 0) == 0)
+
+// Recursive power
+fn power(base, exp) {
+    if exp == 0 { return 1 }
+    return base * power(base, exp - 1)
+}
+assert(power(2, 10) == 1024)
+assert(power(3, 4) == 81)
+assert(power(5, 0) == 1)
+
+// GCD
+fn gcd(a, b) {
+    if b == 0 { return a }
+    return gcd(b, a % b)
+}
+assert(gcd(12, 8) == 4)
+assert(gcd(100, 75) == 25)
+assert(gcd(7, 13) == 1)
+
+print("PASS: functions/recursion")

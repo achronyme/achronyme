@@ -1,4 +1,4 @@
-// Map operations
+// Map operations: literals, dot/bracket access, keys(), len, nested
 
 // Literal + dot access
 let person = {name: "Alice", age: 30}
@@ -44,4 +44,20 @@ let nested = {a: {b: {c: 42}}}
 assert(nested.a.b.c == 42)
 assert(nested["a"]["b"]["c"] == 42)
 
-print("PASS: maps")
+// Add new key
+mut config = {}
+config.debug = true
+config.port = 8080
+assert(config.debug == true)
+assert(config.port == 8080)
+assert(len(config) == 2)
+
+// Iterate over keys
+let scores = {math: 95, science: 88, english: 92}
+mut total = 0
+for k in keys(scores) {
+    total = total + scores[k]
+}
+assert(total == 275)
+
+print("PASS: collections/maps")

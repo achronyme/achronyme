@@ -1,0 +1,90 @@
+// Conditionals: if/else, else-if, as expressions
+
+// if/else as expression
+let x = if true { 10 } else { 20 }
+assert(x == 10)
+let y = if false { 10 } else { 20 }
+assert(y == 20)
+
+// Chained else-if (nested if/else)
+let grade = 85
+mut ltr = "F"
+if grade >= 90 {
+    ltr = "A"
+} else {
+    if grade >= 80 {
+        ltr = "B"
+    } else {
+        if grade >= 70 {
+            ltr = "C"
+        }
+    }
+}
+assert(ltr == "B")
+
+// Another grade test
+let grade2 = 95
+mut ltr2 = "F"
+if grade2 >= 90 {
+    ltr2 = "A"
+} else {
+    if grade2 >= 80 {
+        ltr2 = "B"
+    }
+}
+assert(ltr2 == "A")
+
+// Nested if inside if
+let a = 5
+let b = 10
+mut result = 0
+if a > 0 {
+    if b > 5 {
+        result = a + b
+    } else {
+        result = a
+    }
+}
+assert(result == 15)
+
+// if without else (evaluates to nil)
+mut flag = false
+if true {
+    flag = true
+}
+assert(flag == true)
+
+// Complex conditions
+let p = 3
+let q = 7
+if p > 0 && q > 0 {
+    assert(true)
+} else {
+    assert(false)
+}
+
+// if/else expression in let
+let min = if 3 < 5 { 3 } else { 5 }
+assert(min == 3)
+
+// Deeply nested if/else expression
+let val = if true {
+    if false {
+        1
+    } else {
+        if true { 42 } else { 0 }
+    }
+} else {
+    99
+}
+assert(val == 42)
+
+// Boolean condition expressions
+let cond = 10 > 5
+if cond {
+    assert(true)
+} else {
+    assert(false)
+}
+
+print("PASS: control_flow/conditionals")

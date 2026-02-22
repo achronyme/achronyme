@@ -1,0 +1,51 @@
+// Nested structures: arrays of maps, maps of arrays, deep nesting
+
+// Array of maps
+let people = [{name: "Alice", age: 30}, {name: "Bob", age: 25}]
+assert(people[0].name == "Alice")
+assert(people[1].age == 25)
+assert(len(people) == 2)
+
+// Map of arrays
+let classroom = {students: ["Alice", "Bob", "Carol"], grades: [90, 85, 92]}
+assert(classroom.students[0] == "Alice")
+assert(classroom.grades[2] == 92)
+assert(len(classroom.students) == 3)
+
+// Deep nesting: map > array > map
+let org = {
+    teams: [
+        {name: "alpha", members: ["a1", "a2"]},
+        {name: "beta", members: ["b1", "b2", "b3"]}
+    ]
+}
+assert(org.teams[0].name == "alpha")
+assert(org.teams[1].members[2] == "b3")
+assert(len(org.teams[1].members) == 3)
+
+// Mutation of nested
+mut data = [{x: 1}, {x: 2}]
+data[0].x = 10
+assert(data[0].x == 10)
+assert(data[1].x == 2)
+
+// Build nested in loop
+mut records = []
+mut i = 0
+while i < 3 {
+    push(records, {id: i, value: i * 10})
+    i = i + 1
+}
+assert(records[0].id == 0)
+assert(records[1].value == 10)
+assert(records[2].value == 20)
+assert(len(records) == 3)
+
+// Map with array value, push to it
+mut bag = {items: []}
+push(bag.items, "sword")
+push(bag.items, "shield")
+assert(len(bag.items) == 2)
+assert(bag.items[0] == "sword")
+
+print("PASS: collections/nested_structures")

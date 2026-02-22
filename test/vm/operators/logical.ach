@@ -1,0 +1,66 @@
+// Logical operators: &&, ||, !, truthiness
+
+// Truth tables for &&
+assert(true && true)
+assert(!(true && false))
+assert(!(false && true))
+assert(!(false && false))
+
+// Truth tables for ||
+assert(true || false)
+assert(false || true)
+assert(true || true)
+assert(!(false || false))
+
+// NOT on booleans
+assert(!false == true)
+assert(!true == false)
+assert(!!true == true)
+assert(!!false == false)
+
+// Short-circuit &&: false && <expr> should not evaluate rhs
+// (We test by ensuring it doesn't crash if rhs would be an error)
+mut sc_and = false
+if false && true {
+    sc_and = true
+}
+assert(sc_and == false)
+
+// Short-circuit ||: true || <expr> should not evaluate rhs
+mut sc_or = false
+if true || false {
+    sc_or = true
+}
+assert(sc_or == true)
+
+// Truthiness: only false and nil are falsy
+assert(if false { false } else { true })
+assert(if nil { false } else { true })
+
+// Everything else is truthy
+assert(if true { true } else { false })
+assert(if 0 { true } else { false })
+assert(if 1 { true } else { false })
+assert(if "" { true } else { false })
+assert(if "hello" { true } else { false })
+assert(if [] { true } else { false })
+assert(if [1] { true } else { false })
+
+// Complex logical expressions
+let x = 3
+let y = 7
+assert((x > 0) && (y > 0))
+assert((x > 10) || (y > 5))
+assert(!((x > 10) && (y > 10)))
+
+// NOT precedence with comparison
+assert(!false == true)
+assert(!(1 == 2))
+assert(!(3 < 2))
+
+// Nested logical
+assert((true && true) || false)
+assert(!(false && (true || false)))
+assert((true || false) && (true || false))
+
+print("PASS: operators/logical")

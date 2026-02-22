@@ -1,0 +1,3 @@
+// Expected error: calling a non-function value
+let x = 42
+x()

@@ -1,0 +1,83 @@
+// Break and continue: while, forever, nested
+
+// break exits while
+mut i = 0
+while true {
+    if i == 3 { break }
+    i = i + 1
+}
+assert(i == 3)
+
+// break exits forever
+mut j = 0
+forever {
+    j = j + 1
+    if j >= 5 { break }
+}
+assert(j == 5)
+
+// continue in while
+mut odds = 0
+mut k = 0
+while k < 10 {
+    k = k + 1
+    if k % 2 == 0 { continue }
+    odds = odds + 1
+}
+assert(odds == 5)
+
+// continue skips push
+mut evens = []
+mut idx = 0
+while idx < 10 {
+    idx = idx + 1
+    if idx % 2 != 0 { continue }
+    push(evens, idx)
+}
+assert(len(evens) == 5)
+assert(evens[0] == 2)
+assert(evens[4] == 10)
+
+// Nested: break inner doesn't break outer
+mut outer = 0
+mut total = 0
+while outer < 3 {
+    mut inner = 0
+    forever {
+        inner = inner + 1
+        total = total + 1
+        if inner == 2 { break }
+    }
+    outer = outer + 1
+}
+assert(total == 6)
+assert(outer == 3)
+
+// continue in inner doesn't affect outer
+mut outer2 = 0
+mut sum = 0
+while outer2 < 3 {
+    mut inner2 = 0
+    while inner2 < 5 {
+        inner2 = inner2 + 1
+        if inner2 % 2 == 0 { continue }
+        sum = sum + 1
+    }
+    outer2 = outer2 + 1
+}
+assert(sum == 9)
+
+// Early break on condition
+mut found = -1
+mut pos = 0
+let haystack = [5, 3, 8, 1, 9]
+for val in haystack {
+    if val == 8 {
+        found = pos
+        break
+    }
+    pos = pos + 1
+}
+assert(found == 2)
+
+print("PASS: control_flow/break_continue")

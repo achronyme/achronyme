@@ -1,0 +1,2 @@
+// Expected error: assertion failure
+assert(false)

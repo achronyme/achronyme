@@ -1,0 +1,63 @@
+// Comparison operators: ==, !=, <, <=, >, >= across types
+
+// Integer equality
+assert(1 == 1)
+assert(!(1 == 2))
+assert(1 != 2)
+assert(!(1 != 1))
+assert(0 == 0)
+
+// Integer ordering
+assert(1 < 2)
+assert(!(2 < 1))
+assert(!(1 < 1))
+assert(1 <= 1)
+assert(1 <= 2)
+assert(!(2 <= 1))
+assert(2 > 1)
+assert(!(1 > 2))
+assert(!(1 > 1))
+assert(1 >= 1)
+assert(2 >= 1)
+assert(!(1 >= 2))
+
+// Float comparisons
+assert(1.5 < 2.5)
+assert(3.0 >= 3.0)
+assert(2.5 > 1.5)
+assert(1.0 <= 1.0)
+assert(0.1 < 0.2)
+
+// Negative comparisons
+assert(-1 < 0)
+assert(-5 < -3)
+assert(-3 > -5)
+assert(-1 <= -1)
+
+// String equality
+assert("abc" == "abc")
+assert("abc" != "def")
+assert(!("abc" != "abc"))
+
+// Boolean equality
+assert(true == true)
+assert(false == false)
+assert(true != false)
+assert(!(true == false))
+
+// Nil equality
+assert(nil == nil)
+assert(!(nil != nil))
+
+// Chained logic
+let a = 1
+let b = 2
+let c = 3
+assert(a < b && b < c)
+assert(a < c || b > c)
+
+// Mixed comparisons in expressions
+assert((1 == 1) && (2 != 3))
+assert((1 > 2) || (3 > 2))
+
+print("PASS: operators/comparison")

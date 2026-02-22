@@ -1,4 +1,4 @@
-// Corner cases
+// Edge cases: large ints, deep nesting, nil/bool, various corner cases
 
 // Empty map literal {}
 let x = {}
@@ -55,5 +55,26 @@ assert(!(nil != nil))
 assert(true == true)
 assert(false == false)
 assert(true != false)
+
+// Block evaluates to last expression
+let blk = { 1 + 2 }
+assert(blk == 3)
+
+// Empty block
+let empty_blk = {}
+assert(typeof(empty_blk) == "Map")
+
+// Chained function calls
+fn id(x) { x }
+assert(id(id(id(42))) == 42)
+
+// Moderately large computation
+mut total = 0
+mut i = 0
+while i < 100 {
+    total = total + i
+    i = i + 1
+}
+assert(total == 4950)
 
 print("PASS: edge_cases")

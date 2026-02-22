@@ -1,0 +1,3 @@
+// Expected error: reassigning an immutable let binding
+let x = 42
+x = 99

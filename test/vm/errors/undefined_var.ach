@@ -1,0 +1,2 @@
+// Expected error: undefined variable
+print(nope)

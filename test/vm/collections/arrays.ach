@@ -1,4 +1,4 @@
-// List operations
+// Array operations: literals, indexing, push/pop, len, mutation, nested
 
 // Literal + indexing
 let arr = [10, 20, 30]
@@ -12,6 +12,7 @@ assert(len(empty) == 0)
 
 // len
 assert(len(arr) == 3)
+assert(len([1]) == 1)
 
 // push + pop
 mut items = [1, 2]
@@ -22,6 +23,15 @@ assert(items[2] == 3)
 let last = pop(items)
 assert(last == 3)
 assert(len(items) == 2)
+
+// Multiple push/pop
+push(items, 10)
+push(items, 20)
+push(items, 30)
+assert(len(items) == 5)
+assert(pop(items) == 30)
+assert(pop(items) == 20)
+assert(len(items) == 3)
 
 // Assignment via index
 mut nums = [0, 0, 0]
@@ -47,7 +57,7 @@ assert(matrix[0][1] == 2)
 assert(matrix[1][0] == 3)
 assert(matrix[1][1] == 4)
 
-// Build list in loop (using while since for..in has a known bug)
+// Build list in loop
 mut squares = []
 mut i = 0
 while i < 5 {
@@ -56,6 +66,22 @@ while i < 5 {
 }
 assert(len(squares) == 5)
 assert(squares[0] == 0)
+assert(squares[1] == 1)
 assert(squares[4] == 16)
 
-print("PASS: arrays")
+// for..in on array
+mut total = 0
+for x in [10, 20, 30] {
+    total = total + x
+}
+assert(total == 60)
+
+// for..in with variable
+let data = [1, 2, 3, 4, 5]
+mut sum = 0
+for v in data {
+    sum = sum + v
+}
+assert(sum == 15)
+
+print("PASS: collections/arrays")

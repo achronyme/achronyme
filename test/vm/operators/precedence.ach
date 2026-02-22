@@ -1,0 +1,46 @@
+// Operator precedence and associativity
+
+// mul > add
+assert(2 + 3 * 4 == 14)
+assert(10 - 2 * 3 == 4)
+
+// parens override
+assert((2 + 3) * 4 == 20)
+assert((10 - 2) * (3 + 1) == 32)
+
+// pow > mul > add
+assert(2 + 3 * 4 ^ 2 == 50)
+assert(2 ^ 3 * 2 == 16)
+
+// left-associative sub
+assert(10 - 3 - 2 == 5)
+assert(20 - 5 - 5 - 5 == 5)
+
+// left-associative div
+assert(100 / 10 / 2 == 5)
+
+// mixed arithmetic
+assert(1 + 2 * 3 - 4 == 3)
+assert((1 + 2) * (3 - 4) == -3)
+
+// comparison with arithmetic
+assert(2 + 3 == 5)
+assert(2 * 3 > 5)
+assert(10 / 2 <= 5)
+
+// AND > OR
+assert(true || true && false)
+assert(!(false || false && true))
+
+// NOT > AND
+assert(!false && true)
+assert(!false || false)
+
+// deeply nested parens
+assert(((((1 + 2) * 3) - 4) * 5) == 25)
+
+// unary negation precedence
+assert(-2 + 5 == 3)
+assert(-(2 + 5) == -7)
+
+print("PASS: operators/precedence")

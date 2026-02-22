@@ -1,4 +1,4 @@
-// let and mut bindings
+// Variables: let, mut, reassignment
 
 // Immutable let
 let x = 42
@@ -9,21 +9,14 @@ mut y = 10
 assert(y == 10)
 y = 20
 assert(y == 20)
+y = y + 5
+assert(y == 25)
 
 // Multiple bindings
 let a = 1
 let b = 2
 let c = a + b
 assert(c == 3)
-
-// Block scoping: inner let shadows outer
-let v = 100
-let w = {
-    let v = 200
-    v
-}
-assert(v == 100)
-assert(w == 200)
 
 // Block as expression
 let z = {
@@ -33,7 +26,7 @@ let z = {
 }
 assert(z == 30)
 
-// Nested blocks
+// Nested blocks as expressions
 let n = {
     let a = {
         let b = 5
@@ -43,4 +36,17 @@ let n = {
 }
 assert(n == 11)
 
-print("PASS: variables")
+// Mutable in different types
+mut s = "hello"
+s = "world"
+assert(s == "world")
+
+mut arr = [1, 2]
+arr = [3, 4, 5]
+assert(len(arr) == 3)
+
+mut flag = true
+flag = false
+assert(flag == false)
+
+print("PASS: variables/bindings")

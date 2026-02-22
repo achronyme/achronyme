@@ -27,13 +27,34 @@ run_test() {
     fi
 }
 
+run_fail_test() {
+    local name="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then
+        FAIL=$((FAIL + 1))
+        ERRORS+=("$name (expected failure but succeeded)")
+        echo "  FAIL  $name"
+    else
+        PASS=$((PASS + 1))
+        echo "  PASS  $name"
+    fi
+}
+
 # --- VM tests ---
 echo ""
 echo "=== VM tests ==="
-for f in "$SCRIPT_DIR"/vm/*.ach; do
-    name="vm/$(basename "$f")"
+while IFS= read -r -d '' f; do
+    name="${f#$SCRIPT_DIR/}"
     run_test "$name" "$ACH" run "$f"
-done
+done < <(find "$SCRIPT_DIR/vm" -name '*.ach' -not -path '*/errors/*' -print0 | sort -z)
+
+# --- VM error tests (expected failures) ---
+echo ""
+echo "=== VM error tests (expected failures) ==="
+while IFS= read -r -d '' f; do
+    name="${f#$SCRIPT_DIR/}"
+    run_fail_test "$name" "$ACH" run "$f"
+done < <(find "$SCRIPT_DIR/vm/errors" -name '*.ach' -print0 2>/dev/null | sort -z)
 
 # --- Circuit tests ---
 echo ""
