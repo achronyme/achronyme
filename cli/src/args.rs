@@ -20,6 +20,9 @@ pub enum Commands {
         /// [Deprecated] Ignored — native Groth16 backend does not use ptau files
         #[arg(long, hide = true)]
         ptau: Option<String>,
+        /// Backend for prove {} blocks: "r1cs" (default) or "plonkish"
+        #[arg(long, default_value = "r1cs")]
+        prove_backend: String,
     },
     /// Disassemble a source file or binary
     Disassemble {
@@ -61,5 +64,8 @@ pub enum Commands {
         /// Backend: "r1cs" (default) or "plonkish"
         #[arg(long, default_value = "r1cs")]
         backend: String,
+        /// Generate a cryptographic proof (requires --inputs)
+        #[arg(long)]
+        prove: bool,
     },
 }

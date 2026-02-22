@@ -45,6 +45,7 @@ pub fn circuit_command(
     inputs: Option<&str>,
     no_optimize: bool,
     backend: &str,
+    prove: bool,
 ) -> Result<()> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("cannot read source file: {path}"))?;
@@ -74,7 +75,7 @@ pub fn circuit_command(
 
     match backend {
         "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs),
-        "plonkish" => run_plonkish_pipeline(&program, inputs),
+        "plonkish" => run_plonkish_pipeline(&program, inputs, prove),
         _ => Err(anyhow::anyhow!(
             "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
         )),
@@ -145,7 +146,7 @@ fn run_r1cs_pipeline(
     Ok(())
 }
 
-fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>) -> Result<()> {
+fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>, prove: bool) -> Result<()> {
     let mut compiler = PlonkishCompiler::new();
     let proven = ir::passes::bool_prop::compute_proven_boolean(program);
     compiler.set_proven_boolean(proven);
@@ -170,7 +171,39 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>) -> Resul
             .verify()
             .map_err(|e| anyhow::anyhow!("Plonkish verification error: {e}"))?;
         eprintln!("plonkish verification: OK");
+
+        if prove {
+            let cache_dir = std::env::var("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".achronyme").join("cache"))
+                .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/achronyme/cache"));
+
+            let result = crate::halo2_proof::generate_plonkish_proof(compiler, &cache_dir)
+                .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
+
+            match result {
+                vm::ProveResult::Proof {
+                    proof_json,
+                    public_json,
+                    vkey_json,
+                } => {
+                    fs::write("proof.json", &proof_json)
+                        .context("cannot write proof.json")?;
+                    fs::write("public.json", &public_json)
+                        .context("cannot write public.json")?;
+                    fs::write("vkey.json", &vkey_json)
+                        .context("cannot write vkey.json")?;
+                    eprintln!("wrote proof.json, public.json, vkey.json");
+                }
+                vm::ProveResult::VerifiedOnly => {
+                    eprintln!("plonkish proof generation: verified only (no proof output)");
+                }
+            }
+        }
     } else {
+        if prove {
+            return Err(anyhow::anyhow!("--prove requires --inputs"));
+        }
+
         compiler
             .compile_ir(program)
             .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;

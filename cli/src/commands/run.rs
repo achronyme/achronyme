@@ -4,30 +4,24 @@ use memory::Function;
 use std::fs;
 use vm::{CallFrame, VM};
 
-use crate::prove_handler::DefaultProveHandler;
+use crate::prove_handler::{DefaultProveHandler, ProveBackend};
 
-// Need format_value logic. It was local in runner.rs.
-// I will duplicate it here or move it to a shared utils or vm method?
-// Since `Value::fmt` exists (Debug), but the user wants `format_value`.
-// Ideally updating `Value::Display` or similar.
-// For now, I'll put `format_value` here or make it a helper in `vm` or `cli`.
-// Let's put it in `vm` would be best, but I can't easily change `vm` right deeply now.
-// I'll copy it here for now to avoid cross-crate dependency cycles if any (cli depends on vm, so vm can't depend on cli).
-// BUT `vm` has `Value` and `VM`. `format_value` takes `&Value` and `&VM`.
-// It strictly belongs in `vm` or `cli` utils.
-// I'll make a private helper here for now.
-
-pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>) -> Result<()> {
+pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>, prove_backend: &str) -> Result<()> {
     if ptau.is_some() {
         eprintln!("Warning: --ptau is deprecated and ignored (native Groth16 backend does not use ptau files)");
     }
+
+    let backend = match prove_backend {
+        "plonkish" => ProveBackend::Plonkish,
+        _ => ProveBackend::R1cs,
+    };
 
     if path.ends_with(".achb") {
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler::new()));
+        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(backend)));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -49,7 +43,7 @@ pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>) -> Result<()> {
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler::new()));
+        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(backend)));
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);
