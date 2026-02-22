@@ -51,9 +51,14 @@ fn ir_compile_and_verify(
 
 #[test]
 fn test_for_static_range_constraint_count() {
-    // for i in 0..3 { let step = a * a } -> 3 mul constraints
-    let rc = ir_compile("for i in 0..3 { let step = a * a }", &[], &["a"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    // for i in 0..3 { assert_eq(a * a, out) } -> 3 * (1 mul + 1 assert_eq) = 6
+    let rc = ir_compile(
+        "for i in 0..3 { assert_eq(a * a, out) }",
+        &["out"],
+        &["a"],
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 6);
 }
 
 #[test]
@@ -75,26 +80,30 @@ fn test_for_iterator_as_constant() {
 
 #[test]
 fn test_for_nested() {
-    // Nested for: outer 0..2, inner 0..3, body = a * a (1 constraint)
-    // Total: 2 * 3 * 1 = 6 constraints
+    // Nested for: outer 0..2, inner 0..3, body = assert_eq(a * a, out)
+    // Each iteration: 1 mul + 1 assert_eq = 2
+    // Total: 2 * 3 * 2 = 12 constraints
     let rc = ir_compile(
-        "for i in 0..2 { for j in 0..3 { let step = a * a } }",
-        &[],
+        "for i in 0..2 { for j in 0..3 { assert_eq(a * a, out) } }",
+        &["out"],
         &["a"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 6);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 12);
 }
 
 #[test]
 fn test_for_integration_with_witness() {
     // Circuit: for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)
-    // 3 mul inside loop + 1 mul for final a*b + 1 assert_eq = 5
+    // Loop body `let prod = a * b` is dead (prod unused), DCE eliminates it.
+    // Remaining: 1 mul (a * b) + 1 assert_eq = 2
     let rc = ir_compile(
         "for i in 0..3 { let prod = a * b }; assert_eq(a * b, out)",
         &["out"],
         &["a", "b"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 5);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 2);
 
     // Verify with concrete inputs: a=3, b=7, out=a*b=21
     ir_compile_and_verify(
@@ -117,20 +126,26 @@ fn test_for_non_literal_rejected() {
 
 #[test]
 fn test_if_else_two_constraints() {
-    // if flag { a } else { b } -> 1 boolean check + 1 MUX mul = 2 constraints
+    // if flag { a } else { b } with assert_eq → 1 boolean + 1 MUX + 1 assert_eq = 3
     let rc = ir_compile(
-        "if flag { a } else { b }",
-        &[],
+        "let r = if flag { a } else { b }; assert_eq(r, out)",
+        &["out"],
         &["flag", "a", "b"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]
 fn test_if_without_else() {
-    // if flag { a } -> else defaults to 0, still 2 constraints
-    let rc = ir_compile("if flag { a }", &[], &["flag", "a"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2);
+    // if flag { a } → else defaults to 0, with assert_eq: 1 boolean + 1 MUX + 1 assert_eq = 3
+    let rc = ir_compile(
+        "let r = if flag { a }; assert_eq(r, out)",
+        &["out"],
+        &["flag", "a"],
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]
@@ -204,42 +219,41 @@ fn test_if_else_boolean_enforcement() {
 
 #[test]
 fn test_if_nested_mux() {
-    // if c1 { a } else { if c2 { b } else { c } }
-    // Outer: 2 constraints, inner: 2 constraints -> 4 total
+    // if c1 { a } else { if c2 { b } else { c } } with assert_eq
+    // Inner: 2, outer: 2, assert_eq: 1 → 5 total
     let rc = ir_compile(
-        "if c1 { a } else { if c2 { b } else { c } }",
-        &[],
+        "let r = if c1 { a } else { if c2 { b } else { c } }; assert_eq(r, out)",
+        &["out"],
         &["c1", "c2", "a", "b", "c"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 4);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 5);
 }
 
 #[test]
 fn test_if_with_arithmetic_branches() {
-    // if flag { a * b } else { c + d }
-    // a*b = 1 mul constraint (in then branch)
-    // c+d = 0 constraints (in else branch)
-    // MUX = 2 constraints (boolean + mul)
-    // Total = 3
+    // if flag { a * b } else { c + d } with assert_eq
+    // a*b = 1 mul, MUX = 2, assert_eq = 1 → Total = 4
     let rc = ir_compile(
-        "if flag { a * b } else { c + d }",
-        &[],
+        "let r = if flag { a * b } else { c + d }; assert_eq(r, out)",
+        &["out"],
         &["flag", "a", "b", "c", "d"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
 fn test_if_else_if_chain() {
-    // if c1 { a } else if c2 { b } else { c }
-    // This parses as: if c1 { a } else { if c2 { b } else { c } }
-    // Each if level = 2 constraints -> 4 total
+    // if c1 { a } else if c2 { b } else { c } with assert_eq
+    // Two mux levels = 4 + 1 assert_eq = 5
     let rc = ir_compile(
-        "if c1 { a } else if c2 { b } else { c }",
-        &[],
+        "let r = if c1 { a } else if c2 { b } else { c }; assert_eq(r, out)",
+        &["out"],
         &["c1", "c2", "a", "b", "c"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 4);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 5);
 }
 
 // ====================================================================
@@ -279,21 +293,22 @@ fn test_break_rejected() {
 
 #[test]
 fn test_for_with_if_inside() {
-    // for i in 0..2 { if flag { a * b } else { c } }
-    // Each iteration: 1 mul (a*b) + 2 MUX constraints = 3
-    // 2 iterations -> 6 constraints
+    // for i in 0..2 { let r = if flag { a * b } else { c }; assert_eq(r, out) }
+    // Each iteration: 1 mul (a*b) + 2 MUX + 1 assert_eq = 4
+    // 2 iterations → 8 constraints
     let rc = ir_compile(
-        "for i in 0..2 { if flag { a * b } else { c } }",
-        &[],
+        "for i in 0..2 { let r = if flag { a * b } else { c }; assert_eq(r, out) }",
+        &["out"],
         &["flag", "a", "b", "c"],
-    ).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 6);
+    )
+    .unwrap();
+    assert_eq!(rc.cs.num_constraints(), 8);
 }
 
 #[test]
 fn test_full_circuit_with_control_flow() {
     // Realistic circuit: compute x^2 conditionally, accumulate in a loop
-    // for i in 0..2 { let step = x * x }
+    // for i in 0..2 { let step = x * x } → dead code (step unused), DCE eliminates
     // let result = if flag { x * x } else { x + 1 }
     // assert_eq(result, out)
     let source =
@@ -303,11 +318,11 @@ fn test_full_circuit_with_control_flow() {
 
     let rc = ir_compile(source, &["out"], &["x", "flag"]).unwrap();
 
-    // Loop: 2 * 1 = 2 constraints (x*x each iteration)
+    // Loop body eliminated by DCE (step unused)
     // If: 1 (x*x in then) + 2 (boolean + MUX) = 3 constraints
     // assert_eq: 1 constraint
-    // Total: 2 + 3 + 1 = 6
-    assert_eq!(rc.cs.num_constraints(), 6);
+    // Total: 3 + 1 = 4
+    assert_eq!(rc.cs.num_constraints(), 4);
 
     // flag=1, x=5: result = x*x = 25
     ir_compile_and_verify(source, &[("out", 25)], &[("x", 5), ("flag", 1)]);

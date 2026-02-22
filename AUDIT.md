@@ -14,11 +14,11 @@
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
-| ir | 6 | 4 | 0 | 10 |
+| ir | 5 | 5 | 0 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
 | cli | 6 | 2 | 5 | 13 |
 | parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **27** | **46 (+1)** | **19** | **93** |
+| **TOTAL** | **26** | **47 (+1)** | **19** | **93** |
 
 ### Open by severity
 
@@ -26,12 +26,12 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 2 |
-| MEDIUM | 13 |
+| MEDIUM | 12 |
 | LOW | 12 |
 
 ---
 
-## Resolved Findings (47)
+## Resolved Findings (48)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -82,6 +82,7 @@
 | I-03 | HIGH | ir | `FnDef` re-parsed source on every call → stores `body: Block` (AST) | `0543a81` |
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
+| I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `pending` |
 
 ## False Positives & Confirmed Sound (19)
 
@@ -111,18 +112,7 @@
 
 ## Open Findings
 
-### IR Crate (6 open)
-
-#### I-05 — DCE Conservatively Keeps All Logic Ops [MEDIUM]
-
-**File**: `ir/src/passes/dce.rs` (lines 33-45)
-**Category**: Efficiency
-
-Dead code elimination keeps `Not`, `And`, `Or`, `IsEq`, `IsNeq`, `IsLt`, `IsLe` even if unused, because they generate constraints. This is correct for R1CS but suboptimal for Plonkish, where unused logic ops waste rows.
-
-**Fix**: Future: add backend-aware DCE pass.
-
----
+### IR Crate (5 open)
 
 #### I-06 — Array Literal Element Type Validation [MEDIUM]
 

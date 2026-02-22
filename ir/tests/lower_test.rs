@@ -600,8 +600,8 @@ fn dce_preserves_range_check_unused_result() {
 }
 
 #[test]
-fn dce_preserves_poseidon_unused_result() {
-    // poseidon(a, b) — result not used, but must not be eliminated
+fn dce_eliminates_poseidon_unused_result() {
+    // poseidon(a, b) — result not used → DCE should eliminate it
     let source = "poseidon(a, b)";
     let mut program = IrLowering::lower_circuit(source, &[], &["a", "b"]).unwrap();
     let has_poseidon_before = program.instructions.iter().any(|i| matches!(i, Instruction::PoseidonHash { .. }));
@@ -610,7 +610,7 @@ fn dce_preserves_poseidon_unused_result() {
     ir::passes::optimize(&mut program);
 
     let has_poseidon_after = program.instructions.iter().any(|i| matches!(i, Instruction::PoseidonHash { .. }));
-    assert!(has_poseidon_after, "PoseidonHash must survive DCE even when result is unused");
+    assert!(!has_poseidon_after, "unused PoseidonHash should be eliminated by DCE");
 }
 
 #[test]

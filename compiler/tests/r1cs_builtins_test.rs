@@ -12,65 +12,80 @@ use memory::FieldElement;
 
 #[test]
 fn test_poseidon_constraint_count() {
-    // poseidon(a, b) with simple variables → 360 permutation + 1 capacity = 361
-    let mut program = IrLowering::lower_circuit("poseidon(a, b)", &[], &["a", "b"]).unwrap();
-    ir::passes::optimize(&mut program);
-
-    let mut rc = R1CSCompiler::new();
-    rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 361);
-}
-
-#[test]
-fn test_poseidon_chained() {
-    // poseidon(poseidon(a, b), c) → (360+1) + (360+1) = 722 constraints
-    // Inner poseidon returns a Variable, so outer's left materialization is free
+    // poseidon(a, b) with simple variables → 360 permutation + 1 capacity + 1 assert_eq = 362
     let mut program =
-        IrLowering::lower_circuit("poseidon(poseidon(a, b), c)", &[], &["a", "b", "c"]).unwrap();
-    ir::passes::optimize(&mut program);
-
-    let mut rc = R1CSCompiler::new();
-    rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 722);
-}
-
-#[test]
-fn test_poseidon_in_loop() {
-    // for i in 0..2 { poseidon(a, b) } → 2 * 361 = 722
-    let mut program =
-        IrLowering::lower_circuit("for i in 0..2 { poseidon(a, b) }", &[], &["a", "b"]).unwrap();
-    ir::passes::optimize(&mut program);
-
-    let mut rc = R1CSCompiler::new();
-    rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 722);
-}
-
-#[test]
-fn test_poseidon_with_expression_args() {
-    // poseidon(a + b, c * d)
-    // a + b → LC (needs materialization: 1 constraint)
-    // c * d → mul_lc returns LC::from_variable (no materialization needed)
-    // poseidon: 361 constraints (360 permutation + 1 capacity)
-    // Total: 1 (materialize a+b) + 1 (c*d mul) + 361 = 363
-    let mut program =
-        IrLowering::lower_circuit("poseidon(a + b, c * d)", &[], &["a", "b", "c", "d"]).unwrap();
-    ir::passes::optimize(&mut program);
-
-    let mut rc = R1CSCompiler::new();
-    rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 363);
-}
-
-#[test]
-fn test_poseidon_constant_arg_materialization() {
-    // poseidon(5, a) → constant 5 must be materialized (1 constraint) + 361
-    let mut program = IrLowering::lower_circuit("poseidon(5, a)", &[], &["a"]).unwrap();
+        IrLowering::lower_circuit("assert_eq(poseidon(a, b), out)", &["out"], &["a", "b"])
+            .unwrap();
     ir::passes::optimize(&mut program);
 
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 362);
+}
+
+#[test]
+fn test_poseidon_chained() {
+    // poseidon(poseidon(a, b), c) → 2 * 361 + 1 assert_eq = 723
+    let mut program = IrLowering::lower_circuit(
+        "assert_eq(poseidon(poseidon(a, b), c), out)",
+        &["out"],
+        &["a", "b", "c"],
+    )
+    .unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 723);
+}
+
+#[test]
+fn test_poseidon_in_loop() {
+    // Two poseidon calls via loop, last result asserted → 2 * 361 + 1 assert_eq = 723
+    let mut program = IrLowering::lower_circuit(
+        "let h = poseidon(a, b)\nlet h = poseidon(h, b)\nassert_eq(h, out)",
+        &["out"],
+        &["a", "b"],
+    )
+    .unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 723);
+}
+
+#[test]
+fn test_poseidon_with_expression_args() {
+    // poseidon(a + b, c * d) with assert_eq
+    // a + b → LC (needs materialization: 1 constraint)
+    // c * d → mul_lc returns LC::from_variable (no materialization needed)
+    // poseidon: 361 constraints (360 permutation + 1 capacity)
+    // assert_eq: 1 constraint
+    // Total: 1 (materialize a+b) + 1 (c*d mul) + 361 + 1 = 364
+    let mut program = IrLowering::lower_circuit(
+        "assert_eq(poseidon(a + b, c * d), out)",
+        &["out"],
+        &["a", "b", "c", "d"],
+    )
+    .unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 364);
+}
+
+#[test]
+fn test_poseidon_constant_arg_materialization() {
+    // poseidon(5, a) with assert_eq → constant 5 must be materialized (1 constraint) + 361 + 1
+    let mut program =
+        IrLowering::lower_circuit("assert_eq(poseidon(5, a), out)", &["out"], &["a"]).unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut rc = R1CSCompiler::new();
+    rc.compile_ir(&program).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 363);
 }
 
 #[test]
@@ -116,14 +131,18 @@ fn test_poseidon_wrong_arg_count_too_many() {
 
 #[test]
 fn test_mux_constraint_count() {
-    // mux(flag, a, b) → 1 boolean check + 1 MUX mul = 2 constraints
-    let mut program =
-        IrLowering::lower_circuit("mux(flag, a, b)", &[], &["flag", "a", "b"]).unwrap();
+    // mux(flag, a, b) with assert_eq → 1 boolean check + 1 MUX mul + 1 assert_eq = 3
+    let mut program = IrLowering::lower_circuit(
+        "assert_eq(mux(flag, a, b), out)",
+        &["out"],
+        &["flag", "a", "b"],
+    )
+    .unwrap();
     ir::passes::optimize(&mut program);
 
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2);
+    assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]
@@ -216,10 +235,10 @@ fn test_mux_boolean_enforcement() {
 
 #[test]
 fn test_mux_with_complex_branches() {
-    // mux(flag, a * b, c + d) → 1 mul (a*b) + 2 mux = 3
+    // mux(flag, a * b, c + d) with assert_eq → 1 mul (a*b) + 2 mux + 1 assert_eq = 4
     let mut program = IrLowering::lower_circuit(
-        "mux(flag, a * b, c + d)",
-        &[],
+        "assert_eq(mux(flag, a * b, c + d), out)",
+        &["out"],
         &["flag", "a", "b", "c", "d"],
     )
     .unwrap();
@@ -227,7 +246,7 @@ fn test_mux_with_complex_branches() {
 
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]

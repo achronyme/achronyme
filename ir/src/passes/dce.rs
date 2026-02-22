@@ -8,8 +8,9 @@ use crate::types::{Instruction, IrProgram, SsaVar};
 /// retained instructions, then removes instructions whose result is unused
 /// and that are safe to eliminate.
 ///
-/// Conservative: `Mul`, `Div`, `Mux`, `PoseidonHash` are NOT eliminated even
-/// if unused, because they generate constraints in the R1CS backend.
+/// Side-effect instructions (`AssertEq`, `Assert`, `Input`, `RangeCheck`)
+/// are never eliminated. All other instructions are eliminated if their
+/// result variable is unused by any retained instruction.
 pub fn dead_code_elimination(program: &mut IrProgram) {
     loop {
         let before = program.instructions.len();
@@ -29,24 +30,6 @@ pub fn dead_code_elimination(program: &mut IrProgram) {
                 return true;
             }
 
-            // Conservative: keep instructions that generate constraints
-            match inst {
-                Instruction::Mul { .. }
-                | Instruction::Div { .. }
-                | Instruction::Mux { .. }
-                | Instruction::PoseidonHash { .. }
-                | Instruction::RangeCheck { .. }
-                | Instruction::Not { .. }
-                | Instruction::And { .. }
-                | Instruction::Or { .. }
-                | Instruction::IsEq { .. }
-                | Instruction::IsNeq { .. }
-                | Instruction::IsLt { .. }
-                | Instruction::IsLe { .. } => return true,
-                _ => {}
-            }
-
-            // Safe to eliminate: Const, Add, Sub, Neg
             let result = inst.result_var();
             used.contains(&result)
         });

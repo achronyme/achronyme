@@ -77,8 +77,9 @@ fn test_r1cs_mul_by_constant_free() {
 
 #[test]
 fn test_r1cs_mul_variables_one_constraint() {
-    let rc = ir_compile("a * b", &[], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 1, "variable * variable should be 1 constraint");
+    // 1 mul + 1 assert_eq = 2
+    let rc = ir_compile("assert_eq(a * b, out)", &["out"], &["a", "b"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 2, "variable * variable should be 1 constraint (+1 assert_eq)");
 }
 
 #[test]
@@ -89,15 +90,16 @@ fn test_r1cs_div_constant_free() {
 
 #[test]
 fn test_r1cs_div_variables_two_constraints() {
-    let rc = ir_compile("a / b", &[], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2, "a / b should generate 2 constraints");
+    // 2 div + 1 assert_eq = 3
+    let rc = ir_compile("assert_eq(a / b, out)", &["out"], &["a", "b"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 3, "a / b should generate 2 constraints (+1 assert_eq)");
 }
 
 #[test]
 fn test_r1cs_pow_literal() {
-    let rc = ir_compile("x ^ 3", &[], &["x"]).unwrap();
-    // x^3 = x * x * x: first x*x (1 constraint), then result * x (1 constraint) = 2
-    assert_eq!(rc.cs.num_constraints(), 2, "x^3 should generate 2 constraints");
+    // x^3 = x * x * x: 2 mul + 1 assert_eq = 3
+    let rc = ir_compile("assert_eq(x ^ 3, out)", &["out"], &["x"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 3, "x^3 should generate 2 constraints (+1 assert_eq)");
 }
 
 #[test]
@@ -134,9 +136,9 @@ fn test_r1cs_negation_free() {
 
 #[test]
 fn test_r1cs_complex_expression_constraint_count() {
-    // a * b + c * d should be 2 constraints (one for each mul)
-    let rc = ir_compile("a * b + c * d", &[], &["a", "b", "c", "d"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2);
+    // a * b + c * d: 2 mul + 1 assert_eq = 3
+    let rc = ir_compile("assert_eq(a * b + c * d, out)", &["out"], &["a", "b", "c", "d"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 3);
 }
 
 #[test]
@@ -163,23 +165,23 @@ fn test_r1cs_reject_print() {
 
 #[test]
 fn test_r1cs_and_expr() {
-    // a && b = 2 boolean enforcements + 1 mul = 3 constraints
-    let rc = ir_compile("a && b", &[], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    // a && b: 2 boolean + 1 mul + 1 assert_eq = 4
+    let rc = ir_compile("assert_eq(a && b, out)", &["out"], &["a", "b"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
 fn test_r1cs_or_expr() {
-    // a || b = 2 boolean enforcements + 1 mul = 3 constraints
-    let rc = ir_compile("a || b", &[], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    // a || b: 2 boolean + 1 mul + 1 assert_eq = 4
+    let rc = ir_compile("assert_eq(a || b, out)", &["out"], &["a", "b"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
 fn test_r1cs_not_expr() {
-    // !x = boolean enforcement (1) = 1 constraint
-    let rc = ir_compile("!x", &[], &["x"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 1);
+    // !x: 1 boolean + 1 assert_eq = 2
+    let rc = ir_compile("assert_eq(!x, out)", &["out"], &["x"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 2);
 }
 
 #[test]
@@ -192,10 +194,9 @@ fn test_r1cs_not_constant_free() {
 
 #[test]
 fn test_r1cs_comparison_via_ir() {
-    // The IR path supports comparisons via the IsEq gadget (2 constraints).
-    // (The old direct AST path rejected these, but IR handles them.)
-    let rc = ir_compile("a == b", &[], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2, "IsEq gadget should produce 2 constraints");
+    // IsEq gadget: 2 constraints + 1 assert_eq = 3
+    let rc = ir_compile("assert_eq(a == b, out)", &["out"], &["a", "b"]).unwrap();
+    assert_eq!(rc.cs.num_constraints(), 3, "IsEq gadget should produce 2 constraints (+1 assert_eq)");
 }
 
 #[test]

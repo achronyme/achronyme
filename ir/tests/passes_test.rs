@@ -431,8 +431,8 @@ fn dce_keeps_assert_eq() {
 }
 
 #[test]
-fn dce_keeps_mul_conservative() {
-    // Mul is kept conservatively even if unused (generates constraints)
+fn dce_eliminates_unused_mul() {
+    // Unused Mul is eliminated by DCE (only Input survives as side-effect)
     let mut p = IrProgram::new();
     let x = p.fresh_var();
     p.push(Instruction::Input {
@@ -449,8 +449,8 @@ fn dce_keeps_mul_conservative() {
 
     dce::dead_code_elimination(&mut p);
 
-    // Mul is kept (conservative)
-    assert_eq!(p.instructions.len(), 2);
+    // Mul is eliminated (unused result), only Input survives
+    assert_eq!(p.instructions.len(), 1);
 }
 
 // ============================================================================
