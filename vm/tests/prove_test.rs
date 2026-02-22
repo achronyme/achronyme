@@ -194,21 +194,21 @@ fn value_to_field_element_bool_returns_none() {
 }
 
 #[test]
-fn value_to_field_element_number_whole() {
+fn value_to_field_element_int_seven() {
     use vm::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
-    let val = Value::number(7.0);
+    let val = Value::int(7);
     let result = value_to_field_element(&heap, val);
     assert_eq!(result, Some(FieldElement::from_i64(7)));
 }
 
 #[test]
-fn value_to_field_element_number_fractional_returns_none() {
+fn value_to_field_element_negative_int() {
     use vm::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
-    let val = Value::number(3.14);
+    let val = Value::int(-3);
     let result = value_to_field_element(&heap, val);
-    assert_eq!(result, None);
+    assert_eq!(result, Some(FieldElement::from_i64(-3)));
 }
 
 // ======================================================================

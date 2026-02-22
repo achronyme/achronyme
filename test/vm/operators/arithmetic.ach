@@ -1,4 +1,4 @@
-// Arithmetic operators: int, float, field, unary, exponentiation
+// Arithmetic operators: int, field, unary, exponentiation
 
 // Integer arithmetic
 assert(2 + 3 == 5)
@@ -7,20 +7,10 @@ assert(3 * 7 == 21)
 assert(17 % 5 == 2)
 assert(-(-3) == 3)
 
-// Division
+// Division (truncating for integers)
 assert(15 / 3 == 5)
 assert(10 / 2 == 5)
-assert(7 / 2 == 3.5)
-
-// Float arithmetic
-assert(1.5 + 2.5 == 4.0)
-assert(5.0 - 1.5 == 3.5)
-assert(2.5 * 4.0 == 10.0)
-assert(7.0 / 2.0 == 3.5)
-
-// Mixed int/float
-assert(2 + 3.5 == 5.5)
-assert(10 / 4.0 == 2.5)
+assert(7 / 2 == 3)
 
 // Unary negation
 assert(-5 + 10 == 5)

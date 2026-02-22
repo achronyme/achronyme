@@ -1,7 +1,6 @@
 // Type system and typeof
 
 assert(typeof(42) == "Number")
-assert(typeof(3.14) == "Number")
 assert(typeof(true) == "Bool")
 assert(typeof(false) == "Bool")
 assert(typeof(nil) == "Nil")
@@ -15,7 +14,6 @@ assert(typeof(field(1)) == "Field")
 
 // typeof on expressions
 assert(typeof(1 + 2) == "Number")
-assert(typeof(1.0 + 2.0) == "Number")
 assert(typeof(true && false) == "Bool")
 assert(typeof("a" + "b") == "String")
 

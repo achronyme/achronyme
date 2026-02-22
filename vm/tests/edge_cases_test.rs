@@ -227,7 +227,7 @@ fn malicious_bytecode_oob_constant_no_panic() {
     // LoadConst R[0] = K[9999] with only 1 constant.
     // VM uses .get().unwrap_or(nil) — gracefully returns nil, no panic.
     let chunk = vec![encode_abx(OpCode::LoadConst.as_u8(), 0, 9999)];
-    let result = run_raw(chunk, vec![Value::number(1.0)], 4);
+    let result = run_raw(chunk, vec![Value::int(1)], 4);
     assert!(result.is_ok(), "oob constant should not panic");
 }
 
@@ -318,7 +318,7 @@ fn malicious_bytecode_call_number() {
         encode_abx(OpCode::LoadConst.as_u8(), 0, 0),
         encode_abc(OpCode::Call.as_u8(), 0, 0, 0),
     ];
-    let result = run_raw(chunk, vec![Value::number(42.0)], 4);
+    let result = run_raw(chunk, vec![Value::int(42)], 4);
     assert!(result.is_err(), "calling a number should error");
 }
 

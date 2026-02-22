@@ -53,8 +53,9 @@ fn test_r1cs_reject_nil() {
 
 #[test]
 fn test_r1cs_reject_decimal() {
-    let err = IrLowering::lower_circuit("3.14", &[], &[]).unwrap_err();
-    assert!(matches!(err, IrError::TypeNotConstrainable(..)));
+    // Decimals are now rejected at the grammar level (parse error)
+    let err = IrLowering::lower_circuit("3.14", &[], &[]);
+    assert!(err.is_err(), "Decimal literals should be rejected");
 }
 
 #[test]

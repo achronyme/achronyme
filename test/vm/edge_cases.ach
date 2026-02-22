@@ -5,10 +5,10 @@ let x = {}
 assert(typeof(x) == "Map")
 assert(len(x) == 0)
 
-// Division produces float when not evenly divisible
-assert(7 / 2 == 3.5)
+// Truncating integer division
+assert(7 / 2 == 3)
 assert(15 / 3 == 5)
-assert(10 / 4 == 2.5)
+assert(10 / 4 == 2)
 
 // Falsey values in conditions
 let a = if false { 1 } else { 0 }
