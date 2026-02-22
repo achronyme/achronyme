@@ -14,11 +14,11 @@
 | memory | 0 | 14 (+1 partial) | 0 | 15 |
 | vm | 0 | 14 | 6 | 20 |
 | compiler | 0 | 9 | 0 | 9 |
-| ir | 2 | 5 | 3 | 10 |
+| ir | 0 | 5 | 5 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
 | cli | 6 | 2 | 5 | 13 |
 | parser | 10 | 1 | 6 | 17 |
-| **TOTAL** | **22** | **47 (+1)** | **23** | **93** |
+| **TOTAL** | **20** | **47 (+1)** | **25** | **93** |
 
 ### Open by severity
 
@@ -27,7 +27,7 @@
 | CRITICAL | 0 |
 | HIGH | 2 |
 | MEDIUM | 9 |
-| LOW | 11 |
+| LOW | 9 |
 
 ---
 
@@ -84,7 +84,7 @@
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
-## False Positives & Confirmed Sound (23)
+## False Positives & Confirmed Sound (25)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -111,34 +111,12 @@
 | I-06 | ir | Already handled: `Expr::Array` in expression position returns `TypeMismatch { expected: "scalar", got: "array" }`; nested arrays like `[x, [1,2]]` are rejected at lowering |
 | I-07 | ir | Intentionally conservative: merging all Mux operand taints is sound (never misses real issues); branch-sensitive analysis is a future optimization, not a bug |
 | I-08 | ir | By-design: arrays are data (must be non-empty for indexing), loops are control flow (zero iterations is valid unrolling) |
+| I-09 | ir | Obsolete after AST refactor: zero `Rule::` references remain in `lower.rs`; all pest matching replaced by typed AST `match` arms |
+| I-10 | ir | Obsolete after AST refactor: file reduced from 1600+ to 1316 lines; 10 precedence-layer methods collapsed into single `lower_expr` match on typed AST |
 
 ---
 
 ## Open Findings
-
-### IR Crate (2 open)
-
-#### I-09 — ParseError Uses Debug Format for Rule [LOW]
-
-**File**: `ir/src/lower.rs` (lines 353-355)
-**Category**: UX
-
-Unmatched grammar rules produce errors like `Rule::SomeVariant` instead of user-friendly descriptions.
-
-**Fix**: Use descriptive strings instead of `{:?}` for Rule variants.
-
----
-
-#### I-10 — IrLowering Monolith (1600+ lines) [LOW]
-
-**File**: `ir/src/lower.rs`
-**Category**: Maintainability
-
-Single file with all lowering logic. Consider splitting into `lower_atoms.rs`, `lower_binops.rs`, `lower_builtins.rs`, `lower_control_flow.rs`, `lower_functions.rs`.
-
-**Fix**: Modularize in a future refactor pass.
-
----
 
 ### Constraints Crate (4 open)
 
