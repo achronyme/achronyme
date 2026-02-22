@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
 use std::fs;
-use vm::specs::{SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
+use vm::specs::{SER_TAG_INT, SER_TAG_STRING, SER_TAG_NIL};
 
 pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
@@ -18,8 +18,8 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
 
         let mut file = fs::File::create(out_path).context("Failed to create output file")?;
 
-        file.write_all(b"ACH\x08")?;
-        
+        file.write_all(b"ACH\x09")?;
+
         // Metadata
         let main_func = compiler.compilers.last().expect("No main compiler");
         file.write_u16::<LittleEndian>(main_func.max_slots)?;
@@ -32,17 +32,16 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             file.write_u32::<LittleEndian>(bytes.len() as u32)?;
             file.write_all(bytes)?;
         }
-        
+
         // --- Constants ---
         let main_func = compiler.compilers.last().expect("No main compiler");
         file.write_u32::<LittleEndian>(main_func.constants.len() as u32)?;
         for c in &main_func.constants {
-            if let Some(n) = c.as_number() {
-                file.write_u8(SER_TAG_NUMBER)?;
-                file.write_f64::<LittleEndian>(n)?;
+            if let Some(n) = c.as_int() {
+                file.write_u8(SER_TAG_INT)?;
+                file.write_i64::<LittleEndian>(n)?;
             } else if c.is_string() {
                 file.write_u8(SER_TAG_STRING)?;
-                // Payload is the handle
                 let handle = c.as_handle().expect("String value must have handle");
                 file.write_u32::<LittleEndian>(handle)?;
             } else if c.is_nil() {
@@ -62,17 +61,17 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             let name_bytes = proto.name.as_bytes();
             file.write_u32::<LittleEndian>(name_bytes.len() as u32)?;
             file.write_all(name_bytes)?;
-            
+
             // Arity and max_slots
             file.write_u8(proto.arity)?;
             file.write_u16::<LittleEndian>(proto.max_slots)?;
-            
+
             // Proto constants
             file.write_u32::<LittleEndian>(proto.constants.len() as u32)?;
             for c in &proto.constants {
-                if let Some(n) = c.as_number() {
-                    file.write_u8(SER_TAG_NUMBER)?;
-                    file.write_f64::<LittleEndian>(n)?;
+                if let Some(n) = c.as_int() {
+                    file.write_u8(SER_TAG_INT)?;
+                    file.write_i64::<LittleEndian>(n)?;
                 } else if c.is_string() {
                     file.write_u8(SER_TAG_STRING)?;
                     let handle = c.as_handle().expect("String value must have handle");

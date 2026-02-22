@@ -34,8 +34,8 @@ const _: () = assert!(NATIVE_TABLE.len() == NATIVE_COUNT, "NATIVE_TABLE length c
 pub const USER_GLOBAL_START: u16 = NATIVE_COUNT as u16;
 
 // --- SERIALIZATION CONTRACT ---
-// Binary Format Tags (v1)
-pub const SER_TAG_NUMBER: u8 = 0;
+// Binary Format Tags (v2 — tagged u64, no floats)
+pub const SER_TAG_INT:    u8 = 0;
 pub const SER_TAG_STRING: u8 = 1;
 pub const SER_TAG_FIELD:  u8 = 8;
 pub const SER_TAG_NIL:    u8 = 255;

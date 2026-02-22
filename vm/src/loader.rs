@@ -1,6 +1,6 @@
 use std::io::Read;
 use byteorder::{LittleEndian, ReadBytesExt};
-use crate::specs::{SER_TAG_FIELD, SER_TAG_NUMBER, SER_TAG_STRING, SER_TAG_NIL};
+use crate::specs::{SER_TAG_FIELD, SER_TAG_INT, SER_TAG_STRING, SER_TAG_NIL};
 use crate::{VM, CallFrame};
 use memory::{Function, Closure, Value};
 
@@ -20,13 +20,13 @@ impl From<std::io::Error> for LoaderError {
 
 impl VM {
     /// Load an executable binary (.achb) into the VM.
-    /// 
+    ///
     /// # Security
     /// This method includes checks against "Allocation Bomb" attacks.
     pub fn load_executable<R: Read>(&mut self, reader: &mut R) -> Result<(), LoaderError> {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
-        if &magic != b"ACH\x08" {
+        if &magic != b"ACH\x09" {
             return Err(LoaderError::Format("Invalid binary magic or version".to_string()));
         }
 
@@ -34,7 +34,6 @@ impl VM {
 
         // --- String Table ---
         let str_count = reader.read_u32::<LittleEndian>()?;
-        // Protection: Limit string count to avoid massive pre-allocation if malformed
         if str_count > 1_000_000 {
              return Err(LoaderError::Security(format!("String count too large: {}", str_count)));
         }
@@ -42,15 +41,14 @@ impl VM {
 
         for _ in 0..str_count {
             let len = reader.read_u32::<LittleEndian>()?;
-            
-            // SECURITY: Allocation Bomb Protection
+
             if len > 1024 {
                 return Err(LoaderError::Security(format!("String length exceeds limit of 1024: {}", len)));
             }
 
             let mut bytes = vec![0u8; len as usize];
             reader.read_exact(&mut bytes)?;
-            
+
             let s = String::from_utf8(bytes)
                 .map_err(|_| LoaderError::Format("Invalid UTF-8 in binary".to_string()))?;
             strings.push(s);
@@ -68,12 +66,11 @@ impl VM {
         for _ in 0..const_count {
             let tag = reader.read_u8()?;
             match tag {
-                SER_TAG_NUMBER => {
-                    let n = reader.read_f64::<LittleEndian>()?;
-                    constants.push(Value::number(n));
+                SER_TAG_INT => {
+                    let n = reader.read_i64::<LittleEndian>()?;
+                    constants.push(Value::int(n));
                 }
                 SER_TAG_STRING => {
-                    // Read Handle -> Create Value
                     let handle = reader.read_u32::<LittleEndian>()?;
                     constants.push(Value::string(handle));
                 }
@@ -98,13 +95,12 @@ impl VM {
          if proto_count > 100_000 {
              return Err(LoaderError::Security(format!("Prototype count too large: {}", proto_count)));
         }
-        
+
         let mut proto_funcs = Vec::with_capacity(proto_count as usize);
         for _ in 0..proto_count {
             // Name
             let name_len = reader.read_u32::<LittleEndian>()? as usize;
-            
-            // SECURITY: Allocation Bomb Protection
+
             if name_len > 1024 {
                 return Err(LoaderError::Security(format!("Function name length exceeds limit of 1024: {}", name_len)));
             }
@@ -113,20 +109,20 @@ impl VM {
             reader.read_exact(&mut name_bytes)?;
             let name = String::from_utf8(name_bytes)
                 .map_err(|_| LoaderError::Format("Invalid UTF-8 in function name".to_string()))?;
-            
+
             // Arity and max_slots
             let arity = reader.read_u8()?;
             let proto_max_slots = reader.read_u16::<LittleEndian>()?;
-            
+
             // Proto constants
             let proto_const_count = reader.read_u32::<LittleEndian>()?;
             let mut proto_constants = Vec::with_capacity(proto_const_count as usize);
             for _ in 0..proto_const_count {
                 let tag = reader.read_u8()?;
                 match tag {
-                    SER_TAG_NUMBER => {
-                        let n = reader.read_f64::<LittleEndian>()?;
-                        proto_constants.push(Value::number(n));
+                    SER_TAG_INT => {
+                        let n = reader.read_i64::<LittleEndian>()?;
+                        proto_constants.push(Value::int(n));
                     }
                     SER_TAG_STRING => {
                         let handle = reader.read_u32::<LittleEndian>()?;
@@ -147,7 +143,7 @@ impl VM {
                     _ => return Err(LoaderError::Format(format!("Unknown proto constant tag: {}", tag))),
                 }
             }
-            
+
             // Upvalue Info
             let upvalue_count = reader.read_u32::<LittleEndian>()?;
             if upvalue_count > 1024 {
@@ -159,7 +155,6 @@ impl VM {
 
             // Proto bytecode
             let proto_code_len = reader.read_u32::<LittleEndian>()?;
-             // Limit bytecode size per function? 1MB?
              if proto_code_len > 1_000_000 {
                  return Err(LoaderError::Security(format!("Bytecode length too large: {}", proto_code_len)));
              }
@@ -168,7 +163,7 @@ impl VM {
             for _ in 0..proto_code_len {
                 proto_bytecode.push(reader.read_u32::<LittleEndian>()?);
             }
-            
+
             proto_funcs.push(Function {
                 name,
                 arity,
@@ -193,9 +188,6 @@ impl VM {
         }
 
         // Try load debug symbols (Sidecar) - Optional
-        // Reading remaining bytes? Or check if EOF?
-        // run.rs logic: "if file.read_to_end...".
-        // Here we just read what we can. 
         let mut debug_bytes = Vec::new();
         if reader.read_to_end(&mut debug_bytes).is_ok() && !debug_bytes.is_empty() {
              self.load_debug_section(&debug_bytes);
@@ -215,12 +207,12 @@ impl VM {
             function: func_idx,
             upvalues: vec![],
         });
-        
+
         self.frames.push(CallFrame {
             closure: closure_idx,
             ip: 0,
             base: 0,
-            dest_reg: 0, 
+            dest_reg: 0,
         });
 
         Ok(())
