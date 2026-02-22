@@ -134,7 +134,7 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         "Field"
     } else if val.is_proof() {
         "Proof"
-    } else if val.is_function() {
+    } else if val.is_function() || val.is_closure() {
         "Function"
     } else if val.is_native() {
         "Native"
