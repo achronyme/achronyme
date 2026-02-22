@@ -59,6 +59,14 @@ impl NativeRegistry for super::vm::VM {
                 "proof_json"   => crate::stdlib::core::native_proof_json,
                 "proof_public" => crate::stdlib::core::native_proof_public,
                 "proof_vkey"   => crate::stdlib::core::native_proof_vkey,
+                "substring"    => crate::stdlib::core::native_substring,
+                "indexOf"      => crate::stdlib::core::native_index_of,
+                "split"        => crate::stdlib::core::native_split,
+                "trim"         => crate::stdlib::core::native_trim,
+                "replace"      => crate::stdlib::core::native_replace,
+                "toUpper"      => crate::stdlib::core::native_to_upper,
+                "toLower"      => crate::stdlib::core::native_to_lower,
+                "chars"        => crate::stdlib::core::native_chars,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 

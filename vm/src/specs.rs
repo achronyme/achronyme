@@ -23,11 +23,20 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
     NativeMeta { name: "proof_json",   arity: 1 }, // Index 9
     NativeMeta { name: "proof_public", arity: 1 }, // Index 10
     NativeMeta { name: "proof_vkey",   arity: 1 }, // Index 11
+    // String utilities
+    NativeMeta { name: "substring",    arity: 3 }, // Index 12
+    NativeMeta { name: "indexOf",      arity: 2 }, // Index 13
+    NativeMeta { name: "split",        arity: 2 }, // Index 14
+    NativeMeta { name: "trim",         arity: 1 }, // Index 15
+    NativeMeta { name: "replace",      arity: 3 }, // Index 16
+    NativeMeta { name: "toUpper",      arity: 1 }, // Index 17
+    NativeMeta { name: "toLower",      arity: 1 }, // Index 18
+    NativeMeta { name: "chars",        arity: 1 }, // Index 19
 ];
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 12;
+pub const NATIVE_COUNT: usize = 20;
 const _: () = assert!(NATIVE_TABLE.len() == NATIVE_COUNT, "NATIVE_TABLE length changed — update NATIVE_COUNT");
 
 // Helper to get start index for user globals

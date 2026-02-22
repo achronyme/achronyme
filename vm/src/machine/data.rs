@@ -120,8 +120,31 @@ impl DataOps for super::vm::VM {
                     } else {
                          return Err(RuntimeError::TypeMismatch("Map key must be a string".into()));
                     }
+                } else if target.is_string() {
+                    let handle = target.as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+                    let s = self.heap.get_string(handle)
+                        .ok_or(RuntimeError::SystemError("String missing".into()))?;
+
+                    if let Some(idx_val) = key.as_int() {
+                        if idx_val < 0 {
+                            return Err(RuntimeError::OutOfBounds(format!("Negative index {}", idx_val)));
+                        }
+                        let idx = idx_val as usize;
+                        if let Some(ch) = s.chars().nth(idx) {
+                            let ch_str = ch.to_string();
+                            let h = self.heap.alloc_string(ch_str);
+                            self.set_reg(base, a, Value::string(h))?;
+                        } else {
+                            return Err(RuntimeError::OutOfBounds(format!(
+                                "String index {} out of bounds (len {})", idx, s.chars().count()
+                            )));
+                        }
+                    } else {
+                        return Err(RuntimeError::TypeMismatch("String index must be an integer".into()));
+                    }
                 } else {
-                    return Err(RuntimeError::TypeMismatch("Can only index Lists or Maps".into()));
+                    return Err(RuntimeError::TypeMismatch("Can only index Lists, Maps, or Strings".into()));
                 }
             }
 
