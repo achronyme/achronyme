@@ -82,7 +82,7 @@
 | I-03 | HIGH | ir | `FnDef` re-parsed source on every call → stores `body: Block` (AST) | `0543a81` |
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
-| I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `pending` |
+| I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
 ## False Positives & Confirmed Sound (19)
 
