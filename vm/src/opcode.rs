@@ -41,8 +41,7 @@ pub enum OpCode {
     Pow = 15,
     /// Negation: R[A] = -R[B]
     Neg = 16,
-    /// Square root: R[A] = sqrt(R[B])
-    Sqrt = 17,
+    // 17 removed (was Sqrt)
 
     // ===== Comparison =====
     /// Equal: R[A] = R[B] == R[C]
@@ -130,7 +129,7 @@ impl OpCode {
             14 => Some(OpCode::Mod),
             15 => Some(OpCode::Pow),
             16 => Some(OpCode::Neg),
-            17 => Some(OpCode::Sqrt),
+            // 17 was Sqrt, removed
             20 => Some(OpCode::Eq),
             21 => Some(OpCode::Lt),
             22 => Some(OpCode::Gt),
@@ -184,7 +183,7 @@ impl OpCode {
             OpCode::Mod => "MOD",
             OpCode::Pow => "POW",
             OpCode::Neg => "NEG",
-            OpCode::Sqrt => "SQRT",
+            // Sqrt removed
             OpCode::Eq => "EQ",
             OpCode::Lt => "LT",
             OpCode::Gt => "GT",
