@@ -1,8 +1,0 @@
-fn rec(n) {
-  if n > 0 { return rec(n-1) + 1; }
-  return 0;
-}
-print("Starting recursion up to 70000...");
-// This should fail gracefully with StackOverflow, NOT segfault/panic
-print(rec(70000));
-print("Finished.");

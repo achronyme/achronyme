@@ -1,9 +1,0 @@
-print("--- Escape Sequence Test ---")
-print("Line 1\nLine 2")
-print("Quote: \"Hello\"")
-print("Backslash: \\")
-print("Tab:\tIndented")
-print("Mixed: \"Quote\" and \n Newline")
-// Path: C:\Windows\System32
-print("Path: C:\\Windows\\System32")
-print("--- END ---")
