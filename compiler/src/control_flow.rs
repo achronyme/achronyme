@@ -235,8 +235,7 @@ impl ControlFlowCompiler for Compiler {
         self.patch_jump(jump_exit_idx);
         
         self.end_scope();
-        
-        self.free_reg(val_reg);
+
         self.exit_loop();
 
         self.free_reg(iter_reg);
