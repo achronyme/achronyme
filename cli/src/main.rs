@@ -2,24 +2,17 @@ use anyhow::Result;
 use clap::Parser;
 
 mod args;
-mod commands;
-mod groth16;
-mod halo2_proof;
-mod prove_handler;
-mod repl;
-mod solidity;
 
 use args::{Cli, Commands};
-use commands::{circuit, compile, disassemble, run};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Run { path, stress_gc, ptau, prove_backend } => run::run_file(path, *stress_gc, ptau.as_deref(), prove_backend),
-        Commands::Disassemble { path } => disassemble::disassemble_file(path),
-        Commands::Compile { path, output } => compile::compile_file(path, output.as_deref()),
-        Commands::Repl => repl::run_repl(),
+        Commands::Run { path, stress_gc, ptau, prove_backend } => cli::commands::run::run_file(path, *stress_gc, ptau.as_deref(), prove_backend),
+        Commands::Disassemble { path } => cli::commands::disassemble::disassemble_file(path),
+        Commands::Compile { path, output } => cli::commands::compile::compile_file(path, output.as_deref()),
+        Commands::Repl => cli::repl::run_repl(),
         Commands::Circuit {
             path,
             r1cs,
@@ -31,7 +24,7 @@ fn main() -> Result<()> {
             backend,
             prove,
             solidity,
-        } => circuit::circuit_command(
+        } => cli::commands::circuit::circuit_command(
             path,
             r1cs,
             wtns,

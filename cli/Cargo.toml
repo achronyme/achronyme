@@ -31,3 +31,6 @@ vm = { path = "../vm" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 ir = { path = "../ir" }
+
+[dev-dependencies]
+tempfile = "3"
