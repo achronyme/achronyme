@@ -1,0 +1,42 @@
+// BN254 field elements
+
+// Construction
+let a = field(42)
+let b = field(0)
+let c = field(1)
+
+// typeof
+assert(typeof(a) == "Field")
+assert(typeof(b) == "Field")
+
+// From hex string
+let h = field("0xFF")
+assert(typeof(h) == "Field")
+
+// Arithmetic
+let x = field(3)
+let y = field(4)
+let sum = x + y
+assert(sum == field(7))
+
+let prod = field(6) * field(7)
+assert(prod == field(42))
+
+let diff = field(10) - field(3)
+assert(diff == field(7))
+
+// Negation
+let neg = -field(5)
+assert(neg + field(5) == field(0))
+
+// Multiplication identity
+assert(field(1) * field(99) == field(99))
+
+// Additive identity
+assert(field(0) + field(42) == field(42))
+
+// Division (modular inverse)
+let q = field(10) / field(2)
+assert(q == field(5))
+
+print("PASS: field")

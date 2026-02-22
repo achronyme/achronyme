@@ -1,0 +1,15 @@
+// Type system and typeof
+
+assert(typeof(42) == "Number")
+assert(typeof(3.14) == "Number")
+assert(typeof(true) == "Bool")
+assert(typeof(false) == "Bool")
+assert(typeof(nil) == "Nil")
+assert(typeof("hello") == "String")
+assert(typeof([]) == "List")
+assert(typeof([1, 2]) == "List")
+assert(typeof({}) == "Map")
+assert(typeof({a: 1}) == "Map")
+assert(typeof(field(1)) == "Field")
+
+print("PASS: types")

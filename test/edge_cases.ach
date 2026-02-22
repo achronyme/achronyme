@@ -1,0 +1,59 @@
+// Corner cases
+
+// Empty map literal {}
+let x = {}
+assert(typeof(x) == "Map")
+assert(len(x) == 0)
+
+// Division produces float when not evenly divisible
+assert(7 / 2 == 3.5)
+assert(15 / 3 == 5)
+assert(10 / 4 == 2.5)
+
+// Falsey values in conditions
+let a = if false { 1 } else { 0 }
+assert(a == 0)
+let b = if nil { 1 } else { 0 }
+assert(b == 0)
+
+// Truthy values
+let d = if 1 { 1 } else { 0 }
+assert(d == 1)
+let e = if "hello" { 1 } else { 0 }
+assert(e == 1)
+let f = if true { 1 } else { 0 }
+assert(f == 1)
+
+// Large integers
+let big = 1000000
+assert(big * 1000 == 1000000000)
+
+// Deeply nested expressions
+assert(((((1 + 2) * 3) - 4) * 5) == 25)
+
+// Nested if/else
+let val = if true {
+    if false {
+        1
+    } else {
+        if true { 42 } else { 0 }
+    }
+} else {
+    99
+}
+assert(val == 42)
+
+// String equality
+assert("abc" == "abc")
+assert("abc" != "def")
+
+// nil comparisons
+assert(nil == nil)
+assert(!(nil != nil))
+
+// Boolean identity
+assert(true == true)
+assert(false == false)
+assert(true != false)
+
+print("PASS: edge_cases")

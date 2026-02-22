@@ -1,0 +1,81 @@
+// if/else, while, forever, break/continue
+
+// if/else as expression
+let x = if true { 10 } else { 20 }
+assert(x == 10)
+let y = if false { 10 } else { 20 }
+assert(y == 20)
+
+// Nested if/else (used instead of else-if chains)
+let grade = 85
+mut ltr = "F"
+if grade >= 90 {
+    ltr = "A"
+} else {
+    if grade >= 80 {
+        ltr = "B"
+    } else {
+        if grade >= 70 {
+            ltr = "C"
+        }
+    }
+}
+assert(ltr == "B")
+
+// while loop with counter
+mut sum = 0
+mut i = 1
+while i <= 10 {
+    sum = sum + i
+    i = i + 1
+}
+assert(sum == 55)
+
+// forever + break
+mut count = 0
+forever {
+    count = count + 1
+    if count == 5 {
+        break
+    }
+}
+assert(count == 5)
+
+// continue skips iteration
+mut odds = 0
+mut j = 0
+while j < 10 {
+    j = j + 1
+    if j % 2 == 0 { continue }
+    odds = odds + 1
+}
+assert(odds == 5)
+
+// Nested loops
+mut product = 0
+mut a = 0
+while a < 3 {
+    mut b = 0
+    while b < 3 {
+        product = product + 1
+        b = b + 1
+    }
+    a = a + 1
+}
+assert(product == 9)
+
+// Break in nested loop (only breaks inner)
+mut outer = 0
+mut total = 0
+while outer < 3 {
+    mut inner = 0
+    forever {
+        inner = inner + 1
+        total = total + 1
+        if inner == 2 { break }
+    }
+    outer = outer + 1
+}
+assert(total == 6)
+
+print("PASS: control_flow")

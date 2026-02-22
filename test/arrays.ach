@@ -1,0 +1,61 @@
+// List operations
+
+// Literal + indexing
+let arr = [10, 20, 30]
+assert(arr[0] == 10)
+assert(arr[1] == 20)
+assert(arr[2] == 30)
+
+// Empty list
+let empty = []
+assert(len(empty) == 0)
+
+// len
+assert(len(arr) == 3)
+
+// push + pop
+mut items = [1, 2]
+push(items, 3)
+assert(len(items) == 3)
+assert(items[2] == 3)
+
+let last = pop(items)
+assert(last == 3)
+assert(len(items) == 2)
+
+// Assignment via index
+mut nums = [0, 0, 0]
+nums[0] = 10
+nums[1] = 20
+nums[2] = 30
+assert(nums[0] == 10)
+assert(nums[1] == 20)
+assert(nums[2] == 30)
+
+// Heterogeneous list
+let mixed = [1, "two", true, nil]
+assert(len(mixed) == 4)
+assert(mixed[0] == 1)
+assert(mixed[1] == "two")
+assert(mixed[2] == true)
+assert(mixed[3] == nil)
+
+// Nested lists
+let matrix = [[1, 2], [3, 4]]
+assert(matrix[0][0] == 1)
+assert(matrix[0][1] == 2)
+assert(matrix[1][0] == 3)
+assert(matrix[1][1] == 4)
+
+// Build list in loop (using while since for..in has a known bug)
+mut squares = []
+mut i = 0
+while i < 5 {
+    push(squares, i * i)
+    i = i + 1
+}
+assert(len(squares) == 5)
+assert(squares[0] == 0)
+assert(squares[4] == 16)
+
+print("PASS: arrays")

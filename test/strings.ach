@@ -1,0 +1,31 @@
+// String operations
+
+// Basic literal
+let s = "hello"
+assert(s == "hello")
+
+// Length
+assert(len("hello") == 5)
+assert(len("") == 0)
+
+// Escapes
+let nl = "line1\nline2"
+assert(len(nl) == 11)
+
+let tab = "a\tb"
+assert(len(tab) == 3)
+
+let escaped_quote = "say \"hi\""
+assert(len(escaped_quote) == 8)
+
+let backslash = "a\\b"
+assert(len(backslash) == 3)
+
+// typeof
+assert(typeof("x") == "String")
+
+// Equality
+assert("abc" == "abc")
+assert("abc" != "def")
+
+print("PASS: strings")

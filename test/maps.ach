@@ -1,0 +1,47 @@
+// Map operations
+
+// Literal + dot access
+let person = {name: "Alice", age: 30}
+assert(person.name == "Alice")
+assert(person.age == 30)
+
+// Bracket access
+assert(person["name"] == "Alice")
+assert(person["age"] == 30)
+
+// Bracket access with variable key
+let key = "name"
+assert(person[key] == "Alice")
+
+// Empty map
+let empty = {}
+assert(len(empty) == 0)
+
+// len
+assert(len(person) == 2)
+
+// Assignment via dot and bracket
+mut m = {x: 1}
+m.x = 2
+assert(m.x == 2)
+m["y"] = 3
+assert(m.y == 3)
+assert(m["y"] == 3)
+m.z = 4
+assert(m["z"] == 4)
+
+// String keys in literal
+let m2 = {"hello": 1, "world": 2}
+assert(m2["hello"] == 1)
+assert(m2["world"] == 2)
+
+// keys()
+let k = keys(person)
+assert(len(k) == 2)
+
+// Nested maps
+let nested = {a: {b: {c: 42}}}
+assert(nested.a.b.c == 42)
+assert(nested["a"]["b"]["c"] == 42)
+
+print("PASS: maps")

@@ -1,0 +1,63 @@
+// Advanced closure patterns
+
+// Shared mutable state between closures from same factory
+let make_pair = fn() {
+    mut val = 0
+    let getter = fn() { val }
+    let setter = fn(x) { val = x }
+    return [getter, setter]
+}
+let pair = make_pair()
+let get = pair[0]
+let set = pair[1]
+assert(get() == 0)
+set(42)
+assert(get() == 42)
+set(100)
+assert(get() == 100)
+
+// Closure as callback
+let map_list = fn(list, f) {
+    mut result = []
+    mut i = 0
+    while i < len(list) {
+        push(result, f(list[i]))
+        i = i + 1
+    }
+    return result
+}
+let doubled = map_list([1, 2, 3], fn(x) { x * 2 })
+assert(doubled[0] == 2)
+assert(doubled[1] == 4)
+assert(doubled[2] == 6)
+
+// Nested closures (closure returning closure)
+let make_multiplier = fn(factor) {
+    return fn(x) {
+        return fn(y) {
+            return x * y * factor
+        }
+    }
+}
+let mul2 = make_multiplier(2)
+let mul2_3 = mul2(3)
+assert(mul2_3(4) == 24)
+
+// Immediate invocation
+let result = fn(x) { x + 1 }(41)
+assert(result == 42)
+
+// Closure preserving environment after outer returns
+let make_accumulator = fn(init) {
+    mut total = init
+    return fn(n) {
+        total = total + n
+        return total
+    }
+}
+let acc = make_accumulator(0)
+assert(acc(5) == 5)
+assert(acc(10) == 15)
+assert(acc(20) == 35)
+
+print("PASS: closures")
