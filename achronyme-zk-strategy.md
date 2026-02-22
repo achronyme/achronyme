@@ -454,3 +454,142 @@ La auditoría de 6 agentes identificó áreas de mejora previas a la integració
 6. **AST intermedio** → desacoplar pest del resto del pipeline
 7. **Export Plonkish** → formato binario (actualmente solo R1CS exporta)
 8. **Ceremonia segura** — reemplazar entropía hardcoded en trusted setup
+
+---
+
+## 10. Estrategia Multi-Nicho (Febrero 2026)
+
+### Los 4 nichos y por qué no son mutuamente exclusivos
+
+```
+                    SDK embebible (Rust crate)
+                    ┌─────────────────────┐
+                    │  achronyme::prove!   │
+                    │  Compila circuitos   │
+                    │  inline desde Rust   │
+                    └────────┬────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+     Educación          Solvencia      Credenciales
+   ┌──────────────┐  ┌────────────┐  ┌──────────────┐
+   │ Playground   │  │ Proof of   │  │ Selective    │
+   │ web (WASM)   │  │ Reserves   │  │ disclosure   │
+   │ Tutoriales   │  │ Audit      │  │ Age/identity │
+   │ Cursos       │  │ DeFi       │  │ W3C VC       │
+   └──────────────┘  └────────────┘  └──────────────┘
+```
+
+**El SDK es la base.** Educación, solvencia y credenciales son aplicaciones verticales que lo consumen. No hay conflicto — hay stack.
+
+### Secuencia recomendada
+
+**Fase A: SDK horizontal (prerequisito para todo)**
+
+Exponer el pipeline IR→R1CS→proof como crate Rust embebible. Hoy el CLI es el único punto de entrada; un backend Rust que importe `achronyme` como dependencia no tiene API ergonómica para hacerlo. Esto implica:
+
+- Estabilizar la API pública: `compile_circuit(source, inputs) -> Result<Proof>`
+- Separar el runtime de la CLI (ya casi logrado con `ProveHandler` trait)
+- Publicar en crates.io con documentación mínima
+
+**Fase B: Un vertical de demostración (el primero que aterrice)**
+
+No importa cuál sea — importa tener uno funcional end-to-end para demostrar valor. Candidatos:
+
+1. **Proof of Solvency** — Tiene clientes inmediatos (exchanges post-FTX). Template: "suma de balances en Merkle tree ≥ liability declarada". Los builtins `merkle_verify` + `poseidon` ya cubren el 80%.
+
+2. **Selective Disclosure / Age Proof** — Más simple técnicamente. Template: "campo `birthdate` en credencial firmada cumple `age >= 18`". Requiere añadir verificación de firmas (EdDSA/ECDSA sobre BN254) como builtin.
+
+3. **Educación** — No requiere nuevos builtins. Playground WASM + 5 tutoriales progresivos. Menor barrera de entrada pero menor impacto comercial directo.
+
+**Fase C: Expansión a los demás verticales**
+
+Una vez que un vertical funciona, los otros son variaciones del mismo SDK. El esfuerzo marginal baja significativamente.
+
+### Por qué funciona con un equipo de 1
+
+El truco es que los 4 nichos comparten >90% del stack técnico. Lo que cambia entre ellos son:
+
+- **Templates** (archivos .ach de ejemplo para cada caso de uso)
+- **Builtins específicos** (EdDSA para credenciales, Merkle sum tree para solvencia)
+- **Documentación** (tutoriales orientados a cada audiencia)
+
+El compilador, los backends, el IR, la VM, Poseidon, witness generation — todo eso es compartido. El trabajo diferencial por vertical es bajo.
+
+---
+
+## 11. Debilidades Técnicas Actuales
+
+### Críticas (bloquean adopción)
+
+| # | Debilidad | Impacto | Esfuerzo |
+|---|-----------|---------|----------|
+| D1 | **Sin verificador on-chain** | El usuario genera prueba pero no puede verificarla en Ethereum sin trabajo manual. Último kilómetro roto. | Medio — generar contrato Solidity desde ConstraintSystem es ~500 LOC |
+| D2 | **Una sola curva (BN254)** | No interoperable con BLS12-381 (Ethereum EIP-2537), Pasta (Halo2/Zcash), ni campos STARK. | Alto — requiere genericizar `FieldElement` sobre un trait `Field` |
+| D3 | **GC placeholder** | `prove {}` en loop = memory leak. Programas largos crecen en RAM sin límite. | Medio — la infraestructura de arenas existe, falta el sweep real |
+| D4 | **Sin imports / sistema de módulos** | Todo es un archivo. Circuitos grandes son inmanejables. | Medio — `import "path"` con resolución de nombres |
+
+### Importantes (degradan DX)
+
+| # | Debilidad | Impacto | Esfuerzo |
+|---|-----------|---------|----------|
+| D5 | **Errores VM→circuit no educativos** | Usuario escribe `while` en `prove {}`, recibe error genérico en vez de "while no es válido en circuitos porque..." | Bajo — enriquecer mensajes de error en IrLowering |
+| D6 | **Sin stdlib** | No hay `map`, `filter`, `reduce`, manejo de strings. La parte VM se siente incompleta. | Medio — implementar como natives |
+| D7 | **Comparaciones caras (~760 constraints)** | `x < y` es prohibitivo en circuitos sensibles al tamaño. Técnicas de batching o range proofs más eficientes no están implementadas. | Alto — requiere investigación criptográfica |
+| D8 | **Sin LSP / IDE support** | No hay autocompletado, go-to-definition, ni syntax highlighting oficial. | Medio — LSP básico + grammar TextMate |
+| D9 | **REPL es WIP** | Listado en CLI help pero no funcional. | Bajo |
+
+### De diseño (limitan el techo)
+
+| # | Debilidad | Impacto | Esfuerzo |
+|---|-----------|---------|----------|
+| D10 | **Lookup O(N²) en Plonkish** | Inutilizable para tablas grandes (ya identificado en auditoría interna). | Bajo — `HashSet` |
+| D11 | **Dependencia de snarkjs para Groth16** | El pipeline `prove {}` llama a `npx snarkjs` como subproceso. Frágil, lento, requiere Node.js. | Alto — migrar a arkworks nativo (parcialmente hecho) |
+| D12 | **Sin export Plonkish** | El backend Plonkish compila y verifica pero no genera artefactos binarios. | Medio |
+
+### Priorización sugerida
+
+```
+Inmediato (desbloquean SDK):
+  D10 → HashSet para lookups (1 hora)
+  D5  → Mensajes de error educativos (2-3 horas)
+  D3  → GC funcional (1-2 días)
+  D9  → REPL básico (medio día)
+
+Corto plazo (desbloquean verticales):
+  D1  → Verificador Solidity (2-3 días)
+  D4  → Sistema de imports (2-3 días)
+  D6  → Stdlib mínima: map, filter, reduce, string ops (2-3 días)
+
+Medio plazo (desbloquean escala):
+  D11 → Prover nativo Rust (1-2 semanas)
+  D2  → Multi-curva via trait Field (2-3 semanas)
+  D8  → LSP + TextMate grammar (1 semana)
+
+Largo plazo (opcionales):
+  D7  → Comparaciones optimizadas
+  D12 → Export Plonkish binario
+```
+
+---
+
+## 12. Riesgos de Mercado
+
+### El elefante en la sala: Noir
+
+Noir (Aztec) tiene $100M+ de funding, 15+ ingenieros, y ataca exactamente el mismo gap de DX. Su modelo `constrained` / `unconstrained` es conceptualmente similar a la dualidad VM/circuit de Achronyme. Diferencias clave:
+
+- Noir NO tiene VM general (no hay closures, GC, I/O fuera de circuitos)
+- Noir NO genera proofs inline como valores del lenguaje
+- Noir SÍ tiene ecosystem (packages, IDE, community)
+- Noir SÍ tiene backend-agnostic IR (ACIR) que soporta múltiples provers
+
+**Conclusión**: No competir en "mejor DSL ZK general" — Noir gana por recursos. Competir en "proofs como parte del lenguaje" (prove blocks) y en verticales específicos donde la ejecución dual es ventaja real.
+
+### Timing
+
+El mercado ZK está en una ventana de ~18-24 meses antes de que los ganadores se consoliden. Los grants de Ethereum Foundation y Aztec están activos ahora. Después de esa ventana, los ecosistemas se cierran alrededor de 2-3 stacks dominantes y la barrera de entrada sube dramáticamente.
+
+### El riesgo real
+
+No es técnico. Es que el proyecto se quede como "impresionante repo de GitHub que nadie usa". La diferencia entre un proyecto técnicamente bueno y uno adoptado es: **un usuario que resolvió un problema real con él y lo contó**. Todo el esfuerzo de nichos debería orientarse a conseguir ese primer caso de éxito documentado.
