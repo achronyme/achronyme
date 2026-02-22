@@ -17,8 +17,8 @@
 | ir | 5 | 5 | 0 | 10 |
 | constraints | 4 | 2 | 3 | 9 |
 | cli | 6 | 2 | 5 | 13 |
-| parser | 11 | 1 | 5 | 17 |
-| **TOTAL** | **26** | **47 (+1)** | **19** | **93** |
+| parser | 10 | 1 | 6 | 17 |
+| **TOTAL** | **25** | **47 (+1)** | **20** | **93** |
 
 ### Open by severity
 
@@ -26,7 +26,7 @@
 |----------|-------|
 | CRITICAL | 0 |
 | HIGH | 2 |
-| MEDIUM | 12 |
+| MEDIUM | 11 |
 | LOW | 12 |
 
 ---
@@ -84,7 +84,7 @@
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
 
-## False Positives & Confirmed Sound (19)
+## False Positives & Confirmed Sound (20)
 
 | ID | Crate | Reason |
 |----|-------|--------|
@@ -107,6 +107,7 @@
 | L-05 | cli | `/tmp` is typically `tmpfs` (RAM-backed); secure wiping ineffective on SSDs; snarkjs heap not zeroed either; requires root/physical access |
 | L-07 | cli | CLI arg from user's own process; no privilege boundary crossed; snarkjs validates ptau format |
 | L-06 | cli | `HOME` trusted by all Unix tools (git, cargo, ssh); `dirs::home_dir()` also reads `HOME`; no privilege escalation |
+| P-01 | parser | By-design: `{}` as empty map is correct PEG parse; control flow (`if/while/for/fn`) references `block` directly, not through `atom`, so unaffected |
 
 ---
 
@@ -283,18 +284,7 @@ The `--inputs` string has no length limit. A multi-GB string could exhaust memor
 
 ---
 
-### Parser Crate (11 open)
-
-#### P-01 — Empty Braces Ambiguity [MEDIUM]
-
-**File**: `achronyme-parser/src/grammar.pest` (lines 40, 60, 67)
-**Category**: Grammar
-
-`{ }` parses as empty `map_literal` (not empty `block`) because `map_literal` appears first in `atom`. Semantically harmless for `if/while/for/fn` (which require `block`), but standalone `{ }` becomes an empty map.
-
-**Fix**: Document behavior. `{ nil }` or `{ ; }` for empty blocks.
-
----
+### Parser Crate (10 open)
 
 #### P-02 — Missing String Escape Sequences [MEDIUM]
 
