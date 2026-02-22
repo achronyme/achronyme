@@ -23,6 +23,9 @@ ark-ff = "0.5"
 ark-ec = "0.5"
 ark-snark = "0.5"
 
+# Plonkish proving (halo2/KZG on BN254)
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_04_20", features = ["circuit-params"] }
+
 memory = { path = "../memory" }
 vm = { path = "../vm" }
 compiler = { path = "../compiler" }
