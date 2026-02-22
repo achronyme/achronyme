@@ -4,6 +4,7 @@ use crate::error::CompilerError;
 use crate::declarations::DeclarationCompiler;
 use crate::control_flow::ControlFlowCompiler;
 use crate::expressions::ExpressionCompiler;
+use crate::functions::FunctionDefinitionCompiler;
 use achronyme_parser::Rule;
 use pest::iterators::Pair;
 
@@ -57,6 +58,11 @@ impl StatementCompiler for Compiler {
                      self.emit_abc(OpCode::Return, 0, 0, 0);
                  }
                  Ok(())
+            },
+            Rule::fn_decl => {
+                let reg = self.compile_fn_expr(inner)?;
+                self.free_reg(reg);
+                Ok(())
             },
             Rule::expr => {
                 let reg = self.compile_expr(inner)?;
