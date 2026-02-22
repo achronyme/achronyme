@@ -8,7 +8,7 @@
 /// This provides more efficient circuits than R1CS for many operations,
 /// especially range checks (O(1) lookup vs O(bits) boolean decomposition).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use memory::FieldElement;
@@ -389,15 +389,15 @@ impl PlonkishSystem {
         // 3. Lookup check: for each lookup, for each active row, the input
         //    tuple must appear in the table columns.
         for lookup in &self.lookups {
-            // Build the set of table tuples
-            let mut table_set: Vec<Vec<FieldElement>> = Vec::new();
+            // Build the set of table tuples — O(N) with HashSet for O(1) membership.
+            let mut table_set: HashSet<Vec<FieldElement>> = HashSet::new();
             for row in 0..self.num_rows {
                 let tuple: Vec<FieldElement> = lookup
                     .table_exprs
                     .iter()
                     .map(|e| e.evaluate(&self.assignments, row))
                     .collect();
-                table_set.push(tuple);
+                table_set.insert(tuple);
             }
 
             for row in 0..self.num_rows {

@@ -4,7 +4,7 @@
 /// Internal representation: value * R mod p (Montgomery domain)
 /// Zero external dependencies. ~350 LOC.
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FieldElement {
     /// Four 64-bit limbs in little-endian order (limbs[0] is least significant)
     pub(crate) limbs: [u64; 4],
