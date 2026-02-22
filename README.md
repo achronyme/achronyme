@@ -1,104 +1,259 @@
 # Achronyme
 
-> A programming language for zero-knowledge circuits with dual execution: full VM (closures, GC, I/O) + optimized circuit compilation (R1CS/Plonkish over BN254).
+A programming language for zero-knowledge circuits.
 
-**703 tests** | **2 backends** | **Native Groth16 & PlonK proofs as first-class values**
+Write readable code. Decide what gets proven. Same language for general execution and ZK circuit compilation.
+
+```
+cargo build --release
+cargo test --workspace     # 703 unit tests
+bash test/run_tests.sh     # 23 integration tests
+```
 
 ---
 
-## What is Achronyme?
+## Quick Look
 
-Achronyme is a high-level language where the same code can run as a general-purpose program (VM mode) or compile to ZK circuits (circuit mode). Write readable logic, get verifiable proofs.
+### General-purpose execution
+
+```achronyme
+let make_counter = fn(init) {
+    mut n = init
+    return fn() { n = n + 1; return n }
+}
+let c = make_counter(0)
+print(c())  // 1
+print(c())  // 2
+```
+
+### ZK circuit
+
+```achronyme
+public root
+witness leaf
+witness path[3]
+witness indices[3]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+```bash
+ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=...,indices_0=0,indices_1=1,indices_2=0"
+# → circuit.r1cs + witness.wtns (snarkjs-compatible)
+```
+
+### Inline proof generation
 
 ```achronyme
 let secret = field(42)
-let hash = field("17159...")  // precomputed poseidon(42, 0)
+let hash = field("17159...")  // poseidon(42, 0)
 
-let proof = prove {
+let p = prove {
     witness secret
     public hash
     assert_eq(poseidon(secret, 0), hash)
 }
 
-print(proof)              // <Proof>
-print(proof_json(proof))  // {"pi_a": [...], "pi_b": [...], ...}
+print(proof_json(p))  // Groth16 proof, verifiable on-chain
 ```
-
-Unlike zkVMs (SP1, RISC Zero) that prove generic computation expensively, or restrictive DSLs (Circom, Noir) that force you to think in constraints, Achronyme lets you write natural code and decide what gets proven.
 
 ---
 
-## Features
+## How It Works
 
-### Language
-- Functional syntax with `let`, `fn`, `if/else`, `for`, closures, recursion
-- Arrays, maps, iterators, first-class functions
-- BN254 field elements as native type (`field(42)`, `field("0x2a")`)
-- Mark-and-sweep GC with typed arenas
+Achronyme has two execution modes from the same source:
 
-### ZK Circuit Compilation
-- **R1CS backend** — native Groth16 proofs via ark-groth16, snarkjs-compatible `.r1cs` / `.wtns` export
-- **Plonkish backend** — native KZG-PlonK proofs via halo2 (PSE), custom gates, lookup tables, copy constraints
-- SSA intermediate representation with optimization passes (const fold, DCE, boolean propagation)
-- Taint analysis: compile-time detection of under-constrained variables
-- Builtins: `poseidon`, `poseidon_many`, `mux`, `assert`, `assert_eq`, `range_check`, `merkle_verify`
+**VM mode** (`ach run`) — Full language: closures, recursion, GC, arrays, maps, strings, I/O. Code runs like any scripting language.
 
-### VM-ZK Integration
-- `prove {}` blocks compile circuits, generate witnesses, and verify at runtime
-- Native in-process proof generation for both backends (no external dependencies)
-- `--prove-backend r1cs` (default, Groth16) or `--prove-backend plonkish` (KZG-PlonK)
-- Proofs are first-class values: `proof_json()`, `proof_public()`, `proof_vkey()`
-- KZG params and proving keys cached in `~/.achronyme/cache/`
+**Circuit mode** (`ach circuit`) — Compiles to arithmetic constraints over BN254. No loops at runtime, no I/O — everything is unrolled and flattened into a constraint system for zero-knowledge proofs.
 
-### Architecture
-- NaN-boxed 64-bit tagged values (10 types: Number, Int, Bool, Nil, String, List, Map, Function, Field, Proof)
-- Register-based VM with 61 opcodes, 65K stack, upvalue closures
-- 7 workspace crates: parser, compiler, ir, vm, memory, constraints, cli
+The `prove {}` block bridges both: it runs inside the VM, compiles its body as a circuit, generates a witness from captured variables, and produces a cryptographic proof — all in one expression.
+
+```
+Source (.ach)
+    │
+    ├─► Parser (PEG) → AST
+    │       │
+    │       ├─► Bytecode → VM          (run mode)
+    │       │
+    │       └─► SSA IR → Optimize
+    │               │
+    │           ┌───┴───┐
+    │           ▼       ▼
+    │        R1CS    Plonkish
+    │      (Groth16) (KZG-PlonK)
+    │           │       │
+    │           ▼       ▼
+    │       .r1cs    Gates/Lookups
+    │       .wtns    Copy constraints
+    │           │       │
+    │           └───┬───┘
+    │               ▼
+    │         Native proof
+    │
+    └─► prove { } → compile + witness + verify + proof (inline)
+```
 
 ---
 
-## Getting Started
+## Language
 
-### Prerequisites
-- Rust (latest stable)
-- No external dependencies — proof generation is fully native
+### Types
 
-### Build & Test
+| Type | Examples |
+|------|---------|
+| Number | `3.14`, `-0.5` |
+| Int | `42`, `-7` |
+| Bool | `true`, `false` |
+| String | `"hello"` |
+| List | `[1, 2, 3]` |
+| Map | `{"a": 1, "b": 2}` |
+| Field | `field(42)`, `field("0x2a")` |
+| Function | `fn(x) { x + 1 }` |
+| Proof | result of `prove { }` |
+| Nil | `nil` |
 
-```bash
-cargo build --release
-cargo test --workspace  # 703 tests
+### Control Flow
+
+```achronyme
+if x > 0 { print("positive") } else { print("non-positive") }
+
+while n > 0 { n = n - 1 }
+
+for item in list { print(item) }
+
+for i in 0..10 { print(i) }
 ```
 
-### Run a Program
+### Functions and Closures
 
-```bash
-# Execute a script
-cargo run -- run examples/hello.ach
+```achronyme
+let add = fn(a, b) { a + b }
 
-# With prove {} blocks using Groth16 (default)
-cargo run -- run examples/proof.ach
+let fib = fn fib(n) {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
 
-# With prove {} blocks using PlonK (halo2 KZG)
-cargo run -- run examples/proof.ach --prove-backend plonkish
+// Closures capture environment
+let make_adder = fn(x) { fn(y) { x + y } }
+let add5 = make_adder(5)
+print(add5(3))  // 8
 ```
 
-### Compile a Circuit
+### Field Elements
+
+BN254 scalar field. Montgomery form internally, decimal/hex input.
+
+```achronyme
+let a = field(42)
+let b = field("0xFF")
+let c = field("21888242871839275222246405745257275088548364400416034343698204186575808495617")
+
+let sum = a + b
+let prod = a * b
+let inv = field(1) / a
+```
+
+---
+
+## Circuit Features
+
+### Declarations
+
+```achronyme
+public output          // public input (instance)
+witness secret         // private input (witness)
+witness arr[4]         // witness array (arr_0, arr_1, arr_2, arr_3)
+```
+
+### Builtins
+
+| Builtin | Description | R1CS cost | Plonkish cost |
+|---------|-------------|-----------|---------------|
+| `assert_eq(a, b)` | Enforce equality | 1 | 1 |
+| `assert(expr)` | Enforce boolean true | 2 | 2 |
+| `poseidon(a, b)` | Poseidon 2-to-1 hash | 361 | 361 |
+| `poseidon_many(a, b, c, ...)` | Left-fold Poseidon | 361*(n-1) | 361*(n-1) |
+| `mux(cond, a, b)` | Conditional select | 2 | 1 |
+| `range_check(x, bits)` | Value fits in N bits | bits+1 | 1 (lookup) |
+| `merkle_verify(root, leaf, path, indices)` | Merkle membership proof | ~1090/level | ~1090/level |
+| `len(arr)` | Compile-time array length | 0 | 0 |
+
+### Operators in Circuits
+
+| Operation | R1CS | Plonkish |
+|-----------|------|----------|
+| `+`, `-` | 0 | 0 |
+| `*` | 1 | 1 |
+| `/` | 2 | 2 |
+| `^` (constant exp) | O(log n) | O(log n) |
+| `==`, `!=` | 2 | 2 |
+| `<`, `<=`, `>`, `>=` | ~760 | ~760 |
+| `&&`, `\|\|` | 3 | 3 |
+| `!` | 1 | 1 |
+
+### Functions in Circuits
+
+Functions are inlined at each call site. No dynamic dispatch, no recursion.
+
+```achronyme
+witness a, b
+public out
+
+fn hash_pair(x, y) { poseidon(x, y) }
+
+assert_eq(hash_pair(a, b), out)
+```
+
+### Control Flow in Circuits
+
+`if/else` compiles to `mux` (both branches are evaluated). `for` loops are statically unrolled. `while`, `break`, `continue` are rejected at compile time.
+
+```achronyme
+witness vals[4]
+public total
+
+let sum = vals[0]
+let sum = sum + vals[1]
+let sum = sum + vals[2]
+let sum = sum + vals[3]
+assert_eq(sum, total)
+```
+
+---
+
+## CLI
 
 ```bash
-# R1CS: generate .r1cs and .wtns files
-cargo run -- circuit circuit.ach \
-    --public "root" \
-    --witness "leaf,path_0,path_1,path_2" \
-    --inputs "leaf=42,root=..."
+# Run a program
+ach run script.ach
 
-# Plonkish: compile, verify, and generate KZG-PlonK proof
-cargo run -- circuit circuit.ach \
-    --backend plonkish \
-    --inputs "leaf=42,root=..." \
-    --prove
+# Run with PlonK prove backend
+ach run script.ach --prove-backend plonkish
 
-# R1CS files are snarkjs-compatible
+# Compile circuit (in-source declarations)
+ach circuit circuit.ach --inputs "x=42,y=7"
+
+# Compile circuit (CLI declarations)
+ach circuit circuit.ach --public "out" --witness "a,b" --inputs "out=42,a=6,b=7"
+
+# Plonkish backend
+ach circuit circuit.ach --backend plonkish --inputs "x=42,y=7"
+
+# Generate Plonkish proof
+ach circuit circuit.ach --backend plonkish --inputs "x=42" --prove
+
+# Compile to bytecode
+ach compile script.ach --output script.achb
+
+# Disassemble
+ach disassemble script.ach
+```
+
+Output `.r1cs` and `.wtns` files are compatible with snarkjs:
+
+```bash
 snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit.zkey
 snarkjs groth16 prove circuit.zkey witness.wtns proof.json public.json
 snarkjs groth16 verify verification_key.json public.json proof.json
@@ -106,68 +261,73 @@ snarkjs groth16 verify verification_key.json public.json proof.json
 
 ---
 
-## Example: Merkle Membership Proof
+## Prove Blocks
+
+`prove {}` compiles a circuit, captures variables from the enclosing scope, generates a witness, and returns a proof — all inline.
 
 ```achronyme
-// Prove you know a leaf in a Merkle tree without revealing it
-let leaf = field(42)
-let root = field("17843...")
+let a = field(6)
+let b = field(7)
+let product = field(42)
 
-// Witness: the secret path
-let path = [field("1234..."), field("5678..."), field("9abc...")]
-let indices = [field(0), field(1), field(0)]
-
-let proof = prove {
-    witness leaf
-    witness path[3]
-    witness indices[3]
-    public root
-    merkle_verify(root, leaf, path, indices)
+let p = prove {
+    witness a
+    witness b
+    public product
+    assert_eq(a * b, product)
 }
-
-print(proof_json(proof))  // Groth16 proof, verifiable on-chain
 ```
+
+Variable names inside `public`/`witness` declarations must match `let` bindings in the outer scope. Integer values are automatically promoted to field elements.
+
+The result is a `Proof` object (Groth16 or PlonK depending on `--prove-backend`). Extract components with `proof_json(p)`, `proof_public(p)`, `proof_vkey(p)`.
+
+If no proving backend is available, the block still compiles the circuit, generates the witness, and verifies constraints locally (returns `nil`).
+
+---
+
+## Optimization Passes
+
+The SSA IR runs four optimization passes before constraint generation:
+
+- **Constant folding** — Evaluates arithmetic on known constants at compile time
+- **Dead code elimination** — Removes unused instructions
+- **Boolean propagation** — Tracks proven-boolean variables, skips redundant enforcement
+- **Taint analysis** — Warns about under-constrained or unused inputs
+
+Disable with `--no-optimize`.
 
 ---
 
 ## Project Structure
 
-| Crate | Purpose |
-|-------|---------|
-| `achronyme-parser` | PEG grammar (pest), lexing, parsing |
-| `compiler` | Bytecode compiler + R1CS/Plonkish backends |
-| `ir` | SSA intermediate representation, optimization passes |
-| `vm` | Register-based virtual machine |
-| `memory` | Heap, GC, FieldElement (BN254 Montgomery), ProofObject |
-| `constraints` | R1CS/Plonkish constraint systems, Poseidon hash, binary export |
-| `cli` | Command-line interface, native Groth16 (ark-groth16) & PlonK (halo2 KZG) proving |
-
----
-
-## Constraint Costs
-
-| Operation | R1CS Constraints | Plonkish Rows |
-|-----------|-----------------|---------------|
-| `a + b` | 0 | 0 (deferred) |
-| `a * b` | 1 | 1 |
-| `a / b` | 2 | 2 |
-| `assert_eq(a, b)` | 1 | 1 |
-| `assert(expr)` | 2 | 2 |
-| `a == b` | 2 (IsZero) | 2 |
-| `a < b` | ~760 | ~760 |
-| `poseidon(a, b)` | 361 | 361 |
-| `range_check(x, n)` | n+1 | 1 (lookup) |
-| `mux(c, a, b)` | 2 | 1 |
+```
+achronyme/
+├── achronyme-parser/   PEG grammar (pest), AST types, parser
+├── ir/                 SSA intermediate representation, optimization passes
+├── compiler/           Bytecode compiler, R1CS backend, Plonkish backend
+├── vm/                 Register-based VM (61 opcodes, NaN-boxed values)
+├── memory/             Heap, GC, FieldElement (BN254 Montgomery)
+├── constraints/        R1CS/Plonkish systems, Poseidon hash, binary export
+├── cli/                CLI, native Groth16 (ark-groth16) & PlonK (halo2-KZG)
+├── examples/           Example circuits
+└── test/
+    ├── vm/             12 VM/interpreter tests
+    ├── circuit/        8 circuit compilation tests
+    ├── prove/          3 prove block tests
+    └── run_tests.sh    Integration test runner
+```
 
 ---
 
 ## Status
 
-- **703 tests passing** across 7 crates
-- 2 ZK backends with native proof generation (R1CS/Groth16 + Plonkish/KZG-PlonK)
-- Full VM-ZK integration (Levels 1-3)
-- snarkjs-compatible binary export (R1CS backend)
-- 2 complete security audits resolved (C1-4, H1-5, M1-8)
+- 703 unit tests + 23 integration tests
+- 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
+- Native in-process proof generation (no external tools)
+- snarkjs-compatible binary export
+- 2 security audits resolved
+- Poseidon hash compatible with circomlibjs
 
 ## License
 
