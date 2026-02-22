@@ -1,13 +1,30 @@
 // ============================================================================
 // Achronyme Core Grammar - Foundation V1
 // ============================================================================
+//
+// OPERATOR PRECEDENCE (highest to lowest):
+//
+//   Prec  Operator       Assoc   Description
+//   ----  --------       -----   -----------
+//   1     () [] .        left    Call, index, dot access (postfix)
+//   2     ^              right   Exponentiation
+//   3     - !            right   Negation, logical NOT (prefix)
+//   4     * / %          left    Multiplication, division, modulo
+//   5     + -            left    Addition, subtraction
+//   6     == != < <= > >=  —     Comparison (single, no chaining)
+//   7     &&             left    Logical AND (short-circuit in VM)
+//   8     ||             left    Logical OR (short-circuit in VM)
+//
+// STRING ESCAPES: \" \\ \/ \b \f \n \r \t
+//
 // ARCHITECTURE: The Layered Cake
-// 
+//
 // To ensure scalability, we strictly enforce the following hierarchy:
 // 1. ATOMS:   Standalone values (numbers, strings, identifiers, (expr)).
 // 2. POSTFIX: Operations that attach to the RIGHT of an atom (calls, index).
-// 3. PREFIX:  Operations that attach to the LEFT (negation, not).
-// 4. INFIX:   Binary operators with standard precedence.
+// 3. POWER:   Right-associative exponentiation (2^3^2 = 512).
+// 4. PREFIX:  Operations that attach to the LEFT (negation, not).
+// 5. INFIX:   Binary operators with standard precedence.
 // ============================================================================
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
@@ -107,7 +124,7 @@ call_op = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 // Power binds tighter than prefix so `-a^2` means `-(a^2)`.
 
 pow_op = { "^" }
-pow_expr = { postfix_expr ~ (pow_op ~ postfix_expr)* }
+pow_expr = { postfix_expr ~ (pow_op ~ postfix_expr)* }  // right-associative (handled in AST builder)
 
 // ============================================================================
 // LAYER 4: PREFIX EXPRESSIONS (Unary Operators)

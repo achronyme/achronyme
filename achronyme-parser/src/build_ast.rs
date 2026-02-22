@@ -186,7 +186,7 @@ fn build_expr(pair: Pair<Rule>) -> Result<Expr, String> {
         Rule::cmp_expr => build_binop_chain(pair, build_cmp_op),
         Rule::add_expr => build_binop_chain(pair, build_add_op),
         Rule::mul_expr => build_binop_chain(pair, build_mul_op),
-        Rule::pow_expr => build_binop_chain(pair, build_pow_op),
+        Rule::pow_expr => build_pow_chain(pair),
         Rule::prefix_expr => build_prefix_expr(pair),
         Rule::postfix_expr => build_postfix_expr(pair),
         Rule::atom => build_atom(pair),
@@ -275,8 +275,31 @@ fn build_mul_op(pair: &Pair<Rule>) -> Option<BinOp> {
     }
 }
 
-fn build_pow_op(pair: &Pair<Rule>) -> Option<BinOp> {
-    if pair.as_rule() == Rule::pow_op { Some(BinOp::Pow) } else { None }
+/// Build a right-associative chain for power expressions.
+/// `2^3^2` becomes `2^(3^2) = 512`, matching standard math convention.
+fn build_pow_chain(pair: Pair<Rule>) -> Result<Expr, String> {
+    let sp = span_of(&pair);
+    let children: Vec<Pair<Rule>> = pair.into_inner().collect();
+
+    // Separate operands and operators
+    let mut operands = Vec::new();
+    for child in &children {
+        if child.as_rule() != Rule::pow_op {
+            operands.push(build_expr(child.clone())?);
+        }
+    }
+
+    // Fold right-to-left: a ^ b ^ c → a ^ (b ^ c)
+    let mut result = operands.pop().unwrap();
+    for operand in operands.into_iter().rev() {
+        result = Expr::BinOp {
+            op: BinOp::Pow,
+            lhs: Box::new(operand),
+            rhs: Box::new(result),
+            span: sp.clone(),
+        };
+    }
+    Ok(result)
 }
 
 fn build_prefix_expr(pair: Pair<Rule>) -> Result<Expr, String> {
