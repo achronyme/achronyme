@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use memory::{FieldElement, Heap, ProofObject, Value};
 
@@ -20,6 +21,30 @@ pub enum ProveResult {
     },
 }
 
+/// Typed error for prove block failures, categorized by pipeline phase.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProveError {
+    /// IR lowering failed (parsing / AST → IR conversion)
+    IrLowering(String),
+    /// Constraint compilation failed (IR → R1CS/Plonkish)
+    Compilation(String),
+    /// Constraint verification failed
+    Verification(String),
+    /// Proof generation failed (Groth16 / halo2)
+    ProofGeneration(String),
+}
+
+impl fmt::Display for ProveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProveError::IrLowering(msg) => write!(f, "IR lowering: {msg}"),
+            ProveError::Compilation(msg) => write!(f, "compilation: {msg}"),
+            ProveError::Verification(msg) => write!(f, "verification: {msg}"),
+            ProveError::ProofGeneration(msg) => write!(f, "proof generation: {msg}"),
+        }
+    }
+}
+
 /// Trait for handling `prove { }` blocks at runtime.
 ///
 /// The VM calls this when it encounters a `Prove` opcode.
@@ -30,7 +55,7 @@ pub trait ProveHandler {
         &self,
         source: &str,
         scope_values: &HashMap<String, FieldElement>,
-    ) -> Result<ProveResult, String>;
+    ) -> Result<ProveResult, ProveError>;
 }
 
 /// Convert a VM `Value` to a `FieldElement` for prove block capture.

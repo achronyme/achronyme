@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, PartialEq)]
+use crate::machine::prove::ProveError;
+
+#[derive(Debug)]
 pub enum RuntimeError {
     StackOverflow,
     StackUnderflow,
@@ -12,7 +14,7 @@ pub enum RuntimeError {
     Unknown(String),
     OutOfBounds(String),
     SystemError(String),
-    ProveBlockFailed(String),
+    ProveBlockFailed(ProveError),
     ProveHandlerNotConfigured,
 }
 

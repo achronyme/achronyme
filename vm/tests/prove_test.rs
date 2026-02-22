@@ -1,6 +1,6 @@
 use compiler::Compiler;
 use memory::{Function, Value};
-use vm::{CallFrame, ProveHandler, ProveResult, VM};
+use vm::{CallFrame, ProveError, ProveHandler, ProveResult, VM};
 use std::collections::HashMap;
 use memory::FieldElement;
 
@@ -94,7 +94,7 @@ impl ProveHandler for RealProveHandler {
         &self,
         source: &str,
         scope_values: &HashMap<String, FieldElement>,
-    ) -> Result<ProveResult, String> {
+    ) -> Result<ProveResult, ProveError> {
         use compiler::r1cs_backend::R1CSCompiler;
         use ir::IrLowering;
 
@@ -105,15 +105,16 @@ impl ProveHandler for RealProveHandler {
             .unwrap_or(source);
 
         let (pub_names, wit_names, mut program) =
-            IrLowering::lower_self_contained(inner).map_err(|e| format!("{e}"))?;
+            IrLowering::lower_self_contained(inner)
+                .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         ir::passes::optimize(&mut program);
 
         let mut inputs = HashMap::new();
         for name in pub_names.iter().chain(wit_names.iter()) {
-            let val = scope_values
-                .get(name)
-                .ok_or_else(|| format!("prove: variable `{name}` not found in scope"))?;
+            let val = scope_values.get(name).ok_or_else(|| {
+                ProveError::IrLowering(format!("variable `{name}` not found in scope"))
+            })?;
             inputs.insert(name.clone(), *val);
         }
 
@@ -122,11 +123,11 @@ impl ProveHandler for RealProveHandler {
         r1cs.set_proven_boolean(proven);
         let witness = r1cs
             .compile_ir_with_witness(&program, &inputs)
-            .map_err(|e| format!("{e}"))?;
+            .map_err(|e| ProveError::Compilation(format!("{e}")))?;
 
         r1cs.cs
             .verify(&witness)
-            .map_err(|idx| format!("constraint {idx} failed"))?;
+            .map_err(|idx| ProveError::Verification(format!("constraint {idx} failed")))?;
 
         Ok(ProveResult::VerifiedOnly)
     }
@@ -442,7 +443,7 @@ impl ProveHandler for MockProofHandler {
         &self,
         _source: &str,
         _scope_values: &HashMap<String, FieldElement>,
-    ) -> Result<ProveResult, String> {
+    ) -> Result<ProveResult, ProveError> {
         Ok(ProveResult::Proof {
             proof_json: r#"{"pi_a":["1","2"]}"#.to_string(),
             public_json: r#"["42"]"#.to_string(),

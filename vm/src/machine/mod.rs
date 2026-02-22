@@ -17,5 +17,5 @@ mod vm;
 
 // Public API
 pub use frame::CallFrame;
-pub use prove::{ProveHandler, ProveResult};
+pub use prove::{ProveError, ProveHandler, ProveResult};
 pub use vm::VM;
