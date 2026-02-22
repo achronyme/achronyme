@@ -17,21 +17,21 @@
 | ir | 0 | 5 | 5 | 10 |
 | constraints | 0 | 2 | 7 | 9 |
 | cli | 0 | 2 | 11 | 13 |
-| parser | 2 | 1 | 14 | 17 |
-| **TOTAL** | **2** | **47 (+1)** | **43** | **93** |
+| parser | 0 | 3 | 14 | 17 |
+| **TOTAL** | **0** | **49 (+1)** | **43** | **93** |
 
 ### Open by severity
 
 | Severity | Count |
 |----------|-------|
 | CRITICAL | 0 |
-| HIGH | 2 |
+| HIGH | 0 |
 | MEDIUM | 0 |
-| LOW | 2 |
+| LOW | 0 |
 
 ---
 
-## Resolved Findings (48)
+## Resolved Findings (50)
 
 | ID | Severity | Crate | Description | Commit |
 |----|----------|-------|-------------|--------|
@@ -83,6 +83,8 @@
 | P-05 | MEDIUM | parser | 247 `Rule` matches, no AST layer → typed AST + `build_ast.rs` sole conversion point | `81845c9`, `33f5a6c` |
 | I-04 | HIGH | ir | IsLt/IsLe limb order unverified → 15 tests at 2^64/2^128/2^192/p boundaries | `dd7e475` |
 | I-05 | MEDIUM | ir | DCE conservatively kept all logic ops → removed conservative block, all non-side-effect instructions eliminated when unused | `73d0a7b` |
+| P-06 | MEDIUM | parser | Power operator was left-associative → right-to-left fold in AST builder, `2^3^2 = 512` | `742181f` |
+| P-17 | LOW | parser | Missing grammar documentation → added precedence table, associativity rules, escape sequence reference | `742181f` |
 
 ## False Positives & Confirmed Sound (43)
 
@@ -136,27 +138,7 @@
 
 ## Open Findings
 
-### Parser Crate (2 open)
-
-#### P-06 — Power Operator Left-Associative [MEDIUM]
-
-**File**: `achronyme-parser/src/grammar.pest` (line 129)
-**Category**: Semantic Bug
-
-`pow_expr = { postfix_expr ~ (pow_op ~ postfix_expr)* }` parses `2^3^2` as `(2^3)^2 = 64`. Standard math convention is right-associative: `2^(3^2) = 512`.
-
-**Fix**: Change to `pow_expr = { postfix_expr ~ (pow_op ~ pow_expr)? }` for right-recursion.
-
----
-
-#### P-17 — Missing Grammar Documentation [LOW]
-
-**File**: `achronyme-parser/src/grammar.pest`
-**Category**: Documentation
-
-No operator precedence table, associativity rules, or escape sequence reference in the grammar file.
-
-**Fix**: Add comprehensive header documentation.
+*No open findings remaining.*
 
 ---
 
