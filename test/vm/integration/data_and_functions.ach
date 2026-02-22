@@ -1,0 +1,199 @@
+// Integration: collections with functions, maps as objects, functional data transforms
+
+// --- Object-oriented pattern: map with methods ---
+fn make_stack() {
+    mut data = []
+    return {
+        push: fn(val) { push(data, val) },
+        pop: fn() { pop(data) },
+        peek: fn() { if len(data) == 0 { nil } else { data[len(data) - 1] } },
+        size: fn() { len(data) },
+        empty: fn() { len(data) == 0 },
+        to_array: fn() {
+            mut copy = []
+            for x in data { push(copy, x) }
+            return copy
+        }
+    }
+}
+let s = make_stack()
+assert(s.empty())
+assert(s.size() == 0)
+s.push(10)
+s.push(20)
+s.push(30)
+assert(s.size() == 3)
+assert(s.peek() == 30)
+assert(s.pop() == 30)
+assert(s.size() == 2)
+assert(s.peek() == 20)
+let arr = s.to_array()
+assert(arr[0] == 10)
+assert(arr[1] == 20)
+
+// --- Linked list via maps ---
+fn cons(head, tail) {
+    return {head: head, tail: tail}
+}
+fn list_len(lst) {
+    if lst == nil { return 0 }
+    return 1 + list_len(lst.tail)
+}
+fn list_sum(lst) {
+    if lst == nil { return 0 }
+    return lst.head + list_sum(lst.tail)
+}
+fn list_reverse(lst) {
+    mut result = nil
+    mut current = lst
+    while current != nil {
+        result = cons(current.head, result)
+        current = current.tail
+    }
+    return result
+}
+let lst = cons(1, cons(2, cons(3, cons(4, nil))))
+assert(list_len(lst) == 4)
+assert(list_sum(lst) == 10)
+assert(lst.head == 1)
+assert(lst.tail.head == 2)
+let rev = list_reverse(lst)
+assert(rev.head == 4)
+assert(rev.tail.head == 3)
+assert(list_sum(rev) == 10)
+
+// --- Tree structure ---
+fn make_node(val, left, right) {
+    return {val: val, left: left, right: right}
+}
+fn tree_sum(node) {
+    if node == nil { return 0 }
+    return node.val + tree_sum(node.left) + tree_sum(node.right)
+}
+fn tree_depth(node) {
+    if node == nil { return 0 }
+    let ld = tree_depth(node.left)
+    let rd = tree_depth(node.right)
+    return 1 + if ld > rd { ld } else { rd }
+}
+fn tree_count(node) {
+    if node == nil { return 0 }
+    return 1 + tree_count(node.left) + tree_count(node.right)
+}
+//       5
+//      / \
+//     3   8
+//    / \   \
+//   1   4   9
+let tree = make_node(5,
+    make_node(3,
+        make_node(1, nil, nil),
+        make_node(4, nil, nil)
+    ),
+    make_node(8,
+        nil,
+        make_node(9, nil, nil)
+    )
+)
+assert(tree_sum(tree) == 30)
+assert(tree_depth(tree) == 3)
+assert(tree_count(tree) == 6)
+
+// --- Group by ---
+fn group_by(arr, key_fn) {
+    mut groups = {}
+    for item in arr {
+        let k = key_fn(item)
+        if groups[k] == nil {
+            groups[k] = []
+        }
+        push(groups[k], item)
+    }
+    return groups
+}
+let people = [
+    {name: "Alice", dept: "eng"},
+    {name: "Bob", dept: "sales"},
+    {name: "Carol", dept: "eng"},
+    {name: "Dave", dept: "sales"},
+    {name: "Eve", dept: "eng"}
+]
+let by_dept = group_by(people, fn(p) { p.dept })
+assert(len(by_dept.eng) == 3)
+assert(len(by_dept.sales) == 2)
+assert(by_dept.eng[0].name == "Alice")
+assert(by_dept.sales[1].name == "Dave")
+
+// --- Map over map values ---
+fn map_values(m, f) {
+    mut result = {}
+    for k in keys(m) {
+        result[k] = f(m[k])
+    }
+    return result
+}
+let prices = {apple: 100, banana: 50, cherry: 200}
+let discounted = map_values(prices, fn(p) { p * 80 / 100 })
+assert(discounted.apple == 80)
+assert(discounted.banana == 40)
+assert(discounted.cherry == 160)
+
+// --- Pipeline of data transformations ---
+let raw_data = [
+    {score: 45, active: true},
+    {score: 92, active: false},
+    {score: 78, active: true},
+    {score: 35, active: true},
+    {score: 88, active: true},
+    {score: 12, active: false}
+]
+// Step 1: filter active only
+mut active = []
+for d in raw_data {
+    if d.active { push(active, d) }
+}
+assert(len(active) == 4)
+
+// Step 2: filter score >= 50
+mut qualified = []
+for d in active {
+    if d.score >= 50 { push(qualified, d) }
+}
+assert(len(qualified) == 2)
+
+// Step 3: extract scores
+mut scores = []
+for d in qualified { push(scores, d.score) }
+assert(scores[0] == 78)
+assert(scores[1] == 88)
+
+// Step 4: compute average
+mut score_sum = 0
+for s in scores { score_sum = score_sum + s }
+assert(score_sum / len(scores) == 83)
+
+// --- Function table for type-based dispatch ---
+let formatters = {
+    greeting: fn(name) { "Hello, " + name + "!" },
+    farewell: fn(name) { "Goodbye, " + name + "." }
+}
+assert(formatters.greeting("World") == "Hello, World!")
+assert(formatters.farewell("World") == "Goodbye, World.")
+
+// --- Building a graph adjacency list ---
+mut graph = {}
+fn add_edge(g, from, to) {
+    if g[from] == nil { g[from] = [] }
+    push(g[from], to)
+}
+add_edge(graph, "A", "B")
+add_edge(graph, "A", "C")
+add_edge(graph, "B", "D")
+add_edge(graph, "C", "D")
+assert(len(graph.A) == 2)
+assert(graph.A[0] == "B")
+assert(graph.A[1] == "C")
+assert(len(graph.B) == 1)
+assert(graph.B[0] == "D")
+
+print("PASS: integration/data_and_functions")

@@ -1,0 +1,2 @@
+// Expected error: division by zero
+1 / 0

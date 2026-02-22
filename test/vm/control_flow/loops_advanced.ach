@@ -1,0 +1,222 @@
+// Advanced loops: nested, accumulators, matrix ops, algorithms, stress
+
+// --- Triple-nested while ---
+mut total = 0
+mut i = 0
+while i < 4 {
+    mut j = 0
+    while j < 4 {
+        mut k = 0
+        while k < 4 {
+            total = total + 1
+            k = k + 1
+        }
+        j = j + 1
+    }
+    i = i + 1
+}
+assert(total == 64)
+
+// --- Sum of squares via while ---
+mut sum_sq = 0
+mut n = 1
+while n <= 10 {
+    sum_sq = sum_sq + n * n
+    n = n + 1
+}
+assert(sum_sq == 385)
+
+// --- Collatz conjecture: verify several starting values reach 1 ---
+fn collatz_steps(n) {
+    mut val = n
+    mut steps = 0
+    while val != 1 {
+        if val % 2 == 0 {
+            val = val / 2
+        } else {
+            val = val * 3 + 1
+        }
+        steps = steps + 1
+    }
+    return steps
+}
+assert(collatz_steps(1) == 0)
+assert(collatz_steps(2) == 1)
+assert(collatz_steps(3) == 7)
+assert(collatz_steps(6) == 8)
+assert(collatz_steps(27) == 111)
+assert(collatz_steps(100) == 25)
+
+// --- Build and flatten a 2D matrix ---
+mut matrix = []
+mut r = 0
+while r < 3 {
+    mut row = []
+    mut c = 0
+    while c < 4 {
+        push(row, r * 4 + c)
+        c = c + 1
+    }
+    push(matrix, row)
+    r = r + 1
+}
+assert(len(matrix) == 3)
+assert(len(matrix[0]) == 4)
+assert(matrix[0][0] == 0)
+assert(matrix[1][2] == 6)
+assert(matrix[2][3] == 11)
+
+// Flatten
+mut flat = []
+for row in matrix {
+    for val in row {
+        push(flat, val)
+    }
+}
+assert(len(flat) == 12)
+assert(flat[0] == 0)
+assert(flat[11] == 11)
+
+// --- Matrix transpose ---
+fn transpose(mat) {
+    let rows = len(mat)
+    let cols = len(mat[0])
+    mut result = []
+    mut c = 0
+    while c < cols {
+        mut new_row = []
+        mut r = 0
+        while r < rows {
+            push(new_row, mat[r][c])
+            r = r + 1
+        }
+        push(result, new_row)
+        c = c + 1
+    }
+    return result
+}
+let m = [[1, 2, 3], [4, 5, 6]]
+let t = transpose(m)
+assert(len(t) == 3)
+assert(len(t[0]) == 2)
+assert(t[0][0] == 1)
+assert(t[0][1] == 4)
+assert(t[1][0] == 2)
+assert(t[2][1] == 6)
+
+// --- Sieve of Eratosthenes: primes up to 50 ---
+fn sieve(limit) {
+    mut is_prime = []
+    mut i = 0
+    while i <= limit {
+        push(is_prime, true)
+        i = i + 1
+    }
+    is_prime[0] = false
+    is_prime[1] = false
+    mut p = 2
+    while p * p <= limit {
+        if is_prime[p] {
+            mut multiple = p * p
+            while multiple <= limit {
+                is_prime[multiple] = false
+                multiple = multiple + p
+            }
+        }
+        p = p + 1
+    }
+    mut primes = []
+    mut n = 2
+    while n <= limit {
+        if is_prime[n] { push(primes, n) }
+        n = n + 1
+    }
+    return primes
+}
+let primes = sieve(50)
+assert(primes[0] == 2)
+assert(primes[1] == 3)
+assert(primes[2] == 5)
+assert(primes[3] == 7)
+assert(primes[4] == 11)
+assert(len(primes) == 15)
+assert(primes[14] == 47)
+
+// --- Fibonacci sequence via loop ---
+fn fib_loop(n) {
+    if n < 2 { return n }
+    mut a = 0
+    mut b = 1
+    mut i = 2
+    while i <= n {
+        let tmp = a + b
+        a = b
+        b = tmp
+        i = i + 1
+    }
+    return b
+}
+assert(fib_loop(0) == 0)
+assert(fib_loop(1) == 1)
+assert(fib_loop(10) == 55)
+assert(fib_loop(20) == 6765)
+assert(fib_loop(30) == 832040)
+
+// --- Bubble sort ---
+fn bubble_sort(arr) {
+    mut sorted = []
+    for x in arr { push(sorted, x) }
+    let n = len(sorted)
+    mut i = 0
+    while i < n {
+        mut j = 0
+        while j < n - 1 - i {
+            if sorted[j] > sorted[j + 1] {
+                let tmp = sorted[j]
+                sorted[j] = sorted[j + 1]
+                sorted[j + 1] = tmp
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return sorted
+}
+let unsorted = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0]
+let sorted = bubble_sort(unsorted)
+mut idx = 0
+while idx < 10 {
+    assert(sorted[idx] == idx)
+    idx = idx + 1
+}
+
+// --- Loop with break returning a value via variable ---
+fn find_first_above(arr, threshold) {
+    for x in arr {
+        if x > threshold { return x }
+    }
+    return -1
+}
+assert(find_first_above([1, 5, 3, 8, 2], 4) == 5)
+assert(find_first_above([1, 5, 3, 8, 2], 10) == -1)
+assert(find_first_above([], 0) == -1)
+
+// --- Accumulating loop with continue (skip negatives) ---
+mut pos_sum = 0
+let mixed = [3, -1, 5, -2, 7, -3, 1]
+for x in mixed {
+    if x < 0 { continue }
+    pos_sum = pos_sum + x
+}
+assert(pos_sum == 16)
+
+// --- Large loop (stress test for determinism) ---
+mut big_sum = 0
+mut cnt = 0
+while cnt < 10000 {
+    big_sum = big_sum + cnt
+    cnt = cnt + 1
+}
+assert(big_sum == 49995000)
+
+print("PASS: control_flow/loops_advanced")

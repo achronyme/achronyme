@@ -1,0 +1,127 @@
+// Arithmetic edge cases: overflow, negative zero, large numbers, boundary values
+
+// --- Zero operations ---
+assert(0 + 0 == 0)
+assert(0 - 0 == 0)
+assert(0 * 0 == 0)
+assert(0 * 999999 == 0)
+assert(999999 * 0 == 0)
+assert(0 / 1 == 0)
+assert(0 / 999 == 0)
+assert(0 % 7 == 0)
+
+// --- Negation edge cases ---
+assert(-0 == 0)
+assert(-(-0) == 0)
+assert(-1 * 0 == 0)
+assert(0 * -1 == 0)
+assert(-(-(-1)) == -1)
+assert(-(-(-(-1))) == 1)
+
+// --- One operations ---
+assert(1 * 1 == 1)
+assert(1 ^ 1000 == 1)
+assert(0 ^ 0 == 1)
+
+// --- Power edge cases ---
+assert(2 ^ 0 == 1)
+assert(0 ^ 1 == 0)
+assert(1 ^ 100 == 1)
+assert((-1) ^ 2 == 1)
+assert((-1) ^ 3 == -1)
+assert((-2) ^ 3 == -8)
+assert((-2) ^ 4 == 16)
+
+// --- Large integer arithmetic ---
+assert(1000000 * 1000000 == 1000000000000)
+assert(999999999 + 1 == 1000000000)
+assert(1000000000 - 1 == 999999999)
+
+// Very large multiplication
+let big1 = 100000000
+let big2 = 100000000
+assert(big1 * big2 == 10000000000000000)
+
+// --- Division truncation ---
+assert(7 / 2 == 3)
+assert(1 / 2 == 0)
+assert(1 / 3 == 0)
+assert(2 / 3 == 0)
+assert(5 / 3 == 1)
+assert(10 / 3 == 3)
+assert(10 / 4 == 2)
+assert(99 / 100 == 0)
+assert(100 / 100 == 1)
+assert(101 / 100 == 1)
+
+// Negative division truncation (truncates toward zero)
+assert(-7 / 2 == -3)
+assert(-1 / 2 == 0)
+assert(7 / -2 == -3)
+assert(-7 / -2 == 3)
+
+// --- Modulo with negatives ---
+assert(7 % 3 == 1)
+assert(-7 % 3 == -1)
+assert(7 % -3 == 1)
+assert(-7 % -3 == -1)
+assert(10 % 5 == 0)
+assert(-10 % 5 == 0)
+
+// --- Associativity ---
+// Left-associative subtraction
+assert(10 - 3 - 2 == 5)
+assert(100 - 50 - 25 - 10 == 15)
+
+// Left-associative division
+assert(1000 / 10 / 10 == 10)
+assert(120 / 2 / 3 / 4 == 5)
+
+// --- Distributive property ---
+let a = 7
+let b = 3
+let c = 5
+assert(a * (b + c) == a * b + a * c)
+assert(a * (b - c) == a * b - a * c)
+
+// --- Mixed operations maintaining precision ---
+assert(2 + 3 * 4 == 14)
+assert((2 + 3) * 4 == 20)
+assert(2 ^ 3 + 1 == 9)
+assert(10 - 2 ^ 3 == 2)
+assert(100 / 10 + 5 * 3 == 25)
+
+// --- Chained arithmetic ---
+mut val = 1
+val = val + 1
+val = val * 2
+val = val + 3
+val = val * 4
+// (((1+1)*2)+3)*4 = (2*2+3)*4 = 7*4 = 28
+assert(val == 28)
+
+// --- Power of 2 sequence ---
+mut p2 = 1
+mut pi = 0
+while pi < 20 {
+    assert(p2 == 2 ^ pi)
+    p2 = p2 * 2
+    pi = pi + 1
+}
+
+// --- Modular arithmetic cycle ---
+mut mod_vals = []
+mut mi = 0
+while mi < 12 {
+    push(mod_vals, mi % 4)
+    mi = mi + 1
+}
+assert(mod_vals[0] == 0)
+assert(mod_vals[1] == 1)
+assert(mod_vals[2] == 2)
+assert(mod_vals[3] == 3)
+assert(mod_vals[4] == 0)
+assert(mod_vals[5] == 1)
+assert(mod_vals[11] == 3)
+
+print("PASS: operators/arithmetic_edge_cases")

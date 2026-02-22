@@ -1,0 +1,262 @@
+// Integration: classic algorithms combining loops, recursion, closures, collections
+
+// --- Binary search ---
+fn binary_search(arr, target) {
+    mut lo = 0
+    mut hi = len(arr) - 1
+    while lo <= hi {
+        let mid = (lo + hi) / 2
+        if arr[mid] == target { return mid }
+        if arr[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return -1
+}
+let sorted = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
+assert(binary_search(sorted, 23) == 5)
+assert(binary_search(sorted, 2) == 0)
+assert(binary_search(sorted, 91) == 9)
+assert(binary_search(sorted, 1) == -1)
+assert(binary_search(sorted, 50) == -1)
+assert(binary_search([], 1) == -1)
+
+// --- Insertion sort ---
+fn insertion_sort(arr) {
+    mut result = []
+    for x in arr { push(result, x) }
+    mut i = 1
+    while i < len(result) {
+        let key = result[i]
+        mut j = i - 1
+        while j >= 0 && result[j] > key {
+            result[j + 1] = result[j]
+            j = j - 1
+        }
+        result[j + 1] = key
+        i = i + 1
+    }
+    return result
+}
+let is_sorted = insertion_sort([9, 3, 7, 1, 5, 8, 2, 6, 4, 0])
+mut idx = 0
+while idx < 10 {
+    assert(is_sorted[idx] == idx)
+    idx = idx + 1
+}
+
+// Already sorted
+let already = insertion_sort([1, 2, 3, 4])
+assert(already[0] == 1)
+assert(already[3] == 4)
+
+// Reverse sorted
+let rev_sort = insertion_sort([5, 4, 3, 2, 1])
+assert(rev_sort[0] == 1)
+assert(rev_sort[4] == 5)
+
+// --- GCD and LCM ---
+fn gcd(a, b) {
+    while b != 0 {
+        let t = b
+        b = a % b
+        a = t
+    }
+    return a
+}
+fn lcm(a, b) {
+    return a / gcd(a, b) * b
+}
+assert(gcd(12, 8) == 4)
+assert(gcd(100, 75) == 25)
+assert(gcd(7, 13) == 1)
+assert(gcd(0, 5) == 5)
+assert(lcm(4, 6) == 12)
+assert(lcm(3, 5) == 15)
+assert(lcm(7, 7) == 7)
+
+// LCM of array
+fn lcm_arr(arr) {
+    mut result = arr[0]
+    mut i = 1
+    while i < len(arr) {
+        result = lcm(result, arr[i])
+        i = i + 1
+    }
+    return result
+}
+assert(lcm_arr([2, 3, 4, 5, 6]) == 60)
+
+// --- Power set (subsets) ---
+fn power_set(arr) {
+    mut result = [[]]
+    for elem in arr {
+        mut new_sets = []
+        for s in result {
+            mut copy = []
+            for x in s { push(copy, x) }
+            push(copy, elem)
+            push(new_sets, copy)
+        }
+        for s in new_sets {
+            push(result, s)
+        }
+    }
+    return result
+}
+let ps = power_set([1, 2, 3])
+assert(len(ps) == 8)
+
+// --- Pascal's triangle row ---
+fn pascal_row(n) {
+    mut row = [1]
+    mut i = 0
+    while i < n {
+        mut new_row = [1]
+        mut j = 0
+        while j < len(row) - 1 {
+            push(new_row, row[j] + row[j + 1])
+            j = j + 1
+        }
+        push(new_row, 1)
+        row = new_row
+        i = i + 1
+    }
+    return row
+}
+let p0 = pascal_row(0)
+assert(len(p0) == 1)
+assert(p0[0] == 1)
+
+let p4 = pascal_row(4)
+assert(len(p4) == 5)
+assert(p4[0] == 1)
+assert(p4[1] == 4)
+assert(p4[2] == 6)
+assert(p4[3] == 4)
+assert(p4[4] == 1)
+
+let p6 = pascal_row(6)
+assert(p6[3] == 20)
+
+// --- Matrix multiplication ---
+fn mat_mul(a, b) {
+    let rows_a = len(a)
+    let cols_a = len(a[0])
+    let cols_b = len(b[0])
+    mut result = []
+    mut r = 0
+    while r < rows_a {
+        mut row = []
+        mut c = 0
+        while c < cols_b {
+            mut sum = 0
+            mut k = 0
+            while k < cols_a {
+                sum = sum + a[r][k] * b[k][c]
+                k = k + 1
+            }
+            push(row, sum)
+            c = c + 1
+        }
+        push(result, row)
+        r = r + 1
+    }
+    return result
+}
+let a = [[1, 2], [3, 4]]
+let b = [[5, 6], [7, 8]]
+let ab = mat_mul(a, b)
+assert(ab[0][0] == 19)
+assert(ab[0][1] == 22)
+assert(ab[1][0] == 43)
+assert(ab[1][1] == 50)
+
+// Identity multiplication
+let eye = [[1, 0], [0, 1]]
+let ae = mat_mul(a, eye)
+assert(ae[0][0] == 1)
+assert(ae[1][1] == 4)
+
+// --- Run-length encoding ---
+fn rle_encode(arr) {
+    if len(arr) == 0 { return [] }
+    mut result = []
+    mut current = arr[0]
+    mut count = 1
+    mut i = 1
+    while i < len(arr) {
+        if arr[i] == current {
+            count = count + 1
+        } else {
+            push(result, [current, count])
+            current = arr[i]
+            count = 1
+        }
+        i = i + 1
+    }
+    push(result, [current, count])
+    return result
+}
+let encoded = rle_encode([1, 1, 1, 2, 2, 3, 3, 3, 3, 1])
+assert(len(encoded) == 4)
+assert(encoded[0][0] == 1)
+assert(encoded[0][1] == 3)
+assert(encoded[1][0] == 2)
+assert(encoded[1][1] == 2)
+assert(encoded[2][0] == 3)
+assert(encoded[2][1] == 4)
+assert(encoded[3][0] == 1)
+assert(encoded[3][1] == 1)
+
+// --- Tower of Hanoi ---
+mut moves = []
+fn hanoi(n, from, to, aux) {
+    if n == 0 { return nil }
+    hanoi(n - 1, from, aux, to)
+    push(moves, from + "->" + to)
+    hanoi(n - 1, aux, to, from)
+}
+hanoi(3, "A", "C", "B")
+assert(len(moves) == 7)
+assert(moves[0] == "A->C")
+assert(moves[1] == "A->B")
+assert(moves[2] == "C->B")
+assert(moves[3] == "A->C")
+
+// --- Permutation count via factorial ---
+fn factorial(n) {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+assert(factorial(0) == 1)
+assert(factorial(1) == 1)
+assert(factorial(5) == 120)
+assert(factorial(10) == 3628800)
+
+// --- Two-sum problem ---
+fn two_sum(arr, target) {
+    mut i = 0
+    while i < len(arr) {
+        mut j = i + 1
+        while j < len(arr) {
+            if arr[i] + arr[j] == target {
+                return [i, j]
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return nil
+}
+let result = two_sum([2, 7, 11, 15], 9)
+assert(result[0] == 0)
+assert(result[1] == 1)
+let result2 = two_sum([3, 2, 4], 6)
+assert(result2[0] == 1)
+assert(result2[1] == 2)
+assert(two_sum([1, 2, 3], 100) == nil)
+
+print("PASS: integration/algorithms")

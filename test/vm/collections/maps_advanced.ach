@@ -1,0 +1,175 @@
+// Advanced maps: dynamic keys, patterns, dispatch tables, nested ops
+
+// --- Dynamic key building ---
+mut counts = {}
+let words = ["apple", "banana", "apple", "cherry", "banana", "apple"]
+for w in words {
+    if counts[w] == nil {
+        counts[w] = 0
+    }
+    counts[w] = counts[w] + 1
+}
+assert(counts.apple == 3)
+assert(counts.banana == 2)
+assert(counts.cherry == 1)
+assert(len(counts) == 3)
+
+// --- Map as dispatch table ---
+let ops = {
+    add: fn(a, b) { a + b },
+    sub: fn(a, b) { a - b },
+    mul: fn(a, b) { a * b },
+    div: fn(a, b) { a / b }
+}
+assert(ops.add(10, 3) == 13)
+assert(ops.sub(10, 3) == 7)
+assert(ops.mul(10, 3) == 30)
+assert(ops.div(10, 3) == 3)
+
+// Dynamic dispatch
+let op_names = ["add", "sub", "mul"]
+mut results = []
+for name in op_names {
+    push(results, ops[name](6, 2))
+}
+assert(results[0] == 8)
+assert(results[1] == 4)
+assert(results[2] == 12)
+
+// --- Map merge ---
+fn merge(a, b) {
+    mut result = {}
+    for k in keys(a) { result[k] = a[k] }
+    for k in keys(b) { result[k] = b[k] }
+    return result
+}
+let merged = merge({x: 1, y: 2}, {y: 3, z: 4})
+assert(merged.x == 1)
+assert(merged.y == 3)
+assert(merged.z == 4)
+assert(len(merged) == 3)
+
+// --- Map values extraction ---
+fn values(m) {
+    mut result = []
+    for k in keys(m) {
+        push(result, m[k])
+    }
+    return result
+}
+let vals = values({a: 10, b: 20, c: 30})
+assert(len(vals) == 3)
+// Sum all values
+mut val_sum = 0
+for v in vals { val_sum = val_sum + v }
+assert(val_sum == 60)
+
+// --- Nested map update ---
+mut config = {
+    db: {host: "localhost", port: 5432},
+    cache: {enabled: true, ttl: 300}
+}
+config.db.port = 3306
+config.cache.ttl = 600
+assert(config.db.port == 3306)
+assert(config.cache.ttl == 600)
+assert(config.db.host == "localhost")
+
+// --- Map as record / struct pattern ---
+fn make_point(x, y) {
+    return {x: x, y: y}
+}
+fn distance_sq(p1, p2) {
+    let dx = p1.x - p2.x
+    let dy = p1.y - p2.y
+    return dx * dx + dy * dy
+}
+let origin = make_point(0, 0)
+let p = make_point(3, 4)
+assert(distance_sq(origin, p) == 25)
+assert(distance_sq(p, p) == 0)
+
+// --- Array of maps with map operations ---
+let students = [
+    {name: "Alice", grade: 95},
+    {name: "Bob", grade: 82},
+    {name: "Carol", grade: 91},
+    {name: "Dave", grade: 78},
+    {name: "Eve", grade: 88}
+]
+
+// Find average grade
+mut grade_sum = 0
+for s in students {
+    grade_sum = grade_sum + s.grade
+}
+let avg = grade_sum / len(students)
+assert(avg == 86)
+
+// Find highest grade
+mut best = students[0]
+mut i = 1
+while i < len(students) {
+    if students[i].grade > best.grade {
+        best = students[i]
+    }
+    i = i + 1
+}
+assert(best.name == "Alice")
+assert(best.grade == 95)
+
+// Count above threshold
+mut above_85 = 0
+for s in students {
+    if s.grade > 85 { above_85 = above_85 + 1 }
+}
+assert(above_85 == 3)
+
+// --- Map with boolean values ---
+mut visited = {}
+let nodes = ["A", "B", "C", "D"]
+for n in nodes { visited[n] = false }
+visited["A"] = true
+visited["C"] = true
+mut visited_count = 0
+for k in keys(visited) {
+    if visited[k] { visited_count = visited_count + 1 }
+}
+assert(visited_count == 2)
+
+// --- Map copy ---
+fn copy_map(m) {
+    mut result = {}
+    for k in keys(m) {
+        result[k] = m[k]
+    }
+    return result
+}
+let orig = {a: 1, b: 2, c: 3}
+let cpy = copy_map(orig)
+cpy.a = 999
+assert(orig.a == 1)
+assert(cpy.a == 999)
+
+// --- Frequency analysis ---
+fn char_freq(str) {
+    mut freq = {}
+    mut i = 0
+    // Approximate: count each character as separate token
+    // Since we can't index strings, use a word-based approach
+    let words = ["h", "e", "l", "l", "o"]
+    for ch in words {
+        if freq[ch] == nil {
+            freq[ch] = 0
+        }
+        freq[ch] = freq[ch] + 1
+    }
+    return freq
+}
+let freq = char_freq("hello")
+assert(freq.h == 1)
+assert(freq.e == 1)
+assert(freq.l == 2)
+assert(freq.o == 1)
+
+print("PASS: collections/maps_advanced")

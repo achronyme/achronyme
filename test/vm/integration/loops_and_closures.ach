@@ -1,0 +1,197 @@
+// Integration: loops calling closures, closures in loops, combined patterns
+
+// --- Build array of closures in loop, call them ---
+fn make_multipliers(factors) {
+    mut fns = []
+    for f in factors {
+        let factor = f
+        push(fns, fn(x) { x * factor })
+    }
+    return fns
+}
+let muls = make_multipliers([2, 3, 5, 7])
+assert(muls[0](10) == 20)
+assert(muls[1](10) == 30)
+assert(muls[2](10) == 50)
+assert(muls[3](10) == 70)
+
+// --- Accumulator pattern: closure called in loop ---
+fn make_accumulator(init) {
+    mut total = init
+    return fn(n) {
+        total = total + n
+        return total
+    }
+}
+let acc = make_accumulator(0)
+mut i = 1
+while i <= 10 {
+    acc(i)
+    i = i + 1
+}
+assert(acc(0) == 55)
+
+// --- Closure-based iterator consumed by loop ---
+fn counter_iter(start, stop, step) {
+    mut current = start
+    return fn() {
+        if current >= stop { return nil }
+        let val = current
+        current = current + step
+        return val
+    }
+}
+let it = counter_iter(0, 50, 5)
+mut values = []
+forever {
+    let v = it()
+    if v == nil { break }
+    push(values, v)
+}
+assert(len(values) == 10)
+assert(values[0] == 0)
+assert(values[9] == 45)
+
+// --- Closure that uses loop internally ---
+fn make_summer() {
+    return fn(arr) {
+        mut total = 0
+        for x in arr {
+            total = total + x
+        }
+        return total
+    }
+}
+let summer = make_summer()
+assert(summer([1, 2, 3, 4, 5]) == 15)
+assert(summer([10, 20, 30]) == 60)
+assert(summer([]) == 0)
+
+// --- Loop calling closure that modifies external state ---
+mut log = []
+let logger = fn(msg) { push(log, msg) }
+mut j = 0
+while j < 5 {
+    logger("step_" + j)
+    j = j + 1
+}
+assert(len(log) == 5)
+assert(log[0] == "step_0")
+assert(log[4] == "step_4")
+
+// --- Closure as loop predicate ---
+fn count_matching(arr, pred) {
+    mut count = 0
+    for x in arr {
+        if pred(x) { count = count + 1 }
+    }
+    return count
+}
+let data = [1, 4, 6, 3, 8, 2, 9, 5, 7, 10]
+assert(count_matching(data, fn(x) { x > 5 }) == 5)
+assert(count_matching(data, fn(x) { x % 2 == 0 }) == 5)
+assert(count_matching(data, fn(x) { x == 100 }) == 0)
+assert(count_matching([], fn(x) { true }) == 0)
+
+// --- Multiple closures sharing state, called alternately in loop ---
+fn make_toggle() {
+    mut state = false
+    let toggle = fn() {
+        state = !state
+        return state
+    }
+    let read = fn() { state }
+    return [toggle, read]
+}
+let tg = make_toggle()
+let toggle = tg[0]
+let read = tg[1]
+mut toggle_log = []
+mut k = 0
+while k < 6 {
+    toggle()
+    push(toggle_log, read())
+    k = k + 1
+}
+assert(toggle_log[0] == true)
+assert(toggle_log[1] == false)
+assert(toggle_log[2] == true)
+assert(toggle_log[3] == false)
+assert(toggle_log[4] == true)
+assert(toggle_log[5] == false)
+
+// --- Nested loop building closures, each closure does iteration ---
+fn make_range_summers(ranges) {
+    mut fns = []
+    for range_data in ranges {
+        let start = range_data[0]
+        let stop = range_data[1]
+        push(fns, fn() {
+            mut sum = 0
+            mut i = start
+            while i < stop {
+                sum = sum + i
+                i = i + 1
+            }
+            return sum
+        })
+    }
+    return fns
+}
+let summers = make_range_summers([[0, 5], [10, 15], [100, 103]])
+assert(summers[0]() == 10)
+assert(summers[1]() == 60)
+assert(summers[2]() == 303)
+
+// --- Callback chain: each closure calls the next ---
+fn make_chain() {
+    mut steps = []
+    let chain = fn(f) { push(steps, f) }
+    let run = fn(init) {
+        mut val = init
+        for step in steps {
+            val = step(val)
+        }
+        return val
+    }
+    return {chain: chain, run: run}
+}
+let c = make_chain()
+c.chain(fn(x) { x + 1 })
+c.chain(fn(x) { x * 2 })
+c.chain(fn(x) { x - 3 })
+c.chain(fn(x) { x * x })
+assert(c.run(5) == 81)
+assert(c.run(0) == 1)
+
+// --- Generator pattern: fibonacci via closures ---
+fn fib_gen() {
+    mut a = 0
+    mut b = 1
+    return fn() {
+        let val = a
+        let next = a + b
+        a = b
+        b = next
+        return val
+    }
+}
+let fib = fib_gen()
+mut fibs = []
+mut fi = 0
+while fi < 10 {
+    push(fibs, fib())
+    fi = fi + 1
+}
+assert(fibs[0] == 0)
+assert(fibs[1] == 1)
+assert(fibs[2] == 1)
+assert(fibs[3] == 2)
+assert(fibs[4] == 3)
+assert(fibs[5] == 5)
+assert(fibs[6] == 8)
+assert(fibs[7] == 13)
+assert(fibs[8] == 21)
+assert(fibs[9] == 34)
+
+print("PASS: integration/loops_and_closures")

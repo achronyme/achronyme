@@ -1,0 +1,2 @@
+// Expected error: modulo by zero
+1 % 0

@@ -1,0 +1,153 @@
+// Stress tests: determinism, large computations, many iterations
+
+// --- Sum 0..9999 ---
+mut sum = 0
+mut i = 0
+while i < 10000 {
+    sum = sum + i
+    i = i + 1
+}
+assert(sum == 49995000)
+
+// --- Nested loop: 100x100 ---
+mut grid_sum = 0
+mut r = 0
+while r < 100 {
+    mut c = 0
+    while c < 100 {
+        grid_sum = grid_sum + 1
+        c = c + 1
+    }
+    r = r + 1
+}
+assert(grid_sum == 10000)
+
+// --- Fibonacci(40) via iteration (determinism check) ---
+fn fib_iter(n) {
+    if n < 2 { return n }
+    mut a = 0
+    mut b = 1
+    mut i = 2
+    while i <= n {
+        let tmp = a + b
+        a = b
+        b = tmp
+        i = i + 1
+    }
+    return b
+}
+assert(fib_iter(40) == 102334155)
+assert(fib_iter(45) == 1134903170)
+
+// --- Many function calls ---
+fn inc(x) { x + 1 }
+mut val = 0
+mut j = 0
+while j < 5000 {
+    val = inc(val)
+    j = j + 1
+}
+assert(val == 5000)
+
+// --- Many closure calls ---
+fn make_adder(n) {
+    return fn(x) { x + n }
+}
+let add1 = make_adder(1)
+mut cv = 0
+mut ci = 0
+while ci < 5000 {
+    cv = add1(cv)
+    ci = ci + 1
+}
+assert(cv == 5000)
+
+// --- Large array operations ---
+mut big = []
+mut bi = 0
+while bi < 2000 {
+    push(big, bi * bi)
+    bi = bi + 1
+}
+assert(len(big) == 2000)
+assert(big[0] == 0)
+assert(big[1] == 1)
+assert(big[10] == 100)
+assert(big[100] == 10000)
+assert(big[1999] == 1999 * 1999)
+
+// Verify sum of first 100 squares
+mut sq_sum = 0
+mut si = 0
+while si < 100 {
+    sq_sum = sq_sum + big[si]
+    si = si + 1
+}
+// Sum of squares 0..99 = 99 * 100 * 199 / 6 = 328350
+assert(sq_sum == 328350)
+
+// --- Power computation with integer overflow → field promotion ---
+let big_pow = 2 ^ 50
+assert(big_pow == 1125899906842624)
+
+// Verify multiple runs give same result (determinism)
+assert(2 ^ 50 == 1125899906842624)
+assert(2 ^ 50 == big_pow)
+
+// --- Deep recursion ---
+fn sum_recursive(n) {
+    if n <= 0 { return 0 }
+    return n + sum_recursive(n - 1)
+}
+assert(sum_recursive(100) == 5050)
+
+// --- String concatenation in loop ---
+mut s = ""
+mut si2 = 0
+while si2 < 50 {
+    s = s + "x"
+    si2 = si2 + 1
+}
+assert(len(s) == 50)
+
+// --- Map with many entries ---
+mut big_map = {}
+mut mi = 0
+while mi < 100 {
+    big_map["k" + mi] = mi * mi
+    mi = mi + 1
+}
+assert(len(big_map) == 100)
+assert(big_map.k0 == 0)
+assert(big_map.k10 == 100)
+assert(big_map.k99 == 9801)
+
+// --- Complex: many closures, many iterations ---
+fn make_processors(n) {
+    mut procs = []
+    mut i = 0
+    while i < n {
+        let offset = i
+        push(procs, fn(x) { x + offset })
+        i = i + 1
+    }
+    return procs
+}
+let procs = make_processors(20)
+mut proc_sum = 0
+for p in procs {
+    proc_sum = proc_sum + p(100)
+}
+// Sum of (100+0) + (100+1) + ... + (100+19) = 20*100 + 0+1+...+19 = 2000 + 190 = 2190
+assert(proc_sum == 2190)
+
+// --- Double-check: re-run same computation for determinism ---
+let procs2 = make_processors(20)
+mut proc_sum2 = 0
+for p in procs2 {
+    proc_sum2 = proc_sum2 + p(100)
+}
+assert(proc_sum2 == 2190)
+assert(proc_sum == proc_sum2)
+
+print("PASS: integration/stress")

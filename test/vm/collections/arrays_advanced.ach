@@ -1,0 +1,203 @@
+// Advanced arrays: manipulation, algorithms, patterns, stress
+
+// --- Reverse ---
+fn reverse(arr) {
+    mut result = []
+    mut i = len(arr) - 1
+    while i >= 0 {
+        push(result, arr[i])
+        i = i - 1
+    }
+    return result
+}
+let rev = reverse([1, 2, 3, 4, 5])
+assert(rev[0] == 5)
+assert(rev[1] == 4)
+assert(rev[4] == 1)
+assert(len(rev) == 5)
+
+// Reverse empty
+assert(len(reverse([])) == 0)
+
+// Reverse single
+let single = reverse([42])
+assert(len(single) == 1)
+assert(single[0] == 42)
+
+// Double reverse = identity
+let original = [10, 20, 30]
+let doubled_rev = reverse(reverse(original))
+assert(doubled_rev[0] == 10)
+assert(doubled_rev[1] == 20)
+assert(doubled_rev[2] == 30)
+
+// --- Concatenate arrays ---
+fn concat(a, b) {
+    mut result = []
+    for x in a { push(result, x) }
+    for x in b { push(result, x) }
+    return result
+}
+let c = concat([1, 2], [3, 4, 5])
+assert(len(c) == 5)
+assert(c[0] == 1)
+assert(c[4] == 5)
+
+// Concat with empty
+assert(len(concat([], [1])) == 1)
+assert(len(concat([1], [])) == 1)
+assert(len(concat([], [])) == 0)
+
+// --- Slice ---
+fn slice(arr, start, stop) {
+    mut result = []
+    mut i = start
+    while i < stop && i < len(arr) {
+        push(result, arr[i])
+        i = i + 1
+    }
+    return result
+}
+let s = slice([10, 20, 30, 40, 50], 1, 4)
+assert(len(s) == 3)
+assert(s[0] == 20)
+assert(s[2] == 40)
+
+// --- Contains ---
+fn contains(arr, target) {
+    for x in arr {
+        if x == target { return true }
+    }
+    return false
+}
+assert(contains([1, 2, 3], 2))
+assert(!contains([1, 2, 3], 4))
+assert(!contains([], 1))
+
+// --- Index of ---
+fn index_of(arr, target) {
+    mut i = 0
+    while i < len(arr) {
+        if arr[i] == target { return i }
+        i = i + 1
+    }
+    return -1
+}
+assert(index_of([10, 20, 30, 40], 30) == 2)
+assert(index_of([10, 20, 30, 40], 50) == -1)
+assert(index_of([], 1) == -1)
+
+// --- Count occurrences ---
+fn count(arr, target) {
+    mut c = 0
+    for x in arr {
+        if x == target { c = c + 1 }
+    }
+    return c
+}
+assert(count([1, 2, 3, 2, 1, 2], 2) == 3)
+assert(count([1, 2, 3], 5) == 0)
+
+// --- Unique elements ---
+fn unique(arr) {
+    mut result = []
+    for x in arr {
+        mut found = false
+        for y in result {
+            if x == y { found = true }
+        }
+        if !found { push(result, x) }
+    }
+    return result
+}
+let u = unique([1, 2, 3, 2, 1, 4, 3, 5])
+assert(len(u) == 5)
+assert(u[0] == 1)
+assert(u[4] == 5)
+
+// --- Nested array operations ---
+let nested = [[1, 2], [3, 4], [5, 6]]
+mut flat_sum = 0
+for sub in nested {
+    for x in sub {
+        flat_sum = flat_sum + x
+    }
+}
+assert(flat_sum == 21)
+
+// --- Stack via array (LIFO) ---
+mut stack = []
+push(stack, 10)
+push(stack, 20)
+push(stack, 30)
+assert(pop(stack) == 30)
+assert(pop(stack) == 20)
+push(stack, 40)
+assert(pop(stack) == 40)
+assert(pop(stack) == 10)
+assert(len(stack) == 0)
+
+// --- Queue simulation via two arrays ---
+fn make_queue() {
+    mut data = []
+    let enqueue = fn(val) { push(data, val) }
+    let dequeue = fn() {
+        if len(data) == 0 { return nil }
+        let front = data[0]
+        // Rebuild without first element
+        mut new_data = []
+        mut i = 1
+        while i < len(data) {
+            push(new_data, data[i])
+            i = i + 1
+        }
+        // Copy back
+        while len(data) > 0 { pop(data) }
+        for x in new_data { push(data, x) }
+        return front
+    }
+    let size = fn() { len(data) }
+    return {enqueue: enqueue, dequeue: dequeue, size: size}
+}
+let q = make_queue()
+q.enqueue(1)
+q.enqueue(2)
+q.enqueue(3)
+assert(q.size() == 3)
+assert(q.dequeue() == 1)
+assert(q.dequeue() == 2)
+q.enqueue(4)
+assert(q.dequeue() == 3)
+assert(q.dequeue() == 4)
+assert(q.size() == 0)
+
+// --- Array of booleans (bit manipulation) ---
+mut bits = [false, false, false, false, false, false, false, false]
+// Set bits 0, 2, 4, 7
+bits[0] = true
+bits[2] = true
+bits[4] = true
+bits[7] = true
+mut bit_count = 0
+for b in bits {
+    if b { bit_count = bit_count + 1 }
+}
+assert(bit_count == 4)
+
+// --- Large array creation ---
+mut large = []
+mut i = 0
+while i < 1000 {
+    push(large, i)
+    i = i + 1
+}
+assert(len(large) == 1000)
+assert(large[0] == 0)
+assert(large[999] == 999)
+mut large_sum = 0
+for x in large {
+    large_sum = large_sum + x
+}
+assert(large_sum == 499500)
+
+print("PASS: collections/arrays_advanced")

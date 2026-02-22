@@ -1,0 +1,193 @@
+// Advanced closures: factories, composition, memoization, currying, shared state
+
+// --- Currying ---
+fn curry_add(a) {
+    return fn(b) {
+        return fn(c) {
+            a + b + c
+        }
+    }
+}
+assert(curry_add(1)(2)(3) == 6)
+assert(curry_add(10)(20)(30) == 60)
+assert(curry_add(0)(0)(0) == 0)
+assert(curry_add(-1)(1)(0) == 0)
+
+// Partial application via currying
+let add10 = curry_add(10)
+let add10_20 = add10(20)
+assert(add10_20(5) == 35)
+assert(add10_20(0) == 30)
+
+// --- Closure capturing mutable state (shared reference semantics) ---
+fn make_fns_shared() {
+    mut fns = []
+    mut i = 0
+    while i < 3 {
+        push(fns, fn() { i })
+        i = i + 1
+    }
+    return fns
+}
+let shared = make_fns_shared()
+// All closures share the same `i`, which is 3 after the loop
+assert(shared[0]() == 3)
+assert(shared[1]() == 3)
+assert(shared[2]() == 3)
+
+// --- Closure capturing immutable snapshot ---
+fn make_fns_snapshot() {
+    mut fns = []
+    mut i = 0
+    while i < 5 {
+        let snapshot = i
+        push(fns, fn() { snapshot })
+        i = i + 1
+    }
+    return fns
+}
+let snapped = make_fns_snapshot()
+assert(snapped[0]() == 0)
+assert(snapped[1]() == 1)
+assert(snapped[2]() == 2)
+assert(snapped[3]() == 3)
+assert(snapped[4]() == 4)
+
+// --- Multiple independent counters ---
+fn make_counter_from(start) {
+    mut n = start
+    return fn() {
+        n = n + 1
+        return n
+    }
+}
+let c1 = make_counter_from(0)
+let c2 = make_counter_from(100)
+assert(c1() == 1)
+assert(c1() == 2)
+assert(c2() == 101)
+assert(c1() == 3)
+assert(c2() == 102)
+assert(c2() == 103)
+
+// --- Closure over closure (nested factory) ---
+fn make_scaler(factor) {
+    return fn(base) {
+        return fn(x) {
+            base + x * factor
+        }
+    }
+}
+let linear = make_scaler(2)(10)
+assert(linear(0) == 10)
+assert(linear(1) == 12)
+assert(linear(5) == 20)
+
+// --- Closure as event handler pattern ---
+fn make_event_system() {
+    mut handlers = []
+    mut log = []
+    let on = fn(handler) {
+        push(handlers, handler)
+    }
+    let emit = fn(value) {
+        for h in handlers {
+            push(log, h(value))
+        }
+    }
+    let get_log = fn() { log }
+    return {on: on, emit: emit, log: get_log}
+}
+let events = make_event_system()
+events.on(fn(x) { x * 2 })
+events.on(fn(x) { x + 100 })
+events.emit(5)
+let log = events.log()
+assert(len(log) == 2)
+assert(log[0] == 10)
+assert(log[1] == 105)
+events.emit(1)
+let log2 = events.log()
+assert(len(log2) == 4)
+
+// --- Memoization pattern ---
+fn make_memo(f) {
+    mut cache = {}
+    return fn(n) {
+        let key = "" + n
+        if cache[key] != nil {
+            return cache[key]
+        }
+        let result = f(n)
+        cache[key] = result
+        return result
+    }
+}
+mut call_count = 0
+let expensive = fn(n) {
+    call_count = call_count + 1
+    return n * n
+}
+let memo = make_memo(expensive)
+assert(memo(5) == 25)
+assert(memo(5) == 25)
+assert(memo(3) == 9)
+assert(memo(3) == 9)
+// expensive should only have been called 2 times (once per unique arg)
+assert(call_count == 2)
+
+// --- Closure pipeline ---
+fn pipeline(fns) {
+    return fn(x) {
+        mut result = x
+        for f in fns {
+            result = f(result)
+        }
+        return result
+    }
+}
+let transform = pipeline([
+    fn(x) { x + 1 },
+    fn(x) { x * 2 },
+    fn(x) { x - 3 }
+])
+assert(transform(0) == -1)
+assert(transform(5) == 9)
+assert(transform(10) == 19)
+
+// --- Closure capturing different types ---
+fn capture_types() {
+    let num = 42
+    let str = "hello"
+    let flag = true
+    let arr = [1, 2, 3]
+    return fn() {
+        return [num, str, flag, len(arr)]
+    }
+}
+let types = capture_types()()
+assert(types[0] == 42)
+assert(types[1] == "hello")
+assert(types[2] == true)
+assert(types[3] == 3)
+
+// --- Stateful iterator via closure ---
+fn range_iter(start, stop) {
+    mut current = start
+    return fn() {
+        if current >= stop { return nil }
+        let val = current
+        current = current + 1
+        return val
+    }
+}
+let it = range_iter(0, 5)
+assert(it() == 0)
+assert(it() == 1)
+assert(it() == 2)
+assert(it() == 3)
+assert(it() == 4)
+assert(it() == nil)
+assert(it() == nil)
+
+print("PASS: functions/closures_advanced")

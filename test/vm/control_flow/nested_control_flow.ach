@@ -1,0 +1,161 @@
+// Nested control flow: if inside loops, loops inside if, deep combinations
+
+// --- If inside for ---
+mut even_count = 0
+mut odd_count = 0
+for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+    if x % 2 == 0 {
+        even_count = even_count + 1
+    } else {
+        odd_count = odd_count + 1
+    }
+}
+assert(even_count == 5)
+assert(odd_count == 5)
+
+// --- While inside if ---
+let should_loop = true
+mut loop_result = 0
+if should_loop {
+    mut i = 0
+    while i < 5 {
+        loop_result = loop_result + i
+        i = i + 1
+    }
+}
+assert(loop_result == 10)
+
+// --- Nested if chains inside loop ---
+fn classify(x) {
+    if x < 0 { return "negative" }
+    if x == 0 { return "zero" }
+    if x < 10 { return "small" }
+    if x < 100 { return "medium" }
+    return "large"
+}
+let values = [-5, 0, 3, 50, 200]
+let expected = ["negative", "zero", "small", "medium", "large"]
+mut idx = 0
+for v in values {
+    assert(classify(v) == expected[idx])
+    idx = idx + 1
+}
+
+// --- Loop inside loop inside if ---
+let do_it = true
+mut grid = 0
+if do_it {
+    mut r = 0
+    while r < 5 {
+        mut c = 0
+        while c < 5 {
+            if r == c {
+                grid = grid + 1
+            }
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+assert(grid == 5)
+
+// --- Forever + if + break with complex condition ---
+mut search = 1
+forever {
+    if search % 7 == 0 && search % 3 == 0 {
+        break
+    }
+    search = search + 1
+}
+assert(search == 21)
+
+// --- Nested for with conditional accumulation ---
+mut combos = []
+for a in [1, 2, 3] {
+    for b in [10, 20, 30] {
+        if a + b > 15 {
+            push(combos, a * 100 + b)
+        }
+    }
+}
+// Combos: 1+20=21>15 -> 120, 1+30=31>15 -> 130, 2+20=22>15 -> 220, 2+30=32>15 -> 230, 3+20=23>15 -> 320, 3+30=33>15 -> 330
+assert(len(combos) == 6)
+assert(combos[0] == 120)
+assert(combos[5] == 330)
+
+// --- While with nested forever and multiple breaks ---
+mut outer_count = 0
+mut inner_total = 0
+while outer_count < 3 {
+    mut inner = 0
+    forever {
+        inner = inner + 1
+        if inner > outer_count + 1 { break }
+        inner_total = inner_total + 1
+    }
+    outer_count = outer_count + 1
+}
+// outer_count=0: inner runs 1 time (inner=1 counted, inner=2 breaks)
+// outer_count=1: inner runs 2 times
+// outer_count=2: inner runs 3 times
+assert(inner_total == 6)
+
+// --- Deeply nested blocks as expressions ---
+let deep = {
+    let a = {
+        let b = {
+            let c = if true {
+                if false { 0 } else {
+                    let d = 21
+                    d * 2
+                }
+            } else { 0 }
+            c
+        }
+        b
+    }
+    a
+}
+assert(deep == 42)
+
+// --- Loop building nested data with conditionals ---
+mut groups = {even: [], odd: []}
+mut i = 1
+while i <= 10 {
+    if i % 2 == 0 {
+        push(groups.even, i)
+    } else {
+        push(groups.odd, i)
+    }
+    i = i + 1
+}
+assert(len(groups.even) == 5)
+assert(len(groups.odd) == 5)
+assert(groups.even[0] == 2)
+assert(groups.even[4] == 10)
+assert(groups.odd[0] == 1)
+assert(groups.odd[4] == 9)
+
+// --- State machine via while + if/else ---
+mut state = "start"
+mut transitions = 0
+while state != "done" {
+    if state == "start" {
+        state = "processing"
+    } else {
+        if state == "processing" {
+            if transitions > 3 {
+                state = "finalizing"
+            }
+        } else {
+            if state == "finalizing" {
+                state = "done"
+            }
+        }
+    }
+    transitions = transitions + 1
+}
+assert(state == "done")
+assert(transitions == 6)
+
+print("PASS: control_flow/nested_control_flow")

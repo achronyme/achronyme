@@ -1,0 +1,138 @@
+// Advanced strings: concatenation, conversion, comparison, patterns
+
+// --- Basic concatenation ---
+assert("hello" + " " + "world" == "hello world")
+assert("" + "abc" == "abc")
+assert("abc" + "" == "abc")
+assert("" + "" == "")
+
+// --- Int to string via concatenation ---
+assert("" + 42 == "42")
+assert("" + 0 == "0")
+assert("" + -7 == "-7")
+assert("val=" + 100 == "val=100")
+
+// --- Boolean to string ---
+assert("" + true == "true")
+assert("" + false == "false")
+
+// --- Multiple concatenation ---
+let msg = "x=" + 1 + ", y=" + 2 + ", z=" + 3
+assert(msg == "x=1, y=2, z=3")
+
+// --- String length ---
+assert(len("") == 0)
+assert(len("a") == 1)
+assert(len("hello") == 5)
+assert(len("hello world") == 11)
+
+// --- String equality ---
+assert("abc" == "abc")
+assert(!("abc" == "def"))
+assert("abc" != "def")
+assert(!("abc" != "abc"))
+assert("" == "")
+assert("" != "x")
+
+// --- String in various contexts ---
+// As map key
+let m = {}
+mut mp = m
+mp["hello"] = 1
+mp["world"] = 2
+assert(mp["hello"] == 1)
+assert(mp["world"] == 2)
+
+// As array element
+let words = ["the", "quick", "brown", "fox"]
+assert(words[0] == "the")
+assert(words[3] == "fox")
+assert(len(words) == 4)
+
+// --- String building in loop ---
+fn repeat_str(s, n) {
+    mut result = ""
+    mut i = 0
+    while i < n {
+        result = result + s
+        i = i + 1
+    }
+    return result
+}
+assert(repeat_str("ab", 3) == "ababab")
+assert(repeat_str("x", 5) == "xxxxx")
+assert(repeat_str("hi", 0) == "")
+assert(len(repeat_str(".", 100)) == 100)
+
+// --- Join array of strings ---
+fn join(arr, sep) {
+    if len(arr) == 0 { return "" }
+    mut result = "" + arr[0]
+    mut i = 1
+    while i < len(arr) {
+        result = result + sep + arr[i]
+        i = i + 1
+    }
+    return result
+}
+assert(join(["a", "b", "c"], ",") == "a,b,c")
+assert(join(["hello", "world"], " ") == "hello world")
+assert(join(["only"], "-") == "only")
+assert(join([], ",") == "")
+
+// --- String comparison for sorting ---
+// Strings can be compared with == and !=
+let names = ["Charlie", "Alice", "Bob"]
+assert(names[0] != names[1])
+assert(names[1] != names[2])
+
+// --- Typeof on strings ---
+assert(typeof("hello") == "String")
+assert(typeof("") == "String")
+assert(typeof("" + 42) == "String")
+
+// --- Escape sequences ---
+let with_newline = "line1\nline2"
+assert(len(with_newline) == 11)
+let with_tab = "col1\tcol2"
+assert(len(with_tab) == 9)
+let with_quote = "say \"hello\""
+assert(len(with_quote) == 11)
+let with_backslash = "path\\to\\file"
+assert(len(with_backslash) == 12)
+
+// --- String as key for lookup table ---
+fn lookup(table, key) {
+    for entry in table {
+        if entry[0] == key { return entry[1] }
+    }
+    return nil
+}
+let table = [["red", 1], ["green", 2], ["blue", 3]]
+assert(lookup(table, "red") == 1)
+assert(lookup(table, "green") == 2)
+assert(lookup(table, "blue") == 3)
+assert(lookup(table, "yellow") == nil)
+
+// --- String accumulator closure ---
+fn make_builder() {
+    mut parts = []
+    return {
+        add: fn(s) { push(parts, s) },
+        build: fn() {
+            mut result = ""
+            for p in parts {
+                result = result + p
+            }
+            return result
+        }
+    }
+}
+let b = make_builder()
+b.add("Hello")
+b.add(", ")
+b.add("World")
+b.add("!")
+assert(b.build() == "Hello, World!")
+
+print("PASS: data_types/strings_advanced")
