@@ -135,6 +135,7 @@ impl ControlFlowCompiler for Compiler {
                  Rule::if_expr => {
                      let res = self.compile_if(else_pair)?;
                      self.emit_abc(OpCode::Move, target_reg, res, 0);
+                     self.free_reg(res);
                  },
                  _ => return Err(CompilerError::UnexpectedRule(format!("Else: {:?}", else_pair.as_rule())))
              }
