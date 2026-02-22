@@ -155,7 +155,7 @@ fn run_r1cs_pipeline(
             .map(|h| std::path::PathBuf::from(h).join(".achronyme").join("cache"))
             .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/achronyme/cache"));
 
-        let (_pk, vk) = crate::groth16::setup_keys(&compiler.cs, &cache_dir)
+        let vk = crate::groth16::setup_vk_only(&compiler.cs, &cache_dir)
             .map_err(|e| anyhow::anyhow!("Groth16 setup failed: {e}"))?;
 
         let sol_source = crate::solidity::generate_solidity_verifier(&vk);

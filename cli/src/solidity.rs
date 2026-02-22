@@ -140,7 +140,7 @@ contract Groth16Verifier {{
 
     uint16 constant pLastMem = 896;
 
-    function verifyProof(uint[2] calldata _pA, uint[2][2] calldata _pB, uint[2] calldata _pC{pub_signals_param}) public view returns (bool) {{
+    function verifyProof(uint[2] calldata _pA, uint[2][2] calldata _pB, uint[2] calldata _pC{pub_signals_param}) external view returns (bool) {{
         assembly {{
             function checkField(v) {{
                 if iszero(lt(v, r)) {{

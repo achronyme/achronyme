@@ -127,6 +127,34 @@ pub fn setup_keys(
     }
 }
 
+/// Run trusted setup and return only the verifying key.
+///
+/// Tries the cache first (loading only the VK file). On cache miss, runs
+/// full setup but only serializes the VK to disk — avoids the cost of
+/// writing the much larger proving key when only the VK is needed.
+pub fn setup_vk_only(
+    cs: &ConstraintSystem,
+    cache_dir: &Path,
+) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
+    let key = cache_key(cs);
+    let cache_subdir = cache_dir.join(&key);
+
+    // Try loading just the VK from cache
+    if let Some(vk) = load_cached_vk(&cache_subdir) {
+        return Ok(vk);
+    }
+
+    // Full setup required — save only VK
+    let setup_circuit = AchronymeCircuit {
+        cs: cs.clone(),
+        witness: None,
+    };
+    let (_pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut OsRng)
+        .map_err(|e| format!("Groth16 setup failed: {e}"))?;
+    save_cached_vk(&cache_subdir, &vk)?;
+    Ok(vk)
+}
+
 /// Generate a native Groth16 proof using ark-groth16.
 ///
 /// Uses cached proving/verifying keys when available.
@@ -252,6 +280,8 @@ fn serialize_vkey_json(
 /// Compute a SHA256 cache key from the constraint system structure.
 fn cache_key(cs: &ConstraintSystem) -> String {
     let mut hasher = Sha256::new();
+    // Version salt — bump when serialization format or setup algorithm changes
+    hasher.update(b"achronyme-groth16-cache-v1");
     // Hash structural parameters
     hasher.update(cs.num_variables().to_le_bytes());
     hasher.update(cs.num_pub_inputs().to_le_bytes());
@@ -267,11 +297,37 @@ fn cache_key(cs: &ConstraintSystem) -> String {
 }
 
 fn hash_lc(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination) {
-    hasher.update((lc.terms.len() as u64).to_le_bytes());
-    for (var, coeff) in &lc.terms {
+    // Sort terms by variable index for canonical ordering — avoids
+    // cache misses when semantically identical LCs have different term order.
+    let mut terms: Vec<_> = lc.terms.iter().collect();
+    terms.sort_by_key(|(var, _)| var.index());
+    hasher.update((terms.len() as u64).to_le_bytes());
+    for (var, coeff) in &terms {
         hasher.update((var.index() as u64).to_le_bytes());
         hasher.update(coeff.to_le_bytes());
     }
+}
+
+fn load_cached_vk(dir: &Path) -> Option<ark_groth16::VerifyingKey<Bn254>> {
+    let vk_path = dir.join("verifying_key.bin");
+    if !vk_path.exists() {
+        return None;
+    }
+    let vk_bytes = std::fs::read(&vk_path).ok()?;
+    ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&vk_bytes[..]).ok()
+}
+
+fn save_cached_vk(
+    dir: &Path,
+    vk: &ark_groth16::VerifyingKey<Bn254>,
+) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
+    let mut vk_buf = Vec::new();
+    vk.serialize_compressed(&mut vk_buf)
+        .map_err(|e| format!("failed to serialize verifying key: {e}"))?;
+    std::fs::write(dir.join("verifying_key.bin"), &vk_buf)
+        .map_err(|e| format!("failed to write verifying key: {e}"))?;
+    Ok(())
 }
 
 fn load_cached_keys(
