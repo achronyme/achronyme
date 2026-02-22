@@ -324,7 +324,7 @@ achronyme/
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export
-- 2 security audits resolved
+- 3 security audits resolved
 - Poseidon hash compatible with circomlibjs
 
 ## License
