@@ -136,22 +136,18 @@ assert(groups.even[4] == 10)
 assert(groups.odd[0] == 1)
 assert(groups.odd[4] == 9)
 
-// --- State machine via while + if/else ---
+// --- State machine via while + else if ---
 mut state = "start"
 mut transitions = 0
 while state != "done" {
     if state == "start" {
         state = "processing"
-    } else {
-        if state == "processing" {
-            if transitions > 3 {
-                state = "finalizing"
-            }
-        } else {
-            if state == "finalizing" {
-                state = "done"
-            }
+    } else if state == "processing" {
+        if transitions > 3 {
+            state = "finalizing"
         }
+    } else if state == "finalizing" {
+        state = "done"
     }
     transitions = transitions + 1
 }

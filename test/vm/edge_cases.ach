@@ -31,13 +31,11 @@ assert(big * 1000 == 1000000000)
 // Deeply nested expressions
 assert(((((1 + 2) * 3) - 4) * 5) == 25)
 
-// Nested if/else
-let val = if true {
-    if false {
-        1
-    } else {
-        if true { 42 } else { 0 }
-    }
+// Chained else if expression
+let val = if false {
+    1
+} else if true {
+    42
 } else {
     99
 }
