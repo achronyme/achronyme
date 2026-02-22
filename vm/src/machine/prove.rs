@@ -38,7 +38,6 @@ pub trait ProveHandler {
 /// Supports:
 /// - `field(...)` values → direct copy
 /// - integer values → `FieldElement::from_i64`
-/// - number (f64) values that are whole → `FieldElement::from_i64`
 /// - everything else → `None`
 pub fn value_to_field_element(heap: &Heap, val: Value) -> Option<FieldElement> {
     if val.is_field() {
@@ -46,15 +45,7 @@ pub fn value_to_field_element(heap: &Heap, val: Value) -> Option<FieldElement> {
         heap.get_field(handle).copied()
     } else if val.is_int() {
         let i = val.as_int()?;
-        Some(FieldElement::from_i64(i as i64))
-    } else if val.is_number() {
-        let n = val.as_number()?;
-        // Only convert whole numbers
-        if n.fract() == 0.0 && n.abs() < (i64::MAX as f64) {
-            Some(FieldElement::from_i64(n as i64))
-        } else {
-            None
-        }
+        Some(FieldElement::from_i64(i))
     } else {
         None
     }

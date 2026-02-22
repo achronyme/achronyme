@@ -18,20 +18,19 @@ pub fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(RuntimeError::ArityMismatch("len() takes exactly 1 argument".into()));
     }
     let val = &args[0];
-    
-    // [STANDARD]: Polymorphic dispatch based on tags
+
     if val.is_string() {
         let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
         let s = vm.heap.get_string(handle).ok_or(RuntimeError::SystemError("Dangling string handle".into()))?;
-        Ok(Value::number(s.len() as f64))
+        Ok(Value::int(s.len() as i64))
     } else if val.is_list() {
         let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
         let l = vm.heap.get_list(handle).ok_or(RuntimeError::SystemError("Dangling list handle".into()))?;
-        Ok(Value::number(l.len() as f64))
+        Ok(Value::int(l.len() as i64))
     } else if val.is_map() {
         let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
         let m = vm.heap.get_map(handle).ok_or(RuntimeError::SystemError("Dangling map handle".into()))?;
-        Ok(Value::number(m.len() as f64))
+        Ok(Value::int(m.len() as i64))
     } else {
         Err(RuntimeError::TypeMismatch("len() expects String, List, or Map".into()))
     }
@@ -41,7 +40,7 @@ pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::ArityMismatch("push(list, item) takes exactly 2 arguments".into()));
     }
-    
+
     let target = args[0];
     let item = args[1];
 
@@ -50,13 +49,12 @@ pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     let handle = target.as_handle().ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
-    // [STANDARD]: Mutable access required. Fails cleanly if handle is invalid.
     let list = vm.heap.get_list_mut(handle)
         .ok_or(RuntimeError::SystemError("List corrupted or missing".into()))?;
-    
+
     list.push(item);
-    
-    Ok(Value::nil()) // Void return
+
+    Ok(Value::nil())
 }
 
 pub fn native_pop(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -73,7 +71,6 @@ pub fn native_pop(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let list = vm.heap.get_list_mut(handle)
         .ok_or(RuntimeError::SystemError("List corrupted or missing".into()))?;
 
-    // [STANDARD]: Safe handling of empty lists (returns Nil, implies Option-like behavior)
     let val = list.pop().unwrap_or(Value::nil());
     Ok(val)
 }
@@ -90,24 +87,19 @@ pub fn native_keys(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
     let map_handle = target.as_handle().ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
 
-    // [CRITICAL]: Scope Limiting for Borrow Checker Compliance
-    // Step 1: Read keys (Immutable Borrow). Copy to temp vector.
     let keys_raw: Vec<String> = {
         let map = vm.heap.get_map(map_handle).ok_or(RuntimeError::SystemError("Map corrupted".into()))?;
-        map.keys().cloned().collect() // Clone strings to own them
-    }; 
-    // Scope ends here. Immutable borrow dropped.
+        map.keys().cloned().collect()
+    };
 
-    // Step 2: Allocate strings (Mutable Borrow of Heap).
     let mut key_values = Vec::with_capacity(keys_raw.len());
     for k in keys_raw {
         let handle = vm.heap.alloc_string(k);
         key_values.push(Value::string(handle));
     }
 
-    // Step 3: Allocate list (Mutable Borrow of Heap).
     let list_handle = vm.heap.alloc_list(key_values);
-    
+
     Ok(Value::list(list_handle))
 }
 
@@ -118,7 +110,7 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         ));
     }
     let val = &args[0];
-    let type_name = if val.is_number() {
+    let type_name = if val.is_int() {
         "Number"
     } else if val.is_string() {
         "String"
@@ -142,14 +134,8 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         "Unknown"
     };
 
-    // Intern/Alloc the string
     let s = type_name.to_string();
-    // We need to use VM logic to intern/alloc.
-    // Similar logic to define_native, but returning a Value.
-    // VM doesn't expose a simple "create_string_value" public method that does interning + alloc?
-    // We can use heap.alloc_string directly.
     let handle = vm.heap.alloc_string(s);
-    // Note: We are not interning this in vm.interner because it's a runtime value, not a global name.
 
     Ok(Value::string(handle))
 }
@@ -163,16 +149,7 @@ pub fn native_field(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     let val = &args[0];
 
     let fe = if val.is_int() {
-        FieldElement::from_i64(val.as_int().unwrap() as i64)
-    } else if val.is_number() {
-        // Convert f64 to field: only accept whole numbers
-        let n = val.as_number().unwrap();
-        if n.fract() != 0.0 || n.is_nan() || n.is_infinite() {
-            return Err(RuntimeError::TypeMismatch(
-                "field() requires integer, integer-valued float, or string".into(),
-            ));
-        }
-        FieldElement::from_i64(n as i64)
+        FieldElement::from_i64(val.as_int().unwrap())
     } else if val.is_string() {
         let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
         let s = vm.heap.get_string(handle)
@@ -189,7 +166,7 @@ pub fn native_field(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         }
     } else {
         return Err(RuntimeError::TypeMismatch(
-            "field() expects Int, Number, or String".into(),
+            "field() expects Int or String".into(),
         ));
     };
 
@@ -212,7 +189,7 @@ pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
 pub fn native_time(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let now = std::time::SystemTime::now();
     let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
-    Ok(Value::number(duration.as_secs_f64()))
+    Ok(Value::int(duration.as_millis() as i64))
 }
 
 pub fn native_proof_json(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

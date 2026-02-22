@@ -92,7 +92,7 @@ impl VM {
                 let Some(handle) = v.as_handle() else { return "<bad string>".into() };
                 self.heap.get_string(handle).cloned().unwrap_or("<bad string>".into())
             },
-            v if v.is_number() => format!("{}", v.as_number().unwrap()),
+            v if v.is_int() => format!("{}", v.as_int().unwrap()),
             v if v.is_bool() => format!("{}", v.as_bool().unwrap()),
             v if v.is_nil() => "nil".to_string(),
             v if v.is_field() => {
@@ -210,7 +210,7 @@ impl VM {
 
             match op {
                 // Arithmetic (delegated to arithmetic.rs)
-                Add | Sub | Mul | Div | Mod | Pow | Neg | Sqrt => {
+                Add | Sub | Mul | Div | Mod | Pow | Neg => {
                     self.handle_arithmetic(op, instruction, base)?;
                 }
 
@@ -255,10 +255,16 @@ impl VM {
                     let v1 = self.get_reg(base, b)?;
                     let v2 = self.get_reg(base, c)?;
 
-                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                    if let (Some(n1), Some(n2)) = (v1.as_int(), v2.as_int()) {
                         self.set_reg(base, a, Value::bool(n1 < n2))?;
+                    } else if v1.is_field() && v2.is_field() {
+                        let h1 = v1.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let h2 = v2.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let f1 = self.heap.get_field(h1).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        let f2 = self.heap.get_field(h2).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        self.set_reg(base, a, Value::bool(f1.to_canonical() < f2.to_canonical()))?;
                     } else {
-                        return Err(RuntimeError::TypeMismatch("Expected numbers for < comparison".to_string()));
+                        return Err(RuntimeError::TypeMismatch("Expected numeric values for < comparison".to_string()));
                     }
                 }
 
@@ -269,10 +275,16 @@ impl VM {
                     let v1 = self.get_reg(base, b)?;
                     let v2 = self.get_reg(base, c)?;
 
-                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                    if let (Some(n1), Some(n2)) = (v1.as_int(), v2.as_int()) {
                         self.set_reg(base, a, Value::bool(n1 > n2))?;
+                    } else if v1.is_field() && v2.is_field() {
+                        let h1 = v1.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let h2 = v2.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let f1 = self.heap.get_field(h1).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        let f2 = self.heap.get_field(h2).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        self.set_reg(base, a, Value::bool(f1.to_canonical() > f2.to_canonical()))?;
                     } else {
-                        return Err(RuntimeError::TypeMismatch("Expected numbers for > comparison".to_string()));
+                        return Err(RuntimeError::TypeMismatch("Expected numeric values for > comparison".to_string()));
                     }
                 }
 
@@ -292,10 +304,16 @@ impl VM {
                     let v1 = self.get_reg(base, b)?;
                     let v2 = self.get_reg(base, c)?;
 
-                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                    if let (Some(n1), Some(n2)) = (v1.as_int(), v2.as_int()) {
                         self.set_reg(base, a, Value::bool(n1 <= n2))?;
+                    } else if v1.is_field() && v2.is_field() {
+                        let h1 = v1.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let h2 = v2.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let f1 = self.heap.get_field(h1).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        let f2 = self.heap.get_field(h2).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        self.set_reg(base, a, Value::bool(f1.to_canonical() <= f2.to_canonical()))?;
                     } else {
-                        return Err(RuntimeError::TypeMismatch("Expected numbers for <= comparison".to_string()));
+                        return Err(RuntimeError::TypeMismatch("Expected numeric values for <= comparison".to_string()));
                     }
                 }
 
@@ -306,10 +324,16 @@ impl VM {
                     let v1 = self.get_reg(base, b)?;
                     let v2 = self.get_reg(base, c)?;
 
-                    if let (Some(n1), Some(n2)) = (v1.as_number(), v2.as_number()) {
+                    if let (Some(n1), Some(n2)) = (v1.as_int(), v2.as_int()) {
                         self.set_reg(base, a, Value::bool(n1 >= n2))?;
+                    } else if v1.is_field() && v2.is_field() {
+                        let h1 = v1.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let h2 = v2.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        let f1 = self.heap.get_field(h1).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        let f2 = self.heap.get_field(h2).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        self.set_reg(base, a, Value::bool(f1.to_canonical() >= f2.to_canonical()))?;
                     } else {
-                        return Err(RuntimeError::TypeMismatch("Expected numbers for >= comparison".to_string()));
+                        return Err(RuntimeError::TypeMismatch("Expected numeric values for >= comparison".to_string()));
                     }
                 }
 

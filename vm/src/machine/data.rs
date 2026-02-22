@@ -88,19 +88,19 @@ impl DataOps for super::vm::VM {
                     let list = self.heap.get_list(handle)
                         .ok_or(RuntimeError::SystemError("List missing".into()))?;
 
-                    if let Some(idx_float) = key.as_number() {
-                        // Truncamos a entero para indexar (0-based)
-                        let idx = idx_float as usize;
+                    if let Some(idx_val) = key.as_int() {
+                        if idx_val < 0 {
+                            return Err(RuntimeError::OutOfBounds(format!("Negative index {}", idx_val)));
+                        }
+                        let idx = idx_val as usize;
                         if idx < list.len() {
                             let val = list[idx];
                             self.set_reg(base, a, val)?;
                         } else {
-                            // Lua devuelve nil, Python lanza error. 
-                            // En Achronyme, seamos seguros: Error.
                             return Err(RuntimeError::OutOfBounds(format!("Index {} out of bounds (len {})", idx, list.len())));
                         }
                     } else {
-                        return Err(RuntimeError::TypeMismatch("List index must be a number".into()));
+                        return Err(RuntimeError::TypeMismatch("List index must be an integer".into()));
                     }
 
                 } else if target.is_map() {
@@ -139,16 +139,18 @@ impl DataOps for super::vm::VM {
                     let list = self.heap.get_list_mut(handle)
                         .ok_or(RuntimeError::SystemError("List missing".into()))?;
 
-                    if let Some(idx_float) = key.as_number() {
-                        let idx = idx_float as usize;
+                    if let Some(idx_val) = key.as_int() {
+                        if idx_val < 0 {
+                            return Err(RuntimeError::OutOfBounds(format!("Negative index {}", idx_val)));
+                        }
+                        let idx = idx_val as usize;
                         if idx < list.len() {
                             list[idx] = val;
                         } else {
-                             // Strict bounds.
                              return Err(RuntimeError::OutOfBounds("List index out of bounds".into()));
                         }
                     } else {
-                        return Err(RuntimeError::TypeMismatch("List index must be a number".into()));
+                        return Err(RuntimeError::TypeMismatch("List index must be an integer".into()));
                     }
 
                 } else if target.is_map() {
