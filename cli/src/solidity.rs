@@ -14,14 +14,19 @@ fn fq_to_solidity<F: PrimeField>(f: &F) -> String {
 }
 
 /// Convert a G1 affine point to (x, y) decimal strings.
+/// Returns ("0", "0") for the identity/infinity point.
 fn g1_to_solidity(p: &<Bn254 as Pairing>::G1Affine) -> (String, String) {
     use ark_ec::AffineRepr;
-    let x = p.x().expect("non-zero G1 point has x");
-    let y = p.y().expect("non-zero G1 point has y");
+    if p.is_zero() {
+        return ("0".into(), "0".into());
+    }
+    let x = p.x().expect("non-identity G1 point has x");
+    let y = p.y().expect("non-identity G1 point has y");
     (fq_to_solidity(&x), fq_to_solidity(&y))
 }
 
 /// Convert a G2 affine point to (x1, x2, y1, y2) decimal strings.
+/// Returns ("0","0","0","0") for the identity/infinity point.
 ///
 /// **Critical**: arkworks stores Fq2 as (c0, c1). The EVM ecPairing precompile
 /// expects (c1, c0) — imaginary part first. This function emits EVM order.
@@ -29,8 +34,11 @@ fn g2_to_solidity(
     p: &<Bn254 as Pairing>::G2Affine,
 ) -> (String, String, String, String) {
     use ark_ec::AffineRepr;
-    let x = p.x().expect("non-zero G2 point has x");
-    let y = p.y().expect("non-zero G2 point has y");
+    if p.is_zero() {
+        return ("0".into(), "0".into(), "0".into(), "0".into());
+    }
+    let x = p.x().expect("non-identity G2 point has x");
+    let y = p.y().expect("non-identity G2 point has y");
     // EVM order: (x.c1, x.c0, y.c1, y.c0)
     (
         fq_to_solidity(&x.c1),
@@ -59,14 +67,13 @@ pub fn generate_solidity_verifier(vk: &ark_groth16::VerifyingKey<Bn254>) -> Stri
     }
 
     // IC accumulation: vk_x = IC[0] + sum(input[i] * IC[i+1])
+    // Uses _pVk (Yul local), not pVk (Solidity constant).
     let mut ic_accum = String::new();
-    ic_accum.push_str("            pVk := mload(0x40)\n");
-    ic_accum.push_str("            mstore(0x40, add(pVk, 64))\n");
-    ic_accum.push_str("            mstore(pVk, IC0x)\n");
-    ic_accum.push_str("            mstore(add(pVk, 32), IC0y)\n");
+    ic_accum.push_str("            mstore(_pVk, IC0x)\n");
+    ic_accum.push_str("            mstore(add(_pVk, 32), IC0y)\n");
     for i in 1..=num_pub {
         ic_accum.push_str(&format!(
-            "\n            g1_mulAccC(pVk, IC{i}x, IC{i}y, calldataload(add(pubSignals, {})))\n",
+            "\n            g1_mulAccC(_pVk, IC{i}x, IC{i}y, calldataload(add(pubSignals, {})))\n",
             (i - 1) * 32
         ));
     }
@@ -93,9 +100,16 @@ pub fn generate_solidity_verifier(vk: &ark_groth16::VerifyingKey<Bn254>) -> Stri
         ""
     };
 
+    // C-3: When no public inputs, _pubSignals doesn't exist — pass 0
+    let check_pairing_call = if num_pub > 0 {
+        "let isValid := checkPairing(_pA, _pB, _pC, _pubSignals.offset, pMem)"
+    } else {
+        "let isValid := checkPairing(_pA, _pB, _pC, 0, pMem)"
+    };
+
     format!(
         r#"// SPDX-License-Identifier: GPL-3.0
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity >=0.8.0 <0.9.0;
 
 contract Groth16Verifier {{
     // Scalar field size
@@ -152,7 +166,7 @@ contract Groth16Verifier {{
                 mstore(add(mIn, 64), mload(pR))
                 mstore(add(mIn, 96), mload(add(pR, 32)))
 
-                success := staticcall(sub(gas(), 2000), 6, add(mIn, 64), 128, pR, 64)
+                success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
 
                 if iszero(success) {{
                     mstore(0, 0)
@@ -164,8 +178,7 @@ contract Groth16Verifier {{
                 let _pPairing := add(pMem, pPairing)
                 let _pVk := add(pMem, pVk)
 
-                mstore(_pVk, mload(add(pMem, pVk)))
-                mstore(add(_pVk, 32), mload(add(pMem, add(pVk, 32))))
+                // IC accumulation writes directly to _pVk below
 {pub_signals_ref}{field_checks}{ic_accum}
                 // -A
                 mstore(add(_pPairing, 0), calldataload(pA))
@@ -187,9 +200,9 @@ contract Groth16Verifier {{
                 mstore(add(_pPairing, 320), betay1)
                 mstore(add(_pPairing, 352), betay2)
 
-                // vk_x
-                mstore(add(_pPairing, 384), mload(add(pMem, pVk)))
-                mstore(add(_pPairing, 416), mload(add(pMem, add(pVk, 32))))
+                // vk_x (accumulated IC result)
+                mstore(add(_pPairing, 384), mload(_pVk))
+                mstore(add(_pPairing, 416), mload(add(_pVk, 32)))
 
                 // gamma2
                 mstore(add(_pPairing, 448), gammax1)
@@ -215,23 +228,13 @@ contract Groth16Verifier {{
             let pMem := mload(0x40)
             mstore(0x40, add(pMem, pLastMem))
 
-            // Validate inputs are in field
-            checkField(calldataload(add(_pA, 0)))
-            checkField(calldataload(add(_pA, 32)))
-            checkField(calldataload(add(_pB, 0)))
-            checkField(calldataload(add(_pB, 32)))
-            checkField(calldataload(add(_pB, 64)))
-            checkField(calldataload(add(_pB, 96)))
-            checkField(calldataload(add(_pC, 0)))
-            checkField(calldataload(add(_pC, 32)))
-
-            let isValid := checkPairing(_pA, _pB, _pC, _pubSignals.offset, pMem)
+            {check_pairing_call}
 
             mstore(0, isValid)
             return(0, 0x20)
         }}
     }}
- }}
+}}
 "#
     )
 }
@@ -291,7 +294,7 @@ mod tests {
     fn generate_solidity_produces_valid_structure() {
         let vk = test_vk();
         let sol = generate_solidity_verifier(&vk);
-        assert!(sol.contains("pragma solidity >=0.7.0 <0.9.0;"));
+        assert!(sol.contains("pragma solidity >=0.8.0 <0.9.0;"));
         assert!(sol.contains("contract Groth16Verifier"));
         assert!(sol.contains("function verifyProof"));
         assert!(sol.contains("SPDX-License-Identifier: GPL-3.0"));
@@ -333,5 +336,74 @@ mod tests {
 
         assert!(sol.contains(&format!("uint256 constant betax1  = {expected_x1};")));
         assert!(sol.contains(&format!("uint256 constant betax2  = {expected_x2};")));
+    }
+
+    /// Circuit with zero public inputs — only witness variables.
+    #[derive(Clone)]
+    struct ZeroInputCircuit;
+
+    impl ConstraintSynthesizer<Fr> for ZeroInputCircuit {
+        fn generate_constraints(
+            self,
+            cs: ConstraintSystemRef<Fr>,
+        ) -> Result<(), SynthesisError> {
+            let a = cs.new_witness_variable(|| Ok(Fr::from(3u64)))?;
+            let b = cs.new_witness_variable(|| Ok(Fr::from(3u64)))?;
+            cs.enforce_constraint(
+                ark_relations::r1cs::LinearCombination::from(a),
+                ark_relations::r1cs::LinearCombination::zero()
+                    + (Fr::from(1u64), ark_relations::r1cs::Variable::One),
+                ark_relations::r1cs::LinearCombination::from(b),
+            )?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn solidity_zero_public_inputs_compiles_structurally() {
+        let circuit = ZeroInputCircuit;
+        let (_, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut OsRng).unwrap();
+        let sol = generate_solidity_verifier(&vk);
+
+        // No _pubSignals parameter
+        assert!(!sol.contains("_pubSignals"));
+        // Uses 0 instead of _pubSignals.offset
+        assert!(sol.contains("checkPairing(_pA, _pB, _pC, 0, pMem)"));
+        // Still has contract and verifyProof
+        assert!(sol.contains("contract Groth16Verifier"));
+        assert!(sol.contains("function verifyProof"));
+        // IC0 present but no IC1
+        assert!(sol.contains("IC0x"));
+        assert!(!sol.contains("IC1x"));
+    }
+
+    #[test]
+    fn solidity_ecadd_reads_from_min() {
+        let vk = test_vk();
+        let sol = generate_solidity_verifier(&vk);
+        // C-1 fix: ecAdd should read from mIn (not add(mIn, 64))
+        assert!(sol.contains("staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)"));
+        assert!(!sol.contains("add(mIn, 64), 128"));
+    }
+
+    #[test]
+    fn solidity_ic_accum_uses_underscore_pvk() {
+        let vk = test_vk();
+        let sol = generate_solidity_verifier(&vk);
+        // C-2 fix: IC accumulation should use _pVk (Yul local), not pVk
+        assert!(sol.contains("mstore(_pVk, IC0x)"));
+        assert!(sol.contains("g1_mulAccC(_pVk,"));
+    }
+
+    #[test]
+    fn solidity_no_proof_coord_checkfield() {
+        let vk = test_vk();
+        let sol = generate_solidity_verifier(&vk);
+        // H-3 fix: No checkField on proof coordinates _pA, _pB, _pC
+        assert!(!sol.contains("checkField(calldataload(add(_pA"));
+        assert!(!sol.contains("checkField(calldataload(add(_pB"));
+        assert!(!sol.contains("checkField(calldataload(add(_pC"));
+        // Public signal checkField should still be in checkPairing
+        assert!(sol.contains("checkField(calldataload(add(pubSignals"));
     }
 }
