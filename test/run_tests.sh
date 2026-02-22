@@ -82,6 +82,26 @@ run_test "circuit/power.ach" \
     --r1cs "$R1CS_DIR/pow.r1cs" --wtns "$R1CS_DIR/pow.wtns" \
     --inputs "x=3,x2=9,x3=27,x4=81"
 
+# --- Solidity verifier test ---
+echo ""
+echo "=== Solidity verifier tests ==="
+
+run_test "circuit/basic_arithmetic.ach (solidity)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/basic_arithmetic.ach" \
+    --r1cs "$R1CS_DIR/basic_sol.r1cs" --wtns "$R1CS_DIR/basic_sol.wtns" \
+    --inputs "out=42,a=6,b=7" \
+    --solidity "$R1CS_DIR/verifier.sol"
+
+# Validate the .sol file exists and contains the contract
+if [ -f "$R1CS_DIR/verifier.sol" ] && grep -q "contract Groth16Verifier" "$R1CS_DIR/verifier.sol"; then
+    PASS=$((PASS + 1))
+    echo "  PASS  circuit/solidity_verifier_content"
+else
+    FAIL=$((FAIL + 1))
+    ERRORS+=("circuit/solidity_verifier_content")
+    echo "  FAIL  circuit/solidity_verifier_content"
+fi
+
 # --- Prove tests ---
 echo ""
 echo "=== Prove tests ==="

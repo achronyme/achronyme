@@ -7,6 +7,7 @@ mod groth16;
 mod halo2_proof;
 mod prove_handler;
 mod repl;
+mod solidity;
 
 use args::{Cli, Commands};
 use commands::{circuit, compile, disassemble, run};
@@ -29,6 +30,7 @@ fn main() -> Result<()> {
             no_optimize,
             backend,
             prove,
+            solidity,
         } => circuit::circuit_command(
             path,
             r1cs,
@@ -39,6 +41,7 @@ fn main() -> Result<()> {
             *no_optimize,
             backend,
             *prove,
+            solidity.as_deref(),
         ),
     }
 }

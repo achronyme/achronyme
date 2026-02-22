@@ -67,5 +67,8 @@ pub enum Commands {
         /// Generate a cryptographic proof (requires --inputs)
         #[arg(long)]
         prove: bool,
+        /// Generate a Solidity Groth16 verifier contract at the given path
+        #[arg(long)]
+        solidity: Option<String>,
     },
 }

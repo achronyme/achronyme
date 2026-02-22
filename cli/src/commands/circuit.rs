@@ -46,6 +46,7 @@ pub fn circuit_command(
     no_optimize: bool,
     backend: &str,
     prove: bool,
+    solidity_path: Option<&str>,
 ) -> Result<()> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("cannot read source file: {path}"))?;
@@ -73,8 +74,12 @@ pub fn circuit_command(
         eprintln!("warning: {w}");
     }
 
+    if solidity_path.is_some() && backend != "r1cs" {
+        return Err(anyhow::anyhow!("--solidity is only supported with the r1cs backend"));
+    }
+
     match backend {
-        "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs),
+        "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs, solidity_path),
         "plonkish" => run_plonkish_pipeline(&program, inputs, prove),
         _ => Err(anyhow::anyhow!(
             "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
@@ -87,6 +92,7 @@ fn run_r1cs_pipeline(
     r1cs_path: &str,
     wtns_path: &str,
     inputs: Option<&str>,
+    solidity_path: Option<&str>,
 ) -> Result<()> {
     let mut compiler = R1CSCompiler::new();
     let proven = ir::passes::bool_prop::compute_proven_boolean(program);
@@ -141,6 +147,21 @@ fn run_r1cs_pipeline(
             compiler.cs.num_variables(),
             r1cs_data.len(),
         );
+    }
+
+    // Generate Solidity verifier if requested
+    if let Some(sol_path) = solidity_path {
+        let cache_dir = std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join(".achronyme").join("cache"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/achronyme/cache"));
+
+        let (_pk, vk) = crate::groth16::setup_keys(&compiler.cs, &cache_dir)
+            .map_err(|e| anyhow::anyhow!("Groth16 setup failed: {e}"))?;
+
+        let sol_source = crate::solidity::generate_solidity_verifier(&vk);
+        fs::write(sol_path, &sol_source)
+            .with_context(|| format!("cannot write {sol_path}"))?;
+        eprintln!("wrote {} (Solidity Groth16 verifier)", sol_path);
     }
 
     Ok(())

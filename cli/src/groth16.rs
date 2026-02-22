@@ -105,6 +105,28 @@ fn convert_lc(
 // Proof generation (top-level entry point)
 // ============================================================================
 
+/// Run trusted setup (or load cached keys) without proving.
+pub fn setup_keys(
+    cs: &ConstraintSystem,
+    cache_dir: &Path,
+) -> Result<(ark_groth16::ProvingKey<Bn254>, ark_groth16::VerifyingKey<Bn254>), String> {
+    let key = cache_key(cs);
+    let cache_subdir = cache_dir.join(&key);
+
+    if let Some(keys) = load_cached_keys(&cache_subdir) {
+        Ok(keys)
+    } else {
+        let setup_circuit = AchronymeCircuit {
+            cs: cs.clone(),
+            witness: None,
+        };
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut OsRng)
+            .map_err(|e| format!("Groth16 setup failed: {e}"))?;
+        save_cached_keys(&cache_subdir, &pk, &vk)?;
+        Ok((pk, vk))
+    }
+}
+
 /// Generate a native Groth16 proof using ark-groth16.
 ///
 /// Uses cached proving/verifying keys when available.
@@ -113,26 +135,9 @@ pub fn generate_proof(
     witness: &[FieldElement],
     cache_dir: &Path,
 ) -> Result<ProveResult, String> {
-    // 1. Cache key from constraint data
-    let key = cache_key(cs);
-    let cache_subdir = cache_dir.join(&key);
+    let (pk, vk) = setup_keys(cs, cache_dir)?;
 
-    // 2. Setup or load cached keys
-    let (pk, vk) = if let Some(keys) = load_cached_keys(&cache_subdir) {
-        keys
-    } else {
-        // Run trusted setup
-        let setup_circuit = AchronymeCircuit {
-            cs: cs.clone(),
-            witness: None,
-        };
-        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut OsRng)
-            .map_err(|e| format!("Groth16 setup failed: {e}"))?;
-        save_cached_keys(&cache_subdir, &pk, &vk)?;
-        (pk, vk)
-    };
-
-    // 3. Prove
+    // Prove
     let prove_circuit = AchronymeCircuit {
         cs: cs.clone(),
         witness: Some(witness.to_vec()),
