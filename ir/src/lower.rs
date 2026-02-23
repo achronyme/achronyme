@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use achronyme_parser::ast::*;
-use achronyme_parser::build_ast;
+use achronyme_parser::parse_program as ast_parse_program;
 use memory::FieldElement;
 
 use crate::error::{IrError, SourceSpan};
@@ -121,7 +121,7 @@ impl IrLowering {
     /// Parse and lower an Achronyme source string into an IR program.
     /// Public/witness inputs must be declared before calling this.
     pub fn lower(mut self, source: &str) -> Result<IrProgram, IrError> {
-        let program = build_ast::parse_program(source)
+        let program = ast_parse_program(source)
             .map_err(|e| IrError::ParseError(e))?;
         self.lower_program(&program)?;
         Ok(self.program)
@@ -174,7 +174,7 @@ impl IrLowering {
     /// declarations. Two-pass: first collects declaration names (to ensure correct
     /// wire ordering: public first, then witness), then processes remaining statements.
     pub fn lower_self_contained(source: &str) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
-        let ast_program = build_ast::parse_program(source)
+        let ast_program = ast_parse_program(source)
             .map_err(|e| IrError::ParseError(e))?;
 
         // Pass 1: collect declaration names (with optional array sizes)
