@@ -2,33 +2,31 @@ use crate::codegen::Compiler;
 use crate::error::CompilerError;
 use crate::scopes::ScopeCompiler;
 use crate::expressions::ExpressionCompiler;
-use crate::statements::StatementCompiler; // For compile_stmt in block
+use crate::statements::StatementCompiler;
 use crate::types::{LoopContext, Local};
-use achronyme_parser::{AchronymeParser, Rule};
+use achronyme_parser::ast::*;
 use memory::Value;
-use pest::iterators::Pair;
-use pest::Parser;
 use vm::opcode::{OpCode, instruction::encode_abx};
 
 pub trait ControlFlowCompiler {
-    fn compile_block(&mut self, pair: Pair<Rule>, target_reg: u8) -> Result<(), CompilerError>;
-    fn compile_if(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
-    fn compile_while(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
-    fn compile_for(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
-    fn compile_forever(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
-    
+    fn compile_block(&mut self, block: &Block, target_reg: u8) -> Result<(), CompilerError>;
+    fn compile_if(&mut self, condition: &Expr, then_block: &Block, else_branch: Option<&ElseBranch>) -> Result<u8, CompilerError>;
+    fn compile_while(&mut self, condition: &Expr, body: &Block) -> Result<u8, CompilerError>;
+    fn compile_for(&mut self, var: &str, iterable: &ForIterable, body: &Block) -> Result<u8, CompilerError>;
+    fn compile_forever(&mut self, body: &Block) -> Result<u8, CompilerError>;
+
     // Low level
     fn emit_jump(&mut self, op: OpCode, a: u8) -> usize;
     fn patch_jump(&mut self, idx: usize);
     fn enter_loop(&mut self, start_label: usize);
     fn exit_loop(&mut self);
-    
+
     // Statements
     fn compile_break(&mut self) -> Result<(), CompilerError>;
     fn compile_continue(&mut self) -> Result<(), CompilerError>;
 
     // ZK
-    fn compile_prove(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError>;
+    fn compile_prove(&mut self, body: &Block, source: &str) -> Result<u8, CompilerError>;
 }
 
 impl ControlFlowCompiler for Compiler {
@@ -64,25 +62,19 @@ impl ControlFlowCompiler for Compiler {
         }
     }
 
-    fn compile_block(&mut self, pair: Pair<Rule>, target_reg: u8) -> Result<(), CompilerError> {
-        let initial_reg_top = self.current().reg_top; // Snapshot
+    fn compile_block(&mut self, block: &Block, target_reg: u8) -> Result<(), CompilerError> {
+        let initial_reg_top = self.current().reg_top;
         self.begin_scope();
-        let stmts = pair.into_inner();
+        let len = block.stmts.len();
         let mut last_processed = false;
 
-        // Collect all stmts to handle 'last one' logic if expression
-        let stmt_list: Vec<Pair<Rule>> = stmts.collect();
-        let len = stmt_list.len();
-
-        for (i, stmt) in stmt_list.into_iter().enumerate() {
+        for (i, stmt) in block.stmts.iter().enumerate() {
             let is_last = i == len - 1;
 
             if is_last {
-                let inner = stmt.clone().into_inner().next().unwrap();
-                match inner.as_rule() {
-                    Rule::expr => {
-                        // Directly compile into target
-                        let _ = self.compile_expr_into(inner, target_reg)?;
+                match stmt {
+                    Stmt::Expr(expr) => {
+                        self.compile_expr_into(expr, target_reg)?;
                     }
                     _ => {
                         self.compile_stmt(stmt)?;
@@ -96,29 +88,24 @@ impl ControlFlowCompiler for Compiler {
         }
 
         if !last_processed {
-             // Empty block?
+             // Empty block
              self.emit_abx(OpCode::LoadNil, target_reg, 0);
         }
 
         self.end_scope();
-        self.current().reg_top = initial_reg_top; // Restore (Hygiene)
+        self.current().reg_top = initial_reg_top;
         Ok(())
     }
 
-    fn compile_if(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-        let mut inner = pair.into_inner();
-        let cond_expr = inner.next().unwrap();
-        let then_block = inner.next().unwrap();
-        let else_part = inner.next(); // Optional
-
+    fn compile_if(&mut self, condition: &Expr, then_block: &Block, else_branch: Option<&ElseBranch>) -> Result<u8, CompilerError> {
         let target_reg = self.alloc_reg()?;
 
         // 1. Compile Condition
-        let cond_reg = self.compile_expr(cond_expr)?;
+        let cond_reg = self.compile_expr(condition)?;
 
         // 2. Jump if False -> Else
         let jump_else = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
-        self.free_reg(cond_reg); 
+        self.free_reg(cond_reg);
 
         // 3. Then Block
         self.compile_block(then_block, target_reg)?;
@@ -129,16 +116,15 @@ impl ControlFlowCompiler for Compiler {
         // 5. Else Start
         self.patch_jump(jump_else);
 
-        if let Some(else_pair) = else_part {
-             match else_pair.as_rule() {
-                 Rule::block => self.compile_block(else_pair, target_reg)?,
-                 Rule::if_expr => {
-                     let res = self.compile_if(else_pair)?;
-                     self.emit_abc(OpCode::Move, target_reg, res, 0);
-                     self.free_reg(res);
-                 },
-                 _ => return Err(CompilerError::UnexpectedRule(format!("Else: {:?}", else_pair.as_rule())))
-             }
+        if let Some(else_part) = else_branch {
+            match else_part {
+                ElseBranch::Block(block) => self.compile_block(block, target_reg)?,
+                ElseBranch::If(if_expr) => {
+                    let res = self.compile_expr(if_expr)?;
+                    self.emit_abc(OpCode::Move, target_reg, res, 0);
+                    self.free_reg(res);
+                }
+            }
         } else {
              self.emit_abx(OpCode::LoadNil, target_reg, 0);
         }
@@ -152,36 +138,36 @@ impl ControlFlowCompiler for Compiler {
     fn compile_break(&mut self) -> Result<(), CompilerError> {
         let loop_ctx = self.current_ref().loop_stack.last()
             .ok_or(CompilerError::CompileError("break outside of loop".into()))?;
-        
+
         let target_depth = loop_ctx.scope_depth;
-        
+
         let mut close_threshold = None;
         for (i, local) in self.current().locals.iter().enumerate().rev() {
             if local.depth <= target_depth {
-                break; 
+                break;
             }
             if local.is_captured {
                 close_threshold = Some(i as u8);
             }
         }
-        
+
         if let Some(reg) = close_threshold {
-            self.emit_abx(OpCode::CloseUpvalue, reg, 0); 
+            self.emit_abx(OpCode::CloseUpvalue, reg, 0);
         }
-        
+
         let jump = self.emit_jump(OpCode::Jump, 0);
         self.current().loop_stack.last_mut().unwrap().break_jumps.push(jump);
-        
+
         Ok(())
     }
 
     fn compile_continue(&mut self) -> Result<(), CompilerError> {
         let loop_ctx = self.current_ref().loop_stack.last()
             .ok_or(CompilerError::CompileError("continue outside of loop".into()))?;
-            
+
         let target_depth = loop_ctx.scope_depth;
         let start_label = loop_ctx.start_label;
-        
+
         let mut close_threshold = None;
         for (i, local) in self.current().locals.iter().enumerate().rev() {
             if local.depth <= target_depth {
@@ -194,101 +180,121 @@ impl ControlFlowCompiler for Compiler {
         if let Some(reg) = close_threshold {
             self.emit_abx(OpCode::CloseUpvalue, reg, 0);
         }
-        
+
         self.emit_abx(OpCode::Jump, 0, start_label as u16);
         Ok(())
     }
 
-    fn compile_for(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-        let mut inner = pair.into_inner();
-        let var_name = inner.next().unwrap().as_str().to_string();
+    fn compile_for(&mut self, var: &str, iterable: &ForIterable, body: &Block) -> Result<u8, CompilerError> {
+        let iter_src_reg = match iterable {
+            ForIterable::Expr(expr) => self.compile_expr(expr)?,
+            ForIterable::Range { start, end } => {
+                // Build a list [start, start+1, ..., end-1] for the VM iterator
+                let count = if *end >= *start { (end - start) as usize } else { 0 };
+                if count > 255 {
+                    return Err(CompilerError::CompilerLimitation(
+                        "for..in range with more than 255 iterations; use a while loop instead".into(),
+                    ));
+                }
 
-        let iterable_expr = inner.next().unwrap();
-        let body_block = inner.next().unwrap();
+                let list_reg = self.alloc_reg()?;
+                let start_elem = self.current().reg_top;
 
-        let iter_src_reg = self.compile_expr(iterable_expr)?;
-        
+                for i in *start..*end {
+                    let r = self.alloc_reg()?;
+                    let ci = self.add_constant(Value::int(i as i64));
+                    if ci > 0xFFFF {
+                        return Err(CompilerError::TooManyConstants);
+                    }
+                    self.emit_abx(OpCode::LoadConst, r, ci as u16);
+                }
+
+                self.emit_abc(OpCode::BuildList, list_reg, start_elem, count as u8);
+
+                for _ in 0..count {
+                    let top = self.current().reg_top - 1;
+                    self.free_reg(top);
+                }
+
+                list_reg
+            }
+        };
+
         let iter_reg = self.alloc_contiguous(2)?;
         let val_reg = iter_reg + 1;
-        
-        self.emit_abc(OpCode::GetIter, iter_reg, iter_src_reg, 0); 
-        
+
+        self.emit_abc(OpCode::GetIter, iter_reg, iter_src_reg, 0);
+
         let start_label = self.current().bytecode.len();
         self.enter_loop(start_label);
-        
+
         let jump_exit_idx = self.emit_jump(OpCode::ForIter, iter_reg);
-        
+
         self.begin_scope();
         let depth = self.current().scope_depth;
         self.current().locals.push(Local {
-            name: var_name,
+            name: var.to_string(),
             depth,
             is_captured: false,
             reg: val_reg,
         });
 
         let body_target = self.alloc_reg()?;
-        self.compile_block(body_block, body_target)?;
+        self.compile_block(body, body_target)?;
         self.free_reg(body_target);
-        
+
         self.emit_abx(OpCode::Jump, 0, start_label as u16);
-        
+
         self.patch_jump(jump_exit_idx);
-        
+
         self.end_scope();
 
         self.exit_loop();
 
         self.free_reg(iter_reg);
         self.free_reg(iter_src_reg);
-        
+
         let target_reg = self.alloc_reg()?;
         self.emit_abx(OpCode::LoadNil, target_reg, 0);
         Ok(target_reg)
     }
 
-    fn compile_forever(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-        let block = pair.into_inner().next().unwrap();
-        
+    fn compile_forever(&mut self, body: &Block) -> Result<u8, CompilerError> {
         let start_label = self.current().bytecode.len();
         self.enter_loop(start_label);
-        
+
         let body_reg = self.alloc_reg()?;
-        self.compile_block(block, body_reg)?;
+        self.compile_block(body, body_reg)?;
         self.free_reg(body_reg);
-        
+
         self.emit_abx(OpCode::Jump, 0, start_label as u16);
-        
+
         self.exit_loop();
-        
+
         let target_reg = self.alloc_reg()?;
         self.emit_abx(OpCode::LoadNil, target_reg, 0);
         Ok(target_reg)
     }
 
-    fn compile_while(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-        let mut inner = pair.into_inner();
-        let cond_expr = inner.next().unwrap();
-        let body_block = inner.next().unwrap();
-
+    fn compile_while(&mut self, condition: &Expr, body: &Block) -> Result<u8, CompilerError> {
         let start_label = self.current().bytecode.len();
 
-        let cond_reg = self.compile_expr(cond_expr)?;
+        let cond_reg = self.compile_expr(condition)?;
 
         let jump_end = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
-        
-        self.free_reg(cond_reg); 
+
+        self.free_reg(cond_reg);
 
         self.enter_loop(start_label);
-        
+
         let body_reg = self.alloc_reg()?;
-        self.compile_block(body_block, body_reg)?;
-        self.free_reg(body_reg); 
+        self.compile_block(body, body_reg)?;
+        self.free_reg(body_reg);
 
         self.emit_abx(OpCode::Jump, 0, start_label as u16);
 
         self.patch_jump(jump_end);
-        
+
         self.exit_loop();
 
         let target_reg = self.alloc_reg()?;
@@ -297,15 +303,10 @@ impl ControlFlowCompiler for Compiler {
         Ok(target_reg)
     }
 
-    fn compile_prove(&mut self, pair: Pair<Rule>) -> Result<u8, CompilerError> {
-        // pair is prove_expr: "prove" ~ block
-        let block = pair.into_inner().next().unwrap(); // the block
-        let block_source = block.as_str().to_string();
+    fn compile_prove(&mut self, body: &Block, source: &str) -> Result<u8, CompilerError> {
+        // Walk body stmts directly to find public/witness declarations
+        let capture_names = prescan_prove_block(body)?;
 
-        // Pre-scan: parse block source to find public/witness declarations
-        let capture_names = prescan_prove_declarations(&block_source)?;
-
-        // Build capture map: { "name": value, ... }
         let count = capture_names.len();
         if count > 127 {
             return Err(CompilerError::CompilerLimitation(
@@ -349,7 +350,6 @@ impl ControlFlowCompiler for Compiler {
 
             self.emit_abc(OpCode::BuildMap, map_reg, start_reg, count as u8);
 
-            // Free key/value registers
             for _ in 0..(count * 2) {
                 let top = self.current().reg_top - 1;
                 self.free_reg(top);
@@ -360,8 +360,11 @@ impl ControlFlowCompiler for Compiler {
             self.emit_abc(OpCode::BuildMap, map_reg, start, 0);
         }
 
-        // Store block source as string constant
-        let src_handle = self.intern_string(&block_source);
+        // Store block source as string constant.
+        // The source includes the `prove` keyword; strip it so the handler
+        // receives source starting with `{`.
+        let block_source = &source[source.find('{').unwrap_or(0)..];
+        let src_handle = self.intern_string(block_source);
         let src_val = Value::string(src_handle);
         let src_idx = self.add_constant(src_val);
         if src_idx > 0xFFFF {
@@ -371,54 +374,31 @@ impl ControlFlowCompiler for Compiler {
         // Emit Prove R[map_reg], K[src_idx]
         self.emit_abx(OpCode::Prove, map_reg, src_idx as u16);
 
-        // Result is nil (handler sets R[A] = nil)
         Ok(map_reg)
     }
 }
 
-/// Pre-scan a prove block source to extract public/witness declaration names.
+/// Walk prove block AST to extract public/witness declaration names.
 ///
-/// Parses the block as `Rule::block` and collects all identifiers from
-/// `public_decl` and `witness_decl` statements. Supports array syntax `x[N]`
-/// which expands to `x_0, x_1, ..., x_{N-1}`.
-fn prescan_prove_declarations(block_source: &str) -> Result<Vec<String>, CompilerError> {
-    let pairs = AchronymeParser::parse(Rule::block, block_source)
-        .map_err(|e| CompilerError::ParseError(format!("prove pre-scan: {e}")))?;
-
-    let block_pair = pairs.into_iter().next().unwrap();
+/// Supports array syntax `x[N]` which expands to `x_0, x_1, ..., x_{N-1}`.
+fn prescan_prove_block(block: &Block) -> Result<Vec<String>, CompilerError> {
     let mut names = Vec::new();
 
-    for stmt in block_pair.into_inner() {
-        if stmt.as_rule() != Rule::stmt {
-            continue;
-        }
-        let inner = match stmt.into_inner().next() {
-            Some(inner) => inner,
-            None => continue,
-        };
-        match inner.as_rule() {
-            Rule::public_decl | Rule::witness_decl => {
-                let mut children = inner.into_inner().peekable();
-                while let Some(child) = children.next() {
-                    if child.as_rule() == Rule::identifier {
-                        let name = child.as_str().to_string();
-                        if children.peek().map(|p| p.as_rule()) == Some(Rule::array_size) {
-                            let size_pair = children.next().unwrap();
-                            let s = size_pair.into_inner().next().unwrap().as_str();
-                            let n: usize = s.parse().map_err(|_| {
-                                CompilerError::ParseError(format!("invalid array size: {s}"))
-                            })?;
-                            if n > 10_000 {
-                                return Err(CompilerError::ParseError(format!(
-                                    "array size {n} exceeds maximum of 10,000"
-                                )));
-                            }
-                            for i in 0..n {
-                                names.push(format!("{name}_{i}"));
-                            }
-                        } else {
-                            names.push(name);
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::PublicDecl { names: decls, .. } | Stmt::WitnessDecl { names: decls, .. } => {
+                for decl in decls {
+                    if let Some(n) = decl.array_size {
+                        if n > 10_000 {
+                            return Err(CompilerError::CompilerLimitation(format!(
+                                "array size {n} exceeds maximum of 10,000"
+                            )));
                         }
+                        for i in 0..n {
+                            names.push(format!("{}_{i}", decl.name));
+                        }
+                    } else {
+                        names.push(decl.name.clone());
                     }
                 }
             }

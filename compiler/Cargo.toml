@@ -9,7 +9,6 @@ memory = { path = "../memory" }
 vm = { path = "../vm" }
 constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
-pest = "2.6"
 ir = { path = "../ir" }
 
 [dev-dependencies]
