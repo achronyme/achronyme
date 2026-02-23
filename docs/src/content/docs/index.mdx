@@ -1,0 +1,32 @@
+---
+title: Achronyme
+description: A programming language for zero-knowledge circuits.
+template: splash
+hero:
+  tagline: Write readable code. Decide what gets proven. Same language for general execution and ZK circuit compilation.
+  actions:
+    - text: Get Started
+      link: /getting-started/introduction/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/eddndev/achronyme
+      variant: minimal
+      icon: github
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Dual Mode" icon="rocket">
+    Run programs normally with `ach run` or compile to ZK circuits with `ach circuit`. Same language, two modes.
+  </Card>
+  <Card title="Two Backends" icon="setting">
+    R1CS (Groth16) and Plonkish (KZG-PlonK). Choose the right backend for your proof system.
+  </Card>
+  <Card title="Inline Proofs" icon="approve-check">
+    `prove {}` blocks compile circuits, generate witnesses, and produce proofs — all from within your program.
+  </Card>
+  <Card title="snarkjs Compatible" icon="external">
+    Export `.r1cs` and `.wtns` files directly consumable by snarkjs for Groth16 proof generation.
+  </Card>
+</CardGrid>

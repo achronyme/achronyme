@@ -1,0 +1,51 @@
+---
+title: Installation
+description: How to install and build Achronyme.
+---
+
+## From Source
+
+Achronyme is written in Rust. You need a recent Rust toolchain (1.77+).
+
+```bash
+git clone https://github.com/eddndev/achronyme.git
+cd achronyme
+cargo build --release
+```
+
+The binary is at `target/release/ach`.
+
+### Verify the build
+
+```bash
+cargo test --workspace     # 718 unit tests
+bash test/run_tests.sh     # 54 integration tests
+```
+
+## Optional: snarkjs Integration
+
+For full Groth16 proof generation with `ach circuit`, install snarkjs:
+
+```bash
+npm install -g snarkjs
+```
+
+Achronyme can generate `.r1cs` and `.wtns` files directly consumable by snarkjs:
+
+```bash
+snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit.zkey
+snarkjs groth16 prove circuit.zkey witness.wtns proof.json public.json
+snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+## Optional: Native Proof Generation
+
+Achronyme includes native Groth16 (ark-groth16) and PlonK (halo2-KZG) backends. No external tools needed for `prove {}` blocks — proofs are generated in-process.
+
+For `prove {}` blocks with Groth16 via snarkjs, you need a Powers of Tau file:
+
+```bash
+ach run script.ach --ptau pot12_final.ptau
+```
+
+Without `--ptau`, prove blocks still compile the circuit, generate the witness, and verify constraints locally (returning `nil` instead of a proof object).

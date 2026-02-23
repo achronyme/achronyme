@@ -23,3 +23,8 @@ changes.txt
 
 # Proptest
 **/*.proptest-regressions
+
+# Astro / Starlight (docs site)
+docs/node_modules/
+docs/.astro/
+docs/dist/
