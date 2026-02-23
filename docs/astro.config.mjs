@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'Achronyme Docs',
 			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com/eddndev/achronyme' },
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/achronyme/achronyme' },
 			],
 			defaultLocale: 'root',
 			locales: {
