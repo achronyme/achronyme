@@ -1,0 +1,97 @@
+---
+title: Introduction
+description: What is Achronyme and why it exists.
+---
+
+Achronyme is a programming language for zero-knowledge circuits.
+
+Write readable code. Decide what gets proven. Same language for general execution and ZK circuit compilation.
+
+## Quick Look
+
+### General-purpose execution
+
+```
+let make_counter = fn(init) {
+    mut n = init
+    return fn() { n = n + 1; return n }
+}
+let c = make_counter(0)
+print(c())  // 1
+print(c())  // 2
+```
+
+### ZK circuit
+
+```
+public root
+witness leaf
+witness path[3]
+witness indices[3]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+```bash
+ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=...,indices_0=0,indices_1=1,indices_2=0"
+# → circuit.r1cs + witness.wtns (snarkjs-compatible)
+```
+
+### Inline proof generation
+
+```
+let secret = field(42)
+let hash = field("17159...")  // poseidon(42, 0)
+
+let p = prove {
+    witness secret
+    public hash
+    assert_eq(poseidon(secret, 0), hash)
+}
+
+print(proof_json(p))  // Groth16 proof, verifiable on-chain
+```
+
+## How It Works
+
+Achronyme has two execution modes from the same source:
+
+**VM mode** (`ach run`) — Full language: closures, recursion, GC, arrays, maps, strings, I/O. Code runs like any scripting language.
+
+**Circuit mode** (`ach circuit`) — Compiles to arithmetic constraints over BN254. No loops at runtime, no I/O — everything is unrolled and flattened into a constraint system for zero-knowledge proofs.
+
+The `prove {}` block bridges both: it runs inside the VM, compiles its body as a circuit, generates a witness from captured variables, and produces a cryptographic proof — all in one expression.
+
+```
+Source (.ach)
+    │
+    ├─► Parser (PEG) → AST
+    │       │
+    │       ├─► Bytecode → VM          (run mode)
+    │       │
+    │       └─► SSA IR → Optimize
+    │               │
+    │           ┌───┴───┐
+    │           ▼       ▼
+    │        R1CS    Plonkish
+    │      (Groth16) (KZG-PlonK)
+    │           │       │
+    │           ▼       ▼
+    │       .r1cs    Gates/Lookups
+    │       .wtns    Copy constraints
+    │           │       │
+    │           └───┬───┘
+    │               ▼
+    │         Native proof
+    │
+    └─► prove { } → compile + witness + verify + proof (inline)
+```
+
+## Status
+
+- 718 unit tests + 54 integration tests
+- 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
+- Native in-process proof generation (no external tools)
+- snarkjs-compatible binary export
+- 3 security audits resolved
+- Poseidon hash compatible with circomlibjs

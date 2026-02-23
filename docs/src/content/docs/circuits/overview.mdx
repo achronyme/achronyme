@@ -1,0 +1,98 @@
+---
+title: Circuit Programming Overview
+description: How Achronyme compiles programs into zero-knowledge circuits.
+---
+
+Achronyme is a dual-mode language. The same source code can run as a general-purpose program **or** compile into an arithmetic circuit for zero-knowledge proofs.
+
+## What Is a Circuit?
+
+A ZK circuit is a system of polynomial constraints over a finite field. Given public inputs (known to the verifier) and witness inputs (known only to the prover), the circuit enforces that certain relationships hold — without revealing the witness.
+
+In Achronyme, you write circuits using the same syntax as regular programs, with a few restrictions.
+
+## Two Ways to Build Circuits
+
+### 1. Standalone circuit file
+
+```
+public output
+witness secret
+
+assert_eq(poseidon(secret, 0), output)
+```
+
+Compile with the CLI:
+
+```bash
+ach circuit hash.ach --inputs "output=17159...,secret=42"
+```
+
+### 2. Inline `prove {}` block
+
+```
+let secret = field(42)
+let hash = field("17159...")
+
+let p = prove {
+    witness secret
+    public hash
+    assert_eq(poseidon(secret, 0), hash)
+}
+```
+
+The `prove {}` block runs inside the VM, captures variables from scope, compiles the body as a circuit, and generates a proof.
+
+## What Works in Circuits
+
+| Feature | Behavior |
+|---------|----------|
+| Arithmetic (`+`, `-`, `*`, `/`, `^`) | Compiles to field operations and constraints |
+| `let` bindings | Aliases (zero cost) |
+| `if/else` | Compiles to `mux` — both branches evaluated |
+| `for` loops (range or array) | Statically unrolled |
+| `fn` calls | Inlined at each call site |
+| `assert_eq(a, b)` | Enforces `a == b` (1 constraint) |
+| `poseidon(a, b)` | Poseidon 2-to-1 hash (361 constraints) |
+| `range_check(x, bits)` | Value fits in N bits |
+| Comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`) | Field-safe gadgets |
+| Boolean logic (`&&`, `\|\|`, `!`) | With boolean enforcement |
+
+## What Doesn't Work in Circuits
+
+| Feature | Reason |
+|---------|--------|
+| `while` loops | Unknown iteration count — can't unroll |
+| `break` / `continue` | Requires dynamic control flow |
+| `print()` | Side effect, no circuit equivalent |
+| Strings, maps | Not representable as field elements |
+| Recursion | Functions are inlined, no stack |
+
+These are rejected at compile time with clear error messages.
+
+## Compilation Pipeline
+
+```
+Source → Parser → AST → IR Lowering → SSA IR → Optimize → Backend → Constraints
+```
+
+1. **Parse** — PEG grammar produces an AST
+2. **Lower** — AST becomes flat SSA instructions (`Add`, `Mul`, `Mux`, `PoseidonHash`, ...)
+3. **Optimize** — Constant folding, dead code elimination, boolean propagation
+4. **Compile** — R1CS or Plonkish backend generates constraints
+5. **Witness** — Concrete values fill the constraint system
+6. **Export** — Binary `.r1cs` + `.wtns` files (R1CS) or in-memory verification (Plonkish)
+
+## Backends
+
+Achronyme supports two constraint system backends:
+
+**R1CS** (default) — Rank-1 Constraint System. Each constraint is `A * B = C` where A, B, C are linear combinations of wires. Compatible with Groth16 via snarkjs.
+
+**Plonkish** — Gate-based system with custom gates, lookups, and copy constraints. Uses KZG polynomial commitments. Some operations (like `range_check`) are more efficient with lookups.
+
+Select the backend with `--backend`:
+
+```bash
+ach circuit file.ach --backend plonkish --inputs "x=42"
+```

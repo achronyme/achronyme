@@ -1,0 +1,86 @@
+---
+title: Hello World
+description: Your first Achronyme program and your first circuit.
+---
+
+## General-Purpose Program
+
+Create a file `hello.ach`:
+
+```
+print("Hello, world!")
+```
+
+Run it:
+
+```bash
+ach run hello.ach
+```
+
+Output:
+
+```
+Hello, world!
+```
+
+### A more interesting example
+
+```
+let fib = fn fib(n) {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+for i in 0..10 {
+    print(fib(i))
+}
+```
+
+## Your First Circuit
+
+Create a file `multiply.ach`:
+
+```
+public product
+witness a
+witness b
+
+assert_eq(a * b, product)
+```
+
+This circuit proves that the prover knows two secret numbers `a` and `b` whose product equals the public value `product`.
+
+Compile it:
+
+```bash
+ach circuit multiply.ach --inputs "product=42,a=6,b=7"
+```
+
+This produces `circuit.r1cs` and `witness.wtns`, ready for snarkjs proof generation.
+
+### What just happened?
+
+1. The parser read `multiply.ach` and built an AST
+2. The IR lowering phase converted it to SSA instructions
+3. The R1CS backend compiled the multiplication into a single constraint: `a * b = product`
+4. The witness generator filled in the concrete values: `a=6`, `b=7`, `product=42`
+5. The exporter wrote snarkjs-compatible binary files
+
+## Inline Proof
+
+You can also generate proofs directly from Achronyme code:
+
+```
+let a = field(6)
+let b = field(7)
+let product = field(42)
+
+let p = prove {
+    witness a
+    witness b
+    public product
+    assert_eq(a * b, product)
+}
+```
+
+The `prove {}` block compiles the circuit, captures variables from the enclosing scope, generates a witness, verifies constraints, and — if a proving backend is available — returns a cryptographic proof.

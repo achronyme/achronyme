@@ -1,0 +1,96 @@
+---
+title: Types & Values
+description: Achronyme's type system and value representations.
+---
+
+Achronyme is dynamically typed. All values are represented as tagged 64-bit words with a 4-bit tag and 60-bit payload.
+
+## Types
+
+| Type | Examples | Description |
+|------|---------|-------------|
+| Int | `42`, `-7` | 60-bit signed integer (-2^59 to 2^59-1) |
+| Bool | `true`, `false` | Boolean values |
+| String | `"hello"` | UTF-8 strings (heap-allocated) |
+| List | `[1, 2, 3]` | Ordered collections |
+| Map | `{"a": 1, "b": 2}` | Key-value maps |
+| Field | `field(42)`, `field("0x2a")` | BN254 scalar field element |
+| Function | `fn(x) { x + 1 }` | First-class functions and closures |
+| Proof | result of `prove { }` | Groth16 or PlonK proof object |
+| Nil | `nil` | Absence of value |
+
+## Integers
+
+Integers are 60-bit signed values stored inline (no heap allocation). Range: -576460752303423488 to 576460752303423487.
+
+```
+let x = 42
+let y = -7
+let big = 100000000000
+```
+
+If an arithmetic operation overflows the i60 range, the result is automatically promoted to a `FieldElement` on the heap.
+
+## Booleans
+
+```
+let yes = true
+let no = false
+```
+
+In circuits, `true` maps to field element 1 and `false` maps to 0.
+
+## Strings
+
+```
+let greeting = "hello, world"
+let empty = ""
+```
+
+## Lists
+
+```
+let nums = [1, 2, 3]
+let mixed = [1, "two", true]
+let nested = [[1, 2], [3, 4]]
+```
+
+## Maps
+
+```
+let person = {"name": "Alice", "age": 30}
+```
+
+## Field Elements
+
+BN254 scalar field elements for cryptographic operations. Montgomery form internally.
+
+```
+let a = field(42)                // from integer
+let b = field("0xFF")            // from hex string
+let c = field("21888242871839275222246405745257275088548364400416034343698204186575808495617")  // from decimal string
+
+let sum = a + b
+let prod = a * b
+let inv = field(1) / a           // modular inverse
+```
+
+Field elements are essential for circuit programming — all circuit values are field elements under the hood.
+
+## Nil
+
+```
+let nothing = nil
+```
+
+`nil` represents the absence of a value. Functions without a `return` statement return `nil`.
+
+## Variable Bindings
+
+```
+let x = 42          // immutable binding
+mut y = 0           // mutable binding
+y = y + 1           // reassignment (only for mut)
+```
+
+`let` creates an immutable binding. `mut` creates a mutable binding that can be reassigned.
