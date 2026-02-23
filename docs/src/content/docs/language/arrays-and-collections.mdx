@@ -3,4 +3,156 @@ title: "Arrays & Collections"
 description: "Arrays, lists, and maps."
 ---
 
-Content coming soon.
+Achronyme has two built-in collection types: arrays (ordered lists) and maps (key-value dictionaries). Both are heap-allocated, mutable, and can hold any value type.
+
+## Arrays
+
+Create arrays with square brackets. Access elements by index (zero-based).
+
+```
+let arr = [10, 20, 30]
+assert(arr[0] == 10)
+assert(arr[2] == 30)
+
+let mixed = [1, "two", true, nil]
+assert(len(mixed) == 4)
+
+let nested = [[1, 2], [3, 4]]
+assert(nested[0][1] == 2)
+```
+
+Mutate arrays with index assignment, `push()`, and `pop()`:
+
+```
+mut nums = [0, 0, 0]
+nums[0] = 10
+assert(nums[0] == 10)
+
+mut items = [1, 2]
+push(items, 3)
+assert(len(items) == 3)
+
+let last = pop(items)
+assert(last == 3)
+assert(len(items) == 2)
+```
+
+## Array Builtins
+
+| Function | Description |
+|----------|-------------|
+| `len(arr)` | Number of elements |
+| `push(arr, val)` | Append to end |
+| `pop(arr)` | Remove and return last element |
+
+## Maps
+
+Create maps with curly braces. Keys can be bare identifiers or quoted strings.
+
+```
+let person = {name: "Alice", age: 30}
+assert(person.name == "Alice")
+assert(person["age"] == 30)
+
+let m = {"hello": 1, "world": 2}
+assert(m["hello"] == 1)
+```
+
+Access values with dot notation or bracket notation. Bracket notation supports dynamic keys.
+
+```
+let key = "name"
+assert(person[key] == "Alice")
+
+let nested = {a: {b: {c: 42}}}
+assert(nested.a.b.c == 42)
+```
+
+Add or update fields by assignment:
+
+```
+mut config = {}
+config.debug = true
+config["port"] = 8080
+assert(len(config) == 2)
+```
+
+## Map Builtins
+
+| Function | Description |
+|----------|-------------|
+| `len(map)` | Number of key-value pairs |
+| `keys(map)` | Array of all keys |
+
+## Iteration
+
+Use `for..in` to iterate over arrays directly or over map keys with `keys()`.
+
+```
+mut total = 0
+for x in [10, 20, 30] {
+    total = total + x
+}
+assert(total == 60)
+
+let scores = {math: 95, science: 88, english: 92}
+mut sum = 0
+for k in keys(scores) {
+    sum = sum + scores[k]
+}
+assert(sum == 275)
+```
+
+## Patterns
+
+**Dispatch table** — store functions in a map for dynamic lookup:
+
+```
+let ops = {
+    add: fn(a, b) { a + b },
+    sub: fn(a, b) { a - b },
+    mul: fn(a, b) { a * b }
+}
+assert(ops.add(10, 3) == 13)
+assert(ops["mul"](4, 5) == 20)
+```
+
+**Records** — use maps as lightweight structs:
+
+```
+fn make_point(x, y) {
+    return {x: x, y: y}
+}
+let p = make_point(3, 4)
+assert(p.x == 3)
+```
+
+**Word counting** — dynamic keys for aggregation:
+
+```
+mut counts = {}
+let words = ["apple", "banana", "apple", "cherry", "banana", "apple"]
+for w in words {
+    if counts[w] == nil {
+        counts[w] = 0
+    }
+    counts[w] = counts[w] + 1
+}
+assert(counts.apple == 3)
+assert(counts.banana == 2)
+```
+
+**Nested structures** — arrays of maps, maps of arrays:
+
+```
+let people = [
+    {name: "Alice", age: 30},
+    {name: "Bob", age: 25}
+]
+assert(people[0].name == "Alice")
+
+mut bag = {items: []}
+push(bag.items, "sword")
+push(bag.items, "shield")
+assert(len(bag.items) == 2)
+```
