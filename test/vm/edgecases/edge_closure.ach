@@ -1,0 +1,74 @@
+fn deep_closure() {
+    print("ENTRY POINT")
+    fn () {
+        print("PASS: cl01")
+        fn () {
+            print("PASS: cl02")
+            fn () {
+                print("PASS: cl03")
+                fn () {
+                    print("PASS: cl04")
+                    fn () {
+                        print("PASS: cl05")
+                        fn () {
+                            print("PASS: cl06")
+                            fn () {
+                                print("PASS: cl07")
+                                fn  () {
+                                    print("PASS: cl08")
+                                    fn () {
+                                        print("PASS: cl09")
+                                        fn () {
+                                            print("PASS: cl10")
+                                            fn () {
+                                                print("PASS: cl11")
+                                                fn () {
+                                                    print("PASS: cl12")
+                                                    fn () {
+                                                        print("PASS: cl13")
+                                                        fn () {
+                                                            print("PASS: cl14")
+                                                            fn () {
+                                                                print("PASS: cl15")
+                                                                fn () {
+                                                                    print("PASS: cl16")
+                                                                    fn () {
+                                                                        print("PASS: cl17")
+                                                                        fn () {
+                                                                            print("PASS: cl18")
+                                                                            fn () {
+                                                                                print("PASS: cl19")
+                                                                                fn () {
+                                                                                    print("PASS: cl20")
+                                                                                    fn () {
+                                                                                        print("PASS: cl21")
+                                                                                        fn () {
+                                                                                            print("PASS: cl22")
+                                                                                            fn () {
+                                                                                                print("PASS: cl23")
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+deep_closure()()()()()()()()()()()()()()()()()()()()()()()()
