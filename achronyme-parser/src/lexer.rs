@@ -58,7 +58,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn skip_whitespace_and_comments(&mut self) {
+    fn skip_whitespace_and_comments(&mut self) -> Result<(), ParseError> {
         loop {
             match self.peek() {
                 Some(b' ' | b'\t' | b'\r' | b'\n') => {
@@ -77,20 +77,31 @@ impl<'a> Lexer<'a> {
                         }
                     } else if self.peek2() == Some(b'*') {
                         // Block comment
+                        let comment_line = self.line;
+                        let comment_col = self.col;
                         self.advance();
                         self.advance();
+                        let mut closed = false;
                         loop {
                             match self.peek() {
                                 None => break,
                                 Some(b'*') if self.peek2() == Some(b'/') => {
                                     self.advance();
                                     self.advance();
+                                    closed = true;
                                     break;
                                 }
                                 _ => {
                                     self.advance();
                                 }
                             }
+                        }
+                        if !closed {
+                            return Err(ParseError::new(
+                                "unterminated block comment",
+                                comment_line,
+                                comment_col,
+                            ));
                         }
                     } else {
                         break;
@@ -99,10 +110,11 @@ impl<'a> Lexer<'a> {
                 _ => break,
             }
         }
+        Ok(())
     }
 
     fn next_token(&mut self) -> Result<Token, ParseError> {
-        self.skip_whitespace_and_comments();
+        self.skip_whitespace_and_comments()?;
 
         let sp = self.span();
         let offset = self.pos;

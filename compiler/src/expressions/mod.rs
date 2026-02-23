@@ -228,7 +228,9 @@ impl Compiler {
         }
 
         if arg_count > 255 {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::CompilerLimitation(
+                format!("function call has {arg_count} arguments (maximum is 255)"),
+            ));
         }
 
         self.emit_abc(OpCode::Call, func_reg, func_reg, arg_count as u8);

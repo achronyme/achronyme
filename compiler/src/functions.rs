@@ -14,6 +14,11 @@ pub trait FunctionDefinitionCompiler {
 impl FunctionDefinitionCompiler for Compiler {
     fn compile_fn_core(&mut self, name: Option<&str>, params: &[String], body: &Block) -> Result<u8, CompilerError> {
         let fn_name = name.unwrap_or("lambda").to_string();
+        if params.len() > 255 {
+            return Err(CompilerError::CompilerLimitation(
+                format!("function `{fn_name}` has {} parameters (maximum is 255)", params.len()),
+            ));
+        }
         let arity = params.len() as u8;
 
         let global_idx = if name.is_some() {
