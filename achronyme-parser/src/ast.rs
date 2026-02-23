@@ -20,11 +20,13 @@ pub struct Program {
 pub enum Stmt {
     LetDecl {
         name: String,
+        type_ann: Option<TypeAnnotation>,
         value: Expr,
         span: Span,
     },
     MutDecl {
         name: String,
+        type_ann: Option<TypeAnnotation>,
         value: Expr,
         span: Span,
     },
@@ -43,7 +45,8 @@ pub enum Stmt {
     },
     FnDecl {
         name: String,
-        params: Vec<String>,
+        params: Vec<TypedParam>,
+        return_type: Option<TypeAnnotation>,
         body: Block,
         span: Span,
     },
@@ -69,6 +72,7 @@ pub enum Stmt {
 pub struct InputDecl {
     pub name: String,
     pub array_size: Option<usize>,
+    pub type_ann: Option<TypeAnnotation>,
 }
 
 /// A block of statements (e.g., `{ ... }`).
@@ -150,7 +154,8 @@ pub enum Expr {
     Block(Block),
     FnExpr {
         name: Option<String>,
-        params: Vec<String>,
+        params: Vec<TypedParam>,
+        return_type: Option<TypeAnnotation>,
         body: Block,
         span: Span,
     },
@@ -240,4 +245,49 @@ pub enum BinOp {
 pub enum UnaryOp {
     Neg,
     Not,
+}
+
+/// A type annotation for circuit variables and function parameters.
+///
+/// ```
+/// use achronyme_parser::ast::TypeAnnotation;
+///
+/// let t = TypeAnnotation::Field;
+/// assert_eq!(format!("{t}"), "Field");
+///
+/// let arr = TypeAnnotation::BoolArray(4);
+/// assert_eq!(format!("{arr}"), "Bool[4]");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypeAnnotation {
+    Field,
+    Bool,
+    FieldArray(usize),
+    BoolArray(usize),
+}
+
+impl std::fmt::Display for TypeAnnotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeAnnotation::Field => write!(f, "Field"),
+            TypeAnnotation::Bool => write!(f, "Bool"),
+            TypeAnnotation::FieldArray(n) => write!(f, "Field[{n}]"),
+            TypeAnnotation::BoolArray(n) => write!(f, "Bool[{n}]"),
+        }
+    }
+}
+
+/// A function parameter with an optional type annotation.
+///
+/// ```
+/// use achronyme_parser::ast::TypedParam;
+///
+/// let p = TypedParam { name: "x".into(), type_ann: None };
+/// assert_eq!(p.name, "x");
+/// assert!(p.type_ann.is_none());
+/// ```
+#[derive(Clone, Debug)]
+pub struct TypedParam {
+    pub name: String,
+    pub type_ann: Option<TypeAnnotation>,
 }

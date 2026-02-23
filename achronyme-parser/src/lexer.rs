@@ -242,6 +242,24 @@ impl<'a> Lexer<'a> {
                 }
                 return Err(ParseError::new("unexpected character `|`", sp.line, sp.col));
             }
+            b'-' => {
+                self.advance();
+                if self.peek() == Some(b'>') {
+                    self.advance();
+                    return Ok(Token {
+                        kind: TokenKind::Arrow,
+                        span: sp,
+                        lexeme: "->".into(),
+                        byte_offset: offset,
+                    });
+                }
+                return Ok(Token {
+                    kind: TokenKind::Minus,
+                    span: sp,
+                    lexeme: "-".into(),
+                    byte_offset: offset,
+                });
+            }
             b'.' => {
                 self.advance();
                 if self.peek() == Some(b'.') {
@@ -267,7 +285,6 @@ impl<'a> Lexer<'a> {
         self.advance();
         let (kind, lexeme) = match ch {
             b'+' => (TokenKind::Plus, "+"),
-            b'-' => (TokenKind::Minus, "-"),
             b'*' => (TokenKind::Star, "*"),
             b'/' => (TokenKind::Slash, "/"),
             b'%' => (TokenKind::Percent, "%"),

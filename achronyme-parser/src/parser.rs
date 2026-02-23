@@ -208,10 +208,12 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `let`
         let name = self.expect_ident()?;
+        let type_ann = self.try_parse_type_annotation()?;
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
         Ok(Stmt::LetDecl {
             name,
+            type_ann,
             value,
             span: sp,
         })
@@ -221,10 +223,12 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `mut`
         let name = self.expect_ident()?;
+        let type_ann = self.try_parse_type_annotation()?;
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
         Ok(Stmt::MutDecl {
             name,
+            type_ann,
             value,
             span: sp,
         })
@@ -270,7 +274,12 @@ impl Parser {
         } else {
             None
         };
-        Ok(InputDecl { name, array_size })
+        let type_ann = self.try_parse_type_annotation()?;
+        Ok(InputDecl {
+            name,
+            array_size,
+            type_ann,
+        })
     }
 
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -280,21 +289,27 @@ impl Parser {
         self.expect(&TokenKind::LParen)?;
         let params = self.parse_param_list()?;
         self.expect(&TokenKind::RParen)?;
+        let return_type = self.try_parse_return_type()?;
         let body = self.parse_block_inner()?;
         Ok(Stmt::FnDecl {
             name,
             params,
+            return_type,
             body,
             span: sp,
         })
     }
 
-    fn parse_param_list(&mut self) -> Result<Vec<String>, ParseError> {
+    fn parse_param_list(&mut self) -> Result<Vec<TypedParam>, ParseError> {
         let mut params = Vec::new();
         if !self.at(&TokenKind::RParen) {
-            params.push(self.expect_ident()?);
+            let name = self.expect_ident()?;
+            let type_ann = self.try_parse_type_annotation()?;
+            params.push(TypedParam { name, type_ann });
             while self.eat(&TokenKind::Comma) {
-                params.push(self.expect_ident()?);
+                let name = self.expect_ident()?;
+                let type_ann = self.try_parse_type_annotation()?;
+                params.push(TypedParam { name, type_ann });
             }
         }
         Ok(params)
@@ -358,6 +373,76 @@ impl Parser {
                 tok.span.col,
             ))
         }
+    }
+
+    // ========================================================================
+    // Type annotation helpers
+    // ========================================================================
+
+    /// Try to parse a type annotation (`: Type`). Returns `None` if no `:` is present.
+    fn try_parse_type_annotation(&mut self) -> Result<Option<TypeAnnotation>, ParseError> {
+        if !self.eat(&TokenKind::Colon) {
+            return Ok(None);
+        }
+        let ann = self.parse_type()?;
+        Ok(Some(ann))
+    }
+
+    /// Try to parse a return type annotation (`-> Type`). Returns `None` if no `->` is present.
+    fn try_parse_return_type(&mut self) -> Result<Option<TypeAnnotation>, ParseError> {
+        if !self.eat(&TokenKind::Arrow) {
+            return Ok(None);
+        }
+        let ann = self.parse_type()?;
+        Ok(Some(ann))
+    }
+
+    /// Parse a type: `Field`, `Bool`, `Field[N]`, or `Bool[N]`.
+    fn parse_type(&mut self) -> Result<TypeAnnotation, ParseError> {
+        let tok = self.peek().clone();
+        if tok.kind != TokenKind::Ident {
+            return Err(ParseError::new(
+                format!(
+                    "expected type (`Field` or `Bool`), found `{}`",
+                    tok_display(&tok)
+                ),
+                tok.span.line,
+                tok.span.col,
+            ));
+        }
+        let base = tok.lexeme.as_str();
+        if base != "Field" && base != "Bool" {
+            return Err(ParseError::new(
+                format!("expected type (`Field` or `Bool`), found `{base}`"),
+                tok.span.line,
+                tok.span.col,
+            ));
+        }
+        self.advance();
+
+        // Check for array syntax: `[N]`
+        if self.eat(&TokenKind::LBracket) {
+            let size_tok = self.expect(&TokenKind::Integer)?;
+            let size: usize = size_tok.lexeme.parse().map_err(|_| {
+                ParseError::new(
+                    format!("invalid array size: {}", size_tok.lexeme),
+                    size_tok.span.line,
+                    size_tok.span.col,
+                )
+            })?;
+            self.expect(&TokenKind::RBracket)?;
+            return Ok(match base {
+                "Field" => TypeAnnotation::FieldArray(size),
+                "Bool" => TypeAnnotation::BoolArray(size),
+                _ => unreachable!(),
+            });
+        }
+
+        Ok(match base {
+            "Field" => TypeAnnotation::Field,
+            "Bool" => TypeAnnotation::Bool,
+            _ => unreachable!(),
+        })
     }
 
     // ========================================================================
@@ -752,10 +837,12 @@ impl Parser {
         self.expect(&TokenKind::LParen)?;
         let params = self.parse_param_list()?;
         self.expect(&TokenKind::RParen)?;
+        let return_type = self.try_parse_return_type()?;
         let body = self.parse_block_inner()?;
         Ok(Expr::FnExpr {
             name,
             params,
+            return_type,
             body,
             span: sp,
         })
@@ -874,6 +961,7 @@ fn kind_name(kind: &TokenKind) -> &'static str {
         TokenKind::Or => "||",
         TokenKind::Not => "!",
         TokenKind::Assign => "=",
+        TokenKind::Arrow => "->",
         TokenKind::DotDot => "..",
         TokenKind::Dot => ".",
         TokenKind::LParen => "(",
@@ -1023,9 +1111,17 @@ mod tests {
     fn parse_fn_decl() {
         let prog = parse_program("fn add(a, b) { a + b }").unwrap();
         match &prog.stmts[0] {
-            Stmt::FnDecl { name, params, .. } => {
+            Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
                 assert_eq!(name, "add");
-                assert_eq!(params, &["a", "b"]);
+                let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, &["a", "b"]);
+                assert!(params.iter().all(|p| p.type_ann.is_none()));
+                assert!(return_type.is_none());
             }
             other => panic!("expected FnDecl, got {other:?}"),
         }
@@ -1256,7 +1352,8 @@ mod tests {
         match &prog.stmts[0] {
             Stmt::Expr(Expr::FnExpr { name, params, .. }) => {
                 assert!(name.is_none());
-                assert_eq!(params, &["x"]);
+                let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, &["x"]);
             }
             other => panic!("expected FnExpr, got {other:?}"),
         }
@@ -1394,6 +1491,233 @@ mod tests {
                 }
             }
             other => panic!("expected Call, got {other:?}"),
+        }
+    }
+
+    // ========================================================================
+    // Type annotation tests
+    // ========================================================================
+
+    #[test]
+    fn parse_let_with_type() {
+        let prog = parse_program("let x: Field = 5").unwrap();
+        match &prog.stmts[0] {
+            Stmt::LetDecl { name, type_ann, .. } => {
+                assert_eq!(name, "x");
+                assert_eq!(*type_ann, Some(TypeAnnotation::Field));
+            }
+            other => panic!("expected LetDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_let_with_bool_type() {
+        let prog = parse_program("let ok: Bool = true").unwrap();
+        match &prog.stmts[0] {
+            Stmt::LetDecl { name, type_ann, .. } => {
+                assert_eq!(name, "ok");
+                assert_eq!(*type_ann, Some(TypeAnnotation::Bool));
+            }
+            other => panic!("expected LetDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_let_without_type() {
+        let prog = parse_program("let x = 5").unwrap();
+        match &prog.stmts[0] {
+            Stmt::LetDecl { type_ann, .. } => {
+                assert!(type_ann.is_none());
+            }
+            other => panic!("expected LetDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_mut_with_type() {
+        let prog = parse_program("mut x: Field = 10").unwrap();
+        match &prog.stmts[0] {
+            Stmt::MutDecl { name, type_ann, .. } => {
+                assert_eq!(name, "x");
+                assert_eq!(*type_ann, Some(TypeAnnotation::Field));
+            }
+            other => panic!("expected MutDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_public_with_type() {
+        let prog = parse_program("public x: Field").unwrap();
+        match &prog.stmts[0] {
+            Stmt::PublicDecl { names, .. } => {
+                assert_eq!(names[0].name, "x");
+                assert_eq!(names[0].type_ann, Some(TypeAnnotation::Field));
+            }
+            other => panic!("expected PublicDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_witness_with_type() {
+        let prog = parse_program("witness flag: Bool").unwrap();
+        match &prog.stmts[0] {
+            Stmt::WitnessDecl { names, .. } => {
+                assert_eq!(names[0].name, "flag");
+                assert_eq!(names[0].type_ann, Some(TypeAnnotation::Bool));
+            }
+            other => panic!("expected WitnessDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_witness_array_with_type() {
+        let prog = parse_program("witness path[3]: Field").unwrap();
+        match &prog.stmts[0] {
+            Stmt::WitnessDecl { names, .. } => {
+                assert_eq!(names[0].name, "path");
+                assert_eq!(names[0].array_size, Some(3));
+                assert_eq!(names[0].type_ann, Some(TypeAnnotation::Field));
+            }
+            other => panic!("expected WitnessDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_public_without_type() {
+        let prog = parse_program("public x").unwrap();
+        match &prog.stmts[0] {
+            Stmt::PublicDecl { names, .. } => {
+                assert!(names[0].type_ann.is_none());
+            }
+            other => panic!("expected PublicDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_fn_with_typed_params() {
+        let prog = parse_program("fn hash(a: Field, b: Field) -> Field { a + b }").unwrap();
+        match &prog.stmts[0] {
+            Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                assert_eq!(name, "hash");
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].name, "a");
+                assert_eq!(params[0].type_ann, Some(TypeAnnotation::Field));
+                assert_eq!(params[1].name, "b");
+                assert_eq!(params[1].type_ann, Some(TypeAnnotation::Field));
+                assert_eq!(*return_type, Some(TypeAnnotation::Field));
+            }
+            other => panic!("expected FnDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_fn_mixed_typed_untyped_params() {
+        let prog = parse_program("fn f(a: Field, b) { a + b }").unwrap();
+        match &prog.stmts[0] {
+            Stmt::FnDecl {
+                params,
+                return_type,
+                ..
+            } => {
+                assert_eq!(params[0].type_ann, Some(TypeAnnotation::Field));
+                assert!(params[1].type_ann.is_none());
+                assert!(return_type.is_none());
+            }
+            other => panic!("expected FnDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_fn_expr_with_return_type() {
+        let prog = parse_program("fn(x: Bool) -> Bool { !x }").unwrap();
+        match &prog.stmts[0] {
+            Stmt::Expr(Expr::FnExpr {
+                params,
+                return_type,
+                ..
+            }) => {
+                assert_eq!(params[0].name, "x");
+                assert_eq!(params[0].type_ann, Some(TypeAnnotation::Bool));
+                assert_eq!(*return_type, Some(TypeAnnotation::Bool));
+            }
+            other => panic!("expected FnExpr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_arrow_token() {
+        // Ensure -> doesn't interfere with subtraction
+        let prog = parse_program("a - b").unwrap();
+        match &prog.stmts[0] {
+            Stmt::Expr(Expr::BinOp { op: BinOp::Sub, .. }) => {}
+            other => panic!("expected Sub, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_negative_still_works() {
+        // Ensure negation still works after lexer change
+        let prog = parse_program("-5").unwrap();
+        match &prog.stmts[0] {
+            Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOp::Neg, ..
+            }) => {}
+            other => panic!("expected Neg, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_type_annotation_array() {
+        let prog = parse_program("let a: Field[4] = [1, 2, 3, 4]").unwrap();
+        match &prog.stmts[0] {
+            Stmt::LetDecl { type_ann, .. } => {
+                assert_eq!(*type_ann, Some(TypeAnnotation::FieldArray(4)));
+            }
+            other => panic!("expected LetDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_type_annotation_bool_array() {
+        let prog = parse_program("witness flags[2]: Bool[2]").unwrap();
+        match &prog.stmts[0] {
+            Stmt::WitnessDecl { names, .. } => {
+                assert_eq!(names[0].type_ann, Some(TypeAnnotation::BoolArray(2)));
+            }
+            other => panic!("expected WitnessDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_invalid_type_annotation() {
+        assert!(parse_program("let x: Integer = 5").is_err());
+    }
+
+    #[test]
+    fn parse_multiple_public_with_types() {
+        let prog = parse_program("public x: Field, y: Bool").unwrap();
+        match &prog.stmts[0] {
+            Stmt::PublicDecl { names, .. } => {
+                assert_eq!(names.len(), 2);
+                assert_eq!(names[0].type_ann, Some(TypeAnnotation::Field));
+                assert_eq!(names[1].type_ann, Some(TypeAnnotation::Bool));
+            }
+            other => panic!("expected PublicDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn field_and_bool_not_keywords() {
+        // Field and Bool are NOT keywords, they can be used as identifiers
+        let prog = parse_program("let Field = 5").unwrap();
+        match &prog.stmts[0] {
+            Stmt::LetDecl { name, .. } => assert_eq!(name, "Field"),
+            other => panic!("expected LetDecl, got {other:?}"),
         }
     }
 }
