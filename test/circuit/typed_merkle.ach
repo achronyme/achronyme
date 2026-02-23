@@ -1,0 +1,7 @@
+// Circuit: Merkle membership proof with type annotations
+public root: Field
+witness leaf: Field
+witness path[1]: Field
+witness indices[1]: Bool
+
+merkle_verify(root, leaf, path, indices)

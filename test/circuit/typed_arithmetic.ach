@@ -1,0 +1,18 @@
+// Circuit: arithmetic with type annotations
+public out: Field
+witness a: Field
+witness b: Field
+
+// Typed let bindings
+let product: Field = a * b
+assert_eq(product, out)
+
+let sum: Field = a + b
+assert_eq(sum, a + b)
+
+let diff: Field = b - a
+assert_eq(diff, b - a)
+
+// Untyped let mixed with typed inputs (gradual typing)
+let doubled = a + a
+assert_eq(doubled, a * 2)
