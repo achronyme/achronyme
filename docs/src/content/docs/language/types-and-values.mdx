@@ -94,3 +94,15 @@ y = y + 1           // reassignment (only for mut)
 ```
 
 `let` creates an immutable binding. `mut` creates a mutable binding that can be reassigned.
+
+## Type Annotations
+
+Achronyme supports optional type annotations on variable bindings and function signatures. In circuit mode, annotations enable compile-time type checking and constraint optimization. In VM mode, annotations are parsed and accepted but execution remains dynamic.
+
+```
+let x: Field = field(42)
+let flag: Bool = true
+mut counter: Field = field(0)
+```
+
+See [Type Annotations](/circuits/type-annotations/) for the full reference in circuit context.

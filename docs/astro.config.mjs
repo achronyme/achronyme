@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import codeTheme from './src/styles/code-theme.json';
 
 // https://astro.build/config
 export default defineConfig({
@@ -16,6 +17,14 @@ export default defineConfig({
 				root: { label: 'English', lang: 'en' },
 				es: { label: 'Español' },
 			},
+			customCss: [
+				'@fontsource-variable/jetbrains-mono',
+				'./src/styles/custom.css',
+			],
+			expressiveCode: {
+				themes: [codeTheme],
+			},
+			favicon: '/favicon.svg',
 			sidebar: [
 				{
 					label: 'Getting Started',
@@ -39,6 +48,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'circuits/overview' },
 						{ label: 'Declarations', slug: 'circuits/declarations' },
+						{ label: 'Type Annotations', slug: 'circuits/type-annotations' },
 						{ label: 'Builtins', slug: 'circuits/builtins' },
 						{ label: 'Operators & Costs', slug: 'circuits/operators-and-costs' },
 						{ label: 'Functions in Circuits', slug: 'circuits/functions' },

@@ -157,6 +157,32 @@ let fib = fn fib(n) {
 assert(fib(10) == 55)
 ```
 
+## Type Annotations
+
+Functions can include optional type annotations on parameters and return types:
+
+```
+fn add(a: Field, b: Field) -> Field {
+    return a + b
+}
+
+fn is_positive(x: Field) -> Bool {
+    return x > 0
+}
+
+let double = fn(x: Field) -> Field { x * 2 }
+```
+
+Mixed typed and untyped parameters are allowed — this is gradual typing:
+
+```
+fn scale(x: Field, factor) {
+    x * factor
+}
+```
+
+In circuit mode, annotations are checked at compile time. See [Type Annotations](/circuits/type-annotations/) for details on type checking rules and constraint savings.
+
 ## Quick Reference
 
 | Feature | Syntax | Notes |
@@ -164,6 +190,8 @@ assert(fib(10) == 55)
 | Named function | `fn name(a, b) { body }` | Hoisted in scope |
 | Anonymous function | `fn(a, b) { body }` | First-class value |
 | Named function expression | `let f = fn f(n) { ... }` | Enables recursion via variable |
+| Typed parameters | `fn f(x: Field, y: Bool)` | Optional, checked in circuits |
+| Return type | `fn f(x) -> Field { body }` | Optional, checked in circuits |
 | Implicit return | last expression in body | No `return` needed |
 | Explicit return | `return expr` | Early exit |
 | Closure capture | automatic | By reference |
