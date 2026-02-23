@@ -180,25 +180,36 @@ impl ArithmeticOps for super::vm::VM {
                     } else if exp_val == 0 {
                         self.set_reg(base, a, Value::int(1))?;
                     } else {
-                        // Integer pow with overflow check
-                        let mut result: i64 = 1;
-                        let mut overflowed = false;
-                        for _ in 0..exp_val {
-                            match result.checked_mul(base_val) {
-                                Some(r) if (I60_MIN..=I60_MAX).contains(&r) => result = r,
-                                _ => {
-                                    overflowed = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if overflowed {
+                        // Integer pow with overflow check.
+                        // Cap the loop at 63 iterations — any i64 base raised to a
+                        // power > 63 will either overflow or be 0/1/−1.  For larger
+                        // exponents, promote directly to field pow (O(log n)).
+                        const MAX_INT_POW_ITERS: i64 = 63;
+                        if exp_val > MAX_INT_POW_ITERS {
                             let fa = FieldElement::from_i64(base_val);
                             let result = fa.pow(&[exp_val as u64, 0, 0, 0]);
                             let handle = self.heap.alloc_field(result);
                             self.set_reg(base, a, Value::field(handle))?;
                         } else {
-                            self.set_reg(base, a, Value::int(result))?;
+                            let mut result: i64 = 1;
+                            let mut overflowed = false;
+                            for _ in 0..exp_val {
+                                match result.checked_mul(base_val) {
+                                    Some(r) if (I60_MIN..=I60_MAX).contains(&r) => result = r,
+                                    _ => {
+                                        overflowed = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if overflowed {
+                                let fa = FieldElement::from_i64(base_val);
+                                let result = fa.pow(&[exp_val as u64, 0, 0, 0]);
+                                let handle = self.heap.alloc_field(result);
+                                self.set_reg(base, a, Value::field(handle))?;
+                            } else {
+                                self.set_reg(base, a, Value::int(result))?;
+                            }
                         }
                     }
                 } else if vb.is_field() && vc.is_int() {

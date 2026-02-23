@@ -540,8 +540,9 @@ pub fn poseidon_permutation(params: &PoseidonParams, state: &mut [FieldElement])
             state[0] = sbox(state[0]);
         }
 
-        // 3. MDS matrix multiplication
-        let old = state.to_vec();
+        // 3. MDS matrix multiplication (stack copy avoids heap allocation)
+        let mut old = [FieldElement::ZERO; 3];
+        old[..params.t].copy_from_slice(&state[..params.t]);
         for i in 0..params.t {
             state[i] = FieldElement::ZERO;
             for j in 0..params.t {
@@ -560,7 +561,7 @@ pub fn poseidon_hash(
     left: FieldElement,
     right: FieldElement,
 ) -> FieldElement {
-    let mut state = vec![FieldElement::ZERO; params.t]; // capacity = 0
+    let mut state = [FieldElement::ZERO; 3]; // capacity = 0
     state[1] = left;
     state[2] = right;
     poseidon_permutation(params, &mut state);
@@ -572,7 +573,7 @@ pub fn poseidon_hash(
 /// State: [capacity=0, input, 0]
 /// Output: state[0] after permutation (circomlibjs convention)
 pub fn poseidon_hash_single(params: &PoseidonParams, input: FieldElement) -> FieldElement {
-    let mut state = vec![FieldElement::ZERO; params.t];
+    let mut state = [FieldElement::ZERO; 3];
     state[1] = input;
     poseidon_permutation(params, &mut state);
     state[0]
