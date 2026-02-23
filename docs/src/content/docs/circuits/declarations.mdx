@@ -3,4 +3,89 @@ title: "Declarations"
 description: "Public and witness declarations in circuits."
 ---
 
-Content coming soon.
+Every circuit needs explicit input declarations. These tell the compiler which variables are **public** (visible to the verifier) and which are **witness** (known only to the prover).
+
+## Scalar Declarations
+
+Declare one variable at a time:
+
+```
+public output
+witness secret
+```
+
+Or multiple on one line, separated by commas:
+
+```
+public x, y
+witness a, b, c
+```
+
+Public inputs become part of the proof's public statement — anyone verifying the proof can see their values. Witness inputs remain private to the prover.
+
+## Array Declarations
+
+Declare a fixed-size array of inputs with bracket syntax:
+
+```
+witness path[3]
+witness indices[3]
+```
+
+This creates three indexed variables (`path_0`, `path_1`, `path_2`) that you access with standard indexing. Array declarations work for both public and witness inputs:
+
+```
+public commitments[4]
+witness secrets[4]
+```
+
+## Using Declared Inputs
+
+Once declared, inputs are ordinary variables. Use them in expressions, pass them to builtins, and index into arrays:
+
+```
+public output
+witness a
+witness b
+
+let product = a * b
+assert_eq(product, output)
+
+let sum = a + b
+assert_eq(sum, a + b)
+```
+
+Array elements are accessed by index:
+
+```
+public expected_sum
+witness vals[3]
+
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
+```
+
+## CLI Alternative
+
+Instead of in-source declarations, you can declare inputs with CLI flags:
+
+```bash
+ach circuit program.ach --public output --witness a,b --inputs "a=3,b=5,output=15"
+```
+
+The `--public` and `--witness` flags accept comma-separated variable names. If the source file already contains `public`/`witness` declarations, omit the flags — the compiler picks them up automatically.
+
+Array inputs are passed with indexed names:
+
+```bash
+ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=0,indices_1=1"
+```
+
+## Errors
+
+| Error | Cause |
+|-------|-------|
+| `DuplicateInput` | Same name declared as both `public` and `witness`, or declared twice |
+| `UndeclaredVariable` | Using a variable that was never declared as `public` or `witness` |

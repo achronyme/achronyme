@@ -1,6 +1,132 @@
 ---
-title: "Circuit Builtins"
-description: "Built-in functions for circuit programming."
+title: "Builtins"
+description: "Built-in functions available in circuits."
 ---
 
-Content coming soon.
+Circuits provide built-in functions for assertions, hashing, conditional selection, and range checking. Each builtin compiles to a fixed number of constraints.
+
+## Quick Reference
+
+| Builtin | Constraints (R1CS) | Purpose |
+|---------|-------------------|---------|
+| `assert_eq(a, b)` | 1 | Enforce equality |
+| `assert(expr)` | 2 | Enforce boolean expression is true |
+| `poseidon(a, b)` | 361 | Poseidon 2-to-1 hash |
+| `poseidon_many(a, b, c, ...)` | (N−1) × 361 | Left-fold Poseidon hash |
+| `mux(cond, a, b)` | 2 | Conditional selection |
+| `range_check(x, bits)` | bits + 1 | Value fits in N bits |
+| `merkle_verify(root, leaf, path, indices)` | depth × ~363 | Merkle membership proof |
+| `len(arr)` | 0 | Compile-time array length |
+
+## assert_eq
+
+Enforces that two expressions are equal. Costs 1 constraint.
+
+```
+public out
+witness a
+witness b
+
+let product = a * b
+assert_eq(product, out)
+```
+
+This is the most common builtin — use it to bind computed values to public outputs.
+
+## assert
+
+Enforces that a boolean expression is true. Costs 2 constraints (one for boolean enforcement, one to enforce the value equals 1).
+
+```
+witness x
+witness y
+
+assert(x < y)
+```
+
+Unlike `assert_eq`, this works with any expression that evaluates to 0 or 1.
+
+## poseidon
+
+Computes a Poseidon 2-to-1 hash. Costs 361 constraints (360 for the permutation rounds + 1 for the capacity wire). The output is compatible with circomlibjs.
+
+```
+public expected
+witness a
+witness b
+
+let h = poseidon(a, b)
+assert_eq(h, expected)
+```
+
+## poseidon_many
+
+Hashes an arbitrary number of values by left-folding `poseidon`. Three arguments cost 2 × 361 = 722 constraints, four arguments cost 3 × 361 = 1083, and so on.
+
+```
+public expected
+witness a
+witness b
+witness c
+
+// poseidon_many(a, b, c) == poseidon(poseidon(a, b), c)
+let h = poseidon_many(a, b, c)
+assert_eq(h, expected)
+```
+
+## mux
+
+Conditional selection: returns `a` when `cond` is 1, `b` when `cond` is 0. Costs 2 constraints (one boolean enforcement for `cond`, one selection constraint).
+
+```
+public out
+witness cond
+witness a
+witness b
+
+let selected = mux(cond, a, b)
+assert_eq(selected, out)
+```
+
+Both `a` and `b` are always evaluated — there is no short-circuit behavior.
+
+## range_check
+
+Proves that a value fits within a given number of bits. In R1CS, this costs `bits + 1` constraints (boolean decomposition). In Plonkish, it costs 1 lookup.
+
+```
+witness x
+witness y
+
+// x fits in 8 bits (0..255)
+range_check(x, 8)
+
+// y fits in 16 bits (0..65535)
+range_check(y, 16)
+```
+
+## merkle_verify
+
+Verifies a Merkle membership proof. Takes a root, a leaf, an array of sibling hashes (the path), and an array of direction indices (0 = left, 1 = right). The proof is unrolled at the IR level — each level costs roughly 363 constraints (one Poseidon hash + a mux).
+
+```
+public root
+witness leaf
+witness path[1]
+witness indices[1]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+The `path` and `indices` arrays must have the same length, which determines the tree depth.
+
+## len
+
+Returns the compile-time length of an array. Costs 0 constraints — the value is resolved during compilation.
+
+```
+witness vals[3]
+
+let n = len(vals)
+assert_eq(n, 3)
+```

@@ -1,6 +1,98 @@
 ---
 title: "Control Flow in Circuits"
-description: "How control flow compiles to constraints."
+description: "for loops, if/else, let bindings, and rejected constructs."
 ---
 
-Content coming soon.
+Circuits support a subset of Achronyme's control flow. Every construct must resolve at compile time — the compiler needs to know the exact structure of the constraint system before any inputs are provided.
+
+## for Loops
+
+`for` loops are statically unrolled — the compiler expands every iteration into separate constraints. Two forms are supported.
+
+**Range form** — iterate over `start..end`:
+
+```
+public out
+witness a
+witness b
+
+let product = a * b
+assert_eq(product, out)
+
+let sum = a + b
+assert_eq(sum, a + b)
+```
+
+**Array form** — iterate over a declared array:
+
+```
+public expected_sum
+witness vals[3]
+
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
+```
+
+The constraint cost of a loop equals the number of iterations multiplied by the cost of the body.
+
+### Nested Loops
+
+Nested `for` loops are supported. The total iteration count is the product of all loop bounds:
+
+```
+witness matrix[9]
+
+for i in 0..3 {
+    for j in 0..3 {
+        range_check(matrix[i * 3 + j], 8)
+    }
+}
+```
+
+This unrolls to 9 iterations, each with a `range_check` (9 constraints in R1CS, 9 lookups in Plonkish).
+
+## if/else as mux
+
+In circuits, `if/else` compiles to a **mux** (multiplexer) — both branches are always evaluated, and the condition selects which result to use. This costs 2 constraints (one boolean enforcement for the condition, one selection constraint).
+
+```
+witness cond
+witness a
+witness b
+
+let result = if cond { a } else { b }
+```
+
+This is equivalent to `mux(cond, a, b)`. There is no short-circuit evaluation — both `a` and `b` are computed regardless of `cond`.
+
+An `if` without `else` is not supported in circuits because both branches must produce a value for the mux.
+
+## let Bindings
+
+`let` bindings create aliases — they do not emit constraints. A `let` just gives a name to an existing linear combination.
+
+```
+witness a
+witness b
+
+let sum = a + b        // 0 constraints — just an alias
+let doubled = sum + sum // 0 constraints — still a linear combination
+```
+
+Bindings only cost constraints when they involve operations that require multiplication gates (e.g., `let product = a * b` costs 1 constraint for the multiplication, not for the `let`).
+
+## Rejected Constructs
+
+These constructs are rejected at compile time with clear error messages:
+
+| Construct | Error | Reason |
+|-----------|-------|--------|
+| `while` | `WhileInCircuit` | Iteration count unknown at compile time |
+| `forever` | `ForeverInCircuit` | Same — unbounded loops can't be unrolled |
+| `break` | `BreakInCircuit` | Dynamic exit not representable in constraints |
+| `continue` | `ContinueInCircuit` | Dynamic skip not representable in constraints |
+| `print()` | — | Side effect with no circuit equivalent |
+
+Circuits require a fixed, deterministic constraint structure. Any construct that depends on runtime values to determine control flow is incompatible with this model.

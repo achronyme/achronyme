@@ -1,6 +1,83 @@
 ---
 title: "Functions in Circuits"
-description: "How functions work in circuit mode."
+description: "How functions work inside circuit compilation."
 ---
 
-Content coming soon.
+Functions in circuits use the same `fn` syntax as regular Achronyme code, but they behave differently under the hood — every call is inlined.
+
+## Syntax
+
+Define functions the same way as in regular mode:
+
+```
+fn double(x) {
+    x + x
+}
+```
+
+Call them as usual:
+
+```
+witness vals[3]
+
+fn double(x) { x + x }
+assert_eq(double(vals[0]), vals[0] + vals[0])
+```
+
+## Inlining
+
+There is no function call stack in circuits. Every call site expands the function body with the arguments substituted in. If you call a function 5 times, its body is compiled 5 times.
+
+```
+fn square(x) { x * x }
+
+// Each call inlines independently — 1 constraint each
+let a = square(vals[0])
+let b = square(vals[1])
+let c = square(vals[2])
+```
+
+This means functions are a convenience for code organization, not a mechanism for reducing constraint count.
+
+## Constraint Cost
+
+The cost of a function call equals the sum of its body's constraints. A function with two multiplications costs 2 constraints per call.
+
+```
+fn dot(a0, a1, b0, b1) {
+    a0 * b0 + a1 * b1      // 2 constraints (two variable multiplications)
+}
+```
+
+Calling `dot` three times produces 6 constraints.
+
+## Restrictions
+
+| Restriction | Error | Reason |
+|-------------|-------|--------|
+| No recursion | `RecursiveFunction` | Functions are inlined — recursion would loop forever |
+| No closures | — | No runtime environment to capture |
+| No higher-order functions | — | Cannot pass functions as circuit values |
+| No anonymous functions | — | Only named `fn` definitions are supported |
+
+Functions in circuits are purely a compile-time mechanism. They cannot capture variables from outer scopes (except declared inputs), cannot be passed as values, and cannot call themselves.
+
+## Example
+
+A complete circuit using a helper function:
+
+```
+public expected_sum
+witness vals[3]
+
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
+
+let n = len(vals)
+assert_eq(n, 3)
+
+fn double(x) { x + x }
+assert_eq(double(vals[0]), vals[0] + vals[0])
+```
