@@ -11,7 +11,7 @@ pub trait FunctionDefinitionCompiler {
     fn compile_fn_core(
         &mut self,
         name: Option<&str>,
-        params: &[String],
+        params: &[TypedParam],
         body: &Block,
     ) -> Result<u8, CompilerError>;
 }
@@ -20,7 +20,7 @@ impl FunctionDefinitionCompiler for Compiler {
     fn compile_fn_core(
         &mut self,
         name: Option<&str>,
-        params: &[String],
+        params: &[TypedParam],
         body: &Block,
     ) -> Result<u8, CompilerError> {
         let fn_name = name.unwrap_or("lambda").to_string();
@@ -49,7 +49,7 @@ impl FunctionDefinitionCompiler for Compiler {
 
         for (i, param) in params.iter().enumerate() {
             self.current().locals.push(Local {
-                name: param.clone(),
+                name: param.name.clone(),
                 depth: 0,
                 is_captured: false,
                 reg: i as u8,
