@@ -181,7 +181,10 @@ fn test_plonkish_vs_r1cs_8bit() {
     let r1cs_cost = r1cs.cs.num_constraints(); // 9 (8 + 1)
     let plonk_rows = plonk.num_circuit_rows();
 
-    assert_eq!(r1cs_cost, 9, "R1CS 8-bit range check should cost 9 constraints");
+    assert_eq!(
+        r1cs_cost, 9,
+        "R1CS 8-bit range check should cost 9 constraints"
+    );
     assert!(
         plonk_rows < r1cs_cost,
         "Plonkish should use fewer rows ({plonk_rows}) than R1CS constraints ({r1cs_cost})"
@@ -205,7 +208,10 @@ fn test_plonkish_vs_r1cs_16bit() {
     let r1cs_cost = r1cs.cs.num_constraints(); // 17 (16 + 1)
     let plonk_rows = plonk.num_circuit_rows();
 
-    assert_eq!(r1cs_cost, 17, "R1CS 16-bit range check should cost 17 constraints");
+    assert_eq!(
+        r1cs_cost, 17,
+        "R1CS 16-bit range check should cost 17 constraints"
+    );
     assert!(
         plonk_rows < r1cs_cost,
         "Plonkish should use fewer rows ({plonk_rows}) than R1CS constraints ({r1cs_cost})"
@@ -227,10 +233,14 @@ fn test_range_check_const_fold() {
 
     // After optimization, the RangeCheck should still be present
     // (it has side effects), but the constant should propagate
-    let has_range_check = program.instructions.iter().any(|inst| {
-        matches!(inst, ir::Instruction::RangeCheck { .. })
-    });
-    assert!(has_range_check, "RangeCheck should be preserved (has side effects)");
+    let has_range_check = program
+        .instructions
+        .iter()
+        .any(|inst| matches!(inst, ir::Instruction::RangeCheck { .. }));
+    assert!(
+        has_range_check,
+        "RangeCheck should be preserved (has side effects)"
+    );
 }
 
 #[test]
@@ -242,9 +252,9 @@ fn test_range_check_taint_constrains() {
     let warnings = ir::passes::analyze(&program);
 
     // x should NOT be under-constrained because range_check constrains it
-    let under_constrained = warnings.iter().any(|w| {
-        format!("{w}").contains("under-constrained")
-    });
+    let under_constrained = warnings
+        .iter()
+        .any(|w| format!("{w}").contains("under-constrained"));
     assert!(
         !under_constrained,
         "x should be constrained by range_check, but got warnings: {:?}",

@@ -47,17 +47,11 @@ fn fe(n: u64) -> FieldElement {
 }
 
 fn make_inputs(pairs: &[(&str, u64)]) -> HashMap<String, FieldElement> {
-    pairs
-        .iter()
-        .map(|(n, v)| (n.to_string(), fe(*v)))
-        .collect()
+    pairs.iter().map(|(n, v)| (n.to_string(), fe(*v))).collect()
 }
 
 fn make_inputs_fe(pairs: &[(&str, FieldElement)]) -> HashMap<String, FieldElement> {
-    pairs
-        .iter()
-        .map(|(n, v)| (n.to_string(), *v))
-        .collect()
+    pairs.iter().map(|(n, v)| (n.to_string(), *v)).collect()
 }
 
 // ============================================================================

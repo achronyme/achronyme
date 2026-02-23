@@ -21,10 +21,7 @@ pub enum Visibility {
 #[derive(Debug, Clone)]
 pub enum Instruction {
     /// A compile-time constant field element.
-    Const {
-        result: SsaVar,
-        value: FieldElement,
-    },
+    Const { result: SsaVar, value: FieldElement },
     /// A circuit input (public or witness).
     Input {
         result: SsaVar,
@@ -56,10 +53,7 @@ pub enum Instruction {
         rhs: SsaVar,
     },
     /// result = -operand
-    Neg {
-        result: SsaVar,
-        operand: SsaVar,
-    },
+    Neg { result: SsaVar, operand: SsaVar },
     /// result = cond ? if_true : if_false (boolean MUX)
     Mux {
         result: SsaVar,
@@ -87,10 +81,7 @@ pub enum Instruction {
         bits: u32,
     },
     /// Logical NOT: result = 1 - operand (operand must be boolean).
-    Not {
-        result: SsaVar,
-        operand: SsaVar,
-    },
+    Not { result: SsaVar, operand: SsaVar },
     /// Logical AND: result = lhs * rhs (both must be boolean).
     And {
         result: SsaVar,
@@ -128,10 +119,7 @@ pub enum Instruction {
         rhs: SsaVar,
     },
     /// Assertion: enforces operand == 1 (boolean). Side-effecting.
-    Assert {
-        result: SsaVar,
-        operand: SsaVar,
-    },
+    Assert { result: SsaVar, operand: SsaVar },
 }
 
 impl Instruction {
@@ -219,6 +207,12 @@ pub struct IrProgram {
     pub next_var: u32,
     /// Maps SSA variables to their source-level names (for error messages).
     pub var_names: HashMap<SsaVar, String>,
+}
+
+impl Default for IrProgram {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IrProgram {

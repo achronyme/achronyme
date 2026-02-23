@@ -18,7 +18,8 @@ fn compile_valid_source_with_output() {
     let out = tempfile::NamedTempFile::with_suffix(".achb").unwrap();
     let out_path = out.path().to_str().unwrap().to_string();
 
-    let result = cli::commands::compile::compile_file(src.path().to_str().unwrap(), Some(&out_path));
+    let result =
+        cli::commands::compile::compile_file(src.path().to_str().unwrap(), Some(&out_path));
     assert!(result.is_ok(), "compile_file failed: {:?}", result.err());
 
     // Verify .achb was created with the ACH magic header
@@ -31,7 +32,11 @@ fn compile_valid_source_with_output() {
 fn compile_valid_source_no_output() {
     let src = write_temp_source("let x = 42");
     let result = cli::commands::compile::compile_file(src.path().to_str().unwrap(), None);
-    assert!(result.is_ok(), "compile_file (no output) failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "compile_file (no output) failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -40,7 +45,10 @@ fn compile_invalid_source_returns_error() {
     let result = cli::commands::compile::compile_file(src.path().to_str().unwrap(), None);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
-    assert!(err.contains("Compile error"), "expected compile error, got: {err}");
+    assert!(
+        err.contains("Compile error"),
+        "expected compile error, got: {err}"
+    );
 }
 
 #[test]
@@ -66,12 +74,16 @@ fn run_source_with_runtime_error() {
     let result = cli::commands::run::run_file(src.path().to_str().unwrap(), false, None, "r1cs");
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
-    assert!(err.contains("Runtime Error"), "expected runtime error, got: {err}");
+    assert!(
+        err.contains("Runtime Error"),
+        "expected runtime error, got: {err}"
+    );
 }
 
 #[test]
 fn run_nonexistent_file_returns_error() {
-    let result = cli::commands::run::run_file("/tmp/nonexistent_achronyme_test.ach", false, None, "r1cs");
+    let result =
+        cli::commands::run::run_file("/tmp/nonexistent_achronyme_test.ach", false, None, "r1cs");
     assert!(result.is_err());
 }
 
@@ -86,7 +98,11 @@ fn run_compiled_binary() {
         .expect("compile should succeed");
 
     let result = cli::commands::run::run_file(&out_path, false, None, "r1cs");
-    assert!(result.is_ok(), "run compiled binary failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run compiled binary failed: {:?}",
+        result.err()
+    );
 }
 
 // ======================================================================

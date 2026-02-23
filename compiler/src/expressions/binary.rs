@@ -1,7 +1,7 @@
 use crate::codegen::Compiler;
+use crate::control_flow::ControlFlowCompiler;
 use crate::error::CompilerError;
 use crate::expressions::ExpressionCompiler;
-use crate::control_flow::ControlFlowCompiler;
 use achronyme_parser::ast::*;
 use vm::opcode::OpCode;
 

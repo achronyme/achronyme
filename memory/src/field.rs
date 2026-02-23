@@ -64,7 +64,9 @@ const fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
 /// Subtract with borrow: (result, borrow) = a - b - borrow_in
 #[inline(always)]
 const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
-    let tmp = (a as u128).wrapping_sub(b as u128).wrapping_sub(borrow as u128);
+    let tmp = (a as u128)
+        .wrapping_sub(b as u128)
+        .wrapping_sub(borrow as u128);
     (tmp as u64, (tmp >> 127) as u64) // borrow is 0 or 1
 }
 
@@ -246,8 +248,14 @@ impl FieldElement {
     pub fn to_canonical(&self) -> [u64; 4] {
         // Multiply by 1 to remove Montgomery factor: self * R^{-1} mod p
         montgomery_reduce(&[
-            self.limbs[0], self.limbs[1], self.limbs[2], self.limbs[3],
-            0, 0, 0, 0,
+            self.limbs[0],
+            self.limbs[1],
+            self.limbs[2],
+            self.limbs[3],
+            0,
+            0,
+            0,
+            0,
         ])
     }
 
@@ -388,7 +396,9 @@ impl FieldElement {
         let (r1, carry) = adc(r1, MODULUS[1] & mask, carry);
         let (r2, carry) = adc(r2, MODULUS[2] & mask, carry);
         let (r3, _) = adc(r3, MODULUS[3] & mask, carry);
-        Self { limbs: [r0, r1, r2, r3] }
+        Self {
+            limbs: [r0, r1, r2, r3],
+        }
     }
 
     /// Modular multiplication: (self * other) mod p.
@@ -428,7 +438,9 @@ impl FieldElement {
         // mask = 0xFFFF...FFFF if nonzero, 0 if zero
         let mask = (is_nonzero | is_nonzero.wrapping_neg()) >> 63;
         let mask = 0u64.wrapping_sub(mask);
-        Self { limbs: [r0 & mask, r1 & mask, r2 & mask, r3 & mask] }
+        Self {
+            limbs: [r0 & mask, r1 & mask, r2 & mask, r3 & mask],
+        }
     }
 
     /// Constant-time conditional select: returns `a` if flag==0, `b` if flag==1.
@@ -457,7 +469,7 @@ impl FieldElement {
             for bit in (0..64).rev() {
                 result = result.mul(&result); // always square
                 let multiplied = result.mul(self); // always multiply
-                let flag = ((exp[i] >> bit) & 1) as u64;
+                let flag = (exp[i] >> bit) & 1;
                 result = Self::ct_select(&result, &multiplied, flag);
             }
         }
@@ -572,7 +584,10 @@ mod tests {
         assert_eq!(MODULUS[0].wrapping_mul(INV), u64::MAX);
 
         // montgomery_reduce(R || 0) = 1
-        assert_eq!(montgomery_reduce(&[R[0], R[1], R[2], R[3], 0, 0, 0, 0]), [1, 0, 0, 0]);
+        assert_eq!(
+            montgomery_reduce(&[R[0], R[1], R[2], R[3], 0, 0, 0, 0]),
+            [1, 0, 0, 0]
+        );
 
         // montgomery_mul(1, R2) = R
         assert_eq!(montgomery_mul(&[1, 0, 0, 0], &R2), R);
@@ -759,21 +774,33 @@ mod tests {
         for i in 0..4 {
             p_bytes[i * 8..(i + 1) * 8].copy_from_slice(&MODULUS[i].to_le_bytes());
         }
-        assert!(FieldElement::from_le_bytes(&p_bytes).is_none(), "p should be rejected");
+        assert!(
+            FieldElement::from_le_bytes(&p_bytes).is_none(),
+            "p should be rejected"
+        );
 
         // p + 1 should be rejected
         let mut p_plus_1 = p_bytes;
         p_plus_1[0] = p_plus_1[0].wrapping_add(1);
-        assert!(FieldElement::from_le_bytes(&p_plus_1).is_none(), "p+1 should be rejected");
+        assert!(
+            FieldElement::from_le_bytes(&p_plus_1).is_none(),
+            "p+1 should be rejected"
+        );
 
         // all 0xFF bytes (max 256-bit value)
         let max_bytes = [0xFF; 32];
-        assert!(FieldElement::from_le_bytes(&max_bytes).is_none(), "2^256-1 should be rejected");
+        assert!(
+            FieldElement::from_le_bytes(&max_bytes).is_none(),
+            "2^256-1 should be rejected"
+        );
 
         // p - 1 should be accepted (largest valid element)
         let mut p_minus_1 = p_bytes;
         p_minus_1[0] = p_minus_1[0].wrapping_sub(1);
-        assert!(FieldElement::from_le_bytes(&p_minus_1).is_some(), "p-1 should be accepted");
+        assert!(
+            FieldElement::from_le_bytes(&p_minus_1).is_some(),
+            "p-1 should be accepted"
+        );
     }
 
     // ========================================================================
@@ -787,7 +814,8 @@ mod tests {
         let inv = seven.inv().unwrap();
         let expected = FieldElement::from_decimal_str(
             "3126891838834182174606629392179610726935480628630862049099743455225115499374",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(inv, expected, "inv(7) mismatch with reference vector");
         // Cross-check: 7 * inv(7) = 1
         assert_eq!(seven.mul(&inv), FieldElement::ONE);
@@ -798,11 +826,13 @@ mod tests {
         // (p-1) + (p-1) mod p = p - 2
         let p_minus_1 = FieldElement::from_decimal_str(
             "21888242871839275222246405745257275088548364400416034343698204186575808495616",
-        ).unwrap();
+        )
+        .unwrap();
         let result = p_minus_1.add(&p_minus_1);
         let expected = FieldElement::from_decimal_str(
             "21888242871839275222246405745257275088548364400416034343698204186575808495615",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result, expected, "(p-1)+(p-1) should be p-2");
     }
 
@@ -822,7 +852,8 @@ mod tests {
         let result = FieldElement::ZERO.sub(&FieldElement::ONE);
         let expected = FieldElement::from_decimal_str(
             "21888242871839275222246405745257275088548364400416034343698204186575808495616",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result, expected, "0 - 1 should be p - 1");
     }
 
@@ -831,7 +862,8 @@ mod tests {
         // (p-1) * (p-1) mod p = 1, because (-1)^2 = 1
         let p_minus_1 = FieldElement::from_decimal_str(
             "21888242871839275222246405745257275088548364400416034343698204186575808495616",
-        ).unwrap();
+        )
+        .unwrap();
         let result = p_minus_1.mul(&p_minus_1);
         assert_eq!(result, FieldElement::ONE, "(-1)*(-1) should be 1");
     }
@@ -853,7 +885,8 @@ mod tests {
         let result = a.mul(&b);
         let expected = FieldElement::from_decimal_str(
             "6350874878119819312338956282401532411889292131244146174820061504761160007678",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result, expected);
     }
 
@@ -868,11 +901,7 @@ mod tests {
         );
         // T = R² (padded) → result should be R (Montgomery form of 1·R)
         let r2_wide = mul_wide(&R, &R);
-        assert_eq!(
-            montgomery_reduce(&r2_wide),
-            R,
-            "reduce(R²) must be R"
-        );
+        assert_eq!(montgomery_reduce(&r2_wide), R, "reduce(R²) must be R");
         // Cross-check: mul(a, R²) then reduce must yield a·R mod p (to_montgomery)
         // from_u64(42) uses this path internally; verify roundtrip
         let fe42 = FieldElement::from_u64(42);
@@ -884,7 +913,12 @@ mod tests {
         // 2^256 mod p = R constant = 6350874878119819312338956282401532410528162663560392320966563075034087161851
         let r_expected = FieldElement::from_decimal_str(
             "6350874878119819312338956282401532410528162663560392320966563075034087161851",
-        ).unwrap();
-        assert_eq!(r_expected.to_canonical(), R, "R constant must match 2^256 mod p");
+        )
+        .unwrap();
+        assert_eq!(
+            r_expected.to_canonical(),
+            R,
+            "R constant must match 2^256 mod p"
+        );
     }
 }

@@ -52,9 +52,7 @@ fn test_wtns_roundtrip_structure() {
     // Values section size = 4 * 32 = 128
     // Section 2 header: after file header (12) + sec1 header (12) + sec1 body (40) = 64
     let sec2_offset = 12 + 12 + 40;
-    let sec2_size = u64::from_le_bytes(
-        data[sec2_offset + 4..sec2_offset + 12].try_into().unwrap(),
-    );
+    let sec2_size = u64::from_le_bytes(data[sec2_offset + 4..sec2_offset + 12].try_into().unwrap());
     assert_eq!(sec2_size, 128);
 }
 
@@ -156,21 +154,69 @@ fn test_snarkjs_groth16_full() {
     let pot12_1 = format!("{dir}/pot12_0001.ptau");
     let pot12_final = format!("{dir}/pot12_final.ptau");
     run(&["snarkjs", "powersoftau", "new", "bn128", "12", &pot12, "-v"]);
-    run(&["snarkjs", "powersoftau", "contribute", &pot12, &pot12_1, "--name=test", "-v", "-e=random"]);
-    run(&["snarkjs", "powersoftau", "prepare", "phase2", &pot12_1, &pot12_final, "-v"]);
+    run(&[
+        "snarkjs",
+        "powersoftau",
+        "contribute",
+        &pot12,
+        &pot12_1,
+        "--name=test",
+        "-v",
+        "-e=random",
+    ]);
+    run(&[
+        "snarkjs",
+        "powersoftau",
+        "prepare",
+        "phase2",
+        &pot12_1,
+        &pot12_final,
+        "-v",
+    ]);
 
     // Groth16 setup
     let zkey_0 = format!("{dir}/circuit_0000.zkey");
     let zkey_1 = format!("{dir}/circuit_0001.zkey");
     let vkey = format!("{dir}/verification_key.json");
-    run(&["snarkjs", "groth16", "setup", &r1cs_path, &pot12_final, &zkey_0]);
-    run(&["snarkjs", "zkey", "contribute", &zkey_0, &zkey_1, "--name=test", "-v", "-e=random"]);
-    run(&["snarkjs", "zkey", "export", "verificationkey", &zkey_1, &vkey]);
+    run(&[
+        "snarkjs",
+        "groth16",
+        "setup",
+        &r1cs_path,
+        &pot12_final,
+        &zkey_0,
+    ]);
+    run(&[
+        "snarkjs",
+        "zkey",
+        "contribute",
+        &zkey_0,
+        &zkey_1,
+        "--name=test",
+        "-v",
+        "-e=random",
+    ]);
+    run(&[
+        "snarkjs",
+        "zkey",
+        "export",
+        "verificationkey",
+        &zkey_1,
+        &vkey,
+    ]);
 
     // Prove and verify
     let proof = format!("{dir}/proof.json");
     let public_json = format!("{dir}/public.json");
-    run(&["snarkjs", "groth16", "prove", &zkey_1, &wtns_path, &proof, &public_json]);
+    run(&[
+        "snarkjs",
+        "groth16",
+        "prove",
+        &zkey_1,
+        &wtns_path,
+        &proof,
+        &public_json,
+    ]);
     run(&["snarkjs", "groth16", "verify", &vkey, &public_json, &proof]);
 
     // Cleanup
@@ -211,14 +257,22 @@ fn test_snarkjs_r1cs_info() {
         .args(["snarkjs", "r1cs", "info", r1cs_path])
         .output()
         .expect("npx snarkjs not available");
-    assert!(output.status.success(), "r1cs info failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "r1cs info failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // snarkjs wtns check
     let output = std::process::Command::new("npx")
         .args(["snarkjs", "wtns", "check", r1cs_path, wtns_path])
         .output()
         .expect("npx snarkjs not available");
-    assert!(output.status.success(), "wtns check failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "wtns check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     std::fs::remove_file(r1cs_path).ok();
     std::fs::remove_file(wtns_path).ok();

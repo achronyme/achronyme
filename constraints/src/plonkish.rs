@@ -7,7 +7,6 @@
 ///
 /// This provides more efficient circuits than R1CS for many operations,
 /// especially range checks (O(1) lookup vs O(bits) boolean decomposition).
-
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -58,18 +57,22 @@ impl Expression {
         Expression::Cell(col, rotation)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Self) -> Self {
         Expression::Sum(Box::new(self), Box::new(other))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: Self) -> Self {
         Expression::Product(Box::new(self), Box::new(other))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Self) -> Self {
         Expression::Sum(Box::new(self), Box::new(Expression::Neg(Box::new(other))))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> Self {
         Expression::Neg(Box::new(self))
     }
@@ -155,9 +158,10 @@ impl Assignments {
     }
 
     pub fn set(&mut self, col: Column, row: usize, val: FieldElement) {
-        let col_vals = self.values.entry(col).or_insert_with(|| {
-            vec![FieldElement::ZERO; self.num_rows]
-        });
+        let col_vals = self
+            .values
+            .entry(col)
+            .or_insert_with(|| vec![FieldElement::ZERO; self.num_rows]);
         if row >= col_vals.len() {
             col_vals.resize(row + 1, FieldElement::ZERO);
         }
@@ -495,10 +499,7 @@ mod tests {
         sys.set(b, 0, FieldElement::from_u64(5));
         // a + b = 8
         let sum = Expression::cell(a, 0).add(Expression::cell(b, 0));
-        assert_eq!(
-            sum.evaluate(&sys.assignments, 0),
-            FieldElement::from_u64(8)
-        );
+        assert_eq!(sum.evaluate(&sys.assignments, 0), FieldElement::from_u64(8));
         // a * b = 15
         let prod = Expression::cell(a, 0).mul(Expression::cell(b, 0));
         assert_eq!(
@@ -581,10 +582,7 @@ mod tests {
         let b = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(42));
         sys.set(b, 1, FieldElement::from_u64(42));
-        sys.add_copy(
-            CellRef { column: a, row: 0 },
-            CellRef { column: b, row: 1 },
-        );
+        sys.add_copy(CellRef { column: a, row: 0 }, CellRef { column: b, row: 1 });
         assert!(sys.verify().is_ok());
     }
 
@@ -595,10 +593,7 @@ mod tests {
         let b = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(42));
         sys.set(b, 1, FieldElement::from_u64(99));
-        sys.add_copy(
-            CellRef { column: a, row: 0 },
-            CellRef { column: b, row: 1 },
-        );
+        sys.add_copy(CellRef { column: a, row: 0 }, CellRef { column: b, row: 1 });
         let err = sys.verify().unwrap_err();
         assert!(matches!(err, PlonkishError::CopyConstraintViolation { .. }));
     }
@@ -801,7 +796,10 @@ mod tests {
             vec![Expression::cell(input_col, 0)],
             vec![Expression::cell(table_col, 0)],
         );
-        assert!(sys.verify().is_ok(), "active row with value=0 should pass (0 is in table)");
+        assert!(
+            sys.verify().is_ok(),
+            "active row with value=0 should pass (0 is in table)"
+        );
     }
 
     #[test]
@@ -825,7 +823,10 @@ mod tests {
             vec![Expression::cell(input_col, 0)],
             vec![Expression::cell(table_col, 0)],
         );
-        assert!(sys.verify().is_ok(), "inactive row should be skipped regardless of value");
+        assert!(
+            sys.verify().is_ok(),
+            "inactive row should be skipped regardless of value"
+        );
     }
 
     #[test]

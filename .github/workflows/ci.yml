@@ -7,13 +7,23 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  lint:
+    name: Lint
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust version
-        run: rustc --version && cargo --version
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  test:
+    name: Test
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Build
         run: cargo build --workspace

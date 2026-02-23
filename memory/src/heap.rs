@@ -1,5 +1,5 @@
-use crate::Value;
 use crate::field::FieldElement;
+use crate::Value;
 use std::collections::{HashMap, HashSet};
 
 /// Where an upvalue's value lives.
@@ -59,6 +59,12 @@ pub struct Arena<T> {
     /// `reclaim_free`, and `clear_free` — direct mutation of `free_indices`
     /// without updating this set will break sweep correctness.
     free_set: HashSet<u32>,
+}
+
+impl<T> Default for Arena<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T> Arena<T> {
@@ -163,6 +169,12 @@ pub struct Heap {
     pub bytes_allocated: usize,
     pub next_gc_threshold: usize,
     pub request_gc: bool,
+}
+
+impl Default for Heap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Heap {
@@ -412,14 +424,14 @@ impl Heap {
     }
 
     pub fn sweep(&mut self) {
-        let mut freed_bytes = 0;
+        let mut _freed_bytes = 0;
 
         // Strings
         for i in 0..self.strings.data.len() {
             let idx = i as u32;
             if !self.marked_strings.contains(&idx) && !self.strings.is_free(idx) {
                 self.strings.mark_free(idx);
-                freed_bytes += self.strings.data[i].capacity();
+                _freed_bytes += self.strings.data[i].capacity();
                 self.strings.data[i] = String::new(); // Free memory
             }
         }
@@ -430,7 +442,7 @@ impl Heap {
             let idx = i as u32;
             if !self.marked_lists.contains(&idx) && !self.lists.is_free(idx) {
                 self.lists.mark_free(idx);
-                freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
+                _freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
                 self.lists.data[i] = Vec::new(); // Free memory
             }
         }
@@ -439,12 +451,11 @@ impl Heap {
         // Functions
         for i in 0..self.functions.data.len() {
             let idx = i as u32;
-            if !self.marked_functions.contains(&idx) && !self.functions.is_free(idx)
-            {
+            if !self.marked_functions.contains(&idx) && !self.functions.is_free(idx) {
                 self.functions.mark_free(idx);
                 let f = &self.functions.data[i];
-                freed_bytes += f.chunk.capacity() * 4;
-                freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
+                _freed_bytes += f.chunk.capacity() * 4;
+                _freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
 
                 // We replace with dummy
                 self.functions.data[i] = Function {
@@ -465,7 +476,7 @@ impl Heap {
             if !self.marked_closures.contains(&idx) && !self.closures.is_free(idx) {
                 self.closures.mark_free(idx);
                 let c = &self.closures.data[i];
-                freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
+                _freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
 
                 self.closures.data[i] = Closure {
                     function: 0,
@@ -480,7 +491,7 @@ impl Heap {
             let idx = i as u32;
             if !self.marked_upvalues.contains(&idx) && !self.upvalues.is_free(idx) {
                 self.upvalues.mark_free(idx);
-                freed_bytes += std::mem::size_of::<Upvalue>();
+                _freed_bytes += std::mem::size_of::<Upvalue>();
 
                 self.upvalues.data[i] = Upvalue {
                     location: UpvalueLocation::Closed(Value::nil()),
@@ -493,10 +504,9 @@ impl Heap {
         // Iterators
         for i in 0..self.iterators.data.len() {
             let idx = i as u32;
-            if !self.marked_iterators.contains(&idx) && !self.iterators.is_free(idx)
-            {
+            if !self.marked_iterators.contains(&idx) && !self.iterators.is_free(idx) {
                 self.iterators.mark_free(idx);
-                freed_bytes += std::mem::size_of::<IteratorObj>();
+                _freed_bytes += std::mem::size_of::<IteratorObj>();
                 // Reset iterator (Value::nil() source)
                 self.iterators.data[i] = IteratorObj {
                     source: Value::nil(),
@@ -511,7 +521,7 @@ impl Heap {
             let idx = i as u32;
             if !self.marked_fields.contains(&idx) && !self.fields.is_free(idx) {
                 self.fields.mark_free(idx);
-                freed_bytes += std::mem::size_of::<FieldElement>();
+                _freed_bytes += std::mem::size_of::<FieldElement>();
                 self.fields.data[i] = FieldElement::ZERO;
             }
         }
@@ -523,7 +533,7 @@ impl Heap {
             if !self.marked_proofs.contains(&idx) && !self.proofs.is_free(idx) {
                 self.proofs.mark_free(idx);
                 let p = &self.proofs.data[i];
-                freed_bytes += std::mem::size_of::<ProofObject>()
+                _freed_bytes += std::mem::size_of::<ProofObject>()
                     + p.proof_json.capacity()
                     + p.public_json.capacity()
                     + p.vkey_json.capacity();

@@ -1,7 +1,6 @@
 /// Recursive descent parser with Pratt expression parsing for Achronyme.
 ///
 /// Drop-in replacement for `build_ast::parse_program` / `build_ast::parse_block`.
-
 use crate::ast::*;
 use crate::error::ParseError;
 use crate::lexer::Lexer;
@@ -46,7 +45,11 @@ struct Parser {
 
 impl Parser {
     fn new(tokens: Vec<Token>, source: String) -> Self {
-        Self { tokens, pos: 0, source }
+        Self {
+            tokens,
+            pos: 0,
+            source,
+        }
     }
 
     // ========================================================================
@@ -79,7 +82,11 @@ impl Parser {
         } else {
             let tok = self.peek();
             Err(ParseError::new(
-                format!("expected `{}`, found `{}`", kind_name(kind), tok_display(tok)),
+                format!(
+                    "expected `{}`, found `{}`",
+                    kind_name(kind),
+                    tok_display(tok)
+                ),
                 tok.span.line,
                 tok.span.col,
             ))
@@ -187,7 +194,11 @@ impl Parser {
             let sp = expr.span().clone();
             self.advance();
             let value = self.parse_expr()?;
-            Ok(Stmt::Assignment { target: expr, value, span: sp })
+            Ok(Stmt::Assignment {
+                target: expr,
+                value,
+                span: sp,
+            })
         } else {
             Ok(Stmt::Expr(expr))
         }
@@ -199,7 +210,11 @@ impl Parser {
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
-        Ok(Stmt::LetDecl { name, value, span: sp })
+        Ok(Stmt::LetDecl {
+            name,
+            value,
+            span: sp,
+        })
     }
 
     fn parse_mut_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -208,7 +223,11 @@ impl Parser {
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expr()?;
-        Ok(Stmt::MutDecl { name, value, span: sp })
+        Ok(Stmt::MutDecl {
+            name,
+            value,
+            span: sp,
+        })
     }
 
     fn parse_public_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -262,7 +281,12 @@ impl Parser {
         let params = self.parse_param_list()?;
         self.expect(&TokenKind::RParen)?;
         let body = self.parse_block_inner()?;
-        Ok(Stmt::FnDecl { name, params, body, span: sp })
+        Ok(Stmt::FnDecl {
+            name,
+            params,
+            body,
+            span: sp,
+        })
     }
 
     fn parse_param_list(&mut self) -> Result<Vec<String>, ParseError> {
@@ -288,8 +312,8 @@ impl Parser {
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {
         let sp = self.span();
         self.advance(); // eat `return`
-        // Return has an optional value. Value present if next token can start an expression
-        // and is NOT a statement-starting keyword or block closer.
+                        // Return has an optional value. Value present if next token can start an expression
+                        // and is NOT a statement-starting keyword or block closer.
         let value = if self.can_start_expr() {
             Some(self.parse_expr()?)
         } else {
@@ -436,19 +460,31 @@ impl Parser {
         match self.peek_kind().clone() {
             TokenKind::Integer => {
                 let tok = self.advance().clone();
-                Ok(Expr::Number { value: tok.lexeme, span: sp })
+                Ok(Expr::Number {
+                    value: tok.lexeme,
+                    span: sp,
+                })
             }
             TokenKind::StringLit => {
                 let tok = self.advance().clone();
-                Ok(Expr::StringLit { value: tok.lexeme, span: sp })
+                Ok(Expr::StringLit {
+                    value: tok.lexeme,
+                    span: sp,
+                })
             }
             TokenKind::True => {
                 self.advance();
-                Ok(Expr::Bool { value: true, span: sp })
+                Ok(Expr::Bool {
+                    value: true,
+                    span: sp,
+                })
             }
             TokenKind::False => {
                 self.advance();
-                Ok(Expr::Bool { value: false, span: sp })
+                Ok(Expr::Bool {
+                    value: false,
+                    span: sp,
+                })
             }
             TokenKind::Nil => {
                 self.advance();
@@ -456,7 +492,10 @@ impl Parser {
             }
             TokenKind::Ident => {
                 let tok = self.advance().clone();
-                Ok(Expr::Ident { name: tok.lexeme, span: sp })
+                Ok(Expr::Ident {
+                    name: tok.lexeme,
+                    span: sp,
+                })
             }
             TokenKind::LParen => {
                 self.advance();
@@ -501,7 +540,11 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RParen)?;
-        Ok(Expr::Call { callee: Box::new(callee), args, span: sp })
+        Ok(Expr::Call {
+            callee: Box::new(callee),
+            args,
+            span: sp,
+        })
     }
 
     fn parse_index(&mut self, object: Expr) -> Result<Expr, ParseError> {
@@ -604,7 +647,10 @@ impl Parser {
             _ => {
                 let tok = self.peek();
                 return Err(ParseError::new(
-                    format!("expected map key (identifier or string), found `{}`", tok_display(tok)),
+                    format!(
+                        "expected map key (identifier or string), found `{}`",
+                        tok_display(tok)
+                    ),
                     tok.span.line,
                     tok.span.col,
                 ));
@@ -629,7 +675,12 @@ impl Parser {
         } else {
             None
         };
-        Ok(Expr::If { condition, then_block, else_branch, span: sp })
+        Ok(Expr::If {
+            condition,
+            then_block,
+            else_branch,
+            span: sp,
+        })
     }
 
     fn parse_while(&mut self) -> Result<Expr, ParseError> {
@@ -637,7 +688,11 @@ impl Parser {
         self.advance(); // eat `while`
         let condition = Box::new(self.parse_expr()?);
         let body = self.parse_block_inner()?;
-        Ok(Expr::While { condition, body, span: sp })
+        Ok(Expr::While {
+            condition,
+            body,
+            span: sp,
+        })
     }
 
     fn parse_for(&mut self) -> Result<Expr, ParseError> {
@@ -652,10 +707,18 @@ impl Parser {
             self.advance(); // eat `..`
             let end_tok = self.expect(&TokenKind::Integer)?;
             let start: u64 = start_tok.lexeme.parse().map_err(|e| {
-                ParseError::new(format!("invalid range start: {e}"), start_tok.span.line, start_tok.span.col)
+                ParseError::new(
+                    format!("invalid range start: {e}"),
+                    start_tok.span.line,
+                    start_tok.span.col,
+                )
             })?;
             let end: u64 = end_tok.lexeme.parse().map_err(|e| {
-                ParseError::new(format!("invalid range end: {e}"), end_tok.span.line, end_tok.span.col)
+                ParseError::new(
+                    format!("invalid range end: {e}"),
+                    end_tok.span.line,
+                    end_tok.span.col,
+                )
             })?;
             ForIterable::Range { start, end }
         } else {
@@ -663,7 +726,12 @@ impl Parser {
         };
 
         let body = self.parse_block_inner()?;
-        Ok(Expr::For { var, iterable, body, span: sp })
+        Ok(Expr::For {
+            var,
+            iterable,
+            body,
+            span: sp,
+        })
     }
 
     fn parse_forever(&mut self) -> Result<Expr, ParseError> {
@@ -685,7 +753,12 @@ impl Parser {
         let params = self.parse_param_list()?;
         self.expect(&TokenKind::RParen)?;
         let body = self.parse_block_inner()?;
-        Ok(Expr::FnExpr { name, params, body, span: sp })
+        Ok(Expr::FnExpr {
+            name,
+            params,
+            body,
+            span: sp,
+        })
     }
 
     fn parse_prove(&mut self) -> Result<Expr, ParseError> {
@@ -699,7 +772,11 @@ impl Parser {
         let end = self.tokens[self.pos - 1].byte_offset + 1;
         let source_text = self.source[start..end].to_string();
 
-        Ok(Expr::Prove { body, source: source_text, span: sp })
+        Ok(Expr::Prove {
+            body,
+            source: source_text,
+            span: sp,
+        })
     }
 }
 
@@ -709,14 +786,27 @@ impl Parser {
 
 /// Returns (left_bp, right_bp) for infix operators. None if not infix.
 fn is_comparison(kind: &TokenKind) -> bool {
-    matches!(kind, TokenKind::Eq | TokenKind::Neq | TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge)
+    matches!(
+        kind,
+        TokenKind::Eq
+            | TokenKind::Neq
+            | TokenKind::Lt
+            | TokenKind::Le
+            | TokenKind::Gt
+            | TokenKind::Ge
+    )
 }
 
 fn infix_bp(kind: &TokenKind) -> Option<(u8, u8)> {
     Some(match kind {
         TokenKind::Or => (1, 2),
         TokenKind::And => (3, 4),
-        TokenKind::Eq | TokenKind::Neq | TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (5, 6),
+        TokenKind::Eq
+        | TokenKind::Neq
+        | TokenKind::Lt
+        | TokenKind::Le
+        | TokenKind::Gt
+        | TokenKind::Ge => (5, 6),
         TokenKind::Plus | TokenKind::Minus => (7, 8),
         TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (9, 10),
         TokenKind::Caret => (12, 11), // right-associative
@@ -808,7 +898,6 @@ fn tok_display(tok: &Token) -> String {
         tok.lexeme.clone()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1037,12 +1126,14 @@ mod tests {
         // a + b * c should parse as a + (b * c)
         let prog = parse_program("a + b * c").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::BinOp { op: BinOp::Add, rhs, .. }) => {
-                match rhs.as_ref() {
-                    Expr::BinOp { op: BinOp::Mul, .. } => {}
-                    other => panic!("expected Mul on rhs, got {other:?}"),
-                }
-            }
+            Stmt::Expr(Expr::BinOp {
+                op: BinOp::Add,
+                rhs,
+                ..
+            }) => match rhs.as_ref() {
+                Expr::BinOp { op: BinOp::Mul, .. } => {}
+                other => panic!("expected Mul on rhs, got {other:?}"),
+            },
             other => panic!("expected Add, got {other:?}"),
         }
     }
@@ -1060,12 +1151,12 @@ mod tests {
     fn parse_logical_operators() {
         let prog = parse_program("a && b || c").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::BinOp { op: BinOp::Or, lhs, .. }) => {
-                match lhs.as_ref() {
-                    Expr::BinOp { op: BinOp::And, .. } => {}
-                    other => panic!("expected And on lhs, got {other:?}"),
-                }
-            }
+            Stmt::Expr(Expr::BinOp {
+                op: BinOp::Or, lhs, ..
+            }) => match lhs.as_ref() {
+                Expr::BinOp { op: BinOp::And, .. } => {}
+                other => panic!("expected And on lhs, got {other:?}"),
+            },
             other => panic!("expected Or, got {other:?}"),
         }
     }
@@ -1075,7 +1166,12 @@ mod tests {
         // 2^3^4 should parse as 2^(3^4)
         let prog = parse_program("2^3^4").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::BinOp { op: BinOp::Pow, lhs, rhs, .. }) => {
+            Stmt::Expr(Expr::BinOp {
+                op: BinOp::Pow,
+                lhs,
+                rhs,
+                ..
+            }) => {
                 match lhs.as_ref() {
                     Expr::Number { value, .. } => assert_eq!(value, "2"),
                     other => panic!("expected Number(2), got {other:?}"),
@@ -1094,12 +1190,14 @@ mod tests {
         // -a^2 should parse as -(a^2)
         let prog = parse_program("-a^2").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::UnaryOp { op: UnaryOp::Neg, operand, .. }) => {
-                match operand.as_ref() {
-                    Expr::BinOp { op: BinOp::Pow, .. } => {}
-                    other => panic!("expected Pow inside Neg, got {other:?}"),
-                }
-            }
+            Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                operand,
+                ..
+            }) => match operand.as_ref() {
+                Expr::BinOp { op: BinOp::Pow, .. } => {}
+                other => panic!("expected Pow inside Neg, got {other:?}"),
+            },
             other => panic!("expected UnaryOp(Neg), got {other:?}"),
         }
     }
@@ -1186,12 +1284,16 @@ mod tests {
     fn parse_else_if() {
         let prog = parse_program("if a { 1 } else if b { 2 } else { 3 }").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::If { else_branch: Some(ElseBranch::If(inner)), .. }) => {
-                match inner.as_ref() {
-                    Expr::If { else_branch: Some(ElseBranch::Block(_)), .. } => {}
-                    other => panic!("expected inner If with else block, got {other:?}"),
-                }
-            }
+            Stmt::Expr(Expr::If {
+                else_branch: Some(ElseBranch::If(inner)),
+                ..
+            }) => match inner.as_ref() {
+                Expr::If {
+                    else_branch: Some(ElseBranch::Block(_)),
+                    ..
+                } => {}
+                other => panic!("expected inner If with else block, got {other:?}"),
+            },
             other => panic!("expected If with else-if, got {other:?}"),
         }
     }
@@ -1209,7 +1311,10 @@ mod tests {
     fn parse_return_with_value() {
         let prog = parse_program("return 42").unwrap();
         match &prog.stmts[0] {
-            Stmt::Return { value: Some(Expr::Number { value, .. }), .. } => {
+            Stmt::Return {
+                value: Some(Expr::Number { value, .. }),
+                ..
+            } => {
                 assert_eq!(value, "42");
             }
             other => panic!("expected Return with value, got {other:?}"),
@@ -1221,12 +1326,10 @@ mod tests {
         // `return` followed by `}` has no value
         let prog = parse_program("if true { return }").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::If { then_block, .. }) => {
-                match &then_block.stmts[0] {
-                    Stmt::Return { value: None, .. } => {}
-                    other => panic!("expected Return without value, got {other:?}"),
-                }
-            }
+            Stmt::Expr(Expr::If { then_block, .. }) => match &then_block.stmts[0] {
+                Stmt::Return { value: None, .. } => {}
+                other => panic!("expected Return without value, got {other:?}"),
+            },
             other => panic!("expected If, got {other:?}"),
         }
     }
@@ -1262,7 +1365,9 @@ mod tests {
     fn parse_not_operator() {
         let prog = parse_program("!x").unwrap();
         match &prog.stmts[0] {
-            Stmt::Expr(Expr::UnaryOp { op: UnaryOp::Not, .. }) => {}
+            Stmt::Expr(Expr::UnaryOp {
+                op: UnaryOp::Not, ..
+            }) => {}
             other => panic!("expected Not, got {other:?}"),
         }
     }

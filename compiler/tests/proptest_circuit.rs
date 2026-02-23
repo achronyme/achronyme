@@ -19,11 +19,7 @@ use proptest::prelude::*;
 // ============================================================================
 
 /// Full R1CS pipeline: source → IR → optimize → R1CS → witness → verify.
-fn r1cs_verify(
-    public: &[(&str, FieldElement)],
-    witness: &[(&str, FieldElement)],
-    source: &str,
-) {
+fn r1cs_verify(public: &[(&str, FieldElement)], witness: &[(&str, FieldElement)], source: &str) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
     let mut program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
@@ -62,15 +58,14 @@ fn plonkish_verify(
     }
     wg.generate(&inputs, &mut compiler.system.assignments)
         .expect("Plonkish witness gen failed");
-    compiler.system.verify().expect("Plonkish verification failed");
+    compiler
+        .system
+        .verify()
+        .expect("Plonkish verification failed");
 }
 
 /// Both backends must accept the same circuit + inputs.
-fn both_verify(
-    public: &[(&str, FieldElement)],
-    witness: &[(&str, FieldElement)],
-    source: &str,
-) {
+fn both_verify(public: &[(&str, FieldElement)], witness: &[(&str, FieldElement)], source: &str) {
     r1cs_verify(public, witness, source);
     plonkish_verify(public, witness, source);
 }
@@ -638,7 +633,10 @@ fn test_r1cs_div_by_zero_witness_error() {
     inputs.insert("out".to_string(), FieldElement::ZERO);
 
     let result = wg.generate(&inputs);
-    assert!(result.is_err(), "R1CS witness gen should error on div by zero");
+    assert!(
+        result.is_err(),
+        "R1CS witness gen should error on div by zero"
+    );
 }
 
 #[test]
@@ -658,7 +656,10 @@ fn test_plonkish_div_by_zero_witness_error() {
     inputs.insert("out".to_string(), FieldElement::ZERO);
 
     let result = wg.generate(&inputs, &mut compiler.system.assignments);
-    assert!(result.is_err(), "Plonkish witness gen should error on div by zero");
+    assert!(
+        result.is_err(),
+        "Plonkish witness gen should error on div by zero"
+    );
 }
 
 #[test]
@@ -673,7 +674,10 @@ fn test_r1cs_div_by_zero_in_expression() {
     let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
     let mut compiler = R1CSCompiler::new();
     let result = compiler.compile_ir(&program);
-    assert!(result.is_err(), "div by computed zero should error at compile time");
+    assert!(
+        result.is_err(),
+        "div by computed zero should error at compile time"
+    );
 }
 
 #[test]
@@ -747,7 +751,10 @@ fn r1cs_verify_unoptimized(
         inputs.insert(name.to_string(), *val);
     }
     let w = wg.generate(&inputs).unwrap();
-    compiler.cs.verify(&w).expect("unoptimized R1CS verification failed");
+    compiler
+        .cs
+        .verify(&w)
+        .expect("unoptimized R1CS verification failed");
 }
 
 proptest! {

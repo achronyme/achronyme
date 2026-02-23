@@ -57,7 +57,10 @@ impl fmt::Display for EvalError {
                 ..
             } => match (dividend_name, divisor_name) {
                 (Some(a), Some(b)) => {
-                    write!(f, "division by zero when dividing '{a}' by '{b}' (which is 0)")
+                    write!(
+                        f,
+                        "division by zero when dividing '{a}' by '{b}' (which is 0)"
+                    )
                 }
                 _ => write!(f, "division by zero"),
             },
@@ -138,13 +141,17 @@ impl std::error::Error for EvalError {}
 pub fn evaluate(
     program: &IrProgram,
     inputs: &HashMap<String, FieldElement>,
-) -> Result<HashMap<SsaVar, FieldElement>, EvalError> {
+) -> Result<HashMap<SsaVar, FieldElement>, Box<EvalError>> {
     let mut values: HashMap<SsaVar, FieldElement> = HashMap::new();
     let mut poseidon_params: Option<PoseidonParams> = None;
 
-    let get = |values: &HashMap<SsaVar, FieldElement>, var: &SsaVar| -> Result<FieldElement, EvalError> {
-        values.get(var).copied().ok_or(EvalError::UndefinedVar(*var))
-    };
+    let get =
+        |values: &HashMap<SsaVar, FieldElement>, var: &SsaVar| -> Result<FieldElement, EvalError> {
+            values
+                .get(var)
+                .copied()
+                .ok_or(EvalError::UndefinedVar(*var))
+        };
 
     for inst in &program.instructions {
         match inst {
@@ -155,7 +162,7 @@ pub fn evaluate(
                 let val = inputs
                     .get(name)
                     .copied()
-                    .ok_or_else(|| EvalError::MissingInput(name.clone()))?;
+                    .ok_or_else(|| Box::new(EvalError::MissingInput(name.clone())))?;
                 values.insert(*result, val);
             }
             Instruction::Add { result, lhs, rhs } => {
@@ -176,10 +183,12 @@ pub fn evaluate(
             Instruction::Div { result, lhs, rhs } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
-                let inv = b.inv().ok_or_else(|| EvalError::DivisionByZero {
-                    var: *result,
-                    dividend_name: resolve_name(program, *lhs),
-                    divisor_name: resolve_name(program, *rhs),
+                let inv = b.inv().ok_or_else(|| {
+                    Box::new(EvalError::DivisionByZero {
+                        var: *result,
+                        dividend_name: resolve_name(program, *lhs),
+                        divisor_name: resolve_name(program, *rhs),
+                    })
                 })?;
                 values.insert(*result, a.mul(&inv));
             }
@@ -197,11 +206,11 @@ pub fn evaluate(
                 let t = get(&values, if_true)?;
                 let f = get(&values, if_false)?;
                 if c != FieldElement::ZERO && c != FieldElement::ONE {
-                    return Err(EvalError::NonBooleanMuxCondition {
+                    return Err(Box::new(EvalError::NonBooleanMuxCondition {
                         var: *cond,
                         name: resolve_name(program, *cond),
                         value: Some(c),
-                    });
+                    }));
                 }
                 let val = if !c.is_zero() { t } else { f };
                 values.insert(*result, val);
@@ -213,8 +222,7 @@ pub fn evaluate(
             } => {
                 let l = get(&values, left)?;
                 let r = get(&values, right)?;
-                let params = poseidon_params
-                    .get_or_insert_with(PoseidonParams::bn254_t3);
+                let params = poseidon_params.get_or_insert_with(PoseidonParams::bn254_t3);
                 let hash = poseidon_hash(params, l, r);
                 values.insert(*result, hash);
             }
@@ -222,25 +230,25 @@ pub fn evaluate(
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
                 if a != b {
-                    return Err(EvalError::AssertEqFailed {
+                    return Err(Box::new(EvalError::AssertEqFailed {
                         lhs: *lhs,
                         rhs: *rhs,
                         lhs_name: resolve_name(program, *lhs),
                         rhs_name: resolve_name(program, *rhs),
                         lhs_value: Some(a),
                         rhs_value: Some(b),
-                    });
+                    }));
                 }
                 values.insert(*result, a);
             }
             Instruction::Assert { result, operand } => {
                 let v = get(&values, operand)?;
                 if v != FieldElement::ONE {
-                    return Err(EvalError::AssertionFailed {
+                    return Err(Box::new(EvalError::AssertionFailed {
                         var: *operand,
                         name: resolve_name(program, *operand),
                         value: Some(v),
-                    });
+                    }));
                 }
                 values.insert(*result, v);
             }
@@ -251,12 +259,12 @@ pub fn evaluate(
             } => {
                 let v = get(&values, operand)?;
                 if !fits_in_bits(&v, *bits) {
-                    return Err(EvalError::RangeCheckFailed {
+                    return Err(Box::new(EvalError::RangeCheckFailed {
                         var: *operand,
                         bits: *bits,
                         name: resolve_name(program, *operand),
                         value: Some(v),
-                    });
+                    }));
                 }
                 values.insert(*result, v);
             }
@@ -362,7 +370,7 @@ fn fits_in_bits(v: &FieldElement, bits: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{IrProgram, Instruction, SsaVar, Visibility};
+    use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
 
     fn empty_inputs() -> HashMap<String, FieldElement> {
         HashMap::new()
@@ -376,7 +384,10 @@ mod tests {
     fn eval_const() {
         let mut p = IrProgram::new();
         let v = p.fresh_var();
-        p.push(Instruction::Const { result: v, value: fe(42) });
+        p.push(Instruction::Const {
+            result: v,
+            value: fe(42),
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&v], fe(42));
     }
@@ -406,7 +417,7 @@ mod tests {
             visibility: Visibility::Witness,
         });
         let err = evaluate(&p, &empty_inputs()).unwrap_err();
-        assert!(matches!(err, EvalError::MissingInput(ref n) if n == "x"));
+        assert!(matches!(*err, EvalError::MissingInput(ref n) if n == "x"));
     }
 
     #[test]
@@ -415,9 +426,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(3) });
-        p.push(Instruction::Const { result: b, value: fe(4) });
-        p.push(Instruction::Add { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(3),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(4),
+        });
+        p.push(Instruction::Add {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], fe(7));
     }
@@ -428,9 +449,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(10) });
-        p.push(Instruction::Const { result: b, value: fe(3) });
-        p.push(Instruction::Sub { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(10),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(3),
+        });
+        p.push(Instruction::Sub {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], fe(7));
     }
@@ -441,9 +472,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(6) });
-        p.push(Instruction::Const { result: b, value: fe(7) });
-        p.push(Instruction::Mul { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(6),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(7),
+        });
+        p.push(Instruction::Mul {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], fe(42));
     }
@@ -454,9 +495,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(42) });
-        p.push(Instruction::Const { result: b, value: fe(6) });
-        p.push(Instruction::Div { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(42),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(6),
+        });
+        p.push(Instruction::Div {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], fe(7));
     }
@@ -466,8 +517,14 @@ mod tests {
         let mut p = IrProgram::new();
         let a = p.fresh_var();
         let b = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(5) });
-        p.push(Instruction::Neg { result: b, operand: a });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(5),
+        });
+        p.push(Instruction::Neg {
+            result: b,
+            operand: a,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&b], fe(5).neg());
     }
@@ -478,11 +535,21 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(1) });
-        p.push(Instruction::Const { result: b, value: FieldElement::ZERO });
-        p.push(Instruction::Div { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(1),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: FieldElement::ZERO,
+        });
+        p.push(Instruction::Div {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let err = evaluate(&p, &empty_inputs()).unwrap_err();
-        assert!(matches!(err, EvalError::DivisionByZero { .. }));
+        assert!(matches!(*err, EvalError::DivisionByZero { .. }));
     }
 
     #[test]
@@ -492,9 +559,18 @@ mod tests {
         let t = p.fresh_var();
         let f = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: c, value: FieldElement::ONE });
-        p.push(Instruction::Const { result: t, value: fe(10) });
-        p.push(Instruction::Const { result: f, value: fe(20) });
+        p.push(Instruction::Const {
+            result: c,
+            value: FieldElement::ONE,
+        });
+        p.push(Instruction::Const {
+            result: t,
+            value: fe(10),
+        });
+        p.push(Instruction::Const {
+            result: f,
+            value: fe(20),
+        });
         p.push(Instruction::Mux {
             result: r,
             cond: c,
@@ -512,9 +588,18 @@ mod tests {
         let t = p.fresh_var();
         let f = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: c, value: FieldElement::ZERO });
-        p.push(Instruction::Const { result: t, value: fe(10) });
-        p.push(Instruction::Const { result: f, value: fe(20) });
+        p.push(Instruction::Const {
+            result: c,
+            value: FieldElement::ZERO,
+        });
+        p.push(Instruction::Const {
+            result: t,
+            value: fe(10),
+        });
+        p.push(Instruction::Const {
+            result: f,
+            value: fe(20),
+        });
         p.push(Instruction::Mux {
             result: r,
             cond: c,
@@ -532,9 +617,18 @@ mod tests {
         let t = p.fresh_var();
         let f = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: c, value: fe(2) });
-        p.push(Instruction::Const { result: t, value: fe(10) });
-        p.push(Instruction::Const { result: f, value: fe(20) });
+        p.push(Instruction::Const {
+            result: c,
+            value: fe(2),
+        });
+        p.push(Instruction::Const {
+            result: t,
+            value: fe(10),
+        });
+        p.push(Instruction::Const {
+            result: f,
+            value: fe(20),
+        });
         p.push(Instruction::Mux {
             result: r,
             cond: c,
@@ -542,7 +636,7 @@ mod tests {
             if_false: f,
         });
         let err = evaluate(&p, &empty_inputs()).unwrap_err();
-        assert!(matches!(err, EvalError::NonBooleanMuxCondition { .. }));
+        assert!(matches!(*err, EvalError::NonBooleanMuxCondition { .. }));
     }
 
     #[test]
@@ -556,8 +650,14 @@ mod tests {
         let lv = p.fresh_var();
         let rv = p.fresh_var();
         let hv = p.fresh_var();
-        p.push(Instruction::Const { result: lv, value: l });
-        p.push(Instruction::Const { result: rv, value: r });
+        p.push(Instruction::Const {
+            result: lv,
+            value: l,
+        });
+        p.push(Instruction::Const {
+            result: rv,
+            value: r,
+        });
         p.push(Instruction::PoseidonHash {
             result: hv,
             left: lv,
@@ -572,8 +672,14 @@ mod tests {
         let mut p = IrProgram::new();
         let a = p.fresh_var();
         let b = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: FieldElement::ONE });
-        p.push(Instruction::Not { result: b, operand: a });
+        p.push(Instruction::Const {
+            result: a,
+            value: FieldElement::ONE,
+        });
+        p.push(Instruction::Not {
+            result: b,
+            operand: a,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&b], FieldElement::ZERO);
     }
@@ -584,9 +690,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: FieldElement::ONE });
-        p.push(Instruction::Const { result: b, value: FieldElement::ZERO });
-        p.push(Instruction::And { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: FieldElement::ONE,
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: FieldElement::ZERO,
+        });
+        p.push(Instruction::And {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], FieldElement::ZERO);
     }
@@ -597,9 +713,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: FieldElement::ONE });
-        p.push(Instruction::Const { result: b, value: FieldElement::ZERO });
-        p.push(Instruction::Or { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: FieldElement::ONE,
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: FieldElement::ZERO,
+        });
+        p.push(Instruction::Or {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], FieldElement::ONE);
     }
@@ -610,9 +736,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(5) });
-        p.push(Instruction::Const { result: b, value: fe(5) });
-        p.push(Instruction::IsEq { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(5),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(5),
+        });
+        p.push(Instruction::IsEq {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], FieldElement::ONE);
     }
@@ -623,9 +759,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(3) });
-        p.push(Instruction::Const { result: b, value: fe(5) });
-        p.push(Instruction::IsNeq { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(3),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(5),
+        });
+        p.push(Instruction::IsNeq {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], FieldElement::ONE);
     }
@@ -636,9 +782,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(3) });
-        p.push(Instruction::Const { result: b, value: fe(5) });
-        p.push(Instruction::IsLt { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(3),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(5),
+        });
+        p.push(Instruction::IsLt {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], FieldElement::ONE);
 
@@ -647,9 +803,19 @@ mod tests {
         let a2 = p2.fresh_var();
         let b2 = p2.fresh_var();
         let c2 = p2.fresh_var();
-        p2.push(Instruction::Const { result: a2, value: fe(5) });
-        p2.push(Instruction::Const { result: b2, value: fe(3) });
-        p2.push(Instruction::IsLt { result: c2, lhs: a2, rhs: b2 });
+        p2.push(Instruction::Const {
+            result: a2,
+            value: fe(5),
+        });
+        p2.push(Instruction::Const {
+            result: b2,
+            value: fe(3),
+        });
+        p2.push(Instruction::IsLt {
+            result: c2,
+            lhs: a2,
+            rhs: b2,
+        });
         let vals2 = evaluate(&p2, &empty_inputs()).unwrap();
         assert_eq!(vals2[&c2], FieldElement::ZERO);
     }
@@ -660,9 +826,19 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let c = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(5) });
-        p.push(Instruction::Const { result: b, value: fe(5) });
-        p.push(Instruction::IsLe { result: c, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(5),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(5),
+        });
+        p.push(Instruction::IsLe {
+            result: c,
+            lhs: a,
+            rhs: b,
+        });
         let vals = evaluate(&p, &empty_inputs()).unwrap();
         assert_eq!(vals[&c], FieldElement::ONE);
     }
@@ -672,8 +848,14 @@ mod tests {
         let mut p = IrProgram::new();
         let a = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: FieldElement::ONE });
-        p.push(Instruction::Assert { result: r, operand: a });
+        p.push(Instruction::Const {
+            result: a,
+            value: FieldElement::ONE,
+        });
+        p.push(Instruction::Assert {
+            result: r,
+            operand: a,
+        });
         assert!(evaluate(&p, &empty_inputs()).is_ok());
     }
 
@@ -682,10 +864,16 @@ mod tests {
         let mut p = IrProgram::new();
         let a = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: FieldElement::ZERO });
-        p.push(Instruction::Assert { result: r, operand: a });
+        p.push(Instruction::Const {
+            result: a,
+            value: FieldElement::ZERO,
+        });
+        p.push(Instruction::Assert {
+            result: r,
+            operand: a,
+        });
         let err = evaluate(&p, &empty_inputs()).unwrap_err();
-        assert!(matches!(err, EvalError::AssertionFailed { .. }));
+        assert!(matches!(*err, EvalError::AssertionFailed { .. }));
     }
 
     #[test]
@@ -694,11 +882,21 @@ mod tests {
         let a = p.fresh_var();
         let b = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(1) });
-        p.push(Instruction::Const { result: b, value: fe(2) });
-        p.push(Instruction::AssertEq { result: r, lhs: a, rhs: b });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(1),
+        });
+        p.push(Instruction::Const {
+            result: b,
+            value: fe(2),
+        });
+        p.push(Instruction::AssertEq {
+            result: r,
+            lhs: a,
+            rhs: b,
+        });
         let err = evaluate(&p, &empty_inputs()).unwrap_err();
-        assert!(matches!(err, EvalError::AssertEqFailed { .. }));
+        assert!(matches!(*err, EvalError::AssertEqFailed { .. }));
     }
 
     #[test]
@@ -706,8 +904,15 @@ mod tests {
         let mut p = IrProgram::new();
         let a = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(255) });
-        p.push(Instruction::RangeCheck { result: r, operand: a, bits: 8 });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(255),
+        });
+        p.push(Instruction::RangeCheck {
+            result: r,
+            operand: a,
+            bits: 8,
+        });
         assert!(evaluate(&p, &empty_inputs()).is_ok());
     }
 
@@ -716,10 +921,17 @@ mod tests {
         let mut p = IrProgram::new();
         let a = p.fresh_var();
         let r = p.fresh_var();
-        p.push(Instruction::Const { result: a, value: fe(256) });
-        p.push(Instruction::RangeCheck { result: r, operand: a, bits: 8 });
+        p.push(Instruction::Const {
+            result: a,
+            value: fe(256),
+        });
+        p.push(Instruction::RangeCheck {
+            result: r,
+            operand: a,
+            bits: 8,
+        });
         let err = evaluate(&p, &empty_inputs()).unwrap_err();
-        assert!(matches!(err, EvalError::RangeCheckFailed { .. }));
+        assert!(matches!(*err, EvalError::RangeCheckFailed { .. }));
     }
 
     #[test]
@@ -755,7 +967,11 @@ mod tests {
         });
         p.set_name(y, "y".into());
         let r = p.fresh_var();
-        p.push(Instruction::Div { result: r, lhs: x, rhs: y });
+        p.push(Instruction::Div {
+            result: r,
+            lhs: x,
+            rhs: y,
+        });
 
         let mut inputs = HashMap::new();
         inputs.insert("x".into(), fe(42));
@@ -786,7 +1002,11 @@ mod tests {
         });
         p.set_name(b, "b".into());
         let r = p.fresh_var();
-        p.push(Instruction::AssertEq { result: r, lhs: a, rhs: b });
+        p.push(Instruction::AssertEq {
+            result: r,
+            lhs: a,
+            rhs: b,
+        });
 
         let mut inputs = HashMap::new();
         inputs.insert("a".into(), fe(42));
@@ -811,7 +1031,11 @@ mod tests {
         });
         p.set_name(x, "x".into());
         let r = p.fresh_var();
-        p.push(Instruction::RangeCheck { result: r, operand: x, bits: 8 });
+        p.push(Instruction::RangeCheck {
+            result: r,
+            operand: x,
+            bits: 8,
+        });
 
         let mut inputs = HashMap::new();
         inputs.insert("x".into(), fe(300));
@@ -834,9 +1058,15 @@ mod tests {
         });
         p.set_name(cond, "cond".into());
         let t = p.fresh_var();
-        p.push(Instruction::Const { result: t, value: fe(10) });
+        p.push(Instruction::Const {
+            result: t,
+            value: fe(10),
+        });
         let f = p.fresh_var();
-        p.push(Instruction::Const { result: f, value: fe(20) });
+        p.push(Instruction::Const {
+            result: f,
+            value: fe(20),
+        });
         let r = p.fresh_var();
         p.push(Instruction::Mux {
             result: r,
@@ -850,7 +1080,10 @@ mod tests {
 
         let err = evaluate(&p, &inputs).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("'cond'"), "should mention condition name: {msg}");
+        assert!(
+            msg.contains("'cond'"),
+            "should mention condition name: {msg}"
+        );
         assert!(msg.contains("5"), "should show the value: {msg}");
         assert!(msg.contains("boolean"), "should mention boolean: {msg}");
     }

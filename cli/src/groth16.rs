@@ -9,11 +9,10 @@ use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_groth16::Groth16;
 use ark_relations::r1cs::{
-    ConstraintSynthesizer, ConstraintSystemRef, SynthesisError,
-    Variable as ArkVariable,
+    ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable as ArkVariable,
 };
-use ark_snark::SNARK;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_snark::SNARK;
 use ark_std::rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
@@ -109,7 +108,13 @@ fn convert_lc(
 pub fn setup_keys(
     cs: &ConstraintSystem,
     cache_dir: &Path,
-) -> Result<(ark_groth16::ProvingKey<Bn254>, ark_groth16::VerifyingKey<Bn254>), String> {
+) -> Result<
+    (
+        ark_groth16::ProvingKey<Bn254>,
+        ark_groth16::VerifyingKey<Bn254>,
+    ),
+    String,
+> {
     let key = cache_key(cs);
     let cache_subdir = cache_dir.join(&key);
 
@@ -208,11 +213,7 @@ fn g1_to_json(p: &<Bn254 as Pairing>::G1Affine) -> serde_json::Value {
     }
     let x = p.x().expect("non-zero point has x");
     let y = p.y().expect("non-zero point has y");
-    serde_json::json!([
-        fr_to_decimal(&x),
-        fr_to_decimal(&y),
-        "1"
-    ])
+    serde_json::json!([fr_to_decimal(&x), fr_to_decimal(&y), "1"])
 }
 
 /// Format a G2 affine point as a JSON array of 3 arrays, each with 2 decimal strings.
@@ -248,14 +249,11 @@ fn serialize_proof_json(proof: &ark_groth16::Proof<Bn254>) -> String {
 }
 
 fn serialize_public_json(inputs: &[Fr]) -> String {
-    let arr: Vec<String> = inputs.iter().map(|f| fr_to_decimal(f)).collect();
+    let arr: Vec<String> = inputs.iter().map(fr_to_decimal).collect();
     serde_json::to_string_pretty(&arr).unwrap()
 }
 
-fn serialize_vkey_json(
-    vk: &ark_groth16::VerifyingKey<Bn254>,
-    num_pub: usize,
-) -> String {
+fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bn254>, num_pub: usize) -> String {
     let mut ic: Vec<serde_json::Value> = Vec::new();
     for p in &vk.gamma_abc_g1 {
         ic.push(g1_to_json(p));
@@ -317,10 +315,7 @@ fn load_cached_vk(dir: &Path) -> Option<ark_groth16::VerifyingKey<Bn254>> {
     ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&vk_bytes[..]).ok()
 }
 
-fn save_cached_vk(
-    dir: &Path,
-    vk: &ark_groth16::VerifyingKey<Bn254>,
-) -> Result<(), String> {
+fn save_cached_vk(dir: &Path, vk: &ark_groth16::VerifyingKey<Bn254>) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
     let mut vk_buf = Vec::new();
     vk.serialize_compressed(&mut vk_buf)

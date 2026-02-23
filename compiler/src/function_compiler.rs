@@ -1,8 +1,8 @@
-use crate::types::{Local, LoopContext, UpvalueInfo};
 use crate::error::CompilerError;
+use crate::types::{Local, LoopContext, UpvalueInfo};
 use memory::Value;
-use vm::opcode::OpCode;
 use vm::opcode::instruction::{encode_abc, encode_abx};
+use vm::opcode::OpCode;
 
 /// State specific to ONE function being compiled
 pub struct FunctionCompiler {
@@ -14,14 +14,14 @@ pub struct FunctionCompiler {
     pub constants: Vec<Value>,
     pub upvalues: Vec<UpvalueInfo>,
     pub loop_stack: Vec<LoopContext>,
-    
+
     // Register allocator state
     pub reg_top: u8,
     pub max_slots: u16,
 }
 
 impl FunctionCompiler {
-    /// Creates a new function compiler. 
+    /// Creates a new function compiler.
     /// CRITICAL: reg_top starts at arity to avoid argument/local collision.
     pub fn new(name: String, arity: u8) -> Self {
         Self {
@@ -33,18 +33,18 @@ impl FunctionCompiler {
             constants: Vec::new(),
             upvalues: Vec::new(),
             loop_stack: Vec::new(),
-            reg_top: arity,        // Reserve R0..R(arity-1) for arguments
+            reg_top: arity, // Reserve R0..R(arity-1) for arguments
             max_slots: arity as u16,
         }
     }
-    
+
     pub fn alloc_contiguous(&mut self, count: u8) -> Result<u8, CompilerError> {
         let start = self.reg_top;
         if (start as usize) + (count as usize) > 255 {
-             return Err(CompilerError::RegisterOverflow);
+            return Err(CompilerError::RegisterOverflow);
         }
         self.reg_top += count;
-        
+
         if (self.reg_top as u16) > self.max_slots {
             self.max_slots = self.reg_top as u16;
         }
@@ -57,7 +57,7 @@ impl FunctionCompiler {
             return Err(CompilerError::RegisterOverflow);
         }
         self.reg_top += 1;
-        
+
         // Track High Water Mark
         if (self.reg_top as u16) > self.max_slots {
             self.max_slots = self.reg_top as u16;
@@ -67,12 +67,11 @@ impl FunctionCompiler {
     }
 
     pub fn free_reg(&mut self, reg: u8) {
-        // Assert hygiene? 
+        // Assert hygiene?
         // In robust compiler, we might check if reg == reg_top - 1.
         assert_eq!(reg, self.reg_top - 1, "Register Hygiene Error");
         self.reg_top -= 1;
     }
-
 
     pub fn add_constant(&mut self, val: Value) -> usize {
         if let Some(idx) = self.constants.iter().position(|c| c == &val) {

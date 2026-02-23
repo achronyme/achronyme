@@ -31,20 +31,29 @@ pub fn constant_fold(program: &mut IrProgram) {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
                 // x + 0 → x, 0 + x → x
-                if lhs_val.map_or(false, |v| v.is_zero()) {
+                if lhs_val.is_some_and(|v| v.is_zero()) {
                     if let Some(val) = rhs_val {
                         constants.insert(*result, val);
-                        *inst = Instruction::Const { result: *result, value: val };
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: val,
+                        };
                     }
-                } else if rhs_val.map_or(false, |v| v.is_zero()) {
+                } else if rhs_val.is_some_and(|v| v.is_zero()) {
                     if let Some(val) = lhs_val {
                         constants.insert(*result, val);
-                        *inst = Instruction::Const { result: *result, value: val };
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: val,
+                        };
                     }
                 } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
                     let folded = a.add(&b);
                     constants.insert(*result, folded);
-                    *inst = Instruction::Const { result: *result, value: folded };
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
                 }
             }
             Instruction::Sub { result, lhs, rhs } => {
@@ -52,20 +61,29 @@ pub fn constant_fold(program: &mut IrProgram) {
                     // x - x → 0 regardless of whether x is constant
                     let r = *result;
                     constants.insert(r, FieldElement::ZERO);
-                    *inst = Instruction::Const { result: r, value: FieldElement::ZERO };
+                    *inst = Instruction::Const {
+                        result: r,
+                        value: FieldElement::ZERO,
+                    };
                 } else {
                     let lhs_val = constants.get(lhs).copied();
                     let rhs_val = constants.get(rhs).copied();
                     // x - 0 → x
-                    if rhs_val.map_or(false, |v| v.is_zero()) {
+                    if rhs_val.is_some_and(|v| v.is_zero()) {
                         if let Some(val) = lhs_val {
                             constants.insert(*result, val);
-                            *inst = Instruction::Const { result: *result, value: val };
+                            *inst = Instruction::Const {
+                                result: *result,
+                                value: val,
+                            };
                         }
                     } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
                         let folded = a.sub(&b);
                         constants.insert(*result, folded);
-                        *inst = Instruction::Const { result: *result, value: folded };
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: folded,
+                        };
                     }
                 }
             }
@@ -73,26 +91,38 @@ pub fn constant_fold(program: &mut IrProgram) {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
                 // x * 0 → 0, 0 * x → 0
-                let lhs_zero = lhs_val.map_or(false, |v| v.is_zero());
-                let rhs_zero = rhs_val.map_or(false, |v| v.is_zero());
+                let lhs_zero = lhs_val.is_some_and(|v| v.is_zero());
+                let rhs_zero = rhs_val.is_some_and(|v| v.is_zero());
                 if lhs_zero || rhs_zero {
                     constants.insert(*result, FieldElement::ZERO);
-                    *inst = Instruction::Const { result: *result, value: FieldElement::ZERO };
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: FieldElement::ZERO,
+                    };
                 // x * 1 → x, 1 * x → x
                 } else if lhs_val == Some(FieldElement::ONE) {
                     if let Some(val) = rhs_val {
                         constants.insert(*result, val);
-                        *inst = Instruction::Const { result: *result, value: val };
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: val,
+                        };
                     }
                 } else if rhs_val == Some(FieldElement::ONE) {
                     if let Some(val) = lhs_val {
                         constants.insert(*result, val);
-                        *inst = Instruction::Const { result: *result, value: val };
+                        *inst = Instruction::Const {
+                            result: *result,
+                            value: val,
+                        };
                     }
                 } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
                     let folded = a.mul(&b);
                     constants.insert(*result, folded);
-                    *inst = Instruction::Const { result: *result, value: folded };
+                    *inst = Instruction::Const {
+                        result: *result,
+                        value: folded,
+                    };
                 }
             }
             Instruction::Div { result, lhs, rhs } => {
@@ -106,7 +136,10 @@ pub fn constant_fold(program: &mut IrProgram) {
                     if let Some(val) = constants.get(&l).copied() {
                         if !val.is_zero() {
                             constants.insert(r, FieldElement::ONE);
-                            *inst = Instruction::Const { result: r, value: FieldElement::ONE };
+                            *inst = Instruction::Const {
+                                result: r,
+                                value: FieldElement::ONE,
+                            };
                             folded_self = true;
                         }
                     }
@@ -115,22 +148,31 @@ pub fn constant_fold(program: &mut IrProgram) {
                     let lhs_val = constants.get(&l).copied();
                     let rhs_val = constants.get(&rh).copied();
                     // 0 / x → 0 (for any non-zero x)
-                    let lhs_zero = lhs_val.map_or(false, |v| v.is_zero());
-                    let rhs_zero = rhs_val.map_or(false, |v| v.is_zero());
+                    let lhs_zero = lhs_val.is_some_and(|v| v.is_zero());
+                    let rhs_zero = rhs_val.is_some_and(|v| v.is_zero());
                     if lhs_zero && !rhs_zero {
                         constants.insert(r, FieldElement::ZERO);
-                        *inst = Instruction::Const { result: r, value: FieldElement::ZERO };
+                        *inst = Instruction::Const {
+                            result: r,
+                            value: FieldElement::ZERO,
+                        };
                     // x / 1 → x
                     } else if rhs_val == Some(FieldElement::ONE) {
                         if let Some(val) = lhs_val {
                             constants.insert(r, val);
-                            *inst = Instruction::Const { result: r, value: val };
+                            *inst = Instruction::Const {
+                                result: r,
+                                value: val,
+                            };
                         }
                     } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
                         if let Some(inv) = b.inv() {
                             let folded = a.mul(&inv);
                             constants.insert(r, folded);
-                            *inst = Instruction::Const { result: r, value: folded };
+                            *inst = Instruction::Const {
+                                result: r,
+                                value: folded,
+                            };
                         }
                     }
                 }
@@ -194,8 +236,8 @@ pub fn constant_fold(program: &mut IrProgram) {
                         let full_limbs_needed = (*bits / 64) as usize;
                         let remaining_bits = *bits % 64;
                         let mut ok = true;
-                        for i in (full_limbs_needed + 1)..4 {
-                            if limbs[i] != 0 {
+                        for limb in limbs.iter().skip(full_limbs_needed + 1) {
+                            if *limb != 0 {
                                 ok = false;
                             }
                         }
@@ -204,7 +246,10 @@ pub fn constant_fold(program: &mut IrProgram) {
                         }
                         ok
                     } else {
-                        limbs[0] < (1u64 << *bits) && limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0
+                        limbs[0] < (1u64 << *bits)
+                            && limbs[1] == 0
+                            && limbs[2] == 0
+                            && limbs[3] == 0
                     };
                     if fits {
                         constants.insert(*result, *val);
@@ -233,12 +278,9 @@ pub fn constant_fold(program: &mut IrProgram) {
             Instruction::And { result, lhs, rhs } => {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
-                let is_bool =
-                    |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
+                let is_bool = |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
                 // Short-circuit: 0 && x = 0 (safe: 0 is boolean)
-                if lhs_val.map_or(false, |v| v.is_zero())
-                    || rhs_val.map_or(false, |v| v.is_zero())
-                {
+                if lhs_val.is_some_and(|v| v.is_zero()) || rhs_val.is_some_and(|v| v.is_zero()) {
                     constants.insert(*result, FieldElement::ZERO);
                     *inst = Instruction::Const {
                         result: *result,
@@ -261,12 +303,9 @@ pub fn constant_fold(program: &mut IrProgram) {
             Instruction::Or { result, lhs, rhs } => {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
-                let is_bool =
-                    |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
+                let is_bool = |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
                 // Short-circuit: 1 || x = 1 (safe: 1 is boolean)
-                if lhs_val.map_or(false, |v| v == FieldElement::ONE)
-                    || rhs_val.map_or(false, |v| v == FieldElement::ONE)
-                {
+                if lhs_val == Some(FieldElement::ONE) || rhs_val == Some(FieldElement::ONE) {
                     constants.insert(*result, FieldElement::ONE);
                     *inst = Instruction::Const {
                         result: *result,

@@ -45,9 +45,8 @@ impl ProveHandler for DefaultProveHandler {
             .unwrap_or(source);
 
         // 2. Lower IR (self-contained: extracts public/witness from source)
-        let (pub_names, wit_names, mut program) =
-            IrLowering::lower_self_contained(inner)
-                .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
+        let (pub_names, wit_names, mut program) = IrLowering::lower_self_contained(inner)
+            .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         // 3. Optimize
         ir::passes::optimize(&mut program);
@@ -55,11 +54,9 @@ impl ProveHandler for DefaultProveHandler {
         // 4. Build input map from scope_values
         let mut inputs = HashMap::new();
         for name in pub_names.iter().chain(wit_names.iter()) {
-            let val = scope_values
-                .get(name)
-                .ok_or_else(|| {
-                    ProveError::IrLowering(format!("variable `{name}` not found in scope"))
-                })?;
+            let val = scope_values.get(name).ok_or_else(|| {
+                ProveError::IrLowering(format!("variable `{name}` not found in scope"))
+            })?;
             inputs.insert(name.clone(), *val);
         }
 

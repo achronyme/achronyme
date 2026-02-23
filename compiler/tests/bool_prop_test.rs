@@ -14,11 +14,20 @@ use memory::FieldElement;
 fn bool_prop_const_0_1_are_boolean() {
     let mut p = IrProgram::new();
     let c0 = p.fresh_var();
-    p.push(Instruction::Const { result: c0, value: FieldElement::ZERO });
+    p.push(Instruction::Const {
+        result: c0,
+        value: FieldElement::ZERO,
+    });
     let c1 = p.fresh_var();
-    p.push(Instruction::Const { result: c1, value: FieldElement::ONE });
+    p.push(Instruction::Const {
+        result: c1,
+        value: FieldElement::ONE,
+    });
     let c42 = p.fresh_var();
-    p.push(Instruction::Const { result: c42, value: FieldElement::from_u64(42) });
+    p.push(Instruction::Const {
+        result: c42,
+        value: FieldElement::from_u64(42),
+    });
 
     let set = compute_proven_boolean(&p);
     assert!(set.contains(&c0));
@@ -30,11 +39,23 @@ fn bool_prop_const_0_1_are_boolean() {
 fn bool_prop_is_eq_result_boolean() {
     let mut p = IrProgram::new();
     let a = p.fresh_var();
-    p.push(Instruction::Input { result: a, name: "a".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: a,
+        name: "a".into(),
+        visibility: Visibility::Witness,
+    });
     let b = p.fresh_var();
-    p.push(Instruction::Input { result: b, name: "b".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: b,
+        name: "b".into(),
+        visibility: Visibility::Witness,
+    });
     let eq = p.fresh_var();
-    p.push(Instruction::IsEq { result: eq, lhs: a, rhs: b });
+    p.push(Instruction::IsEq {
+        result: eq,
+        lhs: a,
+        rhs: b,
+    });
 
     let set = compute_proven_boolean(&p);
     assert!(set.contains(&eq));
@@ -46,21 +67,39 @@ fn bool_prop_is_eq_result_boolean() {
 fn bool_prop_not_of_boolean() {
     let mut p = IrProgram::new();
     let a = p.fresh_var();
-    p.push(Instruction::Input { result: a, name: "a".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: a,
+        name: "a".into(),
+        visibility: Visibility::Witness,
+    });
     let b = p.fresh_var();
-    p.push(Instruction::Input { result: b, name: "b".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: b,
+        name: "b".into(),
+        visibility: Visibility::Witness,
+    });
     let eq = p.fresh_var();
-    p.push(Instruction::IsEq { result: eq, lhs: a, rhs: b });
+    p.push(Instruction::IsEq {
+        result: eq,
+        lhs: a,
+        rhs: b,
+    });
     // Not(boolean) → boolean
     let not_eq = p.fresh_var();
-    p.push(Instruction::Not { result: not_eq, operand: eq });
+    p.push(Instruction::Not {
+        result: not_eq,
+        operand: eq,
+    });
 
     let set = compute_proven_boolean(&p);
     assert!(set.contains(&not_eq));
 
     // Not(witness) → NOT boolean
     let not_a = p.fresh_var();
-    p.push(Instruction::Not { result: not_a, operand: a });
+    p.push(Instruction::Not {
+        result: not_a,
+        operand: a,
+    });
     let set2 = compute_proven_boolean(&p);
     assert!(!set2.contains(&not_a));
 }
@@ -69,25 +108,53 @@ fn bool_prop_not_of_boolean() {
 fn bool_prop_and_of_booleans() {
     let mut p = IrProgram::new();
     let a = p.fresh_var();
-    p.push(Instruction::Input { result: a, name: "a".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: a,
+        name: "a".into(),
+        visibility: Visibility::Witness,
+    });
     let b = p.fresh_var();
-    p.push(Instruction::Input { result: b, name: "b".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: b,
+        name: "b".into(),
+        visibility: Visibility::Witness,
+    });
     let c = p.fresh_var();
-    p.push(Instruction::Input { result: c, name: "c".into(), visibility: Visibility::Witness });
+    p.push(Instruction::Input {
+        result: c,
+        name: "c".into(),
+        visibility: Visibility::Witness,
+    });
     let eq = p.fresh_var();
-    p.push(Instruction::IsEq { result: eq, lhs: a, rhs: b });
+    p.push(Instruction::IsEq {
+        result: eq,
+        lhs: a,
+        rhs: b,
+    });
     let lt = p.fresh_var();
-    p.push(Instruction::IsLt { result: lt, lhs: a, rhs: c });
+    p.push(Instruction::IsLt {
+        result: lt,
+        lhs: a,
+        rhs: c,
+    });
 
     // And(boolean, boolean) → boolean
     let and_bool = p.fresh_var();
-    p.push(Instruction::And { result: and_bool, lhs: eq, rhs: lt });
+    p.push(Instruction::And {
+        result: and_bool,
+        lhs: eq,
+        rhs: lt,
+    });
     let set = compute_proven_boolean(&p);
     assert!(set.contains(&and_bool));
 
     // And(boolean, witness) → NOT boolean
     let and_mixed = p.fresh_var();
-    p.push(Instruction::And { result: and_mixed, lhs: eq, rhs: a });
+    p.push(Instruction::And {
+        result: and_mixed,
+        lhs: eq,
+        rhs: a,
+    });
     let set2 = compute_proven_boolean(&p);
     assert!(!set2.contains(&and_mixed));
 }
@@ -138,12 +205,8 @@ let eq = x == y
 let neg = !eq
 assert(neg)
 "#;
-    let (without, with) = constraint_counts_with_without(
-        &[],
-        &["x", "y"],
-        source,
-        &[("x", 3), ("y", 5)],
-    );
+    let (without, with) =
+        constraint_counts_with_without(&[], &["x", "y"], source, &[("x", 3), ("y", 5)]);
     assert!(
         with < without,
         "bool_prop should reduce constraints: without={without}, with={with}"
@@ -213,6 +276,7 @@ assert(neg)
     inputs.insert("x".to_string(), FieldElement::from_u64(3));
     inputs.insert("y".to_string(), FieldElement::from_u64(5));
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler_yes);
-    wg.generate(&inputs, &mut compiler_yes.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler_yes.system.assignments)
+        .unwrap();
     compiler_yes.system.verify().unwrap();
 }

@@ -1,5 +1,4 @@
 /// Parse error with source location.
-
 use std::fmt;
 
 #[derive(Clone, Debug)]

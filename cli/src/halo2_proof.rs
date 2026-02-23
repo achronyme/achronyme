@@ -5,26 +5,25 @@
 
 use std::path::Path;
 
+use compiler::plonkish_backend::PlonkishCompiler;
+use halo2_proofs::SerdeFormat;
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine};
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::plonk::{
-    self, Advice, Circuit, Column as H2Column, ConstraintSystem, Fixed, Instance,
-    create_proof, keygen_pk, keygen_vk, verify_proof, Selector, TableColumn,
-    VerifyingKey,
+    self, Advice, Circuit, Column as H2Column, ConstraintSystem, Fixed, Instance, Selector,
+    TableColumn, VerifyingKey, create_proof, keygen_pk, keygen_vk, verify_proof,
 };
+use halo2_proofs::poly::Rotation;
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::kzg::commitment::{KZGCommitmentScheme, ParamsKZG};
 use halo2_proofs::poly::kzg::multiopen::{ProverSHPLONK, VerifierSHPLONK};
 use halo2_proofs::poly::kzg::strategy::SingleStrategy;
-use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{
     Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
 };
-use halo2_proofs::SerdeFormat;
-use rand::rngs::OsRng;
-use compiler::plonkish_backend::PlonkishCompiler;
 use memory::FieldElement;
+use rand::rngs::OsRng;
 use vm::ProveResult;
 
 // ============================================================================
@@ -56,17 +55,9 @@ fn fr_to_decimal(f: &Fr) -> String {
 // Circuit parameters
 // ============================================================================
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct CircuitParams {
     range_table_bits: Vec<u32>,
-}
-
-impl Default for CircuitParams {
-    fn default() -> Self {
-        Self {
-            range_table_bits: Vec::new(),
-        }
-    }
 }
 
 // ============================================================================
@@ -159,8 +150,9 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
             || "main",
             |mut region| {
                 // Track assigned advice cells for copy constraints
-                let mut assigned_advice: Vec<Vec<Option<halo2_proofs::circuit::AssignedCell<Fr, Fr>>>> =
-                    vec![vec![None; num_rows]; 4];
+                let mut assigned_advice: Vec<
+                    Vec<Option<halo2_proofs::circuit::AssignedCell<Fr, Fr>>>,
+                > = vec![vec![None; num_rows]; 4];
 
                 // Also track assigned fixed cells for copy constraints between
                 // advice and fixed (constant) columns
@@ -168,6 +160,7 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                     vec![None; num_rows];
 
                 // Assign fixed values (selectors + constant column)
+                #[allow(clippy::needless_range_loop)]
                 for row in 0..num_rows {
                     let s_arith_val = sys.assignments.get(self.compiler.col_s_arith, row);
                     if !s_arith_val.is_zero() {
@@ -198,6 +191,7 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                 ];
 
                 for &(achr_col, h2_col, idx) in &advice_cols {
+                    #[allow(clippy::needless_range_loop)]
                     for row in 0..num_rows {
                         let val = sys.assignments.get(achr_col, row);
                         let cell = region.assign_advice(
@@ -213,11 +207,15 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                 // Apply copy constraints
                 for copy in &sys.copies {
                     let left_cell = resolve_cell(
-                        &copy.left, &assigned_advice, &assigned_constant,
+                        &copy.left,
+                        &assigned_advice,
+                        &assigned_constant,
                         &self.compiler,
                     );
                     let right_cell = resolve_cell(
-                        &copy.right, &assigned_advice, &assigned_constant,
+                        &copy.right,
+                        &assigned_advice,
+                        &assigned_constant,
                         &self.compiler,
                     );
                     if let (Some(l), Some(r)) = (left_cell, right_cell) {
@@ -305,7 +303,11 @@ fn resolve_cell(
 
     // Check advice columns
     if col == compiler.col_a {
-        return assigned_advice.get(0)?.get(row)?.as_ref().map(|c| c.cell());
+        return assigned_advice
+            .first()?
+            .get(row)?
+            .as_ref()
+            .map(|c| c.cell());
     } else if col == compiler.col_b {
         return assigned_advice.get(1)?.get(row)?.as_ref().map(|c| c.cell());
     } else if col == compiler.col_c {
@@ -466,7 +468,7 @@ fn load_or_create_kzg_params(k: u32, path: &Path) -> Result<ParamsKZG<Bn256>, St
 
 fn serialize_proof_json(proof_bytes: &[u8], public_inputs: &[Fr], k: u32) -> String {
     let proof_hex = format!("0x{}", hex_encode(proof_bytes));
-    let public: Vec<String> = public_inputs.iter().map(|f| fr_to_decimal(f)).collect();
+    let public: Vec<String> = public_inputs.iter().map(fr_to_decimal).collect();
     let obj = serde_json::json!({
         "protocol": "plonk",
         "curve": "bn128",
@@ -478,7 +480,7 @@ fn serialize_proof_json(proof_bytes: &[u8], public_inputs: &[Fr], k: u32) -> Str
 }
 
 fn serialize_public_json(inputs: &[Fr]) -> String {
-    let arr: Vec<String> = inputs.iter().map(|f| fr_to_decimal(f)).collect();
+    let arr: Vec<String> = inputs.iter().map(fr_to_decimal).collect();
     serde_json::to_string_pretty(&arr).unwrap()
 }
 

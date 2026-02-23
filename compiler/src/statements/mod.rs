@@ -1,11 +1,11 @@
-use vm::opcode::OpCode;
 use crate::codegen::Compiler;
-use crate::error::CompilerError;
-use crate::declarations::DeclarationCompiler;
 use crate::control_flow::ControlFlowCompiler;
+use crate::declarations::DeclarationCompiler;
+use crate::error::CompilerError;
 use crate::expressions::ExpressionCompiler;
 use crate::functions::FunctionDefinitionCompiler;
 use achronyme_parser::ast::*;
+use vm::opcode::OpCode;
 
 pub mod declarations;
 
@@ -40,7 +40,7 @@ impl StatementCompiler for Compiler {
                 self.free_reg(arg_reg);
                 self.free_reg(func_reg);
                 Ok(())
-            },
+            }
             Stmt::Break { .. } => self.compile_break(),
             Stmt::Continue { .. } => self.compile_continue(),
             Stmt::Return { value, .. } => {
@@ -53,18 +53,20 @@ impl StatementCompiler for Compiler {
                     self.emit_abc(OpCode::Return, 0, 0, 0);
                 }
                 Ok(())
-            },
-            Stmt::FnDecl { name, params, body, .. } => {
+            }
+            Stmt::FnDecl {
+                name, params, body, ..
+            } => {
                 let reg = self.compile_fn_core(Some(name), params, body)?;
                 self.free_reg(reg);
                 Ok(())
-            },
+            }
             Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. } => Ok(()), // no-op in VM
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;
                 self.free_reg(reg);
                 Ok(())
-            },
+            }
         }
     }
 }

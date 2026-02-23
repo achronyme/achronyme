@@ -2,7 +2,6 @@
 ///
 /// These types represent the parsed structure of an Achronyme program,
 /// independent of the pest parser. All types are `Clone + Debug`.
-
 /// Source location for error reporting.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Span {

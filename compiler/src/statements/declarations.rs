@@ -72,12 +72,16 @@ impl DeclarationCompiler for Compiler {
 
                 if let Some((_, local_reg)) = self.resolve_local(name) {
                     self.emit_abc(OpCode::Move, local_reg, val_reg, 0);
-                } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name) {
+                } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
+                {
                     self.emit_abx(OpCode::SetUpvalue, val_reg, upval_idx as u16);
                 } else if let Some(global_idx) = self.global_symbols.get(name) {
                     self.emit_abx(OpCode::SetGlobal, val_reg, *global_idx);
                 } else {
-                    return Err(CompilerError::UnknownOperator(format!("Undefined variable '{}'", name)));
+                    return Err(CompilerError::UnknownOperator(format!(
+                        "Undefined variable '{}'",
+                        name
+                    )));
                 }
 
                 self.free_reg(val_reg);
@@ -118,7 +122,9 @@ impl DeclarationCompiler for Compiler {
                 self.free_reg(target_reg);
                 Ok(())
             }
-            _ => Err(CompilerError::UnexpectedRule("Invalid assignment target".into())),
+            _ => Err(CompilerError::UnexpectedRule(
+                "Invalid assignment target".into(),
+            )),
         }
     }
 }

@@ -8,7 +8,7 @@ const TAG_SHIFT: u32 = 60;
 const PAYLOAD_MASK: u64 = (1u64 << 60) - 1; // 0x0FFF_FFFF_FFFF_FFFF
 
 // Tags (reassigned for clean ordering)
-pub const TAG_INT: u64 = 0;       // i60 inline (most common -> tag 0 for speed)
+pub const TAG_INT: u64 = 0; // i60 inline (most common -> tag 0 for speed)
 pub const TAG_NIL: u64 = 1;
 pub const TAG_FALSE: u64 = 2;
 pub const TAG_TRUE: u64 = 3;

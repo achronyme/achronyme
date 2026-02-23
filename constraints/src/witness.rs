@@ -1,10 +1,9 @@
+use crate::r1cs::{ConstraintSystem, Variable};
 /// Witness builder for R1CS constraint systems.
 ///
 /// Manages the assignment of values to circuit variables during
 /// witness generation (the "prover" side of computation).
-
 use memory::FieldElement;
-use crate::r1cs::{ConstraintSystem, Variable};
 
 /// Mutable witness vector builder.
 pub struct WitnessBuilder {

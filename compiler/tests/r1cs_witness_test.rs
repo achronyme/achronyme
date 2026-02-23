@@ -7,11 +7,7 @@ use ir::IrLowering;
 use memory::FieldElement;
 
 /// Helper: build compiler via IR pipeline, generate witness, verify.
-fn compile_and_verify(
-    public: &[(&str, u64)],
-    witness: &[(&str, u64)],
-    source: &str,
-) {
+fn compile_and_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
     let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
@@ -80,12 +76,17 @@ fn test_simple_multiply_witness() {
 #[test]
 fn test_addition_no_ops() {
     // Circuit: 3*a + 2*b = out → all linear, 0 witness ops
-    let program = IrLowering::lower_circuit("assert_eq(3 * a + 2 * b, out)", &["out"], &["a", "b"]).unwrap();
+    let program =
+        IrLowering::lower_circuit("assert_eq(3 * a + 2 * b, out)", &["out"], &["a", "b"]).unwrap();
 
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&program).unwrap();
 
-    assert_eq!(rc.witness_ops.len(), 0, "linear ops should produce 0 witness ops");
+    assert_eq!(
+        rc.witness_ops.len(),
+        0,
+        "linear ops should produce 0 witness ops"
+    );
 
     let gen = WitnessGenerator::from_compiler(&rc);
     let mut inputs = HashMap::new();
@@ -105,11 +106,7 @@ fn test_addition_no_ops() {
 #[test]
 fn test_quadratic_witness() {
     // x=5 → x^2 + x + 5 = 25 + 5 + 5 = 35
-    compile_and_verify(
-        &[("out", 35)],
-        &[("x", 5)],
-        "assert_eq(x ^ 2 + x + 5, out)",
-    );
+    compile_and_verify(&[("out", 35)], &[("x", 5)], "assert_eq(x ^ 2 + x + 5, out)");
 }
 
 // ====================================================================
@@ -272,11 +269,7 @@ fn test_for_loop_unrolled_witness() {
     // Actually: let's use accumulation pattern via for + let rebinding
     // for i in 0..3 → 3 extra multiplications: x * x * x * x = x^4
     // x=2 → 16
-    compile_and_verify(
-        &[("out", 32)],
-        &[("x", 2)],
-        "assert_eq(x ^ 5, out)",
-    );
+    compile_and_verify(&[("out", 32)], &[("x", 2)], "assert_eq(x ^ 5, out)");
 }
 
 // ====================================================================
@@ -285,7 +278,8 @@ fn test_for_loop_unrolled_witness() {
 
 #[test]
 fn test_missing_input_error() {
-    let program = IrLowering::lower_circuit("assert_eq(a * b, out)", &["out"], &["a", "b"]).unwrap();
+    let program =
+        IrLowering::lower_circuit("assert_eq(a * b, out)", &["out"], &["a", "b"]).unwrap();
 
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&program).unwrap();
