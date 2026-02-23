@@ -5,5 +5,3 @@ edition = "2021"
 license = "GPL-3.0"
 
 [dependencies]
-pest = "2.6"
-pest_derive = "2.6"

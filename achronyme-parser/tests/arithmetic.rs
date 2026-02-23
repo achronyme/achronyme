@@ -1,18 +1,17 @@
-use achronyme_parser::ast::{BinOp, Expr};
-use achronyme_parser::build_ast::parse_program;
-use achronyme_parser::parse_expression;
+use achronyme_parser::ast::{BinOp, Expr, Stmt};
+use achronyme_parser::parse_program;
 
 #[test]
 fn test_integer_arithmetic() {
     let input = "1 + 2 * 3";
-    let pairs = parse_expression(input).expect("Failed to parse");
-    println!("Parsed: {:?}", pairs);
+    let prog = parse_program(input).expect("Failed to parse");
+    assert!(!prog.stmts.is_empty());
 }
 
 #[test]
 fn test_grouping() {
     let input = "(1 + 2) * 3";
-    parse_expression(input).expect("Failed to parse grouping");
+    parse_program(input).expect("Failed to parse grouping");
 }
 
 #[test]
@@ -20,7 +19,7 @@ fn test_pow_right_associative() {
     // 2^3^2 should parse as 2^(3^2), not (2^3)^2
     let prog = parse_program("2^3^2").unwrap();
     let expr = match &prog.stmts[0] {
-        achronyme_parser::ast::Stmt::Expr(e) => e,
+        Stmt::Expr(e) => e,
         _ => panic!("expected expression statement"),
     };
 
@@ -58,7 +57,7 @@ fn test_pow_single_operand() {
     // x^3 should just be BinOp(Pow, x, 3)
     let prog = parse_program("x^3").unwrap();
     let expr = match &prog.stmts[0] {
-        achronyme_parser::ast::Stmt::Expr(e) => e,
+        Stmt::Expr(e) => e,
         _ => panic!("expected expression statement"),
     };
     match expr {
