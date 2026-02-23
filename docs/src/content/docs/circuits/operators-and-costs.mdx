@@ -1,6 +1,86 @@
 ---
 title: "Operators & Costs"
-description: "Operator constraint costs in R1CS and Plonkish."
+description: "Arithmetic, comparison, and logical operators with their constraint costs."
 ---
 
-Content coming soon.
+Every operation in a circuit compiles to zero or more constraints. Understanding costs helps you write efficient circuits — fewer constraints mean faster proof generation and smaller proofs.
+
+## Arithmetic Operators
+
+| Operator | Example | Constraints | Notes |
+|----------|---------|-------------|-------|
+| `+` | `a + b` | 0 | Linear combination |
+| `-` | `a - b` | 0 | Linear combination |
+| `*` (by constant) | `a * 3` | 0 | Scalar multiplication of LC |
+| `*` (two variables) | `a * b` | 1 | Multiplication gate |
+| `/` (by constant) | `a / 3` | 0 | Multiply by inverse |
+| `/` (two variables) | `a / b` | 2 | Inverse + multiplication |
+| `^` (exponentiation) | `x ^ n` | O(log n) | Square-and-multiply |
+| `-` (negation) | `-a` | 0 | Negate LC coefficients |
+
+```
+public x2
+public x3
+public x4
+witness x
+
+assert_eq(x ^ 2, x2)
+assert_eq(x ^ 3, x3)
+assert_eq(x ^ 4, x4)
+```
+
+## Comparison Operators
+
+| Operator | Example | Constraints | Notes |
+|----------|---------|-------------|-------|
+| `==` | `a == b` | 2 | IsZero gadget |
+| `!=` | `a != b` | 2 | IsZero gadget + negate |
+| `<` | `a < b` | ~760 | 253-bit decomposition + range checks |
+| `<=` | `a <= b` | ~760 | 253-bit decomposition + range checks |
+| `>` | `a > b` | ~760 | Same as `b < a` |
+| `>=` | `a >= b` | ~760 | Same as `b <= a` |
+
+Equality checks are cheap (2 constraints). Ordering comparisons are expensive (~760 constraints each) because they require bit decomposition over the BN254 field. Use them sparingly.
+
+```
+witness x
+witness y
+
+let eq = x == y
+let lt = x < y
+assert(lt)
+```
+
+## Logical Operators
+
+| Operator | Example | Constraints | Notes |
+|----------|---------|-------------|-------|
+| `&&` | `a && b` | 3 | 2 boolean enforcements + 1 multiplication |
+| `\|\|` | `a \|\| b` | 3 | 2 boolean enforcements + 1 gate |
+| `!` | `!a` | 0–1 | Free if operand is already proven boolean |
+
+```
+witness x
+witness y
+
+let both = (x < y) && (y > x)
+assert(both)
+
+let either = (x == y) || (x < y)
+assert(either)
+
+let not_eq = !(x == y)
+assert(not_eq)
+```
+
+## Why Some Operations Are Free
+
+Addition and subtraction are free because they operate on **linear combinations** — weighted sums of variables. The R1CS constraint system represents wires as linear combinations, so adding two LCs just merges their terms without creating a new constraint.
+
+Multiplication by a constant is also free — it scales all coefficients in the LC. Only multiplication of two variable expressions requires a constraint gate (`A * B = C`).
+
+## Optimization: Boolean Propagation
+
+The compiler's `bool_prop` pass tracks which variables are already proven to be boolean (0 or 1). When a value produced by `==`, `<`, or another comparison feeds into `&&`, `||`, or `!`, the redundant boolean enforcement is skipped, saving constraints.
+
+For example, `!(x == y)` costs 2 constraints for the `==` and 0 for the `!`, because the output of `==` is already known to be boolean.
