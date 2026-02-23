@@ -1,0 +1,91 @@
+{
+	"name": "Achronyme",
+	"type": "dark",
+	"colors": {
+		"editor.background": "#13131A",
+		"editor.foreground": "#E4E4ED",
+		"editorLineNumber.foreground": "#5A5A6E",
+		"editorLineNumber.activeForeground": "#9494A8",
+		"editor.selectionBackground": "#8B5CF640",
+		"editor.lineHighlightBackground": "#1E1E2A"
+	},
+	"tokenColors": [
+		{
+			"name": "Comments",
+			"scope": ["comment", "punctuation.definition.comment"],
+			"settings": { "foreground": "#5A5A6E", "fontStyle": "italic" }
+		},
+		{
+			"name": "Keywords",
+			"scope": [
+				"keyword",
+				"storage.type",
+				"storage.modifier",
+				"keyword.control",
+				"keyword.operator.new",
+				"keyword.operator.expression",
+				"keyword.operator.logical",
+				"variable.language"
+			],
+			"settings": { "foreground": "#8B5CF6" }
+		},
+		{
+			"name": "Strings",
+			"scope": ["string", "punctuation.definition.string"],
+			"settings": { "foreground": "#34D399" }
+		},
+		{
+			"name": "Numbers",
+			"scope": ["constant.numeric", "constant.language.boolean"],
+			"settings": { "foreground": "#FBBF24" }
+		},
+		{
+			"name": "Functions",
+			"scope": [
+				"entity.name.function",
+				"support.function",
+				"meta.function-call"
+			],
+			"settings": { "foreground": "#A78BFA" }
+		},
+		{
+			"name": "Operators",
+			"scope": [
+				"keyword.operator",
+				"punctuation.separator",
+				"punctuation.accessor"
+			],
+			"settings": { "foreground": "#9494A8" }
+		},
+		{
+			"name": "Types",
+			"scope": [
+				"entity.name.type",
+				"entity.name.class",
+				"support.type",
+				"support.class"
+			],
+			"settings": { "foreground": "#60A5FA" }
+		},
+		{
+			"name": "Variables",
+			"scope": ["variable", "variable.other"],
+			"settings": { "foreground": "#E4E4ED" }
+		},
+		{
+			"name": "Constants",
+			"scope": ["constant.other", "variable.other.constant"],
+			"settings": { "foreground": "#FBBF24" }
+		},
+		{
+			"name": "Punctuation",
+			"scope": [
+				"punctuation.definition.block",
+				"punctuation.definition.parameters",
+				"punctuation.section",
+				"meta.brace"
+			],
+			"settings": { "foreground": "#9494A8" }
+		}
+	]
+}

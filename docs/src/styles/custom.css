@@ -1,0 +1,72 @@
+/* Achronyme brand theme — see brand/BRAND.md */
+
+/* === Dark theme (canonical) === */
+:root {
+	--sl-color-bg: #0a0a0f;
+	--sl-color-bg-nav: #13131a;
+	--sl-color-bg-sidebar: #13131a;
+	--sl-color-hairline: #1e1e2a;
+	--sl-color-hairline-light: #1e1e2a;
+
+	--sl-color-accent-low: rgba(109, 40, 217, 0.25);
+	--sl-color-accent: #8b5cf6;
+	--sl-color-accent-high: #a78bfa;
+
+	--sl-color-text: #e4e4ed;
+	--sl-color-text-accent: #a78bfa;
+	--sl-color-gray-1: #e4e4ed;
+	--sl-color-gray-2: #c4c4d4;
+	--sl-color-gray-3: #9494a8;
+	--sl-color-gray-4: #5a5a6e;
+	--sl-color-gray-5: #1e1e2a;
+	--sl-color-gray-6: #13131a;
+
+	--sl-font: 'JetBrains Mono Variable', 'Fira Code', 'Consolas', monospace;
+	--sl-font-system: 'JetBrains Mono Variable', 'Fira Code', 'Consolas', monospace;
+	--sl-font-system-mono: 'JetBrains Mono Variable', 'Fira Code', 'Consolas', monospace;
+}
+
+/* === Light theme overrides === */
+[data-theme='light'],
+:root[data-theme='light'] {
+	--sl-color-bg: #fafafc;
+	--sl-color-bg-nav: #f0f0f5;
+	--sl-color-bg-sidebar: #f0f0f5;
+	--sl-color-hairline: #e4e4ed;
+	--sl-color-hairline-light: #e4e4ed;
+
+	--sl-color-accent-low: rgba(124, 58, 237, 0.12);
+	--sl-color-accent: #7c3aed;
+	--sl-color-accent-high: #6d28d9;
+
+	--sl-color-text: #13131a;
+	--sl-color-gray-1: #13131a;
+	--sl-color-gray-2: #1e1e2a;
+	--sl-color-gray-3: #5a5a6e;
+	--sl-color-gray-4: #9494a8;
+	--sl-color-gray-5: #e4e4ed;
+	--sl-color-gray-6: #f0f0f5;
+}
+
+/* === Border radius (brand radius-md = 10px) === */
+.expressive-code pre,
+.expressive-code .frame {
+	border-radius: 10px !important;
+}
+
+.expressive-code .frame {
+	box-shadow: 0 0 20px rgba(139, 92, 246, 0.08);
+}
+
+.starlight-aside {
+	border-radius: 10px;
+}
+
+.card {
+	border-radius: 14px;
+}
+
+/* === Heading letter-spacing (brand: -0.02em) === */
+h1, h2, h3, h4, h5, h6 {
+	letter-spacing: -0.02em;
+}
