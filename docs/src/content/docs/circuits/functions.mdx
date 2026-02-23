@@ -15,6 +15,14 @@ fn double(x) {
 }
 ```
 
+Functions can include [type annotations](/circuits/type-annotations/) on parameters and return types:
+
+```
+fn double(x: Field) -> Field {
+    x + x
+}
+```
+
 Call them as usual:
 
 ```
@@ -59,6 +67,7 @@ Calling `dot` three times produces 6 constraints.
 | No closures | — | No runtime environment to capture |
 | No higher-order functions | — | Cannot pass functions as circuit values |
 | No anonymous functions | — | Only named `fn` definitions are supported |
+| Type mismatch | `AnnotationMismatch` | Argument type doesn't match typed parameter |
 
 Functions in circuits are purely a compile-time mechanism. They cannot capture variables from outer scopes (except declared inputs), cannot be passed as values, and cannot call themselves.
 

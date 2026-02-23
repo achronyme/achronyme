@@ -1,0 +1,202 @@
+---
+title: "Type Annotations"
+description: "Optional type annotations for circuit variables, functions, and bindings."
+---
+
+Achronyme supports **gradual typing** in circuits. You can add optional type annotations to declarations, bindings, and functions. Unannotated code works exactly as before — annotations are strictly opt-in.
+
+## Type Universe
+
+Four types are available in circuit context:
+
+| Type | Description |
+|------|-------------|
+| `Field` | A BN254 scalar field element (the default for all circuit values) |
+| `Bool` | A boolean value (0 or 1 in the field) |
+| `Field[N]` | Fixed-size array of N field elements |
+| `Bool[N]` | Fixed-size array of N booleans |
+
+`Bool` is a **subtype** of `Field` — a boolean value can be used anywhere a field element is expected. The reverse is an error unless the value is a proven boolean (e.g., a comparison result or constant 0/1).
+
+`Field` and `Bool` are **not keywords**. They are contextual identifiers recognized only after `:` or `->`. You can still use `Field` and `Bool` as variable names in regular code.
+
+## Input Declarations
+
+Add `: Type` after the variable name (or after the array size):
+
+```
+public root: Field
+witness flag: Bool
+witness secret: Field
+
+witness path[3]: Field
+witness indices[3]: Bool
+```
+
+Without annotations, inputs default to untyped — same behavior as before:
+
+```
+public root
+witness secret
+```
+
+Both forms can coexist in the same circuit:
+
+```
+public root: Field
+witness leaf
+witness path[3]: Field
+witness indices[3]
+```
+
+## Let Bindings
+
+Annotate local bindings with `: Type` after the name, before `=`:
+
+```
+witness a: Field
+witness b: Field
+
+let product: Field = a * b
+let is_equal: Bool = a == b
+```
+
+The compiler validates that the annotation matches the expression's inferred type. If there's a mismatch, you get a clear error:
+
+```
+witness a: Field
+
+// Error: type annotation mismatch for `x`: declared as Bool,
+//        but expression has type Field
+let x: Bool = a + 1
+```
+
+Arithmetic operations (`+`, `-`, `*`, `/`, `^`) produce `Field`. Comparisons and logical operations (`==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`) produce `Bool`.
+
+## Functions
+
+Annotate parameters with `: Type` and return types with `-> Type`:
+
+```
+fn hash_pair(a: Field, b: Field) -> Field {
+    poseidon(a, b)
+}
+
+fn is_valid(x: Field, y: Field) -> Bool {
+    x == y
+}
+```
+
+Mixed typed and untyped parameters are allowed:
+
+```
+fn scale(x: Field, factor) {
+    x * factor
+}
+```
+
+The compiler checks that arguments match the declared parameter types at each call site:
+
+```
+fn double(x: Field) -> Field { x + x }
+
+witness a: Field
+let result: Field = double(a)    // ok
+```
+
+## Subtyping: Bool as Field
+
+`Bool` values can be used in arithmetic (field) context. This is safe because booleans are 0 or 1 in the field:
+
+```
+witness flag: Bool
+
+// Bool used in arithmetic — allowed (Bool is subtype of Field)
+let as_field: Field = flag + flag
+```
+
+The reverse is not allowed unless the value is a proven boolean:
+
+```
+witness x: Field
+
+// Error: x is Field, cannot annotate as Bool
+let b: Bool = x
+```
+
+Values that are proven boolean (comparison results, constants 0/1) can be annotated as `Bool`:
+
+```
+witness a: Field
+witness b: Field
+
+// Comparison result is a proven boolean — annotation is valid
+let eq: Bool = a == b
+```
+
+## Constraint Savings
+
+Annotating a witness as `Bool` tells the compiler it can skip the boolean enforcement constraint for that variable. This saves **1 constraint per annotated Bool witness**.
+
+Without annotation, the compiler must add a constraint to enforce `flag * (1 - flag) = 0` every time `flag` is used in a boolean context. With `witness flag: Bool`, the compiler knows `flag` is already boolean and skips the enforcement.
+
+```
+// Without annotation: mux adds 1 boolean enforcement for cond (2 constraints total)
+witness cond
+let r = mux(cond, a, b)
+
+// With annotation: boolean enforcement skipped (1 constraint total)
+witness cond: Bool
+let r = mux(cond, a, b)
+```
+
+This optimization is applied by the `bool_prop` pass, which tracks proven-boolean variables through the program.
+
+## Complete Example
+
+A fully typed Merkle membership proof:
+
+```
+public root: Field
+witness leaf: Field
+witness path[3]: Field
+witness indices[3]: Bool
+
+merkle_verify(root, leaf, path, indices)
+```
+
+The same circuit with typed helper functions:
+
+```
+public expected: Field
+witness a: Field
+witness b: Field
+witness c: Field
+
+fn hash_chain(x: Field, y: Field, z: Field) -> Field {
+    let h: Field = poseidon(x, y)
+    poseidon(h, z)
+}
+
+let result: Field = hash_chain(a, b, c)
+assert_eq(result, expected)
+```
+
+## Quick Reference
+
+| Syntax | Example | Notes |
+|--------|---------|-------|
+| Typed public | `public x: Field` | Annotated public input |
+| Typed witness | `witness flag: Bool` | Saves 1 boolean enforcement constraint |
+| Typed array | `witness path[3]: Field` | Type applies to all elements |
+| Typed let | `let h: Field = poseidon(a, b)` | Validated against inferred type |
+| Typed parameter | `fn f(x: Field)` | Checked at each call site |
+| Return type | `fn f(x: Field) -> Bool` | Checked against body's result type |
+| Untyped (default) | `witness secret` | Same behavior as before |
+
+## Errors
+
+| Error | Cause |
+|-------|-------|
+| `AnnotationMismatch` | Declared type doesn't match the inferred type (e.g., `let x: Bool = a + b`) |
+| Parse error | Invalid type name (only `Field` and `Bool` are recognized) |

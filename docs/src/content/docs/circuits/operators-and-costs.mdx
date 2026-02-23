@@ -84,3 +84,5 @@ Multiplication by a constant is also free — it scales all coefficients in the 
 The compiler's `bool_prop` pass tracks which variables are already proven to be boolean (0 or 1). When a value produced by `==`, `<`, or another comparison feeds into `&&`, `||`, or `!`, the redundant boolean enforcement is skipped, saving constraints.
 
 For example, `!(x == y)` costs 2 constraints for the `==` and 0 for the `!`, because the output of `==` is already known to be boolean.
+
+[Type annotations](/circuits/type-annotations/) extend this optimization: declaring `witness flag: Bool` marks the variable as proven boolean, saving 1 constraint every time it's used in a boolean context (e.g., as a `mux` condition).

@@ -83,9 +83,23 @@ Array inputs are passed with indexed names:
 ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=0,indices_1=1"
 ```
 
+## Type Annotations
+
+Declarations can include optional type annotations. See [Type Annotations](/circuits/type-annotations/) for details.
+
+```
+public root: Field
+witness flag: Bool
+witness path[3]: Field
+witness indices[3]: Bool
+```
+
+Annotating a witness as `Bool` saves 1 constraint by skipping boolean enforcement.
+
 ## Errors
 
 | Error | Cause |
 |-------|-------|
 | `DuplicateInput` | Same name declared as both `public` and `witness`, or declared twice |
 | `UndeclaredVariable` | Using a variable that was never declared as `public` or `witness` |
+| `AnnotationMismatch` | Declared type doesn't match the inferred type |

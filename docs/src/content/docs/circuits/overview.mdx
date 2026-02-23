@@ -52,6 +52,7 @@ The `prove {}` block runs inside the VM, captures variables from scope, compiles
 | `if/else` | Compiles to `mux` — both branches evaluated |
 | `for` loops (range or array) | Statically unrolled |
 | `fn` calls | Inlined at each call site |
+| [Type annotations](/circuits/type-annotations/) | Optional `Field`/`Bool` types on declarations and bindings |
 | `assert_eq(a, b)` | Enforces `a == b` (1 constraint) |
 | `poseidon(a, b)` | Poseidon 2-to-1 hash (361 constraints) |
 | `range_check(x, bits)` | Value fits in N bits |
