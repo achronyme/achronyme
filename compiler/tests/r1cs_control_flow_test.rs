@@ -9,8 +9,8 @@ use memory::FieldElement;
 /// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
 /// Returns the R1CSCompiler so tests can inspect constraint counts etc.
 fn ir_compile(source: &str, public: &[&str], witness: &[&str]) -> Result<R1CSCompiler, String> {
-    let mut prog = IrLowering::lower_circuit(source, public, witness)
-        .map_err(|e| format!("IR: {e}"))?;
+    let mut prog =
+        IrLowering::lower_circuit(source, public, witness).map_err(|e| format!("IR: {e}"))?;
     ir::passes::optimize(&mut prog);
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&prog).map_err(|e| format!("R1CS: {e}"))?;
@@ -19,16 +19,12 @@ fn ir_compile(source: &str, public: &[&str], witness: &[&str]) -> Result<R1CSCom
 
 /// Helper: compile source through the IR pipeline with concrete inputs,
 /// generating and verifying the witness automatically.
-fn ir_compile_and_verify(
-    source: &str,
-    public: &[(&str, u64)],
-    witness: &[(&str, u64)],
-) {
+fn ir_compile_and_verify(source: &str, public: &[(&str, u64)], witness: &[(&str, u64)]) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
 
-    let mut prog = IrLowering::lower_circuit(source, &pub_names, &wit_names)
-        .expect("IR lowering failed");
+    let mut prog =
+        IrLowering::lower_circuit(source, &pub_names, &wit_names).expect("IR lowering failed");
     ir::passes::optimize(&mut prog);
 
     let mut inputs = HashMap::new();
@@ -40,9 +36,7 @@ fn ir_compile_and_verify(
     let w = rc
         .compile_ir_with_witness(&prog, &inputs)
         .expect("compile_ir_with_witness failed");
-    rc.cs
-        .verify(&w)
-        .expect("witness verification failed");
+    rc.cs.verify(&w).expect("witness verification failed");
 }
 
 // ====================================================================
@@ -52,12 +46,7 @@ fn ir_compile_and_verify(
 #[test]
 fn test_for_static_range_constraint_count() {
     // for i in 0..3 { assert_eq(a * a, out) } -> 3 * (1 mul + 1 assert_eq) = 6
-    let rc = ir_compile(
-        "for i in 0..3 { assert_eq(a * a, out) }",
-        &["out"],
-        &["a"],
-    )
-    .unwrap();
+    let rc = ir_compile("for i in 0..3 { assert_eq(a * a, out) }", &["out"], &["a"]).unwrap();
     assert_eq!(rc.cs.num_constraints(), 6);
 }
 
@@ -75,7 +64,11 @@ fn test_for_iterator_as_constant() {
     // i=1: a*1 -> multiply_lcs sees constant 1, scalar mul → 0 constraints
     // i=2: a*2 -> multiply_lcs sees constant 2, scalar mul → 0 constraints
     let rc = ir_compile("for i in 0..3 { let x = a * i }", &[], &["a"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 0, "multiplying by constant iterator should be free");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        0,
+        "multiplying by constant iterator should be free"
+    );
 }
 
 #[test]
@@ -158,11 +151,7 @@ fn test_if_else_integration_flag_one() {
     assert_eq!(rc.cs.num_constraints(), 3);
 
     // flag=1, a=42, b=99 -> result = a = 42
-    ir_compile_and_verify(
-        source,
-        &[("out", 42)],
-        &[("flag", 1), ("a", 42), ("b", 99)],
-    );
+    ir_compile_and_verify(source, &[("out", 42)], &[("flag", 1), ("a", 42), ("b", 99)]);
 }
 
 #[test]
@@ -171,11 +160,7 @@ fn test_if_else_integration_flag_zero() {
     let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
 
     // flag=0, a=42, b=99 -> result = b = 99
-    ir_compile_and_verify(
-        source,
-        &[("out", 99)],
-        &[("flag", 0), ("a", 42), ("b", 99)],
-    );
+    ir_compile_and_verify(source, &[("out", 99)], &[("flag", 0), ("a", 42), ("b", 99)]);
 }
 
 #[test]
@@ -311,8 +296,7 @@ fn test_full_circuit_with_control_flow() {
     // for i in 0..2 { let step = x * x } → dead code (step unused), DCE eliminates
     // let result = if flag { x * x } else { x + 1 }
     // assert_eq(result, out)
-    let source =
-        "for i in 0..2 { let step = x * x }; \
+    let source = "for i in 0..2 { let step = x * x }; \
          let result = if flag { x * x } else { x + 1 }; \
          assert_eq(result, out)";
 

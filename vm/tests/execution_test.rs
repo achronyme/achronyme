@@ -69,7 +69,10 @@ fn test_mod_compilation() {
         upvalue_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure { function: func_idx, upvalues: Vec::new() });
+    let closure_idx = vm.heap.alloc_closure(memory::Closure {
+        function: func_idx,
+        upvalues: Vec::new(),
+    });
 
     let frame = CallFrame {
         closure: closure_idx,

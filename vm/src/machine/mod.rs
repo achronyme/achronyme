@@ -10,8 +10,8 @@ mod frame;
 mod gc;
 mod globals;
 mod native;
-pub mod prove;
 mod promotion;
+pub mod prove;
 mod stack;
 mod vm;
 

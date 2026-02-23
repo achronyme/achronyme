@@ -6,9 +6,16 @@ use vm::{CallFrame, VM};
 
 use crate::prove_handler::{DefaultProveHandler, ProveBackend};
 
-pub fn run_file(path: &str, stress_gc: bool, ptau: Option<&str>, prove_backend: &str) -> Result<()> {
+pub fn run_file(
+    path: &str,
+    stress_gc: bool,
+    ptau: Option<&str>,
+    prove_backend: &str,
+) -> Result<()> {
     if ptau.is_some() {
-        eprintln!("Warning: --ptau is deprecated and ignored (native Groth16 backend does not use ptau files)");
+        eprintln!(
+            "Warning: --ptau is deprecated and ignored (native Groth16 backend does not use ptau files)"
+        );
     }
 
     let backend = match prove_backend {

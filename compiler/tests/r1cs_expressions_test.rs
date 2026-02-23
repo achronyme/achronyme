@@ -6,8 +6,8 @@ use ir::IrLowering;
 /// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
 /// Returns the R1CSCompiler so tests can inspect constraint counts etc.
 fn ir_compile(source: &str, public: &[&str], witness: &[&str]) -> Result<R1CSCompiler, String> {
-    let mut prog = IrLowering::lower_circuit(source, public, witness)
-        .map_err(|e| format!("IR: {e}"))?;
+    let mut prog =
+        IrLowering::lower_circuit(source, public, witness).map_err(|e| format!("IR: {e}"))?;
     ir::passes::optimize(&mut prog);
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&prog).map_err(|e| format!("R1CS: {e}"))?;
@@ -61,7 +61,11 @@ fn test_r1cs_reject_decimal() {
 #[test]
 fn test_r1cs_addition_free() {
     let rc = ir_compile("a + b", &[], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 0, "addition should generate 0 constraints");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        0,
+        "addition should generate 0 constraints"
+    );
 }
 
 #[test]
@@ -73,34 +77,54 @@ fn test_r1cs_subtraction_free() {
 #[test]
 fn test_r1cs_mul_by_constant_free() {
     let rc = ir_compile("a * 3", &[], &["a"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 0, "multiplication by constant should be free");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        0,
+        "multiplication by constant should be free"
+    );
 }
 
 #[test]
 fn test_r1cs_mul_variables_one_constraint() {
     // 1 mul + 1 assert_eq = 2
     let rc = ir_compile("assert_eq(a * b, out)", &["out"], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 2, "variable * variable should be 1 constraint (+1 assert_eq)");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        2,
+        "variable * variable should be 1 constraint (+1 assert_eq)"
+    );
 }
 
 #[test]
 fn test_r1cs_div_constant_free() {
     let rc = ir_compile("a / 7", &[], &["a"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 0, "division by constant should be free");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        0,
+        "division by constant should be free"
+    );
 }
 
 #[test]
 fn test_r1cs_div_variables_two_constraints() {
     // 2 div + 1 assert_eq = 3
     let rc = ir_compile("assert_eq(a / b, out)", &["out"], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3, "a / b should generate 2 constraints (+1 assert_eq)");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        3,
+        "a / b should generate 2 constraints (+1 assert_eq)"
+    );
 }
 
 #[test]
 fn test_r1cs_pow_literal() {
     // x^3 = x * x * x: 2 mul + 1 assert_eq = 3
     let rc = ir_compile("assert_eq(x ^ 3, out)", &["out"], &["x"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3, "x^3 should generate 2 constraints (+1 assert_eq)");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        3,
+        "x^3 should generate 2 constraints (+1 assert_eq)"
+    );
 }
 
 #[test]
@@ -138,7 +162,12 @@ fn test_r1cs_negation_free() {
 #[test]
 fn test_r1cs_complex_expression_constraint_count() {
     // a * b + c * d: 2 mul + 1 assert_eq = 3
-    let rc = ir_compile("assert_eq(a * b + c * d, out)", &["out"], &["a", "b", "c", "d"]).unwrap();
+    let rc = ir_compile(
+        "assert_eq(a * b + c * d, out)",
+        &["out"],
+        &["a", "b", "c", "d"],
+    )
+    .unwrap();
     assert_eq!(rc.cs.num_constraints(), 3);
 }
 
@@ -197,7 +226,11 @@ fn test_r1cs_not_constant_free() {
 fn test_r1cs_comparison_via_ir() {
     // IsEq gadget: 2 constraints + 1 assert_eq = 3
     let rc = ir_compile("assert_eq(a == b, out)", &["out"], &["a", "b"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3, "IsEq gadget should produce 2 constraints (+1 assert_eq)");
+    assert_eq!(
+        rc.cs.num_constraints(),
+        3,
+        "IsEq gadget should produce 2 constraints (+1 assert_eq)"
+    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::types::{Instruction, IrProgram, SsaVar};
+use crate::types::{IrProgram, SsaVar};
 
 /// Dead code elimination pass.
 ///

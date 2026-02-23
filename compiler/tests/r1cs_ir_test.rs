@@ -6,11 +6,7 @@ use ir::IrLowering;
 use memory::FieldElement;
 
 /// Full pipeline: source → IR → R1CS → witness → verify.
-fn ir_pipeline_verify(
-    public: &[(&str, u64)],
-    witness: &[(&str, u64)],
-    source: &str,
-) {
+fn ir_pipeline_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {
     ir_pipeline_verify_fe(
         &public
             .iter()
@@ -84,11 +80,7 @@ fn ir_only_verify_fe(
 }
 
 /// Same but with optimization enabled.
-fn ir_pipeline_optimized_verify(
-    public: &[(&str, u64)],
-    witness: &[(&str, u64)],
-    source: &str,
-) {
+fn ir_pipeline_optimized_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
     let mut program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
@@ -167,11 +159,7 @@ fn ir_negation() {
 #[test]
 fn ir_power() {
     // x^3 = out → x=3, out=27
-    ir_pipeline_verify(
-        &[("out", 27)],
-        &[("x", 3)],
-        "assert_eq(x ^ 3, out)",
-    );
+    ir_pipeline_verify(&[("out", 27)], &[("x", 3)], "assert_eq(x ^ 3, out)");
 }
 
 // ============================================================================
@@ -203,20 +191,12 @@ fn ir_let_chain() {
 #[test]
 fn ir_constant_mul() {
     // x * 3 = out → x=7, out=21
-    ir_pipeline_verify(
-        &[("out", 21)],
-        &[("x", 7)],
-        "assert_eq(x * 3, out)",
-    );
+    ir_pipeline_verify(&[("out", 21)], &[("x", 7)], "assert_eq(x * 3, out)");
 }
 
 #[test]
 fn ir_constant_add() {
-    ir_pipeline_verify(
-        &[("out", 15)],
-        &[("x", 10)],
-        "assert_eq(x + 5, out)",
-    );
+    ir_pipeline_verify(&[("out", 15)], &[("x", 10)], "assert_eq(x + 5, out)");
 }
 
 // ============================================================================
@@ -288,11 +268,7 @@ fn ir_poseidon() {
 #[test]
 fn ir_quadratic() {
     // x^2 + x + 5 = out → x=5, out=35
-    ir_pipeline_verify(
-        &[("out", 35)],
-        &[("x", 5)],
-        "assert_eq(x ^ 2 + x + 5, out)",
-    );
+    ir_pipeline_verify(&[("out", 35)], &[("x", 5)], "assert_eq(x ^ 2 + x + 5, out)");
 }
 
 #[test]
@@ -312,20 +288,12 @@ fn ir_multi_constraint() {
 #[test]
 fn ir_optimized_constant_folding() {
     // 2 + 3 should fold, leaving no extra constraints
-    ir_pipeline_optimized_verify(
-        &[("out", 15)],
-        &[("x", 10)],
-        "assert_eq(x + 2 + 3, out)",
-    );
+    ir_pipeline_optimized_verify(&[("out", 15)], &[("x", 10)], "assert_eq(x + 2 + 3, out)");
 }
 
 #[test]
 fn ir_optimized_quadratic() {
-    ir_pipeline_optimized_verify(
-        &[("out", 35)],
-        &[("x", 5)],
-        "assert_eq(x ^ 2 + x + 5, out)",
-    );
+    ir_pipeline_optimized_verify(&[("out", 35)], &[("x", 5)], "assert_eq(x ^ 2 + x + 5, out)");
 }
 
 #[test]
@@ -365,101 +333,61 @@ fn ir_optimized_poseidon() {
 fn ir_is_eq_true() {
     // x == y where x=5, y=5 → result=1, assert that
     let source = "let eq = x == y\nassert_eq(eq, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 1)],
-        &[("x", 5), ("y", 5)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 1)], &[("x", 5), ("y", 5)], source);
 }
 
 #[test]
 fn ir_is_eq_false() {
     let source = "let eq = x == y\nassert_eq(eq, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 0)],
-        &[("x", 5), ("y", 10)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 0)], &[("x", 5), ("y", 10)], source);
 }
 
 #[test]
 fn ir_is_neq() {
     let source = "let neq = x != y\nassert_eq(neq, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 1)],
-        &[("x", 5), ("y", 10)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 1)], &[("x", 5), ("y", 10)], source);
 }
 
 #[test]
 fn ir_is_neq_false() {
     let source = "let neq = x != y\nassert_eq(neq, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 0)],
-        &[("x", 7), ("y", 7)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 0)], &[("x", 7), ("y", 7)], source);
 }
 
 #[test]
 fn ir_not_false() {
     let source = "let r = !x\nassert_eq(r, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 1)],
-        &[("x", 0)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 1)], &[("x", 0)], source);
 }
 
 #[test]
 fn ir_not_true() {
     let source = "let r = !x\nassert_eq(r, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 0)],
-        &[("x", 1)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 0)], &[("x", 1)], source);
 }
 
 #[test]
 fn ir_and_true() {
     let source = "let r = a && b\nassert_eq(r, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 1)],
-        &[("a", 1), ("b", 1)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 1)], &[("a", 1), ("b", 1)], source);
 }
 
 #[test]
 fn ir_and_false() {
     let source = "let r = a && b\nassert_eq(r, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 0)],
-        &[("a", 1), ("b", 0)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 0)], &[("a", 1), ("b", 0)], source);
 }
 
 #[test]
 fn ir_or_true() {
     let source = "let r = a || b\nassert_eq(r, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 1)],
-        &[("a", 0), ("b", 1)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 1)], &[("a", 0), ("b", 1)], source);
 }
 
 #[test]
 fn ir_or_false() {
     let source = "let r = a || b\nassert_eq(r, expected)";
-    ir_pipeline_optimized_verify(
-        &[("expected", 0)],
-        &[("a", 0), ("b", 0)],
-        source,
-    );
+    ir_pipeline_optimized_verify(&[("expected", 0)], &[("a", 0), ("b", 0)], source);
 }
 
 #[test]
@@ -498,7 +426,10 @@ fn ir_assert_eq_via_operators() {
     inputs.insert("y".into(), FieldElement::from_u64(42));
 
     let w = gen.generate(&inputs).unwrap();
-    compiler.cs.verify(&w).expect("assert(42 == 42) should verify");
+    compiler
+        .cs
+        .verify(&w)
+        .expect("assert(42 == 42) should verify");
 }
 
 #[test]
@@ -537,7 +468,10 @@ fn ir_assert_and() {
     inputs.insert("b".into(), FieldElement::ONE);
 
     let w = gen.generate(&inputs).unwrap();
-    compiler.cs.verify(&w).expect("assert(1 && 1) should verify");
+    compiler
+        .cs
+        .verify(&w)
+        .expect("assert(1 && 1) should verify");
 }
 
 #[test]
@@ -557,18 +491,17 @@ fn ir_assert_or() {
     inputs.insert("b".into(), FieldElement::ONE);
 
     let w = gen.generate(&inputs).unwrap();
-    compiler.cs.verify(&w).expect("assert(0 || 1) should verify");
+    compiler
+        .cs
+        .verify(&w)
+        .expect("assert(0 || 1) should verify");
 }
 
 #[test]
 fn ir_bool_true_false_in_circuit() {
     // true and false should be usable in circuits
     let source = "assert_eq(true, expected)";
-    ir_pipeline_verify(
-        &[("expected", 1)],
-        &[],
-        source,
-    );
+    ir_pipeline_verify(&[("expected", 1)], &[], source);
 }
 
 #[test]
@@ -895,8 +828,14 @@ fn is_lt_fewer_constraints_with_prior_range_check() {
         opt < full,
         "bounded should use fewer constraints: {opt} vs {full}"
     );
-    assert!(opt <= 32, "expected ≤32 constraints with 8-bit bounds, got {opt}");
-    assert!(full >= 760, "unbounded should use ~762 constraints, got {full}");
+    assert!(
+        opt <= 32,
+        "expected ≤32 constraints with 8-bit bounds, got {opt}"
+    );
+    assert!(
+        full >= 760,
+        "unbounded should use ~762 constraints, got {full}"
+    );
 }
 
 #[test]
@@ -921,18 +860,17 @@ fn is_lt_asymmetric_bounds_uses_max() {
         &["a"],
         &["b"],
     );
-    assert!(count <= 48, "expected ≤48 with asymmetric bounds, got {count}");
+    assert!(
+        count <= 48,
+        "expected ≤48 with asymmetric bounds, got {count}"
+    );
 }
 
 #[test]
 fn is_lt_one_bounded_falls_back_to_full() {
     // Only a is range-checked → b needs full 252-bit range check
     // Cost: 9 (range_check a) + 253 (enforce_252 b) + 254 (decomp) + 2 = 518
-    let count = compile_constraint_count(
-        "range_check(a, 8)\nassert(a < b)",
-        &["a"],
-        &["b"],
-    );
+    let count = compile_constraint_count("range_check(a, 8)\nassert(a < b)", &["a"], &["b"]);
     // Should be less than full (saves one 252-bit range check = 253 constraints)
     let full = compile_constraint_count("assert(a < b)", &["a"], &["b"]);
     assert!(
@@ -1020,10 +958,7 @@ fn ir_array_verify(
 }
 
 /// Self-contained pipeline helper.
-fn ir_self_contained_verify(
-    inputs: &[(&str, FieldElement)],
-    source: &str,
-) {
+fn ir_self_contained_verify(inputs: &[(&str, FieldElement)], source: &str) {
     let (_, _, program) = IrLowering::lower_self_contained(source).unwrap();
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
@@ -1125,11 +1060,8 @@ fn ir_array_index_out_of_bounds() {
 #[test]
 fn ir_array_dynamic_index_rejected() {
     // a[x] where x is a witness (not compile-time constant) → error
-    let result = IrLowering::lower_circuit(
-        "let a = [y, y, y]\nassert_eq(a[x], y)",
-        &[],
-        &["x", "y"],
-    );
+    let result =
+        IrLowering::lower_circuit("let a = [y, y, y]\nassert_eq(a[x], y)", &[], &["x", "y"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1237,11 +1169,8 @@ fn ir_fn_multiple_calls() {
 
 #[test]
 fn ir_fn_wrong_arg_count() {
-    let result = IrLowering::lower_circuit(
-        "fn double(x) { x + x }\ndouble(a, b)",
-        &[],
-        &["a", "b"],
-    );
+    let result =
+        IrLowering::lower_circuit("fn double(x) { x + x }\ndouble(a, b)", &[], &["a", "b"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1252,11 +1181,7 @@ fn ir_fn_wrong_arg_count() {
 
 #[test]
 fn ir_fn_recursive_rejected() {
-    let result = IrLowering::lower_circuit(
-        "fn f(x) { f(x) }\nf(a)",
-        &[],
-        &["a"],
-    );
+    let result = IrLowering::lower_circuit("fn f(x) { f(x) }\nf(a)", &[], &["a"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1267,11 +1192,7 @@ fn ir_fn_recursive_rejected() {
 
 #[test]
 fn ir_fn_mutual_recursive_rejected() {
-    let result = IrLowering::lower_circuit(
-        "fn f(x) { g(x) }\nfn g(x) { f(x) }\nf(a)",
-        &[],
-        &["a"],
-    );
+    let result = IrLowering::lower_circuit("fn f(x) { g(x) }\nfn g(x) { f(x) }\nf(a)", &[], &["a"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1334,11 +1255,7 @@ fn ir_fn_scope_isolation() {
 #[test]
 fn ir_fn_forward_reference_rejected() {
     // Call before definition → error
-    let result = IrLowering::lower_circuit(
-        "f(a)\nfn f(x) { x + x }",
-        &[],
-        &["a"],
-    );
+    let result = IrLowering::lower_circuit("f(a)\nfn f(x) { x + x }", &[], &["a"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1470,11 +1387,8 @@ let path = [s0, s1, s2]
 let dirs = [d0, d1]
 merkle_verify(root, leaf, path, dirs)
 "#;
-    let result = IrLowering::lower_circuit(
-        source,
-        &["root"],
-        &["leaf", "s0", "s1", "s2", "d0", "d1"],
-    );
+    let result =
+        IrLowering::lower_circuit(source, &["root"], &["leaf", "s0", "s1", "s2", "d0", "d1"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1615,11 +1529,7 @@ fn ir_fn_returning_expression() {
 #[test]
 fn ir_array_scalar_type_mismatch() {
     // Using a scalar as array → TypeMismatch
-    let result = IrLowering::lower_circuit(
-        "assert_eq(x[0], x)",
-        &[],
-        &["x"],
-    );
+    let result = IrLowering::lower_circuit("assert_eq(x[0], x)", &[], &["x"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1631,11 +1541,7 @@ fn ir_array_scalar_type_mismatch() {
 #[test]
 fn ir_array_as_bare_expression_rejected() {
     // Array not in let binding → TypeMismatch
-    let result = IrLowering::lower_circuit(
-        "assert_eq([x, y], x)",
-        &[],
-        &["x", "y"],
-    );
+    let result = IrLowering::lower_circuit("assert_eq([x, y], x)", &[], &["x", "y"]);
     assert!(result.is_err());
 }
 
@@ -1785,7 +1691,10 @@ fn const_fold_verify(source: &str) {
     compiler.compile_ir(&program).unwrap();
     let gen = WitnessGenerator::from_compiler(&compiler);
     let w = gen.generate(&HashMap::new()).unwrap();
-    compiler.cs.verify(&w).expect("const-folded assertion should verify");
+    compiler
+        .cs
+        .verify(&w)
+        .expect("const-folded assertion should verify");
 }
 
 #[test]
@@ -1799,7 +1708,9 @@ fn ir_is_lt_const_fold_limb_2_64() {
 fn ir_is_lt_const_fold_limb_2_128() {
     // 2^128 - 1 = 340282366920938463463374607431768211455
     // 2^128     = 340282366920938463463374607431768211456
-    const_fold_verify("assert(340282366920938463463374607431768211455 < 340282366920938463463374607431768211456)");
+    const_fold_verify(
+        "assert(340282366920938463463374607431768211455 < 340282366920938463463374607431768211456)",
+    );
 }
 
 #[test]

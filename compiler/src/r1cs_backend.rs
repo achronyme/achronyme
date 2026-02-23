@@ -3,7 +3,7 @@ use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
 use memory::FieldElement;
 use std::collections::HashMap;
 
-use ir::types::{IrProgram, SsaVar, Instruction as IrInstruction, Visibility as IrVisibility};
+use ir::types::{Instruction as IrInstruction, IrProgram, SsaVar, Visibility as IrVisibility};
 
 use crate::r1cs_error::R1CSError;
 use crate::witness_gen::{fill_poseidon_witness, WitnessOp};
@@ -30,6 +30,12 @@ pub struct R1CSCompiler {
     /// SSA variables proven to be boolean by bool_prop analysis.
     /// Boolean enforcement constraints are skipped for these.
     proven_boolean: std::collections::HashSet<ir::types::SsaVar>,
+}
+
+impl Default for R1CSCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl R1CSCompiler {
@@ -137,9 +143,9 @@ impl R1CSCompiler {
     ) -> Result<LinearCombination, R1CSError> {
         // Constant denominator → multiply by inverse (0 constraints)
         if let Some(scalar) = den.constant_value() {
-            let inv = scalar.inv().ok_or_else(|| {
-                R1CSError::UnsupportedOperation("division by zero".into(), None)
-            })?;
+            let inv = scalar
+                .inv()
+                .ok_or_else(|| R1CSError::UnsupportedOperation("division by zero".into(), None))?;
             return Ok(num.clone() * inv);
         }
         // General case: inv_lc (1 constraint) + mul_lc (1 constraint) = 2 constraints
@@ -189,7 +195,11 @@ impl R1CSCompiler {
     /// Compile an IsLt check via `num_bits`-bit decomposition.
     /// Input: an LC representing `diff = b - a + offset`.
     /// Returns an LC that is 1 if a < b, 0 otherwise (bit `num_bits - 1`).
-    fn compile_is_lt_via_bits(&mut self, diff: &LinearCombination, num_bits: u32) -> LinearCombination {
+    fn compile_is_lt_via_bits(
+        &mut self,
+        diff: &LinearCombination,
+        num_bits: u32,
+    ) -> LinearCombination {
         let mut sum = LinearCombination::zero();
         let mut top_bit_lc = LinearCombination::zero();
         let top_index = num_bits - 1;
@@ -241,12 +251,11 @@ impl R1CSCompiler {
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
 
         // Helper closure to look up SSA variables with proper error messages
-        let lookup = |map: &HashMap<SsaVar, LinearCombination>, var: &SsaVar| -> Result<LinearCombination, R1CSError> {
+        let lookup = |map: &HashMap<SsaVar, LinearCombination>,
+                      var: &SsaVar|
+         -> Result<LinearCombination, R1CSError> {
             map.get(var).cloned().ok_or_else(|| {
-                R1CSError::UnsupportedOperation(
-                    format!("undefined SSA variable {:?}", var),
-                    None,
-                )
+                R1CSError::UnsupportedOperation(format!("undefined SSA variable {:?}", var), None)
             })
         };
 
@@ -316,11 +325,8 @@ impl R1CSCompiler {
                     if !self.proven_boolean.contains(cond) {
                         let one = LinearCombination::from_constant(FieldElement::ONE);
                         let one_minus_cond = one - cond_lc.clone();
-                        self.cs.enforce(
-                            cond_lc.clone(),
-                            one_minus_cond,
-                            LinearCombination::zero(),
-                        );
+                        self.cs
+                            .enforce(cond_lc.clone(), one_minus_cond, LinearCombination::zero());
                     }
 
                     // MUX: result = cond * (then - else) + else
@@ -352,7 +358,7 @@ impl R1CSCompiler {
                                 - LinearCombination::from_variable(bit_var),
                             LinearCombination::zero(),
                         );
-                        let coeff = compute_power_of_two(i as u32);
+                        let coeff = compute_power_of_two(i);
                         sum = sum + LinearCombination::from_variable(bit_var) * coeff;
                         self.witness_ops.push(WitnessOp::BitExtract {
                             target: bit_var,
@@ -391,11 +397,8 @@ impl R1CSCompiler {
                         );
                     }
                     if !self.proven_boolean.contains(rhs) {
-                        self.cs.enforce(
-                            b.clone(),
-                            one - b.clone(),
-                            LinearCombination::zero(),
-                        );
+                        self.cs
+                            .enforce(b.clone(), one - b.clone(), LinearCombination::zero());
                     }
                     // result = a * b
                     let out = self.multiply_lcs(&a, &b);
@@ -413,11 +416,8 @@ impl R1CSCompiler {
                         );
                     }
                     if !self.proven_boolean.contains(rhs) {
-                        self.cs.enforce(
-                            b.clone(),
-                            one - b.clone(),
-                            LinearCombination::zero(),
-                        );
+                        self.cs
+                            .enforce(b.clone(), one - b.clone(), LinearCombination::zero());
                     }
                     // result = a + b - a*b
                     let product = self.multiply_lcs(&a, &b);
@@ -441,7 +441,8 @@ impl R1CSCompiler {
                     let eq_lc = LinearCombination::from_variable(eq_var);
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     self.cs.enforce(diff.clone(), inv_lc, one - eq_lc.clone());
-                    self.cs.enforce(diff, eq_lc.clone(), LinearCombination::zero());
+                    self.cs
+                        .enforce(diff, eq_lc.clone(), LinearCombination::zero());
                     lc_map.insert(*result, eq_lc);
                 }
                 IrInstruction::IsNeq { result, lhs, rhs } => {
@@ -459,8 +460,10 @@ impl R1CSCompiler {
                     let inv_lc = LinearCombination::from_variable(inv_var);
                     let eq_lc = LinearCombination::from_variable(eq_var);
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    self.cs.enforce(diff.clone(), inv_lc, one.clone() - eq_lc.clone());
-                    self.cs.enforce(diff, eq_lc.clone(), LinearCombination::zero());
+                    self.cs
+                        .enforce(diff.clone(), inv_lc, one.clone() - eq_lc.clone());
+                    self.cs
+                        .enforce(diff, eq_lc.clone(), LinearCombination::zero());
                     // neq = 1 - eq
                     lc_map.insert(*result, one - eq_lc);
                 }
@@ -473,8 +476,12 @@ impl R1CSCompiler {
                     let effective_bits = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => ba.max(bb),
                         _ => {
-                            if bound_a.is_none() { self.enforce_252_range(&a); }
-                            if bound_b.is_none() { self.enforce_252_range(&b); }
+                            if bound_a.is_none() {
+                                self.enforce_252_range(&a);
+                            }
+                            if bound_b.is_none() {
+                                self.enforce_252_range(&b);
+                            }
                             252
                         }
                     };
@@ -494,8 +501,12 @@ impl R1CSCompiler {
                     let effective_bits = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => ba.max(bb),
                         _ => {
-                            if bound_a.is_none() { self.enforce_252_range(&a); }
-                            if bound_b.is_none() { self.enforce_252_range(&b); }
+                            if bound_a.is_none() {
+                                self.enforce_252_range(&a);
+                            }
+                            if bound_b.is_none() {
+                                self.enforce_252_range(&b);
+                            }
                             252
                         }
                     };
@@ -574,6 +585,7 @@ impl R1CSCompiler {
     /// 3. **Witness**: builds the witness vector by replaying `witness_ops` with
     ///    concrete input values. This is separate from compilation because constraint
     ///    generation must complete before the full witness layout is known.
+    ///
     /// Evaluate the IR, compile to R1CS, and build a witness vector in one pass.
     ///
     /// ```
@@ -628,10 +640,7 @@ impl R1CSCompiler {
                 WitnessOp::Inverse { target, operand } => {
                     let val = operand.evaluate(&witness);
                     witness[target.index()] = val.inv().ok_or_else(|| {
-                        R1CSError::EvalError(format!(
-                            "division by zero at wire {}",
-                            target.index()
-                        ))
+                        R1CSError::EvalError(format!("division by zero at wire {}", target.index()))
                     })?;
                 }
                 WitnessOp::BitExtract {
@@ -656,9 +665,9 @@ impl R1CSCompiler {
                         witness[target_inv.index()] = FieldElement::ZERO;
                         witness[target_result.index()] = FieldElement::ONE;
                     } else {
-                        witness[target_inv.index()] = d.inv().ok_or_else(|| {
-                            R1CSError::EvalError("IsZero inverse failed".into())
-                        })?;
+                        witness[target_inv.index()] = d
+                            .inv()
+                            .ok_or_else(|| R1CSError::EvalError("IsZero inverse failed".into()))?;
                         witness[target_result.index()] = FieldElement::ZERO;
                     }
                 }
@@ -704,4 +713,3 @@ static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 253]> = std::sync::Lazy
 fn compute_power_of_two(n: u32) -> FieldElement {
     POWERS_OF_TWO[n as usize]
 }
-

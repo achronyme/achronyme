@@ -1,8 +1,8 @@
 use compiler::Compiler;
-use memory::{Function, Value};
-use vm::{CallFrame, ProveError, ProveHandler, ProveResult, VM};
-use std::collections::HashMap;
 use memory::FieldElement;
+use memory::{Function, Value};
+use std::collections::HashMap;
+use vm::{CallFrame, ProveError, ProveHandler, ProveResult, VM};
 
 /// Helper: compile and run Achronyme source, returning the VM after execution.
 /// Does NOT inject a prove handler.
@@ -104,9 +104,8 @@ impl ProveHandler for RealProveHandler {
             .and_then(|s| s.strip_suffix('}'))
             .unwrap_or(source);
 
-        let (pub_names, wit_names, mut program) =
-            IrLowering::lower_self_contained(inner)
-                .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
+        let (pub_names, wit_names, mut program) = IrLowering::lower_self_contained(inner)
+            .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         ir::passes::optimize(&mut program);
 
@@ -226,7 +225,11 @@ fn prove_simple_assert_eq() {
         }
     "#;
     let result = run_source_with_prove(source);
-    assert!(result.is_ok(), "prove simple assert_eq failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "prove simple assert_eq failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -258,7 +261,11 @@ fn prove_multiplication() {
         }
     "#;
     let result = run_source_with_prove(source);
-    assert!(result.is_ok(), "prove multiplication failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "prove multiplication failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -294,7 +301,11 @@ fn prove_int_promotion() {
         }
     "#;
     let result = run_source_with_prove(source);
-    assert!(result.is_ok(), "prove int promotion failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "prove int promotion failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -394,7 +405,10 @@ fn prove_poseidon_wrong_witness() {
     "#
     );
     let result = run_source_with_prove(&source);
-    assert!(result.is_err(), "prove should fail: wrong witness for poseidon");
+    assert!(
+        result.is_err(),
+        "prove should fail: wrong witness for poseidon"
+    );
 }
 
 #[test]
@@ -413,7 +427,11 @@ fn prove_multiple_blocks() {
         }
     "#;
     let result = run_source_with_prove(source);
-    assert!(result.is_ok(), "multiple prove blocks failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "multiple prove blocks failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -579,7 +597,10 @@ fn proof_json_on_non_proof_gives_type_error() {
     let result = run_source_with_mock_proof(source);
     match result {
         Ok(_) => panic!("proof_json on int should fail"),
-        Err(err) => assert!(err.contains("TypeMismatch"), "Expected TypeMismatch, got: {err}"),
+        Err(err) => assert!(
+            err.contains("TypeMismatch"),
+            "Expected TypeMismatch, got: {err}"
+        ),
     }
 }
 
@@ -613,7 +634,10 @@ fn proof_object_gc_survives_when_rooted() {
     vm.stress_mode = true; // GC on every allocation
 
     let mut compiler = Compiler::new();
-    let bytecode = compiler.compile(source).map_err(|e| format!("{e:?}")).unwrap();
+    let bytecode = compiler
+        .compile(source)
+        .map_err(|e| format!("{e:?}"))
+        .unwrap();
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     vm.heap.import_strings(compiler.interner.strings);
@@ -645,7 +669,9 @@ fn proof_object_gc_survives_when_rooted() {
 
     vm.prove_handler = Some(Box::new(MockProofHandler));
 
-    vm.interpret().map_err(|e| format!("{e:?}")).expect("should succeed with stress GC");
+    vm.interpret()
+        .map_err(|e| format!("{e:?}"))
+        .expect("should succeed with stress GC");
 }
 
 #[test]

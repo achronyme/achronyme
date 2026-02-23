@@ -1,23 +1,34 @@
 use crate::codegen::Compiler;
-use crate::error::CompilerError;
 use crate::control_flow::ControlFlowCompiler;
-use crate::types::Local;
+use crate::error::CompilerError;
 use crate::function_compiler::FunctionCompiler;
+use crate::types::Local;
 use achronyme_parser::ast::*;
-use vm::opcode::OpCode;
 use memory::Function;
+use vm::opcode::OpCode;
 
 pub trait FunctionDefinitionCompiler {
-    fn compile_fn_core(&mut self, name: Option<&str>, params: &[String], body: &Block) -> Result<u8, CompilerError>;
+    fn compile_fn_core(
+        &mut self,
+        name: Option<&str>,
+        params: &[String],
+        body: &Block,
+    ) -> Result<u8, CompilerError>;
 }
 
 impl FunctionDefinitionCompiler for Compiler {
-    fn compile_fn_core(&mut self, name: Option<&str>, params: &[String], body: &Block) -> Result<u8, CompilerError> {
+    fn compile_fn_core(
+        &mut self,
+        name: Option<&str>,
+        params: &[String],
+        body: &Block,
+    ) -> Result<u8, CompilerError> {
         let fn_name = name.unwrap_or("lambda").to_string();
         if params.len() > 255 {
-            return Err(CompilerError::CompilerLimitation(
-                format!("function `{fn_name}` has {} parameters (maximum is 255)", params.len()),
-            ));
+            return Err(CompilerError::CompilerLimitation(format!(
+                "function `{fn_name}` has {} parameters (maximum is 255)",
+                params.len()
+            )));
         }
         let arity = params.len() as u8;
 
@@ -33,7 +44,8 @@ impl FunctionDefinitionCompiler for Compiler {
             None
         };
 
-        self.compilers.push(FunctionCompiler::new(fn_name.clone(), arity));
+        self.compilers
+            .push(FunctionCompiler::new(fn_name.clone(), arity));
 
         for (i, param) in params.iter().enumerate() {
             self.current().locals.push(Local {
@@ -58,7 +70,11 @@ impl FunctionDefinitionCompiler for Compiler {
             max_slots: compiled_func.max_slots,
             chunk: compiled_func.bytecode,
             constants: compiled_func.constants,
-            upvalue_info: compiled_func.upvalues.iter().flat_map(|u| vec![u.is_local as u8, u.index]).collect(),
+            upvalue_info: compiled_func
+                .upvalues
+                .iter()
+                .flat_map(|u| vec![u.is_local as u8, u.index])
+                .collect(),
         };
 
         let global_func_idx = self.prototypes.len();

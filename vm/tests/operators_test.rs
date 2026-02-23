@@ -35,12 +35,14 @@ fn eval(source: &str) -> Value {
 
 fn eval_bool(source: &str) -> bool {
     let val = eval(source);
-    val.as_bool().unwrap_or_else(|| panic!("expected bool, got {:?}", val))
+    val.as_bool()
+        .unwrap_or_else(|| panic!("expected bool, got {:?}", val))
 }
 
 fn eval_int(source: &str) -> i64 {
     let val = eval(source);
-    val.as_int().unwrap_or_else(|| panic!("expected int, got {:?}", val))
+    val.as_int()
+        .unwrap_or_else(|| panic!("expected int, got {:?}", val))
 }
 
 // ============================================================================

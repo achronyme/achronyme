@@ -14,10 +14,7 @@ fn compile_and_verify(
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
     wg.generate(inputs, &mut compiler.system.assignments)
         .expect("witness gen failed");
-    compiler
-        .system
-        .verify()
-        .expect("verification failed");
+    compiler.system.verify().expect("verification failed");
     compiler
 }
 
@@ -494,7 +491,8 @@ fn test_plonkish_wrong_mul_rejected() {
     inputs.insert("b".to_string(), FieldElement::from_u64(7));
     inputs.insert("out".to_string(), FieldElement::from_u64(99)); // wrong: 6*7=42
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "wrong product should be rejected"
@@ -516,7 +514,8 @@ fn test_plonkish_wrong_assert_eq_rejected() {
     inputs.insert("x".to_string(), FieldElement::from_u64(10));
     inputs.insert("y".to_string(), FieldElement::from_u64(20)); // x != y
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "unequal values in assert_eq should be rejected"
@@ -543,7 +542,8 @@ fn test_plonkish_wrong_mux_output_rejected() {
     inputs.insert("b".to_string(), FieldElement::from_u64(20));
     inputs.insert("out".to_string(), FieldElement::from_u64(99)); // wrong: mux(1,10,20)=10
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "wrong mux output should be rejected"
@@ -569,7 +569,8 @@ fn test_plonkish_wrong_comparison_rejected() {
     inputs.insert("b".to_string(), FieldElement::from_u64(7));
     inputs.insert("out".to_string(), FieldElement::ZERO); // wrong: 3 < 7 is true (1)
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "wrong comparison result should be rejected"
@@ -578,12 +579,7 @@ fn test_plonkish_wrong_comparison_rejected() {
 
 #[test]
 fn test_plonkish_missing_input_error() {
-    let program = ir::IrLowering::lower_circuit(
-        "assert_eq(x, y)",
-        &[],
-        &["x", "y"],
-    )
-    .unwrap();
+    let program = ir::IrLowering::lower_circuit("assert_eq(x, y)", &[], &["x", "y"]).unwrap();
 
     let mut compiler = PlonkishCompiler::new();
     compiler.compile_ir(&program).unwrap();
@@ -661,7 +657,8 @@ fn test_plonkish_is_eq_wrong_result_rejected() {
     inputs.insert("y".to_string(), FieldElement::from_u64(10));
     inputs.insert("expected".to_string(), FieldElement::ONE); // WRONG
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "claiming 5 == 10 must fail Plonkish verification"
@@ -681,7 +678,8 @@ fn test_plonkish_wrong_poseidon_rejected() {
     inputs.insert("r".to_string(), FieldElement::from_u64(2));
     inputs.insert("out".to_string(), FieldElement::from_u64(12345)); // WRONG
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "wrong Poseidon hash should be rejected by Plonkish backend"
@@ -726,9 +724,13 @@ fn test_c1_forge_is_zero_rejected() {
     inputs.insert("y".to_string(), FieldElement::from_u64(10));
     inputs.insert("out".to_string(), FieldElement::ZERO);
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     // Honest witness passes
-    compiler.system.verify().expect("honest witness should pass");
+    compiler
+        .system
+        .verify()
+        .expect("honest witness should pass");
 
     // Corrupt: find a row where col_constant == ONE and col_d has that value,
     // then set col_d to ZERO (simulating IsZero enforce_row corruption).
@@ -740,13 +742,19 @@ fn test_c1_forge_is_zero_rejected() {
         let const_val = compiler.system.assignments.get(col_const, row);
         let d_val = compiler.system.assignments.get(col_d, row);
         if const_val == FieldElement::ONE && d_val == FieldElement::ONE {
-            compiler.system.assignments.set(col_d, row, FieldElement::ZERO);
+            compiler
+                .system
+                .assignments
+                .set(col_d, row, FieldElement::ZERO);
             corrupted = true;
             break;
         }
     }
     assert!(corrupted, "should find an IsZero enforce row to corrupt");
-    let err = compiler.system.verify().expect_err("corrupted d=1→0 must fail");
+    let err = compiler
+        .system
+        .verify()
+        .expect_err("corrupted d=1→0 must fail");
     assert!(
         matches!(err, PlonkishError::CopyConstraintViolation { .. })
             || matches!(err, PlonkishError::GateNotSatisfied { .. }),
@@ -768,8 +776,12 @@ fn test_c2_forge_division_rejected() {
     inputs.insert("y".to_string(), FieldElement::from_u64(6));
     inputs.insert("out".to_string(), FieldElement::from_u64(7));
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
-    compiler.system.verify().expect("honest witness should pass");
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler
+        .system
+        .verify()
+        .expect("honest witness should pass");
 
     // Corrupt col_d on the inverse row (d=1) to 0
     let col_d = compiler.col_d;
@@ -780,13 +792,19 @@ fn test_c2_forge_division_rejected() {
         let const_val = compiler.system.assignments.get(col_const, row);
         let d_val = compiler.system.assignments.get(col_d, row);
         if const_val == FieldElement::ONE && d_val == FieldElement::ONE {
-            compiler.system.assignments.set(col_d, row, FieldElement::ZERO);
+            compiler
+                .system
+                .assignments
+                .set(col_d, row, FieldElement::ZERO);
             corrupted = true;
             break;
         }
     }
     assert!(corrupted, "should find a division inverse row to corrupt");
-    let err = compiler.system.verify().expect_err("corrupted d=1→0 must fail");
+    let err = compiler
+        .system
+        .verify()
+        .expect_err("corrupted d=1→0 must fail");
     assert!(
         matches!(err, PlonkishError::CopyConstraintViolation { .. })
             || matches!(err, PlonkishError::GateNotSatisfied { .. }),
@@ -808,8 +826,12 @@ fn test_c3_forge_bit_coeff_rejected() {
     inputs.insert("b".to_string(), FieldElement::from_u64(7));
     inputs.insert("out".to_string(), FieldElement::ONE);
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
-    compiler.system.verify().expect("honest witness should pass");
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler
+        .system
+        .verify()
+        .expect("honest witness should pass");
 
     // Corrupt: find a row where col_constant has a power-of-two (2^i for i>0)
     // in col_b, and zero it out.
@@ -821,13 +843,22 @@ fn test_c3_forge_bit_coeff_rejected() {
     for row in 0..num_rows {
         let const_val = compiler.system.assignments.get(col_const, row);
         if const_val == two {
-            compiler.system.assignments.set(col_b, row, FieldElement::ZERO);
+            compiler
+                .system
+                .assignments
+                .set(col_b, row, FieldElement::ZERO);
             corrupted = true;
             break;
         }
     }
-    assert!(corrupted, "should find a bit coefficient row (2^1) to corrupt");
-    let err = compiler.system.verify().expect_err("corrupted 2^i→0 must fail");
+    assert!(
+        corrupted,
+        "should find a bit coefficient row (2^1) to corrupt"
+    );
+    let err = compiler
+        .system
+        .verify()
+        .expect_err("corrupted 2^i→0 must fail");
     assert!(
         matches!(err, PlonkishError::CopyConstraintViolation { .. })
             || matches!(err, PlonkishError::GateNotSatisfied { .. }),
@@ -849,8 +880,12 @@ fn test_c4_forge_addition_identity_rejected() {
     inputs.insert("y".to_string(), FieldElement::from_u64(22));
     inputs.insert("out".to_string(), FieldElement::from_u64(42));
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
-    compiler.system.verify().expect("honest witness should pass");
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler
+        .system
+        .verify()
+        .expect("honest witness should pass");
 
     // Corrupt: find a row where col_b=1 (addition identity) and set it to 2
     let col_b = compiler.col_b;
@@ -861,13 +896,19 @@ fn test_c4_forge_addition_identity_rejected() {
         let const_val = compiler.system.assignments.get(col_const, row);
         let b_val = compiler.system.assignments.get(col_b, row);
         if const_val == FieldElement::ONE && b_val == FieldElement::ONE {
-            compiler.system.assignments.set(col_b, row, FieldElement::from_u64(2));
+            compiler
+                .system
+                .assignments
+                .set(col_b, row, FieldElement::from_u64(2));
             corrupted = true;
             break;
         }
     }
     assert!(corrupted, "should find an addition identity row to corrupt");
-    let err = compiler.system.verify().expect_err("corrupted b=1→2 must fail");
+    let err = compiler
+        .system
+        .verify()
+        .expect_err("corrupted b=1→2 must fail");
     assert!(
         matches!(err, PlonkishError::CopyConstraintViolation { .. })
             || matches!(err, PlonkishError::GateNotSatisfied { .. }),
@@ -896,7 +937,12 @@ fn test_plonkish_is_lt_boundary_adjacent_at_max() {
     inputs.insert("a".to_string(), almost);
     inputs.insert("b".to_string(), max);
     inputs.insert("out".to_string(), FieldElement::ONE);
-    compile_source("let r = a < b\nassert_eq(r, out)", &["out"], &["a", "b"], &inputs);
+    compile_source(
+        "let r = a < b\nassert_eq(r, out)",
+        &["out"],
+        &["a", "b"],
+        &inputs,
+    );
 }
 
 #[test]
@@ -905,7 +951,12 @@ fn test_plonkish_is_lt_boundary_equal_zero() {
     inputs.insert("a".to_string(), FieldElement::ZERO);
     inputs.insert("b".to_string(), FieldElement::ZERO);
     inputs.insert("out".to_string(), FieldElement::ZERO);
-    compile_source("let r = a < b\nassert_eq(r, out)", &["out"], &["a", "b"], &inputs);
+    compile_source(
+        "let r = a < b\nassert_eq(r, out)",
+        &["out"],
+        &["a", "b"],
+        &inputs,
+    );
 }
 
 #[test]
@@ -915,7 +966,12 @@ fn test_plonkish_is_lt_boundary_zero_vs_max() {
     inputs.insert("a".to_string(), FieldElement::ZERO);
     inputs.insert("b".to_string(), max);
     inputs.insert("out".to_string(), FieldElement::ONE);
-    compile_source("let r = a < b\nassert_eq(r, out)", &["out"], &["a", "b"], &inputs);
+    compile_source(
+        "let r = a < b\nassert_eq(r, out)",
+        &["out"],
+        &["a", "b"],
+        &inputs,
+    );
 }
 
 #[test]
@@ -925,7 +981,12 @@ fn test_plonkish_is_lt_boundary_max_vs_zero() {
     inputs.insert("a".to_string(), max);
     inputs.insert("b".to_string(), FieldElement::ZERO);
     inputs.insert("out".to_string(), FieldElement::ZERO);
-    compile_source("let r = a < b\nassert_eq(r, out)", &["out"], &["a", "b"], &inputs);
+    compile_source(
+        "let r = a < b\nassert_eq(r, out)",
+        &["out"],
+        &["a", "b"],
+        &inputs,
+    );
 }
 
 #[test]
@@ -935,7 +996,12 @@ fn test_plonkish_is_le_boundary_max_equal() {
     inputs.insert("a".to_string(), max);
     inputs.insert("b".to_string(), max);
     inputs.insert("out".to_string(), FieldElement::ONE);
-    compile_source("let r = a <= b\nassert_eq(r, out)", &["out"], &["a", "b"], &inputs);
+    compile_source(
+        "let r = a <= b\nassert_eq(r, out)",
+        &["out"],
+        &["a", "b"],
+        &inputs,
+    );
 }
 
 // ============================================================================
@@ -962,7 +1028,8 @@ fn test_plonkish_mux_non_boolean_flag_rejected() {
     // but the boolean enforcement c*(1-c)=0 → 2*(1-2)=2*(-1)=-2 ≠ 0
     inputs.insert("out".to_string(), FieldElement::ZERO);
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "mux with flag=2 must fail boolean enforcement in Plonkish"
@@ -981,7 +1048,8 @@ fn test_plonkish_assert_non_boolean_rejected() {
     let mut inputs = HashMap::new();
     inputs.insert("x".to_string(), FieldElement::from_u64(2)); // NOT boolean
 
-    wg.generate(&inputs, &mut compiler.system.assignments).unwrap();
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
     assert!(
         compiler.system.verify().is_err(),
         "assert(2) must fail boolean enforcement in Plonkish"
@@ -1008,10 +1076,7 @@ fn plonkish_is_lt_fewer_rows_with_prior_range_check() {
         &["a"],
         &["b"],
     );
-    assert!(
-        opt < full,
-        "bounded should use fewer rows: {opt} vs {full}"
-    );
+    assert!(opt < full, "bounded should use fewer rows: {opt} vs {full}");
 }
 
 #[test]
@@ -1116,12 +1181,7 @@ fn plonkish_poseidon_many_three() {
     inputs.insert("a".to_string(), FieldElement::from_u64(1));
     inputs.insert("b".to_string(), FieldElement::from_u64(2));
     inputs.insert("c".to_string(), FieldElement::from_u64(3));
-    compile_source(
-        "poseidon_many(a, b, c)",
-        &[],
-        &["a", "b", "c"],
-        &inputs,
-    );
+    compile_source("poseidon_many(a, b, c)", &[], &["a", "b", "c"], &inputs);
 }
 
 #[test]
@@ -1142,10 +1202,5 @@ let path = [sibling]
 let dirs = [dir]
 merkle_verify(root, leaf, path, dirs)
 "#;
-    compile_source(
-        source,
-        &["root"],
-        &["leaf", "sibling", "dir"],
-        &inputs,
-    );
+    compile_source(source, &["root"], &["leaf", "sibling", "dir"], &inputs);
 }

@@ -41,32 +41,32 @@ impl NativeRegistry for super::vm::VM {
 
         // Assert empty state to ensure alignment
         if !self.natives.is_empty() || !self.globals.is_empty() {
-             panic!("VM must be empty before bootstrapping natives");
+            panic!("VM must be empty before bootstrapping natives");
         }
 
         for meta in NATIVE_TABLE {
             // Match the name to the actual Rust function pointer
             let func_ptr = match meta.name {
-                "print"  => crate::stdlib::core::native_print,
-                "len"    => crate::stdlib::core::native_len,
+                "print" => crate::stdlib::core::native_print,
+                "len" => crate::stdlib::core::native_len,
                 "typeof" => crate::stdlib::core::native_typeof,
                 "assert" => crate::stdlib::core::native_assert,
-                "time"   => crate::stdlib::core::native_time,
-                "push"   => crate::stdlib::core::native_push,
-                "pop"    => crate::stdlib::core::native_pop,
-                "keys"   => crate::stdlib::core::native_keys,
-                "field"  => crate::stdlib::core::native_field,
-                "proof_json"   => crate::stdlib::core::native_proof_json,
+                "time" => crate::stdlib::core::native_time,
+                "push" => crate::stdlib::core::native_push,
+                "pop" => crate::stdlib::core::native_pop,
+                "keys" => crate::stdlib::core::native_keys,
+                "field" => crate::stdlib::core::native_field,
+                "proof_json" => crate::stdlib::core::native_proof_json,
                 "proof_public" => crate::stdlib::core::native_proof_public,
-                "proof_vkey"   => crate::stdlib::core::native_proof_vkey,
-                "substring"    => crate::stdlib::core::native_substring,
-                "indexOf"      => crate::stdlib::core::native_index_of,
-                "split"        => crate::stdlib::core::native_split,
-                "trim"         => crate::stdlib::core::native_trim,
-                "replace"      => crate::stdlib::core::native_replace,
-                "toUpper"      => crate::stdlib::core::native_to_upper,
-                "toLower"      => crate::stdlib::core::native_to_lower,
-                "chars"        => crate::stdlib::core::native_chars,
+                "proof_vkey" => crate::stdlib::core::native_proof_vkey,
+                "substring" => crate::stdlib::core::native_substring,
+                "indexOf" => crate::stdlib::core::native_index_of,
+                "split" => crate::stdlib::core::native_split,
+                "trim" => crate::stdlib::core::native_trim,
+                "replace" => crate::stdlib::core::native_replace,
+                "toUpper" => crate::stdlib::core::native_to_upper,
+                "toLower" => crate::stdlib::core::native_to_lower,
+                "chars" => crate::stdlib::core::native_chars,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 
@@ -81,20 +81,20 @@ impl NativeRegistry for super::vm::VM {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::VM;
     use crate::specs::NATIVE_TABLE;
+    use crate::VM;
 
     #[test]
     fn test_native_alignment() {
-        let vm = VM::new(); 
-        
+        let vm = VM::new();
+
         // Check internal vectors match SSOT
         assert_eq!(vm.globals.len(), NATIVE_TABLE.len());
-        
+
         // Check index 0 validity
         let first_val = vm.globals[0].value;
         assert!(first_val.is_native());
-        
+
         // Check integrity of all natives
         for (i, _meta) in NATIVE_TABLE.iter().enumerate() {
             assert!(vm.globals[i].value.is_native());

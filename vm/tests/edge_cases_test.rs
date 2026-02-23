@@ -54,11 +54,7 @@ fn run(source: &str) -> Result<VM, RuntimeError> {
 }
 
 /// Build a VM with raw bytecode, constants, and max_slots, then interpret.
-fn run_raw(
-    chunk: Vec<u32>,
-    constants: Vec<Value>,
-    max_slots: u16,
-) -> Result<VM, RuntimeError> {
+fn run_raw(chunk: Vec<u32>, constants: Vec<Value>, max_slots: u16) -> Result<VM, RuntimeError> {
     let mut vm = VM::new();
     let func = Function {
         name: "raw".to_string(),
@@ -124,10 +120,10 @@ fn deep_recursion_stack_overflow() {
     // Main: Closure R[0] = proto[0], DefGlobalVar Global[user_global_idx] = R[0],
     //       GetGlobal R[0] = Global[user_global_idx], Call R[0]
     let main_chunk = vec![
-        encode_abx(OpCode::Closure.as_u8(), 0, 0),                     // R[0] = Closure(proto 0)
-        encode_abx(OpCode::DefGlobalVar.as_u8(), 0, user_global_idx),  // Global["recurse"] = R[0]
-        encode_abx(OpCode::GetGlobal.as_u8(), 0, user_global_idx),     // R[0] = Global["recurse"]
-        encode_abc(OpCode::Call.as_u8(), 0, 0, 0),                     // Call R[0]
+        encode_abx(OpCode::Closure.as_u8(), 0, 0), // R[0] = Closure(proto 0)
+        encode_abx(OpCode::DefGlobalVar.as_u8(), 0, user_global_idx), // Global["recurse"] = R[0]
+        encode_abx(OpCode::GetGlobal.as_u8(), 0, user_global_idx), // R[0] = Global["recurse"]
+        encode_abc(OpCode::Call.as_u8(), 0, 0, 0), // Call R[0]
     ];
     let main_func = Function {
         name: "main".to_string(),
@@ -361,7 +357,10 @@ fn malicious_bytecode_build_list_large_no_panic() {
     // The key invariant is no panic — the V-11 fix prevents truly OOB access.
     let chunk = vec![encode_abc(OpCode::BuildList.as_u8(), 0, 1, 255)];
     let result = run_raw(chunk, vec![], 4);
-    assert!(result.is_ok(), "BuildList within physical stack should not panic");
+    assert!(
+        result.is_ok(),
+        "BuildList within physical stack should not panic"
+    );
 }
 
 // ======================================================================

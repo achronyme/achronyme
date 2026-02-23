@@ -1,5 +1,4 @@
 /// Single-pass O(n) lexer for Achronyme source code.
-
 use crate::ast::Span;
 use crate::error::ParseError;
 use crate::token::{Token, TokenKind};
@@ -149,39 +148,84 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.peek() == Some(b'=') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::Eq, span: sp, lexeme: "==".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::Eq,
+                        span: sp,
+                        lexeme: "==".into(),
+                        byte_offset: offset,
+                    });
                 }
-                return Ok(Token { kind: TokenKind::Assign, span: sp, lexeme: "=".into(), byte_offset: offset });
+                return Ok(Token {
+                    kind: TokenKind::Assign,
+                    span: sp,
+                    lexeme: "=".into(),
+                    byte_offset: offset,
+                });
             }
             b'!' => {
                 self.advance();
                 if self.peek() == Some(b'=') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::Neq, span: sp, lexeme: "!=".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::Neq,
+                        span: sp,
+                        lexeme: "!=".into(),
+                        byte_offset: offset,
+                    });
                 }
-                return Ok(Token { kind: TokenKind::Not, span: sp, lexeme: "!".into(), byte_offset: offset });
+                return Ok(Token {
+                    kind: TokenKind::Not,
+                    span: sp,
+                    lexeme: "!".into(),
+                    byte_offset: offset,
+                });
             }
             b'<' => {
                 self.advance();
                 if self.peek() == Some(b'=') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::Le, span: sp, lexeme: "<=".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::Le,
+                        span: sp,
+                        lexeme: "<=".into(),
+                        byte_offset: offset,
+                    });
                 }
-                return Ok(Token { kind: TokenKind::Lt, span: sp, lexeme: "<".into(), byte_offset: offset });
+                return Ok(Token {
+                    kind: TokenKind::Lt,
+                    span: sp,
+                    lexeme: "<".into(),
+                    byte_offset: offset,
+                });
             }
             b'>' => {
                 self.advance();
                 if self.peek() == Some(b'=') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::Ge, span: sp, lexeme: ">=".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::Ge,
+                        span: sp,
+                        lexeme: ">=".into(),
+                        byte_offset: offset,
+                    });
                 }
-                return Ok(Token { kind: TokenKind::Gt, span: sp, lexeme: ">".into(), byte_offset: offset });
+                return Ok(Token {
+                    kind: TokenKind::Gt,
+                    span: sp,
+                    lexeme: ">".into(),
+                    byte_offset: offset,
+                });
             }
             b'&' => {
                 self.advance();
                 if self.peek() == Some(b'&') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::And, span: sp, lexeme: "&&".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::And,
+                        span: sp,
+                        lexeme: "&&".into(),
+                        byte_offset: offset,
+                    });
                 }
                 return Err(ParseError::new("unexpected character `&`", sp.line, sp.col));
             }
@@ -189,7 +233,12 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.peek() == Some(b'|') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::Or, span: sp, lexeme: "||".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::Or,
+                        span: sp,
+                        lexeme: "||".into(),
+                        byte_offset: offset,
+                    });
                 }
                 return Err(ParseError::new("unexpected character `|`", sp.line, sp.col));
             }
@@ -197,9 +246,19 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.peek() == Some(b'.') {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::DotDot, span: sp, lexeme: "..".into(), byte_offset: offset });
+                    return Ok(Token {
+                        kind: TokenKind::DotDot,
+                        span: sp,
+                        lexeme: "..".into(),
+                        byte_offset: offset,
+                    });
                 }
-                return Ok(Token { kind: TokenKind::Dot, span: sp, lexeme: ".".into(), byte_offset: offset });
+                return Ok(Token {
+                    kind: TokenKind::Dot,
+                    span: sp,
+                    lexeme: ".".into(),
+                    byte_offset: offset,
+                });
             }
             _ => {}
         }
@@ -230,7 +289,12 @@ impl<'a> Lexer<'a> {
                 ));
             }
         };
-        Ok(Token { kind, span: sp, lexeme: lexeme.into(), byte_offset: offset })
+        Ok(Token {
+            kind,
+            span: sp,
+            lexeme: lexeme.into(),
+            byte_offset: offset,
+        })
     }
 
     fn lex_number(&mut self, sp: Span) -> Result<Token, ParseError> {
@@ -245,7 +309,12 @@ impl<'a> Lexer<'a> {
         let lexeme = std::str::from_utf8(&self.source[start..self.pos])
             .unwrap()
             .to_string();
-        Ok(Token { kind: TokenKind::Integer, span: sp, lexeme, byte_offset: start })
+        Ok(Token {
+            kind: TokenKind::Integer,
+            span: sp,
+            lexeme,
+            byte_offset: start,
+        })
     }
 
     fn lex_ident(&mut self, sp: Span) -> Token {
@@ -282,7 +351,12 @@ impl<'a> Lexer<'a> {
             "forever" => TokenKind::Forever,
             _ => TokenKind::Ident,
         };
-        Token { kind, span: sp, lexeme, byte_offset: start }
+        Token {
+            kind,
+            span: sp,
+            lexeme,
+            byte_offset: start,
+        }
     }
 
     fn lex_string(&mut self, sp: Span) -> Result<Token, ParseError> {
@@ -292,7 +366,11 @@ impl<'a> Lexer<'a> {
         loop {
             match self.peek() {
                 None => {
-                    return Err(ParseError::new("unterminated string literal", sp.line, sp.col));
+                    return Err(ParseError::new(
+                        "unterminated string literal",
+                        sp.line,
+                        sp.col,
+                    ));
                 }
                 Some(b'"') => {
                     self.advance();
@@ -315,7 +393,11 @@ impl<'a> Lexer<'a> {
                             ));
                         }
                         None => {
-                            return Err(ParseError::new("unterminated string literal", sp.line, sp.col));
+                            return Err(ParseError::new(
+                                "unterminated string literal",
+                                sp.line,
+                                sp.col,
+                            ));
                         }
                     }
                 }
@@ -342,7 +424,12 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        Ok(Token { kind: TokenKind::StringLit, span: sp, lexeme: value, byte_offset: start })
+        Ok(Token {
+            kind: TokenKind::StringLit,
+            span: sp,
+            lexeme: value,
+            byte_offset: start,
+        })
     }
 }
 
@@ -395,8 +482,12 @@ mod tests {
         assert_eq!(
             kinds("+ - * / %"),
             vec![
-                TokenKind::Plus, TokenKind::Minus, TokenKind::Star,
-                TokenKind::Slash, TokenKind::Percent, TokenKind::Eof,
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Percent,
+                TokenKind::Eof,
             ]
         );
     }
@@ -406,9 +497,14 @@ mod tests {
         assert_eq!(
             kinds("== != <= >= && || .."),
             vec![
-                TokenKind::Eq, TokenKind::Neq, TokenKind::Le,
-                TokenKind::Ge, TokenKind::And, TokenKind::Or,
-                TokenKind::DotDot, TokenKind::Eof,
+                TokenKind::Eq,
+                TokenKind::Neq,
+                TokenKind::Le,
+                TokenKind::Ge,
+                TokenKind::And,
+                TokenKind::Or,
+                TokenKind::DotDot,
+                TokenKind::Eof,
             ]
         );
     }
@@ -418,8 +514,12 @@ mod tests {
         assert_eq!(
             kinds("let mut if else fn return"),
             vec![
-                TokenKind::Let, TokenKind::Mut, TokenKind::If,
-                TokenKind::Else, TokenKind::Fn, TokenKind::Return,
+                TokenKind::Let,
+                TokenKind::Mut,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::Fn,
+                TokenKind::Return,
                 TokenKind::Eof,
             ]
         );
@@ -478,11 +578,16 @@ mod tests {
         assert_eq!(
             kinds("()[]{},:;"),
             vec![
-                TokenKind::LParen, TokenKind::RParen,
-                TokenKind::LBracket, TokenKind::RBracket,
-                TokenKind::LBrace, TokenKind::RBrace,
-                TokenKind::Comma, TokenKind::Colon,
-                TokenKind::Semicolon, TokenKind::Eof,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::Comma,
+                TokenKind::Colon,
+                TokenKind::Semicolon,
+                TokenKind::Eof,
             ]
         );
     }

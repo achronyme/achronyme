@@ -40,7 +40,7 @@ fn merkle_proof(
     let level1_hashes = [h0123, h4567];
 
     // Direction bits (bottom-up): bit 0 of index, bit 1, bit 2
-    let d0 = (index & 1) as u64;      // 0 = left, 1 = right
+    let d0 = (index & 1) as u64; // 0 = left, 1 = right
     let d1 = ((index >> 1) & 1) as u64;
     let d2 = ((index >> 2) & 1) as u64;
 
@@ -145,7 +145,10 @@ fn merkle_depth3_via_lower_circuit() {
     compiler.cs.verify(&witness).unwrap();
 
     // Check constraint count: ~3*(2 mux + 360 poseidon) + 1 assert_eq
-    assert!(compiler.cs.num_constraints() > 1000, "expected >1000 constraints for depth-3 Merkle");
+    assert!(
+        compiler.cs.num_constraints() > 1000,
+        "expected >1000 constraints for depth-3 Merkle"
+    );
 }
 
 #[test]
@@ -183,8 +186,7 @@ fn merkle_depth3_export_roundtrip() {
     let (siblings, directions) = merkle_proof(&params, &leaves, index);
     let inputs = make_inputs(root, leaves[index], &siblings, &directions);
 
-    let (_, _, program) =
-        IrLowering::lower_self_contained(MERKLE_SOURCE_SELF_CONTAINED).unwrap();
+    let (_, _, program) = IrLowering::lower_self_contained(MERKLE_SOURCE_SELF_CONTAINED).unwrap();
 
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
@@ -228,10 +230,9 @@ fn merkle_depth3_all_leaf_positions() {
 
         let wg = WitnessGenerator::from_compiler(&compiler);
         let witness = wg.generate(&inputs).unwrap();
-        compiler
-            .cs
-            .verify(&witness)
-            .unwrap_or_else(|idx| panic!("leaf index {index}: verification failed at constraint {idx}"));
+        compiler.cs.verify(&witness).unwrap_or_else(|idx| {
+            panic!("leaf index {index}: verification failed at constraint {idx}")
+        });
     }
 }
 
@@ -259,5 +260,8 @@ fn merkle_depth3_wrong_leaf_fails() {
 
     let wg = WitnessGenerator::from_compiler(&compiler);
     let witness = wg.generate(&inputs).unwrap();
-    assert!(compiler.cs.verify(&witness).is_err(), "wrong leaf should fail verification");
+    assert!(
+        compiler.cs.verify(&witness).is_err(),
+        "wrong leaf should fail verification"
+    );
 }

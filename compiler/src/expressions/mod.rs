@@ -1,6 +1,6 @@
 use crate::codegen::Compiler;
-use crate::error::CompilerError;
 use crate::control_flow::ControlFlowCompiler;
+use crate::error::CompilerError;
 use crate::functions::FunctionDefinitionCompiler;
 use crate::scopes::ScopeCompiler;
 use achronyme_parser::ast::*;
@@ -42,8 +42,18 @@ impl ExpressionCompiler for Compiler {
             Expr::Map { pairs, .. } => self.compile_map(pairs),
 
             // === Binary operations ===
-            Expr::BinOp { op: BinOp::And, lhs, rhs, .. } => self.compile_and(lhs, rhs),
-            Expr::BinOp { op: BinOp::Or, lhs, rhs, .. } => self.compile_or(lhs, rhs),
+            Expr::BinOp {
+                op: BinOp::And,
+                lhs,
+                rhs,
+                ..
+            } => self.compile_and(lhs, rhs),
+            Expr::BinOp {
+                op: BinOp::Or,
+                lhs,
+                rhs,
+                ..
+            } => self.compile_or(lhs, rhs),
             Expr::BinOp { op, lhs, rhs, .. } => self.compile_binop(op, lhs, rhs),
 
             // === Unary operations ===
@@ -62,10 +72,21 @@ impl ExpressionCompiler for Compiler {
             Expr::DotAccess { object, field, .. } => self.compile_dot_access(object, field),
 
             // === Control flow ===
-            Expr::If { condition, then_block, else_branch, .. } =>
-                self.compile_if(condition, then_block, else_branch.as_ref()),
-            Expr::While { condition, body, .. } => self.compile_while(condition, body),
-            Expr::For { var, iterable, body, .. } => self.compile_for(var, iterable, body),
+            Expr::If {
+                condition,
+                then_block,
+                else_branch,
+                ..
+            } => self.compile_if(condition, then_block, else_branch.as_ref()),
+            Expr::While {
+                condition, body, ..
+            } => self.compile_while(condition, body),
+            Expr::For {
+                var,
+                iterable,
+                body,
+                ..
+            } => self.compile_for(var, iterable, body),
             Expr::Forever { body, .. } => self.compile_forever(body),
             Expr::Block(block) => {
                 let reg = self.alloc_reg()?;
@@ -74,8 +95,9 @@ impl ExpressionCompiler for Compiler {
             }
 
             // === Functions ===
-            Expr::FnExpr { name, params, body, .. } =>
-                self.compile_fn_core(name.as_deref(), params, body),
+            Expr::FnExpr {
+                name, params, body, ..
+            } => self.compile_fn_core(name.as_deref(), params, body),
 
             // === ZK ===
             Expr::Prove { body, source, .. } => self.compile_prove(body, source),
@@ -125,9 +147,7 @@ impl Compiler {
         if let Some((_, local_reg)) = self.resolve_local(name) {
             self.emit_abc(OpCode::Move, reg, local_reg, 0);
             Ok(reg)
-        } else if let Some(upval_idx) =
-            self.resolve_upvalue(self.compilers.len() - 1, name)
-        {
+        } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name) {
             // 2. Upvalue lookup
             self.emit_abx(OpCode::GetUpvalue, reg, upval_idx as u16);
             Ok(reg)
@@ -228,9 +248,9 @@ impl Compiler {
         }
 
         if arg_count > 255 {
-            return Err(CompilerError::CompilerLimitation(
-                format!("function call has {arg_count} arguments (maximum is 255)"),
-            ));
+            return Err(CompilerError::CompilerLimitation(format!(
+                "function call has {arg_count} arguments (maximum is 255)"
+            )));
         }
 
         self.emit_abc(OpCode::Call, func_reg, func_reg, arg_count as u8);

@@ -488,7 +488,11 @@ fn optimize_full_pipeline() {
         p.instructions.len() < before,
         "optimize should reduce instruction count"
     );
-    assert_eq!(p.instructions.len(), 0, "all unused consts should be removed");
+    assert_eq!(
+        p.instructions.len(),
+        0,
+        "all unused consts should be removed"
+    );
 }
 
 #[test]
@@ -867,7 +871,10 @@ fn const_fold_sub_self_is_zero() {
     if let Instruction::Const { value, .. } = &p.instructions[1] {
         assert_eq!(*value, FieldElement::ZERO);
     } else {
-        panic!("expected Const(0) after folding Sub(w,w), got {:?}", p.instructions[1]);
+        panic!(
+            "expected Const(0) after folding Sub(w,w), got {:?}",
+            p.instructions[1]
+        );
     }
 }
 
@@ -892,7 +899,10 @@ fn const_fold_div_self_constant_is_one() {
     if let Instruction::Const { value, .. } = &p.instructions[1] {
         assert_eq!(*value, FieldElement::ONE);
     } else {
-        panic!("expected Const(1) after folding Div(c,c), got {:?}", p.instructions[1]);
+        panic!(
+            "expected Const(1) after folding Div(c,c), got {:?}",
+            p.instructions[1]
+        );
     }
 }
 
@@ -917,6 +927,7 @@ fn const_fold_div_self_witness_not_folded() {
 
     assert!(
         matches!(&p.instructions[1], Instruction::Div { .. }),
-        "Div(w,w) for witness should NOT be folded, got {:?}", p.instructions[1]
+        "Div(w,w) for witness should NOT be folded, got {:?}",
+        p.instructions[1]
     );
 }

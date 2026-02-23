@@ -164,7 +164,10 @@ fn lower_let_alias() {
     assert_eq!(count(&insts, |i| matches!(i, Instruction::Add { .. })), 1);
     // The Add should reference x's var for both operands
     if let Instruction::Add { lhs, rhs, .. } = &insts[1] {
-        assert_eq!(lhs, rhs, "let should alias, both operands should be the same SsaVar");
+        assert_eq!(
+            lhs, rhs,
+            "let should alias, both operands should be the same SsaVar"
+        );
     }
 }
 
@@ -221,7 +224,9 @@ fn lower_if_no_else() {
     // if without else → Mux with 0 as else
     assert_eq!(count(&insts, |i| matches!(i, Instruction::Mux { .. })), 1);
     // Should have a Const(0) for the else branch
-    assert!(insts.iter().any(|i| matches!(i, Instruction::Const { value, .. } if value.is_zero())));
+    assert!(insts
+        .iter()
+        .any(|i| matches!(i, Instruction::Const { value, .. } if value.is_zero())));
 }
 
 #[test]
@@ -234,10 +239,7 @@ fn lower_for_unrolling() {
         3
     );
     // Should produce 3 Const instructions for i values (0, 1, 2)
-    assert_eq!(
-        count(&insts, |i| matches!(i, Instruction::Const { .. })),
-        3
-    );
+    assert_eq!(count(&insts, |i| matches!(i, Instruction::Const { .. })), 3);
 }
 
 #[test]
@@ -319,12 +321,7 @@ fn input_order_preserved() {
 
 #[test]
 fn lower_circuit_convenience() {
-    let program = IrLowering::lower_circuit(
-        "assert_eq(x * y, z)",
-        &["z"],
-        &["x", "y"],
-    )
-    .unwrap();
+    let program = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
     assert!(program.instructions.len() >= 4); // 3 inputs + mul + assert_eq
     assert_eq!(
         count(&program.instructions, |i| matches!(
@@ -342,55 +339,38 @@ fn lower_circuit_convenience() {
 #[test]
 fn block_let_does_not_leak() {
     // `let y` inside the block should not be visible after the block
-    let result = IrLowering::lower_circuit(
-        "{\nlet y = x\ny\n}\ny",
-        &[],
-        &["x"],
-    );
+    let result = IrLowering::lower_circuit("{\nlet y = x\ny\n}\ny", &[], &["x"]);
     assert!(result.is_err(), "y should not be visible outside the block");
 }
 
 #[test]
 fn nested_block_scoping() {
     // Inner block's `let z` should not leak to outer block
-    let result = IrLowering::lower_circuit(
-        "{\nlet y = x\n{\nlet z = y\n}\nz\n}",
-        &[],
-        &["x"],
+    let result = IrLowering::lower_circuit("{\nlet y = x\n{\nlet z = y\n}\nz\n}", &[], &["x"]);
+    assert!(
+        result.is_err(),
+        "z should not be visible outside inner block"
     );
-    assert!(result.is_err(), "z should not be visible outside inner block");
 }
 
 #[test]
 fn for_body_let_does_not_leak() {
     // `let acc` inside the for body should not leak after the for
-    let result = IrLowering::lower_circuit(
-        "for i in 0..3 {\nlet acc = x\n}\nacc",
-        &[],
-        &["x"],
-    );
+    let result = IrLowering::lower_circuit("for i in 0..3 {\nlet acc = x\n}\nacc", &[], &["x"]);
     assert!(result.is_err(), "acc should not be visible after for loop");
 }
 
 #[test]
 fn if_branch_let_does_not_leak() {
     // `let y` inside the if branch should not be visible after the if
-    let result = IrLowering::lower_circuit(
-        "if c { let y = x\ny } else { x }\ny",
-        &[],
-        &["c", "x"],
-    );
+    let result = IrLowering::lower_circuit("if c { let y = x\ny } else { x }\ny", &[], &["c", "x"]);
     assert!(result.is_err(), "y should not be visible after if/else");
 }
 
 #[test]
 fn outer_binding_survives_block() {
     // `let y` defined before the block should still be accessible after
-    let insts = lower(
-        "let y = x\n{\nlet z = y\n}\ny",
-        &[],
-        &["x"],
-    );
+    let insts = lower("let y = x\n{\nlet z = y\n}\ny", &[], &["x"]);
     // Should succeed — y is defined in the outer scope
     assert!(!insts.is_empty());
 }
@@ -468,7 +448,10 @@ fn lower_ge_as_le_swapped() {
 #[test]
 fn lower_assert() {
     let insts = lower("assert(x)", &[], &["x"]);
-    assert_eq!(count(&insts, |i| matches!(i, Instruction::Assert { .. })), 1);
+    assert_eq!(
+        count(&insts, |i| matches!(i, Instruction::Assert { .. })),
+        1
+    );
 }
 
 #[test]
@@ -490,7 +473,10 @@ fn lower_assert_eq_via_operators() {
     // assert(x == y) should produce IsEq + Assert
     let insts = lower("assert(x == y)", &[], &["x", "y"]);
     assert_eq!(count(&insts, |i| matches!(i, Instruction::IsEq { .. })), 1);
-    assert_eq!(count(&insts, |i| matches!(i, Instruction::Assert { .. })), 1);
+    assert_eq!(
+        count(&insts, |i| matches!(i, Instruction::Assert { .. })),
+        1
+    );
 }
 
 #[test]
@@ -516,7 +502,10 @@ fn error_has_source_span() {
     let err = result.err().expect("should fail");
     // Should include line:col information
     let msg = format!("{err}");
-    assert!(msg.contains("[1:"), "error should include source span, got: {msg}");
+    assert!(
+        msg.contains("[1:"),
+        "error should include source span, got: {msg}"
+    );
 }
 
 #[test]
@@ -524,7 +513,10 @@ fn error_undeclared_has_span() {
     let result = IrLowering::lower_circuit("x + 1", &[], &[]);
     let err = result.err().expect("should fail");
     let msg = format!("{err}");
-    assert!(msg.contains("[1:"), "undeclared error should have span, got: {msg}");
+    assert!(
+        msg.contains("[1:"),
+        "undeclared error should have span, got: {msg}"
+    );
     assert!(msg.contains("x"), "should mention variable name");
 }
 
@@ -544,7 +536,10 @@ fn lower_circuit_duplicate_public_rejected() {
     match result {
         Err(e) => {
             let msg = format!("{e}");
-            assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+            assert!(
+                msg.contains("duplicate"),
+                "error should mention duplicate: {msg}"
+            );
         }
         Ok(_) => panic!("duplicate public name should be rejected"),
     }
@@ -556,7 +551,10 @@ fn lower_circuit_duplicate_public_witness_rejected() {
     match result {
         Err(e) => {
             let msg = format!("{e}");
-            assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+            assert!(
+                msg.contains("duplicate"),
+                "error should mention duplicate: {msg}"
+            );
         }
         Ok(_) => panic!("public+witness overlap should be rejected"),
     }
@@ -569,7 +567,10 @@ fn lower_self_contained_duplicate_rejected() {
     match result {
         Err(e) => {
             let msg = format!("{e}");
-            assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+            assert!(
+                msg.contains("duplicate"),
+                "error should mention duplicate: {msg}"
+            );
         }
         Ok(_) => panic!("duplicate in-source declaration should be rejected"),
     }
@@ -585,13 +586,22 @@ fn dce_preserves_range_check_unused_result() {
     let source = "range_check(x, 8)";
     let mut program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
     let before = program.instructions.len();
-    let has_rc_before = program.instructions.iter().any(|i| matches!(i, Instruction::RangeCheck { .. }));
+    let has_rc_before = program
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::RangeCheck { .. }));
     assert!(has_rc_before, "should have RangeCheck before optimization");
 
     ir::passes::optimize(&mut program);
 
-    let has_rc_after = program.instructions.iter().any(|i| matches!(i, Instruction::RangeCheck { .. }));
-    assert!(has_rc_after, "RangeCheck must survive DCE even when result is unused");
+    let has_rc_after = program
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::RangeCheck { .. }));
+    assert!(
+        has_rc_after,
+        "RangeCheck must survive DCE even when result is unused"
+    );
     // Const instructions for the bits literal may be folded, but RangeCheck itself must remain
     assert!(
         program.instructions.len() <= before,
@@ -604,13 +614,25 @@ fn dce_eliminates_poseidon_unused_result() {
     // poseidon(a, b) — result not used → DCE should eliminate it
     let source = "poseidon(a, b)";
     let mut program = IrLowering::lower_circuit(source, &[], &["a", "b"]).unwrap();
-    let has_poseidon_before = program.instructions.iter().any(|i| matches!(i, Instruction::PoseidonHash { .. }));
-    assert!(has_poseidon_before, "should have PoseidonHash before optimization");
+    let has_poseidon_before = program
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::PoseidonHash { .. }));
+    assert!(
+        has_poseidon_before,
+        "should have PoseidonHash before optimization"
+    );
 
     ir::passes::optimize(&mut program);
 
-    let has_poseidon_after = program.instructions.iter().any(|i| matches!(i, Instruction::PoseidonHash { .. }));
-    assert!(!has_poseidon_after, "unused PoseidonHash should be eliminated by DCE");
+    let has_poseidon_after = program
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::PoseidonHash { .. }));
+    assert!(
+        !has_poseidon_after,
+        "unused PoseidonHash should be eliminated by DCE"
+    );
 }
 
 #[test]
@@ -620,8 +642,14 @@ fn dce_preserves_assert_eq_and_deps() {
     let mut program = IrLowering::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
     ir::passes::optimize(&mut program);
 
-    let has_mul = program.instructions.iter().any(|i| matches!(i, Instruction::Mul { .. }));
-    let has_assert = program.instructions.iter().any(|i| matches!(i, Instruction::AssertEq { .. }));
+    let has_mul = program
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Mul { .. }));
+    let has_assert = program
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::AssertEq { .. }));
     assert!(has_mul, "Mul feeding AssertEq must survive DCE");
     assert!(has_assert, "AssertEq must survive DCE");
 }
@@ -631,11 +659,19 @@ fn dce_eliminates_unused_add() {
     // let unused = x + 1; assert_eq(x, out) — the Add should be eliminated
     let source = "let unused = x + 1\nassert_eq(x, out)";
     let mut program = IrLowering::lower_circuit(source, &["out"], &["x"]).unwrap();
-    let adds_before = program.instructions.iter().filter(|i| matches!(i, Instruction::Add { .. })).count();
+    let adds_before = program
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Add { .. }))
+        .count();
 
     ir::passes::optimize(&mut program);
 
-    let adds_after = program.instructions.iter().filter(|i| matches!(i, Instruction::Add { .. })).count();
+    let adds_after = program
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Add { .. }))
+        .count();
     assert!(
         adds_after < adds_before,
         "unused Add should be eliminated by DCE (before={adds_before}, after={adds_after})"

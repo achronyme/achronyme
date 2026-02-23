@@ -11,7 +11,10 @@ impl StackOps for super::vm::VM {
     #[inline(always)]
     fn get_reg(&self, base: usize, reg: usize) -> Result<Value, RuntimeError> {
         let idx = base + reg;
-        self.stack.get(idx).copied().ok_or(RuntimeError::StackOverflow)
+        self.stack
+            .get(idx)
+            .copied()
+            .ok_or(RuntimeError::StackOverflow)
     }
 
     #[inline(always)]

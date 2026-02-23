@@ -68,7 +68,7 @@ impl GlobalOps for super::vm::VM {
                     )));
                 }
                 let entry = &self.globals[bx];
-                self.set_reg(base, a, entry.value.clone())?;
+                self.set_reg(base, a, entry.value)?;
             }
 
             OpCode::SetGlobal => {
@@ -76,7 +76,7 @@ impl GlobalOps for super::vm::VM {
                 let val = self.get_reg(base, a)?;
 
                 if bx >= self.globals.len() {
-                     let name = self
+                    let name = self
                         .debug_symbols
                         .as_ref()
                         .and_then(|map| map.get(&(bx as u16)))
@@ -93,7 +93,7 @@ impl GlobalOps for super::vm::VM {
                 if entry.mutable {
                     entry.value = val;
                 } else {
-                     let name = self
+                    let name = self
                         .debug_symbols
                         .as_ref()
                         .and_then(|map| map.get(&(bx as u16)))

@@ -1,12 +1,10 @@
 use crate::error::CompilerError;
+use crate::function_compiler::FunctionCompiler;
 use crate::interner::StringInterner;
-use achronyme_parser::ast::*;
+use crate::statements::StatementCompiler;
 use memory::Value;
 use std::collections::HashMap;
 use vm::opcode::OpCode;
-use crate::expressions::ExpressionCompiler;
-use crate::statements::StatementCompiler;
-use crate::function_compiler::FunctionCompiler;
 
 /// The main compiler orchestrator
 pub struct Compiler {
@@ -24,6 +22,12 @@ pub struct Compiler {
 }
 
 use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
+
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Compiler {
     pub fn new() -> Self {
@@ -93,11 +97,8 @@ impl Compiler {
 
     pub fn append_debug_symbols(&self, buffer: &mut Vec<u8>) {
         // 1. Invert Name->Index to (Index, Name) for serialization
-        let mut symbols: Vec<(&u16, &String)> = self
-            .global_symbols
-            .iter()
-            .map(|(k, v)| (v, k))
-            .collect();
+        let mut symbols: Vec<(&u16, &String)> =
+            self.global_symbols.iter().map(|(k, v)| (v, k)).collect();
 
         // 2. Sort by Index (Deterministic output is mandatory for build reproducibility)
         symbols.sort_by_key(|&(idx, _)| *idx);

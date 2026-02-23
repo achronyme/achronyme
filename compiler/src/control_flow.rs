@@ -1,18 +1,28 @@
 use crate::codegen::Compiler;
 use crate::error::CompilerError;
-use crate::scopes::ScopeCompiler;
 use crate::expressions::ExpressionCompiler;
+use crate::scopes::ScopeCompiler;
 use crate::statements::StatementCompiler;
-use crate::types::{LoopContext, Local};
+use crate::types::{Local, LoopContext};
 use achronyme_parser::ast::*;
 use memory::Value;
-use vm::opcode::{OpCode, instruction::encode_abx};
+use vm::opcode::{instruction::encode_abx, OpCode};
 
 pub trait ControlFlowCompiler {
     fn compile_block(&mut self, block: &Block, target_reg: u8) -> Result<(), CompilerError>;
-    fn compile_if(&mut self, condition: &Expr, then_block: &Block, else_branch: Option<&ElseBranch>) -> Result<u8, CompilerError>;
+    fn compile_if(
+        &mut self,
+        condition: &Expr,
+        then_block: &Block,
+        else_branch: Option<&ElseBranch>,
+    ) -> Result<u8, CompilerError>;
     fn compile_while(&mut self, condition: &Expr, body: &Block) -> Result<u8, CompilerError>;
-    fn compile_for(&mut self, var: &str, iterable: &ForIterable, body: &Block) -> Result<u8, CompilerError>;
+    fn compile_for(
+        &mut self,
+        var: &str,
+        iterable: &ForIterable,
+        body: &Block,
+    ) -> Result<u8, CompilerError>;
     fn compile_forever(&mut self, body: &Block) -> Result<u8, CompilerError>;
 
     // Low level
@@ -30,7 +40,6 @@ pub trait ControlFlowCompiler {
 }
 
 impl ControlFlowCompiler for Compiler {
-
     fn emit_jump(&mut self, op: OpCode, a: u8) -> usize {
         self.emit_abx(op, a, 0xFFFF);
         self.current().bytecode.len() - 1
@@ -56,9 +65,13 @@ impl ControlFlowCompiler for Compiler {
     }
 
     fn exit_loop(&mut self) {
-        let loop_ctx = self.current().loop_stack.pop().expect("Loop stack underflow");
+        let loop_ctx = self
+            .current()
+            .loop_stack
+            .pop()
+            .expect("Loop stack underflow");
         for jump_idx in loop_ctx.break_jumps {
-             self.patch_jump(jump_idx);
+            self.patch_jump(jump_idx);
         }
     }
 
@@ -88,8 +101,8 @@ impl ControlFlowCompiler for Compiler {
         }
 
         if !last_processed {
-             // Empty block
-             self.emit_abx(OpCode::LoadNil, target_reg, 0);
+            // Empty block
+            self.emit_abx(OpCode::LoadNil, target_reg, 0);
         }
 
         self.end_scope();
@@ -97,7 +110,12 @@ impl ControlFlowCompiler for Compiler {
         Ok(())
     }
 
-    fn compile_if(&mut self, condition: &Expr, then_block: &Block, else_branch: Option<&ElseBranch>) -> Result<u8, CompilerError> {
+    fn compile_if(
+        &mut self,
+        condition: &Expr,
+        then_block: &Block,
+        else_branch: Option<&ElseBranch>,
+    ) -> Result<u8, CompilerError> {
         let target_reg = self.alloc_reg()?;
 
         // 1. Compile Condition
@@ -126,7 +144,7 @@ impl ControlFlowCompiler for Compiler {
                 }
             }
         } else {
-             self.emit_abx(OpCode::LoadNil, target_reg, 0);
+            self.emit_abx(OpCode::LoadNil, target_reg, 0);
         }
 
         // 6. End
@@ -136,7 +154,10 @@ impl ControlFlowCompiler for Compiler {
     }
 
     fn compile_break(&mut self) -> Result<(), CompilerError> {
-        let loop_ctx = self.current_ref().loop_stack.last()
+        let loop_ctx = self
+            .current_ref()
+            .loop_stack
+            .last()
             .ok_or(CompilerError::CompileError("break outside of loop".into()))?;
 
         let target_depth = loop_ctx.scope_depth;
@@ -156,14 +177,24 @@ impl ControlFlowCompiler for Compiler {
         }
 
         let jump = self.emit_jump(OpCode::Jump, 0);
-        self.current().loop_stack.last_mut().unwrap().break_jumps.push(jump);
+        self.current()
+            .loop_stack
+            .last_mut()
+            .unwrap()
+            .break_jumps
+            .push(jump);
 
         Ok(())
     }
 
     fn compile_continue(&mut self) -> Result<(), CompilerError> {
-        let loop_ctx = self.current_ref().loop_stack.last()
-            .ok_or(CompilerError::CompileError("continue outside of loop".into()))?;
+        let loop_ctx = self
+            .current_ref()
+            .loop_stack
+            .last()
+            .ok_or(CompilerError::CompileError(
+                "continue outside of loop".into(),
+            ))?;
 
         let target_depth = loop_ctx.scope_depth;
         let start_label = loop_ctx.start_label;
@@ -185,15 +216,25 @@ impl ControlFlowCompiler for Compiler {
         Ok(())
     }
 
-    fn compile_for(&mut self, var: &str, iterable: &ForIterable, body: &Block) -> Result<u8, CompilerError> {
+    fn compile_for(
+        &mut self,
+        var: &str,
+        iterable: &ForIterable,
+        body: &Block,
+    ) -> Result<u8, CompilerError> {
         let iter_src_reg = match iterable {
             ForIterable::Expr(expr) => self.compile_expr(expr)?,
             ForIterable::Range { start, end } => {
                 // Build a list [start, start+1, ..., end-1] for the VM iterator
-                let count = if *end >= *start { (end - start) as usize } else { 0 };
+                let count = if *end >= *start {
+                    (end - start) as usize
+                } else {
+                    0
+                };
                 if count > 255 {
                     return Err(CompilerError::CompilerLimitation(
-                        "for..in range with more than 255 iterations; use a while loop instead".into(),
+                        "for..in range with more than 255 iterations; use a while loop instead"
+                            .into(),
                     ));
                 }
 
@@ -335,8 +376,7 @@ impl ControlFlowCompiler for Compiler {
                 // Value: resolve from current scope
                 if let Some((_, local_reg)) = self.resolve_local(name) {
                     self.emit_abc(OpCode::Move, val_reg, local_reg, 0);
-                } else if let Some(upval_idx) =
-                    self.resolve_upvalue(self.compilers.len() - 1, name)
+                } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
                 {
                     self.emit_abx(OpCode::GetUpvalue, val_reg, upval_idx as u16);
                 } else if let Some(&global_idx) = self.global_symbols.get(name) {

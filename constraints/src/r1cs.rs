@@ -8,7 +8,6 @@
 ///   Index 0     = ONE (constant wire, always 1)
 ///   1..=n_pub   = public inputs (instance)
 ///   n_pub+1..   = private inputs + intermediate (witness)
-
 use std::collections::BTreeMap;
 
 use memory::FieldElement;
@@ -131,7 +130,11 @@ impl LinearCombination {
     /// Returns `None` if any non-ONE variable is present.
     pub fn constant_value(&self) -> Option<FieldElement> {
         let simplified = self.simplify();
-        if !simplified.terms.iter().all(|(var, _)| *var == Variable::ONE) {
+        if !simplified
+            .terms
+            .iter()
+            .all(|(var, _)| *var == Variable::ONE)
+        {
             return None;
         }
         let mut sum = FieldElement::ZERO;
@@ -273,6 +276,12 @@ pub struct ConstraintSystem {
     constraints: Vec<Constraint>,
 }
 
+impl Default for ConstraintSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConstraintSystem {
     pub fn new() -> Self {
         Self {
@@ -304,12 +313,7 @@ impl ConstraintSystem {
     // --- Constraint enforcement ---
 
     /// Add a constraint: A * B = C
-    pub fn enforce(
-        &mut self,
-        a: LinearCombination,
-        b: LinearCombination,
-        c: LinearCombination,
-    ) {
+    pub fn enforce(&mut self, a: LinearCombination, b: LinearCombination, c: LinearCombination) {
         self.constraints.push(Constraint { a, b, c });
     }
 
@@ -412,27 +416,15 @@ impl ConstraintSystem {
     /// ];
     /// assert!(cs.verify(&witness).is_ok());
     /// ```
-    pub fn mul_lc(
-        &mut self,
-        a: &LinearCombination,
-        b: &LinearCombination,
-    ) -> Variable {
+    pub fn mul_lc(&mut self, a: &LinearCombination, b: &LinearCombination) -> Variable {
         let out = self.alloc_witness();
-        self.enforce(
-            a.clone(),
-            b.clone(),
-            LinearCombination::from_variable(out),
-        );
+        self.enforce(a.clone(), b.clone(), LinearCombination::from_variable(out));
         out
     }
 
     /// Constrain: out = a + b (linear, no new constraint needed if we track LCs).
     /// This just returns the sum LC. Only use enforce if a multiplication is involved.
-    pub fn add_lc(
-        &self,
-        a: &LinearCombination,
-        b: &LinearCombination,
-    ) -> LinearCombination {
+    pub fn add_lc(&self, a: &LinearCombination, b: &LinearCombination) -> LinearCombination {
         a.clone() + b.clone()
     }
 

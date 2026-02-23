@@ -16,9 +16,19 @@ fn taint_constant_expr() {
     // let a = 3; let b = 4; let c = a + b  — all constant, no warnings
     let p = prog(
         vec![
-            Instruction::Const { result: SsaVar(0), value: FieldElement::from_u64(3) },
-            Instruction::Const { result: SsaVar(1), value: FieldElement::from_u64(4) },
-            Instruction::Add { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
+            Instruction::Const {
+                result: SsaVar(0),
+                value: FieldElement::from_u64(3),
+            },
+            Instruction::Const {
+                result: SsaVar(1),
+                value: FieldElement::from_u64(4),
+            },
+            Instruction::Add {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            },
         ],
         3,
     );
@@ -34,11 +44,29 @@ fn taint_public_propagation() {
     // public x; let r = x + 1 → r is Public
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "x".into(), visibility: Visibility::Public },
-            Instruction::Const { result: SsaVar(1), value: FieldElement::ONE },
-            Instruction::Add { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
-            Instruction::Const { result: SsaVar(3), value: FieldElement::from_u64(42) },
-            Instruction::AssertEq { result: SsaVar(4), lhs: SsaVar(2), rhs: SsaVar(3) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "x".into(),
+                visibility: Visibility::Public,
+            },
+            Instruction::Const {
+                result: SsaVar(1),
+                value: FieldElement::ONE,
+            },
+            Instruction::Add {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            },
+            Instruction::Const {
+                result: SsaVar(3),
+                value: FieldElement::from_u64(42),
+            },
+            Instruction::AssertEq {
+                result: SsaVar(4),
+                lhs: SsaVar(2),
+                rhs: SsaVar(3),
+            },
         ],
         5,
     );
@@ -53,11 +81,30 @@ fn taint_witness_wins() {
     // public x; witness a; let r = x + a → r is Witness
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "x".into(), visibility: Visibility::Public },
-            Instruction::Input { result: SsaVar(1), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Add { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
-            Instruction::Const { result: SsaVar(3), value: FieldElement::from_u64(10) },
-            Instruction::AssertEq { result: SsaVar(4), lhs: SsaVar(2), rhs: SsaVar(3) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "x".into(),
+                visibility: Visibility::Public,
+            },
+            Instruction::Input {
+                result: SsaVar(1),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Add {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            },
+            Instruction::Const {
+                result: SsaVar(3),
+                value: FieldElement::from_u64(10),
+            },
+            Instruction::AssertEq {
+                result: SsaVar(4),
+                lhs: SsaVar(2),
+                rhs: SsaVar(3),
+            },
         ],
         5,
     );
@@ -71,9 +118,20 @@ fn taint_unconstrained_warning() {
     // witness a; let b = a + 1 — used but not constrained
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Const { result: SsaVar(1), value: FieldElement::ONE },
-            Instruction::Add { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Const {
+                result: SsaVar(1),
+                value: FieldElement::ONE,
+            },
+            Instruction::Add {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            },
         ],
         3,
     );
@@ -87,10 +145,24 @@ fn taint_unused_input_warning() {
     // witness a; assert_eq(1, 1) — a never used
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Const { result: SsaVar(1), value: FieldElement::ONE },
-            Instruction::Const { result: SsaVar(2), value: FieldElement::ONE },
-            Instruction::AssertEq { result: SsaVar(3), lhs: SsaVar(1), rhs: SsaVar(2) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Const {
+                result: SsaVar(1),
+                value: FieldElement::ONE,
+            },
+            Instruction::Const {
+                result: SsaVar(2),
+                value: FieldElement::ONE,
+            },
+            Instruction::AssertEq {
+                result: SsaVar(3),
+                lhs: SsaVar(1),
+                rhs: SsaVar(2),
+            },
         ],
         4,
     );
@@ -104,16 +176,37 @@ fn taint_transitive_constraint() {
     // witness a; let b = a + 1; assert_eq(b, 42) → a is constrained transitively
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Const { result: SsaVar(1), value: FieldElement::ONE },
-            Instruction::Add { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
-            Instruction::Const { result: SsaVar(3), value: FieldElement::from_u64(42) },
-            Instruction::AssertEq { result: SsaVar(4), lhs: SsaVar(2), rhs: SsaVar(3) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Const {
+                result: SsaVar(1),
+                value: FieldElement::ONE,
+            },
+            Instruction::Add {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            },
+            Instruction::Const {
+                result: SsaVar(3),
+                value: FieldElement::from_u64(42),
+            },
+            Instruction::AssertEq {
+                result: SsaVar(4),
+                lhs: SsaVar(2),
+                rhs: SsaVar(3),
+            },
         ],
         5,
     );
     let (_, warnings) = taint_analysis(&p);
-    assert!(warnings.is_empty(), "a should be constrained via b → assert_eq");
+    assert!(
+        warnings.is_empty(),
+        "a should be constrained via b → assert_eq"
+    );
 }
 
 #[test]
@@ -189,13 +282,23 @@ fn taint_assert_constrains() {
     // witness a; assert(a) — a should be constrained via Assert
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Assert { result: SsaVar(1), operand: SsaVar(0) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Assert {
+                result: SsaVar(1),
+                operand: SsaVar(0),
+            },
         ],
         2,
     );
     let (_, warnings) = taint_analysis(&p);
-    assert!(warnings.is_empty(), "assert(a) should constrain a, got: {warnings:?}");
+    assert!(
+        warnings.is_empty(),
+        "assert(a) should constrain a, got: {warnings:?}"
+    );
 }
 
 #[test]
@@ -203,15 +306,33 @@ fn taint_is_eq_in_assert() {
     // witness a, b; let eq = a == b; assert(eq)
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Input { result: SsaVar(1), name: "b".into(), visibility: Visibility::Witness },
-            Instruction::IsEq { result: SsaVar(2), lhs: SsaVar(0), rhs: SsaVar(1) },
-            Instruction::Assert { result: SsaVar(3), operand: SsaVar(2) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Input {
+                result: SsaVar(1),
+                name: "b".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::IsEq {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            },
+            Instruction::Assert {
+                result: SsaVar(3),
+                operand: SsaVar(2),
+            },
         ],
         4,
     );
     let (_, warnings) = taint_analysis(&p);
-    assert!(warnings.is_empty(), "assert(a == b) should constrain both a and b, got: {warnings:?}");
+    assert!(
+        warnings.is_empty(),
+        "assert(a == b) should constrain both a and b, got: {warnings:?}"
+    );
 }
 
 #[test]
@@ -219,8 +340,15 @@ fn taint_not_unconstrained() {
     // witness a; let b = !a — b is not constrained (no assert)
     let p = prog(
         vec![
-            Instruction::Input { result: SsaVar(0), name: "a".into(), visibility: Visibility::Witness },
-            Instruction::Not { result: SsaVar(1), operand: SsaVar(0) },
+            Instruction::Input {
+                result: SsaVar(0),
+                name: "a".into(),
+                visibility: Visibility::Witness,
+            },
+            Instruction::Not {
+                result: SsaVar(1),
+                operand: SsaVar(0),
+            },
         ],
         2,
     );

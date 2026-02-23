@@ -17,9 +17,9 @@ fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
         if pair.is_empty() {
             continue;
         }
-        let (name, val_str) = pair
-            .split_once('=')
-            .context(format!("invalid input pair: {pair:?} (expected name=value)"))?;
+        let (name, val_str) = pair.split_once('=').context(format!(
+            "invalid input pair: {pair:?} (expected name=value)"
+        ))?;
         let val = if val_str.starts_with("0x") || val_str.starts_with("0X") {
             FieldElement::from_hex_str(val_str)
                 .context(format!("invalid hex value for {name:?}: {val_str:?}"))?
@@ -36,6 +36,7 @@ fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
     Ok(map)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn circuit_command(
     path: &str,
     r1cs_path: &str,
@@ -48,8 +49,8 @@ pub fn circuit_command(
     prove: bool,
     solidity_path: Option<&str>,
 ) -> Result<()> {
-    let source = fs::read_to_string(path)
-        .with_context(|| format!("cannot read source file: {path}"))?;
+    let source =
+        fs::read_to_string(path).with_context(|| format!("cannot read source file: {path}"))?;
 
     // 1. Lower to IR — self-contained or CLI-provided declarations
     let mut program = if public.is_empty() && witness.is_empty() {
@@ -75,7 +76,9 @@ pub fn circuit_command(
     }
 
     if solidity_path.is_some() && backend != "r1cs" {
-        return Err(anyhow::anyhow!("--solidity is only supported with the r1cs backend"));
+        return Err(anyhow::anyhow!(
+            "--solidity is only supported with the r1cs backend"
+        ));
     }
 
     match backend {
@@ -112,8 +115,7 @@ fn run_r1cs_pipeline(
             .map_err(|idx| anyhow::anyhow!("witness verification failed at constraint {idx}"))?;
 
         let r1cs_data = write_r1cs(&compiler.cs);
-        fs::write(r1cs_path, &r1cs_data)
-            .with_context(|| format!("cannot write {r1cs_path}"))?;
+        fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
         eprintln!(
             "wrote {} ({} constraints, {} wires, {} bytes)",
             r1cs_path,
@@ -123,8 +125,7 @@ fn run_r1cs_pipeline(
         );
 
         let wtns_data = write_wtns(&witness_vec);
-        fs::write(wtns_path, &wtns_data)
-            .with_context(|| format!("cannot write {wtns_path}"))?;
+        fs::write(wtns_path, &wtns_data).with_context(|| format!("cannot write {wtns_path}"))?;
         eprintln!(
             "wrote {} ({} values, {} bytes) — verified OK",
             wtns_path,
@@ -138,8 +139,7 @@ fn run_r1cs_pipeline(
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
         let r1cs_data = write_r1cs(&compiler.cs);
-        fs::write(r1cs_path, &r1cs_data)
-            .with_context(|| format!("cannot write {r1cs_path}"))?;
+        fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
         eprintln!(
             "wrote {} ({} constraints, {} wires, {} bytes)",
             r1cs_path,
@@ -159,8 +159,7 @@ fn run_r1cs_pipeline(
             .map_err(|e| anyhow::anyhow!("Groth16 setup failed: {e}"))?;
 
         let sol_source = crate::solidity::generate_solidity_verifier(&vk);
-        fs::write(sol_path, &sol_source)
-            .with_context(|| format!("cannot write {sol_path}"))?;
+        fs::write(sol_path, &sol_source).with_context(|| format!("cannot write {sol_path}"))?;
         eprintln!("wrote {} (Solidity Groth16 verifier)", sol_path);
     }
 
@@ -207,12 +206,9 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>, prove: b
                     public_json,
                     vkey_json,
                 } => {
-                    fs::write("proof.json", &proof_json)
-                        .context("cannot write proof.json")?;
-                    fs::write("public.json", &public_json)
-                        .context("cannot write public.json")?;
-                    fs::write("vkey.json", &vkey_json)
-                        .context("cannot write vkey.json")?;
+                    fs::write("proof.json", &proof_json).context("cannot write proof.json")?;
+                    fs::write("public.json", &public_json).context("cannot write public.json")?;
+                    fs::write("vkey.json", &vkey_json).context("cannot write vkey.json")?;
                     eprintln!("wrote proof.json, public.json, vkey.json");
                 }
                 vm::ProveResult::VerifiedOnly => {

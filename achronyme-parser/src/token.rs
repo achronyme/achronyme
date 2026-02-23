@@ -1,5 +1,4 @@
 /// Token types for the Achronyme lexer.
-
 use crate::ast::Span;
 
 /// A single token produced by the lexer.

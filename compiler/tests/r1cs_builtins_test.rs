@@ -14,8 +14,7 @@ use memory::FieldElement;
 fn test_poseidon_constraint_count() {
     // poseidon(a, b) with simple variables → 360 permutation + 1 capacity + 1 assert_eq = 362
     let mut program =
-        IrLowering::lower_circuit("assert_eq(poseidon(a, b), out)", &["out"], &["a", "b"])
-            .unwrap();
+        IrLowering::lower_circuit("assert_eq(poseidon(a, b), out)", &["out"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut rc = R1CSCompiler::new();
@@ -108,8 +107,7 @@ fn test_poseidon_wrong_arg_count_too_few() {
 
 #[test]
 fn test_poseidon_wrong_arg_count_too_many() {
-    let err =
-        IrLowering::lower_circuit("poseidon(a, b, c)", &[], &["a", "b", "c"]).unwrap_err();
+    let err = IrLowering::lower_circuit("poseidon(a, b, c)", &[], &["a", "b", "c"]).unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,
@@ -269,8 +267,7 @@ fn test_mux_wrong_arg_count_too_few() {
 
 #[test]
 fn test_mux_wrong_arg_count_too_many() {
-    let err =
-        IrLowering::lower_circuit("mux(a, b, c, d)", &[], &["a", "b", "c", "d"]).unwrap_err();
+    let err = IrLowering::lower_circuit("mux(a, b, c, d)", &[], &["a", "b", "c", "d"]).unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,

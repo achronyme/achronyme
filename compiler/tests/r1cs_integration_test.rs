@@ -77,12 +77,8 @@ fn test_r1cs_integration_quadratic() {
 #[test]
 fn test_r1cs_integration_scalar_operations() {
     // Circuit: prove 3*a + 2*b == out (0 mul constraints, 1 assert_eq)
-    let program = IrLowering::lower_circuit(
-        "assert_eq(3 * a + 2 * b, out)",
-        &["out"],
-        &["a", "b"],
-    )
-    .unwrap();
+    let program =
+        IrLowering::lower_circuit("assert_eq(3 * a + 2 * b, out)", &["out"], &["a", "b"]).unwrap();
 
     let mut rc = R1CSCompiler::new();
     rc.compile_ir(&program).unwrap();

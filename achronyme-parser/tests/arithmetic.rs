@@ -34,7 +34,12 @@ fn test_pow_right_associative() {
             }
             // rhs should be BinOp(Pow, 3, 2)
             match rhs.as_ref() {
-                Expr::BinOp { op: inner_op, lhs: inner_lhs, rhs: inner_rhs, .. } => {
+                Expr::BinOp {
+                    op: inner_op,
+                    lhs: inner_lhs,
+                    rhs: inner_rhs,
+                    ..
+                } => {
                     assert!(matches!(inner_op, BinOp::Pow));
                     match inner_lhs.as_ref() {
                         Expr::Number { value, .. } => assert_eq!(value, "3"),

@@ -1,9 +1,8 @@
-use std::io::Read;
+use crate::specs::{SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
+use crate::{CallFrame, VM};
 use byteorder::{LittleEndian, ReadBytesExt};
-use crate::specs::{SER_TAG_FIELD, SER_TAG_INT, SER_TAG_STRING, SER_TAG_NIL};
-use crate::{VM, CallFrame};
-use memory::{Function, Closure, Value};
-
+use memory::{Closure, Function, Value};
+use std::io::Read;
 
 #[derive(Debug)]
 pub enum LoaderError {
@@ -27,7 +26,9 @@ impl VM {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
         if &magic != b"ACH\x09" {
-            return Err(LoaderError::Format("Invalid binary magic or version".to_string()));
+            return Err(LoaderError::Format(
+                "Invalid binary magic or version".to_string(),
+            ));
         }
 
         let max_slots = reader.read_u16::<LittleEndian>()?;
@@ -35,7 +36,10 @@ impl VM {
         // --- String Table ---
         let str_count = reader.read_u32::<LittleEndian>()?;
         if str_count > 1_000_000 {
-             return Err(LoaderError::Security(format!("String count too large: {}", str_count)));
+            return Err(LoaderError::Security(format!(
+                "String count too large: {}",
+                str_count
+            )));
         }
         let mut strings = Vec::with_capacity(str_count as usize);
 
@@ -43,7 +47,10 @@ impl VM {
             let len = reader.read_u32::<LittleEndian>()?;
 
             if len > 1024 {
-                return Err(LoaderError::Security(format!("String length exceeds limit of 1024: {}", len)));
+                return Err(LoaderError::Security(format!(
+                    "String length exceeds limit of 1024: {}",
+                    len
+                )));
             }
 
             let mut bytes = vec![0u8; len as usize];
@@ -59,8 +66,11 @@ impl VM {
 
         // --- Constants ---
         let const_count = reader.read_u32::<LittleEndian>()?;
-         if const_count > 1_000_000 {
-             return Err(LoaderError::Security(format!("Constant count too large: {}", const_count)));
+        if const_count > 1_000_000 {
+            return Err(LoaderError::Security(format!(
+                "Constant count too large: {}",
+                const_count
+            )));
         }
         let mut constants = Vec::with_capacity(const_count as usize);
         for _ in 0..const_count {
@@ -86,14 +96,22 @@ impl VM {
                 SER_TAG_NIL => {
                     constants.push(Value::nil());
                 }
-                _ => return Err(LoaderError::Format(format!("Unknown constant tag: {}", tag))),
+                _ => {
+                    return Err(LoaderError::Format(format!(
+                        "Unknown constant tag: {}",
+                        tag
+                    )))
+                }
             }
         }
 
         // --- Prototypes (Function Table) ---
         let proto_count = reader.read_u32::<LittleEndian>()?;
-         if proto_count > 100_000 {
-             return Err(LoaderError::Security(format!("Prototype count too large: {}", proto_count)));
+        if proto_count > 100_000 {
+            return Err(LoaderError::Security(format!(
+                "Prototype count too large: {}",
+                proto_count
+            )));
         }
 
         let mut proto_funcs = Vec::with_capacity(proto_count as usize);
@@ -102,7 +120,10 @@ impl VM {
             let name_len = reader.read_u32::<LittleEndian>()? as usize;
 
             if name_len > 1024 {
-                return Err(LoaderError::Security(format!("Function name length exceeds limit of 1024: {}", name_len)));
+                return Err(LoaderError::Security(format!(
+                    "Function name length exceeds limit of 1024: {}",
+                    name_len
+                )));
             }
 
             let mut name_bytes = vec![0u8; name_len];
@@ -140,14 +161,22 @@ impl VM {
                     SER_TAG_NIL => {
                         proto_constants.push(Value::nil());
                     }
-                    _ => return Err(LoaderError::Format(format!("Unknown proto constant tag: {}", tag))),
+                    _ => {
+                        return Err(LoaderError::Format(format!(
+                            "Unknown proto constant tag: {}",
+                            tag
+                        )))
+                    }
                 }
             }
 
             // Upvalue Info
             let upvalue_count = reader.read_u32::<LittleEndian>()?;
             if upvalue_count > 1024 {
-                return Err(LoaderError::Security(format!("Too many upvalues: {}", upvalue_count)));
+                return Err(LoaderError::Security(format!(
+                    "Too many upvalues: {}",
+                    upvalue_count
+                )));
             }
             let info_len = (upvalue_count * 2) as usize;
             let mut upvalue_info = vec![0u8; info_len];
@@ -155,9 +184,12 @@ impl VM {
 
             // Proto bytecode
             let proto_code_len = reader.read_u32::<LittleEndian>()?;
-             if proto_code_len > 1_000_000 {
-                 return Err(LoaderError::Security(format!("Bytecode length too large: {}", proto_code_len)));
-             }
+            if proto_code_len > 1_000_000 {
+                return Err(LoaderError::Security(format!(
+                    "Bytecode length too large: {}",
+                    proto_code_len
+                )));
+            }
 
             let mut proto_bytecode = Vec::with_capacity(proto_code_len as usize);
             for _ in 0..proto_code_len {
@@ -190,7 +222,7 @@ impl VM {
         // Try load debug symbols (Sidecar) - Optional
         let mut debug_bytes = Vec::new();
         if reader.read_to_end(&mut debug_bytes).is_ok() && !debug_bytes.is_empty() {
-             self.load_debug_section(&debug_bytes);
+            self.load_debug_section(&debug_bytes);
         }
 
         // Construct Main Function

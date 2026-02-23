@@ -106,13 +106,15 @@ impl VM {
                 .constants
                 .get(bx)
                 .ok_or(RuntimeError::OutOfBounds("prove source constant".into()))?;
-            let handle = val
-                .as_handle()
-                .ok_or(RuntimeError::TypeMismatch("prove source not a string".into()))?;
+            let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch(
+                "prove source not a string".into(),
+            ))?;
             self.heap
                 .get_string(handle)
                 .cloned()
-                .ok_or(RuntimeError::SystemError("prove source string missing".into()))?
+                .ok_or(RuntimeError::SystemError(
+                    "prove source string missing".into(),
+                ))?
         };
 
         // 2. Read the capture map from R[A]
@@ -125,7 +127,9 @@ impl VM {
             let map = self
                 .heap
                 .get_map(map_handle)
-                .ok_or(RuntimeError::SystemError("prove capture map missing".into()))?;
+                .ok_or(RuntimeError::SystemError(
+                    "prove capture map missing".into(),
+                ))?;
 
             let mut field_map = HashMap::new();
             for (key, val) in map.iter() {

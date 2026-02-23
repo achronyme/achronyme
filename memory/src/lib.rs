@@ -6,5 +6,8 @@ pub mod value;
 mod value_tests;
 
 pub use field::FieldElement;
-pub use heap::{Function, Heap, Upvalue, UpvalueLocation, Closure, IteratorObj, ProofObject};
-pub use value::{Value, TAG_INT, TAG_NIL, TAG_TRUE, TAG_FALSE, TAG_STRING, TAG_LIST, TAG_MAP, TAG_FUNCTION, TAG_CLOSURE, TAG_NATIVE, TAG_ITER, TAG_FIELD, TAG_PROOF, I60_MIN, I60_MAX};
+pub use heap::{Closure, Function, Heap, IteratorObj, ProofObject, Upvalue, UpvalueLocation};
+pub use value::{
+    Value, I60_MAX, I60_MIN, TAG_CLOSURE, TAG_FALSE, TAG_FIELD, TAG_FUNCTION, TAG_INT, TAG_ITER,
+    TAG_LIST, TAG_MAP, TAG_NATIVE, TAG_NIL, TAG_PROOF, TAG_STRING, TAG_TRUE,
+};

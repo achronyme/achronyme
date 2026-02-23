@@ -104,39 +104,55 @@ fn test_len_emoji() {
 
 #[test]
 fn test_string_index_ascii() {
-    let vm = run_source(r#"let s = "hello"
-let x = s[0]"#).unwrap();
+    let vm = run_source(
+        r#"let s = "hello"
+let x = s[0]"#,
+    )
+    .unwrap();
     assert_eq!(result_string(&vm), "h");
 }
 
 #[test]
 fn test_string_index_last() {
-    let vm = run_source(r#"let s = "hello"
-let x = s[4]"#).unwrap();
+    let vm = run_source(
+        r#"let s = "hello"
+let x = s[4]"#,
+    )
+    .unwrap();
     assert_eq!(result_string(&vm), "o");
 }
 
 #[test]
 fn test_string_index_multibyte() {
     // "café"[3] should be "é"
-    let vm = run_source(r#"let s = "café"
-let x = s[3]"#).unwrap();
+    let vm = run_source(
+        r#"let s = "café"
+let x = s[3]"#,
+    )
+    .unwrap();
     assert_eq!(result_string(&vm), "é");
 }
 
 #[test]
 fn test_string_index_out_of_bounds() {
-    let result = run_source(r#"let s = "hi"
-let x = s[5]"#);
+    let result = run_source(
+        r#"let s = "hi"
+let x = s[5]"#,
+    );
     assert!(result.is_err());
     let err = result.err().unwrap();
-    assert!(err.contains("out of bounds"), "expected 'out of bounds', got: {err}");
+    assert!(
+        err.contains("out of bounds"),
+        "expected 'out of bounds', got: {err}"
+    );
 }
 
 #[test]
 fn test_string_index_negative() {
-    let result = run_source(r#"let s = "hi"
-let x = s[-1]"#);
+    let result = run_source(
+        r#"let s = "hi"
+let x = s[-1]"#,
+    );
     assert!(result.is_err());
 }
 
@@ -343,8 +359,11 @@ fn test_len_of_chars() {
 
 #[test]
 fn test_index_after_split() {
-    let vm = run_source(r#"let parts = split("a:b:c", ":")
-let x = parts[1]"#).unwrap();
+    let vm = run_source(
+        r#"let parts = split("a:b:c", ":")
+let x = parts[1]"#,
+    )
+    .unwrap();
     assert_eq!(result_string(&vm), "b");
 }
 
@@ -356,28 +375,37 @@ fn test_trim_and_upper() {
 
 #[test]
 fn test_replace_and_split() {
-    let vm = run_source(r#"let s = replace("a.b.c", ".", ",")
-let x = split(s, ",")"#).unwrap();
+    let vm = run_source(
+        r#"let s = replace("a.b.c", ".", ",")
+let x = split(s, ",")"#,
+    )
+    .unwrap();
     assert_eq!(result_string_list(&vm), vec!["a", "b", "c"]);
 }
 
 #[test]
 fn test_string_index_in_loop() {
-    let vm = run_source(r#"let s = "abc"
+    let vm = run_source(
+        r#"let s = "abc"
 mut result = ""
 mut i = 0
 while i < len(s) {
     result = result + s[i]
     i = i + 1
 }
-let x = result"#).unwrap();
+let x = result"#,
+    )
+    .unwrap();
     assert_eq!(result_string(&vm), "abc");
 }
 
 #[test]
 fn test_substring_with_index_of() {
-    let vm = run_source(r#"let s = "hello world"
+    let vm = run_source(
+        r#"let s = "hello world"
 let pos = indexOf(s, " ")
-let x = substring(s, 0, pos)"#).unwrap();
+let x = substring(s, 0, pos)"#,
+    )
+    .unwrap();
     assert_eq!(result_string(&vm), "hello");
 }

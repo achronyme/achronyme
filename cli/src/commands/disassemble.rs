@@ -31,15 +31,15 @@ pub fn disassemble_file(path: &str) -> Result<()> {
             Some(OpCode::LoadConst) => {
                 let main_func = compiler.compilers.last().expect("No main compiler");
                 let val_opt = main_func.constants.get(bx as usize);
-                
+
                 let val_str = if let Some(val) = val_opt {
                     if val.is_string() {
-                         let handle = val.as_handle().unwrap();
-                         if let Some(s) = compiler.interner.strings.get(handle as usize) {
-                             format!("\"{}\"", s)
-                         } else {
-                             format!("{:?}", val)
-                         }
+                        let handle = val.as_handle().unwrap();
+                        if let Some(s) = compiler.interner.strings.get(handle as usize) {
+                            format!("\"{}\"", s)
+                        } else {
+                            format!("{:?}", val)
+                        }
                     } else {
                         format!("{:?}", val)
                     }
@@ -52,10 +52,7 @@ pub fn disassemble_file(path: &str) -> Result<()> {
             Some(OpCode::Return) => {
                 println!("{:04} {:<12} R{}", i, name, a);
             }
-            Some(OpCode::Add)
-            | Some(OpCode::Sub)
-            | Some(OpCode::Mul)
-            | Some(OpCode::Div)
+            Some(OpCode::Add) | Some(OpCode::Sub) | Some(OpCode::Mul) | Some(OpCode::Div)
             | Some(OpCode::Pow) => {
                 println!("{:04} {:<12} R{}, R{}, R{}", i, name, a, b, c);
             }
@@ -67,7 +64,10 @@ pub fn disassemble_file(path: &str) -> Result<()> {
             | Some(OpCode::GetGlobal)
             | Some(OpCode::SetGlobal) => {
                 let sym_name = inv_globals.get(&bx).map(|s| s.as_str()).unwrap_or("?");
-                println!("{:04} {:<12} R{}, Name[{}] ('{}')", i, name, a, bx, sym_name);
+                println!(
+                    "{:04} {:<12} R{}, Name[{}] ('{}')",
+                    i, name, a, bx, sym_name
+                );
             }
             _ => {
                 println!("{:04} {:<12} A={} B={} C={} Bx={}", i, name, a, b, c, bx);

@@ -30,9 +30,7 @@ fn g1_to_solidity(p: &<Bn254 as Pairing>::G1Affine) -> (String, String) {
 ///
 /// **Critical**: arkworks stores Fq2 as (c0, c1). The EVM ecPairing precompile
 /// expects (c1, c0) — imaginary part first. This function emits EVM order.
-fn g2_to_solidity(
-    p: &<Bn254 as Pairing>::G2Affine,
-) -> (String, String, String, String) {
+fn g2_to_solidity(p: &<Bn254 as Pairing>::G2Affine) -> (String, String, String, String) {
     use ark_ec::AffineRepr;
     if p.is_zero() {
         return ("0".into(), "0".into(), "0".into(), "0".into());
@@ -244,9 +242,7 @@ mod tests {
     use super::*;
     use ark_bn254::{Bn254, Fr};
     use ark_groth16::Groth16;
-    use ark_relations::r1cs::{
-        ConstraintSynthesizer, ConstraintSystemRef, SynthesisError,
-    };
+    use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
     use ark_snark::SNARK;
     use ark_std::rand::rngs::OsRng;
 
@@ -258,10 +254,7 @@ mod tests {
     }
 
     impl ConstraintSynthesizer<Fr> for TestCircuit {
-        fn generate_constraints(
-            self,
-            cs: ConstraintSystemRef<Fr>,
-        ) -> Result<(), SynthesisError> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
             use ark_ff::Field;
             use ark_relations::r1cs::Variable;
 
@@ -343,10 +336,7 @@ mod tests {
     struct ZeroInputCircuit;
 
     impl ConstraintSynthesizer<Fr> for ZeroInputCircuit {
-        fn generate_constraints(
-            self,
-            cs: ConstraintSystemRef<Fr>,
-        ) -> Result<(), SynthesisError> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
             let a = cs.new_witness_variable(|| Ok(Fr::from(3u64)))?;
             let b = cs.new_witness_variable(|| Ok(Fr::from(3u64)))?;
             cs.enforce_constraint(

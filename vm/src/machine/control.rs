@@ -47,15 +47,25 @@ impl ControlFlowOps for super::vm::VM {
                 if func_val.is_native() {
                     self.call_native(func_val, args_start, args_count, base, a)?;
                 } else if func_val.is_closure() {
-                    let handle = func_val.as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("Expected closure handle".into()))?;
-                        
-                    let closure = self.heap.get_closure(handle).ok_or(RuntimeError::FunctionNotFound)?;
-                    let func = self.heap.get_function(closure.function).ok_or(RuntimeError::FunctionNotFound)?;
-                    
+                    let handle = func_val.as_handle().ok_or_else(|| {
+                        RuntimeError::TypeMismatch("Expected closure handle".into())
+                    })?;
+
+                    let closure = self
+                        .heap
+                        .get_closure(handle)
+                        .ok_or(RuntimeError::FunctionNotFound)?;
+                    let func = self
+                        .heap
+                        .get_function(closure.function)
+                        .ok_or(RuntimeError::FunctionNotFound)?;
+
                     // 1. Check arity (optional but good)
                     if func.arity as usize != args_count {
-                         return Err(RuntimeError::ArityMismatch(format!("Expected {} args, got {}", func.arity, args_count)));
+                        return Err(RuntimeError::ArityMismatch(format!(
+                            "Expected {} args, got {}",
+                            func.arity, args_count
+                        )));
                     }
 
                     // 2. Calculate New Base Pointer
@@ -65,11 +75,12 @@ impl ControlFlowOps for super::vm::VM {
                     // 3. THE GOLDEN CHECK
                     // Check if stack has space for this function's PEAK requirement
                     if new_bp + (func.max_slots as usize) >= crate::machine::vm::STACK_MAX {
-                         return Err(RuntimeError::StackOverflow);
+                        return Err(RuntimeError::StackOverflow);
                     }
 
                     // 4. Push Frame with dest_reg = caller's base + A (where result goes)
-                    let dest_reg = base.checked_add(a)
+                    let dest_reg = base
+                        .checked_add(a)
                         .filter(|&d| d < crate::machine::vm::STACK_MAX)
                         .ok_or(RuntimeError::StackOverflow)?;
                     self.frames.push(crate::machine::frame::CallFrame {
@@ -88,7 +99,7 @@ impl ControlFlowOps for super::vm::VM {
             OpCode::Return => {
                 let a = decode_a(instruction) as usize;
                 let b = decode_b(instruction) as usize; // 1 if has value, 0 if nil
-                
+
                 // Get return value
 
                 let ret_val = if b == 1 {
@@ -96,12 +107,12 @@ impl ControlFlowOps for super::vm::VM {
                 } else {
                     Value::nil()
                 };
-                
+
                 // Close Upvalues for current frame
                 // "base" is the start of the current frame (R0)
                 // Any upvalue pointing to base or higher is now invalid/closed
                 self.close_upvalues(base);
-                
+
                 // Pop current frame and get its dest_reg
                 if let Some(frame) = self.frames.pop() {
                     // Write return value to dest_reg (absolute stack index)
@@ -126,7 +137,8 @@ impl ControlFlowOps for super::vm::VM {
         base: usize,
         result_reg: usize,
     ) -> Result<(), RuntimeError> {
-        let handle = func_val.as_handle()
+        let handle = func_val
+            .as_handle()
             .ok_or_else(|| RuntimeError::TypeMismatch("Expected native handle".into()))?;
         let (func, arity) = {
             let n = self

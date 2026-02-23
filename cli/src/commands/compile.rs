@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
 use std::fs;
-use vm::specs::{SER_TAG_INT, SER_TAG_STRING, SER_TAG_NIL};
+use vm::specs::{SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
 
 pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;

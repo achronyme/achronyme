@@ -44,6 +44,12 @@ pub struct IrLowering {
     call_stack: HashSet<String>,
 }
 
+impl Default for IrLowering {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IrLowering {
     pub fn new() -> Self {
         Self {
@@ -95,7 +101,8 @@ impl IrLowering {
                 v
             })
             .collect();
-        self.env.insert(name.to_string(), EnvValue::Array(vars.clone()));
+        self.env
+            .insert(name.to_string(), EnvValue::Array(vars.clone()));
         vars
     }
 
@@ -114,15 +121,15 @@ impl IrLowering {
                 v
             })
             .collect();
-        self.env.insert(name.to_string(), EnvValue::Array(vars.clone()));
+        self.env
+            .insert(name.to_string(), EnvValue::Array(vars.clone()));
         vars
     }
 
     /// Parse and lower an Achronyme source string into an IR program.
     /// Public/witness inputs must be declared before calling this.
     pub fn lower(mut self, source: &str) -> Result<IrProgram, IrError> {
-        let program = ast_parse_program(source)
-            .map_err(|e| IrError::ParseError(e))?;
+        let program = ast_parse_program(source).map_err(IrError::ParseError)?;
         self.lower_program(&program)?;
         Ok(self.program)
     }
@@ -194,9 +201,10 @@ impl IrLowering {
     /// assert_eq!(pub_names, vec!["x"]);
     /// assert_eq!(wit_names, vec!["y"]);
     /// ```
-    pub fn lower_self_contained(source: &str) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
-        let ast_program = ast_parse_program(source)
-            .map_err(|e| IrError::ParseError(e))?;
+    pub fn lower_self_contained(
+        source: &str,
+    ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
+        let ast_program = ast_parse_program(source).map_err(IrError::ParseError)?;
 
         // Pass 1: collect declaration names (with optional array sizes)
         let mut pub_decls: Vec<(String, Option<usize>)> = Vec::new();
@@ -639,9 +647,19 @@ impl IrLowering {
     // Unary operations
     // ========================================================================
 
-    fn lower_unary(&mut self, op: &UnaryOp, operand: &Expr, _span: &Span) -> Result<SsaVar, IrError> {
+    fn lower_unary(
+        &mut self,
+        op: &UnaryOp,
+        operand: &Expr,
+        _span: &Span,
+    ) -> Result<SsaVar, IrError> {
         // Double negation / double NOT cancellation: --x → x, !!x → x
-        if let Expr::UnaryOp { op: inner_op, operand: inner_operand, .. } = operand {
+        if let Expr::UnaryOp {
+            op: inner_op,
+            operand: inner_operand,
+            ..
+        } = operand
+        {
             if inner_op == op {
                 return self.lower_expr(inner_operand);
             }
@@ -650,10 +668,16 @@ impl IrLowering {
         let v = self.program.fresh_var();
         match op {
             UnaryOp::Neg => {
-                self.program.push(Instruction::Neg { result: v, operand: inner });
+                self.program.push(Instruction::Neg {
+                    result: v,
+                    operand: inner,
+                });
             }
             UnaryOp::Not => {
-                self.program.push(Instruction::Not { result: v, operand: inner });
+                self.program.push(Instruction::Not {
+                    result: v,
+                    operand: inner,
+                });
             }
         }
         Ok(v)
@@ -663,12 +687,7 @@ impl IrLowering {
     // Calls (builtins + user functions)
     // ========================================================================
 
-    fn lower_call(
-        &mut self,
-        callee: &Expr,
-        args: &[Expr],
-        span: &Span,
-    ) -> Result<SsaVar, IrError> {
+    fn lower_call(&mut self, callee: &Expr, args: &[Expr], span: &Span) -> Result<SsaVar, IrError> {
         let sp = to_ir_span(span);
         // Only identifier callees are supported
         let name = match callee {
@@ -694,7 +713,11 @@ impl IrLowering {
         }
     }
 
-    fn lower_assert_eq(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_assert_eq(
+        &mut self,
+        args: &[Expr],
+        sp: Option<SourceSpan>,
+    ) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "assert_eq".into(),
@@ -706,7 +729,11 @@ impl IrLowering {
         let a = self.lower_expr(&args[0])?;
         let b = self.lower_expr(&args[1])?;
         let v = self.program.fresh_var();
-        self.program.push(Instruction::AssertEq { result: v, lhs: a, rhs: b });
+        self.program.push(Instruction::AssertEq {
+            result: v,
+            lhs: a,
+            rhs: b,
+        });
         Ok(v)
     }
 
@@ -721,7 +748,8 @@ impl IrLowering {
         }
         let operand = self.lower_expr(&args[0])?;
         let v = self.program.fresh_var();
-        self.program.push(Instruction::Assert { result: v, operand });
+        self.program
+            .push(Instruction::Assert { result: v, operand });
         Ok(v)
     }
 
@@ -737,7 +765,11 @@ impl IrLowering {
         let left = self.lower_expr(&args[0])?;
         let right = self.lower_expr(&args[1])?;
         let v = self.program.fresh_var();
-        self.program.push(Instruction::PoseidonHash { result: v, left, right });
+        self.program.push(Instruction::PoseidonHash {
+            result: v,
+            left,
+            right,
+        });
         Ok(v)
     }
 
@@ -754,11 +786,20 @@ impl IrLowering {
         let if_true = self.lower_expr(&args[1])?;
         let if_false = self.lower_expr(&args[2])?;
         let v = self.program.fresh_var();
-        self.program.push(Instruction::Mux { result: v, cond, if_true, if_false });
+        self.program.push(Instruction::Mux {
+            result: v,
+            cond,
+            if_true,
+            if_false,
+        });
         Ok(v)
     }
 
-    fn lower_range_check(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_range_check(
+        &mut self,
+        args: &[Expr],
+        sp: Option<SourceSpan>,
+    ) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "range_check".into(),
@@ -781,7 +822,11 @@ impl IrLowering {
         })? as u32;
 
         let v = self.program.fresh_var();
-        self.program.push(Instruction::RangeCheck { result: v, operand, bits });
+        self.program.push(Instruction::RangeCheck {
+            result: v,
+            operand,
+            bits,
+        });
         Ok(v)
     }
 
@@ -816,7 +861,11 @@ impl IrLowering {
         }
     }
 
-    fn lower_poseidon_many(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_poseidon_many(
+        &mut self,
+        args: &[Expr],
+        sp: Option<SourceSpan>,
+    ) -> Result<SsaVar, IrError> {
         if args.is_empty() {
             return Err(IrError::WrongArgumentCount {
                 builtin: "poseidon_many".into(),
@@ -878,35 +927,43 @@ impl IrLowering {
 
         let root = match root_val {
             EnvValue::Scalar(v) => v,
-            EnvValue::Array(_) => return Err(IrError::TypeMismatch {
-                expected: "scalar".into(),
-                got: "array".into(),
-                span: sp.clone(),
-            }),
+            EnvValue::Array(_) => {
+                return Err(IrError::TypeMismatch {
+                    expected: "scalar".into(),
+                    got: "array".into(),
+                    span: sp.clone(),
+                })
+            }
         };
         let mut current = match leaf_val {
             EnvValue::Scalar(v) => v,
-            EnvValue::Array(_) => return Err(IrError::TypeMismatch {
-                expected: "scalar".into(),
-                got: "array".into(),
-                span: sp.clone(),
-            }),
+            EnvValue::Array(_) => {
+                return Err(IrError::TypeMismatch {
+                    expected: "scalar".into(),
+                    got: "array".into(),
+                    span: sp.clone(),
+                })
+            }
         };
         let path = match path_val {
             EnvValue::Array(v) => v,
-            EnvValue::Scalar(_) => return Err(IrError::TypeMismatch {
-                expected: "array".into(),
-                got: "scalar".into(),
-                span: sp.clone(),
-            }),
+            EnvValue::Scalar(_) => {
+                return Err(IrError::TypeMismatch {
+                    expected: "array".into(),
+                    got: "scalar".into(),
+                    span: sp.clone(),
+                })
+            }
         };
         let indices = match indices_val {
             EnvValue::Array(v) => v,
-            EnvValue::Scalar(_) => return Err(IrError::TypeMismatch {
-                expected: "array".into(),
-                got: "scalar".into(),
-                span: sp.clone(),
-            }),
+            EnvValue::Scalar(_) => {
+                return Err(IrError::TypeMismatch {
+                    expected: "array".into(),
+                    got: "scalar".into(),
+                    span: sp.clone(),
+                })
+            }
         };
 
         if path.len() != indices.len() {
@@ -1019,12 +1076,7 @@ impl IrLowering {
     // Index access
     // ========================================================================
 
-    fn lower_index(
-        &mut self,
-        object: &Expr,
-        index: &Expr,
-        span: &Span,
-    ) -> Result<SsaVar, IrError> {
+    fn lower_index(&mut self, object: &Expr, index: &Expr, span: &Span) -> Result<SsaVar, IrError> {
         let sp = to_ir_span(span);
         let name = match object {
             Expr::Ident { name, .. } => name.clone(),
@@ -1045,13 +1097,11 @@ impl IrLowering {
                         sp.clone(),
                     )
                 })?;
-                let idx = field_to_u64(&idx_fe).ok_or_else(|| {
-                    IrError::IndexOutOfBounds {
-                        name: name.clone(),
-                        index: usize::MAX,
-                        length: elements.len(),
-                        span: sp.clone(),
-                    }
+                let idx = field_to_u64(&idx_fe).ok_or_else(|| IrError::IndexOutOfBounds {
+                    name: name.clone(),
+                    index: usize::MAX,
+                    length: elements.len(),
+                    span: sp.clone(),
                 })? as usize;
                 if idx >= elements.len() {
                     return Err(IrError::IndexOutOfBounds {
@@ -1166,7 +1216,8 @@ impl IrLowering {
                     if let Some(EnvValue::Array(elems)) = self.env.get(&name).cloned() {
                         let mut last = None;
                         for elem_var in &elems {
-                            self.env.insert(var.to_string(), EnvValue::Scalar(*elem_var));
+                            self.env
+                                .insert(var.to_string(), EnvValue::Scalar(*elem_var));
                             last = Some(self.lower_block(body)?);
                         }
                         self.env.remove(var);
@@ -1201,7 +1252,9 @@ impl IrLowering {
                 Stmt::Expr(expr) => {
                     last_var = Some(self.lower_expr(expr)?);
                 }
-                Stmt::FnDecl { name, params, body, .. } => {
+                Stmt::FnDecl {
+                    name, params, body, ..
+                } => {
                     self.fn_table.insert(
                         name.clone(),
                         FnDef {

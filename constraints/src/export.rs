@@ -2,7 +2,6 @@
 ///
 /// Produces `.r1cs` (version 1) and `.wtns` (version 2) files that can be
 /// consumed directly by `snarkjs` for Groth16 proof generation.
-
 use crate::r1cs::{ConstraintSystem, LinearCombination};
 use memory::FieldElement;
 
@@ -20,10 +19,9 @@ const BN254_PRIME_LE: [u8; 32] = {
     let b2 = l2.to_le_bytes();
     let b3 = l3.to_le_bytes();
     [
-        b0[0], b0[1], b0[2], b0[3], b0[4], b0[5], b0[6], b0[7],
-        b1[0], b1[1], b1[2], b1[3], b1[4], b1[5], b1[6], b1[7],
-        b2[0], b2[1], b2[2], b2[3], b2[4], b2[5], b2[6], b2[7],
-        b3[0], b3[1], b3[2], b3[3], b3[4], b3[5], b3[6], b3[7],
+        b0[0], b0[1], b0[2], b0[3], b0[4], b0[5], b0[6], b0[7], b1[0], b1[1], b1[2], b1[3], b1[4],
+        b1[5], b1[6], b1[7], b2[0], b2[1], b2[2], b2[3], b2[4], b2[5], b2[6], b2[7], b3[0], b3[1],
+        b3[2], b3[3], b3[4], b3[5], b3[6], b3[7],
     ]
 };
 
@@ -183,7 +181,7 @@ mod tests {
     /// Build a simple a * b = c circuit for testing.
     fn make_mul_circuit() -> ConstraintSystem {
         let mut cs = ConstraintSystem::new();
-        let c = cs.alloc_input();  // public output, index 1
+        let c = cs.alloc_input(); // public output, index 1
         let a = cs.alloc_witness(); // index 2
         let b = cs.alloc_witness(); // index 3
         cs.enforce(
@@ -253,7 +251,8 @@ mod tests {
         // A = 1*var(2): nTerms=1, wireId=2, coeff=ONE
         let n_terms_a = u32::from_le_bytes(data[body_offset..body_offset + 4].try_into().unwrap());
         assert_eq!(n_terms_a, 1);
-        let wire_id = u32::from_le_bytes(data[body_offset + 4..body_offset + 8].try_into().unwrap());
+        let wire_id =
+            u32::from_le_bytes(data[body_offset + 4..body_offset + 8].try_into().unwrap());
         assert_eq!(wire_id, 2); // variable a
 
         // B = 1*var(3): after A's data (4 + 4 + 32 = 40 bytes)

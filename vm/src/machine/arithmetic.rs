@@ -1,6 +1,6 @@
 use crate::error::RuntimeError;
 use crate::opcode::{instruction::*, OpCode};
-use memory::{FieldElement, Value, I60_MIN, I60_MAX};
+use memory::{FieldElement, Value, I60_MAX, I60_MIN};
 
 use super::promotion::TypePromotion;
 use super::stack::StackOps;
@@ -39,7 +39,7 @@ impl ArithmeticOps for super::vm::VM {
                     let ib = vb.as_int().unwrap();
                     let ic = vc.as_int().unwrap();
                     match ib.checked_add(ic) {
-                        Some(result) if result >= I60_MIN && result <= I60_MAX => {
+                        Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
@@ -52,8 +52,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else {
-                    let res = self.binary_op(vb, vc,
-                        |a: &FieldElement, b: &FieldElement| Ok(a.add(b)))?;
+                    let res =
+                        self.binary_op(vb, vc, |a: &FieldElement, b: &FieldElement| Ok(a.add(b)))?;
                     self.set_reg(base, a, res)?;
                 }
             }
@@ -69,7 +69,7 @@ impl ArithmeticOps for super::vm::VM {
                     let ib = vb.as_int().unwrap();
                     let ic = vc.as_int().unwrap();
                     match ib.checked_sub(ic) {
-                        Some(result) if result >= I60_MIN && result <= I60_MAX => {
+                        Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
@@ -81,8 +81,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else {
-                    let res = self.binary_op(vb, vc,
-                        |a: &FieldElement, b: &FieldElement| Ok(a.sub(b)))?;
+                    let res =
+                        self.binary_op(vb, vc, |a: &FieldElement, b: &FieldElement| Ok(a.sub(b)))?;
                     self.set_reg(base, a, res)?;
                 }
             }
@@ -98,7 +98,7 @@ impl ArithmeticOps for super::vm::VM {
                     let ib = vb.as_int().unwrap();
                     let ic = vc.as_int().unwrap();
                     match ib.checked_mul(ic) {
-                        Some(result) if result >= I60_MIN && result <= I60_MAX => {
+                        Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
@@ -110,8 +110,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else {
-                    let res = self.binary_op(vb, vc,
-                        |a: &FieldElement, b: &FieldElement| Ok(a.mul(b)))?;
+                    let res =
+                        self.binary_op(vb, vc, |a: &FieldElement, b: &FieldElement| Ok(a.mul(b)))?;
                     self.set_reg(base, a, res)?;
                 }
             }
@@ -131,10 +131,9 @@ impl ArithmeticOps for super::vm::VM {
                     }
                     self.set_reg(base, a, Value::int(ib / ic))?;
                 } else {
-                    let res = self.binary_op(vb, vc,
-                        |a: &FieldElement, b: &FieldElement| {
-                            a.div(b).ok_or(RuntimeError::DivisionByZero)
-                        })?;
+                    let res = self.binary_op(vb, vc, |a: &FieldElement, b: &FieldElement| {
+                        a.div(b).ok_or(RuntimeError::DivisionByZero)
+                    })?;
                     self.set_reg(base, a, res)?;
                 }
             }
@@ -186,8 +185,11 @@ impl ArithmeticOps for super::vm::VM {
                         let mut overflowed = false;
                         for _ in 0..exp_val {
                             match result.checked_mul(base_val) {
-                                Some(r) if r >= I60_MIN && r <= I60_MAX => result = r,
-                                _ => { overflowed = true; break; }
+                                Some(r) if (I60_MIN..=I60_MAX).contains(&r) => result = r,
+                                _ => {
+                                    overflowed = true;
+                                    break;
+                                }
                             }
                         }
                         if overflowed {
@@ -200,8 +202,13 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.is_field() && vc.is_int() {
-                    let ha = vb.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
-                    let fa = *self.heap.get_field(ha).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                    let ha = vb
+                        .as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                    let fa = *self
+                        .heap
+                        .get_field(ha)
+                        .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                     let exp_val = vc.as_int().unwrap();
                     if exp_val < 0 {
                         let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
@@ -215,7 +222,9 @@ impl ArithmeticOps for super::vm::VM {
                         self.set_reg(base, a, Value::field(handle))?;
                     }
                 } else {
-                    return Err(RuntimeError::TypeMismatch("Pow requires numeric operands".into()));
+                    return Err(RuntimeError::TypeMismatch(
+                        "Pow requires numeric operands".into(),
+                    ));
                 }
             }
 
@@ -227,7 +236,7 @@ impl ArithmeticOps for super::vm::VM {
                     let ib = vb.as_int().unwrap();
                     // Handle i60 overflow: negating I60_MIN overflows
                     match ib.checked_neg() {
-                        Some(result) if result >= I60_MIN && result <= I60_MAX => {
+                        Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
@@ -238,13 +247,20 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.is_field() {
-                    let h = vb.as_handle().ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
-                    let fe = *self.heap.get_field(h).ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                    let h = vb
+                        .as_handle()
+                        .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                    let fe = *self
+                        .heap
+                        .get_field(h)
+                        .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                     let result = fe.neg();
                     let handle = self.heap.alloc_field(result);
                     self.set_reg(base, a, Value::field(handle))?;
                 } else {
-                    return Err(RuntimeError::TypeMismatch("Neg requires numeric operand".into()));
+                    return Err(RuntimeError::TypeMismatch(
+                        "Neg requires numeric operand".into(),
+                    ));
                 }
             }
 

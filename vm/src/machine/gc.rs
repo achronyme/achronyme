@@ -12,7 +12,7 @@ impl GarbageCollector for super::vm::VM {
         if self.stress_mode {
             println!("-- GC Triggered (Stress Mode) --");
         } else {
-             // println!("-- GC Begin (Allocated: {} bytes) --", _before);
+            // println!("-- GC Begin (Allocated: {} bytes) --", _before);
         }
 
         let roots = self.mark_roots();
@@ -23,9 +23,9 @@ impl GarbageCollector for super::vm::VM {
         let mut open_idx = self.open_upvalues;
         while let Some(idx) = open_idx {
             self.heap.mark_upvalue(idx);
-            // Traverse list. If next is hidden in heap, retrieving it is safe 
+            // Traverse list. If next is hidden in heap, retrieving it is safe
             // because we just marked 'idx' (it won't be swept).
-             if let Some(upval) = self.heap.get_upvalue(idx) {
+            if let Some(upval) = self.heap.get_upvalue(idx) {
                 open_idx = upval.next_open;
             } else {
                 break;

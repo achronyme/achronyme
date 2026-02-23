@@ -49,7 +49,10 @@ impl fmt::Display for TaintWarning {
                     Visibility::Public => "public",
                     Visibility::Witness => "witness",
                 };
-                write!(f, "{vis} input `{name}` is under-constrained (not in any assert_eq)")
+                write!(
+                    f,
+                    "{vis} input `{name}` is under-constrained (not in any assert_eq)"
+                )
             }
             TaintWarning::UnusedInput {
                 name, visibility, ..
@@ -93,8 +96,7 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
                 taints.insert(*result, taint);
                 inputs.push((*result, name.clone(), *visibility));
             }
-            Instruction::Add { result, lhs, rhs }
-            | Instruction::Mul { result, lhs, rhs } => {
+            Instruction::Add { result, lhs, rhs } | Instruction::Mul { result, lhs, rhs } => {
                 used_vars.insert(*lhs);
                 used_vars.insert(*rhs);
                 let t = taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs));

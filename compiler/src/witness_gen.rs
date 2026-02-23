@@ -172,11 +172,7 @@ impl WitnessGenerator {
     }
 
     /// Execute a single `WitnessOp`, filling in the target wire(s).
-    fn execute_op(
-        &self,
-        op: &WitnessOp,
-        witness: &mut [FieldElement],
-    ) -> Result<(), WitnessError> {
+    fn execute_op(&self, op: &WitnessOp, witness: &mut [FieldElement]) -> Result<(), WitnessError> {
         match op {
             WitnessOp::AssignLC { target, lc } => {
                 witness[target.index()] = lc.evaluate(witness);
@@ -261,6 +257,7 @@ impl WitnessGenerator {
 /// This must replicate *exactly* the variable allocation order of
 /// `poseidon_hash_circuit` → `poseidon_permutation_circuit` in
 /// `constraints/src/poseidon.rs`.
+#[allow(clippy::needless_range_loop)]
 pub(crate) fn fill_poseidon_witness(
     witness: &mut [FieldElement],
     params: &PoseidonParams,

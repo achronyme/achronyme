@@ -1,3 +1,5 @@
+use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
+use memory::field::MODULUS;
 /// Poseidon Hash Function over BN254 Scalar Field
 ///
 /// Sponge-based hash designed for arithmetic circuits.
@@ -31,10 +33,7 @@
 ///
 /// The paper-compliant implementation is available via
 /// [`PoseidonParams::bn254_t3_lfsr`] for reference and auditing.
-
 use memory::FieldElement;
-use memory::field::MODULUS;
-use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
 
 // ============================================================================
 // Hardcoded Constants (from circomlibjs C[1] and M[1], t=3)
@@ -258,9 +257,21 @@ const CIRCOMLIB_RC: [&str; 195] = [
 
 /// 3x3 MDS matrix from circomlibjs (M[1], t=3).
 const CIRCOMLIB_MDS: [[&str; 3]; 3] = [
-    ["109b7f411ba0e4c9b2b70caf5c36a7b194be7c11ad24378bfedb68592ba8118b", "16ed41e13bb9c0c66ae119424fddbcbc9314dc9fdbdeea55d6c64543dc4903e0", "2b90bba00fca0589f617e7dcbfe82e0df706ab640ceb247b791a93b74e36736d"],
-    ["2969f27eed31a480b9c36c764379dbca2cc8fdd1415c3dded62940bcde0bd771", "2e2419f9ec02ec394c9871c832963dc1b89d743c8c7b964029b2311687b1fe23", "101071f0032379b697315876690f053d148d4e109f5fb065c8aacc55a0f89bfa"],
-    ["143021ec686a3f330d5f9e654638065ce6cd79e28c5b3753326244ee65a1b1a7", "176cc029695ad02582a70eff08a6fd99d057e12e58e7d7b6b16cdfabc8ee2911", "19a3fc0a56702bf417ba7fee3802593fa644470307043f7773279cd71d25d5e0"],
+    [
+        "109b7f411ba0e4c9b2b70caf5c36a7b194be7c11ad24378bfedb68592ba8118b",
+        "16ed41e13bb9c0c66ae119424fddbcbc9314dc9fdbdeea55d6c64543dc4903e0",
+        "2b90bba00fca0589f617e7dcbfe82e0df706ab640ceb247b791a93b74e36736d",
+    ],
+    [
+        "2969f27eed31a480b9c36c764379dbca2cc8fdd1415c3dded62940bcde0bd771",
+        "2e2419f9ec02ec394c9871c832963dc1b89d743c8c7b964029b2311687b1fe23",
+        "101071f0032379b697315876690f053d148d4e109f5fb065c8aacc55a0f89bfa",
+    ],
+    [
+        "143021ec686a3f330d5f9e654638065ce6cd79e28c5b3753326244ee65a1b1a7",
+        "176cc029695ad02582a70eff08a6fd99d057e12e58e7d7b6b16cdfabc8ee2911",
+        "19a3fc0a56702bf417ba7fee3802593fa644470307043f7773279cd71d25d5e0",
+    ],
 ];
 
 // ============================================================================
@@ -340,6 +351,7 @@ impl PoseidonParams {
     /// **WARNING**: These constants do NOT match circomlibjs. Proofs generated
     /// with this parameterization are incompatible with snarkjs/circom.
     /// Use [`Self::bn254_t3`] for production circuits.
+    #[allow(clippy::needless_range_loop)]
     pub fn bn254_t3_lfsr() -> Self {
         let t = 3;
         let r_f = 8;
@@ -460,15 +472,14 @@ impl GrainLfsr {
                 if b {
                     let byte_pos = bit_idx / 8;
                     let bit_pos = 7 - (bit_idx % 8);
-                    let offset = 32 - ((field_size + 7) / 8);
+                    let offset = 32 - field_size.div_ceil(8);
                     bytes[offset + byte_pos] |= 1 << bit_pos;
                 }
             }
             bytes.reverse();
             let mut limbs = [0u64; 4];
             for i in 0..4 {
-                limbs[i] =
-                    u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
+                limbs[i] = u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
             }
             if !ge_modulus(&limbs) {
                 return FieldElement::from_canonical(limbs);
@@ -507,6 +518,7 @@ fn sbox(x: FieldElement) -> FieldElement {
 // ============================================================================
 
 /// Apply the Poseidon permutation to a state vector (in-place).
+#[allow(clippy::needless_range_loop)]
 pub fn poseidon_permutation(params: &PoseidonParams, state: &mut [FieldElement]) {
     let total_rounds = params.r_f + params.r_p;
     let half_f = params.r_f / 2;
@@ -559,10 +571,7 @@ pub fn poseidon_hash(
 ///
 /// State: [capacity=0, input, 0]
 /// Output: state[0] after permutation (circomlibjs convention)
-pub fn poseidon_hash_single(
-    params: &PoseidonParams,
-    input: FieldElement,
-) -> FieldElement {
+pub fn poseidon_hash_single(params: &PoseidonParams, input: FieldElement) -> FieldElement {
     let mut state = vec![FieldElement::ZERO; params.t];
     state[1] = input;
     poseidon_permutation(params, &mut state);
@@ -581,10 +590,7 @@ pub fn poseidon_hash_single(
 ///   x5 = x4 * x
 ///
 /// Returns the variable holding x^5.
-fn sbox_circuit(
-    cs: &mut ConstraintSystem,
-    x: &LinearCombination,
-) -> Variable {
+fn sbox_circuit(cs: &mut ConstraintSystem, x: &LinearCombination) -> Variable {
     // x2 = x * x
     let x2 = cs.mul_lc(x, x);
 
@@ -597,6 +603,7 @@ fn sbox_circuit(
     cs.mul_lc(&x4_lc, x)
 }
 
+#[allow(clippy::needless_range_loop)]
 /// Synthesize Poseidon permutation as R1CS constraints.
 ///
 /// Takes state variables as input, returns output state variables.
@@ -756,7 +763,11 @@ mod tests {
         assert!(!h.is_zero());
 
         // Hash of (1, 2) should not be small
-        let h = poseidon_hash(&params, FieldElement::from_u64(1), FieldElement::from_u64(2));
+        let h = poseidon_hash(
+            &params,
+            FieldElement::from_u64(1),
+            FieldElement::from_u64(2),
+        );
         assert!(!h.is_zero());
         assert_ne!(h, FieldElement::ONE);
     }
@@ -767,11 +778,19 @@ mod tests {
         // Decimal: 7853200120776062878684798364095072458815029376092732009249414926327459813530
         // Confirmed by iden3/go-iden3-crypto and circomlibjs npm package.
         let params = PoseidonParams::bn254_t3();
-        let hash = poseidon_hash(&params, FieldElement::from_u64(1), FieldElement::from_u64(2));
+        let hash = poseidon_hash(
+            &params,
+            FieldElement::from_u64(1),
+            FieldElement::from_u64(2),
+        );
         let expected = FieldElement::from_decimal_str(
-            "7853200120776062878684798364095072458815029376092732009249414926327459813530"
-        ).unwrap();
-        assert_eq!(hash, expected, "poseidon(1, 2) must match circomlibjs reference");
+            "7853200120776062878684798364095072458815029376092732009249414926327459813530",
+        )
+        .unwrap();
+        assert_eq!(
+            hash, expected,
+            "poseidon(1, 2) must match circomlibjs reference"
+        );
     }
 
     #[test]
@@ -892,7 +911,11 @@ mod tests {
         // 4. Verify
         let witness = wb.build();
         let result = cs.verify(&witness);
-        assert!(result.is_ok(), "Poseidon R1CS verification failed at constraint {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Poseidon R1CS verification failed at constraint {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -976,7 +999,9 @@ mod tests {
         // Too few round constants → panic
         let result = std::panic::catch_unwind(|| {
             PoseidonParams::new(
-                3, 8, 57,
+                3,
+                8,
+                57,
                 vec![FieldElement::ZERO; 10], // need 195
                 vec![vec![FieldElement::ZERO; 3]; 3],
             );
