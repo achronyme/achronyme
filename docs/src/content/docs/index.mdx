@@ -3,7 +3,7 @@ title: Achronyme
 description: A programming language for zero-knowledge circuits.
 template: splash
 hero:
-  tagline: Write readable code. Decide what gets proven. Same language for general execution and ZK circuit compilation.
+  tagline: Write code. Prove parts of it. Same language for execution and ZK circuits — no separate DSL, no context switch.
   actions:
     - text: Get Started
       link: /getting-started/introduction/
@@ -18,15 +18,15 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="Dual Mode" icon="rocket">
-    Run programs normally with `ach run` or compile to ZK circuits with `ach circuit`. Same language, two modes.
+    `ach run` executes your program. `ach circuit` compiles it to ZK constraints. Same syntax, two targets.
   </Card>
   <Card title="Two Backends" icon="setting">
-    R1CS (Groth16) and Plonkish (KZG-PlonK). Choose the right backend for your proof system.
+    R1CS for Groth16. Plonkish for KZG-PlonK. Pick the proof system that fits.
   </Card>
   <Card title="Inline Proofs" icon="approve-check">
-    `prove {}` blocks compile circuits, generate witnesses, and produce proofs — all from within your program.
+    `prove {}` compiles, witnesses, and proves — all inline. No external tooling required.
   </Card>
   <Card title="snarkjs Compatible" icon="external">
-    Export `.r1cs` and `.wtns` files directly consumable by snarkjs for Groth16 proof generation.
+    Exports `.r1cs` and `.wtns` files. Plug directly into snarkjs for Groth16 proof generation.
   </Card>
 </CardGrid>
