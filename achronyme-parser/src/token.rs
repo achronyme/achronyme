@@ -59,6 +59,7 @@ pub enum TokenKind {
     Or,
     Not,
     Assign,
+    Arrow,
     DotDot,
     Dot,
 

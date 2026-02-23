@@ -103,6 +103,40 @@ run_test "circuit/power.ach" \
     --r1cs "$R1CS_DIR/pow.r1cs" --wtns "$R1CS_DIR/pow.wtns" \
     --inputs "x=3,x2=9,x3=27,x4=81"
 
+# --- Typed circuit tests (gradual type system) ---
+echo ""
+echo "=== Typed circuit tests ==="
+
+run_test "circuit/typed_arithmetic.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_arithmetic.ach" \
+    --r1cs "$R1CS_DIR/typed_arith.r1cs" --wtns "$R1CS_DIR/typed_arith.wtns" \
+    --inputs "out=42,a=6,b=7"
+
+run_test "circuit/typed_boolean_ops.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_boolean_ops.ach" \
+    --r1cs "$R1CS_DIR/typed_bool.r1cs" --wtns "$R1CS_DIR/typed_bool.wtns" \
+    --inputs "x=3,y=5"
+
+run_test "circuit/typed_mux.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_mux.ach" \
+    --r1cs "$R1CS_DIR/typed_mux.r1cs" --wtns "$R1CS_DIR/typed_mux.wtns" \
+    --inputs "out=42,cond=1,a=42,b=99"
+
+run_test "circuit/typed_arrays_and_functions.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_arrays_and_functions.ach" \
+    --r1cs "$R1CS_DIR/typed_arr.r1cs" --wtns "$R1CS_DIR/typed_arr.wtns" \
+    --inputs "expected_sum=60,vals_0=10,vals_1=20,vals_2=30"
+
+run_test "circuit/typed_poseidon.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_poseidon.ach" \
+    --r1cs "$R1CS_DIR/typed_poseidon.r1cs" --wtns "$R1CS_DIR/typed_poseidon.wtns" \
+    --inputs "expected=7853200120776062878684798364095072458815029376092732009249414926327459813530,a=1,b=2,c=3"
+
+run_test "circuit/typed_merkle.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_merkle.ach" \
+    --r1cs "$R1CS_DIR/typed_merkle.r1cs" --wtns "$R1CS_DIR/typed_merkle.wtns" \
+    --inputs "root=7853200120776062878684798364095072458815029376092732009249414926327459813530,leaf=1,path_0=2,indices_0=0"
+
 # --- Solidity verifier test ---
 echo ""
 echo "=== Solidity verifier tests ==="

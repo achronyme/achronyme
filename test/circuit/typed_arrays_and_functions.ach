@@ -1,0 +1,17 @@
+// Circuit: arrays and functions with type annotations
+public expected_sum: Field
+witness vals[3]: Field
+
+// Sum via accumulation
+let acc: Field = vals[0]
+let acc: Field = acc + vals[1]
+let acc: Field = acc + vals[2]
+assert_eq(acc, expected_sum)
+
+// len() returns compile-time constant
+let n: Field = len(vals)
+assert_eq(n, 3)
+
+// Typed function definition
+fn double(x: Field) -> Field { x + x }
+assert_eq(double(vals[0]), vals[0] + vals[0])

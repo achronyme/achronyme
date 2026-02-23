@@ -5,7 +5,7 @@ use achronyme_parser::parse_program as ast_parse_program;
 use memory::FieldElement;
 
 use crate::error::{IrError, SourceSpan};
-use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
+use crate::types::{Instruction, IrProgram, IrType, SsaVar, Visibility};
 
 /// Maximum number of iterations allowed when statically unrolling a `for` loop.
 /// Prevents DoS via `for i in 0..1000000` which would generate millions of IR instructions.
@@ -29,8 +29,35 @@ enum EnvValue {
 /// A user-defined function stored for inlining.
 #[derive(Clone, Debug)]
 struct FnDef {
-    params: Vec<String>,
+    params: Vec<TypedParam>,
     body: Block,
+    return_type: Option<TypeAnnotation>,
+}
+
+/// Convert a `TypeAnnotation` to an `IrType` (scalar types only).
+///
+/// ```
+/// use achronyme_parser::ast::TypeAnnotation;
+/// use ir::IrLowering;
+///
+/// // This is a public helper used during lowering
+/// let prog = IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
+/// assert!(!prog.instructions.is_empty());
+/// ```
+fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
+    match ann {
+        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
+        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
+    }
+}
+
+/// Check if an inferred type is compatible with a declared type annotation.
+/// `Bool` is a subtype of `Field` (booleans are 0/1 field elements).
+fn type_compatible(declared: IrType, inferred: IrType) -> bool {
+    match (declared, inferred) {
+        (IrType::Field, IrType::Bool) => true, // Bool is subtype of Field
+        (a, b) => a == b,
+    }
 }
 
 /// Lowers an Achronyme AST into an SSA IR program.
@@ -206,19 +233,19 @@ impl IrLowering {
     ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
         let ast_program = ast_parse_program(source).map_err(IrError::ParseError)?;
 
-        // Pass 1: collect declaration names (with optional array sizes)
-        let mut pub_decls: Vec<(String, Option<usize>)> = Vec::new();
-        let mut wit_decls: Vec<(String, Option<usize>)> = Vec::new();
+        // Pass 1: collect declaration names (with optional array sizes and type annotations)
+        let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
+        let mut wit_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
         for stmt in &ast_program.stmts {
             match stmt {
                 Stmt::PublicDecl { names, .. } => {
                     for decl in names {
-                        pub_decls.push((decl.name.clone(), decl.array_size));
+                        pub_decls.push((decl.name.clone(), decl.array_size, decl.type_ann.clone()));
                     }
                 }
                 Stmt::WitnessDecl { names, .. } => {
                     for decl in names {
-                        wit_decls.push((decl.name.clone(), decl.array_size));
+                        wit_decls.push((decl.name.clone(), decl.array_size, decl.type_ann.clone()));
                     }
                 }
                 _ => {}
@@ -227,7 +254,7 @@ impl IrLowering {
 
         // Build flat name lists for duplicate checking and return value
         let mut pub_names = Vec::new();
-        for (name, size) in &pub_decls {
+        for (name, size, _) in &pub_decls {
             if let Some(n) = size {
                 for i in 0..*n {
                     pub_names.push(format!("{name}_{i}"));
@@ -237,7 +264,7 @@ impl IrLowering {
             }
         }
         let mut wit_names = Vec::new();
-        for (name, size) in &wit_decls {
+        for (name, size, _) in &wit_decls {
             if let Some(n) = size {
                 for i in 0..*n {
                     wit_names.push(format!("{name}_{i}"));
@@ -257,18 +284,36 @@ impl IrLowering {
 
         // Emit Inputs in correct order: public first, then witness
         let mut lowering = IrLowering::new();
-        for (name, size) in &pub_decls {
+        for (name, size, type_ann) in &pub_decls {
             if let Some(n) = size {
-                lowering.declare_public_array(name, *n);
+                let vars = lowering.declare_public_array(name, *n);
+                if let Some(ann) = type_ann {
+                    let ty = annotation_to_ir_type(ann);
+                    for v in &vars {
+                        lowering.program.set_type(*v, ty);
+                    }
+                }
             } else {
-                lowering.declare_public(name);
+                let v = lowering.declare_public(name);
+                if let Some(ann) = type_ann {
+                    lowering.program.set_type(v, annotation_to_ir_type(ann));
+                }
             }
         }
-        for (name, size) in &wit_decls {
+        for (name, size, type_ann) in &wit_decls {
             if let Some(n) = size {
-                lowering.declare_witness_array(name, *n);
+                let vars = lowering.declare_witness_array(name, *n);
+                if let Some(ann) = type_ann {
+                    let ty = annotation_to_ir_type(ann);
+                    for v in &vars {
+                        lowering.program.set_type(*v, ty);
+                    }
+                }
             } else {
-                lowering.declare_witness(name);
+                let v = lowering.declare_witness(name);
+                if let Some(ann) = type_ann {
+                    lowering.program.set_type(v, annotation_to_ir_type(ann));
+                }
             }
         }
 
@@ -306,16 +351,29 @@ impl IrLowering {
                 self.lower_witness_decl(names)?;
                 Ok(None)
             }
-            Stmt::LetDecl { name, value, .. } => {
-                self.lower_let(name, value)?;
+            Stmt::LetDecl {
+                name,
+                type_ann,
+                value,
+                span,
+                ..
+            } => {
+                self.lower_let(name, type_ann.as_ref(), value, span)?;
                 Ok(None)
             }
-            Stmt::FnDecl { name, params, body, .. } => {
+            Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                body,
+                ..
+            } => {
                 self.fn_table.insert(
                     name.clone(),
                     FnDef {
                         params: params.clone(),
                         body: body.clone(),
+                        return_type: return_type.clone(),
                     },
                 );
                 Ok(None)
@@ -354,9 +412,18 @@ impl IrLowering {
     fn lower_public_decl(&mut self, names: &[InputDecl]) -> Result<(), IrError> {
         for decl in names {
             if let Some(size) = decl.array_size {
-                self.declare_public_array(&decl.name, size);
+                let vars = self.declare_public_array(&decl.name, size);
+                if let Some(ref ann) = decl.type_ann {
+                    let ty = annotation_to_ir_type(ann);
+                    for v in &vars {
+                        self.program.set_type(*v, ty);
+                    }
+                }
             } else {
-                self.declare_public(&decl.name);
+                let v = self.declare_public(&decl.name);
+                if let Some(ref ann) = decl.type_ann {
+                    self.program.set_type(v, annotation_to_ir_type(ann));
+                }
             }
         }
         Ok(())
@@ -365,18 +432,37 @@ impl IrLowering {
     fn lower_witness_decl(&mut self, names: &[InputDecl]) -> Result<(), IrError> {
         for decl in names {
             if let Some(size) = decl.array_size {
-                self.declare_witness_array(&decl.name, size);
+                let vars = self.declare_witness_array(&decl.name, size);
+                if let Some(ref ann) = decl.type_ann {
+                    let ty = annotation_to_ir_type(ann);
+                    for v in &vars {
+                        self.program.set_type(*v, ty);
+                    }
+                }
             } else {
-                self.declare_witness(&decl.name);
+                let v = self.declare_witness(&decl.name);
+                if let Some(ref ann) = decl.type_ann {
+                    self.program.set_type(v, annotation_to_ir_type(ann));
+                }
             }
         }
         Ok(())
     }
 
-    fn lower_let(&mut self, name: &str, value: &Expr) -> Result<(), IrError> {
+    fn lower_let(
+        &mut self,
+        name: &str,
+        type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<(), IrError> {
         // Check if RHS is an array literal
-        if let Expr::Array { elements, span } = value {
-            let sp = to_ir_span(span);
+        if let Expr::Array {
+            elements,
+            span: arr_span,
+        } = value
+        {
+            let sp = to_ir_span(arr_span);
             if elements.is_empty() {
                 return Err(IrError::UnsupportedOperation(
                     "empty arrays are not allowed in circuits".into(),
@@ -387,11 +473,36 @@ impl IrLowering {
                 .iter()
                 .map(|e| self.lower_expr(e))
                 .collect::<Result<Vec<_>, _>>()?;
+            // Set element types from annotation if provided
+            if let Some(ann) = type_ann {
+                let ty = annotation_to_ir_type(ann);
+                for v in &vars {
+                    self.program.set_type(*v, ty);
+                }
+            }
             self.env.insert(name.to_string(), EnvValue::Array(vars));
             return Ok(());
         }
 
         let v = self.lower_expr(value)?;
+
+        // Validate type annotation if present
+        if let Some(ann) = type_ann {
+            let declared = annotation_to_ir_type(ann);
+            if let Some(inferred) = self.program.get_type(v) {
+                if !type_compatible(declared, inferred) {
+                    return Err(IrError::AnnotationMismatch {
+                        name: name.to_string(),
+                        declared: declared.to_string(),
+                        inferred: inferred.to_string(),
+                        span: to_ir_span(span),
+                    });
+                }
+            }
+            // Set the declared type
+            self.program.set_type(v, declared);
+        }
+
         // `let` is an alias — no instruction emitted, just env binding
         self.program.set_name(v, name.to_string());
         self.env.insert(name.to_string(), EnvValue::Scalar(v));
@@ -411,6 +522,7 @@ impl IrLowering {
                     result: v,
                     value: FieldElement::ONE,
                 });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             Expr::Bool { value: false, .. } => {
@@ -419,6 +531,7 @@ impl IrLowering {
                     result: v,
                     value: FieldElement::ZERO,
                 });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             Expr::Ident { name, span } => {
@@ -497,6 +610,7 @@ impl IrLowering {
                 result: pos,
                 value: fe,
             });
+            self.program.set_type(pos, IrType::Field);
             self.program.push(Instruction::Neg {
                 result: v,
                 operand: pos,
@@ -507,6 +621,7 @@ impl IrLowering {
                 value: fe,
             });
         }
+        self.program.set_type(v, IrType::Field);
         Ok(v)
     }
 
@@ -527,6 +642,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Add { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             BinOp::Sub => {
@@ -534,6 +650,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Sub { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             BinOp::Mul => {
@@ -541,6 +658,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Mul { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             BinOp::Div => {
@@ -548,6 +666,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Div { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             BinOp::Mod => Err(IrError::UnsupportedOperation(
@@ -587,6 +706,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::IsEq { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::Neq => {
@@ -594,6 +714,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::IsNeq { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::Lt => {
@@ -601,6 +722,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::IsLt { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::Le => {
@@ -608,6 +730,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::IsLe { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::Gt => {
@@ -616,6 +739,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::IsLt { result: v, lhs: r, rhs: l });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::Ge => {
@@ -624,6 +748,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::IsLe { result: v, lhs: r, rhs: l });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::And => {
@@ -631,6 +756,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::And { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             BinOp::Or => {
@@ -638,6 +764,7 @@ impl IrLowering {
                 let r = self.lower_expr(rhs)?;
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Or { result: v, lhs: l, rhs: r });
+                self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
         }
@@ -674,10 +801,20 @@ impl IrLowering {
                 });
             }
             UnaryOp::Not => {
+                // Validate operand is Bool if typed
+                if let Some(IrType::Field) = self.program.get_type(inner) {
+                    return Err(IrError::AnnotationMismatch {
+                        name: "!operand".into(),
+                        declared: "Bool".into(),
+                        inferred: "Field".into(),
+                        span: to_ir_span(_span),
+                    });
+                }
                 self.program.push(Instruction::Not {
                     result: v,
                     operand: inner,
                 });
+                self.program.set_type(v, IrType::Bool);
             }
         }
         Ok(v)
@@ -770,6 +907,7 @@ impl IrLowering {
             left,
             right,
         });
+        self.program.set_type(v, IrType::Field);
         Ok(v)
     }
 
@@ -792,6 +930,15 @@ impl IrLowering {
             if_true,
             if_false,
         });
+        // Result type = branch type if both agree
+        if let (Some(t), Some(f)) = (
+            self.program.get_type(if_true),
+            self.program.get_type(if_false),
+        ) {
+            if t == f {
+                self.program.set_type(v, t);
+            }
+        }
         Ok(v)
     }
 
@@ -1037,6 +1184,23 @@ impl IrLowering {
             });
         }
 
+        // Validate typed params against argument types
+        for (param, arg_var) in fn_def.params.iter().zip(arg_vars.iter()) {
+            if let Some(ref ann) = param.type_ann {
+                let declared = annotation_to_ir_type(ann);
+                if let Some(inferred) = self.program.get_type(*arg_var) {
+                    if !type_compatible(declared, inferred) {
+                        return Err(IrError::AnnotationMismatch {
+                            name: param.name.clone(),
+                            declared: declared.to_string(),
+                            inferred: inferred.to_string(),
+                            span: sp.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
         // Recursion guard
         if self.call_stack.contains(name) {
             return Err(IrError::RecursiveFunction(name.to_string()));
@@ -1044,17 +1208,33 @@ impl IrLowering {
         self.call_stack.insert(name.to_string());
 
         // Save env for params and bind args
-        let saved: Vec<(String, Option<EnvValue>)> = fn_def
-            .params
+        let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
+        let saved: Vec<(String, Option<EnvValue>)> = param_names
             .iter()
             .map(|p| (p.clone(), self.env.get(p).cloned()))
             .collect();
-        for (param, arg) in fn_def.params.iter().zip(arg_vars.iter()) {
+        for (param, arg) in param_names.iter().zip(arg_vars.iter()) {
             self.env.insert(param.clone(), EnvValue::Scalar(*arg));
         }
 
         // Lower the function body directly (no re-parsing!)
         let result = self.lower_block(&fn_def.body)?;
+
+        // Set return type if declared
+        if let Some(ref ret_ann) = fn_def.return_type {
+            let ret_ty = annotation_to_ir_type(ret_ann);
+            if let Some(inferred) = self.program.get_type(result) {
+                if !type_compatible(ret_ty, inferred) {
+                    return Err(IrError::AnnotationMismatch {
+                        name: format!("{name}() return"),
+                        declared: ret_ty.to_string(),
+                        inferred: inferred.to_string(),
+                        span: sp.clone(),
+                    });
+                }
+            }
+            self.program.set_type(result, ret_ty);
+        }
 
         // Restore env
         for (param, old_val) in saved {
@@ -1161,6 +1341,15 @@ impl IrLowering {
             if_true,
             if_false,
         });
+        // Result type from branches if both agree
+        if let (Some(t), Some(f)) = (
+            self.program.get_type(if_true),
+            self.program.get_type(if_false),
+        ) {
+            if t == f {
+                self.program.set_type(v, t);
+            }
+        }
         Ok(v)
     }
 
@@ -1245,21 +1434,32 @@ impl IrLowering {
 
         for stmt in &block.stmts {
             match stmt {
-                Stmt::LetDecl { name, value, .. } => {
-                    self.lower_let(name, value)?;
+                Stmt::LetDecl {
+                    name,
+                    type_ann,
+                    value,
+                    span,
+                    ..
+                } => {
+                    self.lower_let(name, type_ann.as_ref(), value, span)?;
                     last_var = None;
                 }
                 Stmt::Expr(expr) => {
                     last_var = Some(self.lower_expr(expr)?);
                 }
                 Stmt::FnDecl {
-                    name, params, body, ..
+                    name,
+                    params,
+                    return_type,
+                    body,
+                    ..
                 } => {
                     self.fn_table.insert(
                         name.clone(),
                         FnDef {
                             params: params.clone(),
                             body: body.clone(),
+                            return_type: return_type.clone(),
                         },
                     );
                     last_var = None;
