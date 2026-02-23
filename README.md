@@ -1,5 +1,8 @@
 # Achronyme
 
+[![CI](https://github.com/eddndev/achronyme/actions/workflows/ci.yml/badge.svg)](https://github.com/eddndev/achronyme/actions/workflows/ci.yml)
+[![Deploy Docs](https://github.com/eddndev/achronyme/actions/workflows/docs.yml/badge.svg)](https://github.com/eddndev/achronyme/actions/workflows/docs.yml)
+
 A programming language for zero-knowledge circuits.
 
 Write readable code. Decide what gets proven. Same language for general execution and ZK circuit compilation.
