@@ -189,10 +189,35 @@ impl Instruction {
     }
 }
 
+/// The IR-level type of an SSA variable (for gradual type checking).
+///
+/// ```
+/// use ir::types::IrType;
+///
+/// let t = IrType::Field;
+/// assert_eq!(format!("{t}"), "Field");
+/// assert_eq!(t, IrType::Field);
+/// assert_ne!(t, IrType::Bool);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrType {
+    Field,
+    Bool,
+}
+
+impl std::fmt::Display for IrType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IrType::Field => write!(f, "Field"),
+            IrType::Bool => write!(f, "Bool"),
+        }
+    }
+}
+
 /// A flat SSA program — a sequence of instructions.
 ///
 /// ```
-/// use ir::types::{IrProgram, Instruction, SsaVar};
+/// use ir::types::{IrProgram, IrType, Instruction, SsaVar};
 /// use memory::FieldElement;
 ///
 /// let mut prog = IrProgram::new();
@@ -200,6 +225,11 @@ impl Instruction {
 /// prog.push(Instruction::Const { result: v, value: FieldElement::from_u64(42) });
 /// assert_eq!(prog.instructions.len(), 1);
 /// assert_eq!(v, SsaVar(0));
+///
+/// // Type metadata starts empty
+/// assert!(prog.get_type(v).is_none());
+/// prog.set_type(v, IrType::Field);
+/// assert_eq!(prog.get_type(v), Some(IrType::Field));
 /// ```
 #[derive(Debug)]
 pub struct IrProgram {
@@ -207,6 +237,8 @@ pub struct IrProgram {
     pub next_var: u32,
     /// Maps SSA variables to their source-level names (for error messages).
     pub var_names: HashMap<SsaVar, String>,
+    /// Maps SSA variables to their IR types (set by type annotations and inference).
+    pub var_types: HashMap<SsaVar, IrType>,
 }
 
 impl Default for IrProgram {
@@ -221,6 +253,7 @@ impl IrProgram {
             instructions: Vec::new(),
             next_var: 0,
             var_names: HashMap::new(),
+            var_types: HashMap::new(),
         }
     }
 
@@ -246,6 +279,16 @@ impl IrProgram {
     /// Look up the source-level name for an SSA variable.
     pub fn get_name(&self, var: SsaVar) -> Option<&str> {
         self.var_names.get(&var).map(|s| s.as_str())
+    }
+
+    /// Associate an IR type with an SSA variable.
+    pub fn set_type(&mut self, var: SsaVar, ty: IrType) {
+        self.var_types.insert(var, ty);
+    }
+
+    /// Look up the IR type for an SSA variable.
+    pub fn get_type(&self, var: SsaVar) -> Option<IrType> {
+        self.var_types.get(&var).copied()
     }
 }
 
@@ -299,6 +342,24 @@ mod tests {
             rhs: SsaVar(2),
         };
         assert!(!add_inst.has_side_effects());
+    }
+
+    #[test]
+    fn set_get_type_round_trip() {
+        let mut p = IrProgram::new();
+        let v0 = p.fresh_var();
+        let v1 = p.fresh_var();
+        assert!(p.get_type(v0).is_none());
+        p.set_type(v0, IrType::Field);
+        p.set_type(v1, IrType::Bool);
+        assert_eq!(p.get_type(v0), Some(IrType::Field));
+        assert_eq!(p.get_type(v1), Some(IrType::Bool));
+    }
+
+    #[test]
+    fn ir_type_display() {
+        assert_eq!(format!("{}", IrType::Field), "Field");
+        assert_eq!(format!("{}", IrType::Bool), "Bool");
     }
 
     #[test]
