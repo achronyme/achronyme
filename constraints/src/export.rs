@@ -59,6 +59,22 @@ fn write_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
 /// - `nPubOut` = 0 (Achronyme has no separate computed outputs)
 /// - `nPubIn`  = `num_pub_inputs` (public vars are verifier-supplied inputs)
 /// - `nPrvIn`  = `num_variables - 1 - num_pub_inputs`
+///
+/// ```
+/// use constraints::{ConstraintSystem, LinearCombination, write_r1cs};
+///
+/// let mut cs = ConstraintSystem::new();
+/// let a = cs.alloc_witness();
+/// let b = cs.alloc_witness();
+/// cs.enforce(
+///     LinearCombination::from_variable(a),
+///     LinearCombination::from_variable(b),
+///     LinearCombination::zero(),
+/// );
+///
+/// let data = write_r1cs(&cs);
+/// assert_eq!(&data[0..4], b"r1cs");
+/// ```
 pub fn write_r1cs(cs: &ConstraintSystem) -> Vec<u8> {
     let n_wires = cs.num_variables() as u32;
     let n_pub_out: u32 = 0;
@@ -119,6 +135,15 @@ pub fn write_r1cs(cs: &ConstraintSystem) -> Vec<u8> {
 /// Serialize a witness vector to the iden3 `.wtns` binary format (version 2).
 ///
 /// `witness[0]` must be `FieldElement::ONE` (the constant-1 wire).
+///
+/// ```
+/// use constraints::write_wtns;
+/// use memory::FieldElement;
+///
+/// let witness = vec![FieldElement::ONE, FieldElement::from_u64(42)];
+/// let data = write_wtns(&witness);
+/// assert_eq!(&data[0..4], b"wtns");
+/// ```
 pub fn write_wtns(witness: &[FieldElement]) -> Vec<u8> {
     let n_witness = witness.len() as u32;
 

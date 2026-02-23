@@ -223,6 +223,16 @@ impl R1CSCompiler {
     // ========================================================================
 
     /// Compile an SSA IR program into R1CS constraints.
+    ///
+    /// ```
+    /// use compiler::r1cs_backend::R1CSCompiler;
+    /// use ir::IrLowering;
+    ///
+    /// let prog = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
+    /// let mut rc = R1CSCompiler::new();
+    /// rc.compile_ir(&prog).unwrap();
+    /// assert!(rc.cs.num_constraints() > 0);
+    /// ```
     pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError> {
         // Lookup cache: SSA variable → its LinearCombination. Used for O(1)
         // lookups only — never iterated, so HashMap ordering is irrelevant.
@@ -564,6 +574,24 @@ impl R1CSCompiler {
     /// 3. **Witness**: builds the witness vector by replaying `witness_ops` with
     ///    concrete input values. This is separate from compilation because constraint
     ///    generation must complete before the full witness layout is known.
+    /// Evaluate the IR, compile to R1CS, and build a witness vector in one pass.
+    ///
+    /// ```
+    /// use std::collections::HashMap;
+    /// use compiler::r1cs_backend::R1CSCompiler;
+    /// use ir::IrLowering;
+    /// use memory::FieldElement;
+    ///
+    /// let prog = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
+    /// let mut inputs = HashMap::new();
+    /// inputs.insert("z".to_string(), FieldElement::from_u64(42));
+    /// inputs.insert("x".to_string(), FieldElement::from_u64(6));
+    /// inputs.insert("y".to_string(), FieldElement::from_u64(7));
+    ///
+    /// let mut rc = R1CSCompiler::new();
+    /// let witness = rc.compile_ir_with_witness(&prog, &inputs).unwrap();
+    /// assert!(rc.cs.verify(&witness).is_ok());
+    /// ```
     pub fn compile_ir_with_witness(
         &mut self,
         program: &IrProgram,

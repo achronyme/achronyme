@@ -202,6 +202,17 @@ impl Instruction {
 }
 
 /// A flat SSA program — a sequence of instructions.
+///
+/// ```
+/// use ir::types::{IrProgram, Instruction, SsaVar};
+/// use memory::FieldElement;
+///
+/// let mut prog = IrProgram::new();
+/// let v = prog.fresh_var();
+/// prog.push(Instruction::Const { result: v, value: FieldElement::from_u64(42) });
+/// assert_eq!(prog.instructions.len(), 1);
+/// assert_eq!(v, SsaVar(0));
+/// ```
 #[derive(Debug)]
 pub struct IrProgram {
     pub instructions: Vec<Instruction>,

@@ -122,6 +122,19 @@ impl std::error::Error for EvalError {}
 /// This is a pure evaluator: it computes every SSA variable's value by walking
 /// the instruction list forward. Assertions (`AssertEq`, `Assert`, `RangeCheck`)
 /// are checked eagerly and return errors immediately on failure.
+///
+/// ```
+/// use std::collections::HashMap;
+/// use ir::IrLowering;
+/// use ir::eval::evaluate;
+/// use memory::FieldElement;
+///
+/// let prog = IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
+/// let mut inputs = HashMap::new();
+/// inputs.insert("x".to_string(), FieldElement::from_u64(42));
+/// inputs.insert("y".to_string(), FieldElement::from_u64(42));
+/// assert!(evaluate(&prog, &inputs).is_ok());
+/// ```
 pub fn evaluate(
     program: &IrProgram,
     inputs: &HashMap<String, FieldElement>,

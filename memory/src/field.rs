@@ -201,7 +201,14 @@ impl FieldElement {
     /// The one element (1 in Montgomery form = R mod p)
     pub const ONE: Self = Self { limbs: R };
 
-    /// Create from a small u64 value
+    /// Create from a small u64 value.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let fe = FieldElement::from_u64(42);
+    /// assert_eq!(fe.to_canonical(), [42, 0, 0, 0]);
+    /// ```
     pub fn from_u64(val: u64) -> Self {
         // Convert to Montgomery form: val * R mod p = val * R2 * R^{-1} mod p
         let canonical = [val, 0, 0, 0];
@@ -228,7 +235,14 @@ impl FieldElement {
         }
     }
 
-    /// Convert back to canonical form (from Montgomery)
+    /// Convert back to canonical form (from Montgomery).
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// assert_eq!(FieldElement::ONE.to_canonical(), [1, 0, 0, 0]);
+    /// assert_eq!(FieldElement::ZERO.to_canonical(), [0, 0, 0, 0]);
+    /// ```
     pub fn to_canonical(&self) -> [u64; 4] {
         // Multiply by 1 to remove Montgomery factor: self * R^{-1} mod p
         montgomery_reduce(&[
@@ -238,6 +252,15 @@ impl FieldElement {
     }
 
     /// Convert to 32 bytes in little-endian canonical form.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let fe = FieldElement::from_u64(42);
+    /// let bytes = fe.to_le_bytes();
+    /// let recovered = FieldElement::from_le_bytes(&bytes).unwrap();
+    /// assert_eq!(fe, recovered);
+    /// ```
     pub fn to_le_bytes(&self) -> [u8; 32] {
         let canonical = self.to_canonical();
         let mut bytes = [0u8; 32];
@@ -260,7 +283,14 @@ impl FieldElement {
         Some(Self::from_canonical(limbs))
     }
 
-    /// Parse from decimal string
+    /// Parse from decimal string.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let fe = FieldElement::from_decimal_str("123456789").unwrap();
+    /// assert_eq!(fe.to_decimal_string(), "123456789");
+    /// ```
     pub fn from_decimal_str(s: &str) -> Option<Self> {
         // Parse into [u64; 4] canonical form using repeated multiply-add
         let mut result = [0u64; 4];
@@ -323,7 +353,15 @@ impl FieldElement {
         self.limbs == [0; 4]
     }
 
-    /// Modular addition: (self + other) mod p
+    /// Modular addition: (self + other) mod p.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let a = FieldElement::from_u64(7);
+    /// let b = FieldElement::from_u64(5);
+    /// assert_eq!(a.add(&b), FieldElement::from_u64(12));
+    /// ```
     pub fn add(&self, other: &Self) -> Self {
         let (r0, carry) = adc(self.limbs[0], other.limbs[0], 0);
         let (r1, carry) = adc(self.limbs[1], other.limbs[1], carry);
@@ -353,7 +391,15 @@ impl FieldElement {
         Self { limbs: [r0, r1, r2, r3] }
     }
 
-    /// Modular multiplication: (self * other) mod p
+    /// Modular multiplication: (self * other) mod p.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let a = FieldElement::from_u64(6);
+    /// let b = FieldElement::from_u64(7);
+    /// assert_eq!(a.mul(&b), FieldElement::from_u64(42));
+    /// ```
     #[inline]
     pub fn mul(&self, other: &Self) -> Self {
         Self {
@@ -364,6 +410,14 @@ impl FieldElement {
     /// Modular negation: (-self) mod p (constant-time).
     ///
     /// Computes p - self, then masks to zero if self was zero.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let a = FieldElement::from_u64(5);
+    /// assert!(a.add(&a.neg()).is_zero());
+    /// assert_eq!(FieldElement::ZERO.neg(), FieldElement::ZERO);
+    /// ```
     pub fn neg(&self) -> Self {
         let (r0, borrow) = sbb(MODULUS[0], self.limbs[0], 0);
         let (r1, borrow) = sbb(MODULUS[1], self.limbs[1], borrow);
@@ -419,6 +473,16 @@ impl FieldElement {
     /// constant-time because `pow` uses `ct_select` (branchless) for every bit.
     ///
     /// Returns `None` if `self` is zero.
+    ///
+    /// ```
+    /// use memory::FieldElement;
+    ///
+    /// let a = FieldElement::from_u64(7);
+    /// let inv = a.inv().unwrap();
+    /// assert_eq!(a.mul(&inv), FieldElement::ONE);
+    ///
+    /// assert!(FieldElement::ZERO.inv().is_none());
+    /// ```
     pub fn inv(&self) -> Option<Self> {
         if self.is_zero() {
             return None;

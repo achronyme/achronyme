@@ -18,6 +18,12 @@ use memory::FieldElement;
 // ============================================================================
 
 /// A reference to a wire in the constraint system.
+///
+/// ```
+/// use constraints::Variable;
+///
+/// assert_eq!(Variable::ONE.index(), 0);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Variable(pub usize);
 
@@ -36,9 +42,21 @@ impl Variable {
 // LinearCombination
 // ============================================================================
 
-/// A linear combination: Σ(coefficient_i * variable_i)
+/// A linear combination: Σ(coefficient_i * variable_i).
 ///
 /// Stored as sparse (variable, coefficient) pairs.
+///
+/// ```
+/// use constraints::{Variable, LinearCombination};
+/// use memory::FieldElement;
+///
+/// let lc_var = LinearCombination::from_variable(Variable(1));
+/// assert_eq!(lc_var.terms.len(), 1);
+///
+/// let lc_const = LinearCombination::from_constant(FieldElement::from_u64(42));
+/// assert!(lc_const.is_constant());
+/// assert_eq!(lc_const.constant_value(), Some(FieldElement::from_u64(42)));
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct LinearCombination {
     pub terms: Vec<(Variable, FieldElement)>,
@@ -75,6 +93,14 @@ impl LinearCombination {
     ///
     /// E.g. `x - x` simplifies to the empty LC (constant zero),
     /// `3x + 5x` simplifies to `8x`.
+    ///
+    /// ```
+    /// use constraints::{Variable, LinearCombination};
+    ///
+    /// let x = Variable(1);
+    /// let lc = LinearCombination::from_variable(x) - LinearCombination::from_variable(x);
+    /// assert!(lc.is_constant());
+    /// ```
     pub fn simplify(&self) -> Self {
         if self.terms.len() <= 1 {
             return self.clone();
@@ -209,6 +235,34 @@ pub struct Constraint {
 ///
 /// Manages variable allocation, constraint collection, and
 /// witness verification.
+///
+/// ```
+/// use constraints::{ConstraintSystem, LinearCombination, Variable};
+/// use memory::FieldElement;
+///
+/// let mut cs = ConstraintSystem::new();
+/// let c = cs.alloc_input();   // public output
+/// let a = cs.alloc_witness(); // private input
+/// let b = cs.alloc_witness(); // private input
+///
+/// // Constraint: a * b = c
+/// cs.enforce(
+///     LinearCombination::from_variable(a),
+///     LinearCombination::from_variable(b),
+///     LinearCombination::from_variable(c),
+/// );
+///
+/// assert_eq!(cs.num_constraints(), 1);
+///
+/// // Witness: ONE=1, c=42, a=6, b=7
+/// let witness = vec![
+///     FieldElement::ONE,
+///     FieldElement::from_u64(42),
+///     FieldElement::from_u64(6),
+///     FieldElement::from_u64(7),
+/// ];
+/// assert!(cs.verify(&witness).is_ok());
+/// ```
 #[derive(Clone)]
 pub struct ConstraintSystem {
     /// Total number of variables (including ONE at index 0).
@@ -335,6 +389,29 @@ impl ConstraintSystem {
 impl ConstraintSystem {
     /// Allocate a witness variable and constrain it to be the product of two LCs.
     /// Returns the new variable (= a * b in the field).
+    ///
+    /// ```
+    /// use constraints::{ConstraintSystem, LinearCombination};
+    /// use memory::FieldElement;
+    ///
+    /// let mut cs = ConstraintSystem::new();
+    /// let a = cs.alloc_witness();
+    /// let b = cs.alloc_witness();
+    /// let product = cs.mul_lc(
+    ///     &LinearCombination::from_variable(a),
+    ///     &LinearCombination::from_variable(b),
+    /// );
+    /// assert_eq!(cs.num_constraints(), 1);
+    ///
+    /// // Verify: a=6, b=7, product=42
+    /// let witness = vec![
+    ///     FieldElement::ONE,
+    ///     FieldElement::from_u64(6),
+    ///     FieldElement::from_u64(7),
+    ///     FieldElement::from_u64(42),
+    /// ];
+    /// assert!(cs.verify(&witness).is_ok());
+    /// ```
     pub fn mul_lc(
         &mut self,
         a: &LinearCombination,

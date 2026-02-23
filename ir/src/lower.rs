@@ -129,6 +129,17 @@ impl IrLowering {
 
     /// Convenience: declare inputs and lower in one call.
     /// Names can include array syntax like `"path[3]"` to declare `path_0, path_1, path_2`.
+    ///
+    /// ```
+    /// use ir::IrLowering;
+    ///
+    /// let prog = IrLowering::lower_circuit(
+    ///     "assert_eq(x * y, z)",
+    ///     &["z"],
+    ///     &["x", "y"],
+    /// ).unwrap();
+    /// assert!(!prog.instructions.is_empty());
+    /// ```
     pub fn lower_circuit(
         source: &str,
         public: &[&str],
@@ -173,6 +184,16 @@ impl IrLowering {
     /// Parse a self-contained circuit source that uses in-source `public`/`witness`
     /// declarations. Two-pass: first collects declaration names (to ensure correct
     /// wire ordering: public first, then witness), then processes remaining statements.
+    ///
+    /// ```
+    /// use ir::IrLowering;
+    ///
+    /// let (pub_names, wit_names, prog) = IrLowering::lower_self_contained(
+    ///     "public x\nwitness y\nassert_eq(x, y)"
+    /// ).unwrap();
+    /// assert_eq!(pub_names, vec!["x"]);
+    /// assert_eq!(wit_names, vec!["y"]);
+    /// ```
     pub fn lower_self_contained(source: &str) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
         let ast_program = ast_parse_program(source)
             .map_err(|e| IrError::ParseError(e))?;
