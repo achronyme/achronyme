@@ -26,9 +26,17 @@ jobs:
       - name: Build
         run: cd docs && pnpm build
 
+      - name: Create project if needed
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages project create achronyme-docs --production-branch=main
+        continue-on-error: true
+
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy docs/dist --project-name=achronyme-docs
+          command: pages deploy docs/dist --project-name=achronyme-docs --commit-dirty=true
