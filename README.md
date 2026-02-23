@@ -1,7 +1,7 @@
 # Achronyme
 
-[![CI](https://github.com/eddndev/achronyme/actions/workflows/ci.yml/badge.svg)](https://github.com/eddndev/achronyme/actions/workflows/ci.yml)
-[![Deploy Docs](https://github.com/eddndev/achronyme/actions/workflows/docs.yml/badge.svg)](https://github.com/eddndev/achronyme/actions/workflows/docs.yml)
+[![CI](https://github.com/achronyme/achronyme/actions/workflows/ci.yml/badge.svg)](https://github.com/achronyme/achronyme/actions/workflows/ci.yml)
+[![Deploy Docs](https://github.com/achronyme/achronyme/actions/workflows/docs.yml/badge.svg)](https://github.com/achronyme/achronyme/actions/workflows/docs.yml)
 
 A programming language for zero-knowledge circuits.
 
