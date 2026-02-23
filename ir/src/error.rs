@@ -56,6 +56,26 @@ pub enum IrError {
         got: String,
         span: Option<SourceSpan>,
     },
+    /// A type annotation does not match the inferred type.
+    ///
+    /// ```
+    /// use ir::error::{IrError, SourceSpan};
+    ///
+    /// let err = IrError::AnnotationMismatch {
+    ///     name: "x".into(),
+    ///     declared: "Bool".into(),
+    ///     inferred: "Field".into(),
+    ///     span: Some(SourceSpan { line: 1, col: 5 }),
+    /// };
+    /// assert!(format!("{err}").contains("Bool"));
+    /// assert!(format!("{err}").contains("Field"));
+    /// ```
+    AnnotationMismatch {
+        name: String,
+        declared: String,
+        inferred: String,
+        span: Option<SourceSpan>,
+    },
 }
 
 impl fmt::Display for IrError {
@@ -163,6 +183,21 @@ impl fmt::Display for IrError {
                     write!(f, "[{s}] type mismatch: expected {expected}, got {got}")
                 } else {
                     write!(f, "type mismatch: expected {expected}, got {got}")
+                }
+            }
+            IrError::AnnotationMismatch {
+                name,
+                declared,
+                inferred,
+                span,
+            } => {
+                let msg = format!(
+                    "type annotation mismatch for `{name}`: declared as {declared}, but expression has type {inferred}"
+                );
+                if let Some(s) = span {
+                    write!(f, "[{s}] {msg}")
+                } else {
+                    write!(f, "{msg}")
                 }
             }
         }
