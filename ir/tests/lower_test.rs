@@ -889,3 +889,129 @@ assert(r)
         }
     }
 }
+
+// ============================================================================
+// Type annotation enforcement (soundness fixes)
+// ============================================================================
+
+#[test]
+fn let_bool_on_untyped_emits_range_check() {
+    // `let b: Bool = x` where x is an untyped witness — must emit RangeCheck
+    let source = "witness x\nlet b: Bool = x\nassert(b)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 1,
+        "let b: Bool on untyped witness must emit RangeCheck(1), found {rc_count}"
+    );
+}
+
+#[test]
+fn let_bool_on_typed_bool_no_extra_range_check() {
+    // `let b: Bool = (a == c)` — a == c already produces Bool, no extra RangeCheck needed
+    let source = "witness a\nwitness c\nlet b: Bool = a == c\nassert(b)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert_eq!(
+        rc_count, 0,
+        "let b: Bool on already-Bool value should NOT emit RangeCheck, found {rc_count}"
+    );
+}
+
+#[test]
+fn let_field_on_untyped_no_enforcement() {
+    // `let f: Field = x` — Field annotation on untyped is safe, no RangeCheck
+    let source = "witness x\nlet f: Field = x\nassert_eq(f, f)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { .. })
+    });
+    assert_eq!(
+        rc_count, 0,
+        "let f: Field should not emit RangeCheck, found {rc_count}"
+    );
+}
+
+#[test]
+fn array_annotation_validates_length() {
+    // `let a: Field[2] = [x, y, z]` — length mismatch should error
+    let source = "witness x\nwitness y\nwitness z\nlet a: Field[2] = [x, y, z]";
+    let result = IrLowering::lower_self_contained(source);
+    assert!(result.is_err(), "array length mismatch should fail");
+    let msg = format!("{}", result.unwrap_err());
+    assert!(
+        msg.contains("length mismatch"),
+        "should mention length mismatch: {msg}"
+    );
+}
+
+#[test]
+fn array_bool_on_untyped_elements_enforces() {
+    // `let a: Bool[2] = [x, y]` where x, y are untyped — RangeCheck per element
+    let source = "witness x\nwitness y\nlet a: Bool[2] = [x, y]\nassert(a[0])";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 2,
+        "Bool[2] on untyped elements should emit at least 2 RangeChecks, found {rc_count}"
+    );
+}
+
+#[test]
+fn fn_return_bool_on_untyped_body_enforces() {
+    // fn f(x) -> Bool { x } — x is untyped, return type is Bool → enforce
+    let source = r#"
+witness w
+fn f(x: Field) -> Bool { x }
+let r = f(w)
+assert(r)
+"#;
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 1,
+        "fn -> Bool with untyped body should emit RangeCheck, found {rc_count}"
+    );
+}
+
+#[test]
+fn fn_param_bool_on_untyped_arg_enforces() {
+    // fn f(b: Bool) { assert(b) } called with untyped witness → enforce
+    let source = r#"
+witness w
+fn f(b: Bool) { assert(b) }
+f(w)
+"#;
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 1,
+        "fn(b: Bool) with untyped arg should emit RangeCheck, found {rc_count}"
+    );
+}
+
+#[test]
+fn neg_result_has_field_type() {
+    // `-x` should have type Field
+    let source = "witness x\nlet n = -x\nassert_eq(n, n)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    for inst in &prog.instructions {
+        if let Instruction::Neg { result, .. } = inst {
+            assert_eq!(
+                prog.get_type(*result),
+                Some(ir::IrType::Field),
+                "Neg result should have Field type"
+            );
+        }
+    }
+}

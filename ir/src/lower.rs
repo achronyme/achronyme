@@ -469,15 +469,47 @@ impl IrLowering {
                     sp,
                 ));
             }
-            let vars = elements
+            let mut vars = elements
                 .iter()
                 .map(|e| self.lower_expr(e))
                 .collect::<Result<Vec<_>, _>>()?;
-            // Set element types from annotation if provided
+            // Validate and enforce types from annotation if provided
             if let Some(ann) = type_ann {
-                let ty = annotation_to_ir_type(ann);
-                for v in &vars {
-                    self.program.set_type(*v, ty);
+                // Validate array size matches annotation
+                let expected_size = match ann {
+                    TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n) => Some(*n),
+                    _ => None,
+                };
+                if let Some(expected) = expected_size {
+                    if vars.len() != expected {
+                        return Err(IrError::ArrayLengthMismatch {
+                            expected,
+                            got: vars.len(),
+                            span: to_ir_span(arr_span),
+                        });
+                    }
+                }
+                let elem_ty = annotation_to_ir_type(ann);
+                if elem_ty == IrType::Bool {
+                    // For Bool arrays, enforce each untyped element
+                    for v in vars.iter_mut() {
+                        if self.program.get_type(*v).is_none() {
+                            let enforced = self.program.fresh_var();
+                            self.program.push(Instruction::RangeCheck {
+                                result: enforced,
+                                operand: *v,
+                                bits: 1,
+                            });
+                            self.program.set_type(enforced, IrType::Bool);
+                            *v = enforced;
+                        } else {
+                            self.program.set_type(*v, elem_ty);
+                        }
+                    }
+                } else {
+                    for v in &vars {
+                        self.program.set_type(*v, elem_ty);
+                    }
                 }
             }
             self.env.insert(name.to_string(), EnvValue::Array(vars));
@@ -487,7 +519,7 @@ impl IrLowering {
         let v = self.lower_expr(value)?;
 
         // Validate type annotation if present
-        if let Some(ann) = type_ann {
+        let bound_var = if let Some(ann) = type_ann {
             let declared = annotation_to_ir_type(ann);
             if let Some(inferred) = self.program.get_type(v) {
                 if !type_compatible(declared, inferred) {
@@ -498,14 +530,32 @@ impl IrLowering {
                         span: to_ir_span(span),
                     });
                 }
+                // Already typed and compatible — use as-is
+                self.program.set_type(v, declared);
+                v
+            } else if declared == IrType::Bool {
+                // Untyped value annotated as Bool — emit RangeCheck(v, 1) for enforcement
+                let enforced = self.program.fresh_var();
+                self.program.push(Instruction::RangeCheck {
+                    result: enforced,
+                    operand: v,
+                    bits: 1,
+                });
+                self.program.set_type(enforced, IrType::Bool);
+                enforced
+            } else {
+                // Field annotation on untyped — safe, no enforcement needed
+                self.program.set_type(v, declared);
+                v
             }
-            // Set the declared type
-            self.program.set_type(v, declared);
-        }
+        } else {
+            v
+        };
 
         // `let` is an alias — no instruction emitted, just env binding
-        self.program.set_name(v, name.to_string());
-        self.env.insert(name.to_string(), EnvValue::Scalar(v));
+        self.program.set_name(bound_var, name.to_string());
+        self.env
+            .insert(name.to_string(), EnvValue::Scalar(bound_var));
         Ok(())
     }
 
@@ -799,6 +849,7 @@ impl IrLowering {
                     result: v,
                     operand: inner,
                 });
+                self.program.set_type(v, IrType::Field);
             }
             UnaryOp::Not => {
                 // Validate operand is Bool if typed
@@ -1170,7 +1221,7 @@ impl IrLowering {
             }
         };
 
-        let arg_vars: Vec<SsaVar> = args
+        let mut arg_vars: Vec<SsaVar> = args
             .iter()
             .map(|a| self.lower_expr(a))
             .collect::<Result<_, _>>()?;
@@ -1184,8 +1235,8 @@ impl IrLowering {
             });
         }
 
-        // Validate typed params against argument types
-        for (param, arg_var) in fn_def.params.iter().zip(arg_vars.iter()) {
+        // Validate typed params against argument types, enforce Bool on untyped args
+        for (param, arg_var) in fn_def.params.iter().zip(arg_vars.iter_mut()) {
             if let Some(ref ann) = param.type_ann {
                 let declared = annotation_to_ir_type(ann);
                 if let Some(inferred) = self.program.get_type(*arg_var) {
@@ -1197,6 +1248,16 @@ impl IrLowering {
                             span: sp.clone(),
                         });
                     }
+                } else if declared == IrType::Bool {
+                    // Untyped arg passed to Bool param — emit RangeCheck enforcement
+                    let enforced = self.program.fresh_var();
+                    self.program.push(Instruction::RangeCheck {
+                        result: enforced,
+                        operand: *arg_var,
+                        bits: 1,
+                    });
+                    self.program.set_type(enforced, IrType::Bool);
+                    *arg_var = enforced;
                 }
             }
         }
@@ -1218,7 +1279,7 @@ impl IrLowering {
         }
 
         // Lower the function body directly (no re-parsing!)
-        let result = self.lower_block(&fn_def.body)?;
+        let mut result = self.lower_block(&fn_def.body)?;
 
         // Set return type if declared
         if let Some(ref ret_ann) = fn_def.return_type {
@@ -1232,8 +1293,20 @@ impl IrLowering {
                         span: sp.clone(),
                     });
                 }
+                self.program.set_type(result, ret_ty);
+            } else if ret_ty == IrType::Bool {
+                // Untyped return value with Bool return type — emit enforcement
+                let enforced = self.program.fresh_var();
+                self.program.push(Instruction::RangeCheck {
+                    result: enforced,
+                    operand: result,
+                    bits: 1,
+                });
+                self.program.set_type(enforced, IrType::Bool);
+                result = enforced;
+            } else {
+                self.program.set_type(result, ret_ty);
             }
-            self.program.set_type(result, ret_ty);
         }
 
         // Restore env

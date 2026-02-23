@@ -280,3 +280,172 @@ assert(neg)
         .unwrap();
     compiler_yes.system.verify().unwrap();
 }
+
+// ============================================================================
+// bool_prop: RangeCheck(x, 1) and Assert recognition
+// ============================================================================
+
+#[test]
+fn bool_prop_range_check_1_bit_is_boolean() {
+    let mut p = IrProgram::new();
+    let a = p.fresh_var();
+    p.push(Instruction::Input {
+        result: a,
+        name: "a".into(),
+        visibility: Visibility::Witness,
+    });
+    let rc = p.fresh_var();
+    p.push(Instruction::RangeCheck {
+        result: rc,
+        operand: a,
+        bits: 1,
+    });
+
+    let set = compute_proven_boolean(&p);
+    assert!(
+        set.contains(&rc),
+        "RangeCheck(x, 1) result should be proven boolean"
+    );
+    assert!(
+        !set.contains(&a),
+        "the unchecked operand should NOT be boolean"
+    );
+
+    // RangeCheck with bits > 1 should NOT be boolean
+    let rc8 = p.fresh_var();
+    p.push(Instruction::RangeCheck {
+        result: rc8,
+        operand: a,
+        bits: 8,
+    });
+    let set2 = compute_proven_boolean(&p);
+    assert!(
+        !set2.contains(&rc8),
+        "RangeCheck(x, 8) should NOT be boolean"
+    );
+}
+
+#[test]
+fn bool_prop_assert_marks_operand_boolean() {
+    let mut p = IrProgram::new();
+    let a = p.fresh_var();
+    p.push(Instruction::Input {
+        result: a,
+        name: "a".into(),
+        visibility: Visibility::Witness,
+    });
+    let assert_r = p.fresh_var();
+    p.push(Instruction::Assert {
+        result: assert_r,
+        operand: a,
+    });
+
+    let set = compute_proven_boolean(&p);
+    assert!(set.contains(&a), "Assert operand should be proven boolean");
+    assert!(
+        set.contains(&assert_r),
+        "Assert result should be proven boolean"
+    );
+}
+
+// ============================================================================
+// Soundness: let b: Bool = witness must produce enforceable circuit
+// ============================================================================
+
+#[test]
+fn soundness_let_bool_on_untyped_witness_enforced() {
+    // The critical soundness test: `let b: Bool = x` where x is an untyped witness.
+    // If x=5 is assigned, the circuit MUST reject the witness.
+    let source = "witness x\nlet b: Bool = x\nassert(b)";
+    let (_, _, mut program) = ir::IrLowering::lower_self_contained(source).expect("should lower");
+    ir::passes::optimize(&mut program);
+
+    let proven = compute_proven_boolean(&program);
+    let mut compiler = R1CSCompiler::new();
+    compiler.set_proven_boolean(proven);
+    compiler.compile_ir(&program).unwrap();
+
+    // Valid witness: x=1 → should pass
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let mut valid_inputs = HashMap::new();
+    valid_inputs.insert("x".to_string(), FieldElement::from_u64(1));
+    let witness = wg.generate(&valid_inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+
+    // Malicious witness: x=5 → circuit MUST reject
+    let mut bad_inputs = HashMap::new();
+    bad_inputs.insert("x".to_string(), FieldElement::from_u64(5));
+    let bad_witness = wg.generate(&bad_inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&bad_witness).is_err(),
+        "circuit must reject x=5 when annotated as Bool"
+    );
+}
+
+#[test]
+fn soundness_fn_return_bool_enforced() {
+    // fn f(x: Field) -> Bool { x } — if body returns an untyped value,
+    // the circuit must enforce boolean on the return value.
+    let source = r#"
+witness w
+fn f(x: Field) -> Bool { x }
+let r = f(w)
+assert(r)
+"#;
+    let (_, _, mut program) = ir::IrLowering::lower_self_contained(source).expect("should lower");
+    ir::passes::optimize(&mut program);
+
+    let proven = compute_proven_boolean(&program);
+    let mut compiler = R1CSCompiler::new();
+    compiler.set_proven_boolean(proven);
+    compiler.compile_ir(&program).unwrap();
+
+    // Valid: w=1 → passes (assert(r) requires r=1)
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let mut valid_inputs = HashMap::new();
+    valid_inputs.insert("w".to_string(), FieldElement::ONE);
+    let witness = wg.generate(&valid_inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+
+    // Malicious: w=42 → must reject
+    let mut bad_inputs = HashMap::new();
+    bad_inputs.insert("w".to_string(), FieldElement::from_u64(42));
+    let bad_witness = wg.generate(&bad_inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&bad_witness).is_err(),
+        "circuit must reject w=42 when fn return type is Bool"
+    );
+}
+
+#[test]
+fn soundness_fn_param_bool_enforced() {
+    // fn f(b: Bool) { assert(b) } called with untyped witness
+    let source = r#"
+witness w
+fn f(b: Bool) { assert(b) }
+f(w)
+"#;
+    let (_, _, mut program) = ir::IrLowering::lower_self_contained(source).expect("should lower");
+    ir::passes::optimize(&mut program);
+
+    let proven = compute_proven_boolean(&program);
+    let mut compiler = R1CSCompiler::new();
+    compiler.set_proven_boolean(proven);
+    compiler.compile_ir(&program).unwrap();
+
+    // Valid: w=1 → passes
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let mut valid_inputs = HashMap::new();
+    valid_inputs.insert("w".to_string(), FieldElement::ONE);
+    let witness = wg.generate(&valid_inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+
+    // Malicious: w=3 → must reject
+    let mut bad_inputs = HashMap::new();
+    bad_inputs.insert("w".to_string(), FieldElement::from_u64(3));
+    let bad_witness = wg.generate(&bad_inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&bad_witness).is_err(),
+        "circuit must reject w=3 when param type is Bool"
+    );
+}
