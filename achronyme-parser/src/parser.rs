@@ -551,8 +551,8 @@ impl Parser {
             TokenKind::Ident | TokenKind::StringLit => {
                 matches!(self.lookahead(2), TokenKind::Colon)
             }
-            // Empty map: `{}`  — but `{}` is also an empty block.
-            // pest grammar: map_literal requires at least one pair, so `{}` is a block.
+            // `{}` is an empty map (matches pest grammar behavior)
+            TokenKind::RBrace => true,
             _ => false,
         }
     }
