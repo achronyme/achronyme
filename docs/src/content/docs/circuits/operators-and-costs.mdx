@@ -85,4 +85,13 @@ The compiler's `bool_prop` pass tracks which variables are already proven to be 
 
 For example, `!(x == y)` costs 2 constraints for the `==` and 0 for the `!`, because the output of `==` is already known to be boolean.
 
-[Type annotations](/circuits/type-annotations/) extend this optimization: declaring `witness flag: Bool` marks the variable as proven boolean, saving 1 constraint every time it's used in a boolean context (e.g., as a `mux` condition).
+The pass recognizes these sources as proven-boolean:
+
+- Constants `0` and `1`
+- Comparison results (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+- `RangeCheck(x, 1)` results (including those from `: Bool` enforcement)
+- `Assert` operands and results
+- Variables with `Bool` type annotation (from declarations)
+- `Not`/`And`/`Or`/`Mux` of proven-boolean operands
+
+[Type annotations](/circuits/type-annotations/) extend this optimization: declaring `witness flag: Bool` marks the variable as proven boolean, saving 1 constraint every time it's used in a boolean context (e.g., as a `mux` condition). Annotating `: Bool` on an untyped value (via `let`, function params, or return types) emits a one-time `RangeCheck` enforcement (+1 constraint), after which the value is also tracked as proven-boolean for downstream savings.

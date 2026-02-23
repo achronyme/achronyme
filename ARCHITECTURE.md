@@ -102,11 +102,15 @@ calls are inlined at each call site with a recursion guard.
 pub fn optimize(program: &mut IrProgram)
 ```
 
-Runs two passes in sequence:
+Runs three passes in sequence:
 - **const_fold** — forward pass, folds arithmetic on known constants, mul-by-zero,
   `x - x → 0`, `x / x → 1`, boolean logic, comparisons
 - **dce** — backward pass, removes instructions whose result is unused
   (conservative on side-effecting instructions)
+- **bool_prop** — forward pass, computes the set of proven-boolean SSA variables
+  (seeds: `Const(0/1)`, comparisons, `RangeCheck(x,1)`, `Assert`, `Bool` annotations;
+  propagates through `Not`/`And`/`Or`/`Mux`). Used by backends to skip redundant
+  boolean enforcement constraints.
 
 ### 4. Compile to R1CS
 

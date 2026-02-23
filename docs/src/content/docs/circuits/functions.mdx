@@ -49,7 +49,7 @@ This means functions are a convenience for code organization, not a mechanism fo
 
 ## Constraint Cost
 
-The cost of a function call equals the sum of its body's constraints. A function with two multiplications costs 2 constraints per call.
+The cost of a function call equals the sum of its body's constraints, plus any type enforcement costs. A function with two multiplications costs 2 constraints per call.
 
 ```
 fn dot(a0, a1, b0, b1) {
@@ -59,6 +59,24 @@ fn dot(a0, a1, b0, b1) {
 
 Calling `dot` three times produces 6 constraints.
 
+### Type Enforcement Costs
+
+When a function has typed parameters or a return type, the compiler may emit additional constraints:
+
+- **`: Bool` parameter with untyped argument**: +1 constraint per parameter (emits `RangeCheck(arg, 1)`)
+- **`-> Bool` return with untyped body result**: +1 constraint (emits `RangeCheck(result, 1)`)
+- **Already-typed arguments/results that match**: No extra cost
+
+```
+fn check(b: Bool) { assert(b) }    // body: 2 constraints (assert)
+
+witness w                           // untyped
+check(w)                            // total: 2 + 1 = 3 constraints (1 for param enforcement)
+
+witness b: Bool                     // typed
+check(b)                            // total: 2 constraints (no enforcement needed)
+```
+
 ## Restrictions
 
 | Restriction | Error | Reason |
@@ -67,7 +85,8 @@ Calling `dot` three times produces 6 constraints.
 | No closures | — | No runtime environment to capture |
 | No higher-order functions | — | Cannot pass functions as circuit values |
 | No anonymous functions | — | Only named `fn` definitions are supported |
-| Type mismatch | `AnnotationMismatch` | Argument type doesn't match typed parameter |
+| Type mismatch | `AnnotationMismatch` | Argument type doesn't match typed parameter (e.g., `Field` arg to `Bool` param) |
+| Bool enforcement | — | Untyped arg to `: Bool` param emits `RangeCheck` (+1 constraint) |
 
 Functions in circuits are purely a compile-time mechanism. They cannot capture variables from outer scopes (except declared inputs), cannot be passed as values, and cannot call themselves.
 

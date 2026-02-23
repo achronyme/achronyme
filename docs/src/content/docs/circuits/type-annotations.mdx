@@ -61,7 +61,12 @@ let product: Field = a * b
 let is_equal: Bool = a == b
 ```
 
-The compiler validates that the annotation matches the expression's inferred type. If there's a mismatch, you get a clear error:
+The compiler handles annotations depending on the expression's inferred type:
+
+- **Typed expression matches annotation**: No extra cost. `let eq: Bool = a == b` is free because `==` already produces `Bool`.
+- **Typed expression conflicts**: Error. `let x: Bool = a + 1` fails because `+` produces `Field`, which is incompatible with `Bool`.
+- **Untyped expression with `: Bool`**: The compiler emits a `RangeCheck(v, 1)` constraint to enforce `v * (1 - v) = 0`, costing **1 extra constraint**. This is necessary for soundness — without enforcement, a malicious prover could assign any value.
+- **Untyped expression with `: Field`**: No enforcement needed. `Field` is the default and doesn't restrict the value space.
 
 ```
 witness a: Field
@@ -71,7 +76,36 @@ witness a: Field
 let x: Bool = a + 1
 ```
 
+```
+witness w
+
+// Enforced: emits RangeCheck(w, 1) — costs 1 constraint
+let b: Bool = w
+```
+
 Arithmetic operations (`+`, `-`, `*`, `/`, `^`) produce `Field`. Comparisons and logical operations (`==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`) produce `Bool`.
+
+### Array Bindings
+
+For array annotations, the compiler validates that the array length matches the declared size:
+
+```
+witness x
+witness y
+
+// Error: array length mismatch: expected 3, got 2
+let a: Field[3] = [x, y]
+```
+
+`Bool[N]` annotations enforce each untyped element individually (1 constraint per element):
+
+```
+witness x
+witness y
+
+// Enforced: emits RangeCheck for each untyped element — costs 2 constraints
+let flags: Bool[2] = [x, y]
+```
 
 ## Functions
 
@@ -104,6 +138,28 @@ witness a: Field
 let result: Field = double(a)    // ok
 ```
 
+### Bool Enforcement on Parameters and Return Types
+
+When a `: Bool` parameter receives an untyped argument, the compiler emits a `RangeCheck` to enforce the boolean constraint (1 extra constraint per untyped argument):
+
+```
+witness w    // untyped
+
+fn check(b: Bool) { assert(b) }
+check(w)     // emits RangeCheck(w, 1) — 1 extra constraint
+```
+
+Similarly, when a function with `-> Bool` return type produces an untyped body result, the compiler enforces boolean on the return value:
+
+```
+witness w
+
+fn to_flag(x: Field) -> Bool { x }
+let f = to_flag(w)    // emits RangeCheck on return value — 1 extra constraint
+```
+
+If the argument or return value already has a proven type (e.g., from a comparison), no extra constraint is emitted.
+
 ## Subtyping: Bool as Field
 
 `Bool` values can be used in arithmetic (field) context. This is safe because booleans are 0 or 1 in the field:
@@ -115,30 +171,36 @@ witness flag: Bool
 let as_field: Field = flag + flag
 ```
 
-The reverse is not allowed unless the value is a proven boolean:
+The reverse depends on the source value's type:
 
-```
-witness x: Field
+- **Typed as `Field`**: Error. A value explicitly typed as `Field` cannot be narrowed to `Bool`:
+  ```
+  witness x: Field
 
-// Error: x is Field, cannot annotate as Bool
-let b: Bool = x
-```
+  // Error: x is Field, cannot annotate as Bool
+  let b: Bool = x
+  ```
 
-Values that are proven boolean (comparison results, constants 0/1) can be annotated as `Bool`:
+- **Untyped**: Enforcement. The compiler emits `RangeCheck(x, 1)` to enforce `x * (1 - x) = 0` (1 constraint):
+  ```
+  witness x    // untyped
 
-```
-witness a: Field
-witness b: Field
+  // Enforced: emits RangeCheck — 1 extra constraint
+  let b: Bool = x
+  ```
 
-// Comparison result is a proven boolean — annotation is valid
-let eq: Bool = a == b
-```
+- **Already proven boolean**: Free. No extra constraint is emitted:
+  ```
+  witness a: Field
+  witness b: Field
+
+  // Comparison result is a proven boolean — annotation is free
+  let eq: Bool = a == b
+  ```
 
 ## Constraint Savings
 
-Annotating a witness as `Bool` tells the compiler it can skip the boolean enforcement constraint for that variable. This saves **1 constraint per annotated Bool witness**.
-
-Without annotation, the compiler must add a constraint to enforce `flag * (1 - flag) = 0` every time `flag` is used in a boolean context. With `witness flag: Bool`, the compiler knows `flag` is already boolean and skips the enforcement.
+Annotating a witness as `Bool` at the declaration site tells the compiler it can skip the boolean enforcement constraint when the variable is used in boolean context later. This saves **1 constraint per use** in operations like `mux`, `&&`, `||`, `!`, and `assert`.
 
 ```
 // Without annotation: mux adds 1 boolean enforcement for cond (2 constraints total)
@@ -150,7 +212,28 @@ witness cond: Bool
 let r = mux(cond, a, b)
 ```
 
-This optimization is applied by the `bool_prop` pass, which tracks proven-boolean variables through the program.
+This optimization is applied by the `bool_prop` pass, which tracks proven-boolean variables through the program. The pass recognizes these sources as proven-boolean:
+
+- Constants `0` and `1`
+- Comparison results (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+- `RangeCheck(x, 1)` results (including those emitted by `: Bool` enforcement)
+- `Assert` operands and results
+- Variables annotated with `IrType::Bool` (from `witness b: Bool` declarations)
+- `Not`/`And`/`Or`/`Mux` of proven-boolean operands
+
+### Enforcement vs. Savings
+
+There is an important distinction:
+
+| Scenario | Cost |
+|----------|------|
+| `witness b: Bool` → used in `mux(b, ...)` | **Saves 1** — declaration marks `b` as boolean, `mux` skips enforcement |
+| `let b: Bool = w` where `w` is untyped | **Costs 1** — emits `RangeCheck(w, 1)` to enforce boolean |
+| `let b: Bool = (x == y)` | **Free** — `==` already produces a proven boolean |
+| `fn f(b: Bool)` called with untyped arg | **Costs 1** — emits `RangeCheck` on the argument |
+| `fn f() -> Bool` returning untyped body | **Costs 1** — emits `RangeCheck` on the return value |
+
+The enforcement cost is a one-time soundness guarantee. Downstream uses of the enforced variable benefit from `bool_prop` savings.
 
 ## Complete Example
 
@@ -187,16 +270,20 @@ assert_eq(result, expected)
 | Syntax | Example | Notes |
 |--------|---------|-------|
 | Typed public | `public x: Field` | Annotated public input |
-| Typed witness | `witness flag: Bool` | Saves 1 boolean enforcement constraint |
+| Typed witness | `witness flag: Bool` | Saves 1 boolean enforcement constraint per use |
 | Typed array | `witness path[3]: Field` | Type applies to all elements |
-| Typed let | `let h: Field = poseidon(a, b)` | Validated against inferred type |
+| Bool array | `let flags: Bool[2] = [x, y]` | Enforces each untyped element (+1 constraint each) |
+| Typed let (matching) | `let eq: Bool = a == b` | No extra cost — type already matches |
+| Typed let (enforced) | `let b: Bool = w` | Emits `RangeCheck` if `w` is untyped (+1 constraint) |
 | Typed parameter | `fn f(x: Field)` | Checked at each call site |
-| Return type | `fn f(x: Field) -> Bool` | Checked against body's result type |
+| Bool parameter | `fn f(b: Bool)` | Enforces untyped args (+1 constraint each) |
+| Return type | `fn f() -> Bool` | Enforces untyped body result (+1 constraint) |
 | Untyped (default) | `witness secret` | Same behavior as before |
 
 ## Errors
 
 | Error | Cause |
 |-------|-------|
-| `AnnotationMismatch` | Declared type doesn't match the inferred type (e.g., `let x: Bool = a + b`) |
+| `AnnotationMismatch` | Declared type doesn't match the inferred type (e.g., `let x: Bool = a + b` where `+` returns `Field`) |
+| `ArrayLengthMismatch` | Array literal size doesn't match declared size (e.g., `let a: Field[2] = [x, y, z]`) |
 | Parse error | Invalid type name (only `Field` and `Bool` are recognized) |
