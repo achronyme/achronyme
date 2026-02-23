@@ -151,9 +151,7 @@ fn run_r1cs_pipeline(
 
     // Generate Solidity verifier if requested
     if let Some(sol_path) = solidity_path {
-        let cache_dir = std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join(".achronyme").join("cache"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/achronyme/cache"));
+        let cache_dir = crate::cache_dir();
 
         let vk = crate::groth16::setup_vk_only(&compiler.cs, &cache_dir)
             .map_err(|e| anyhow::anyhow!("Groth16 setup failed: {e}"))?;
@@ -193,9 +191,7 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>, prove: b
         eprintln!("plonkish verification: OK");
 
         if prove {
-            let cache_dir = std::env::var("HOME")
-                .map(|h| std::path::PathBuf::from(h).join(".achronyme").join("cache"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/achronyme/cache"));
+            let cache_dir = crate::cache_dir();
 
             let result = crate::halo2_proof::generate_plonkish_proof(compiler, &cache_dir)
                 .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;

@@ -24,9 +24,7 @@ pub struct DefaultProveHandler {
 
 impl DefaultProveHandler {
     pub fn new(backend: ProveBackend) -> Self {
-        let cache_dir = std::env::var("HOME")
-            .map(|h| PathBuf::from(h).join(".achronyme").join("cache"))
-            .unwrap_or_else(|_| PathBuf::from("/tmp/achronyme/cache"));
+        let cache_dir = crate::cache_dir();
         Self { cache_dir, backend }
     }
 }
