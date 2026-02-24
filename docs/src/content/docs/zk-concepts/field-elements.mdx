@@ -3,4 +3,70 @@ title: "Field Elements"
 description: "BN254 scalar field arithmetic."
 ---
 
-Content coming soon.
+A **field element** is a number in the BN254 scalar field — integers modulo the prime:
+
+```
+p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+```
+
+All arithmetic on field elements is **modular**: addition, subtraction, and multiplication wrap around at `p`, and division computes the modular inverse.
+
+## Int vs Field
+
+| | Int | Field |
+|---|---|---|
+| Range | -2^59 to 2^59-1 | 0 to p-1 |
+| Overflow | Runtime error | Wraps modulo p |
+| Negation | `-x` | `p - x` |
+| Division | Truncating (`7 / 2 = 3`) | Modular inverse (`1/2 = (p+1)/2`) |
+| Storage | Inline (60-bit tagged) | Heap-allocated (256-bit Montgomery) |
+
+Int and Field are **distinct types**. Mixing them in arithmetic is a runtime error:
+
+```
+field(3) + 5       // Error: Cannot mix Int and Field
+field(3) + field(5) // OK: field(8)
+```
+
+## Creating Field Elements
+
+Use the `field()` builtin to create field elements explicitly:
+
+```
+let a = field(42)          // from integer
+let b = field("0xFF")      // from hex string
+let c = field("12345")     // from decimal string
+```
+
+## Arithmetic
+
+Field elements support `+`, `-`, `*`, `/`, `^`, and `==`:
+
+```
+let a = field(10)
+let b = field(3)
+
+let sum  = a + b        // field(13)
+let diff = a - b        // field(7)
+let prod = a * b        // field(30)
+let quot = a / b        // modular inverse of 3, times 10
+let pow  = a ^ 5        // 10^5 mod p
+
+// Negative exponents compute modular inverse
+let inv = a ^ -1        // same as field(1) / a
+```
+
+## In Circuits
+
+In circuit mode (`prove {}` blocks and `circuit` CLI), **all values are field elements** implicitly. Integer variables captured by a `prove {}` block are converted to field elements automatically:
+
+```
+let x = 42
+prove {
+    // x is automatically converted to field(42) inside the circuit
+    public x
+    assert_eq(x, 42)
+}
+```
+
+This is the only place where Int→Field conversion happens implicitly. In regular VM execution, the conversion must always be explicit via `field()`.
