@@ -200,34 +200,39 @@ The reverse depends on the source value's type:
 
 ## Constraint Savings
 
-Annotating a witness as `Bool` at the declaration site tells the compiler it can skip the boolean enforcement constraint when the variable is used in boolean context later. This saves **1 constraint per use** in operations like `mux`, `&&`, `||`, `!`, and `assert`.
+Annotating an input as `: Bool` emits a one-time `RangeCheck` enforcement constraint (`v * (1-v) = 0`) at the declaration site. This enforced boolean status propagates through `bool_prop`, allowing all downstream uses to **skip** redundant boolean enforcement. The net effect is a saving when the variable is used multiple times in boolean context.
 
 ```
-// Without annotation: mux adds 1 boolean enforcement for cond (2 constraints total)
+// Without annotation: each mux adds 1 boolean enforcement for cond
 witness cond
-let r = mux(cond, a, b)
+let r1 = mux(cond, a, b)   // 2 constraints (1 enforcement + 1 selection)
+let r2 = mux(cond, c, d)   // 2 constraints (1 enforcement + 1 selection)
+// Total: 4 constraints
 
-// With annotation: boolean enforcement skipped (1 constraint total)
-witness cond: Bool
-let r = mux(cond, a, b)
+// With annotation: 1 enforcement at declaration, downstream skips
+witness cond: Bool          // 1 constraint (RangeCheck enforcement)
+let r1 = mux(cond, a, b)   // 1 constraint (selection only, enforcement skipped)
+let r2 = mux(cond, c, d)   // 1 constraint (selection only, enforcement skipped)
+// Total: 3 constraints (saved 1)
 ```
 
 This optimization is applied by the `bool_prop` pass, which tracks proven-boolean variables through the program. The pass recognizes these sources as proven-boolean:
 
 - Constants `0` and `1`
 - Comparison results (`==`, `!=`, `<`, `<=`, `>`, `>=`)
-- `RangeCheck(x, 1)` results (including those emitted by `: Bool` enforcement)
+- `RangeCheck(x, 1)` results (including those emitted by `: Bool` enforcement on declarations, let bindings, function params, and return types)
 - `Assert` operands and results
-- Variables annotated with `IrType::Bool` (from `witness b: Bool` declarations)
 - `Not`/`And`/`Or`/`Mux` of proven-boolean operands
 
 ### Enforcement vs. Savings
 
-There is an important distinction:
+All `: Bool` annotations emit enforcement constraints for soundness. The cost is one-time per variable; downstream uses benefit from `bool_prop` savings.
 
 | Scenario | Cost |
 |----------|------|
-| `witness b: Bool` → used in `mux(b, ...)` | **Saves 1** — declaration marks `b` as boolean, `mux` skips enforcement |
+| `witness b: Bool` | **Costs 1** — emits `RangeCheck(b, 1)` at declaration |
+| `public b: Bool` | **Costs 1** — emits `RangeCheck(b, 1)` at declaration |
+| `witness b: Bool` → used in `mux(b, ...)` | **Saves 1 per use** — `mux` skips boolean enforcement on `b` |
 | `let b: Bool = w` where `w` is untyped | **Costs 1** — emits `RangeCheck(w, 1)` to enforce boolean |
 | `let b: Bool = (x == y)` | **Free** — `==` already produces a proven boolean |
 | `fn f(b: Bool)` called with untyped arg | **Costs 1** — emits `RangeCheck` on the argument |
@@ -270,8 +275,9 @@ assert_eq(result, expected)
 | Syntax | Example | Notes |
 |--------|---------|-------|
 | Typed public | `public x: Field` | Annotated public input |
-| Typed witness | `witness flag: Bool` | Saves 1 boolean enforcement constraint per use |
+| Typed witness | `witness flag: Bool` | Emits `RangeCheck` (+1 constraint), saves 1 per downstream boolean use |
 | Typed array | `witness path[3]: Field` | Type applies to all elements |
+| Bool array input | `witness flags[3]: Bool` | Emits `RangeCheck` per element (+3 constraints) |
 | Bool array | `let flags: Bool[2] = [x, y]` | Enforces each untyped element (+1 constraint each) |
 | Typed let (matching) | `let eq: Bool = a == b` | No extra cost — type already matches |
 | Typed let (enforced) | `let b: Bool = w` | Emits `RangeCheck` if `w` is untyped (+1 constraint) |
