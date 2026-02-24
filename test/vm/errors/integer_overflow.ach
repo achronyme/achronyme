@@ -1,0 +1,2 @@
+// Expected error: integer overflow
+let x = 576460752303423487 + 1
