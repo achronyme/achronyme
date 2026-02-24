@@ -487,6 +487,14 @@ impl IrLowering {
                 .collect::<Result<Vec<_>, _>>()?;
             // Validate and enforce types from annotation if provided
             if let Some(ann) = type_ann {
+                // Reject scalar annotations on array values
+                if matches!(ann, TypeAnnotation::Field | TypeAnnotation::Bool) {
+                    return Err(IrError::TypeMismatch {
+                        expected: format!("{}[{}]", ann, vars.len()),
+                        got: format!("{ann}"),
+                        span: to_ir_span(span),
+                    });
+                }
                 // Validate array size matches annotation
                 let expected_size = match ann {
                     TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n) => Some(*n),
@@ -528,8 +536,12 @@ impl IrLowering {
                         }
                     }
                 } else {
+                    // Field[N]: only stamp if element doesn't already have a
+                    // more specific type (Bool is subtype of Field).
                     for v in &vars {
-                        self.program.set_type(*v, elem_ty);
+                        if self.program.get_type(*v) != Some(IrType::Bool) {
+                            self.program.set_type(*v, elem_ty);
+                        }
                     }
                 }
             }
@@ -541,6 +553,17 @@ impl IrLowering {
 
         // Validate type annotation if present
         let bound_var = if let Some(ann) = type_ann {
+            // Reject array annotations on scalar values
+            if matches!(
+                ann,
+                TypeAnnotation::FieldArray(_) | TypeAnnotation::BoolArray(_)
+            ) {
+                return Err(IrError::TypeMismatch {
+                    expected: "scalar".into(),
+                    got: format!("{ann}"),
+                    span: to_ir_span(span),
+                });
+            }
             let declared = annotation_to_ir_type(ann);
             if let Some(inferred) = self.program.get_type(v) {
                 if !type_compatible(declared, inferred) {
@@ -767,6 +790,7 @@ impl IrLowering {
                         result: v,
                         value: FieldElement::ONE,
                     });
+                    self.program.set_type(v, IrType::Field);
                     return Ok(v);
                 }
 
@@ -1589,6 +1613,7 @@ impl IrLowering {
                 result: v,
                 value: FieldElement::ONE,
             });
+            self.program.set_type(v, IrType::Field);
             return Ok(v);
         }
         if exp == 1 {
@@ -1610,6 +1635,7 @@ impl IrLowering {
                             lhs: r,
                             rhs: current,
                         });
+                        self.program.set_type(v, IrType::Field);
                         v
                     }
                 });
@@ -1622,6 +1648,7 @@ impl IrLowering {
                     lhs: current,
                     rhs: current,
                 });
+                self.program.set_type(v, IrType::Field);
                 current = v;
             }
         }
