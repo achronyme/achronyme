@@ -8,6 +8,7 @@ pub enum RuntimeError {
     FunctionNotFound,
     InvalidOperand,
     DivisionByZero,
+    IntegerOverflow,
     TypeMismatch(String),
     ArityMismatch(String),
     AssertionFailed,

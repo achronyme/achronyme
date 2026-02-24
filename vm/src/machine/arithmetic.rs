@@ -43,12 +43,7 @@ impl ArithmeticOps for super::vm::VM {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
-                            // Overflow -> promote to Field
-                            let fa = FieldElement::from_i64(ib);
-                            let fb = FieldElement::from_i64(ic);
-                            let result = fa.add(&fb);
-                            let handle = self.heap.alloc_field(result);
-                            self.set_reg(base, a, Value::field(handle))?;
+                            return Err(RuntimeError::IntegerOverflow);
                         }
                     }
                 } else {
@@ -73,11 +68,7 @@ impl ArithmeticOps for super::vm::VM {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
-                            let fa = FieldElement::from_i64(ib);
-                            let fb = FieldElement::from_i64(ic);
-                            let result = fa.sub(&fb);
-                            let handle = self.heap.alloc_field(result);
-                            self.set_reg(base, a, Value::field(handle))?;
+                            return Err(RuntimeError::IntegerOverflow);
                         }
                     }
                 } else {
@@ -102,11 +93,7 @@ impl ArithmeticOps for super::vm::VM {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
-                            let fa = FieldElement::from_i64(ib);
-                            let fb = FieldElement::from_i64(ic);
-                            let result = fa.mul(&fb);
-                            let handle = self.heap.alloc_field(result);
-                            self.set_reg(base, a, Value::field(handle))?;
+                            return Err(RuntimeError::IntegerOverflow);
                         }
                     }
                 } else {
@@ -171,43 +158,33 @@ impl ArithmeticOps for super::vm::VM {
                     let exp_val = vc.as_int().unwrap();
 
                     if exp_val < 0 {
-                        // Negative exponent -> promote to field, use field inverse
-                        let fa = FieldElement::from_i64(base_val);
-                        let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
-                        let result = inv.pow(&[(-exp_val) as u64, 0, 0, 0]);
-                        let handle = self.heap.alloc_field(result);
-                        self.set_reg(base, a, Value::field(handle))?;
+                        return Err(RuntimeError::TypeMismatch(
+                            "Cannot raise integer to negative power; use field() for modular inverse".into(),
+                        ));
                     } else if exp_val == 0 {
                         self.set_reg(base, a, Value::int(1))?;
                     } else {
-                        // Integer pow with overflow check.
-                        // Cap the loop at 63 iterations — any i64 base raised to a
-                        // power > 63 will either overflow or be 0/1/−1.  For larger
-                        // exponents, promote directly to field pow (O(log n)).
-                        const MAX_INT_POW_ITERS: i64 = 63;
-                        if exp_val > MAX_INT_POW_ITERS {
-                            let fa = FieldElement::from_i64(base_val);
-                            let result = fa.pow(&[exp_val as u64, 0, 0, 0]);
-                            let handle = self.heap.alloc_field(result);
-                            self.set_reg(base, a, Value::field(handle))?;
-                        } else {
-                            let mut result: i64 = 1;
-                            let mut overflowed = false;
-                            for _ in 0..exp_val {
-                                match result.checked_mul(base_val) {
-                                    Some(r) if (I60_MIN..=I60_MAX).contains(&r) => result = r,
-                                    _ => {
-                                        overflowed = true;
-                                        break;
+                        // Fast-path trivial bases (never overflow)
+                        match base_val {
+                            0 => self.set_reg(base, a, Value::int(0))?,
+                            1 => self.set_reg(base, a, Value::int(1))?,
+                            -1 => {
+                                let r = if exp_val % 2 == 0 { 1 } else { -1 };
+                                self.set_reg(base, a, Value::int(r))?;
+                            }
+                            _ => {
+                                // |base| >= 2: overflow certain if exp > 59
+                                const MAX_INT_POW_ITERS: i64 = 63;
+                                if exp_val > MAX_INT_POW_ITERS {
+                                    return Err(RuntimeError::IntegerOverflow);
+                                }
+                                let mut result: i64 = 1;
+                                for _ in 0..exp_val {
+                                    match result.checked_mul(base_val) {
+                                        Some(r) if (I60_MIN..=I60_MAX).contains(&r) => result = r,
+                                        _ => return Err(RuntimeError::IntegerOverflow),
                                     }
                                 }
-                            }
-                            if overflowed {
-                                let fa = FieldElement::from_i64(base_val);
-                                let result = fa.pow(&[exp_val as u64, 0, 0, 0]);
-                                let handle = self.heap.alloc_field(result);
-                                self.set_reg(base, a, Value::field(handle))?;
-                            } else {
                                 self.set_reg(base, a, Value::int(result))?;
                             }
                         }
@@ -251,10 +228,7 @@ impl ArithmeticOps for super::vm::VM {
                             self.set_reg(base, a, Value::int(result))?;
                         }
                         _ => {
-                            let fa = FieldElement::from_i64(ib);
-                            let result = fa.neg();
-                            let handle = self.heap.alloc_field(result);
-                            self.set_reg(base, a, Value::field(handle))?;
+                            return Err(RuntimeError::IntegerOverflow);
                         }
                     }
                 } else if vb.is_field() {

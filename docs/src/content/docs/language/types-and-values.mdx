@@ -29,7 +29,7 @@ let y = -7
 let big = 100000000000
 ```
 
-If an arithmetic operation overflows the i60 range, the result is automatically promoted to a `FieldElement` on the heap.
+If an arithmetic operation overflows the i60 range, a runtime error is raised. Use `field()` to convert explicitly when you need modular field arithmetic.
 
 ## Booleans
 
@@ -74,6 +74,8 @@ let sum = a + b
 let prod = a * b
 let inv = field(1) / a           // modular inverse
 ```
+
+Int and Field cannot be mixed in arithmetic. `field(3) + 5` is a runtime error — use `field(3) + field(5)` instead.
 
 Field elements are essential for circuit programming — all circuit values are field elements under the hood.
 

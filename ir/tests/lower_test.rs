@@ -1082,3 +1082,142 @@ let arr: Bool[1] = [a + b]
         "should report type mismatch: {err}"
     );
 }
+
+// ============================================================================
+// T-04: Annotation shape must match value shape
+// ============================================================================
+
+#[test]
+fn scalar_annotation_on_array_rejected() {
+    // `let arr: Bool = [x, y]` — scalar annotation on array value
+    let source = "witness x\nwitness y\nlet arr: Bool = [x, y]";
+    let result = IrLowering::lower_self_contained(source);
+    assert!(
+        result.is_err(),
+        "scalar Bool annotation on array literal should fail"
+    );
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("mismatch"),
+        "should report type mismatch: {err}"
+    );
+}
+
+#[test]
+fn scalar_field_annotation_on_array_rejected() {
+    let source = "witness x\nlet arr: Field = [x]";
+    let result = IrLowering::lower_self_contained(source);
+    assert!(
+        result.is_err(),
+        "scalar Field annotation on array literal should fail"
+    );
+}
+
+#[test]
+fn array_annotation_on_scalar_rejected() {
+    // `let x: Field[3] = expr` — array annotation on scalar value
+    let source = "witness x\nlet y: Field[3] = x";
+    let result = IrLowering::lower_self_contained(source);
+    assert!(
+        result.is_err(),
+        "array Field[3] annotation on scalar value should fail"
+    );
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("mismatch"),
+        "should report type mismatch: {err}"
+    );
+}
+
+#[test]
+fn array_bool_annotation_on_scalar_rejected() {
+    let source = "witness x\nlet y: Bool[2] = x";
+    let result = IrLowering::lower_self_contained(source);
+    assert!(
+        result.is_err(),
+        "array Bool[2] annotation on scalar value should fail"
+    );
+}
+
+// ============================================================================
+// T-05: pow_by_squaring results must be typed Field
+// ============================================================================
+
+#[test]
+fn pow_result_has_field_type() {
+    let source = "witness x\nlet p = x ^ 3\nassert_eq(p, p)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    // The last Mul in the pow chain should have Field type
+    let mul_results: Vec<_> = prog
+        .instructions
+        .iter()
+        .filter_map(|i| {
+            if let Instruction::Mul { result, .. } = i {
+                Some(*result)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(!mul_results.is_empty(), "x^3 should emit at least one Mul");
+    for r in &mul_results {
+        assert_eq!(
+            prog.get_type(*r),
+            Some(ir::IrType::Field),
+            "pow Mul result should have Field type"
+        );
+    }
+}
+
+#[test]
+fn pow_zero_result_has_field_type() {
+    let source = "witness x\nlet p = x ^ 0\nassert_eq(p, p)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    // x^0 = Const(1), should be typed Field
+    let const_ones: Vec<_> = prog
+        .instructions
+        .iter()
+        .filter_map(|i| {
+            if let Instruction::Const { result, value } = i {
+                if *value == memory::FieldElement::ONE {
+                    Some(*result)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+    // At least one Const(1) should exist and be typed Field
+    let any_field = const_ones
+        .iter()
+        .any(|r| prog.get_type(*r) == Some(ir::IrType::Field));
+    assert!(any_field, "x^0 Const(1) should have Field type");
+}
+
+// ============================================================================
+// T-06: Field[N] annotation preserves Bool type on elements
+// ============================================================================
+
+#[test]
+fn field_array_preserves_bool_element_type() {
+    // (a == b) is Bool-typed; putting it in Field[1] should NOT widen to Field
+    let source = r#"
+witness a: Field
+witness b: Field
+let eq = a == b
+let arr: Field[1] = [eq]
+"#;
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    // Find the IsEq result variable
+    for inst in &prog.instructions {
+        if let Instruction::IsEq { result, .. } = inst {
+            assert_eq!(
+                prog.get_type(*result),
+                Some(ir::IrType::Bool),
+                "IsEq result in Field[1] array should preserve Bool type"
+            );
+        }
+    }
+}
