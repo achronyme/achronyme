@@ -288,15 +288,12 @@ impl IrLowering {
             if let Some(n) = size {
                 let vars = lowering.declare_public_array(name, *n);
                 if let Some(ann) = type_ann {
-                    let ty = annotation_to_ir_type(ann);
-                    for v in &vars {
-                        lowering.program.set_type(*v, ty);
-                    }
+                    lowering.enforce_input_type_ann(ann, &vars);
                 }
             } else {
                 let v = lowering.declare_public(name);
                 if let Some(ann) = type_ann {
-                    lowering.program.set_type(v, annotation_to_ir_type(ann));
+                    lowering.enforce_input_type_ann(ann, &[v]);
                 }
             }
         }
@@ -304,15 +301,12 @@ impl IrLowering {
             if let Some(n) = size {
                 let vars = lowering.declare_witness_array(name, *n);
                 if let Some(ann) = type_ann {
-                    let ty = annotation_to_ir_type(ann);
-                    for v in &vars {
-                        lowering.program.set_type(*v, ty);
-                    }
+                    lowering.enforce_input_type_ann(ann, &vars);
                 }
             } else {
                 let v = lowering.declare_witness(name);
                 if let Some(ann) = type_ann {
-                    lowering.program.set_type(v, annotation_to_ir_type(ann));
+                    lowering.enforce_input_type_ann(ann, &[v]);
                 }
             }
         }
@@ -414,15 +408,12 @@ impl IrLowering {
             if let Some(size) = decl.array_size {
                 let vars = self.declare_public_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
-                    let ty = annotation_to_ir_type(ann);
-                    for v in &vars {
-                        self.program.set_type(*v, ty);
-                    }
+                    self.enforce_input_type_ann(ann, &vars);
                 }
             } else {
                 let v = self.declare_public(&decl.name);
                 if let Some(ref ann) = decl.type_ann {
-                    self.program.set_type(v, annotation_to_ir_type(ann));
+                    self.enforce_input_type_ann(ann, &[v]);
                 }
             }
         }
@@ -434,19 +425,40 @@ impl IrLowering {
             if let Some(size) = decl.array_size {
                 let vars = self.declare_witness_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
-                    let ty = annotation_to_ir_type(ann);
-                    for v in &vars {
-                        self.program.set_type(*v, ty);
-                    }
+                    self.enforce_input_type_ann(ann, &vars);
                 }
             } else {
                 let v = self.declare_witness(&decl.name);
                 if let Some(ref ann) = decl.type_ann {
-                    self.program.set_type(v, annotation_to_ir_type(ann));
+                    self.enforce_input_type_ann(ann, &[v]);
                 }
             }
         }
         Ok(())
+    }
+
+    /// Apply a type annotation to input variables, emitting `RangeCheck(v, 1)` for
+    /// `: Bool` annotations. Input variables are always untyped at declaration time,
+    /// so Bool enforcement is always needed for soundness.
+    fn enforce_input_type_ann(&mut self, ann: &TypeAnnotation, vars: &[SsaVar]) {
+        let ty = annotation_to_ir_type(ann);
+        if ty == IrType::Bool {
+            for &v in vars {
+                let enforced = self.program.fresh_var();
+                self.program.push(Instruction::RangeCheck {
+                    result: enforced,
+                    operand: v,
+                    bits: 1,
+                });
+                self.program.set_type(enforced, IrType::Bool);
+                // Also stamp the original so env lookups see the type
+                self.program.set_type(v, IrType::Bool);
+            }
+        } else {
+            for &v in vars {
+                self.program.set_type(v, ty);
+            }
+        }
     }
 
     fn lower_let(
@@ -491,9 +503,20 @@ impl IrLowering {
                 }
                 let elem_ty = annotation_to_ir_type(ann);
                 if elem_ty == IrType::Bool {
-                    // For Bool arrays, enforce each untyped element
-                    for v in vars.iter_mut() {
-                        if self.program.get_type(*v).is_none() {
+                    // For Bool arrays, enforce each element
+                    for (i, v) in vars.iter_mut().enumerate() {
+                        if let Some(inferred) = self.program.get_type(*v) {
+                            if !type_compatible(elem_ty, inferred) {
+                                return Err(IrError::AnnotationMismatch {
+                                    name: format!("{name}[{i}]"),
+                                    declared: elem_ty.to_string(),
+                                    inferred: inferred.to_string(),
+                                    span: to_ir_span(arr_span),
+                                });
+                            }
+                            // Already typed and compatible (e.g., Bool) — keep as-is
+                        } else {
+                            // Untyped element — emit RangeCheck for enforcement
                             let enforced = self.program.fresh_var();
                             self.program.push(Instruction::RangeCheck {
                                 result: enforced,
@@ -502,8 +525,6 @@ impl IrLowering {
                             });
                             self.program.set_type(enforced, IrType::Bool);
                             *v = enforced;
-                        } else {
-                            self.program.set_type(*v, elem_ty);
                         }
                     }
                 } else {

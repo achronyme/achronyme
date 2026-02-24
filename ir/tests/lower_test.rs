@@ -1015,3 +1015,70 @@ fn neg_result_has_field_type() {
         }
     }
 }
+
+// ============================================================================
+// T-01: witness x: Bool must emit RangeCheck
+// ============================================================================
+
+#[test]
+fn witness_bool_decl_emits_range_check() {
+    let source = "witness flag: Bool\nassert(flag)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 1,
+        "witness flag: Bool should emit RangeCheck(flag, 1), found {rc_count}"
+    );
+}
+
+#[test]
+fn witness_bool_array_decl_emits_range_checks() {
+    let source = "witness flags[3]: Bool\nassert(flags[0])";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 3,
+        "witness flags[3]: Bool should emit 3 RangeChecks, found {rc_count}"
+    );
+}
+
+#[test]
+fn public_bool_decl_emits_range_check() {
+    let source = "public flag: Bool\nassert(flag)";
+    let (_, _, prog) = IrLowering::lower_self_contained(source).expect("should lower");
+    let rc_count = count(&prog.instructions, |i| {
+        matches!(i, Instruction::RangeCheck { bits: 1, .. })
+    });
+    assert!(
+        rc_count >= 1,
+        "public flag: Bool should emit RangeCheck(flag, 1), found {rc_count}"
+    );
+}
+
+// ============================================================================
+// T-03: array Bool[N] annotation must check type compatibility
+// ============================================================================
+
+#[test]
+fn array_bool_annotation_rejects_field_typed_element() {
+    // `a + b` produces Field type, which is incompatible with Bool[1] annotation.
+    let source = r#"
+witness a: Field
+witness b: Field
+let arr: Bool[1] = [a + b]
+"#;
+    let result = IrLowering::lower_self_contained(source);
+    assert!(
+        result.is_err(),
+        "Bool[1] annotation on Field-typed element should fail"
+    );
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("AnnotationMismatch") || err.contains("mismatch"),
+        "should report type mismatch: {err}"
+    );
+}
