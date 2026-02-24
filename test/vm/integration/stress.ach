@@ -86,7 +86,7 @@ while si < 100 {
 // Sum of squares 0..99 = 99 * 100 * 199 / 6 = 328350
 assert(sq_sum == 328350)
 
-// --- Power computation with integer overflow → field promotion ---
+// --- Large power computation (within i60 range) ---
 let big_pow = 2 ^ 50
 assert(big_pow == 1125899906842624)
 
