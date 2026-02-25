@@ -1,6 +1,30 @@
 use crate::error::RuntimeError;
 use crate::machine::VM;
+use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use memory::{FieldElement, Value};
+
+/// Extract a FieldElement from a VM Value (Int or Field).
+fn extract_fe(vm: &VM, val: &Value) -> Result<FieldElement, RuntimeError> {
+    if val.is_field() {
+        let handle = val
+            .as_handle()
+            .ok_or(RuntimeError::TypeMismatch("bad field handle".into()))?;
+        let fe = vm
+            .heap
+            .get_field(handle)
+            .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+        Ok(*fe)
+    } else if val.is_int() {
+        let i = val
+            .as_int()
+            .ok_or(RuntimeError::TypeMismatch("bad int value".into()))?;
+        Ok(FieldElement::from_i64(i))
+    } else {
+        Err(RuntimeError::TypeMismatch(
+            "Expected Int or Field value".into(),
+        ))
+    }
+}
 
 pub fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     for (i, arg) in args.iter().enumerate() {
@@ -589,4 +613,38 @@ pub fn native_chars(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 
     let list_h = vm.heap.alloc_list(char_vals);
     Ok(Value::list(list_h))
+}
+
+// --- Cryptographic natives ---
+
+pub fn native_poseidon(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::ArityMismatch(
+            "poseidon(left, right) takes exactly 2 arguments".into(),
+        ));
+    }
+    let left = extract_fe(vm, &args[0])?;
+    let right = extract_fe(vm, &args[1])?;
+    let params = PoseidonParams::bn254_t3();
+    let result = poseidon_hash(&params, left, right);
+    let handle = vm.heap.alloc_field(result);
+    Ok(Value::field(handle))
+}
+
+pub fn native_poseidon_many(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(RuntimeError::ArityMismatch(
+            "poseidon_many() requires at least 2 arguments".into(),
+        ));
+    }
+    let params = PoseidonParams::bn254_t3();
+    let first = extract_fe(vm, &args[0])?;
+    let second = extract_fe(vm, &args[1])?;
+    let mut acc = poseidon_hash(&params, first, second);
+    for arg in &args[2..] {
+        let fe = extract_fe(vm, arg)?;
+        acc = poseidon_hash(&params, acc, fe);
+    }
+    let handle = vm.heap.alloc_field(acc);
+    Ok(Value::field(handle))
 }
