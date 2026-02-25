@@ -3,4 +3,177 @@ title: "R1CS"
 description: "Rank-1 Constraint Systems explained."
 ---
 
-Content coming soon.
+A **Rank-1 Constraint System** (R1CS) is the default backend in Achronyme. It represents computation as a set of equations that a prover must satisfy, enabling Groth16 zero-knowledge proofs.
+
+## The Core Idea
+
+Every R1CS constraint has the form:
+
+```
+A * B = C
+```
+
+where `A`, `B`, and `C` are **linear combinations** of circuit variables (wires). A linear combination is a weighted sum like `3x + 5y + 1`.
+
+The key restriction is **rank-1**: each constraint allows exactly one multiplication. This is what makes R1CS "simple enough" for efficient proof systems, but requires the compiler to decompose complex expressions into single-multiplication steps.
+
+## Wires and Layout
+
+A circuit has three kinds of wires:
+
+| Wire | Index | Description |
+|------|-------|-------------|
+| ONE | 0 | Constant wire, always 1. Used to encode constants in linear combinations. |
+| Public inputs | 1..N | Values the verifier sees. Declared with `public`. |
+| Witness | N+1.. | Private inputs + intermediate values. Declared with `witness` or allocated by the compiler. |
+
+This layout is **snarkjs-compatible** — the `.r1cs` and `.wtns` files Achronyme exports work directly with snarkjs tooling.
+
+## From Achronyme to Constraints
+
+The compiler translates each operation into linear combinations and constraints:
+
+### Free operations (0 constraints)
+
+Addition, subtraction, negation, and multiplication by a constant are all linear operations — they just combine existing wires without needing new constraints:
+
+```
+// These are free:
+let sum = a + b          // LC: a + b
+let diff = a - b         // LC: a - b
+let scaled = a * 3       // LC: 3*a
+let neg = -a             // LC: (-1)*a
+```
+
+### Multiplication (1 constraint)
+
+Multiplying two variables requires a constraint because it's the one non-linear operation:
+
+```
+let product = a * b
+// Emits: A=a, B=b, C=product → a * b = product
+```
+
+### Division (2 constraints)
+
+Division by a variable requires computing the modular inverse:
+
+```
+let quotient = a / b
+// Constraint 1: b * b_inv = 1     (computes inverse)
+// Constraint 2: a * b_inv = quotient
+```
+
+Division by a constant is free (multiply by the constant's inverse).
+
+### Equality (1 constraint)
+
+```
+assert_eq(x, y)
+// Emits: x * 1 = y
+```
+
+## Linear Combinations
+
+A `LinearCombination` is stored as sparse `(variable, coefficient)` pairs:
+
+```
+3x + 5y + 7 = [(x, 3), (y, 5), (ONE, 7)]
+```
+
+The system automatically simplifies: `x - x` becomes the empty LC (zero), and `3x + 5x` becomes `8x`. This deduplication prevents constraint bloat.
+
+When a linear combination needs to become a concrete wire (for example, as input to a multiplication), the compiler **materializes** it:
+- If the LC is already a single variable (like just `x`), no constraint is needed
+- Otherwise, a fresh witness wire is allocated and an equality constraint is added (1 constraint)
+
+## Example: Quadratic Equation
+
+Consider proving knowledge of `x` such that `x^2 + x + 5 = 35`:
+
+```
+public out;
+witness x;
+let x_sq = x * x;
+assert_eq(x_sq + x + 5, out);
+```
+
+This produces 2 constraints:
+
+| # | A | B | C | Purpose |
+|---|---|---|---|---------|
+| 1 | x | x | x_sq | `x * x = x_sq` |
+| 2 | x_sq + x + 5*ONE | 1 | out | `x_sq + x + 5 = out` |
+
+With witness `x = 5, out = 35`, both constraints are satisfied: `5*5 = 25` and `25 + 5 + 5 = 35`.
+
+## Boolean Enforcement
+
+Several operations need to verify that a value is boolean (0 or 1). The standard gadget:
+
+```
+b * (1 - b) = 0
+```
+
+This single constraint forces `b` to be either 0 or 1 — the only two solutions.
+
+The `bool_prop` optimization pass tracks which variables are provably boolean (outputs of comparisons, `RangeCheck(x, 1)`, etc.) and skips redundant enforcement, saving constraints.
+
+## IsZero Gadget
+
+Equality and inequality comparisons use the **IsZero** gadget. Given a value `d`, it outputs 1 if `d = 0`, and 0 otherwise:
+
+```
+d * inv = 1 - result
+d * result = 0
+```
+
+- If `d = 0`: `result = 1`, `inv` can be anything (the second constraint forces `result` or `d` to be 0)
+- If `d != 0`: `result = 0`, `inv = 1/d`
+
+Cost: 2 constraints.
+
+## Ordering Comparisons
+
+`<`, `<=`, `>`, `>=` are the most expensive operations. The approach:
+
+1. Ensure both operands are bounded (252-bit range check if not already proven)
+2. Compute `diff = b - a + 2^bits - 1` (offset to keep result positive)
+3. Decompose `diff` into `bits + 1` boolean-enforced bits
+4. The top bit indicates the comparison result
+
+Cost: ~760 constraints without prior range bounds. With `range_check`, the compiler reuses proven bounds, reducing to `O(bits)`.
+
+## Constraint Cost Reference
+
+| Operation | Constraints | Notes |
+|-----------|-------------|-------|
+| `+`, `-`, negation | 0 | Linear combination |
+| `* constant` | 0 | Scalar multiplication |
+| `* variable` | 1 | One R1CS constraint |
+| `/ constant` | 0 | Multiply by inverse |
+| `/ variable` | 2 | Inverse + multiplication |
+| `assert_eq` | 1 | Equality enforcement |
+| `assert` | 2 | Boolean check + enforce = 1 |
+| `==`, `!=` | 2 | IsZero gadget |
+| `<`, `<=`, `>`, `>=` | ~760 | 2x252 range + 253-bit decomposition |
+| `&&`, `\|\|` | 3 | 2 boolean checks + 1 multiplication |
+| `!` | 1 | Boolean check (0 if proven) |
+| `mux` (if/else) | 2 | Boolean check + selection |
+| `range_check(x, n)` | n + 1 | n boolean bits + 1 sum equality |
+| `poseidon(l, r)` | 361 | 360 permutation + 1 capacity |
+
+## Binary Export
+
+Achronyme exports `.r1cs` and `.wtns` files in the **iden3 binary format**, compatible with snarkjs:
+
+- `.r1cs` (v1): 3 sections — header, constraints, wire-to-label mapping
+- `.wtns` (v2): 2 sections — header, witness values (32 bytes per field element)
+
+Both use little-endian encoding with the BN254 scalar field prime embedded in the header.
+
+## Further Reading
+
+- [Operators and Costs](/circuits/operators-and-costs/) — detailed constraint costs for all circuit operations
+- [Builtins](/circuits/builtins/) — constraint costs of built-in functions
+- [Proof Generation](/zk-concepts/proof-generation/) — using R1CS for Groth16 proofs

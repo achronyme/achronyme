@@ -1,0 +1,17 @@
+// Prove block: range check constraints
+let val = field(200)
+
+prove {
+    witness val
+    range_check(val, 8)
+}
+
+// Second prove: 16-bit range check
+let big = field(65000)
+
+prove {
+    witness big
+    range_check(big, 16)
+}
+
+print("PASS: prove_range_check")

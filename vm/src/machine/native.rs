@@ -67,6 +67,9 @@ impl NativeRegistry for super::vm::VM {
                 "toUpper" => crate::stdlib::core::native_to_upper,
                 "toLower" => crate::stdlib::core::native_to_lower,
                 "chars" => crate::stdlib::core::native_chars,
+                "poseidon" => crate::stdlib::core::native_poseidon,
+                "poseidon_many" => crate::stdlib::core::native_poseidon_many,
+                "verify_proof" => crate::stdlib::core::native_verify_proof,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 

@@ -1,8 +1,8 @@
 use compiler::Compiler;
 use memory::FieldElement;
-use memory::{Function, Value};
+use memory::{Function, ProofObject, Value};
 use std::collections::HashMap;
-use vm::{CallFrame, ProveError, ProveHandler, ProveResult, VM};
+use vm::{CallFrame, ProveError, ProveHandler, ProveResult, VerifyHandler, VM};
 
 /// Helper: compile and run Achronyme source, returning the VM after execution.
 /// Does NOT inject a prove handler.
@@ -26,6 +26,7 @@ fn run_source(source: &str) -> Result<VM, String> {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {
@@ -65,6 +66,7 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {
@@ -491,6 +493,7 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {
@@ -653,6 +656,7 @@ fn proof_object_gc_survives_when_rooted() {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {
@@ -692,4 +696,136 @@ fn proof_object_allocation_and_inspection() {
     assert_eq!(proof.proof_json, r#"{"a":"b"}"#);
     assert_eq!(proof.public_json, r#"["1"]"#);
     assert_eq!(proof.vkey_json, r#"{"x":"y"}"#);
+}
+
+// ======================================================================
+// verify_proof tests
+// ======================================================================
+
+/// Mock verify handler that always returns true.
+struct AlwaysValidVerifyHandler;
+
+impl VerifyHandler for AlwaysValidVerifyHandler {
+    fn verify_proof(&self, _proof: &ProofObject) -> Result<bool, String> {
+        Ok(true)
+    }
+}
+
+/// Mock verify handler that always returns false.
+struct AlwaysInvalidVerifyHandler;
+
+impl VerifyHandler for AlwaysInvalidVerifyHandler {
+    fn verify_proof(&self, _proof: &ProofObject) -> Result<bool, String> {
+        Ok(false)
+    }
+}
+
+/// Helper: compile and run with both mock proof + mock verify handlers.
+fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> {
+    let mut compiler = Compiler::new();
+    let bytecode = compiler.compile(source).map_err(|e| format!("{e:?}"))?;
+    let main_func = compiler.compilers.last().expect("No main compiler");
+
+    let mut vm = VM::new();
+    vm.heap.import_strings(compiler.interner.strings);
+
+    for proto in &compiler.prototypes {
+        let handle = vm.heap.alloc_function(proto.clone());
+        vm.prototypes.push(handle);
+    }
+
+    let func = Function {
+        name: "main".to_string(),
+        arity: 0,
+        chunk: bytecode,
+        constants: main_func.constants.clone(),
+        max_slots: main_func.max_slots,
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let func_idx = vm.heap.alloc_function(func);
+    let closure_idx = vm.heap.alloc_closure(memory::Closure {
+        function: func_idx,
+        upvalues: vec![],
+    });
+
+    vm.frames.push(CallFrame {
+        closure: closure_idx,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    });
+
+    vm.prove_handler = Some(Box::new(MockProofHandler));
+    if valid {
+        vm.verify_handler = Some(Box::new(AlwaysValidVerifyHandler));
+    } else {
+        vm.verify_handler = Some(Box::new(AlwaysInvalidVerifyHandler));
+    }
+
+    vm.interpret().map_err(|e| format!("{e:?}"))?;
+    Ok(vm)
+}
+
+#[test]
+fn verify_proof_returns_true_for_valid() {
+    let source = r#"
+        let x = field(42)
+        let p = prove {
+            witness x
+            assert_eq(x, 42)
+        }
+        assert(verify_proof(p))
+    "#;
+    run_source_with_mock_verify(source, true).expect("should succeed");
+}
+
+#[test]
+fn verify_proof_returns_false_for_invalid() {
+    let source = r#"
+        let x = field(42)
+        let p = prove {
+            witness x
+            assert_eq(x, 42)
+        }
+        assert(!verify_proof(p))
+    "#;
+    run_source_with_mock_verify(source, false).expect("should succeed");
+}
+
+#[test]
+fn verify_proof_type_error_on_non_proof() {
+    let source = r#"
+        let x = 42
+        verify_proof(x)
+    "#;
+    let result = run_source_with_mock_verify(source, true);
+    match result {
+        Ok(_) => panic!("verify_proof on int should fail"),
+        Err(err) => assert!(
+            err.contains("TypeMismatch"),
+            "Expected TypeMismatch, got: {err}"
+        ),
+    }
+}
+
+#[test]
+fn verify_proof_no_handler_gives_error() {
+    let source = r#"
+        let x = field(42)
+        let p = prove {
+            witness x
+            assert_eq(x, 42)
+        }
+        verify_proof(p)
+    "#;
+    // Use mock proof handler but NO verify handler
+    let result = run_source_with_mock_proof(source);
+    match result {
+        Ok(_) => panic!("should fail without verify handler"),
+        Err(err) => assert!(
+            err.contains("no verify handler"),
+            "Expected handler error, got: {err}"
+        ),
+    }
 }

@@ -9,8 +9,8 @@ Write readable code. Decide what gets proven. Same language for general executio
 
 ```
 cargo build --release
-cargo test --workspace     # 718 unit tests
-bash test/run_tests.sh     # 54 integration tests
+cargo test --workspace     # 929+ unit tests
+bash test/run_tests.sh     # 75+ integration tests
 ```
 
 ---
@@ -75,7 +75,7 @@ The `prove {}` block bridges both: it runs inside the VM, compiles its body as a
 ```
 Source (.ach)
     │
-    ├─► Parser (PEG) → AST
+    ├─► Parser (Pratt) → AST
     │       │
     │       ├─► Bytecode → VM          (run mode)
     │       │
@@ -246,6 +246,9 @@ ach circuit circuit.ach --backend plonkish --inputs "x=42,y=7"
 # Generate Plonkish proof
 ach circuit circuit.ach --backend plonkish --inputs "x=42" --prove
 
+# Generate Solidity verifier contract
+ach circuit circuit.ach --inputs "x=42,y=7" --solidity
+
 # Compile to bytecode
 ach compile script.ach --output script.achb
 
@@ -282,7 +285,7 @@ let p = prove {
 
 Variable names inside `public`/`witness` declarations must match `let` bindings in the outer scope. Integer values are automatically promoted to field elements.
 
-The result is a `Proof` object (Groth16 or PlonK depending on `--prove-backend`). Extract components with `proof_json(p)`, `proof_public(p)`, `proof_vkey(p)`.
+The result is a `Proof` object (Groth16 or PlonK depending on `--prove-backend`). Extract components with `proof_json(p)`, `proof_public(p)`, `proof_vkey(p)`. Verify with `verify_proof(p)`.
 
 If no proving backend is available, the block still compiles the circuit, generates the witness, and verifies constraints locally (returns `nil`).
 
@@ -313,22 +316,53 @@ achronyme/
 ├── constraints/        R1CS/Plonkish systems, Poseidon hash, binary export
 ├── cli/                CLI, native Groth16 (ark-groth16) & PlonK (halo2-KZG)
 └── test/
-    ├── vm/             41 VM/interpreter tests (closures, algorithms, stress)
-    ├── circuit/        8 circuit compilation tests
-    ├── prove/          3 prove block tests
+    ├── vm/             VM/interpreter integration tests
+    ├── circuit/        Circuit compilation tests
+    ├── prove/          Prove block tests
     └── run_tests.sh    Integration test runner
 ```
 
 ---
 
+## Native Functions
+
+| Function | Arity | Description |
+|----------|-------|-------------|
+| `print(...)` | variadic | Print values to stdout |
+| `len(x)` | 1 | Length of String, List, or Map |
+| `typeof(x)` | 1 | Type name as String |
+| `assert(x)` | 1 | Runtime assertion |
+| `time()` | 0 | Unix timestamp (ms) |
+| `push(list, item)` | 2 | Append to list |
+| `pop(list)` | 1 | Remove last from list |
+| `keys(map)` | 1 | Map keys as list |
+| `field(x)` | 1 | Convert Int/String to Field |
+| `proof_json(p)` | 1 | Extract proof JSON |
+| `proof_public(p)` | 1 | Extract public inputs JSON |
+| `proof_vkey(p)` | 1 | Extract verifying key JSON |
+| `substring(s, start, end)` | 3 | Substring extraction |
+| `indexOf(s, sub)` | 2 | Find substring index (-1 if not found) |
+| `split(s, delim)` | 2 | Split string into list |
+| `trim(s)` | 1 | Trim whitespace |
+| `replace(s, search, repl)` | 3 | Replace all occurrences |
+| `toUpper(s)` | 1 | Uppercase |
+| `toLower(s)` | 1 | Lowercase |
+| `chars(s)` | 1 | String to list of characters |
+| `poseidon(a, b)` | 2 | Poseidon 2-to-1 hash (BN254) |
+| `poseidon_many(a, b, ...)` | variadic | Left-fold Poseidon hash |
+| `verify_proof(p)` | 1 | Verify a Groth16 proof |
+
+---
+
 ## Status
 
-- 718 unit tests + 54 integration tests
+- 929+ unit tests + 75+ integration tests
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export
-- 3 security audits resolved
+- 6 security audits resolved
 - Poseidon hash compatible with circomlibjs
+- Runtime errors with source line numbers
 
 ## License
 

@@ -3,4 +3,69 @@ title: "CLI Commands"
 description: "Achronyme CLI command reference."
 ---
 
-Content coming soon.
+## `run` — Execute a program
+
+Runs an Achronyme source file (`.ach`) or compiled binary (`.achb`).
+
+```bash
+ach run script.ach
+ach run script.achb
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--stress-gc` | Run GC on every allocation (for testing) |
+| `--prove-backend <backend>` | Backend for `prove {}` blocks: `r1cs` (default) or `plonkish` |
+
+### Examples
+
+```bash
+ach run hello.ach
+ach run hello.ach --prove-backend plonkish
+```
+
+---
+
+## `circuit` — Compile a ZK circuit
+
+Compiles an Achronyme circuit source file into R1CS/Plonkish constraints and generates a witness.
+
+```bash
+ach circuit circuit.ach --inputs "x=42,y=7"
+```
+
+See [Circuit Options](/cli/circuit-options) for all available flags.
+
+---
+
+## `compile` — Compile to bytecode
+
+Compiles an Achronyme source file into a binary (`.achb`) that can be run with `ach run`.
+
+```bash
+ach compile script.ach --output script.achb
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--output <path>` | Output file path (required) |
+
+---
+
+## `disassemble` — Show bytecode
+
+Disassembles an Achronyme source file or binary, showing the bytecode instructions.
+
+```bash
+ach disassemble script.ach
+```
+
+---
+
+## `repl` — Interactive mode
+
+Starts an interactive Read-Eval-Print loop. (Not yet implemented.)

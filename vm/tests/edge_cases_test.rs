@@ -35,6 +35,7 @@ fn run(source: &str) -> Result<VM, RuntimeError> {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(Closure {
@@ -63,6 +64,7 @@ fn run_raw(chunk: Vec<u32>, constants: Vec<Value>, max_slots: u16) -> Result<VM,
         constants,
         max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(Closure {
@@ -113,6 +115,7 @@ fn deep_recursion_stack_overflow() {
         constants: vec![],
         max_slots: 4,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let proto_handle = vm.heap.alloc_function(recurse_func);
     vm.prototypes.push(proto_handle);
@@ -132,6 +135,7 @@ fn deep_recursion_stack_overflow() {
         constants: vec![],
         max_slots: 4,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let main_handle = vm.heap.alloc_function(main_func);
     let closure_handle = vm.heap.alloc_closure(Closure {
@@ -184,6 +188,7 @@ fn gc_stress_many_allocations() {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(Closure {

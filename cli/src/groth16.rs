@@ -272,6 +272,131 @@ fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bn254>, num_pub: usize) ->
 }
 
 // ============================================================================
+// JSON deserialization (for verify_proof)
+// ============================================================================
+
+/// Parse a decimal string into an ark Fr.
+fn decimal_to_fr(s: &str) -> Result<Fr, String> {
+    use std::str::FromStr;
+    Fr::from_str(s).map_err(|_| format!("invalid field element: {s}"))
+}
+
+/// Parse a decimal string into an ark Fq (base field).
+fn decimal_to_fq(s: &str) -> Result<ark_bn254::Fq, String> {
+    use std::str::FromStr;
+    ark_bn254::Fq::from_str(s).map_err(|_| format!("invalid base field element: {s}"))
+}
+
+/// Parse a G1 JSON array [x, y, "1"] into an ark G1Affine.
+fn json_to_g1(val: &serde_json::Value) -> Result<<Bn254 as Pairing>::G1Affine, String> {
+    let arr = val.as_array().ok_or("expected array for G1 point")?;
+    if arr.len() != 3 {
+        return Err("G1 point must have 3 elements".into());
+    }
+    let x_str = arr[0].as_str().ok_or("G1 x must be string")?;
+    let y_str = arr[1].as_str().ok_or("G1 y must be string")?;
+    let z_str = arr[2].as_str().ok_or("G1 z must be string")?;
+
+    if z_str == "0" {
+        // Point at infinity
+        use ark_ec::AffineRepr;
+        return Ok(<Bn254 as Pairing>::G1Affine::zero());
+    }
+
+    let x = decimal_to_fq(x_str)?;
+    let y = decimal_to_fq(y_str)?;
+    let p = ark_bn254::G1Affine::new_unchecked(x, y);
+    Ok(p)
+}
+
+/// Parse a G2 JSON array [[x.c0, x.c1], [y.c0, y.c1], ["1","0"]] into an ark G2Affine.
+fn json_to_g2(val: &serde_json::Value) -> Result<<Bn254 as Pairing>::G2Affine, String> {
+    let arr = val.as_array().ok_or("expected array for G2 point")?;
+    if arr.len() != 3 {
+        return Err("G2 point must have 3 elements".into());
+    }
+
+    let x_arr = arr[0].as_array().ok_or("G2 x must be array")?;
+    let y_arr = arr[1].as_array().ok_or("G2 y must be array")?;
+    let z_arr = arr[2].as_array().ok_or("G2 z must be array")?;
+
+    // Check for point at infinity
+    if z_arr.len() >= 2 {
+        let z0 = z_arr[0].as_str().unwrap_or("1");
+        let z1 = z_arr[1].as_str().unwrap_or("0");
+        if z0 == "0" && z1 == "0" {
+            use ark_ec::AffineRepr;
+            return Ok(<Bn254 as Pairing>::G2Affine::zero());
+        }
+    }
+
+    let x_c0 = decimal_to_fq(x_arr[0].as_str().ok_or("x.c0 must be string")?)?;
+    let x_c1 = decimal_to_fq(x_arr[1].as_str().ok_or("x.c1 must be string")?)?;
+    let y_c0 = decimal_to_fq(y_arr[0].as_str().ok_or("y.c0 must be string")?)?;
+    let y_c1 = decimal_to_fq(y_arr[1].as_str().ok_or("y.c1 must be string")?)?;
+
+    let x = ark_bn254::Fq2::new(x_c0, x_c1);
+    let y = ark_bn254::Fq2::new(y_c0, y_c1);
+    let p = ark_bn254::G2Affine::new_unchecked(x, y);
+    Ok(p)
+}
+
+/// Deserialize a snarkjs-format proof JSON string into an ark Proof.
+pub fn deserialize_proof_json(json_str: &str) -> Result<ark_groth16::Proof<Bn254>, String> {
+    let obj: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| format!("invalid proof JSON: {e}"))?;
+    let a = json_to_g1(&obj["pi_a"])?;
+    let b = json_to_g2(&obj["pi_b"])?;
+    let c = json_to_g1(&obj["pi_c"])?;
+    Ok(ark_groth16::Proof { a, b, c })
+}
+
+/// Deserialize a snarkjs-format public inputs JSON string into ark Fr values.
+pub fn deserialize_public_json(json_str: &str) -> Result<Vec<Fr>, String> {
+    let arr: Vec<String> =
+        serde_json::from_str(json_str).map_err(|e| format!("invalid public JSON: {e}"))?;
+    arr.iter().map(|s| decimal_to_fr(s)).collect()
+}
+
+/// Deserialize a snarkjs-format verifying key JSON string into an ark VerifyingKey.
+pub fn deserialize_vkey_json(json_str: &str) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
+    let obj: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| format!("invalid vkey JSON: {e}"))?;
+
+    let alpha_g1 = json_to_g1(&obj["vk_alpha_1"])?;
+    let beta_g2 = json_to_g2(&obj["vk_beta_2"])?;
+    let gamma_g2 = json_to_g2(&obj["vk_gamma_2"])?;
+    let delta_g2 = json_to_g2(&obj["vk_delta_2"])?;
+
+    let ic_arr = obj["IC"].as_array().ok_or("vkey IC must be an array")?;
+    let mut gamma_abc_g1 = Vec::with_capacity(ic_arr.len());
+    for ic in ic_arr {
+        gamma_abc_g1.push(json_to_g1(ic)?);
+    }
+
+    Ok(ark_groth16::VerifyingKey {
+        alpha_g1,
+        beta_g2,
+        gamma_g2,
+        delta_g2,
+        gamma_abc_g1,
+    })
+}
+
+/// Verify a proof using deserialized JSON components.
+pub fn verify_proof_from_json(
+    proof_json: &str,
+    public_json: &str,
+    vkey_json: &str,
+) -> Result<bool, String> {
+    let proof = deserialize_proof_json(proof_json)?;
+    let public_inputs = deserialize_public_json(public_json)?;
+    let vk = deserialize_vkey_json(vkey_json)?;
+    Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)
+        .map_err(|e| format!("verification error: {e}"))
+}
+
+// ============================================================================
 // Cache helpers
 // ============================================================================
 

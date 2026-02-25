@@ -3,4 +3,88 @@ title: "Circuit Options"
 description: "Options for the circuit command."
 ---
 
-Content coming soon.
+## Usage
+
+```bash
+ach circuit <path> [options]
+```
+
+## Input Declaration
+
+| Flag | Description |
+|------|-------------|
+| `--public <vars>` | Comma-separated public input names (e.g., `--public "out,hash"`) |
+| `--witness <vars>` | Comma-separated witness input names (e.g., `--witness "a,b,secret"`) |
+
+If `--public` and `--witness` are omitted, the compiler uses in-source `public` and `witness` declarations.
+
+## Input Values
+
+| Flag | Description |
+|------|-------------|
+| `--inputs <vals>` | Comma-separated `key=value` pairs (e.g., `--inputs "a=6,b=7,c=42"`) |
+
+Values are parsed as BN254 field elements. Negative values are supported.
+
+## Backend Selection
+
+| Flag | Description |
+|------|-------------|
+| `--backend <backend>` | Constraint backend: `r1cs` (default) or `plonkish` |
+
+### R1CS backend (default)
+
+Generates `.r1cs` and `.wtns` files compatible with snarkjs.
+
+### Plonkish backend
+
+Generates Plonkish gates, lookups, and copy constraints. Verifies locally (no binary export yet).
+
+## Proof Generation
+
+| Flag | Description |
+|------|-------------|
+| `--prove` | Generate a cryptographic proof after compiling and verifying |
+| `--solidity` | Generate a Solidity verifier contract (R1CS/Groth16 only) |
+
+## Optimization
+
+| Flag | Description |
+|------|-------------|
+| `--no-optimize` | Skip SSA IR optimization passes (constant folding, DCE, boolean propagation) |
+
+## Examples
+
+```bash
+# In-source declarations, R1CS output
+ach circuit circuit.ach --inputs "x=42,y=7"
+
+# CLI declarations
+ach circuit circuit.ach --public "out" --witness "a,b" --inputs "out=42,a=6,b=7"
+
+# Plonkish backend
+ach circuit circuit.ach --backend plonkish --inputs "x=42"
+
+# Generate Groth16 proof
+ach circuit circuit.ach --inputs "x=42,y=7" --prove
+
+# Generate Solidity verifier
+ach circuit circuit.ach --inputs "x=42,y=7" --solidity
+
+# Unoptimized compilation
+ach circuit circuit.ach --inputs "x=42" --no-optimize
+```
+
+## Output Files (R1CS)
+
+| File | Description |
+|------|-------------|
+| `circuit.r1cs` | R1CS constraint system (iden3 binary format v1) |
+| `witness.wtns` | Witness values (iden3 binary format v2) |
+
+Both files are compatible with snarkjs:
+
+```bash
+snarkjs r1cs info circuit.r1cs
+snarkjs wtns check circuit.r1cs witness.wtns
+```

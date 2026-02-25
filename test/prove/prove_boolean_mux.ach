@@ -1,0 +1,18 @@
+// Prove block: boolean logic with range_check and mux
+let flag = field(1)
+let a = field(10)
+let b = field(20)
+let expected = field(10)
+
+prove {
+    witness flag
+    witness a
+    witness b
+    public expected
+
+    range_check(flag, 1)
+    let selected = mux(flag, a, b)
+    assert_eq(selected, expected)
+}
+
+print("PASS: prove_boolean_mux")

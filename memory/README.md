@@ -1,19 +1,34 @@
 # Achronyme Memory
 
-manages the Heap and Values for the Achronyme VM.
+Manages the Heap and Values for the Achronyme VM.
 
 ## Architecture
 
-- **value.rs**: Defines the `Value` enum which represents runtime values (both stack primitives and heap handles).
-- **heap.rs**: Implements `Heap` using Typed Arenas for efficient memory locality and simplified GC potential.
+- **value.rs**: Tagged u64 representation — 4-bit tag (bits 63-60) + 60-bit payload. No floats; all numeric values are i60 integers or BN254 FieldElements on heap.
+- **heap.rs**: Typed arenas for strings, lists, maps, functions, closures, upvalues, iterators, fields, and proofs. Mark-sweep garbage collector.
+- **field.rs**: BN254 scalar field arithmetic in Montgomery form (`[u64; 4]` limbs).
 
-## NaN Boxing
+## Value Tags
 
-Achronyme uses NaN boxing for `Value` representation (`u64` wrapper):
-- **Double (f64)**: Payload.
-- **Tags**: Stored in high bits of NaN space (bits 32-35).
-- **Objects**: Pointers (handles) stored in low 32 bits (masked with tag).
+| Tag | Type | Storage |
+|-----|------|---------|
+| 0 | Int | i60 inline (sign-extended) |
+| 1 | Nil | — |
+| 2 | False | — |
+| 3 | True | — |
+| 4 | String | Heap handle |
+| 5 | List | Heap handle |
+| 6 | Map | Heap handle |
+| 7 | Field | Heap handle |
+| 8 | Function/Closure | Heap handle |
+| 9 | Proof | Heap handle |
 
-## GC Strategy
+## Integer Semantics
 
-Currently using a placeholder logic. The plan is to implement a Mark-and-Sweep garbage collector over the arenas.
+- Range: -2^59 to 2^59-1
+- Overflow: `IntegerOverflow` runtime error (no silent promotion)
+- No Int+Field mixing at runtime — use `field()` for explicit conversion
+
+## GC
+
+Mark-and-sweep garbage collector over typed arenas. Roots: stack, globals, open upvalues, constants. Configurable stress mode for testing.

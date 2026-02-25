@@ -1,0 +1,16 @@
+// Prove block: field division
+// In ZK circuits, division is field inverse multiplication
+// a / b * b == a
+let a = field(42)
+let b = field(7)
+let q = field(6)
+
+prove {
+    witness a
+    witness b
+    public q
+
+    assert_eq(a / b, q)
+}
+
+print("PASS: prove_division")

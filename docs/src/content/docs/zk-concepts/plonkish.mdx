@@ -3,4 +3,146 @@ title: "Plonkish"
 description: "Plonkish arithmetization with gates, lookups, and copy constraints."
 ---
 
-Content coming soon.
+**Plonkish** is Achronyme's second backend, offering more efficient circuits for certain operations — especially range checks. It uses KZG polynomial commitments on BN254 via halo2.
+
+Select it with `--backend plonkish`.
+
+## How It Differs from R1CS
+
+| | R1CS | Plonkish |
+|---|---|---|
+| Constraint form | `A * B = C` (linear combinations) | Custom gate polynomials over a 2D table |
+| Range check cost | O(bits) constraints | O(1) via lookup table |
+| Proof system | Groth16 (constant-size proof) | KZG-PlonK (slightly larger, no trusted setup per circuit) |
+| Data model | 1D witness vector | 2D table (columns x rows) |
+| Equality | Implicit in linear combinations | Explicit copy constraints |
+
+## The Execution Trace
+
+A Plonkish circuit is a **2D table** where each column has a type and each row represents one step of computation:
+
+```
+Row  | s_arith | constant | a   | b   | c   | d
+-----+---------+----------+-----+-----+-----+-----
+  0  |    1    |    0     |  3  |  4  |  5  |  17
+  1  |    1    |    0     |  6  |  7  |  0  |  42
+  2  |    0    |    0     |  0  |  0  |  0  |  0
+```
+
+### Column Types
+
+- **Fixed**: Values set at circuit design time. Include selectors (`s_arith`, `s_range`) and the `constant` column. The verifier knows these.
+- **Advice**: Prover-supplied values — the "witness" data. Columns `a`, `b`, `c`, `d` hold intermediate computation values.
+- **Instance**: Public inputs visible to the verifier.
+
+## Gates
+
+A **gate** is a polynomial expression that must evaluate to zero on every row. Achronyme's standard arithmetic gate:
+
+```
+s_arith * (a * b + c - d) = 0
+```
+
+When the selector `s_arith = 1`, the gate enforces `a * b + c = d`. When `s_arith = 0`, the row is inactive — any values are allowed.
+
+This single gate handles all arithmetic:
+
+| Operation | a | b | c | d | Effect |
+|-----------|---|---|---|---|--------|
+| Multiply | x | y | 0 | x*y | `x * y + 0 = x*y` |
+| Add | 1 | x | y | x+y | `1 * x + y = x+y` |
+| Subtract | 1 | x | -y | x-y | `1 * x + (-y) = x-y` |
+| Constant | 1 | 0 | k | k | `1 * 0 + k = k` (via copy from constant col) |
+
+## Copy Constraints
+
+In R1CS, wires are shared implicitly through linear combinations. In Plonkish, equality between cells in different rows or columns must be enforced explicitly with **copy constraints**:
+
+```
+(advice_a, row 0) == (advice_c, row 5)
+```
+
+This tells the proof system: "the value in column `a` at row 0 must equal the value in column `c` at row 5." The compiler emits these automatically when a value computed in one row is used in another.
+
+Copy constraints can also link advice columns to the constant column, enforcing that an advice cell holds a specific constant value.
+
+## Lookups
+
+**Lookup arguments** prove that a value belongs to a precomputed table — without decomposing it into bits. This is where Plonkish shines over R1CS.
+
+### Range Checks
+
+In R1CS, a range check for `n` bits costs `n + 1` constraints (one per bit plus a sum). In Plonkish, it costs **1 lookup row**:
+
+```
+s_range active → a ∈ {0, 1, 2, ..., 2^n - 1}
+```
+
+The table is a fixed column filled with values `0` through `2^n - 1`, and the lookup proves membership.
+
+### Selector-Based Lookups
+
+Lookups use a selector to control which rows are active:
+
+- `selector = 1`: the row's input must appear in the table
+- `selector = 0`: the row is skipped (any value allowed)
+
+This prevents inactive (zero-padded) rows from causing false lookup failures.
+
+## Deferred Evaluation
+
+The Plonkish compiler uses **lazy evaluation** for linear operations. Instead of emitting a table row for every addition or subtraction, it builds a `PlonkVal` tree:
+
+```
+DeferredAdd(
+    Cell(a, row 0),
+    DeferredNeg(Cell(b, row 1))
+)
+```
+
+This tree is only **materialized** (collapsed into a real table row) when:
+- The value is needed for a multiplication (`a * b` requires concrete cells)
+- The value is used in a builtin (`poseidon`, `range_check`)
+- The value is an output
+
+This optimization eliminates unnecessary rows and keeps the table compact.
+
+## Ordering Comparisons
+
+Like R1CS, `<`, `<=`, `>`, `>=` require bit decompositions and range checks. But in Plonkish, each range check is a single lookup row instead of `O(bits)` constraints:
+
+- `a < b`: 252-bit range check on both operands (if not already bounded) + 253-bit decomposition of `b - a + 2^252 - 1`
+- `a <= b`: computed as `1 - (b < a)` (swap and negate)
+
+## IsZero Gadget
+
+The equality check (`==`, `!=`) uses the same IsZero approach as R1CS, but materialized as two arithmetic gate rows:
+
+- **Row 1**: enforces `diff * inv + eq = 1` with `d` constrained to 1. If `diff = 0`, then `eq = 1`; otherwise `inv = 1/diff` and `eq = 0`.
+- **Row 2**: enforces `diff * eq = 0` with `d` constrained to 0. This ensures `eq` can only be 1 when `diff` is truly zero.
+
+## Plonkish vs R1CS: When to Use Which
+
+| Use Case | Better Backend | Why |
+|----------|---------------|-----|
+| Many range checks | Plonkish | O(1) vs O(bits) per check |
+| Minimal proof size | R1CS (Groth16) | Constant 128-byte proof |
+| snarkjs interop | R1CS | Native `.r1cs`/`.wtns` export |
+| No per-circuit setup | Plonkish | KZG params are universal |
+| General arithmetic | Similar | Both use 1 constraint/row per multiplication |
+
+## Verification
+
+The Plonkish verifier checks three things:
+
+1. **Gate satisfaction**: every gate polynomial evaluates to zero on every row
+2. **Copy constraints**: all linked cells hold equal values
+3. **Lookup membership**: every active input tuple appears in the corresponding table
+
+If all three pass, the execution trace is valid and a proof can be generated.
+
+## Further Reading
+
+- [R1CS](/zk-concepts/r1cs/) — the default backend and Groth16 proofs
+- [Operators and Costs](/circuits/operators-and-costs/) — constraint costs across both backends
+- [Proof Generation](/zk-concepts/proof-generation/) — generating proofs with either backend

@@ -103,6 +103,26 @@ run_test "circuit/power.ach" \
     --r1cs "$R1CS_DIR/pow.r1cs" --wtns "$R1CS_DIR/pow.wtns" \
     --inputs "x=3,x2=9,x3=27,x4=81"
 
+run_test "circuit/division.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/division.ach" \
+    --r1cs "$R1CS_DIR/div.r1cs" --wtns "$R1CS_DIR/div.wtns" \
+    --inputs "q=6,a=42,b=7"
+
+run_test "circuit/comparison_ops.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/comparison_ops.ach" \
+    --r1cs "$R1CS_DIR/cmp.r1cs" --wtns "$R1CS_DIR/cmp.wtns" \
+    --inputs "x=3,y=5"
+
+run_test "circuit/nested_functions.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/nested_functions.ach" \
+    --r1cs "$R1CS_DIR/nested_fn.r1cs" --wtns "$R1CS_DIR/nested_fn.wtns" \
+    --inputs "result=25,x=3"
+
+run_test "circuit/for_loop_unroll.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/for_loop_unroll.ach" \
+    --r1cs "$R1CS_DIR/for_loop.r1cs" --wtns "$R1CS_DIR/for_loop.wtns" \
+    --inputs "total=100,vals_0=10,vals_1=20,vals_2=30,vals_3=40"
+
 # --- Typed circuit tests (gradual type system) ---
 echo ""
 echo "=== Typed circuit tests ==="
