@@ -1,0 +1,14 @@
+// Prove block: comparison operators in circuits
+let x = field(3)
+let y = field(5)
+
+prove {
+    witness x
+    witness y
+
+    assert(x < y)
+    assert(x <= y)
+    assert(x != y)
+}
+
+print("PASS: prove_comparison")

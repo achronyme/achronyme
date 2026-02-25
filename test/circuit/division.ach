@@ -1,0 +1,11 @@
+// Circuit: field division
+public q
+witness a
+witness b
+
+// a / b = q  →  a = q * b
+assert_eq(a / b, q)
+
+// Division by constant
+let half = a / 2
+assert_eq(half * 2, a)

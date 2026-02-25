@@ -1,0 +1,13 @@
+// Circuit: comparison operators
+witness x
+witness y
+
+// x=3, y=5 expected
+assert(x < y)
+assert(x <= y)
+assert(x != y)
+assert(!(x == y))
+
+// Derived comparisons
+assert(y > x)
+assert(y >= x)

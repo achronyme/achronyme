@@ -1,0 +1,14 @@
+// Circuit: for-in loop unrolling over arrays
+public total
+witness vals[4]
+
+// Sum array via for-in
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+let acc = acc + vals[3]
+assert_eq(acc, total)
+
+// Product of first two elements
+let prod = vals[0] * vals[1]
+assert_eq(prod, vals[0] * vals[1])

@@ -1,0 +1,19 @@
+// Prove block: arrays and functions
+let v0 = field(10)
+let v1 = field(20)
+let v2 = field(30)
+let total = field(60)
+
+prove {
+    witness v0
+    witness v1
+    witness v2
+    public total
+
+    let vals = [v0, v1, v2]
+    let acc = vals[0] + vals[1] + vals[2]
+    assert_eq(acc, total)
+    assert_eq(len(vals), 3)
+}
+
+print("PASS: prove_array_sum")

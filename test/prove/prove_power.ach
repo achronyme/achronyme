@@ -1,0 +1,15 @@
+// Prove block: exponentiation constraints
+let base = field(3)
+let sq = field(9)
+let cube = field(27)
+
+prove {
+    witness base
+    public sq
+    public cube
+
+    assert_eq(base ^ 2, sq)
+    assert_eq(base ^ 3, cube)
+}
+
+print("PASS: prove_power")
