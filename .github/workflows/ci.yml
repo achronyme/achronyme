@@ -33,3 +33,6 @@ jobs:
 
       - name: Doctests
         run: cargo test --doc --workspace
+
+      - name: Integration tests
+        run: bash test/run_tests.sh
