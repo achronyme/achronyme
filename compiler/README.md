@@ -1,27 +1,28 @@
 # Achronyme Compiler
 
-Compiles Achronyme source code into VM bytecode.
+Compiles Achronyme source code into VM bytecode, R1CS constraints, or Plonkish gates.
 
 ## Architecture
 
-- **codegen.rs**: Main compiler logic using `pest` for AST traversal and `vm::opcode` for emission.
-- **error.rs**: Compiler specific errors.
-- **interner.rs**: String interning for efficient string storage.
+### Bytecode Compiler
 
-### FunctionCompiler Stack
+- **codegen.rs**: Main compiler orchestrator with LIFO `FunctionCompiler` stack.
+- **function_compiler.rs**: Per-function state: bytecode, constants, locals, register allocation, line tracking.
+- **statements/**: Statement compilation (let/mut/assignment/control flow).
+- **expressions/**: Expression compilation (arithmetic, calls, closures).
+- **functions.rs**: Function definition compilation and prototype emission.
 
-The compiler uses a LIFO stack of `FunctionCompiler` instances to handle nested function compilation:
+### R1CS Backend (`r1cs_backend.rs`)
 
-```rust
-pub struct Compiler {
-    pub compilers: Vec<FunctionCompiler>,  // Stack for nested functions
-    pub prototypes: Vec<Function>,         // Flat global function table
-    pub global_symbols: HashMap<String, u16>,
-    // ...
-}
-```
+- `R1CSCompiler`: Walks SSA IR instructions, builds `HashMap<SsaVar, LinearCombination>`.
+- Compiles arithmetic, builtins (poseidon, range_check, mux, merkle_verify), and assertions into R1CS constraints.
+- `compile_ir_with_witness()`: Full pipeline from IR + inputs → constraint system + witness.
 
-Each `FunctionCompiler` manages per-function state: bytecode, constants, locals, and register allocation.
+### Plonkish Backend (`plonkish_backend.rs`)
+
+- `PlonkishCompiler`: Lazy evaluation with `PlonkVal` (deferred add/sub/neg, materialized on mul/builtin).
+- Standard arithmetic gate: `s_arith * (a*b + c - d) = 0`.
+- Range checks via lookup tables (1 constraint vs bits+1 in R1CS).
 
 ## Usage
 
@@ -29,15 +30,12 @@ Each `FunctionCompiler` manages per-function state: bytecode, constants, locals,
 use compiler::Compiler;
 
 let mut compiler = Compiler::new();
-let bytecode = compiler.compile("fn add(a, b) { return a + b }").unwrap();
-// Access function prototypes: compiler.prototypes
+let bytecode = compiler.compile("let x = 2 + 3").unwrap();
 ```
 
 ## Features
 
-- **User-Defined Functions**: `fn name(params) { body }`, anonymous `fn (x) { x * 2 }`, nested functions.
-- **Recursion**: Functions can call themselves (name registered before body compilation).
-- **Control Flow**: `if`, `while`, `block` expressions.
-- **Register Hygiene**: Uses a LIFO (Stack) register allocation strategy to minimize register pressure and prevent leaks.
-- **Scope Management**: Blocks create new scopes. Variables are automatically freed when scope ends.
-- **Shadowing**: Inner variables correctly shadow outer ones (LIFO lookup).
+- User-defined functions, recursion, closures, control flow
+- Register hygiene with LIFO allocation
+- Source line tracking for runtime error reporting
+- Dual-backend constraint compilation (R1CS + Plonkish)
