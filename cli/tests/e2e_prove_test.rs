@@ -325,6 +325,49 @@ assert_eq(a * b, c)
 }
 
 // ============================================================================
+// Proof verification roundtrip test
+// ============================================================================
+
+#[test]
+fn e2e_verify_proof_roundtrip() {
+    let source = r#"
+witness a
+witness b
+public c
+assert_eq(a * b, c)
+"#;
+    let (compiler, witness) = lower_and_compile_r1cs(source, &[("a", 6), ("b", 7), ("c", 42)]);
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let result = cli::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
+        .expect("generate_proof failed");
+
+    match result {
+        ProveResult::Proof {
+            proof_json,
+            public_json,
+            vkey_json,
+        } => {
+            // Verify the proof using the deserialization + verify roundtrip
+            let valid = cli::groth16::verify_proof_from_json(&proof_json, &public_json, &vkey_json)
+                .expect("verify_proof_from_json failed");
+            assert!(valid, "proof should verify successfully");
+
+            // Tamper with public input and verify it fails
+            let tampered_public = serde_json::to_string(&vec!["99"]).unwrap();
+            let tampered_result =
+                cli::groth16::verify_proof_from_json(&proof_json, &tampered_public, &vkey_json);
+            match tampered_result {
+                Ok(false) => {} // expected
+                Ok(true) => panic!("tampered proof should not verify"),
+                Err(_) => {} // also acceptable (verification error)
+            }
+        }
+        ProveResult::VerifiedOnly => panic!("expected Proof"),
+    }
+}
+
+// ============================================================================
 // Cache reuse test
 // ============================================================================
 

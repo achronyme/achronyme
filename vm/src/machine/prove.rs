@@ -58,6 +58,15 @@ pub trait ProveHandler {
     ) -> Result<ProveResult, ProveError>;
 }
 
+/// Trait for handling `verify_proof()` calls at runtime.
+///
+/// The VM calls this when the `verify_proof` native is invoked.
+/// The implementation is responsible for deserializing the proof JSON
+/// and running the verification algorithm.
+pub trait VerifyHandler {
+    fn verify_proof(&self, proof: &memory::ProofObject) -> Result<bool, String>;
+}
+
 /// Convert a VM `Value` to a `FieldElement` for prove block capture.
 ///
 /// Supports:

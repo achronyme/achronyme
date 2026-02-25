@@ -100,11 +100,15 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         name: "poseidon_many",
         arity: -1,
     }, // Index 21
+    NativeMeta {
+        name: "verify_proof",
+        arity: 1,
+    }, // Index 22
 ];
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 22;
+pub const NATIVE_COUNT: usize = 23;
 const _: () = assert!(
     NATIVE_TABLE.len() == NATIVE_COUNT,
     "NATIVE_TABLE length changed — update NATIVE_COUNT"

@@ -5,7 +5,7 @@ use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use ir::IrLowering;
 use memory::FieldElement;
-use vm::{ProveError, ProveHandler, ProveResult};
+use vm::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 
 /// Backend selection for prove blocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +62,16 @@ impl ProveHandler for DefaultProveHandler {
             ProveBackend::R1cs => self.prove_r1cs(&program, &inputs),
             ProveBackend::Plonkish => self.prove_plonkish(&program, &inputs),
         }
+    }
+}
+
+impl VerifyHandler for DefaultProveHandler {
+    fn verify_proof(&self, proof: &memory::ProofObject) -> Result<bool, String> {
+        crate::groth16::verify_proof_from_json(
+            &proof.proof_json,
+            &proof.public_json,
+            &proof.vkey_json,
+        )
     }
 }
 

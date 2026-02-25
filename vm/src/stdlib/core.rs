@@ -648,3 +648,36 @@ pub fn native_poseidon_many(vm: &mut VM, args: &[Value]) -> Result<Value, Runtim
     let handle = vm.heap.alloc_field(acc);
     Ok(Value::field(handle))
 }
+
+pub fn native_verify_proof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::ArityMismatch(
+            "verify_proof(proof) takes exactly 1 argument".into(),
+        ));
+    }
+    let val = args[0];
+    if !val.is_proof() {
+        return Err(RuntimeError::TypeMismatch(
+            "verify_proof expects a Proof".into(),
+        ));
+    }
+    let handle = val
+        .as_handle()
+        .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+    let proof_obj = vm
+        .heap
+        .get_proof(handle)
+        .ok_or(RuntimeError::SystemError("proof not found".into()))?
+        .clone();
+
+    let handler = vm.verify_handler.as_ref().ok_or(RuntimeError::SystemError(
+        "verify_proof: no verify handler configured".into(),
+    ))?;
+
+    match handler.verify_proof(&proof_obj) {
+        Ok(valid) => Ok(Value::bool(valid)),
+        Err(msg) => Err(RuntimeError::SystemError(format!(
+            "verify_proof failed: {msg}"
+        ))),
+    }
+}

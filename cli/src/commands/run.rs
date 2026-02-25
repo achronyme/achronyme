@@ -28,7 +28,9 @@ pub fn run_file(
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(backend)));
+        let handler = DefaultProveHandler::new(backend);
+        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend)));
+        vm.prove_handler = Some(Box::new(handler));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -50,7 +52,9 @@ pub fn run_file(
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
-        vm.prove_handler = Some(Box::new(DefaultProveHandler::new(backend)));
+        let handler = DefaultProveHandler::new(backend);
+        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend)));
+        vm.prove_handler = Some(Box::new(handler));
 
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);

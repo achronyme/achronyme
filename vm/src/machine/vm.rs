@@ -12,7 +12,7 @@ use super::frame::CallFrame;
 use super::gc::GarbageCollector;
 use super::globals::GlobalOps;
 use super::native::NativeRegistry;
-use super::prove::ProveHandler;
+use super::prove::{ProveHandler, VerifyHandler};
 use super::stack::StackOps;
 
 /// The Virtual Machine struct
@@ -39,6 +39,9 @@ pub struct VM {
 
     /// Handler for `prove { }` blocks (injected by CLI or host)
     pub prove_handler: Option<Box<dyn ProveHandler>>,
+
+    /// Handler for `verify_proof()` calls (injected by CLI or host)
+    pub verify_handler: Option<Box<dyn VerifyHandler>>,
 }
 
 pub const STACK_MAX: usize = 65_536;
@@ -67,6 +70,7 @@ impl VM {
             stress_mode: false,
             debug_symbols: None,
             prove_handler: None,
+            verify_handler: None,
         };
 
         // Bootstrap native functions
