@@ -203,6 +203,7 @@ impl VM {
                 chunk: proto_bytecode,
                 constants: proto_constants,
                 upvalue_info,
+                line_info: vec![],
             });
         }
 
@@ -233,6 +234,7 @@ impl VM {
             chunk: bytecode,
             constants,
             upvalue_info: vec![],
+            line_info: vec![],
         };
         let func_idx = self.heap.alloc_function(func);
         let closure_idx = self.heap.alloc_closure(Closure {

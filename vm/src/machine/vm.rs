@@ -42,6 +42,10 @@ pub struct VM {
 
     /// Handler for `verify_proof()` calls (injected by CLI or host)
     pub verify_handler: Option<Box<dyn VerifyHandler>>,
+
+    /// Location of the last runtime error: (function_name, line_number).
+    /// Set by interpret() before returning Err.
+    pub last_error_location: Option<(String, u32)>,
 }
 
 pub const STACK_MAX: usize = 65_536;
@@ -71,6 +75,7 @@ impl VM {
             debug_symbols: None,
             prove_handler: None,
             verify_handler: None,
+            last_error_location: None,
         };
 
         // Bootstrap native functions
@@ -181,8 +186,33 @@ impl VM {
         }
     }
 
+    /// Capture the current execution location for error reporting.
+    fn capture_error_location(&mut self) {
+        if let Some(frame) = self.frames.last() {
+            let ip = if frame.ip > 0 { frame.ip - 1 } else { 0 };
+            if let Some(closure) = self.heap.get_closure(frame.closure) {
+                if let Some(func) = self.heap.get_function(closure.function) {
+                    let line = func.line_info.get(ip).copied().unwrap_or(0);
+                    if line > 0 {
+                        self.last_error_location = Some((func.name.clone(), line));
+                    }
+                }
+            }
+        }
+    }
+
     /// Main interpretation loop
     pub fn interpret(&mut self) -> Result<(), RuntimeError> {
+        match self.interpret_inner() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.capture_error_location();
+                Err(e)
+            }
+        }
+    }
+
+    fn interpret_inner(&mut self) -> Result<(), RuntimeError> {
         // Validation: Check checking initial frame fits
 
         if let Some(frame) = self.frames.last() {

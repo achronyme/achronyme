@@ -18,6 +18,10 @@ pub struct FunctionCompiler {
     // Register allocator state
     pub reg_top: u8,
     pub max_slots: u16,
+
+    // Line tracking: one entry per bytecode instruction
+    pub line_info: Vec<u32>,
+    pub current_line: u32,
 }
 
 impl FunctionCompiler {
@@ -35,6 +39,8 @@ impl FunctionCompiler {
             loop_stack: Vec::new(),
             reg_top: arity, // Reserve R0..R(arity-1) for arguments
             max_slots: arity as u16,
+            line_info: Vec::new(),
+            current_line: 0,
         }
     }
 
@@ -93,10 +99,12 @@ impl FunctionCompiler {
 
     pub fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {
         self.bytecode.push(encode_abc(op.as_u8(), a, b, c));
+        self.line_info.push(self.current_line);
     }
 
     pub fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) {
         self.bytecode.push(encode_abx(op.as_u8(), a, bx));
+        self.line_info.push(self.current_line);
     }
 
     pub fn resolve_local(&self, name: &str) -> Option<(usize, u8)> {

@@ -12,6 +12,7 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
         chunk,
         constants,
         upvalue_info: Vec::new(),
+        line_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure = memory::Closure {
@@ -39,6 +40,7 @@ fn run_fallible(chunk: Vec<u32>, constants: Vec<Value>) -> Result<VM, RuntimeErr
         chunk,
         constants,
         upvalue_info: Vec::new(),
+        line_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure = memory::Closure {

@@ -13,8 +13,33 @@ pub trait StatementCompiler {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompilerError>;
 }
 
+/// Extract the source line number from a statement (1-based), or 0 if unavailable.
+fn stmt_line(stmt: &Stmt) -> u32 {
+    match stmt {
+        Stmt::LetDecl { span, .. }
+        | Stmt::MutDecl { span, .. }
+        | Stmt::Assignment { span, .. }
+        | Stmt::Print { span, .. }
+        | Stmt::Return { span, .. }
+        | Stmt::FnDecl { span, .. }
+        | Stmt::PublicDecl { span, .. }
+        | Stmt::WitnessDecl { span, .. }
+        | Stmt::Break { span }
+        | Stmt::Continue { span } => span.line as u32,
+        Stmt::Expr(expr) => expr_line(expr),
+    }
+}
+
+/// Extract the source line number from an expression (1-based), or 0 if unavailable.
+fn expr_line(expr: &Expr) -> u32 {
+    expr.span().line as u32
+}
+
 impl StatementCompiler for Compiler {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompilerError> {
+        // Track source line for error reporting
+        self.current().current_line = stmt_line(stmt);
+
         match stmt {
             Stmt::LetDecl { name, value, .. } => self.compile_let_decl(name, value),
             Stmt::MutDecl { name, value, .. } => self.compile_mut_decl(name, value),

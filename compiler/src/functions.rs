@@ -75,6 +75,7 @@ impl FunctionDefinitionCompiler for Compiler {
                 .iter()
                 .flat_map(|u| vec![u.is_local as u8, u.index])
                 .collect(),
+            line_info: compiled_func.line_info,
         };
 
         let global_func_idx = self.prototypes.len();

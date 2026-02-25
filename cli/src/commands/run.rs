@@ -36,8 +36,10 @@ pub fn run_file(
         vm.load_executable(&mut file)
             .map_err(|e| anyhow::anyhow!("Loader Error: {:?}", e))?;
 
-        vm.interpret()
-            .map_err(|e| anyhow::anyhow!("Runtime Error: {:?}", e))?;
+        if let Err(e) = vm.interpret() {
+            let msg = format_runtime_error(&vm, &e);
+            return Err(anyhow::anyhow!("{}", msg));
+        }
 
         if let Some(val) = vm.stack.last() {
             println!("Exit Status: {}", vm.val_to_string(val));
@@ -82,6 +84,7 @@ pub fn run_file(
             constants: main_func.constants.clone(),
             max_slots: main_func.max_slots,
             upvalue_info: vec![],
+            line_info: main_func.line_info.clone(),
         };
         let func_idx = vm.heap.alloc_function(func);
         let closure_idx = vm.heap.alloc_closure(memory::Closure {
@@ -96,13 +99,23 @@ pub fn run_file(
             dest_reg: 0, // Top-level script, unused
         });
 
-        vm.interpret()
-            .map_err(|e| anyhow::anyhow!("Runtime Error: {:?}", e))?;
+        if let Err(e) = vm.interpret() {
+            let msg = format_runtime_error(&vm, &e);
+            return Err(anyhow::anyhow!("{}", msg));
+        }
 
         if let Some(val) = vm.stack.last() {
             println!("Exit Status: {}", vm.val_to_string(val));
         }
 
         Ok(())
+    }
+}
+
+/// Format a runtime error with source location if available.
+fn format_runtime_error(vm: &VM, err: &vm::RuntimeError) -> String {
+    match &vm.last_error_location {
+        Some((func_name, line)) => format!("[line {line}] in {func_name}: {err:?}"),
+        None => format!("Runtime Error: {err:?}"),
     }
 }

@@ -23,6 +23,7 @@ fn run_source(source: &str) -> Result<VM, String> {
         constants: main_func.constants.clone(),
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {

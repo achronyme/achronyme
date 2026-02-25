@@ -23,6 +23,7 @@ fn run_program(source: &str) -> Result<Value, vm::RuntimeError> {
         chunk: bytecode,
         constants: main_func.constants.clone(),
         upvalue_info: vec![],
+        line_info: vec![],
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {

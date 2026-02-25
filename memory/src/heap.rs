@@ -34,6 +34,8 @@ pub struct Function {
     // (is_local, index)
     // stored flat: [is_local_1, index_1, is_local_2, index_2...]
     pub upvalue_info: Vec<u8>,
+    // Source line number for each bytecode instruction (1-based, 0 = unknown)
+    pub line_info: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -465,6 +467,7 @@ impl Heap {
                     chunk: vec![],
                     constants: vec![],
                     upvalue_info: vec![],
+                    line_info: vec![],
                 };
             }
         }

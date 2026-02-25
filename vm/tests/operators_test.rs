@@ -16,6 +16,7 @@ fn eval(source: &str) -> Value {
         chunk: bytecode,
         constants: main_func.constants.clone(),
         upvalue_info: Vec::new(),
+        line_info: Vec::new(),
     };
     let func_idx = vm.heap.alloc_function(func);
     let closure_idx = vm.heap.alloc_closure(memory::Closure {
