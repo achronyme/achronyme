@@ -3,4 +3,162 @@ title: "Pipeline Overview"
 description: "The compilation pipeline from source to constraints."
 ---
 
-Content coming soon.
+Achronyme compiles the same source language through two distinct paths: **VM mode** for general execution and **Circuit mode** for zero-knowledge constraint generation.
+
+## Pipeline Diagram
+
+```
+Source (.ach)
+    │
+    ├─► Parser (recursive descent) → AST
+    │       │
+    │       ├─► Bytecode Compiler → VM          (ach run)
+    │       │
+    │       └─► IR Lowering → SSA IR
+    │               │
+    │           Optimize (const_fold → dce → bool_prop)
+    │               │
+    │           ┌───┴───┐
+    │           ▼       ▼
+    │        R1CS    Plonkish
+    │      (Groth16) (KZG-PlonK)
+    │           │       │
+    │           ▼       ▼
+    │       .r1cs    Gates/Lookups
+    │       .wtns    Copy constraints
+    │           │       │
+    │           └───┬───┘
+    │               ▼
+    │         Native proof
+    │
+    └─► prove { } → compile + witness + verify + proof (inline)
+```
+
+## Stage 1: Parsing
+
+**Entry point:** `achronyme_parser::parse_program(source) -> Result<Program, String>`
+
+The parser is a hand-written recursive descent parser with Pratt expression parsing. It produces an owned AST with `Program`, `Stmt`, `Expr`, and `Block` nodes.
+
+Operator precedence (high to low):
+1. `^` (power)
+2. `*`, `/`, `%` (multiplicative)
+3. `+`, `-` (additive)
+4. `==`, `!=`, `<`, `<=`, `>`, `>=` (comparison)
+5. `&&` (logical AND)
+6. `||` (logical OR)
+
+The parser handles `public`/`witness` declarations, `for` ranges, `fn` definitions, and `prove {}` blocks.
+
+## Stage 2: IR Lowering (Circuit Mode)
+
+**Entry point:** `IrLowering::lower_circuit(source, pub_vars, wit_vars) -> IrProgram`
+
+The IR lowerer converts the AST into a flat list of SSA instructions (`IrProgram`). Key behaviors:
+
+- **`let` bindings** are aliases — no instruction is emitted, the variable just points to an existing `SsaVar`
+- **`if/else`** compiles to `Mux(cond, then_val, else_val)`
+- **`for` loops** are statically unrolled (max 10,000 iterations)
+- **Function calls** are inlined at each call site; recursion is detected via a call stack guard
+- **Arrays** support compile-time indexing: `a[i]` where `i` must be a constant
+
+The lowerer tracks variables via `HashMap<String, EnvValue>` where `EnvValue` is either `Scalar(SsaVar)` or `Array(Vec<SsaVar>)`.
+
+## Stage 3: Optimization
+
+**Entry point:** `ir::passes::optimize(&mut program)`
+
+Three passes run sequentially on the IR:
+
+### Constant Folding (`const_fold`)
+
+Forward pass that evaluates operations on known constants:
+- Folds arithmetic: `Const(3) + Const(5)` → `Const(8)`
+- Simplifies identities: `x * 0 → 0`, `x - x → 0`, `x / x → 1`
+- Folds boolean logic and comparisons on constants
+
+### Dead Code Elimination (`dce`)
+
+Backward pass that removes instructions whose results are never used. Conservative on side-effecting instructions (`Mul`, `Div`, `Mux`, `PoseidonHash`, `RangeCheck`, `Assert`, etc.).
+
+### Boolean Propagation (`bool_prop`)
+
+Forward pass that computes the set of proven-boolean SSA variables. Seeds include:
+- `Const(0)` and `Const(1)`
+- Comparison results (`IsEq`, `IsNeq`, `IsLt`, `IsLe`)
+- `RangeCheck(x, 1)` and `Assert` operands
+- `Bool` type annotations
+
+Propagates through `Not`, `And`, `Or`, and `Mux`. The backends use this set to skip redundant boolean enforcement constraints.
+
+## Stage 4: Backend Compilation
+
+Two backends compile the optimized IR into constraint systems:
+
+### R1CS Backend (default)
+
+**Entry point:** `R1CSCompiler::compile_ir(program) -> Result<(), R1CSError>`
+
+Maps each `SsaVar` to a `LinearCombination`. Add/Sub/Neg are free (LC arithmetic). Mul/Div/Mux/Poseidon emit actual R1CS constraints (`A × B = C`).
+
+Wire layout: `[ONE, pub₁..pubₙ, wit₁..witₘ, intermediates...]`
+
+Public inputs are allocated before witnesses for snarkjs compatibility.
+
+### Plonkish Backend
+
+**Entry point:** `PlonkishCompiler::compile_ir(program) -> Result<(), PlonkishError>`
+
+Uses **lazy evaluation** with `PlonkVal` — defers add/sub/neg until a mul or builtin forces materialization. Each multiplication emits one row using the standard arithmetic gate: `s_arith · (a·b + c − d) = 0`.
+
+Range checks use a **lookup table** (1 row) instead of bit decomposition (n+1 constraints in R1CS).
+
+## Stage 5: Witness Generation
+
+**Entry point:** `R1CSCompiler::compile_ir_with_witness(program, inputs)`
+
+The witness is generated via **trace replay**:
+
+1. The IR is evaluated with concrete inputs using `ir::eval::evaluate()` for early validation
+2. The backend compiles the IR, recording a `WitnessOp` for each intermediate variable
+3. A witness vector is allocated (`num_variables()` slots)
+4. Public/witness inputs are filled from user-provided values
+5. The trace is replayed to compute all intermediate values
+
+## Stage 6: Binary Export (R1CS only)
+
+**Functions:**
+- `write_r1cs(cs) -> Vec<u8>` — iden3 `.r1cs` v1 binary format
+- `write_wtns(witness) -> Vec<u8>` — iden3 `.wtns` v2 binary format
+
+The exported files are compatible with snarkjs for proof generation and verification:
+
+```bash
+snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit_final.zkey
+snarkjs groth16 prove circuit_final.zkey witness.wtns proof.json public.json
+snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+## Prove Blocks (Bridge Mode)
+
+The `prove {}` expression bridges VM and circuit mode:
+
+1. The VM encounters a `prove {}` block during execution
+2. The block body is compiled as a circuit (IR → optimize → R1CS)
+3. Captured variables from the VM scope become witness/public inputs
+4. A witness is generated and constraints are verified
+5. A Groth16 proof is produced via snarkjs (if a ptau file is available)
+6. The proof is returned to the VM as a first-class `ProofObject`
+
+## Source Files
+
+| Stage | File |
+|-------|------|
+| Parser | `achronyme-parser/src/parser.rs` |
+| IR Lowering | `ir/src/lower.rs` |
+| Optimization | `ir/src/passes/` (`const_fold.rs`, `dce.rs`, `bool_prop.rs`) |
+| R1CS Backend | `compiler/src/r1cs_backend.rs` |
+| Plonkish Backend | `compiler/src/plonkish_backend.rs` |
+| Witness Gen | `compiler/src/witness_gen.rs` |
+| Binary Export | `constraints/src/export.rs` |
+| CLI Dispatch | `cli/src/commands/circuit.rs` |

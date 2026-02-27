@@ -3,4 +3,261 @@ title: "Extension Guide"
 description: "How to add new instructions, builtins, and optimization passes."
 ---
 
-Content coming soon.
+This guide explains how to extend Achronyme with new IR instructions, circuit builtins, optimization passes, and VM native functions.
+
+## Adding a New IR Instruction
+
+### 1. Define the variant
+
+In `ir/src/types.rs`, add a new variant to the `Instruction` enum:
+
+```rust
+pub enum Instruction {
+    // ... existing variants ...
+    MyOp { result: SsaVar, operand: SsaVar },
+}
+```
+
+### 2. Implement trait methods
+
+In the same file, update three methods:
+
+```rust
+// result_var() — return the result variable
+Instruction::MyOp { result, .. } => *result,
+
+// has_side_effects() — true if the instruction must not be eliminated
+// Add to the matches! if it has side effects
+
+// operands() — return all input SSA variables
+Instruction::MyOp { operand, .. } => vec![*operand],
+```
+
+### 3. Emit from IR lowering
+
+In `ir/src/lower.rs`, handle the new instruction in the appropriate method (e.g., `lower_call` for builtins, `lower_expr` for operators):
+
+```rust
+"my_op" => {
+    let arg = self.lower_expr(args[0])?;
+    let result = self.program.fresh_var();
+    self.program.push(Instruction::MyOp { result, operand: arg });
+    Ok(EnvValue::Scalar(result))
+}
+```
+
+### 4. Add evaluation logic
+
+In `ir/src/eval.rs`, handle the instruction in the `evaluate` function:
+
+```rust
+Instruction::MyOp { result, operand } => {
+    let val = values[operand];
+    let out = /* compute result */;
+    values.insert(*result, out);
+}
+```
+
+### 5. Handle in optimization passes
+
+**Constant folding** (`ir/src/passes/const_fold.rs`): Add folding logic if the operation can be computed at compile time on constants.
+
+**Dead code elimination** (`ir/src/passes/dce.rs`): If the instruction is pure (no side effects), add it to the eliminable set. If it has side effects, keep it conservative.
+
+**Boolean propagation** (`ir/src/passes/bool_prop.rs`): If the result is always boolean, add it as a seed.
+
+### 6. Compile to R1CS
+
+In `compiler/src/r1cs_backend.rs`, add a match arm in `compile_ir`:
+
+```rust
+Instruction::MyOp { result, operand } => {
+    let lc_op = self.vars[operand].clone();
+    // Build constraints...
+    let lc_result = /* ... */;
+    self.vars.insert(*result, lc_result);
+}
+```
+
+### 7. Compile to Plonkish
+
+In `compiler/src/plonkish_backend.rs`, add a match arm in `compile_ir`:
+
+```rust
+Instruction::MyOp { result, operand } => {
+    let val = self.materialize_val(/* ... */)?;
+    // Emit gate rows...
+    self.vals.insert(*result, PlonkVal::Cell(cell));
+}
+```
+
+### 8. Add witness generation
+
+If the instruction allocates intermediate variables, record a `WitnessOp` in `compiler/src/witness_gen.rs`.
+
+## Adding a Circuit Builtin
+
+Circuit builtins are high-level functions that lower to one or more IR instructions.
+
+### 1. Add the name to the parser
+
+No changes needed — the parser already handles function calls generically.
+
+### 2. Handle in IR lowering
+
+In `ir/src/lower.rs`, add a match arm in `lower_call`:
+
+```rust
+"my_builtin" => {
+    if args.len() != 2 {
+        return Err(IrError::WrongArgumentCount { ... });
+    }
+    let a = self.lower_expr_scalar(&args[0])?;
+    let b = self.lower_expr_scalar(&args[1])?;
+    let result = self.program.fresh_var();
+    self.program.push(Instruction::MyOp { result, lhs: a, rhs: b });
+    Ok(EnvValue::Scalar(result))
+}
+```
+
+### 3. Add to evaluator, passes, and backends
+
+Follow steps 4-8 from "Adding a New IR Instruction" above.
+
+## Adding an Optimization Pass
+
+### 1. Create the pass file
+
+Create `ir/src/passes/my_pass.rs`:
+
+```rust
+use crate::types::{IrProgram, Instruction, SsaVar};
+
+pub fn my_pass(program: &mut IrProgram) {
+    // Walk program.instructions and transform
+}
+```
+
+### 2. Register in the pass manager
+
+In `ir/src/passes/mod.rs`, add the module and call it from `optimize`:
+
+```rust
+mod my_pass;
+
+pub fn optimize(program: &mut IrProgram) {
+    const_fold::const_fold(program);
+    dce::dce(program);
+    bool_prop::bool_prop(program);
+    my_pass::my_pass(program);  // new pass
+}
+```
+
+### Pass guidelines
+
+- **Forward passes** (like `const_fold`, `bool_prop`) iterate `program.instructions` front-to-back, building up state
+- **Backward passes** (like `dce`) iterate back-to-front, tracking which results are used
+- Passes should be O(n) in instruction count
+- Avoid quadratic behavior — use `HashMap<SsaVar, ...>` for lookups
+
+## Adding a VM Native Function
+
+### 1. Implement the function
+
+In `vm/src/stdlib/core.rs`, add the implementation:
+
+```rust
+pub fn native_my_func(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let arg = args[0];
+    // ... process ...
+    Ok(Value::int(result))
+}
+```
+
+The signature is always `fn(&mut VM, &[Value]) -> Result<Value, RuntimeError>`.
+
+### 2. Register in the dispatch table
+
+In `vm/src/specs.rs`, add an entry to `NATIVE_TABLE`:
+
+```rust
+pub const NATIVE_TABLE: &[NativeSpec] = &[
+    // ... existing entries ...
+    NativeSpec { name: "my_func", arity: 1 },
+];
+```
+
+### 3. Update NATIVE_COUNT
+
+In the same file, update the constant:
+
+```rust
+pub const NATIVE_COUNT: usize = 24;  // was 23
+```
+
+The compile-time assertion will catch any mismatch.
+
+### 4. Map in bootstrap
+
+In `vm/src/machine/native.rs`, add the match arm in `bootstrap_natives`:
+
+```rust
+"my_func" => stdlib::core::native_my_func,
+```
+
+## Adding a VM Opcode
+
+### 1. Define the opcode
+
+In `vm/src/opcode.rs`, add a constant:
+
+```rust
+pub const MY_OP: u8 = /* next available number */;
+```
+
+### 2. Emit in the bytecode compiler
+
+In `compiler/src/compiler.rs`, emit the opcode during compilation:
+
+```rust
+// In the appropriate compilation method
+self.emit(opcode::MY_OP, a, b, c);
+```
+
+### 3. Handle in the VM interpreter
+
+In `vm/src/machine/vm.rs`, add a match arm in `interpret_inner`:
+
+```rust
+opcode::MY_OP => {
+    let a = inst_a!(inst);
+    let b = inst_b!(inst);
+    // ... execute ...
+}
+```
+
+### 4. Track line info
+
+In the bytecode compiler, ensure `current_line` is set before emitting:
+
+```rust
+self.current_line = node.line as u32;
+self.emit(opcode::MY_OP, a, b, c);
+```
+
+This enables error location tracking (`[line N] in func: Error`).
+
+## Checklist
+
+When adding a new instruction or builtin, verify:
+
+- [ ] `ir/src/types.rs` — `Instruction` enum + `result_var` + `has_side_effects` + `operands`
+- [ ] `ir/src/lower.rs` — emit instruction from AST
+- [ ] `ir/src/eval.rs` — concrete evaluation
+- [ ] `ir/src/passes/const_fold.rs` — fold on constants (if applicable)
+- [ ] `ir/src/passes/dce.rs` — mark as eliminable or conservative
+- [ ] `ir/src/passes/bool_prop.rs` — propagate boolean-ness (if applicable)
+- [ ] `compiler/src/r1cs_backend.rs` — R1CS constraint generation
+- [ ] `compiler/src/plonkish_backend.rs` — Plonkish gate emission
+- [ ] `compiler/src/witness_gen.rs` — witness computation (if intermediate wires)
+- [ ] Tests in all relevant crates

@@ -3,4 +3,86 @@ title: "Crate Map"
 description: "Workspace crate dependencies and responsibilities."
 ---
 
-Content coming soon.
+The Achronyme workspace contains 7 crates. All are at version 0.7.0, edition 2021.
+
+## Crate Overview
+
+| Crate | Path | Purpose |
+|-------|------|---------|
+| `memory` | `memory/` | Value representation, `FieldElement` (BN254 Montgomery), heap arenas, GC |
+| `achronyme-parser` | `achronyme-parser/` | Recursive descent parser, owned AST types |
+| `constraints` | `constraints/` | R1CS constraint system, Plonkish system, Poseidon hash, binary export |
+| `ir` | `ir/` | SSA intermediate representation, AST→IR lowering, optimization passes |
+| `vm` | `vm/` | Register-based virtual machine, bytecode interpreter, native functions |
+| `compiler` | `compiler/` | R1CS and Plonkish backends, witness generation |
+| `cli` | `cli/` | Command-line interface, proof orchestration (arkworks Groth16, halo2 PlonK) |
+
+## Dependency Graph
+
+```
+memory          achronyme-parser
+  │                    │
+  ├──────┐             │
+  ▼      ▼             │
+constraints   ┌────────┘
+  │      │    │
+  │      ▼    ▼
+  │       ir ◄──── memory
+  │       │
+  ▼       │
+  vm      │
+  │       │
+  └──┬────┘
+     ▼
+  compiler ◄── memory, achronyme-parser
+     │
+     ▼
+    cli ◄── memory, vm, constraints, ir
+```
+
+### Foundation (no workspace dependencies)
+
+**`memory`** — The base layer. Defines `FieldElement` (BN254 scalar field in Montgomery form, `[u64; 4]` limbs), tagged `Value` (4-bit tag + 60-bit payload), typed heap arenas, and mark-and-sweep GC.
+
+**`achronyme-parser`** — Standalone parser. Recursive descent with Pratt expression parsing. Exports `parse_program(source) -> Result<Program, String>` and owned AST types (`Program`, `Stmt`, `Expr`, `Block`).
+
+### Middle Layer
+
+**`constraints`** → `memory`
+
+Core constraint system abstractions. `Variable(usize)` for wire references, `LinearCombination` for sparse symbolic expressions, `ConstraintSystem` for A×B=C enforcement. Also contains the `PlonkishSystem` (gates, lookups, copy constraints), Poseidon hash parameters (circomlibjs-compatible), and binary export (`write_r1cs`, `write_wtns` in iden3 format).
+
+**`ir`** → `memory`, `constraints`, `achronyme-parser`
+
+SSA intermediate representation for circuit compilation. `IrLowering` converts the AST into a flat `IrProgram` (19 instruction variants). Includes 4 optimization passes (`const_fold`, `dce`, `bool_prop`, `taint`) and an evaluator for concrete IR execution.
+
+**`vm`** → `memory`, `constraints`
+
+Register-based bytecode VM. 40+ opcodes, bytecode compiler (`FunctionCompiler`), 23 native functions, `prove {}` block support. Uses `constraints` for Poseidon hash computation in VM mode.
+
+### Top Layer
+
+**`compiler`** → `memory`, `vm`, `constraints`, `achronyme-parser`, `ir`
+
+Backend compilation from IR to constraint systems. `R1CSCompiler` maps SSA variables to linear combinations and emits R1CS constraints. `PlonkishCompiler` uses lazy `PlonkVal` evaluation with cell-based rows. Both backends include `compile_ir_with_witness()` for combined compilation + witness generation.
+
+**`cli`** → `memory`, `vm`, `compiler`, `constraints`, `ir`
+
+User-facing CLI. Dispatches `ach run` (VM path) and `ach circuit` (constraint path). Handles proof orchestration with external cryptographic libraries:
+- **arkworks**: `ark-groth16`, `ark-bn254`, `ark-relations` for Groth16 proving
+- **halo2**: `halo2_proofs` for PlonK proving
+
+## Key Entry Points
+
+| Task | Crate | Function |
+|------|-------|----------|
+| Parse source | `achronyme-parser` | `parse_program(source)` |
+| Lower to IR | `ir` | `IrLowering::lower_circuit(source, pub, wit)` |
+| Optimize IR | `ir` | `passes::optimize(&mut program)` |
+| Compile to R1CS | `compiler` | `R1CSCompiler::compile_ir(program)` |
+| Compile to Plonkish | `compiler` | `PlonkishCompiler::compile_ir(program)` |
+| Generate witness | `compiler` | `R1CSCompiler::compile_ir_with_witness(program, inputs)` |
+| Export .r1cs | `constraints` | `write_r1cs(cs)` |
+| Export .wtns | `constraints` | `write_wtns(witness)` |
+| Run VM | `vm` | `VM::interpret(function)` |
+| Run CLI | `cli` | `main()` → command dispatch |

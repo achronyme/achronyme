@@ -3,4 +3,184 @@ title: "Merkle Membership Proof"
 description: "End-to-end Merkle tree membership proof tutorial."
 ---
 
-Content coming soon.
+This tutorial shows how to prove that a leaf belongs to a Merkle tree without revealing the leaf's position or the tree's other contents.
+
+## Concepts
+
+A Merkle tree is a binary hash tree where each non-leaf node is the Poseidon hash of its two children. To prove membership, the prover provides:
+
+- **leaf**: the value at a specific position
+- **path**: sibling hashes at each level (from leaf to root)
+- **indices**: direction bits at each level (0 = left child, 1 = right child)
+
+The verifier recomputes the root from these values and checks it matches the expected root.
+
+## Circuit Definition
+
+Create `merkle.ach`:
+
+```
+public root
+witness leaf
+witness path[3]
+witness indices[3]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+This verifies membership in a tree of depth 3 (8 leaves). The `merkle_verify` builtin:
+1. At each level, positions the current hash and the sibling based on the direction bit
+2. Hashes them together with Poseidon
+3. After all levels, asserts the result equals `root`
+
+Internally, `merkle_verify` unrolls to:
+
+```
+// Level 0
+let l0 = mux(indices[0], path[0], leaf)
+let r0 = mux(indices[0], leaf, path[0])
+let h0 = poseidon(l0, r0)
+
+// Level 1
+let l1 = mux(indices[1], path[1], h0)
+let r1 = mux(indices[1], h0, path[1])
+let h1 = poseidon(l1, r1)
+
+// Level 2
+let l2 = mux(indices[2], path[2], h1)
+let r2 = mux(indices[2], h1, path[2])
+let h2 = poseidon(l2, r2)
+
+assert_eq(h2, root)
+```
+
+## Building the Tree
+
+To provide inputs, you need to compute the tree. In a separate script or program, build the tree bottom-up:
+
+```
+// 8 leaves
+let leaves = [
+    field(100), field(200), field(300), field(400),
+    field(500), field(600), field(700), field(800)
+]
+
+// Level 0: hash pairs of leaves
+let n0 = poseidon(leaves[0], leaves[1])
+let n1 = poseidon(leaves[2], leaves[3])
+let n2 = poseidon(leaves[4], leaves[5])
+let n3 = poseidon(leaves[6], leaves[7])
+
+// Level 1: hash pairs of level-0 nodes
+let n4 = poseidon(n0, n1)
+let n5 = poseidon(n2, n3)
+
+// Level 2: root
+let root = poseidon(n4, n5)
+print(root)
+```
+
+Run this with `ach run` to get concrete hash values.
+
+## Generating a Proof Path
+
+To prove that `leaves[2]` (value 300) is in the tree:
+
+1. **Level 0**: `leaves[2]` is the left child of `poseidon(leaves[2], leaves[3])`. Sibling = `leaves[3]`, index = 0 (we are on the left).
+2. **Level 1**: `n1` is the right child of `poseidon(n0, n1)`. Sibling = `n0`, index = 1 (we are on the right).
+3. **Level 2**: `n4` is the left child of `poseidon(n4, n5)`. Sibling = `n5`, index = 0 (we are on the left).
+
+So:
+- `leaf = 300`
+- `path = [leaves[3], n0, n5]` (sibling at each level)
+- `indices = [0, 1, 0]` (our position at each level)
+
+## Compiling the Circuit
+
+```bash
+ach circuit merkle.ach \
+  --inputs "root=<root_value>,leaf=300,path_0=<leaves[3]>,path_1=<n0>,path_2=<n5>,indices_0=0,indices_1=1,indices_2=0"
+```
+
+Note the array input syntax: `path_0`, `path_1`, `path_2` for `path[3]`.
+
+This produces `circuit.r1cs` and `witness.wtns`, compatible with snarkjs.
+
+## Constraint Cost
+
+Each level of the tree costs approximately 363 R1CS constraints:
+- 1 Poseidon hash: 361 constraints
+- 1 `mux` for left/right selection: 2 constraints
+
+A depth-3 tree uses ~1,089 constraints. A depth-20 tree (for ~1M leaves) uses ~7,260 constraints.
+
+## Verifying with snarkjs
+
+After compiling, generate and verify a Groth16 proof:
+
+```bash
+# Setup (one-time, needs Powers of Tau ceremony file)
+snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit_final.zkey
+
+# Generate proof
+snarkjs groth16 prove circuit_final.zkey witness.wtns proof.json public.json
+
+# Verify
+snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+The verifier only sees `root` (the public input). The leaf value, path, and indices remain private.
+
+## Using prove {} Instead
+
+You can also generate proofs inline without the CLI:
+
+```
+// ... compute tree values as above ...
+
+let p = prove {
+    witness leaf
+    witness path[3]
+    witness indices[3]
+    public root
+
+    merkle_verify(root, leaf, path, indices)
+}
+
+print(verify_proof(p))  // true
+```
+
+## Adjusting Tree Depth
+
+Change the array size to match your tree depth:
+
+```
+// Depth 1 (2 leaves)
+witness path[1]
+witness indices[1]
+
+// Depth 5 (32 leaves)
+witness path[5]
+witness indices[5]
+
+// Depth 20 (~1M leaves)
+witness path[20]
+witness indices[20]
+```
+
+The `path` and `indices` arrays must have the same length.
+
+## Type Annotations
+
+For explicit type safety, add annotations:
+
+```
+public root: Field
+witness leaf: Field
+witness path[3]: Field
+witness indices[3]: Bool
+
+merkle_verify(root, leaf, path, indices)
+```
+
+The `Bool` annotation on `indices` ensures they are constrained to 0 or 1, which the `bool_prop` optimization pass can use to skip redundant boolean enforcement.

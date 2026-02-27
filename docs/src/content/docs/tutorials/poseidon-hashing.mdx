@@ -3,4 +3,182 @@ title: "Poseidon Hashing"
 description: "Hash chains and tree roots with Poseidon."
 ---
 
-Content coming soon.
+Poseidon is an arithmetic-friendly hash function designed for zero-knowledge circuits. Achronyme's implementation uses BN254 parameters compatible with [circomlibjs](https://github.com/iden3/circomlibjs), so hashes computed in Achronyme match those from the iden3/circom ecosystem.
+
+## Basic Hash
+
+Compute a 2-to-1 Poseidon hash:
+
+```
+let h = poseidon(1, 2)
+print(h)
+// 7853200120776062878684798364095072458815029376092732009249414926327459813530
+```
+
+Both arguments can be integers or field elements. The result is always a field element.
+
+## Known Test Vectors
+
+These values match circomlibjs output:
+
+```
+// poseidon(0, 0)
+let h0 = poseidon(0, 0)
+print(h0)
+// 14744269619966411208579211824598458697587494354926760081771325075741142829156
+
+// poseidon(1, 2)
+let h1 = poseidon(1, 2)
+print(h1)
+// 7853200120776062878684798364095072458815029376092732009249414926327459813530
+```
+
+You can use these vectors to verify compatibility with other Poseidon implementations.
+
+## Hash Chains
+
+Chain multiple values by feeding the previous hash as input:
+
+```
+let h01 = poseidon(1, 2)
+let h012 = poseidon(h01, 3)
+let h0123 = poseidon(h012, 4)
+print(h0123)
+```
+
+Or use `poseidon_many()` for the same result with less code:
+
+```
+let h = poseidon_many(1, 2, 3, 4)
+print(h)
+// Same as poseidon(poseidon(poseidon(1, 2), 3), 4)
+```
+
+`poseidon_many` requires at least 2 arguments. It left-folds the hash: the first two values are hashed together, then each subsequent value is hashed with the running result.
+
+## Input Order Matters
+
+Poseidon is **not** commutative — swapping inputs produces a different hash:
+
+```
+let h1 = poseidon(1, 2)
+let h2 = poseidon(2, 1)
+assert(h1 != h2)  // different values
+```
+
+This property is essential for Merkle trees, where left and right children must be distinguished.
+
+## Using with Field Elements
+
+For values larger than i60 or for exact BN254 field arithmetic, use `field()`:
+
+```
+let a = field("21888242871839275222246405745257275088548364400416034343698204186575808495616")
+let b = field(1)
+let h = poseidon(a, b)
+print(h)
+```
+
+## In Circuit Mode
+
+Poseidon works in both VM and circuit mode. In circuits, each hash emits 361 R1CS constraints (360 permutation rounds + 1 capacity initialization):
+
+```
+public expected
+witness a
+witness b
+
+let h = poseidon(a, b)
+assert_eq(h, expected)
+```
+
+Compile and run:
+
+```bash
+ach circuit hash.ach --inputs "expected=7853200120776062878684798364095072458815029376092732009249414926327459813530,a=1,b=2"
+```
+
+### Constraint Costs
+
+| Expression | Constraints |
+|-----------|-------------|
+| `poseidon(a, b)` | 361 |
+| `poseidon_many(a, b, c)` | 722 (2 × 361) |
+| `poseidon_many(a, b, c, d)` | 1,083 (3 × 361) |
+
+## Building Merkle Roots
+
+Compute a Merkle root by hashing leaves pairwise, then hashing the results:
+
+```
+// 4-leaf tree
+let leaf0 = field(100)
+let leaf1 = field(200)
+let leaf2 = field(300)
+let leaf3 = field(400)
+
+// Level 0: hash pairs
+let n0 = poseidon(leaf0, leaf1)
+let n1 = poseidon(leaf2, leaf3)
+
+// Level 1: root
+let root = poseidon(n0, n1)
+print(root)
+```
+
+For larger trees, use loops:
+
+```
+// 8-leaf tree
+let leaves = [
+    field(100), field(200), field(300), field(400),
+    field(500), field(600), field(700), field(800)
+]
+
+// Level 0
+let l0_0 = poseidon(leaves[0], leaves[1])
+let l0_1 = poseidon(leaves[2], leaves[3])
+let l0_2 = poseidon(leaves[4], leaves[5])
+let l0_3 = poseidon(leaves[6], leaves[7])
+
+// Level 1
+let l1_0 = poseidon(l0_0, l0_1)
+let l1_1 = poseidon(l0_2, l0_3)
+
+// Root
+let root = poseidon(l1_0, l1_1)
+print(root)
+```
+
+## In Prove Blocks
+
+Poseidon works inside `prove {}` for inline proof generation:
+
+```
+let a = field(1)
+let b = field(2)
+let h = field("7853200120776062878684798364095072458815029376092732009249414926327459813530")
+
+let p = prove {
+    witness a
+    witness b
+    public h
+    assert_eq(poseidon(a, b), h)
+}
+
+print(verify_proof(p))  // true
+```
+
+The prover demonstrates knowledge of `a` and `b` without revealing them. The verifier only sees `h`.
+
+## circomlibjs Compatibility
+
+Achronyme uses the same Poseidon constants as circomlibjs v0.1.7:
+
+- **Curve**: BN254 scalar field
+- **State width**: t = 3
+- **Full rounds**: R_f = 8
+- **Partial rounds**: R_p = 57
+- **S-box**: x^5
+
+Hashes computed with `poseidon()` in Achronyme produce identical outputs to `circomlibjs.poseidon([a, b])`. This ensures interoperability with circom circuits, snarkjs proofs, and on-chain Poseidon verifiers.
