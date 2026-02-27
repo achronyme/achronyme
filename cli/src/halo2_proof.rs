@@ -6,22 +6,22 @@
 use std::path::Path;
 
 use compiler::plonkish_backend::PlonkishCompiler;
-use halo2_proofs::SerdeFormat;
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine};
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::plonk::{
-    self, Advice, Circuit, Column as H2Column, ConstraintSystem, Fixed, Instance, Selector,
-    TableColumn, VerifyingKey, create_proof, keygen_pk, keygen_vk, verify_proof,
+    self, create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column as H2Column,
+    ConstraintSystem, Fixed, Instance, Selector, TableColumn, VerifyingKey,
 };
-use halo2_proofs::poly::Rotation;
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::kzg::commitment::{KZGCommitmentScheme, ParamsKZG};
 use halo2_proofs::poly::kzg::multiopen::{ProverSHPLONK, VerifierSHPLONK};
 use halo2_proofs::poly::kzg::strategy::SingleStrategy;
+use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{
     Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
 };
+use halo2_proofs::SerdeFormat;
 use memory::FieldElement;
 use rand::rngs::OsRng;
 use vm::ProveResult;
