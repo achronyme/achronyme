@@ -3,4 +3,167 @@ title: "Witness Generation"
 description: "How witnesses are generated from compiled circuits."
 ---
 
-Content coming soon.
+A **witness** is the complete assignment of values to all wires in a constraint system. Achronyme generates witnesses via **trace replay** — the compiler records each intermediate computation during compilation, then replays those operations with concrete input values.
+
+## Overview
+
+The witness generation pipeline:
+
+1. **Compilation**: `R1CSCompiler::compile_ir()` walks the IR and records a `WitnessOp` for each intermediate variable it allocates
+2. **Capture**: `WitnessGenerator::from_compiler()` captures the ops trace, variable layout, and Poseidon parameters
+3. **Generation**: `generate(inputs)` allocates the witness vector, fills input values, and replays the ops
+
+Alternatively, `compile_ir_with_witness(program, inputs)` combines all three steps — it also runs the IR evaluator first for early validation.
+
+## WitnessOp
+
+Each `WitnessOp` records how to compute one intermediate wire value:
+
+### AssignLC
+
+```rust
+AssignLC { target: Variable, lc: LinearCombination }
+```
+
+Evaluate a linear combination against the current witness: `target = lc.evaluate(witness)`. Emitted by `materialize_lc` when a linear combination is materialized into a new wire.
+
+### Multiply
+
+```rust
+Multiply { target: Variable, a: LinearCombination, b: LinearCombination }
+```
+
+Compute `target = a.evaluate(witness) × b.evaluate(witness)`. Emitted by `multiply_lcs` for general multiplication.
+
+### Inverse
+
+```rust
+Inverse { target: Variable, operand: LinearCombination }
+```
+
+Compute `target = 1 / operand.evaluate(witness)`. Emitted by `divide_lcs` for division. Errors if the operand evaluates to zero.
+
+### BitExtract
+
+```rust
+BitExtract { target: Variable, source: LinearCombination, bit_index: u32 }
+```
+
+Extract a single bit: `target = (source >> bit_index) & 1`. Emitted by `RangeCheck` boolean decomposition. Field elements are 256 bits (4 × 64-bit limbs), so `bit_index` can be 0–255.
+
+### IsZero
+
+```rust
+IsZero { diff: LinearCombination, target_inv: Variable, target_result: Variable }
+```
+
+The IsZero gadget:
+- If `diff == 0`: `inv = 0`, `result = 1`
+- If `diff != 0`: `inv = 1/diff`, `result = 0`
+
+Used by `IsEq` and `IsNeq` comparison instructions.
+
+### PoseidonHash
+
+```rust
+PoseidonHash { left: Variable, right: Variable, output: Variable,
+               internal_start: usize, internal_count: usize }
+```
+
+Compute the Poseidon 2-to-1 hash by replaying the full permutation natively. Fills ~361 internal wire values (360 round states + 1 capacity init) starting at `internal_start`. The allocation order matches exactly what `compile_poseidon` produces in the R1CS backend.
+
+## WitnessGenerator
+
+```rust
+struct WitnessGenerator {
+    ops: Vec<WitnessOp>,
+    num_variables: usize,
+    public_inputs: Vec<(String, Variable)>,
+    witnesses: Vec<(String, Variable)>,
+    poseidon_params: Option<PoseidonParams>,
+}
+```
+
+### Building
+
+```rust
+let wg = WitnessGenerator::from_compiler(&compiler);
+```
+
+Must be called after `compile_ir()`. Captures the ops trace, variable count, input/witness layout, and lazily-initialized Poseidon parameters.
+
+### Generating
+
+```rust
+let witness: Vec<FieldElement> = wg.generate(inputs)?;
+```
+
+The `generate()` method:
+
+1. Allocates a vector of `num_variables` field elements
+2. Sets wire 0 = 1 (the constant ONE wire)
+3. Fills public input wires from the provided `inputs` map
+4. Fills witness wires from the provided `inputs` map
+5. Replays each `WitnessOp` in order to compute intermediate values
+6. Returns the complete witness vector
+
+### Errors
+
+```rust
+enum WitnessError {
+    MissingInput(String),                    // required input not provided
+    DivisionByZero { variable_index: usize }, // inverse of zero
+}
+```
+
+## Wire Layout
+
+The witness vector follows this layout (required for snarkjs compatibility):
+
+```
+Index:  0       1..n_pub    n_pub+1..
+        ONE     public      witness + intermediates
+```
+
+- **Wire 0**: Always 1 (the constant)
+- **Wires 1..n_pub**: Public inputs in declaration order
+- **Remaining wires**: Witness inputs followed by intermediate variables
+
+Public inputs must be allocated before witness inputs — snarkjs expects this ordering.
+
+## Combined Pipeline
+
+The most common usage is `compile_ir_with_witness()`, which does everything in one call:
+
+```rust
+let witness = compiler.compile_ir_with_witness(&program, &inputs)?;
+```
+
+This method:
+1. Evaluates the IR with concrete inputs (`ir::eval::evaluate()`) for early validation
+2. Compiles the IR to constraints (populating `witness_ops`)
+3. Builds a `WitnessGenerator` from the compiler
+4. Generates the witness
+5. Verifies the witness against the constraint system
+
+Both `R1CSCompiler` and `PlonkishCompiler` provide this method.
+
+## Poseidon Witness
+
+The Poseidon hash is the most complex witness computation. `fill_poseidon` replays the permutation:
+
+1. Initialize state: `[left, right, 0]` (capacity = 0)
+2. Apply the Poseidon permutation (full rounds → partial rounds → full rounds)
+3. For each round: add round constant, apply S-box, multiply by MDS matrix
+4. Record each intermediate state value in the witness at the correct wire index
+
+The wire allocation order must exactly match what `compile_poseidon` produces — any mismatch causes witness verification to fail.
+
+## Source Files
+
+| Component | File |
+|-----------|------|
+| WitnessOp & WitnessGenerator | `compiler/src/witness_gen.rs` |
+| R1CS compile_ir_with_witness | `compiler/src/r1cs_backend.rs` |
+| Plonkish compile_ir_with_witness | `compiler/src/plonkish_backend.rs` |
+| Poseidon parameters | `constraints/src/poseidon.rs` |

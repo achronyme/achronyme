@@ -1,0 +1,286 @@
+---
+title: "Native Functions"
+description: "Reference for all 23 built-in native functions."
+---
+
+Achronyme provides 23 native functions built into the VM. Some are also available in circuit mode.
+
+## Core
+
+### `print(...values)`
+
+Prints all arguments separated by spaces, followed by a newline. Returns `nil`.
+
+```
+print("hello", 42, true)  // hello 42 true
+```
+
+**Mode:** VM only
+
+### `len(x)`
+
+Returns the length of a string (character count), list (element count), or map (entry count).
+
+```
+len("abc")     // 3
+len([1, 2, 3]) // 3
+len({a: 1})    // 1
+```
+
+**Mode:** Both (in circuits, resolves array length at compile time)
+
+### `typeof(x)`
+
+Returns a string describing the type of the value: `"Number"`, `"String"`, `"Bool"`, `"Nil"`, `"List"`, `"Map"`, `"Field"`, `"Proof"`, `"Function"`, `"Native"`.
+
+```
+typeof(42)      // "Number"
+typeof("hi")    // "String"
+typeof(true)    // "Bool"
+```
+
+**Mode:** VM only
+
+### `assert(condition)`
+
+Asserts that the condition is true. Returns `nil` on success, raises `AssertionFailed` on failure.
+
+```
+assert(1 + 1 == 2)  // ok
+assert(false)        // error: AssertionFailed
+```
+
+**Mode:** Both (in circuits, emits 2 constraints: boolean enforcement + enforce = 1)
+
+### `time()`
+
+Returns the current time as milliseconds since the Unix epoch.
+
+```
+let t = time()
+print(t)  // 1740700800000
+```
+
+**Mode:** VM only
+
+## Collections
+
+### `push(list, item)`
+
+Appends an item to the end of a list. Mutates the list in-place. Returns `nil`.
+
+```
+let a = [1, 2]
+push(a, 3)
+print(a)  // [1, 2, 3]
+```
+
+**Mode:** VM only
+
+### `pop(list)`
+
+Removes and returns the last element of a list. Returns `nil` if the list is empty.
+
+```
+let a = [1, 2, 3]
+let x = pop(a)
+print(x)  // 3
+print(a)  // [1, 2]
+```
+
+**Mode:** VM only
+
+### `keys(map)`
+
+Returns a list of all keys in a map.
+
+```
+let m = {name: "alice", age: 30}
+print(keys(m))  // ["name", "age"]
+```
+
+**Mode:** VM only
+
+## Type Conversion
+
+### `field(x)`
+
+Converts an integer or decimal/hex string to a BN254 field element. This is the explicit way to work with field arithmetic in VM mode.
+
+```
+let a = field(42)
+let b = field("0x2a")
+let c = field("21888242871839275222246405745257275088548364400416034343698204186575808495617")
+```
+
+Integer values are converted via `FieldElement::from_i64()`. Strings can be decimal or hex (with `0x` prefix).
+
+**Mode:** VM only (in `prove {}` blocks, integer captures are auto-converted)
+
+## Proof Inspection
+
+These functions extract components from a `ProofObject` returned by `prove {}`.
+
+### `proof_json(proof)`
+
+Returns the Groth16 proof as a JSON string.
+
+```
+let p = prove { ... }
+print(proof_json(p))  // {"pi_a": [...], "pi_b": [...], ...}
+```
+
+**Mode:** VM only
+
+### `proof_public(proof)`
+
+Returns the public inputs as a JSON string.
+
+```
+print(proof_public(p))  // ["21888...", "17159..."]
+```
+
+**Mode:** VM only
+
+### `proof_vkey(proof)`
+
+Returns the verification key as a JSON string.
+
+```
+print(proof_vkey(p))  // {"protocol": "groth16", "curve": "bn128", ...}
+```
+
+**Mode:** VM only
+
+## String Utilities
+
+### `substring(s, start, end)`
+
+Extracts a substring from character position `start` to `end` (exclusive). Indices are clamped to string bounds.
+
+```
+substring("hello", 1, 4)  // "ell"
+```
+
+### `indexOf(s, sub)`
+
+Returns the character index of the first occurrence of `sub` in `s`. Returns `-1` if not found.
+
+```
+indexOf("hello world", "world")  // 6
+indexOf("hello", "xyz")          // -1
+```
+
+### `split(s, delimiter)`
+
+Splits a string by the given delimiter. Returns a list of strings.
+
+```
+split("a,b,c", ",")  // ["a", "b", "c"]
+```
+
+### `trim(s)`
+
+Removes leading and trailing whitespace.
+
+```
+trim("  hello  ")  // "hello"
+```
+
+### `replace(s, search, replacement)`
+
+Replaces all occurrences of `search` with `replacement`.
+
+```
+replace("aabbcc", "bb", "XX")  // "aaXXcc"
+```
+
+### `toUpper(s)`
+
+Converts all characters to uppercase.
+
+```
+toUpper("hello")  // "HELLO"
+```
+
+### `toLower(s)`
+
+Converts all characters to lowercase.
+
+```
+toLower("HELLO")  // "hello"
+```
+
+### `chars(s)`
+
+Splits a string into a list of individual characters.
+
+```
+chars("abc")  // ["a", "b", "c"]
+```
+
+All string functions are **VM only**.
+
+## Cryptographic
+
+### `poseidon(left, right)`
+
+Computes the Poseidon 2-to-1 hash over BN254. Both arguments can be integers or field elements.
+
+```
+let h = poseidon(1, 2)
+print(h)  // field element
+```
+
+**Mode:** Both (in circuits, emits 361 constraints)
+
+### `poseidon_many(a, b, ...)`
+
+Left-fold Poseidon hash: `poseidon(poseidon(a, b), c)` and so on. Requires at least 2 arguments.
+
+```
+let h = poseidon_many(1, 2, 3, 4)
+// equivalent to: poseidon(poseidon(poseidon(1, 2), 3), 4)
+```
+
+**Mode:** Both (in circuits, emits 361 constraints per pair)
+
+### `verify_proof(proof)`
+
+Verifies a Groth16 proof. Returns `true` if valid, `false` otherwise. Requires a verify handler to be configured in the VM.
+
+```
+let p = prove { ... }
+let ok = verify_proof(p)
+print(ok)  // true
+```
+
+**Mode:** VM only
+
+## Summary Table
+
+| # | Function | Arity | Mode | Returns |
+|---|----------|-------|------|---------|
+| 0 | `print(...)` | variadic | VM | nil |
+| 1 | `len(x)` | 1 | Both | int |
+| 2 | `typeof(x)` | 1 | VM | string |
+| 3 | `assert(x)` | 1 | Both | nil |
+| 4 | `time()` | 0 | VM | int |
+| 5 | `push(list, item)` | 2 | VM | nil |
+| 6 | `pop(list)` | 1 | VM | value |
+| 7 | `keys(map)` | 1 | VM | list |
+| 8 | `field(x)` | 1 | VM | field |
+| 9 | `proof_json(p)` | 1 | VM | string |
+| 10 | `proof_public(p)` | 1 | VM | string |
+| 11 | `proof_vkey(p)` | 1 | VM | string |
+| 12 | `substring(s, start, end)` | 3 | VM | string |
+| 13 | `indexOf(s, sub)` | 2 | VM | int |
+| 14 | `split(s, delim)` | 2 | VM | list |
+| 15 | `trim(s)` | 1 | VM | string |
+| 16 | `replace(s, search, repl)` | 3 | VM | string |
+| 17 | `toUpper(s)` | 1 | VM | string |
+| 18 | `toLower(s)` | 1 | VM | string |
+| 19 | `chars(s)` | 1 | VM | list |
+| 20 | `poseidon(a, b)` | 2 | Both | field |
+| 21 | `poseidon_many(...)` | variadic | Both | field |
+| 22 | `verify_proof(p)` | 1 | VM | bool |

@@ -3,4 +3,192 @@ title: "IR & Optimization"
 description: "SSA intermediate representation and optimization passes."
 ---
 
-Content coming soon.
+The IR (intermediate representation) is the bridge between the parser's AST and the constraint backends. It uses Static Single Assignment form — every variable is defined exactly once.
+
+## SSA Variables
+
+```rust
+struct SsaVar(pub u32);
+```
+
+Each `SsaVar` is a unique, immutable variable identified by an integer. The `IrProgram` allocates them sequentially via `fresh_var()`.
+
+## Instructions
+
+The IR has 19 instruction variants. Each defines exactly one `result` variable:
+
+### Data
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `Const` | `value: FieldElement` | Compile-time constant |
+| `Input` | `name, visibility` | Circuit input (public or witness) |
+
+### Arithmetic
+
+| Instruction | Description | R1CS Cost |
+|-------------|-------------|-----------|
+| `Add(lhs, rhs)` | Field addition | 0 (LC arithmetic) |
+| `Sub(lhs, rhs)` | Field subtraction | 0 |
+| `Mul(lhs, rhs)` | Field multiplication | 1 constraint |
+| `Div(lhs, rhs)` | Field division | 2 constraints |
+| `Neg(operand)` | Field negation | 0 |
+
+### Control Flow
+
+| Instruction | Description | R1CS Cost |
+|-------------|-------------|-----------|
+| `Mux(cond, if_true, if_false)` | Boolean selector | 2 constraints |
+
+### Assertions
+
+| Instruction | Description | R1CS Cost |
+|-------------|-------------|-----------|
+| `AssertEq(lhs, rhs)` | Enforce equality | 1 constraint |
+| `Assert(operand)` | Enforce operand == 1 | 2 constraints |
+| `RangeCheck(operand, bits)` | Enforce 0 ≤ operand < 2^bits | bits+1 constraints |
+
+### Boolean Logic
+
+| Instruction | Description | R1CS Cost |
+|-------------|-------------|-----------|
+| `Not(operand)` | 1 − operand | 1 constraint |
+| `And(lhs, rhs)` | lhs × rhs | 3 constraints |
+| `Or(lhs, rhs)` | lhs + rhs − lhs×rhs | 3 constraints |
+
+### Comparisons
+
+| Instruction | Description | R1CS Cost |
+|-------------|-------------|-----------|
+| `IsEq(lhs, rhs)` | 1 if equal, 0 otherwise | 2 constraints |
+| `IsNeq(lhs, rhs)` | 1 if not equal, 0 otherwise | 2 constraints |
+| `IsLt(lhs, rhs)` | 1 if lhs < rhs | ~760 constraints |
+| `IsLe(lhs, rhs)` | 1 if lhs ≤ rhs | ~760 constraints |
+
+### Cryptographic
+
+| Instruction | Description | R1CS Cost |
+|-------------|-------------|-----------|
+| `PoseidonHash(left, right)` | Poseidon 2-to-1 hash | 361 constraints |
+
+## IrProgram
+
+```rust
+struct IrProgram {
+    instructions: Vec<Instruction>,
+    next_var: u32,
+    var_names: HashMap<SsaVar, String>,   // source names for errors
+    var_types: HashMap<SsaVar, IrType>,   // Field or Bool
+}
+```
+
+The program is a flat list of instructions — no phi-nodes needed because circuits have no dynamic branching. Type metadata (`IrType::Field` or `IrType::Bool`) is set by type annotations and used by backends to skip redundant boolean enforcement.
+
+## IR Lowering
+
+`IrLowering` converts the AST into an `IrProgram`:
+
+```rust
+// With explicit declarations
+IrLowering::lower_circuit(source, public_vars, witness_vars) -> IrProgram
+
+// With in-source declarations
+IrLowering::lower_self_contained(source) -> (pub_names, wit_names, IrProgram)
+```
+
+### Key Lowering Rules
+
+- **`let` bindings** are aliases — no instruction emitted, the name maps to an existing `SsaVar`
+- **`if/else`** compiles to `Mux(cond, then_val, else_val)`
+- **`for` loops** are statically unrolled (max 10,000 iterations)
+- **Function calls** are inlined at each call site with recursion detection via `call_stack`
+- **Arrays** are `EnvValue::Array(Vec<SsaVar>)` — indexing must be compile-time constant
+- **`len(arr)`** is resolved at compile time to a constant
+
+### Environment
+
+Variables are tracked via `HashMap<String, EnvValue>`:
+
+```rust
+enum EnvValue {
+    Scalar(SsaVar),
+    Array(Vec<SsaVar>),
+}
+```
+
+## Optimization Passes
+
+The optimizer runs three passes sequentially via `passes::optimize(&mut program)`:
+
+### 1. Constant Folding (`const_fold`)
+
+A forward O(n) pass that evaluates operations on known constants:
+
+- **Arithmetic**: `Const(3) + Const(5)` → `Const(8)`
+- **Identity**: `x * 1` → `x`, `x + 0` → `x`
+- **Annihilation**: `x * 0` → `Const(0)`
+- **Self-operations**: `x - x` → `Const(0)`, `x / x` → `Const(1)` (when x is a non-zero constant)
+- **Boolean logic**: folds `Not`, `And`, `Or` on constant operands
+- **Comparisons**: folds `IsEq`, `IsNeq`, `IsLt`, `IsLe` on constant operands (canonical limb comparison)
+- **Range checks**: verifies `RangeCheck` on constants, replaces with pass-through
+
+### 2. Dead Code Elimination (`dce`)
+
+A backward pass that removes instructions whose results are never used.
+
+**Eliminable** (pure): `Const`, `Add`, `Sub`, `Neg`
+
+**Conservative** (may have side effects or be expensive): `Mul`, `Div`, `Mux`, `PoseidonHash`, `RangeCheck`, `Not`, `And`, `Or`, `IsEq`, `IsNeq`, `IsLt`, `IsLe`, `Assert`
+
+**Never eliminated**: `AssertEq`, `Input`, `RangeCheck`, `Assert` (side-effecting)
+
+### 3. Boolean Propagation (`bool_prop`)
+
+A forward O(n) pass that computes the set of SSA variables proven to be boolean (0 or 1). The backends use this set to skip redundant boolean enforcement constraints.
+
+**Seeds** (known boolean):
+- `Const(0)` and `Const(1)`
+- Comparison results: `IsEq`, `IsNeq`, `IsLt`, `IsLe`
+- `RangeCheck(x, 1)` targets
+- `Assert` operands and results
+- Variables with `IrType::Bool` annotation
+
+**Propagation**:
+- `Not(x)` → result is boolean if `x` is boolean
+- `And(a, b)` → result is boolean if both are boolean
+- `Or(a, b)` → result is boolean if both are boolean
+- `Mux(c, t, f)` → result is boolean if both `t` and `f` are boolean
+
+## Taint Analysis (`taint`)
+
+An additional analysis pass (not part of `optimize()`) that runs as a diagnostic:
+
+1. **Forward taint propagation**: marks all SSA variables derived from inputs
+2. **Backward constraint reachability**: marks variables used by assertions/constraints
+
+Warnings:
+- **`UnderConstrained`**: an input influences no constraint — potential soundness issue
+- **`UnusedInput`**: an input is declared but never used
+
+## IR Evaluator
+
+`ir::eval::evaluate(program, inputs)` provides concrete forward evaluation of an `IrProgram`:
+
+```rust
+evaluate(program: &IrProgram, inputs: &HashMap<String, FieldElement>)
+    -> Result<HashMap<SsaVar, FieldElement>, EvalError>
+```
+
+Used by `compile_ir_with_witness()` for early validation before constraint generation. Error variants: `MissingInput`, `DivisionByZero`, `AssertionFailed`, `AssertEqFailed`, `RangeCheckFailed`, `UndefinedVar`.
+
+## Source Files
+
+| Component | File |
+|-----------|------|
+| Types | `ir/src/types.rs` |
+| Lowering | `ir/src/lower.rs` |
+| Evaluator | `ir/src/eval.rs` |
+| Constant Folding | `ir/src/passes/const_fold.rs` |
+| Dead Code Elimination | `ir/src/passes/dce.rs` |
+| Boolean Propagation | `ir/src/passes/bool_prop.rs` |
+| Taint Analysis | `ir/src/passes/taint.rs` |

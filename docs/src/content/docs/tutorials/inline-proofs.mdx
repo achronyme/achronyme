@@ -3,4 +3,204 @@ title: "Inline Proofs"
 description: "Using prove blocks for inline proof generation."
 ---
 
-Content coming soon.
+The `prove {}` block lets you generate zero-knowledge proofs inline, without leaving the VM. It compiles its body as a circuit, generates a witness from captured variables, and returns a cryptographic proof.
+
+## Basic Example
+
+```
+let x = field(6)
+let y = field(7)
+let product = field(42)
+
+let p = prove {
+    witness x
+    witness y
+    public product
+    assert_eq(x * y, product)
+}
+
+print(proof_json(p))
+```
+
+The prove block:
+1. Captures `x`, `y`, and `product` from the outer scope
+2. Compiles `assert_eq(x * y, product)` as an R1CS circuit
+3. Uses the captured values as witness/public inputs
+4. Generates a Groth16 proof
+5. Returns a `ProofObject`
+
+## Variable Declarations
+
+Inside a prove block, declare which captured variables are public (visible to the verifier) and which are witness (private):
+
+```
+let secret = field(42)
+let hash = field("17159...")
+
+let p = prove {
+    witness secret    // private — prover knows this
+    public hash       // public — verifier sees this
+    assert_eq(poseidon(secret, 0), hash)
+}
+```
+
+The verifier learns only that *some* value hashes to `hash`, without learning `secret`.
+
+## Integer Auto-Conversion
+
+Integers captured by prove blocks are automatically converted to field elements. This is the only place where Int→Field conversion happens implicitly:
+
+```
+let a = 10
+let b = 20
+let sum = 30
+
+prove {
+    witness a     // 10 becomes field(10)
+    witness b     // 20 becomes field(20)
+    public sum    // 30 becomes field(30)
+    assert_eq(a + b, sum)
+}
+```
+
+Outside prove blocks, mixing Int and Field raises a `TypeMismatch` error. Use `field()` for explicit conversion.
+
+## Accessing Proof Components
+
+A `ProofObject` contains three JSON components:
+
+```
+let p = prove {
+    witness x
+    public y
+    assert_eq(x, y)
+}
+
+// Groth16 proof data (pi_a, pi_b, pi_c)
+let proof = proof_json(p)
+
+// Public inputs as decimal string array
+let inputs = proof_public(p)
+
+// Verification key (for on-chain verification)
+let vkey = proof_vkey(p)
+
+print(proof)
+print(inputs)
+print(vkey)
+```
+
+## Verifying Proofs
+
+Use `verify_proof()` to verify a proof within the VM:
+
+```
+let p = prove {
+    witness secret
+    public hash
+    assert_eq(poseidon(secret, 0), hash)
+}
+
+let ok = verify_proof(p)
+print(ok)  // true
+```
+
+## Arrays and Functions
+
+Prove blocks support arrays, functions, and all circuit-mode features:
+
+```
+let v0 = field(10)
+let v1 = field(20)
+let v2 = field(30)
+let total = field(60)
+
+prove {
+    witness v0
+    witness v1
+    witness v2
+    public total
+
+    let vals = [v0, v1, v2]
+    let acc = vals[0] + vals[1] + vals[2]
+    assert_eq(acc, total)
+    assert_eq(len(vals), 3)
+}
+```
+
+## Poseidon in Prove Blocks
+
+Cryptographic builtins work inside prove blocks:
+
+```
+let a = field(1)
+let b = field(2)
+let h = field("7853200120776062878684798364095072458815029376092732009249414926327459813530")
+
+prove {
+    witness a
+    witness b
+    public h
+    assert_eq(poseidon(a, b), h)
+}
+```
+
+## Range Checks
+
+Enforce that a value fits within a certain number of bits:
+
+```
+let val = field(200)
+
+prove {
+    witness val
+    range_check(val, 8)   // 0 ≤ val < 256
+}
+```
+
+## Multiple Prove Blocks
+
+You can use multiple prove blocks in sequence:
+
+```
+let a = field(3)
+let b = field(4)
+let sum = field(7)
+let product = field(12)
+
+prove {
+    witness a
+    witness b
+    public sum
+    assert_eq(a + b, sum)
+}
+
+prove {
+    witness a
+    witness b
+    public product
+    assert_eq(a * b, product)
+}
+```
+
+Each prove block compiles and proves independently.
+
+## Running with Proof Generation
+
+To generate actual Groth16 proofs, provide a Powers of Tau file:
+
+```bash
+ach run my_program.ach --ptau pot12_final.ptau
+```
+
+Without `--ptau`, prove blocks still verify constraints but return `VerifiedOnly` (no cryptographic proof is generated).
+
+The zkey is cached in `~/.achronyme/cache/` for faster subsequent runs.
+
+## Backend Selection
+
+By default, prove blocks use the R1CS/Groth16 backend. To use Plonkish/KZG-PlonK:
+
+```bash
+ach run my_program.ach --prove-backend plonkish
+```

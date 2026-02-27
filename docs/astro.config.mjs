@@ -41,6 +41,8 @@ export default defineConfig({
 						{ label: 'Control Flow', slug: 'language/control-flow' },
 						{ label: 'Functions & Closures', slug: 'language/functions-and-closures' },
 						{ label: 'Arrays & Collections', slug: 'language/arrays-and-collections' },
+						{ label: 'Native Functions', slug: 'language/native-functions' },
+						{ label: 'Error Handling', slug: 'language/error-handling' },
 					],
 				},
 				{
@@ -80,6 +82,8 @@ export default defineConfig({
 						{ label: 'Backends', slug: 'architecture/backends' },
 						{ label: 'Witness Generation', slug: 'architecture/witness-generation' },
 						{ label: 'Extension Guide', slug: 'architecture/extension-guide' },
+						{ label: 'VM & Bytecode', slug: 'architecture/vm-and-bytecode' },
+						{ label: 'Memory & GC', slug: 'architecture/memory-and-gc' },
 					],
 				},
 				{
