@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
 use std::fs;
-use vm::opcode::{OpCode, instruction::*};
+use vm::opcode::{instruction::*, OpCode};
 
 pub fn disassemble_file(path: &str) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;

@@ -19,9 +19,12 @@ Manages the Heap and Values for the Achronyme VM.
 | 4 | String | Heap handle |
 | 5 | List | Heap handle |
 | 6 | Map | Heap handle |
-| 7 | Field | Heap handle |
-| 8 | Function/Closure | Heap handle |
+| 7 | Function | Heap handle |
+| 8 | Field | Heap handle |
 | 9 | Proof | Heap handle |
+| 10 | Native | Heap handle |
+| 11 | Closure | Heap handle |
+| 12 | Iter | Heap handle |
 
 ## Integer Semantics
 
