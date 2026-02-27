@@ -47,6 +47,58 @@
     - Newlines (`\n`, `\r`), Tabs (`\t`), Quotes (`\"`), Backslash (`\\`).
     - Implementado mediante `grammar.pest` (parsing) y `codegen.rs` (transformación `unescape_string`).
 
+### Maturity Gaps (Phase 11)
+- **VM Natives**: `poseidon()` and `poseidon_many()` available as VM natives (indices 20-21), no longer circuit-only
+- **Proof Verification**: `verify_proof()` native (index 22) with `VerifyHandler` trait
+- **Error Location Tracking**: VM runtime errors now include line numbers and function names (`last_error_location`)
+- **Documentation**: Updated README, crate READMEs, and CLI reference
+
+### Remove Silent Int→Field Promotion (Phase 10b)
+- i60 overflow → `IntegerOverflow` runtime error (no silent promotion to Field)
+- Int+Field mixing → `TypeMismatch` error at runtime
+- Pow trivial-base fast-paths: `0^n`, `1^n`, `(-1)^n`
+- `field()` remains as explicit conversion
+- `prove {}` still auto-converts integers to field elements
+
+### Type Annotation Soundness (Phase 10a)
+- `let b: Bool = x` on untyped witness emits `RangeCheck(x, 1)` instead of stamping
+- Bool array elements and fn params/returns enforce range checks
+- `bool_prop` pass recognizes `RangeCheck(x,1)` and `Assert` as boolean seeds
+- `Neg` propagates `IrType::Field`
+- Array size validated vs type annotation
+- 13 new tests including 3 malicious-prover soundness tests
+
+### Arrays, Functions, Crypto (Phase 10)
+- `EnvValue::Scalar|Array` for array support in circuits
+- `fn` inlining at call sites (no dynamic dispatch, recursion detected via `call_stack`)
+- `poseidon_many(a, b, c, ...)` left-fold Poseidon hash
+- `merkle_verify(root, leaf, path, indices)` Merkle membership proof
+- `len(arr)` compile-time array length
+
+### Medium Audit Fixes (M2, M3, M8)
+- LC dedup (`simplify()` merges duplicate Variable terms)
+- `const_fold` self-ops (Sub-self→0, Div-self→1)
+- `bool_prop` optimization pass (forward boolean propagation)
+
+### SSA IR Pipeline (Phases 7-9)
+- **SSA IR**: `SsaVar(u32)`, flat `IrProgram`, 18 instruction types
+- **IR Lowering**: AST→IR with `IrLowering`, public/witness declarations, static unrolling
+- **IR Evaluator**: Pure forward evaluation for witness generation and validation
+- **Optimization Passes**: `const_fold`, `dce`, `bool_prop`, `taint` analysis
+- **Dual Backend**: `R1CSCompiler::compile_ir()` and `PlonkishCompiler::compile_ir()` from same IR
+- **Witness Generation**: `WitnessGenerator` with `WitnessOp` trace replay
+- **Binary Export**: `.r1cs` (iden3 v1) and `.wtns` (iden3 v2), snarkjs-compatible
+- **Prove Blocks**: `prove {}` syntax, `ProveHandler` trait, Groth16 pipeline, `ProofObject` on heap
+- **Plonkish Backend**: Gates, lookups, copy constraints, `PlonkVal` lazy materialization
+
+### R1CS Foundation (Phases 4-6)
+- **R1CS Constraint System**: `Variable`, `LinearCombination`, `ConstraintSystem` with `enforce(A, B, C)`
+- **R1CS Compiler**: Arithmetic, builtins (`assert_eq`, `poseidon`, `mux`, `range_check`), control flow
+- **Comparison Operators**: `IsLt`, `IsLe`, `IsEq`, `IsNeq` with bounded 252-bit range checks
+- **Boolean Logic**: `Not`, `And`, `Or` with enforcement constraints
+- **Solidity Verifier**: `--solidity` CLI flag for on-chain verification contract generation
+- **String Natives**: `substring`, `indexOf`, `split`, `trim`, `replace`, `toUpper`, `toLower`, `chars`
+
 ### Stdlib Robustness (Phase 3)
 - **Robust Native Functions**:
     - `len(obj)`: Polymorphic (String, List, Map).
