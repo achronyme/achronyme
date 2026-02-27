@@ -1,0 +1,213 @@
+---
+title: "Error Handling"
+description: "Runtime errors, circuit errors, taint warnings, and debugging."
+---
+
+Achronyme provides detailed error messages across all execution modes. Errors include source location information when available.
+
+## Runtime Errors (VM Mode)
+
+When running with `ach run`, the VM reports errors with line numbers:
+
+```
+[line 5] in main: DivisionByZero
+```
+
+### Error Types
+
+| Error | Cause |
+|-------|-------|
+| `DivisionByZero` | Division or modulo by zero |
+| `IntegerOverflow` | i60 arithmetic overflow (no silent promotion) |
+| `TypeMismatch` | Incompatible types in operation (e.g., Int + Field) |
+| `ArityMismatch` | Wrong number of arguments to a function |
+| `AssertionFailed` | `assert(expr)` evaluated to false |
+| `OutOfBounds` | Array index out of range |
+| `StackOverflow` | Call stack exceeded 65,536 entries (likely infinite recursion) |
+| `StackUnderflow` | Internal error — pop from empty stack |
+| `InvalidOpcode` | Corrupt bytecode — unknown instruction |
+| `FunctionNotFound` | Closure or function reference is invalid |
+| `ProveBlockFailed` | Error during `prove {}` execution |
+| `ProveHandlerNotConfigured` | `prove {}` used without `--ptau` |
+| `SystemError` | Internal VM state corruption |
+
+### Integer Overflow
+
+Achronyme uses 60-bit signed integers (range: -2^59 to 2^59 - 1). Overflow is always an error:
+
+```
+let big = 576460752303423487   // 2^59 - 1 (max i60)
+let overflow = big + 1         // ERROR: IntegerOverflow
+```
+
+To work with larger values, use `field()` to convert to BN254 field elements explicitly.
+
+### Type Mismatch
+
+Integer and field values cannot be mixed directly:
+
+```
+let x = 42
+let y = field(10)
+let z = x + y  // ERROR: TypeMismatch
+```
+
+Use `field()` for explicit conversion: `let z = field(x) + y`.
+
+## Parse Errors
+
+Syntax errors include line and column information:
+
+```
+parse error at line 3, col 10: expected expression
+```
+
+## Circuit Errors (IR Lowering)
+
+When compiling circuits with `ach circuit`, the IR lowering phase reports errors with source spans:
+
+| Error | Cause |
+|-------|-------|
+| `UndeclaredVariable` | Variable used without `public`/`witness` declaration |
+| `UnsupportedOperation` | Operation not available in circuit mode (e.g., `print`) |
+| `TypeNotConstrainable` | Non-field type used in circuit (string, map, etc.) |
+| `UnboundedLoop` | Loop without fixed bounds (circuits require static unrolling) |
+| `WrongArgumentCount` | Builtin called with wrong arity |
+| `DuplicateInput` | Same variable declared twice |
+| `IndexOutOfBounds` | Array access beyond array length |
+| `ArrayLengthMismatch` | Array size doesn't match type annotation |
+| `RecursiveFunction` | Recursive call detected (not allowed in circuits) |
+| `TypeMismatch` | Expression type doesn't match annotation |
+| `AnnotationMismatch` | Declared type conflicts with inferred type |
+
+### Helpful Messages
+
+Some errors include user-friendly guidance:
+
+```
+// Using a string in a circuit:
+"cannot be used in circuits (circuits operate on field elements only)"
+
+// Using a map in a circuit:
+"cannot be used in circuits (use arrays instead)"
+
+// Using a decimal:
+"field arithmetic is integer-only — use whole numbers"
+```
+
+## R1CS Compilation Errors
+
+Errors during constraint generation:
+
+```
+R1CS compilation error: [3:5] undeclared variable 'x'
+```
+
+The `[line:col]` prefix maps to the source location when available.
+
+## IR Evaluation Errors
+
+When using `compile_ir_with_witness()`, the IR evaluator validates inputs before constraint generation:
+
+| Error | Cause |
+|-------|-------|
+| `MissingInput` | Required circuit input not provided |
+| `DivisionByZero` | Division by zero with concrete values |
+| `AssertionFailed` | `assert(expr)` fails with provided inputs |
+| `AssertEqFailed` | `assert_eq(a, b)` fails — values don't match |
+| `RangeCheckFailed` | Value doesn't fit in declared bit width |
+| `NonBooleanMuxCondition` | `mux` condition is not 0 or 1 |
+| `UndefinedVar` | Internal error — SSA variable not computed |
+
+These errors include the concrete values that caused the failure, making debugging easier:
+
+```
+assert_eq failed: x (= 42) != y (= 43)
+```
+
+## Taint Analysis Warnings
+
+After circuit compilation, the taint analysis pass checks for potential soundness issues:
+
+### UnderConstrained
+
+```
+witness input 'secret' is under-constrained (not in any assert_eq)
+```
+
+A declared input is not used in any constraint. This means a malicious prover could set it to any value without affecting the proof. This is almost always a bug.
+
+### UnusedInput
+
+```
+public input 'unused_var' is unused
+```
+
+A declared input is never referenced in the circuit body. Remove the declaration or use the variable.
+
+## Prove Block Errors
+
+Errors inside `prove {}` blocks are categorized by pipeline phase:
+
+| Phase | Error |
+|-------|-------|
+| IR lowering | Parsing or AST→IR conversion failed |
+| Compilation | Constraint generation failed |
+| Verification | Generated witness doesn't satisfy constraints |
+| Proof generation | Groth16/PlonK proving failed |
+
+Example:
+
+```
+prove block error: IR lowering: undeclared variable 'x'
+```
+
+## Debugging Strategies
+
+### Check inputs first
+
+Most circuit failures come from wrong input values. The `--inputs` flag requires exact field-level precision:
+
+```bash
+ach circuit my_circuit.ach --inputs "a=42,b=7"
+```
+
+### Use `--no-optimize` to isolate issues
+
+If a circuit fails after optimization, try running without it:
+
+```bash
+ach circuit my_circuit.ach --no-optimize --inputs "a=42,b=7"
+```
+
+### Check taint warnings
+
+Always review taint analysis output. An `UnderConstrained` warning often indicates a missing constraint that could allow a malicious prover to forge proofs.
+
+### Print intermediate values
+
+In VM mode, use `print()` to inspect values:
+
+```
+let h = poseidon(1, 2)
+print("hash:", h)
+```
+
+### Verify witness separately
+
+After compiling a circuit, verify the witness with snarkjs:
+
+```bash
+snarkjs r1cs info circuit.r1cs       # check constraint count
+snarkjs wtns check circuit.r1cs witness.wtns  # verify witness
+```
+
+### Use `--stress-gc` for memory issues
+
+If you suspect GC-related bugs:
+
+```bash
+ach run program.ach --stress-gc
+```
+
+This triggers garbage collection on every allocation, exposing rooting issues.

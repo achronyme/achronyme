@@ -1,0 +1,275 @@
+---
+title: "VM & Bytecode"
+description: "Register-based virtual machine, opcodes, and binary format."
+---
+
+The Achronyme VM is a register-based bytecode interpreter. It executes compiled `.achb` files using a fixed-size stack of 65,536 Value slots.
+
+## Architecture
+
+```
+Source (.ach)
+    │
+    ▼
+Bytecode Compiler → Function prototypes + bytecode
+    │
+    ▼
+Serializer → .achb binary file
+    │
+    ▼
+Loader → VM heap + stack + frames
+    │
+    ▼
+Interpreter → Register-based execution
+```
+
+### VM Structure
+
+```
+VM {
+    heap: Heap,              // typed arenas + GC
+    stack: [Value; 65536],   // fixed-size register stack
+    frames: Vec<CallFrame>,  // call stack
+    globals: Vec<GlobalEntry>,  // global variables
+    natives: Vec<NativeObj>,    // 23 built-in functions
+    open_upvalues: linked list, // captured stack variables
+    stress_mode: bool,          // force GC every cycle
+}
+```
+
+### Call Frames
+
+Each function call pushes a `CallFrame`:
+
+```
+CallFrame {
+    closure: u32,   // handle to Closure on heap
+    ip: usize,      // instruction pointer
+    base: usize,    // base offset in stack
+    dest_reg: usize, // where to store return value
+}
+```
+
+Register `R[i]` in the current frame maps to `stack[frame.base + i]`.
+
+## Value Representation
+
+Values are **tagged 64-bit integers** — no boxing for common types:
+
+```
+Bits 63..60 = 4-bit tag
+Bits 59..0  = 60-bit payload
+```
+
+### Tags
+
+| Tag | Name | Payload |
+|-----|------|---------|
+| 0 | `INT` | i60 signed integer (inline) |
+| 1 | `NIL` | — |
+| 2 | `FALSE` | — |
+| 3 | `TRUE` | — |
+| 4 | `STRING` | u32 handle → strings arena |
+| 5 | `LIST` | u32 handle → lists arena |
+| 6 | `MAP` | u32 handle → maps arena |
+| 7 | `FUNCTION` | u32 handle → functions arena |
+| 8 | `FIELD` | u32 handle → fields arena (BN254) |
+| 9 | `PROOF` | u32 handle → proofs arena |
+| 10 | `NATIVE` | u32 handle → natives table |
+| 11 | `CLOSURE` | u32 handle → closures arena |
+| 12 | `ITER` | u32 handle → iterators arena |
+
+Integers (tag 0) are the most common value type — using tag 0 means no masking is needed for the common case.
+
+Integer range: -2^59 to 2^59 - 1 (576,460,752,303,423,487). Overflow raises `IntegerOverflow`.
+
+## Instruction Encoding
+
+Each instruction is a `u32` in one of two formats:
+
+### ABC Format
+
+```
+[opcode:8][A:8][B:8][C:8]
+```
+
+Used for 3-operand instructions like `Add R[A] = R[B] + R[C]`.
+
+### ABx Format
+
+```
+[opcode:8][A:8][Bx:16]
+```
+
+Used for instructions with a 16-bit operand, like `LoadConst R[A] = K[Bx]` or `Jump IP = Bx`.
+
+## Opcodes
+
+### Constants & Moves
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `LoadConst` | 0 | ABx | `R[A] = K[Bx]` — load from constant pool |
+| `LoadTrue` | 1 | A | `R[A] = true` |
+| `LoadFalse` | 2 | A | `R[A] = false` |
+| `LoadNil` | 3 | A | `R[A] = nil` |
+| `Move` | 5 | AB | `R[A] = R[B]` |
+
+### Arithmetic
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `Add` | 10 | ABC | `R[A] = R[B] + R[C]` |
+| `Sub` | 11 | ABC | `R[A] = R[B] - R[C]` |
+| `Mul` | 12 | ABC | `R[A] = R[B] * R[C]` |
+| `Div` | 13 | ABC | `R[A] = R[B] / R[C]` |
+| `Mod` | 14 | ABC | `R[A] = R[B] % R[C]` |
+| `Pow` | 15 | ABC | `R[A] = R[B] ^ R[C]` |
+| `Neg` | 16 | AB | `R[A] = -R[B]` |
+
+### Comparison & Logic
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `Eq` | 20 | ABC | `R[A] = R[B] == R[C]` |
+| `Lt` | 21 | ABC | `R[A] = R[B] < R[C]` |
+| `Gt` | 22 | ABC | `R[A] = R[B] > R[C]` |
+| `NotEq` | 23 | ABC | `R[A] = R[B] != R[C]` |
+| `Le` | 24 | ABC | `R[A] = R[B] <= R[C]` |
+| `Ge` | 25 | ABC | `R[A] = R[B] >= R[C]` |
+| `LogNot` | 26 | AB | `R[A] = !R[B]` |
+
+### Closures & Upvalues
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `GetUpvalue` | 34 | AB | `R[A] = Upvalue[B]` |
+| `SetUpvalue` | 35 | AB | `Upvalue[B] = R[A]` |
+| `CloseUpvalue` | 36 | A | Close upvalue at stack slot A |
+
+### Functions
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `Return` | 54 | A | Return `R[A]` from current frame |
+| `Call` | 55 | ABC | `R[A] = Call(R[B], R[B+1]..R[B+C-1])` |
+| `Closure` | 56 | ABx | `R[A] = Closure(K[Bx])` |
+
+### Control Flow
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `Jump` | 60 | Bx | `IP = Bx` |
+| `JumpIfFalse` | 61 | ABx | If `!R[A]` then `IP = Bx` |
+| `GetIter` | 65 | AB | `R[A] = Iterator(R[B])` |
+| `ForIter` | 66 | ABx | Next item or jump to Bx |
+
+### Globals
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `DefGlobalVar` | 98 | ABx | Define mutable global |
+| `DefGlobalLet` | 99 | ABx | Define immutable global |
+| `GetGlobal` | 100 | ABx | `R[A] = Global[K[Bx]]` |
+| `SetGlobal` | 101 | ABx | `Global[K[Bx]] = R[A]` |
+| `Print` | 102 | A | Print `R[A]` |
+
+### Data Structures
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `BuildList` | 150 | ABC | `R[A] = [R[B]..R[B+C-1]]` |
+| `BuildMap` | 151 | ABC | `R[A] = {R[B]:R[B+1], ...}` |
+| `GetIndex` | 152 | ABC | `R[A] = R[B][R[C]]` |
+| `SetIndex` | 153 | ABC | `R[A][R[B]] = R[C]` |
+
+### ZK
+
+| Opcode | Code | Format | Description |
+|--------|------|--------|-------------|
+| `Prove` | 160 | — | Compile + verify ZK circuit |
+
+### Special
+
+| Opcode | Code | Description |
+|--------|------|-------------|
+| `Nop` | 255 | No operation |
+
+## Function Objects
+
+Each compiled function produces a `Function` struct on the heap:
+
+```
+Function {
+    name: String,        // for debugging
+    arity: u8,           // parameter count
+    max_slots: u16,      // peak register usage
+    chunk: Vec<u32>,     // bytecode instructions
+    constants: Vec<Value>, // constant pool
+    upvalue_info: Vec<u8>, // [is_local, index] pairs
+    line_info: Vec<u32>, // line number per instruction
+}
+```
+
+The `line_info` vector is parallel to `chunk` — each instruction has a source line number for error reporting.
+
+## Binary Format (.achb)
+
+The `.achb` file format (version 9):
+
+```
+Magic:    b"ACH\x09"          (4 bytes)
+Metadata: max_slots (u16 LE)
+
+Global Strings:
+    count (u32 LE)
+    for each: length (u32 LE) + UTF-8 bytes
+
+Global Constants:
+    count (u32 LE)
+    for each: tag (u8) + payload
+        INT (0):    i64 LE
+        STRING (1): u32 LE handle
+        FIELD (8):  4 × u64 LE (Montgomery limbs)
+        NIL (255):  (no payload)
+
+Prototypes:
+    count (u32 LE)
+    for each:
+        name_len (u32 LE) + name bytes
+        arity (u8)
+        max_slots (u16 LE)
+        const_count (u32 LE) + constants
+        upvalue_count (u32 LE) + upvalue info
+        bytecode_len (u32 LE) + instructions (u32 LE each)
+
+Main Bytecode:
+    instruction_count (u32 LE)
+    instructions (u32 LE each)
+```
+
+The format is compatible with the VM's `loader` module, which deserializes into heap objects.
+
+## Global Variable Layout
+
+```
+Index:  0..22       23..
+        Natives     User globals
+```
+
+The first 23 slots (0–22) are reserved for native functions. User-defined globals start at index 23 (`USER_GLOBAL_START`).
+
+## Source Files
+
+| Component | File |
+|-----------|------|
+| Opcodes | `vm/src/opcode.rs` |
+| VM interpreter | `vm/src/machine/vm.rs` |
+| Call frames | `vm/src/machine/frame.rs` |
+| Native dispatch | `vm/src/specs.rs` |
+| Value encoding | `memory/src/value.rs` |
+| Function struct | `memory/src/heap.rs` |
+| Bytecode compiler | `compiler/src/codegen.rs` |
+| Function compiler | `compiler/src/function_compiler.rs` |
+| Binary serializer | `cli/src/commands/compile.rs` |
+| Binary loader | `vm/src/loader.rs` |
