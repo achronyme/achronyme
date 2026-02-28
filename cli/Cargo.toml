@@ -1,8 +1,18 @@
 [package]
 name = "cli"
-version = "0.7.0"
-edition = "2021"
-license = "GPL-3.0"
+description = "Command-line interface for Achronyme: run, compile, circuit, and disassemble."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "ach"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }

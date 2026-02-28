@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ACH="$REPO_ROOT/target/release/cli"
+ACH="$REPO_ROOT/target/release/ach"
 
 # Build once
 echo "Building ach (release)..."

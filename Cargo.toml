@@ -10,6 +10,16 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0-beta.1"
+edition = "2021"
+license = "GPL-3.0"
+repository = "https://github.com/achronyme/achronyme"
+homepage = "https://achrony.me"
+authors = ["Achronyme Contributors"]
+keywords = ["zero-knowledge", "zk", "circuits", "compiler", "cryptography"]
+categories = ["compilers", "cryptography"]
+
 [profile.release]
 lto = true
 opt-level = 3

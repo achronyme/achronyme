@@ -40,11 +40,11 @@ jobs:
 
       - name: Rename binary (unix)
         if: runner.os != 'Windows'
-        run: mv target/${{ matrix.target }}/release/cli ${{ matrix.artifact }}
+        run: mv target/${{ matrix.target }}/release/ach ${{ matrix.artifact }}
 
       - name: Rename binary (windows)
         if: runner.os == 'Windows'
-        run: mv target/${{ matrix.target }}/release/cli.exe ${{ matrix.artifact }}
+        run: mv target/${{ matrix.target }}/release/ach.exe ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

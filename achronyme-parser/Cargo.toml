@@ -1,7 +1,13 @@
 [package]
 name = "achronyme-parser"
-version = "0.7.0"
-edition = "2021"
-license = "GPL-3.0"
+description = "Hand-written Pratt lexer and recursive-descent parser for the Achronyme language."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
