@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
 use std::fs;
-use vm::specs::{SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
+use vm::specs::{SER_TAG_BIGINT, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
 
 pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
@@ -43,6 +43,21 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             }
         }
 
+        // --- BigInt Table ---
+        let bigints = &compiler.bigint_interner.bigints;
+        file.write_u32::<LittleEndian>(bigints.len() as u32)?;
+        for bi in bigints {
+            // width tag: 0 = W256, 1 = W512
+            let width_tag: u8 = match bi.width() {
+                memory::BigIntWidth::W256 => 0,
+                memory::BigIntWidth::W512 => 1,
+            };
+            file.write_u8(width_tag)?;
+            for &limb in bi.limbs() {
+                file.write_u64::<LittleEndian>(limb)?;
+            }
+        }
+
         // --- Constants ---
         let main_func = compiler.compilers.last().expect("No main compiler");
         file.write_u32::<LittleEndian>(main_func.constants.len() as u32)?;
@@ -57,6 +72,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             } else if c.is_field() {
                 file.write_u8(SER_TAG_FIELD)?;
                 let handle = c.as_handle().expect("Field value must have handle");
+                file.write_u32::<LittleEndian>(handle)?;
+            } else if c.is_bigint() {
+                file.write_u8(SER_TAG_BIGINT)?;
+                let handle = c.as_handle().expect("BigInt value must have handle");
                 file.write_u32::<LittleEndian>(handle)?;
             } else if c.is_nil() {
                 file.write_u8(SER_TAG_NIL)?;
@@ -93,6 +112,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                 } else if c.is_field() {
                     file.write_u8(SER_TAG_FIELD)?;
                     let handle = c.as_handle().expect("Field value must have handle");
+                    file.write_u32::<LittleEndian>(handle)?;
+                } else if c.is_bigint() {
+                    file.write_u8(SER_TAG_BIGINT)?;
+                    let handle = c.as_handle().expect("BigInt value must have handle");
                     file.write_u32::<LittleEndian>(handle)?;
                 } else {
                     file.write_u8(SER_TAG_NIL)?;

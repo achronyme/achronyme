@@ -22,6 +22,12 @@ impl ExpressionCompiler for Compiler {
             // === Atoms ===
             Expr::Number { value, .. } => self.compile_number(value),
             Expr::FieldLit { value, radix, .. } => self.compile_field_lit(value, radix),
+            Expr::BigIntLit {
+                value,
+                width,
+                radix,
+                ..
+            } => self.compile_bigint_lit(value, *width, radix),
             Expr::StringLit { value, .. } => self.compile_string(value),
             Expr::Bool { value: true, .. } => {
                 let reg = self.alloc_reg()?;
@@ -137,6 +143,34 @@ impl Compiler {
         .ok_or(CompilerError::InvalidNumber)?;
         let handle = self.intern_field(fe);
         let val = Value::field(handle);
+        let const_idx = self.add_constant(val);
+        let reg = self.alloc_reg()?;
+        if const_idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants);
+        }
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        Ok(reg)
+    }
+
+    fn compile_bigint_lit(
+        &mut self,
+        value: &str,
+        width: u16,
+        radix: &BigIntRadix,
+    ) -> Result<u8, CompilerError> {
+        let w = match width {
+            256 => memory::BigIntWidth::W256,
+            512 => memory::BigIntWidth::W512,
+            _ => return Err(CompilerError::InvalidNumber),
+        };
+        let bi = match radix {
+            BigIntRadix::Hex => memory::BigInt::from_hex_str(value, w),
+            BigIntRadix::Decimal => memory::BigInt::from_decimal_str(value, w),
+            BigIntRadix::Binary => memory::BigInt::from_binary_str(value, w),
+        }
+        .ok_or(CompilerError::InvalidNumber)?;
+        let handle = self.intern_bigint(bi);
+        let val = Value::bigint(handle);
         let const_idx = self.add_constant(val);
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {

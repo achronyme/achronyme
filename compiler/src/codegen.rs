@@ -1,6 +1,6 @@
 use crate::error::CompilerError;
 use crate::function_compiler::FunctionCompiler;
-use crate::interner::{FieldInterner, StringInterner};
+use crate::interner::{BigIntInterner, FieldInterner, StringInterner};
 use crate::statements::StatementCompiler;
 use memory::Value;
 use std::collections::HashMap;
@@ -22,6 +22,9 @@ pub struct Compiler {
 
     // Field Interner (shared across all functions)
     pub field_interner: FieldInterner,
+
+    // BigInt Interner (shared across all functions)
+    pub bigint_interner: BigIntInterner,
 }
 
 use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
@@ -53,6 +56,7 @@ impl Compiler {
             next_global_idx,
             interner: StringInterner::new(),
             field_interner: FieldInterner::new(),
+            bigint_interner: BigIntInterner::new(),
         }
     }
 
@@ -91,6 +95,10 @@ impl Compiler {
 
     pub fn intern_field(&mut self, fe: memory::FieldElement) -> u32 {
         self.field_interner.intern(fe)
+    }
+
+    pub fn intern_bigint(&mut self, bi: memory::BigInt) -> u32 {
+        self.bigint_interner.intern(bi)
     }
 
     /// Returns a mutable reference to the current (top) function compiler

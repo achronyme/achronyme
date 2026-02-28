@@ -565,6 +565,38 @@ impl Parser {
                     span: sp,
                 })
             }
+            TokenKind::BigIntLit => {
+                let tok = self.advance().clone();
+                // Lexeme format: "256xFF00" or "512d42" or "256b1010"
+                // Find the radix char position (first non-digit after start)
+                let width_end = tok
+                    .lexeme
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(tok.lexeme.len());
+                let width: u16 = tok.lexeme[..width_end]
+                    .parse()
+                    .map_err(|_| ParseError::new("invalid BigInt width", sp.line, sp.col))?;
+                let rest = &tok.lexeme[width_end..];
+                let (value, radix) = if let Some(hex) = rest.strip_prefix('x') {
+                    (hex.to_string(), BigIntRadix::Hex)
+                } else if let Some(dec) = rest.strip_prefix('d') {
+                    (dec.to_string(), BigIntRadix::Decimal)
+                } else if let Some(bin) = rest.strip_prefix('b') {
+                    (bin.to_string(), BigIntRadix::Binary)
+                } else {
+                    return Err(ParseError::new(
+                        "invalid BigInt literal radix",
+                        sp.line,
+                        sp.col,
+                    ));
+                };
+                Ok(Expr::BigIntLit {
+                    value,
+                    width,
+                    radix,
+                    span: sp,
+                })
+            }
             TokenKind::StringLit => {
                 let tok = self.advance().clone();
                 Ok(Expr::StringLit {
@@ -940,6 +972,7 @@ fn kind_name(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Integer => "integer",
         TokenKind::FieldLit => "field literal",
+        TokenKind::BigIntLit => "bigint literal",
         TokenKind::StringLit => "string",
         TokenKind::Let => "let",
         TokenKind::Mut => "mut",

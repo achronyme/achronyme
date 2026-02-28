@@ -100,11 +100,52 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         name: "verify_proof",
         arity: 1,
     }, // Index 21
+    // BigInt
+    NativeMeta {
+        name: "bigint256",
+        arity: 1,
+    }, // Index 22
+    NativeMeta {
+        name: "bigint512",
+        arity: 1,
+    }, // Index 23
+    NativeMeta {
+        name: "to_bits",
+        arity: 1,
+    }, // Index 24
+    NativeMeta {
+        name: "from_bits",
+        arity: 2,
+    }, // Index 25
+    NativeMeta {
+        name: "bit_and",
+        arity: 2,
+    }, // Index 26
+    NativeMeta {
+        name: "bit_or",
+        arity: 2,
+    }, // Index 27
+    NativeMeta {
+        name: "bit_xor",
+        arity: 2,
+    }, // Index 28
+    NativeMeta {
+        name: "bit_not",
+        arity: 1,
+    }, // Index 29
+    NativeMeta {
+        name: "bit_shl",
+        arity: 2,
+    }, // Index 30
+    NativeMeta {
+        name: "bit_shr",
+        arity: 2,
+    }, // Index 31
 ];
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 22;
+pub const NATIVE_COUNT: usize = 32;
 const _: () = assert!(
     NATIVE_TABLE.len() == NATIVE_COUNT,
     "NATIVE_TABLE length changed — update NATIVE_COUNT"
@@ -118,4 +159,5 @@ pub const USER_GLOBAL_START: u16 = NATIVE_COUNT as u16;
 pub const SER_TAG_INT: u8 = 0;
 pub const SER_TAG_STRING: u8 = 1;
 pub const SER_TAG_FIELD: u8 = 8;
+pub const SER_TAG_BIGINT: u8 = 13;
 pub const SER_TAG_NIL: u8 = 255;

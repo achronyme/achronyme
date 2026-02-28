@@ -63,9 +63,12 @@ pub fn run_file(
 
         // Transfer field literals from compiler to VM
         let field_map = vm.heap.import_fields(compiler.field_interner.fields);
-        // Remap field handles in constants
+        // Transfer bigint literals from compiler to VM
+        let bigint_map = vm.heap.import_bigints(compiler.bigint_interner.bigints);
+        // Remap field and bigint handles in constants
         for proto in &mut compiler.prototypes {
             remap_field_handles(&mut proto.constants, &field_map);
+            remap_bigint_handles(&mut proto.constants, &bigint_map);
         }
 
         // Transfer Debug Symbols (Source Mode)
@@ -86,6 +89,7 @@ pub fn run_file(
 
         let mut main_constants = main_func.constants.clone();
         remap_field_handles(&mut main_constants, &field_map);
+        remap_bigint_handles(&mut main_constants, &bigint_map);
 
         let func = Function {
             name: "main".to_string(),
@@ -129,6 +133,18 @@ fn remap_field_handles(constants: &mut [memory::Value], field_map: &[u32]) {
             let old_handle = val.as_handle().expect("Field value must have handle");
             if let Some(&new_handle) = field_map.get(old_handle as usize) {
                 *val = memory::Value::field(new_handle);
+            }
+        }
+    }
+}
+
+/// Remap BigInt literal handles from compiler-space to VM heap-space.
+fn remap_bigint_handles(constants: &mut [memory::Value], bigint_map: &[u32]) {
+    for val in constants.iter_mut() {
+        if val.is_bigint() {
+            let old_handle = val.as_handle().expect("BigInt value must have handle");
+            if let Some(&new_handle) = bigint_map.get(old_handle as usize) {
+                *val = memory::Value::bigint(new_handle);
             }
         }
     }

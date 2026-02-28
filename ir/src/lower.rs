@@ -685,6 +685,10 @@ impl IrLowering {
                 "dot access is not supported in circuits (use arrays with static indexing instead)".into(),
                 to_ir_span(span),
             )),
+            Expr::BigIntLit { span, .. } => Err(IrError::TypeNotConstrainable(
+                "BigInt".into(),
+                to_ir_span(span),
+            )),
         }
     }
 

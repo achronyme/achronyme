@@ -322,6 +322,12 @@ impl<'a> Lexer<'a> {
             self.advance(); // consume 'p'
             return self.lex_field_lit(sp, start);
         }
+        // Check for 0i bigint literal prefix
+        if self.peek() == Some(b'0') && self.peek2() == Some(b'i') {
+            self.advance(); // consume '0'
+            self.advance(); // consume 'i'
+            return self.lex_bigint_lit(sp, start);
+        }
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
                 self.advance();
@@ -404,6 +410,107 @@ impl<'a> Lexer<'a> {
         };
         Ok(Token {
             kind: TokenKind::FieldLit,
+            span: sp,
+            lexeme,
+            byte_offset: start,
+        })
+    }
+
+    fn lex_bigint_lit(&mut self, sp: Span, start: usize) -> Result<Token, ParseError> {
+        // Parse width: 256 or 512
+        let width_start = self.pos;
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_digit() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        let width_str =
+            std::str::from_utf8(&self.source[width_start..self.pos]).unwrap_or_default();
+        if width_str != "256" && width_str != "512" {
+            return Err(ParseError::new(
+                format!("invalid BigInt width `{width_str}`, expected 256 or 512"),
+                sp.line,
+                sp.col,
+            ));
+        }
+
+        // Parse radix char and digits
+        let radix_ch = self.peek().ok_or_else(|| {
+            ParseError::new("expected radix (x/d/b) after BigInt width", sp.line, sp.col)
+        })?;
+        let lexeme = match radix_ch {
+            b'x' => {
+                self.advance();
+                let digit_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_hexdigit() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.pos == digit_start {
+                    return Err(ParseError::new(
+                        "expected hex digits after 0i<width>x",
+                        sp.line,
+                        sp.col,
+                    ));
+                }
+                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                format!("{width_str}x{digits}")
+            }
+            b'd' => {
+                self.advance();
+                let digit_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_digit() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.pos == digit_start {
+                    return Err(ParseError::new(
+                        "expected decimal digits after 0i<width>d",
+                        sp.line,
+                        sp.col,
+                    ));
+                }
+                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                format!("{width_str}d{digits}")
+            }
+            b'b' => {
+                self.advance();
+                let digit_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch == b'0' || ch == b'1' {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.pos == digit_start {
+                    return Err(ParseError::new(
+                        "expected binary digits after 0i<width>b",
+                        sp.line,
+                        sp.col,
+                    ));
+                }
+                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                format!("{width_str}b{digits}")
+            }
+            _ => {
+                return Err(ParseError::new(
+                    "expected radix (x/d/b) after BigInt width",
+                    sp.line,
+                    sp.col,
+                ));
+            }
+        };
+        Ok(Token {
+            kind: TokenKind::BigIntLit,
             span: sp,
             lexeme,
             byte_offset: start,

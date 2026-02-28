@@ -1,6 +1,6 @@
 use crate::error::RuntimeError;
 use memory::{
-    value::{TAG_FIELD, TAG_INT},
+    value::{TAG_BIGINT, TAG_FIELD, TAG_INT},
     FieldElement, Value,
 };
 
@@ -52,6 +52,16 @@ impl TypePromotion for super::vm::VM {
             // Int + Field / Field + Int → type error
             (TAG_INT, TAG_FIELD) | (TAG_FIELD, TAG_INT) => Err(RuntimeError::TypeMismatch(
                 "Cannot mix Int and Field in arithmetic; use 0p prefix for field literals".into(),
+            )),
+
+            // BigInt + Int / Int + BigInt → type error
+            (TAG_BIGINT, TAG_INT) | (TAG_INT, TAG_BIGINT) => Err(RuntimeError::TypeMismatch(
+                "Cannot mix Int and BigInt in arithmetic".into(),
+            )),
+
+            // BigInt + Field / Field + BigInt → type error
+            (TAG_BIGINT, TAG_FIELD) | (TAG_FIELD, TAG_BIGINT) => Err(RuntimeError::TypeMismatch(
+                "Cannot mix Field and BigInt in arithmetic".into(),
             )),
 
             _ => Err(RuntimeError::TypeMismatch(

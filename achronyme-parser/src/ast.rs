@@ -90,6 +90,14 @@ pub enum FieldRadix {
     Binary,
 }
 
+/// Radix for BigInt literals (`0i` prefix).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BigIntRadix {
+    Hex,
+    Decimal,
+    Binary,
+}
+
 /// Expression variants.
 #[derive(Clone, Debug)]
 pub enum Expr {
@@ -100,6 +108,12 @@ pub enum Expr {
     FieldLit {
         value: String,
         radix: FieldRadix,
+        span: Span,
+    },
+    BigIntLit {
+        value: String,
+        width: u16,
+        radix: BigIntRadix,
         span: Span,
     },
     Bool {
@@ -192,6 +206,7 @@ impl Expr {
         match self {
             Expr::Number { span, .. }
             | Expr::FieldLit { span, .. }
+            | Expr::BigIntLit { span, .. }
             | Expr::Bool { span, .. }
             | Expr::StringLit { span, .. }
             | Expr::Nil { span }

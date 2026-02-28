@@ -1,4 +1,4 @@
-use crate::specs::{SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
+use crate::specs::{SER_TAG_BIGINT, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
 use crate::{CallFrame, VM};
 use byteorder::{LittleEndian, ReadBytesExt};
 use memory::{Closure, Function, Value};
@@ -89,6 +89,42 @@ impl VM {
             Vec::new()
         };
 
+        // --- BigInt Table (v10+) ---
+        let bigint_handles = if version >= 0x0A {
+            let bigint_count = reader.read_u32::<LittleEndian>()?;
+            if bigint_count > 1_000_000 {
+                return Err(LoaderError::Security(format!(
+                    "BigInt count too large: {}",
+                    bigint_count
+                )));
+            }
+            let mut handles = Vec::with_capacity(bigint_count as usize);
+            for _ in 0..bigint_count {
+                let width_tag = reader.read_u8()?;
+                let (width, n_limbs) = match width_tag {
+                    0 => (memory::BigIntWidth::W256, 4usize),
+                    1 => (memory::BigIntWidth::W512, 8usize),
+                    _ => {
+                        return Err(LoaderError::Format(format!(
+                            "Unknown BigInt width tag: {}",
+                            width_tag
+                        )))
+                    }
+                };
+                let mut limbs = Vec::with_capacity(n_limbs);
+                for _ in 0..n_limbs {
+                    limbs.push(reader.read_u64::<LittleEndian>()?);
+                }
+                let bi = memory::BigInt::from_limbs(limbs, width)
+                    .ok_or_else(|| LoaderError::Format("Invalid BigInt limb count".to_string()))?;
+                let handle = self.heap.alloc_bigint(bi);
+                handles.push(handle);
+            }
+            handles
+        } else {
+            Vec::new()
+        };
+
         // --- Constants ---
         let const_count = reader.read_u32::<LittleEndian>()?;
         if const_count > 1_000_000 {
@@ -128,6 +164,13 @@ impl VM {
                         let handle = self.heap.alloc_field(fe);
                         constants.push(Value::field(handle));
                     }
+                }
+                SER_TAG_BIGINT => {
+                    let handle_idx = reader.read_u32::<LittleEndian>()? as usize;
+                    let heap_handle = *bigint_handles.get(handle_idx).ok_or_else(|| {
+                        LoaderError::Format(format!("BigInt handle out of range: {}", handle_idx))
+                    })?;
+                    constants.push(Value::bigint(heap_handle));
                 }
                 SER_TAG_NIL => {
                     constants.push(Value::nil());
@@ -204,6 +247,16 @@ impl VM {
                             let handle = self.heap.alloc_field(fe);
                             proto_constants.push(Value::field(handle));
                         }
+                    }
+                    SER_TAG_BIGINT => {
+                        let handle_idx = reader.read_u32::<LittleEndian>()? as usize;
+                        let heap_handle = *bigint_handles.get(handle_idx).ok_or_else(|| {
+                            LoaderError::Format(format!(
+                                "BigInt handle out of range: {}",
+                                handle_idx
+                            ))
+                        })?;
+                        proto_constants.push(Value::bigint(heap_handle));
                     }
                     SER_TAG_NIL => {
                         proto_constants.push(Value::nil());

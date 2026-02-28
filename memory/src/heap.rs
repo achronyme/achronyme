@@ -1,3 +1,4 @@
+use crate::bigint::BigInt;
 use crate::field::FieldElement;
 use crate::Value;
 use std::collections::{HashMap, HashSet};
@@ -155,6 +156,7 @@ pub struct Heap {
     pub(crate) iterators: Arena<IteratorObj>,
     pub(crate) fields: Arena<FieldElement>,
     pub(crate) proofs: Arena<ProofObject>,
+    pub(crate) bigints: Arena<BigInt>,
 
     // Mark State — pub(crate) to prevent external mark manipulation
     pub(crate) marked_strings: HashSet<u32>,
@@ -166,6 +168,7 @@ pub struct Heap {
     pub(crate) marked_iterators: HashSet<u32>,
     pub(crate) marked_fields: HashSet<u32>,
     pub(crate) marked_proofs: HashSet<u32>,
+    pub(crate) marked_bigints: HashSet<u32>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -191,6 +194,7 @@ impl Heap {
             iterators: Arena::new(),
             fields: Arena::new(),
             proofs: Arena::new(),
+            bigints: Arena::new(),
 
             marked_strings: HashSet::new(),
             marked_lists: HashSet::new(),
@@ -201,6 +205,7 @@ impl Heap {
             marked_iterators: HashSet::new(),
             marked_fields: HashSet::new(),
             marked_proofs: HashSet::new(),
+            marked_bigints: HashSet::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -365,6 +370,11 @@ impl Heap {
                 crate::value::TAG_PROOF => {
                     // Leaf type: no children to trace
                     self.marked_proofs.insert(handle);
+                    false
+                }
+                crate::value::TAG_BIGINT => {
+                    // Leaf type: no children to trace
+                    self.marked_bigints.insert(handle);
                     false
                 }
                 _ => false,
@@ -549,6 +559,18 @@ impl Heap {
         }
         self.marked_proofs.clear();
 
+        // BigInts (leaf type)
+        for i in 0..self.bigints.data.len() {
+            let idx = i as u32;
+            if !self.marked_bigints.contains(&idx) && !self.bigints.is_free(idx) {
+                self.bigints.mark_free(idx);
+                let bi = &self.bigints.data[i];
+                _freed_bytes += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
+                self.bigints.data[i] = BigInt::zero(crate::bigint::BigIntWidth::W256);
+            }
+        }
+        self.marked_bigints.clear();
+
         // Recompute bytes_allocated from surviving objects (self-correcting).
         // This eliminates drift from untracked mutations (push, insert, etc.)
         // at negligible cost — the sweep loop already touched every slot.
@@ -607,6 +629,11 @@ impl Heap {
                     + p.proof_json.capacity()
                     + p.public_json.capacity()
                     + p.vkey_json.capacity();
+            }
+        }
+        for (i, bi) in self.bigints.data.iter().enumerate() {
+            if !self.bigints.is_free(i as u32) {
+                total += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
             }
         }
         for (i, m) in self.maps.data.iter().enumerate() {
@@ -694,5 +721,26 @@ impl Heap {
 
     pub fn get_proof(&self, index: u32) -> Option<&ProofObject> {
         self.proofs.get(index)
+    }
+
+    pub fn alloc_bigint(&mut self, bi: BigInt) -> u32 {
+        self.bytes_allocated += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
+        self.check_gc();
+        self.bigints.alloc(bi)
+    }
+
+    pub fn get_bigint(&self, index: u32) -> Option<&BigInt> {
+        self.bigints.get(index)
+    }
+
+    pub fn get_bigint_mut(&mut self, index: u32) -> Option<&mut BigInt> {
+        self.bigints.get_mut(index)
+    }
+
+    pub fn import_bigints(&mut self, bigints: Vec<BigInt>) -> Vec<u32> {
+        bigints
+            .into_iter()
+            .map(|bi| self.alloc_bigint(bi))
+            .collect()
     }
 }

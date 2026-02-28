@@ -69,6 +69,16 @@ impl NativeRegistry for super::vm::VM {
                 "poseidon" => crate::stdlib::core::native_poseidon,
                 "poseidon_many" => crate::stdlib::core::native_poseidon_many,
                 "verify_proof" => crate::stdlib::core::native_verify_proof,
+                "bigint256" => crate::stdlib::bigint::native_bigint256,
+                "bigint512" => crate::stdlib::bigint::native_bigint512,
+                "to_bits" => crate::stdlib::bigint::native_to_bits,
+                "from_bits" => crate::stdlib::bigint::native_from_bits,
+                "bit_and" => crate::stdlib::bigint::native_bit_and,
+                "bit_or" => crate::stdlib::bigint::native_bit_or,
+                "bit_xor" => crate::stdlib::bigint::native_bit_xor,
+                "bit_not" => crate::stdlib::bigint::native_bit_not,
+                "bit_shl" => crate::stdlib::bigint::native_bit_shl,
+                "bit_shr" => crate::stdlib::bigint::native_bit_shr,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 

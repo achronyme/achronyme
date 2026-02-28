@@ -196,6 +196,16 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         "Map"
     } else if val.is_field() {
         "Field"
+    } else if val.is_bigint() {
+        let handle = val.as_handle().unwrap();
+        let bi = vm.heap.get_bigint(handle);
+        match bi {
+            Some(b) => match b.width() {
+                memory::BigIntWidth::W256 => "BigInt256",
+                memory::BigIntWidth::W512 => "BigInt512",
+            },
+            None => "BigInt",
+        }
     } else if val.is_proof() {
         "Proof"
     } else if val.is_function() || val.is_closure() {

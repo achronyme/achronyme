@@ -123,6 +123,15 @@ impl VM {
                     None => "<bad field>".into(),
                 }
             }
+            v if v.is_bigint() => {
+                let Some(handle) = v.as_handle() else {
+                    return "<bad bigint>".into();
+                };
+                match self.heap.get_bigint(handle) {
+                    Some(bi) => format!("{}", bi),
+                    None => "<bad bigint>".into(),
+                }
+            }
             v if v.is_proof() => "<Proof>".to_string(),
             v if v.is_list() => {
                 let Some(handle) = v.as_handle() else {
@@ -162,6 +171,14 @@ impl VM {
             };
             match (self.heap.get_field(h1), self.heap.get_field(h2)) {
                 (Some(f1), Some(f2)) => f1 == f2,
+                _ => false,
+            }
+        } else if v1.is_bigint() && v2.is_bigint() {
+            let (Some(h1), Some(h2)) = (v1.as_handle(), v2.as_handle()) else {
+                return false;
+            };
+            match (self.heap.get_bigint(h1), self.heap.get_bigint(h2)) {
+                (Some(b1), Some(b2)) => b1 == b2,
                 _ => false,
             }
         } else if v1.is_proof() && v2.is_proof() {
@@ -334,6 +351,17 @@ impl VM {
                             .get_field(h2)
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() < f2.to_canonical()))?;
+                    } else if v1.is_bigint() && v2.is_bigint() {
+                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let b1 = self
+                            .heap
+                            .get_bigint(h1)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        let b2 = self
+                            .heap
+                            .get_bigint(h2)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        self.set_reg(base, a, Value::bool(b1 < b2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch(
                             "Expected numeric values for < comparison".to_string(),
@@ -366,6 +394,17 @@ impl VM {
                             .get_field(h2)
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() > f2.to_canonical()))?;
+                    } else if v1.is_bigint() && v2.is_bigint() {
+                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let b1 = self
+                            .heap
+                            .get_bigint(h1)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        let b2 = self
+                            .heap
+                            .get_bigint(h2)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        self.set_reg(base, a, Value::bool(b1 > b2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch(
                             "Expected numeric values for > comparison".to_string(),
@@ -407,6 +446,17 @@ impl VM {
                             .get_field(h2)
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() <= f2.to_canonical()))?;
+                    } else if v1.is_bigint() && v2.is_bigint() {
+                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let b1 = self
+                            .heap
+                            .get_bigint(h1)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        let b2 = self
+                            .heap
+                            .get_bigint(h2)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        self.set_reg(base, a, Value::bool(b1 <= b2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch(
                             "Expected numeric values for <= comparison".to_string(),
@@ -439,6 +489,17 @@ impl VM {
                             .get_field(h2)
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() >= f2.to_canonical()))?;
+                    } else if v1.is_bigint() && v2.is_bigint() {
+                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let b1 = self
+                            .heap
+                            .get_bigint(h1)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        let b2 = self
+                            .heap
+                            .get_bigint(h2)
+                            .ok_or(RuntimeError::InvalidOperand)?;
+                        self.set_reg(base, a, Value::bool(b1 >= b2))?;
                     } else {
                         return Err(RuntimeError::TypeMismatch(
                             "Expected numeric values for >= comparison".to_string(),

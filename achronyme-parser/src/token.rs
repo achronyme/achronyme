@@ -17,6 +17,7 @@ pub enum TokenKind {
     // Literals
     Integer,
     FieldLit,
+    BigIntLit,
     StringLit,
 
     // Keywords
