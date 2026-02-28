@@ -25,7 +25,8 @@ impl VM {
     pub fn load_executable<R: Read>(&mut self, reader: &mut R) -> Result<(), LoaderError> {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
-        if &magic != b"ACH\x09" {
+        let version = magic[3];
+        if &magic[..3] != b"ACH" || (version != 0x09 && version != 0x0A) {
             return Err(LoaderError::Format(
                 "Invalid binary magic or version".to_string(),
             ));
@@ -64,6 +65,30 @@ impl VM {
         // Sync Strings to Heap
         self.heap.import_strings(strings);
 
+        // --- Field Table (v10+) ---
+        let field_handles = if version >= 0x0A {
+            let field_count = reader.read_u32::<LittleEndian>()?;
+            if field_count > 1_000_000 {
+                return Err(LoaderError::Security(format!(
+                    "Field count too large: {}",
+                    field_count
+                )));
+            }
+            let mut handles = Vec::with_capacity(field_count as usize);
+            for _ in 0..field_count {
+                let l0 = reader.read_u64::<LittleEndian>()?;
+                let l1 = reader.read_u64::<LittleEndian>()?;
+                let l2 = reader.read_u64::<LittleEndian>()?;
+                let l3 = reader.read_u64::<LittleEndian>()?;
+                let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
+                let handle = self.heap.alloc_field(fe);
+                handles.push(handle);
+            }
+            handles
+        } else {
+            Vec::new()
+        };
+
         // --- Constants ---
         let const_count = reader.read_u32::<LittleEndian>()?;
         if const_count > 1_000_000 {
@@ -85,13 +110,24 @@ impl VM {
                     constants.push(Value::string(handle));
                 }
                 SER_TAG_FIELD => {
-                    let l0 = reader.read_u64::<LittleEndian>()?;
-                    let l1 = reader.read_u64::<LittleEndian>()?;
-                    let l2 = reader.read_u64::<LittleEndian>()?;
-                    let l3 = reader.read_u64::<LittleEndian>()?;
-                    let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
-                    let handle = self.heap.alloc_field(fe);
-                    constants.push(Value::field(handle));
+                    if version >= 0x0A {
+                        let handle_idx = reader.read_u32::<LittleEndian>()? as usize;
+                        let heap_handle = *field_handles.get(handle_idx).ok_or_else(|| {
+                            LoaderError::Format(format!(
+                                "Field handle out of range: {}",
+                                handle_idx
+                            ))
+                        })?;
+                        constants.push(Value::field(heap_handle));
+                    } else {
+                        let l0 = reader.read_u64::<LittleEndian>()?;
+                        let l1 = reader.read_u64::<LittleEndian>()?;
+                        let l2 = reader.read_u64::<LittleEndian>()?;
+                        let l3 = reader.read_u64::<LittleEndian>()?;
+                        let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
+                        let handle = self.heap.alloc_field(fe);
+                        constants.push(Value::field(handle));
+                    }
                 }
                 SER_TAG_NIL => {
                     constants.push(Value::nil());
@@ -150,13 +186,24 @@ impl VM {
                         proto_constants.push(Value::string(handle));
                     }
                     SER_TAG_FIELD => {
-                        let l0 = reader.read_u64::<LittleEndian>()?;
-                        let l1 = reader.read_u64::<LittleEndian>()?;
-                        let l2 = reader.read_u64::<LittleEndian>()?;
-                        let l3 = reader.read_u64::<LittleEndian>()?;
-                        let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
-                        let handle = self.heap.alloc_field(fe);
-                        proto_constants.push(Value::field(handle));
+                        if version >= 0x0A {
+                            let handle_idx = reader.read_u32::<LittleEndian>()? as usize;
+                            let heap_handle = *field_handles.get(handle_idx).ok_or_else(|| {
+                                LoaderError::Format(format!(
+                                    "Field handle out of range: {}",
+                                    handle_idx
+                                ))
+                            })?;
+                            proto_constants.push(Value::field(heap_handle));
+                        } else {
+                            let l0 = reader.read_u64::<LittleEndian>()?;
+                            let l1 = reader.read_u64::<LittleEndian>()?;
+                            let l2 = reader.read_u64::<LittleEndian>()?;
+                            let l3 = reader.read_u64::<LittleEndian>()?;
+                            let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
+                            let handle = self.heap.alloc_field(fe);
+                            proto_constants.push(Value::field(handle));
+                        }
                     }
                     SER_TAG_NIL => {
                         proto_constants.push(Value::nil());

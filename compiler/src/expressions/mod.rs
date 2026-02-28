@@ -21,6 +21,7 @@ impl ExpressionCompiler for Compiler {
         match expr {
             // === Atoms ===
             Expr::Number { value, .. } => self.compile_number(value),
+            Expr::FieldLit { value, radix, .. } => self.compile_field_lit(value, radix),
             Expr::StringLit { value, .. } => self.compile_string(value),
             Expr::Bool { value: true, .. } => {
                 let reg = self.alloc_reg()?;
@@ -120,6 +121,24 @@ impl Compiler {
         let val: i64 = value.parse().map_err(|_| CompilerError::InvalidNumber)?;
         let reg = self.alloc_reg()?;
         let const_idx = self.add_constant(Value::int(val));
+        if const_idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants);
+        }
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        Ok(reg)
+    }
+
+    fn compile_field_lit(&mut self, value: &str, radix: &FieldRadix) -> Result<u8, CompilerError> {
+        let fe = match radix {
+            FieldRadix::Decimal => memory::FieldElement::from_decimal_str(value),
+            FieldRadix::Hex => memory::FieldElement::from_hex_str(value),
+            FieldRadix::Binary => memory::FieldElement::from_binary_str(value),
+        }
+        .ok_or(CompilerError::InvalidNumber)?;
+        let handle = self.intern_field(fe);
+        let val = Value::field(handle);
+        let const_idx = self.add_constant(val);
+        let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants);
         }

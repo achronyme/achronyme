@@ -316,6 +316,12 @@ impl<'a> Lexer<'a> {
 
     fn lex_number(&mut self, sp: Span) -> Result<Token, ParseError> {
         let start = self.pos;
+        // Check for 0p field literal prefix
+        if self.peek() == Some(b'0') && self.peek2() == Some(b'p') {
+            self.advance(); // consume '0'
+            self.advance(); // consume 'p'
+            return self.lex_field_lit(sp, start);
+        }
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
                 self.advance();
@@ -328,6 +334,76 @@ impl<'a> Lexer<'a> {
             .to_string();
         Ok(Token {
             kind: TokenKind::Integer,
+            span: sp,
+            lexeme,
+            byte_offset: start,
+        })
+    }
+
+    fn lex_field_lit(&mut self, sp: Span, start: usize) -> Result<Token, ParseError> {
+        let next = self
+            .peek()
+            .ok_or_else(|| ParseError::new("expected digits after 0p", sp.line, sp.col))?;
+        let lexeme = match next {
+            b'x' => {
+                self.advance(); // consume 'x'
+                let digit_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_hexdigit() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.pos == digit_start {
+                    return Err(ParseError::new(
+                        "expected hex digits after 0px",
+                        sp.line,
+                        sp.col,
+                    ));
+                }
+                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                format!("x{digits}")
+            }
+            b'b' => {
+                self.advance(); // consume 'b'
+                let digit_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch == b'0' || ch == b'1' {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.pos == digit_start {
+                    return Err(ParseError::new(
+                        "expected binary digits after 0pb",
+                        sp.line,
+                        sp.col,
+                    ));
+                }
+                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                format!("b{digits}")
+            }
+            ch if ch.is_ascii_digit() => {
+                let digit_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_digit() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                std::str::from_utf8(&self.source[digit_start..self.pos])
+                    .unwrap()
+                    .to_string()
+            }
+            _ => {
+                return Err(ParseError::new("expected digits after 0p", sp.line, sp.col));
+            }
+        };
+        Ok(Token {
+            kind: TokenKind::FieldLit,
             span: sp,
             lexeme,
             byte_offset: start,

@@ -61,6 +61,13 @@ pub fn run_file(
         // Transfer strings from compiler to VM
         vm.heap.import_strings(compiler.interner.strings);
 
+        // Transfer field literals from compiler to VM
+        let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+        // Remap field handles in constants
+        for proto in &mut compiler.prototypes {
+            remap_field_handles(&mut proto.constants, &field_map);
+        }
+
         // Transfer Debug Symbols (Source Mode)
         let mut debug_map = std::collections::HashMap::new();
         for (name, idx) in &compiler.global_symbols {
@@ -77,11 +84,14 @@ pub fn run_file(
             vm.prototypes.push(handle);
         }
 
+        let mut main_constants = main_func.constants.clone();
+        remap_field_handles(&mut main_constants, &field_map);
+
         let func = Function {
             name: "main".to_string(),
             arity: 0,
             chunk: bytecode,
-            constants: main_func.constants.clone(),
+            constants: main_constants,
             max_slots: main_func.max_slots,
             upvalue_info: vec![],
             line_info: main_func.line_info.clone(),
@@ -109,6 +119,18 @@ pub fn run_file(
         }
 
         Ok(())
+    }
+}
+
+/// Remap field literal handles from compiler-space to VM heap-space.
+fn remap_field_handles(constants: &mut [memory::Value], field_map: &[u32]) {
+    for val in constants.iter_mut() {
+        if val.is_field() {
+            let old_handle = val.as_handle().expect("Field value must have handle");
+            if let Some(&new_handle) = field_map.get(old_handle as usize) {
+                *val = memory::Value::field(new_handle);
+            }
+        }
     }
 }
 

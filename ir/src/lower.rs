@@ -610,6 +610,11 @@ impl IrLowering {
     fn lower_expr(&mut self, expr: &Expr) -> Result<SsaVar, IrError> {
         match expr {
             Expr::Number { value, span } => self.lower_number(value, span),
+            Expr::FieldLit {
+                value,
+                radix,
+                span,
+            } => self.lower_field_lit(value, radix, span),
             Expr::Bool { value: true, .. } => {
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Const {
@@ -715,6 +720,29 @@ impl IrLowering {
                 value: fe,
             });
         }
+        self.program.set_type(v, IrType::Field);
+        Ok(v)
+    }
+
+    fn lower_field_lit(
+        &mut self,
+        value: &str,
+        radix: &FieldRadix,
+        span: &Span,
+    ) -> Result<SsaVar, IrError> {
+        let fe = match radix {
+            FieldRadix::Decimal => FieldElement::from_decimal_str(value),
+            FieldRadix::Hex => FieldElement::from_hex_str(value),
+            FieldRadix::Binary => FieldElement::from_binary_str(value),
+        }
+        .ok_or_else(|| {
+            IrError::ParseError(format!("invalid field literal at line {}", span.line))
+        })?;
+        let v = self.program.fresh_var();
+        self.program.push(Instruction::Const {
+            result: v,
+            value: fe,
+        });
         self.program.set_type(v, IrType::Field);
         Ok(v)
     }

@@ -550,6 +550,21 @@ impl Parser {
                     span: sp,
                 })
             }
+            TokenKind::FieldLit => {
+                let tok = self.advance().clone();
+                let (value, radix) = if let Some(hex) = tok.lexeme.strip_prefix('x') {
+                    (hex.to_string(), FieldRadix::Hex)
+                } else if let Some(bin) = tok.lexeme.strip_prefix('b') {
+                    (bin.to_string(), FieldRadix::Binary)
+                } else {
+                    (tok.lexeme, FieldRadix::Decimal)
+                };
+                Ok(Expr::FieldLit {
+                    value,
+                    radix,
+                    span: sp,
+                })
+            }
             TokenKind::StringLit => {
                 let tok = self.advance().clone();
                 Ok(Expr::StringLit {
@@ -924,6 +939,7 @@ fn token_to_binop(kind: &TokenKind) -> BinOp {
 fn kind_name(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Integer => "integer",
+        TokenKind::FieldLit => "field literal",
         TokenKind::StringLit => "string",
         TokenKind::Let => "let",
         TokenKind::Mut => "mut",

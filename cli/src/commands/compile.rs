@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use compiler::Compiler;
 use std::fs;
-use vm::specs::{SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
+use vm::specs::{SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
 
 pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
@@ -18,7 +18,7 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
 
         let mut file = fs::File::create(out_path).context("Failed to create output file")?;
 
-        file.write_all(b"ACH\x09")?;
+        file.write_all(b"ACH\x0A")?;
 
         // Metadata
         let main_func = compiler.compilers.last().expect("No main compiler");
@@ -33,6 +33,16 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             file.write_all(bytes)?;
         }
 
+        // --- Field Table ---
+        let fields = &compiler.field_interner.fields;
+        file.write_u32::<LittleEndian>(fields.len() as u32)?;
+        for fe in fields {
+            let canonical = fe.to_canonical();
+            for limb in &canonical {
+                file.write_u64::<LittleEndian>(*limb)?;
+            }
+        }
+
         // --- Constants ---
         let main_func = compiler.compilers.last().expect("No main compiler");
         file.write_u32::<LittleEndian>(main_func.constants.len() as u32)?;
@@ -43,6 +53,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
             } else if c.is_string() {
                 file.write_u8(SER_TAG_STRING)?;
                 let handle = c.as_handle().expect("String value must have handle");
+                file.write_u32::<LittleEndian>(handle)?;
+            } else if c.is_field() {
+                file.write_u8(SER_TAG_FIELD)?;
+                let handle = c.as_handle().expect("Field value must have handle");
                 file.write_u32::<LittleEndian>(handle)?;
             } else if c.is_nil() {
                 file.write_u8(SER_TAG_NIL)?;
@@ -75,6 +89,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
                 } else if c.is_string() {
                     file.write_u8(SER_TAG_STRING)?;
                     let handle = c.as_handle().expect("String value must have handle");
+                    file.write_u32::<LittleEndian>(handle)?;
+                } else if c.is_field() {
+                    file.write_u8(SER_TAG_FIELD)?;
+                    let handle = c.as_handle().expect("Field value must have handle");
                     file.write_u32::<LittleEndian>(handle)?;
                 } else {
                     file.write_u8(SER_TAG_NIL)?;

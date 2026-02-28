@@ -668,6 +668,11 @@ impl Heap {
         self.iterators.get_mut(index)
     }
 
+    pub fn import_fields(&mut self, fields: Vec<FieldElement>) -> Vec<u32> {
+        let handles: Vec<u32> = fields.into_iter().map(|fe| self.alloc_field(fe)).collect();
+        handles
+    }
+
     pub fn alloc_field(&mut self, fe: FieldElement) -> u32 {
         self.bytes_allocated += std::mem::size_of::<FieldElement>();
         self.check_gc();

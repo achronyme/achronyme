@@ -16,6 +16,7 @@ pub struct Token {
 pub enum TokenKind {
     // Literals
     Integer,
+    FieldLit,
     StringLit,
 
     // Keywords

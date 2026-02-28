@@ -82,11 +82,24 @@ pub struct Block {
     pub span: Span,
 }
 
+/// Radix for field element literals (`0p` prefix).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldRadix {
+    Decimal,
+    Hex,
+    Binary,
+}
+
 /// Expression variants.
 #[derive(Clone, Debug)]
 pub enum Expr {
     Number {
         value: String,
+        span: Span,
+    },
+    FieldLit {
+        value: String,
+        radix: FieldRadix,
         span: Span,
     },
     Bool {
@@ -178,6 +191,7 @@ impl Expr {
     pub fn span(&self) -> &Span {
         match self {
             Expr::Number { span, .. }
+            | Expr::FieldLit { span, .. }
             | Expr::Bool { span, .. }
             | Expr::StringLit { span, .. }
             | Expr::Nil { span }

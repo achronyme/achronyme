@@ -15,7 +15,7 @@ pub mod witness_gen;
 
 pub use codegen::Compiler;
 pub use error::CompilerError;
-pub use interner::StringInterner;
+pub use interner::{FieldInterner, StringInterner};
 
 // Re-exports for convenience if needed, but Compiler has most traits implemented.
 // Expose traits so they can be imported if necessary?
