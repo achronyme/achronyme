@@ -1,0 +1,86 @@
+---
+title: Hola Mundo
+description: Tu primer programa Achronyme y tu primer circuito.
+---
+
+## Programa de Propósito General
+
+Crea un archivo `hello.ach`:
+
+```
+print("Hello, world!")
+```
+
+Ejecútalo:
+
+```bash
+ach run hello.ach
+```
+
+Salida:
+
+```
+Hello, world!
+```
+
+### Un ejemplo más interesante
+
+```
+let fib = fn fib(n) {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+for i in 0..10 {
+    print(fib(i))
+}
+```
+
+## Tu Primer Circuito
+
+Crea un archivo `multiply.ach`:
+
+```
+public product
+witness a
+witness b
+
+assert_eq(a * b, product)
+```
+
+Este circuito demuestra que el probador conoce dos números secretos `a` y `b` cuyo producto es igual al valor público `product`.
+
+Compílalo:
+
+```bash
+ach circuit multiply.ach --inputs "product=42,a=6,b=7"
+```
+
+Esto produce `circuit.r1cs` y `witness.wtns`, listos para generación de pruebas con snarkjs.
+
+### ¿Qué acaba de pasar?
+
+1. El parser leyó `multiply.ach` y construyó un AST
+2. La fase de bajada a IR lo convirtió en instrucciones SSA
+3. El backend R1CS compiló la multiplicación en una sola restricción: `a * b = product`
+4. El generador de testigos completó los valores concretos: `a=6`, `b=7`, `product=42`
+5. El exportador escribió archivos binarios compatibles con snarkjs
+
+## Prueba en Línea
+
+También puedes generar pruebas directamente desde código Achronyme:
+
+```
+let a = 0p6
+let b = 0p7
+let product = 0p42
+
+let p = prove {
+    witness a
+    witness b
+    public product
+    assert_eq(a * b, product)
+}
+```
+
+El bloque `prove {}` compila el circuito, captura variables del ámbito circundante, genera un testigo, verifica las restricciones y — si hay un backend de pruebas disponible — devuelve una prueba criptográfica.

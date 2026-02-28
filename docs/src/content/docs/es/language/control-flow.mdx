@@ -1,0 +1,167 @@
+---
+title: "Flujo de Control"
+description: "if/else, while, bucles for, break y continue."
+---
+
+Achronyme proporciona construcciones estándar de flujo de control. `if/else` es una expresión que devuelve un valor. Los bucles vienen en tres formas: `while`, `forever` y `for..in`.
+
+## if / else
+
+Los bloques `if/else` son expresiones — evalúan al último valor de la rama tomada. Un `if` sin `else` devuelve `nil` cuando la condición es falsa.
+
+```
+let x = if true { 10 } else { 20 }
+assert(x == 10)
+
+let min = if 3 < 5 { 3 } else { 5 }
+assert(min == 3)
+```
+
+Encadena condiciones con `else if`:
+
+```
+let grade = 85
+mut ltr = "F"
+if grade >= 90 {
+    ltr = "A"
+} else if grade >= 80 {
+    ltr = "B"
+} else if grade >= 70 {
+    ltr = "C"
+}
+assert(ltr == "B")
+```
+
+Las cadenas `if/else` también son expresiones:
+
+```
+let val = if false {
+    1
+} else if true {
+    42
+} else {
+    99
+}
+assert(val == 42)
+```
+
+## while
+
+Repite un bloque mientras la condición sea verdadera.
+
+```
+mut sum = 0
+mut i = 1
+while i <= 10 {
+    sum = sum + i
+    i = i + 1
+}
+assert(sum == 55)
+```
+
+## forever
+
+Un bucle infinito. Usa `break` para salir.
+
+```
+mut count = 0
+forever {
+    count = count + 1
+    if count == 5 { break }
+}
+assert(count == 5)
+```
+
+## for..in
+
+Itera sobre un rango o una colección.
+
+**Forma de rango** — `start..end` (límite superior exclusivo):
+
+```
+mut sum = 0
+for i in 0..5 {
+    sum = sum + i
+}
+assert(sum == 10)
+```
+
+**Forma de colección** — itera sobre arrays o `keys(map)`:
+
+```
+mut total = 0
+for x in [10, 20, 30] {
+    total = total + x
+}
+assert(total == 60)
+
+let scores = {math: 95, science: 88, english: 92}
+mut sum = 0
+for k in keys(scores) {
+    sum = sum + scores[k]
+}
+assert(sum == 275)
+```
+
+## break
+
+Sale del bucle más interno inmediatamente.
+
+```
+mut found = -1
+mut pos = 0
+let haystack = [5, 3, 8, 1, 9]
+for val in haystack {
+    if val == 8 {
+        found = pos
+        break
+    }
+    pos = pos + 1
+}
+assert(found == 2)
+```
+
+`break` solo afecta al bucle más interno en estructuras anidadas:
+
+```
+mut outer = 0
+mut total = 0
+while outer < 3 {
+    mut inner = 0
+    forever {
+        inner = inner + 1
+        total = total + 1
+        if inner == 2 { break }
+    }
+    outer = outer + 1
+}
+assert(total == 6)
+```
+
+## continue
+
+Salta el resto de la iteración actual y pasa a la siguiente.
+
+```
+mut odds = 0
+mut k = 0
+while k < 10 {
+    k = k + 1
+    if k % 2 == 0 { continue }
+    odds = odds + 1
+}
+assert(odds == 5)
+```
+
+## Referencia Rápida
+
+| Construcción | Sintaxis | Notas |
+|-----------|--------|-------|
+| if/else | `if cond { a } else { b }` | Expresión — devuelve un valor |
+| else if | `if c1 { } else if c2 { } else { }` | Encadenable |
+| while | `while cond { body }` | Bucle estándar |
+| forever | `forever { body }` | Requiere `break` para salir |
+| for..in rango | `for i in 0..n { body }` | Límite superior exclusivo |
+| for..in colección | `for x in arr { body }` | Arrays, `keys(map)` |
+| break | `break` | Sale del bucle más interno |
+| continue | `continue` | Salta a la siguiente iteración |

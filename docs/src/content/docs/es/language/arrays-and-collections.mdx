@@ -1,0 +1,158 @@
+---
+title: "Arrays y Colecciones"
+description: "Arrays, listas y mapas."
+---
+
+Achronyme tiene dos tipos de colecciones integrados: arrays (listas ordenadas) y mapas (diccionarios clave-valor). Ambos se asignan en el heap, son mutables y pueden contener cualquier tipo de valor.
+
+## Arrays
+
+Crea arrays con corchetes. Accede a los elementos por índice (basado en cero).
+
+```
+let arr = [10, 20, 30]
+assert(arr[0] == 10)
+assert(arr[2] == 30)
+
+let mixed = [1, "two", true, nil]
+assert(len(mixed) == 4)
+
+let nested = [[1, 2], [3, 4]]
+assert(nested[0][1] == 2)
+```
+
+Modifica arrays con asignación por índice, `push()` y `pop()`:
+
+```
+mut nums = [0, 0, 0]
+nums[0] = 10
+assert(nums[0] == 10)
+
+mut items = [1, 2]
+push(items, 3)
+assert(len(items) == 3)
+
+let last = pop(items)
+assert(last == 3)
+assert(len(items) == 2)
+```
+
+## Funciones Integradas de Arrays
+
+| Función | Descripción |
+|----------|-------------|
+| `len(arr)` | Número de elementos |
+| `push(arr, val)` | Agregar al final |
+| `pop(arr)` | Eliminar y devolver el último elemento |
+
+## Mapas
+
+Crea mapas con llaves. Las claves pueden ser identificadores sin comillas o cadenas entre comillas.
+
+```
+let person = {name: "Alice", age: 30}
+assert(person.name == "Alice")
+assert(person["age"] == 30)
+
+let m = {"hello": 1, "world": 2}
+assert(m["hello"] == 1)
+```
+
+Accede a los valores con notación de punto o notación de corchetes. La notación de corchetes soporta claves dinámicas.
+
+```
+let key = "name"
+assert(person[key] == "Alice")
+
+let nested = {a: {b: {c: 42}}}
+assert(nested.a.b.c == 42)
+```
+
+Agrega o actualiza campos por asignación:
+
+```
+mut config = {}
+config.debug = true
+config["port"] = 8080
+assert(len(config) == 2)
+```
+
+## Funciones Integradas de Mapas
+
+| Función | Descripción |
+|----------|-------------|
+| `len(map)` | Número de pares clave-valor |
+| `keys(map)` | Array de todas las claves |
+
+## Iteración
+
+Usa `for..in` para iterar sobre arrays directamente o sobre claves de mapas con `keys()`.
+
+```
+mut total = 0
+for x in [10, 20, 30] {
+    total = total + x
+}
+assert(total == 60)
+
+let scores = {math: 95, science: 88, english: 92}
+mut sum = 0
+for k in keys(scores) {
+    sum = sum + scores[k]
+}
+assert(sum == 275)
+```
+
+## Patrones
+
+**Tabla de despacho** — almacena funciones en un mapa para búsqueda dinámica:
+
+```
+let ops = {
+    add: fn(a, b) { a + b },
+    sub: fn(a, b) { a - b },
+    mul: fn(a, b) { a * b }
+}
+assert(ops.add(10, 3) == 13)
+assert(ops["mul"](4, 5) == 20)
+```
+
+**Registros** — usa mapas como structs ligeros:
+
+```
+fn make_point(x, y) {
+    return {x: x, y: y}
+}
+let p = make_point(3, 4)
+assert(p.x == 3)
+```
+
+**Conteo de palabras** — claves dinámicas para agregación:
+
+```
+mut counts = {}
+let words = ["apple", "banana", "apple", "cherry", "banana", "apple"]
+for w in words {
+    if counts[w] == nil {
+        counts[w] = 0
+    }
+    counts[w] = counts[w] + 1
+}
+assert(counts.apple == 3)
+assert(counts.banana == 2)
+```
+
+**Estructuras anidadas** — arrays de mapas, mapas de arrays:
+
+```
+let people = [
+    {name: "Alice", age: 30},
+    {name: "Bob", age: 25}
+]
+assert(people[0].name == "Alice")
+
+mut bag = {items: []}
+push(bag.items, "sword")
+push(bag.items, "shield")
+assert(len(bag.items) == 2)
+```

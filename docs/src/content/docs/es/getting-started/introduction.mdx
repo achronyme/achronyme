@@ -1,0 +1,97 @@
+---
+title: Introducción
+description: Qué es Achronyme y por qué existe.
+---
+
+Achronyme es un lenguaje de programación para circuitos de conocimiento cero.
+
+Escribe código legible. Decide qué se demuestra. El mismo lenguaje para ejecución general y compilación de circuitos ZK.
+
+## Vistazo Rápido
+
+### Ejecución de propósito general
+
+```
+let make_counter = fn(init) {
+    mut n = init
+    return fn() { n = n + 1; return n }
+}
+let c = make_counter(0)
+print(c())  // 1
+print(c())  // 2
+```
+
+### Circuito ZK
+
+```
+public root
+witness leaf
+witness path[3]
+witness indices[3]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+```bash
+ ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=...,indices_0=0,indices_1=1,indices_2=0"
+# → circuit.r1cs + witness.wtns (compatible con snarkjs)
+```
+
+### Generación de pruebas en línea
+
+```
+let secret = 0p42
+let hash = 0p17159...  // poseidon(42, 0)
+
+let p = prove {
+    witness secret
+    public hash
+    assert_eq(poseidon(secret, 0), hash)
+}
+
+print(proof_json(p))  // Prueba Groth16, verificable on-chain
+```
+
+## Cómo Funciona
+
+Achronyme tiene dos modos de ejecución desde el mismo código fuente:
+
+**Modo VM** (`ach run`) — Lenguaje completo: closures, recursión, GC, arrays, maps, strings, E/S. El código se ejecuta como cualquier lenguaje de scripting.
+
+**Modo circuito** (`ach circuit`) — Compila a restricciones aritméticas sobre BN254. Sin bucles en tiempo de ejecución, sin E/S — todo se desenrolla y aplana en un sistema de restricciones para pruebas de conocimiento cero.
+
+El bloque `prove {}` conecta ambos: se ejecuta dentro de la VM, compila su cuerpo como un circuito, genera un testigo a partir de variables capturadas y produce una prueba criptográfica — todo en una sola expresión.
+
+```
+Fuente (.ach)
+    │
+    ├─► Parser (PEG) → AST
+    │       │
+    │       ├─► Bytecode → VM          (modo ejecución)
+    │       │
+    │       └─► SSA IR → Optimizar
+    │               │
+    │           ┌───┴───┐
+    │           ▼       ▼
+    │        R1CS    Plonkish
+    │      (Groth16) (KZG-PlonK)
+    │           │       │
+    │           ▼       ▼
+    │       .r1cs    Gates/Lookups
+    │       .wtns    Copy constraints
+    │           │       │
+    │           └───┬───┘
+    │               ▼
+    │         Prueba nativa
+    │
+    └─► prove { } → compilar + testigo + verificar + prueba (en línea)
+```
+
+## Estado
+
+- 929 pruebas unitarias + 75 pruebas de integración
+- 2 backends ZK: R1CS/Groth16 + Plonkish/KZG-PlonK
+- Generación de pruebas nativa en proceso (sin herramientas externas)
+- Exportación binaria compatible con snarkjs
+- 6 auditorías de seguridad resueltas
+- Hash Poseidon compatible con circomlibjs

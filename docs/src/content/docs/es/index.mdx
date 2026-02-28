@@ -1,0 +1,32 @@
+---
+title: Achronyme
+description: Un lenguaje de programación para circuitos de conocimiento cero.
+template: splash
+hero:
+  tagline: Escribe código. Demuestra partes de él. El mismo lenguaje para ejecución y circuitos ZK — sin DSL separado, sin cambio de contexto.
+  actions:
+    - text: Comenzar
+      link: /es/getting-started/introduction/
+      icon: right-arrow
+    - text: Ver en GitHub
+      link: https://github.com/achronyme/achronyme
+      variant: minimal
+      icon: github
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Modo Dual" icon="rocket">
+    `ach run` ejecuta tu programa. `ach circuit` lo compila a restricciones ZK. Misma sintaxis, dos objetivos.
+  </Card>
+  <Card title="Dos Backends" icon="setting">
+    R1CS para Groth16. Plonkish para KZG-PlonK. Elige el sistema de pruebas que se adapte.
+  </Card>
+  <Card title="Pruebas en Línea" icon="approve-check">
+    `prove {}` compila, genera testigos y prueba — todo en línea. Sin herramientas externas.
+  </Card>
+  <Card title="Compatible con snarkjs" icon="external">
+    Exporta archivos `.r1cs` y `.wtns`. Conéctalos directamente a snarkjs para generación de pruebas Groth16.
+  </Card>
+</CardGrid>

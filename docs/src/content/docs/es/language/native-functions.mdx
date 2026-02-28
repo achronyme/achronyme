@@ -1,0 +1,386 @@
+---
+title: "Funciones Nativas"
+description: "Referencia de las 32 funciones nativas integradas."
+---
+
+Achronyme proporciona 32 funciones nativas integradas en la VM. Algunas también están disponibles en modo circuito.
+
+## Núcleo
+
+### `print(...valores)`
+
+Imprime todos los argumentos separados por espacios, seguidos de un salto de línea. Devuelve `nil`.
+
+```
+print("hello", 42, true)  // hello 42 true
+```
+
+**Modo:** Solo VM
+
+### `len(x)`
+
+Devuelve la longitud de una cadena (número de caracteres), lista (número de elementos) o mapa (número de entradas).
+
+```
+len("abc")     // 3
+len([1, 2, 3]) // 3
+len({a: 1})    // 1
+```
+
+**Modo:** Ambos (en circuitos, resuelve la longitud del array en tiempo de compilación)
+
+### `typeof(x)`
+
+Devuelve una cadena que describe el tipo del valor: `"Number"`, `"String"`, `"Bool"`, `"Nil"`, `"List"`, `"Map"`, `"Field"`, `"BigInt256"`, `"BigInt512"`, `"Proof"`, `"Function"`, `"Native"`.
+
+```
+typeof(42)      // "Number"
+typeof("hi")    // "String"
+typeof(true)    // "Bool"
+```
+
+**Modo:** Solo VM
+
+### `assert(condición)`
+
+Afirma que la condición es verdadera. Devuelve `nil` en caso de éxito, genera `AssertionFailed` en caso de fallo.
+
+```
+assert(1 + 1 == 2)  // ok
+assert(false)        // error: AssertionFailed
+```
+
+**Modo:** Ambos (en circuitos, emite 2 restricciones: verificación booleana + forzar = 1)
+
+### `time()`
+
+Devuelve la hora actual en milisegundos desde la época Unix.
+
+```
+let t = time()
+print(t)  // 1740700800000
+```
+
+**Modo:** Solo VM
+
+## Colecciones
+
+### `push(lista, elemento)`
+
+Agrega un elemento al final de una lista. Modifica la lista en su lugar. Devuelve `nil`.
+
+```
+let a = [1, 2]
+push(a, 3)
+print(a)  // [1, 2, 3]
+```
+
+**Modo:** Solo VM
+
+### `pop(lista)`
+
+Elimina y devuelve el último elemento de una lista. Devuelve `nil` si la lista está vacía.
+
+```
+let a = [1, 2, 3]
+let x = pop(a)
+print(x)  // 3
+print(a)  // [1, 2]
+```
+
+**Modo:** Solo VM
+
+### `keys(mapa)`
+
+Devuelve una lista de todas las claves en un mapa.
+
+```
+let m = {name: "alice", age: 30}
+print(keys(m))  // ["name", "age"]
+```
+
+**Modo:** Solo VM
+
+## Inspección de Pruebas
+
+Estas funciones extraen componentes de un `ProofObject` devuelto por `prove {}`.
+
+### `proof_json(prueba)`
+
+Devuelve la prueba Groth16 como una cadena JSON.
+
+```
+let p = prove { ... }
+print(proof_json(p))  // {"pi_a": [...], "pi_b": [...], ...}
+```
+
+**Modo:** Solo VM
+
+### `proof_public(prueba)`
+
+Devuelve las entradas públicas como una cadena JSON.
+
+```
+print(proof_public(p))  // ["21888...", "17159..."]
+```
+
+**Modo:** Solo VM
+
+### `proof_vkey(prueba)`
+
+Devuelve la clave de verificación como una cadena JSON.
+
+```
+print(proof_vkey(p))  // {"protocol": "groth16", "curve": "bn128", ...}
+```
+
+**Modo:** Solo VM
+
+## Utilidades de Cadenas
+
+### `substring(s, inicio, fin)`
+
+Extrae una subcadena desde la posición de carácter `inicio` hasta `fin` (exclusivo). Los índices se ajustan a los límites de la cadena.
+
+```
+substring("hello", 1, 4)  // "ell"
+```
+
+### `indexOf(s, sub)`
+
+Devuelve el índice de carácter de la primera aparición de `sub` en `s`. Devuelve `-1` si no se encuentra.
+
+```
+indexOf("hello world", "world")  // 6
+indexOf("hello", "xyz")          // -1
+```
+
+### `split(s, delimitador)`
+
+Divide una cadena por el delimitador dado. Devuelve una lista de cadenas.
+
+```
+split("a,b,c", ",")  // ["a", "b", "c"]
+```
+
+### `trim(s)`
+
+Elimina espacios en blanco al inicio y al final.
+
+```
+trim("  hello  ")  // "hello"
+```
+
+### `replace(s, buscar, reemplazo)`
+
+Reemplaza todas las apariciones de `buscar` con `reemplazo`.
+
+```
+replace("aabbcc", "bb", "XX")  // "aaXXcc"
+```
+
+### `toUpper(s)`
+
+Convierte todos los caracteres a mayúsculas.
+
+```
+toUpper("hello")  // "HELLO"
+```
+
+### `toLower(s)`
+
+Convierte todos los caracteres a minúsculas.
+
+```
+toLower("HELLO")  // "hello"
+```
+
+### `chars(s)`
+
+Divide una cadena en una lista de caracteres individuales.
+
+```
+chars("abc")  // ["a", "b", "c"]
+```
+
+Todas las funciones de cadenas son **solo VM**.
+
+## Criptográficas
+
+### `poseidon(izquierda, derecha)`
+
+Calcula el hash Poseidon 2-a-1 sobre BN254. Ambos argumentos pueden ser enteros o elementos de campo.
+
+```
+let h = poseidon(1, 2)
+print(h)  // elemento de campo
+```
+
+**Modo:** Ambos (en circuitos, emite 361 restricciones)
+
+### `poseidon_many(a, b, ...)`
+
+Hash Poseidon con plegado izquierdo: `poseidon(poseidon(a, b), c)` y así sucesivamente. Requiere al menos 2 argumentos.
+
+```
+let h = poseidon_many(1, 2, 3, 4)
+// equivalente a: poseidon(poseidon(poseidon(1, 2), 3), 4)
+```
+
+**Modo:** Ambos (en circuitos, emite 361 restricciones por par)
+
+### `verify_proof(prueba)`
+
+Verifica una prueba Groth16. Devuelve `true` si es válida, `false` en caso contrario. Requiere que un manejador de verificación esté configurado en la VM.
+
+```
+let p = prove { ... }
+let ok = verify_proof(p)
+print(ok)  // true
+```
+
+**Modo:** Solo VM
+
+## BigInt
+
+### `bigint256(x)`
+
+Construye un entero sin signo de 256 bits desde un entero (>= 0) o cadena. Las cadenas pueden usar formato `0x` (hex), `0b` (binario) o decimal.
+
+```
+let a = bigint256(42)
+let b = bigint256("0xFF")
+let c = bigint256("12345")
+```
+
+**Modo:** Solo VM
+
+### `bigint512(x)`
+
+Construye un entero sin signo de 512 bits. Mismos formatos de argumento que `bigint256`.
+
+```
+let a = bigint512(42)
+let b = bigint512("0xFF")
+```
+
+**Modo:** Solo VM
+
+### `to_bits(bigint)`
+
+Convierte un BigInt a una lista de enteros 0/1 en orden LSB primero. La longitud es 256 o 512 dependiendo del ancho.
+
+```
+let bits = to_bits(bigint256(42))
+// bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1, bits[4] = 0, bits[5] = 1
+```
+
+**Modo:** Solo VM
+
+### `from_bits(bits, ancho)`
+
+Construye un BigInt desde una lista de enteros 0/1 (LSB primero). El ancho debe ser 256 o 512.
+
+```
+let val = from_bits(to_bits(bigint256(42)), 256)
+assert(val == bigint256(42))
+```
+
+**Modo:** Solo VM
+
+### `bit_and(a, b)`
+
+AND a nivel de bits de dos BigInts (deben tener el mismo ancho).
+
+```
+bit_and(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0x0F")
+```
+
+**Modo:** Solo VM
+
+### `bit_or(a, b)`
+
+OR a nivel de bits de dos BigInts (deben tener el mismo ancho).
+
+```
+bit_or(bigint256("0xF0"), bigint256("0x0F"))  // bigint256("0xFF")
+```
+
+**Modo:** Solo VM
+
+### `bit_xor(a, b)`
+
+XOR a nivel de bits de dos BigInts (deben tener el mismo ancho).
+
+```
+bit_xor(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0xF0")
+```
+
+**Modo:** Solo VM
+
+### `bit_not(x)`
+
+NOT a nivel de bits de un BigInt (invierte todos los bits).
+
+```
+let x = bit_not(bigint256(0))  // todos los bits activados
+```
+
+**Modo:** Solo VM
+
+### `bit_shl(x, n)`
+
+Desplaza un BigInt a la izquierda `n` bits. Error si algún bit activado es desplazado fuera (desbordamiento).
+
+```
+bit_shl(bigint256(1), 8)  // bigint256(256)
+```
+
+**Modo:** Solo VM
+
+### `bit_shr(x, n)`
+
+Desplaza un BigInt a la derecha `n` bits. Los bits desplazados fuera se descartan.
+
+```
+bit_shr(bigint256(256), 8)  // bigint256(1)
+```
+
+**Modo:** Solo VM
+
+## Tabla Resumen
+
+| # | Función | Aridad | Modo | Devuelve |
+|---|----------|-------|------|---------|
+| 0 | `print(...)` | variádica | VM | nil |
+| 1 | `len(x)` | 1 | Ambos | int |
+| 2 | `typeof(x)` | 1 | VM | string |
+| 3 | `assert(x)` | 1 | Ambos | nil |
+| 4 | `time()` | 0 | VM | int |
+| 5 | `push(lista, elem)` | 2 | VM | nil |
+| 6 | `pop(lista)` | 1 | VM | valor |
+| 7 | `keys(mapa)` | 1 | VM | lista |
+| 8 | `proof_json(p)` | 1 | VM | string |
+| 9 | `proof_public(p)` | 1 | VM | string |
+| 10 | `proof_vkey(p)` | 1 | VM | string |
+| 11 | `substring(s, inicio, fin)` | 3 | VM | string |
+| 12 | `indexOf(s, sub)` | 2 | VM | int |
+| 13 | `split(s, delim)` | 2 | VM | lista |
+| 14 | `trim(s)` | 1 | VM | string |
+| 15 | `replace(s, buscar, reempl)` | 3 | VM | string |
+| 16 | `toUpper(s)` | 1 | VM | string |
+| 17 | `toLower(s)` | 1 | VM | string |
+| 18 | `chars(s)` | 1 | VM | lista |
+| 19 | `poseidon(a, b)` | 2 | Ambos | field |
+| 20 | `poseidon_many(...)` | variádica | Ambos | field |
+| 21 | `verify_proof(p)` | 1 | VM | bool |
+| 22 | `bigint256(x)` | 1 | VM | BigInt256 |
+| 23 | `bigint512(x)` | 1 | VM | BigInt512 |
+| 24 | `to_bits(x)` | 1 | VM | lista |
+| 25 | `from_bits(bits, ancho)` | 2 | VM | BigInt |
+| 26 | `bit_and(a, b)` | 2 | VM | BigInt |
+| 27 | `bit_or(a, b)` | 2 | VM | BigInt |
+| 28 | `bit_xor(a, b)` | 2 | VM | BigInt |
+| 29 | `bit_not(x)` | 1 | VM | BigInt |
+| 30 | `bit_shl(x, n)` | 2 | VM | BigInt |
+| 31 | `bit_shr(x, n)` | 2 | VM | BigInt |

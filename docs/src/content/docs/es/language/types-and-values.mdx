@@ -1,0 +1,180 @@
+---
+title: Tipos y Valores
+description: Sistema de tipos y representación de valores en Achronyme.
+---
+
+Achronyme es de tipado dinámico. Todos los valores se representan como palabras de 64 bits etiquetadas con una etiqueta de 4 bits y un payload de 60 bits.
+
+## Tipos
+
+| Tipo | Ejemplos | Descripción |
+|------|---------|-------------|
+| Int | `42`, `-7` | Entero con signo de 60 bits (-2^59 a 2^59-1) |
+| Bool | `true`, `false` | Valores booleanos |
+| String | `"hello"` | Cadenas UTF-8 (asignadas en el heap) |
+| List | `[1, 2, 3]` | Colecciones ordenadas |
+| Map | `{"a": 1, "b": 2}` | Mapas clave-valor |
+| Field | `0p42`, `0pxFF`, `0pb1010` | Elemento del campo escalar BN254 |
+| BigInt256 | `0i256xFF`, `0i256d42` | Entero sin signo de 256 bits (solo VM) |
+| BigInt512 | `0i512xFF`, `0i512d42` | Entero sin signo de 512 bits (solo VM) |
+| Function | `fn(x) { x + 1 }` | Funciones y closures de primera clase |
+| Proof | resultado de `prove { }` | Objeto de prueba Groth16 o PlonK |
+| Nil | `nil` | Ausencia de valor |
+
+## Enteros
+
+Los enteros son valores con signo de 60 bits almacenados en línea (sin asignación en heap). Rango: -576460752303423488 a 576460752303423487.
+
+```
+let x = 42
+let y = -7
+let big = 100000000000
+```
+
+Si una operación aritmética desborda el rango i60, se genera un error en tiempo de ejecución. Usa literales de campo `0p` cuando necesites aritmética modular de campo (ej., `0p42`).
+
+## Booleanos
+
+```
+let yes = true
+let no = false
+```
+
+En circuitos, `true` se mapea al elemento de campo 1 y `false` al 0.
+
+## Cadenas
+
+```
+let greeting = "hello, world"
+let empty = ""
+```
+
+## Listas
+
+```
+let nums = [1, 2, 3]
+let mixed = [1, "two", true]
+let nested = [[1, 2], [3, 4]]
+```
+
+## Mapas
+
+```
+let person = {"name": "Alice", "age": 30}
+```
+
+## Elementos de Campo
+
+Elementos del campo escalar BN254 para operaciones criptográficas. Internamente en forma Montgomery. Se crean usando el prefijo `0p`, que funciona como `0x` para hexadecimal:
+
+```
+let a = 0p42         // literal de campo decimal
+let b = 0pxFF        // literal de campo hexadecimal
+let c = 0pb1010      // literal de campo binario
+let d = 0p21888242871839275222246405745257275088548364400416034343698204186575808495617  // decimal grande
+
+let sum = a + b
+let prod = a * b
+let inv = 0p1 / a    // inverso modular
+```
+
+Int y Field no se pueden mezclar en operaciones aritméticas. `0p3 + 5` es un error en tiempo de ejecución — usa `0p3 + 0p5` en su lugar.
+
+Los elementos de campo son esenciales para la programación de circuitos — todos los valores de circuito son elementos de campo internamente.
+
+## BigInt (solo VM)
+
+Enteros sin signo de ancho fijo para operaciones criptográficas. Dos anchos: 256 bits (4 limbs) y 512 bits (8 limbs). Aritmética no modular con errores de desbordamiento.
+
+### Literales
+
+Los literales BigInt usan el prefijo `0i`, seguido del ancho y la base:
+
+```
+let a = 0i256xFF           // 256 bits hexadecimal
+let b = 0i256d255          // 256 bits decimal
+let c = 0i256b11111111     // 256 bits binario
+let d = 0i512x1234         // 512 bits hexadecimal
+```
+
+### Funciones constructoras
+
+```
+let a = bigint256(42)       // desde entero
+let b = bigint256("0xFF")   // desde cadena hexadecimal
+let c = bigint512(100)      // 512 bits desde entero
+```
+
+### Aritmética
+
+Los operadores estándar funcionan entre BigInts del mismo ancho:
+
+```
+let x = 0i256d10
+let y = 0i256d20
+let sum = x + y              // 30
+let diff = y - x             // 10
+let prod = x * y             // 200
+let q = y / x                // 2
+let r = 0i256d25 % 0i256d7   // 4
+let p = 0i256d2 ^ 10         // 1024
+```
+
+### Seguridad de tipos
+
+BigInt no se puede mezclar con Int, Field, ni con un BigInt de diferente ancho:
+
+```
+// Todos estos son errores en tiempo de ejecución:
+// bigint256(1) + 1           -- BigInt + Int
+// bigint256(1) + 0p1         -- BigInt + Field
+// bigint256(1) + bigint512(1) -- incompatibilidad de ancho
+```
+
+### Operaciones a nivel de bits
+
+```
+bit_and(a, b)     // AND a nivel de bits
+bit_or(a, b)      // OR a nivel de bits
+bit_xor(a, b)     // XOR a nivel de bits
+bit_not(a)        // NOT a nivel de bits
+bit_shl(a, n)     // desplazamiento a la izquierda (error si los bits desbordan)
+bit_shr(a, n)     // desplazamiento a la derecha
+
+let bits = to_bits(a)          // lista de 0/1 (LSB primero)
+let val = from_bits(bits, 256) // reconstruir desde bits
+```
+
+### typeof
+
+`typeof()` devuelve `"BigInt256"` o `"BigInt512"` para valores BigInt.
+
+## Nil
+
+```
+let nothing = nil
+```
+
+`nil` representa la ausencia de un valor. Las funciones sin una sentencia `return` devuelven `nil`.
+
+## Vinculaciones de Variables
+
+```
+let x = 42          // vinculación inmutable
+mut y = 0           // vinculación mutable
+y = y + 1           // reasignación (solo para mut)
+```
+
+`let` crea una vinculación inmutable. `mut` crea una vinculación mutable que puede ser reasignada.
+
+## Anotaciones de Tipo
+
+Achronyme soporta anotaciones de tipo opcionales en vinculaciones de variables y firmas de funciones. En modo circuito, las anotaciones habilitan verificación de tipos en tiempo de compilación y optimización de restricciones. En modo VM, las anotaciones se parsean y aceptan pero la ejecución sigue siendo dinámica.
+
+```
+let x: Field = 0p42
+let flag: Bool = true
+mut counter: Field = 0p0
+```
+
+Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para la referencia completa en contexto de circuitos.

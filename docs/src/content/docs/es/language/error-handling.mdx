@@ -1,0 +1,213 @@
+---
+title: "Manejo de Errores"
+description: "Errores en tiempo de ejecución, errores de circuito, advertencias de contaminación y depuración."
+---
+
+Achronyme proporciona mensajes de error detallados en todos los modos de ejecución. Los errores incluyen información de ubicación en el código fuente cuando está disponible.
+
+## Errores en Tiempo de Ejecución (Modo VM)
+
+Al ejecutar con `ach run`, la VM reporta errores con números de línea:
+
+```
+[line 5] in main: DivisionByZero
+```
+
+### Tipos de Error
+
+| Error | Causa |
+|-------|-------|
+| `DivisionByZero` | División o módulo por cero |
+| `IntegerOverflow` | Desbordamiento aritmético i60 (sin promoción silenciosa) |
+| `TypeMismatch` | Tipos incompatibles en operación (ej., Int + Field) |
+| `ArityMismatch` | Número incorrecto de argumentos para una función |
+| `AssertionFailed` | `assert(expr)` evaluó a falso |
+| `OutOfBounds` | Índice de array fuera de rango |
+| `StackOverflow` | La pila de llamadas excedió 65,536 entradas (probable recursión infinita) |
+| `StackUnderflow` | Error interno — pop de pila vacía |
+| `InvalidOpcode` | Bytecode corrupto — instrucción desconocida |
+| `FunctionNotFound` | Referencia a closure o función inválida |
+| `ProveBlockFailed` | Error durante ejecución de `prove {}` |
+| `ProveHandlerNotConfigured` | `prove {}` usado sin `--ptau` |
+| `SystemError` | Corrupción del estado interno de la VM |
+
+### Desbordamiento de Enteros
+
+Achronyme usa enteros con signo de 60 bits (rango: -2^59 a 2^59 - 1). El desbordamiento siempre es un error:
+
+```
+let big = 576460752303423487   // 2^59 - 1 (máximo i60)
+let overflow = big + 1         // ERROR: IntegerOverflow
+```
+
+Para trabajar con valores más grandes, usa literales de campo `0p` para elementos del campo BN254 (ej., `0p42`, `0pxFF`).
+
+### Incompatibilidad de Tipos
+
+Los valores enteros y de campo no pueden mezclarse directamente:
+
+```
+let x = 42
+let y = 0p10
+let z = x + y  // ERROR: TypeMismatch
+```
+
+Usa literales `0p` para conversión explícita: `let z = 0p42 + y`.
+
+## Errores de Parseo
+
+Los errores de sintaxis incluyen información de línea y columna:
+
+```
+parse error at line 3, col 10: expected expression
+```
+
+## Errores de Circuito (Bajada a IR)
+
+Al compilar circuitos con `ach circuit`, la fase de bajada a IR reporta errores con rangos de código fuente:
+
+| Error | Causa |
+|-------|-------|
+| `UndeclaredVariable` | Variable usada sin declaración `public`/`witness` |
+| `UnsupportedOperation` | Operación no disponible en modo circuito (ej., `print`) |
+| `TypeNotConstrainable` | Tipo no representable en campo usado en circuito (cadena, mapa, etc.) |
+| `UnboundedLoop` | Bucle sin límites fijos (los circuitos requieren desenrollado estático) |
+| `WrongArgumentCount` | Función integrada llamada con aridad incorrecta |
+| `DuplicateInput` | Misma variable declarada dos veces |
+| `IndexOutOfBounds` | Acceso a array más allá de su longitud |
+| `ArrayLengthMismatch` | Tamaño de array no coincide con la anotación de tipo |
+| `RecursiveFunction` | Llamada recursiva detectada (no permitida en circuitos) |
+| `TypeMismatch` | Tipo de expresión no coincide con la anotación |
+| `AnnotationMismatch` | Tipo declarado conflicta con el tipo inferido |
+
+### Mensajes Útiles
+
+Algunos errores incluyen orientación amigable para el usuario:
+
+```
+// Usando una cadena en un circuito:
+"cannot be used in circuits (circuits operate on field elements only)"
+
+// Usando un mapa en un circuito:
+"cannot be used in circuits (use arrays instead)"
+
+// Usando un decimal:
+"field arithmetic is integer-only — use whole numbers"
+```
+
+## Errores de Compilación R1CS
+
+Errores durante la generación de restricciones:
+
+```
+R1CS compilation error: [3:5] undeclared variable 'x'
+```
+
+El prefijo `[línea:col]` mapea a la ubicación en el código fuente cuando está disponible.
+
+## Errores de Evaluación IR
+
+Al usar `compile_ir_with_witness()`, el evaluador IR valida las entradas antes de la generación de restricciones:
+
+| Error | Causa |
+|-------|-------|
+| `MissingInput` | Entrada de circuito requerida no proporcionada |
+| `DivisionByZero` | División por cero con valores concretos |
+| `AssertionFailed` | `assert(expr)` falla con las entradas proporcionadas |
+| `AssertEqFailed` | `assert_eq(a, b)` falla — los valores no coinciden |
+| `RangeCheckFailed` | El valor no cabe en el ancho de bits declarado |
+| `NonBooleanMuxCondition` | La condición de `mux` no es 0 ni 1 |
+| `UndefinedVar` | Error interno — variable SSA no calculada |
+
+Estos errores incluyen los valores concretos que causaron el fallo, facilitando la depuración:
+
+```
+assert_eq failed: x (= 42) != y (= 43)
+```
+
+## Advertencias de Análisis de Contaminación
+
+Después de la compilación del circuito, el pase de análisis de contaminación verifica posibles problemas de solidez:
+
+### SubRestringido
+
+```
+witness input 'secret' is under-constrained (not in any assert_eq)
+```
+
+Una entrada declarada no se usa en ninguna restricción. Esto significa que un probador malicioso podría asignarle cualquier valor sin afectar la prueba. Esto casi siempre es un error.
+
+### Entrada No Utilizada
+
+```
+public input 'unused_var' is unused
+```
+
+Una entrada declarada nunca se referencia en el cuerpo del circuito. Elimina la declaración o usa la variable.
+
+## Errores de Bloques Prove
+
+Los errores dentro de bloques `prove {}` se categorizan por fase del pipeline:
+
+| Fase | Error |
+|-------|-------|
+| Bajada a IR | Parseo o conversión AST→IR falló |
+| Compilación | Generación de restricciones falló |
+| Verificación | El testigo generado no satisface las restricciones |
+| Generación de prueba | La prueba Groth16/PlonK falló |
+
+Ejemplo:
+
+```
+prove block error: IR lowering: undeclared variable 'x'
+```
+
+## Estrategias de Depuración
+
+### Verifica las entradas primero
+
+La mayoría de los fallos de circuito provienen de valores de entrada incorrectos. La bandera `--inputs` requiere precisión exacta a nivel de campo:
+
+```bash
+ach circuit my_circuit.ach --inputs "a=42,b=7"
+```
+
+### Usa `--no-optimize` para aislar problemas
+
+Si un circuito falla después de la optimización, intenta ejecutar sin ella:
+
+```bash
+ach circuit my_circuit.ach --no-optimize --inputs "a=42,b=7"
+```
+
+### Revisa las advertencias de contaminación
+
+Siempre revisa la salida del análisis de contaminación. Una advertencia `UnderConstrained` frecuentemente indica una restricción faltante que podría permitir a un probador malicioso falsificar pruebas.
+
+### Imprime valores intermedios
+
+En modo VM, usa `print()` para inspeccionar valores:
+
+```
+let h = poseidon(1, 2)
+print("hash:", h)
+```
+
+### Verifica el testigo por separado
+
+Después de compilar un circuito, verifica el testigo con snarkjs:
+
+```bash
+snarkjs r1cs info circuit.r1cs       # verificar conteo de restricciones
+snarkjs wtns check circuit.r1cs witness.wtns  # verificar testigo
+```
+
+### Usa `--stress-gc` para problemas de memoria
+
+Si sospechas errores relacionados con el GC:
+
+```bash
+ach run program.ach --stress-gc
+```
+
+Esto activa la recolección de basura en cada asignación, exponiendo problemas de enraizamiento.
