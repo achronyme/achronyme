@@ -355,6 +355,44 @@ impl FieldElement {
         Some(Self::from_canonical(result))
     }
 
+    /// Parse from binary string (only '0'/'1' chars, max 256 chars)
+    pub fn from_binary_str(s: &str) -> Option<Self> {
+        if s.is_empty() || s.len() > 256 {
+            return None;
+        }
+        let mut result = [0u64; 4];
+        for ch in s.chars() {
+            let digit = match ch {
+                '0' => 0u64,
+                '1' => 1u64,
+                _ => return None,
+            };
+            // result = result * 2 + digit (in 256-bit arithmetic)
+            let mut carry = 0u64;
+            for limb in result.iter_mut() {
+                let new_carry = *limb >> 63;
+                *limb = (*limb << 1) | carry;
+                carry = new_carry;
+            }
+            // Add digit
+            let mut add_carry = digit as u128;
+            for limb in result.iter_mut() {
+                let wide = *limb as u128 + add_carry;
+                *limb = wide as u64;
+                add_carry = wide >> 64;
+            }
+        }
+        // Reduce mod p if needed
+        while gte(&result, &MODULUS) {
+            let (r0, borrow) = sbb(result[0], MODULUS[0], 0);
+            let (r1, borrow) = sbb(result[1], MODULUS[1], borrow);
+            let (r2, borrow) = sbb(result[2], MODULUS[2], borrow);
+            let (r3, _) = sbb(result[3], MODULUS[3], borrow);
+            result = [r0, r1, r2, r3];
+        }
+        Some(Self::from_canonical(result))
+    }
+
     /// Check if zero
     #[inline]
     pub fn is_zero(&self) -> bool {
@@ -724,6 +762,36 @@ mod tests {
 
         let fe2 = FieldElement::from_hex_str("ff").unwrap();
         assert_eq!(fe2, FieldElement::from_u64(255));
+    }
+
+    #[test]
+    fn test_from_binary_str() {
+        let fe = FieldElement::from_binary_str("101010").unwrap();
+        assert_eq!(fe, FieldElement::from_u64(42));
+
+        let fe2 = FieldElement::from_binary_str("0").unwrap();
+        assert_eq!(fe2, FieldElement::ZERO);
+
+        let fe3 = FieldElement::from_binary_str("1").unwrap();
+        assert_eq!(fe3, FieldElement::ONE);
+
+        let fe4 = FieldElement::from_binary_str("11111111").unwrap();
+        assert_eq!(fe4, FieldElement::from_u64(255));
+
+        // Invalid chars
+        assert!(FieldElement::from_binary_str("102").is_none());
+        assert!(FieldElement::from_binary_str("abc").is_none());
+
+        // Empty
+        assert!(FieldElement::from_binary_str("").is_none());
+
+        // Max 256 chars is ok
+        let s256 = "1".repeat(256);
+        assert!(FieldElement::from_binary_str(&s256).is_some());
+
+        // 257 chars is too long
+        let s257 = "1".repeat(257);
+        assert!(FieldElement::from_binary_str(&s257).is_none());
     }
 
     #[test]
