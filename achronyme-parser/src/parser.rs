@@ -31,6 +31,13 @@ pub fn parse_program(source: &str) -> Result<Program, String> {
 /// assert!(matches!(&prog.stmts[0], Stmt::PublicDecl { .. }));
 /// assert!(matches!(&prog.stmts[1], Stmt::WitnessDecl { .. }));
 /// ```
+/// Parse a complete source string, returning a structured [`ParseError`] on failure.
+pub fn parse_program_with_errors(source: &str) -> Result<Program, ParseError> {
+    let tokens = Lexer::tokenize(source)?;
+    let mut parser = Parser::new(tokens, source.to_string());
+    parser.do_parse_program()
+}
+
 pub fn parse_block(source: &str) -> Result<Block, String> {
     let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, source.to_string());
