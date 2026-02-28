@@ -1,9 +1,9 @@
 ---
 title: "Native Functions"
-description: "Reference for all 22 built-in native functions."
+description: "Reference for all 32 built-in native functions."
 ---
 
-Achronyme provides 22 native functions built into the VM. Some are also available in circuit mode.
+Achronyme provides 32 native functions built into the VM. Some are also available in circuit mode.
 
 ## Core
 
@@ -31,7 +31,7 @@ len({a: 1})    // 1
 
 ### `typeof(x)`
 
-Returns a string describing the type of the value: `"Number"`, `"String"`, `"Bool"`, `"Nil"`, `"List"`, `"Map"`, `"Field"`, `"Proof"`, `"Function"`, `"Native"`.
+Returns a string describing the type of the value: `"Number"`, `"String"`, `"Bool"`, `"Nil"`, `"List"`, `"Map"`, `"Field"`, `"BigInt256"`, `"BigInt512"`, `"Proof"`, `"Function"`, `"Native"`.
 
 ```
 typeof(42)      // "Number"
@@ -241,6 +241,113 @@ print(ok)  // true
 
 **Mode:** VM only
 
+## BigInt
+
+### `bigint256(x)`
+
+Constructs a 256-bit unsigned integer from an integer (>= 0) or string. Strings can use `0x` (hex), `0b` (binary), or decimal format.
+
+```
+let a = bigint256(42)
+let b = bigint256("0xFF")
+let c = bigint256("12345")
+```
+
+**Mode:** VM only
+
+### `bigint512(x)`
+
+Constructs a 512-bit unsigned integer. Same argument formats as `bigint256`.
+
+```
+let a = bigint512(42)
+let b = bigint512("0xFF")
+```
+
+**Mode:** VM only
+
+### `to_bits(bigint)`
+
+Converts a BigInt to a list of 0/1 integers in LSB-first order. Length is 256 or 512 depending on width.
+
+```
+let bits = to_bits(bigint256(42))
+// bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1, bits[4] = 0, bits[5] = 1
+```
+
+**Mode:** VM only
+
+### `from_bits(bits, width)`
+
+Constructs a BigInt from a list of 0/1 integers (LSB-first). Width must be 256 or 512.
+
+```
+let val = from_bits(to_bits(bigint256(42)), 256)
+assert(val == bigint256(42))
+```
+
+**Mode:** VM only
+
+### `bit_and(a, b)`
+
+Bitwise AND of two BigInts (must be same width).
+
+```
+bit_and(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0x0F")
+```
+
+**Mode:** VM only
+
+### `bit_or(a, b)`
+
+Bitwise OR of two BigInts (must be same width).
+
+```
+bit_or(bigint256("0xF0"), bigint256("0x0F"))  // bigint256("0xFF")
+```
+
+**Mode:** VM only
+
+### `bit_xor(a, b)`
+
+Bitwise XOR of two BigInts (must be same width).
+
+```
+bit_xor(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0xF0")
+```
+
+**Mode:** VM only
+
+### `bit_not(x)`
+
+Bitwise NOT of a BigInt (flips all bits).
+
+```
+let x = bit_not(bigint256(0))  // all bits set
+```
+
+**Mode:** VM only
+
+### `bit_shl(x, n)`
+
+Shifts a BigInt left by `n` bits. Errors if any set bits are shifted out (overflow).
+
+```
+bit_shl(bigint256(1), 8)  // bigint256(256)
+```
+
+**Mode:** VM only
+
+### `bit_shr(x, n)`
+
+Shifts a BigInt right by `n` bits. Bits shifted out are discarded.
+
+```
+bit_shr(bigint256(256), 8)  // bigint256(1)
+```
+
+**Mode:** VM only
+
 ## Summary Table
 
 | # | Function | Arity | Mode | Returns |
@@ -267,3 +374,13 @@ print(ok)  // true
 | 19 | `poseidon(a, b)` | 2 | Both | field |
 | 20 | `poseidon_many(...)` | variadic | Both | field |
 | 21 | `verify_proof(p)` | 1 | VM | bool |
+| 22 | `bigint256(x)` | 1 | VM | BigInt256 |
+| 23 | `bigint512(x)` | 1 | VM | BigInt512 |
+| 24 | `to_bits(x)` | 1 | VM | list |
+| 25 | `from_bits(bits, width)` | 2 | VM | BigInt |
+| 26 | `bit_and(a, b)` | 2 | VM | BigInt |
+| 27 | `bit_or(a, b)` | 2 | VM | BigInt |
+| 28 | `bit_xor(a, b)` | 2 | VM | BigInt |
+| 29 | `bit_not(x)` | 1 | VM | BigInt |
+| 30 | `bit_shl(x, n)` | 2 | VM | BigInt |
+| 31 | `bit_shr(x, n)` | 2 | VM | BigInt |

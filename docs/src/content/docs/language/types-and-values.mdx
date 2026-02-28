@@ -15,6 +15,8 @@ Achronyme is dynamically typed. All values are represented as tagged 64-bit word
 | List | `[1, 2, 3]` | Ordered collections |
 | Map | `{"a": 1, "b": 2}` | Key-value maps |
 | Field | `0p42`, `0pxFF`, `0pb1010` | BN254 scalar field element |
+| BigInt256 | `0i256xFF`, `0i256d42` | 256-bit unsigned integer (VM only) |
+| BigInt512 | `0i512xFF`, `0i512d42` | 512-bit unsigned integer (VM only) |
 | Function | `fn(x) { x + 1 }` | First-class functions and closures |
 | Proof | result of `prove { }` | Groth16 or PlonK proof object |
 | Nil | `nil` | Absence of value |
@@ -79,6 +81,73 @@ let inv = 0p1 / a    // modular inverse
 Int and Field cannot be mixed in arithmetic. `0p3 + 5` is a runtime error -- use `0p3 + 0p5` instead.
 
 Field elements are essential for circuit programming -- all circuit values are field elements under the hood.
+
+## BigInt (VM only)
+
+Fixed-width unsigned integers for cryptographic operations. Two widths: 256-bit (4 limbs) and 512-bit (8 limbs). Non-modular arithmetic with overflow/underflow errors.
+
+### Literals
+
+BigInt literals use the `0i` prefix, followed by width and radix:
+
+```
+let a = 0i256xFF           // 256-bit hex
+let b = 0i256d255          // 256-bit decimal
+let c = 0i256b11111111     // 256-bit binary
+let d = 0i512x1234         // 512-bit hex
+```
+
+### Constructor functions
+
+```
+let a = bigint256(42)       // from integer
+let b = bigint256("0xFF")   // from hex string
+let c = bigint512(100)      // 512-bit from integer
+```
+
+### Arithmetic
+
+Standard operators work between BigInts of the same width:
+
+```
+let x = 0i256d10
+let y = 0i256d20
+let sum = x + y              // 30
+let diff = y - x             // 10
+let prod = x * y             // 200
+let q = y / x                // 2
+let r = 0i256d25 % 0i256d7   // 4
+let p = 0i256d2 ^ 10         // 1024
+```
+
+### Type safety
+
+BigInt cannot be mixed with Int, Field, or a different BigInt width:
+
+```
+// All of these are runtime errors:
+// bigint256(1) + 1           -- BigInt + Int
+// bigint256(1) + 0p1         -- BigInt + Field
+// bigint256(1) + bigint512(1) -- width mismatch
+```
+
+### Bitwise operations
+
+```
+bit_and(a, b)     // bitwise AND
+bit_or(a, b)      // bitwise OR
+bit_xor(a, b)     // bitwise XOR
+bit_not(a)        // bitwise NOT
+bit_shl(a, n)     // shift left (errors if bits overflow)
+bit_shr(a, n)     // shift right
+
+let bits = to_bits(a)          // list of 0/1 (LSB-first)
+let val = from_bits(bits, 256) // reconstruct from bits
+```
+
+### typeof
+
+`typeof()` returns `"BigInt256"` or `"BigInt512"` for BigInt values.
 
 ## Nil
 
