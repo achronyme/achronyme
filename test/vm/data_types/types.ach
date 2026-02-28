@@ -10,7 +10,7 @@ assert(typeof([]) == "List")
 assert(typeof([1, 2]) == "List")
 assert(typeof({}) == "Map")
 assert(typeof({a: 1}) == "Map")
-assert(typeof(field(1)) == "Field")
+assert(typeof(0p1) == "Field")
 
 // typeof on expressions
 assert(typeof(1 + 2) == "Number")

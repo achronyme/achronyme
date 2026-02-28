@@ -159,7 +159,7 @@ impl ArithmeticOps for super::vm::VM {
 
                     if exp_val < 0 {
                         return Err(RuntimeError::TypeMismatch(
-                            "Cannot raise integer to negative power; use field() for modular inverse".into(),
+                            "Cannot raise integer to negative power; use 0p prefix for field modular inverse".into(),
                         ));
                     } else if exp_val == 0 {
                         self.set_reg(base, a, Value::int(1))?;

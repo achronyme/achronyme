@@ -51,7 +51,7 @@ impl TypePromotion for super::vm::VM {
 
             // Int + Field / Field + Int → type error
             (TAG_INT, TAG_FIELD) | (TAG_FIELD, TAG_INT) => Err(RuntimeError::TypeMismatch(
-                "Cannot mix Int and Field in arithmetic; use field() to convert".into(),
+                "Cannot mix Int and Field in arithmetic; use 0p prefix for field literals".into(),
             )),
 
             _ => Err(RuntimeError::TypeMismatch(

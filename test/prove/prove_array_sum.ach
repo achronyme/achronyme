@@ -1,8 +1,8 @@
 // Prove block: arrays and functions
-let v0 = field(10)
-let v1 = field(20)
-let v2 = field(30)
-let total = field(60)
+let v0 = 0p10
+let v1 = 0p20
+let v2 = 0p30
+let total = 0p60
 
 prove {
     witness v0

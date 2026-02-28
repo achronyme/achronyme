@@ -1,7 +1,7 @@
 // Prove block with type annotations
-let x = field(6)
-let y = field(7)
-let product = field(42)
+let x = 0p6
+let y = 0p7
+let product = 0p42
 
 prove {
     witness x: Field

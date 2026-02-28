@@ -212,46 +212,6 @@ pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     Ok(Value::string(handle))
 }
 
-pub fn native_field(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "field() takes exactly 1 argument".into(),
-        ));
-    }
-    let val = &args[0];
-
-    let fe = if val.is_int() {
-        FieldElement::from_i64(val.as_int().unwrap())
-    } else if val.is_string() {
-        let handle = val
-            .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
-        let s = vm
-            .heap
-            .get_string(handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?
-            .clone();
-        if s.starts_with("0x") || s.starts_with("0X") {
-            FieldElement::from_hex_str(&s).ok_or(RuntimeError::TypeMismatch(format!(
-                "Invalid hex string for field(): '{}'",
-                s
-            )))?
-        } else {
-            FieldElement::from_decimal_str(&s).ok_or(RuntimeError::TypeMismatch(format!(
-                "Invalid decimal string for field(): '{}'",
-                s
-            )))?
-        }
-    } else {
-        return Err(RuntimeError::TypeMismatch(
-            "field() expects Int or String".into(),
-        ));
-    };
-
-    let handle = vm.heap.alloc_field(fe);
-    Ok(Value::field(handle))
-}
-
 pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::ArityMismatch(

@@ -55,7 +55,6 @@ impl NativeRegistry for super::vm::VM {
                 "push" => crate::stdlib::core::native_push,
                 "pop" => crate::stdlib::core::native_pop,
                 "keys" => crate::stdlib::core::native_keys,
-                "field" => crate::stdlib::core::native_field,
                 "proof_json" => crate::stdlib::core::native_proof_json,
                 "proof_public" => crate::stdlib::core::native_proof_public,
                 "proof_vkey" => crate::stdlib::core::native_proof_vkey,

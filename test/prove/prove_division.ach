@@ -1,9 +1,9 @@
 // Prove block: field division
 // In ZK circuits, division is field inverse multiplication
 // a / b * b == a
-let a = field(42)
-let b = field(7)
-let q = field(6)
+let a = 0p42
+let b = 0p7
+let q = 0p6
 
 prove {
     witness a

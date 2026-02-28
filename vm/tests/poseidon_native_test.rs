@@ -10,18 +10,23 @@ fn run_program(source: &str) -> Result<Value, vm::RuntimeError> {
 
     let mut vm = VM::new();
     vm.heap.import_strings(compiler.interner.strings);
+    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
-    for proto in &compiler.prototypes {
+    for proto in &mut compiler.prototypes {
+        remap_field_handles(&mut proto.constants, &field_map);
         let handle = vm.heap.alloc_function(proto.clone());
         vm.prototypes.push(handle);
     }
+
+    let mut main_constants = main_func.constants.clone();
+    remap_field_handles(&mut main_constants, &field_map);
 
     let func = Function {
         name: "main".to_string(),
         arity: 0,
         max_slots: main_func.max_slots,
         chunk: bytecode,
-        constants: main_func.constants.clone(),
+        constants: main_constants,
         upvalue_info: vec![],
         line_info: vec![],
     };
@@ -55,8 +60,8 @@ fn run_err(source: &str) -> vm::RuntimeError {
 fn test_poseidon_basic() {
     // poseidon(0, 0) should return a Field value
     let source = r#"
-        let a = field(0)
-        let b = field(0)
+        let a = 0p0
+        let b = 0p0
         let h = poseidon(a, b)
         assert(typeof(h) == "Field")
     "#;
@@ -100,8 +105,8 @@ fn test_poseidon_known_vector() {
     // poseidon(0, 0) should match the known circomlibjs result
     // This is the same reference vector used in constraints/src/poseidon.rs tests
     let source = r#"
-        let h = poseidon(field(0), field(0))
-        let expected = field("14744269619966411208579211824598458697587494354926760081771325075741142829156")
+        let h = poseidon(0p0, 0p0)
+        let expected = 0p14744269619966411208579211824598458697587494354926760081771325075741142829156
         assert(h == expected)
     "#;
     run_ok(source);
@@ -129,9 +134,9 @@ fn test_poseidon_type_error() {
 fn test_poseidon_many_basic() {
     // poseidon_many(a, b, c) = poseidon(poseidon(a, b), c)
     let source = r#"
-        let a = field(1)
-        let b = field(2)
-        let c = field(3)
+        let a = 0p1
+        let b = 0p2
+        let c = 0p3
         let h1 = poseidon_many(a, b, c)
         let h2 = poseidon(poseidon(a, b), c)
         assert(h1 == h2)
@@ -167,5 +172,16 @@ fn test_poseidon_many_arity_error() {
     match err {
         vm::RuntimeError::ArityMismatch(_) => {}
         other => panic!("Expected ArityMismatch, got {:?}", other),
+    }
+}
+
+fn remap_field_handles(constants: &mut [Value], field_map: &[u32]) {
+    for val in constants.iter_mut() {
+        if val.is_field() {
+            let old_handle = val.as_handle().expect("Field value must have handle");
+            if let Some(&new_handle) = field_map.get(old_handle as usize) {
+                *val = Value::field(new_handle);
+            }
+        }
     }
 }

@@ -41,74 +41,70 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         name: "keys",
         arity: 1,
     }, // Index 7
-    NativeMeta {
-        name: "field",
-        arity: 1,
-    }, // Index 8
     // Proof inspection
     NativeMeta {
         name: "proof_json",
         arity: 1,
-    }, // Index 9
+    }, // Index 8
     NativeMeta {
         name: "proof_public",
         arity: 1,
-    }, // Index 10
+    }, // Index 9
     NativeMeta {
         name: "proof_vkey",
         arity: 1,
-    }, // Index 11
+    }, // Index 10
     // String utilities
     NativeMeta {
         name: "substring",
         arity: 3,
-    }, // Index 12
+    }, // Index 11
     NativeMeta {
         name: "indexOf",
         arity: 2,
-    }, // Index 13
+    }, // Index 12
     NativeMeta {
         name: "split",
         arity: 2,
-    }, // Index 14
+    }, // Index 13
     NativeMeta {
         name: "trim",
         arity: 1,
-    }, // Index 15
+    }, // Index 14
     NativeMeta {
         name: "replace",
         arity: 3,
-    }, // Index 16
+    }, // Index 15
     NativeMeta {
         name: "toUpper",
         arity: 1,
-    }, // Index 17
+    }, // Index 16
     NativeMeta {
         name: "toLower",
         arity: 1,
-    }, // Index 18
+    }, // Index 17
     NativeMeta {
         name: "chars",
         arity: 1,
-    }, // Index 19
+    }, // Index 18
     // Cryptographic
     NativeMeta {
         name: "poseidon",
         arity: 2,
-    }, // Index 20
+    }, // Index 19
     NativeMeta {
         name: "poseidon_many",
         arity: -1,
-    }, // Index 21
+    }, // Index 20
     NativeMeta {
         name: "verify_proof",
         arity: 1,
-    }, // Index 22
+    }, // Index 21
 ];
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 23;
+pub const NATIVE_COUNT: usize = 22;
 const _: () = assert!(
     NATIVE_TABLE.len() == NATIVE_COUNT,
     "NATIVE_TABLE length changed — update NATIVE_COUNT"

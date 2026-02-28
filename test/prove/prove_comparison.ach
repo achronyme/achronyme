@@ -1,6 +1,6 @@
 // Prove block: comparison operators in circuits
-let x = field(3)
-let y = field(5)
+let x = 0p3
+let y = 0p5
 
 prove {
     witness x

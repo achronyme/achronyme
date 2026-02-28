@@ -1,51 +1,51 @@
 // BN254 field elements
 
 // Construction
-let a = field(42)
-let b = field(0)
-let c = field(1)
+let a = 0p42
+let b = 0p0
+let c = 0p1
 
 // typeof
 assert(typeof(a) == "Field")
 assert(typeof(b) == "Field")
 
-// From hex string
-let h = field("0xFF")
+// From hex literal
+let h = 0pxFF
 assert(typeof(h) == "Field")
 
 // Arithmetic
-let x = field(3)
-let y = field(4)
+let x = 0p3
+let y = 0p4
 let sum = x + y
-assert(sum == field(7))
+assert(sum == 0p7)
 
-let prod = field(6) * field(7)
-assert(prod == field(42))
+let prod = 0p6 * 0p7
+assert(prod == 0p42)
 
-let diff = field(10) - field(3)
-assert(diff == field(7))
+let diff = 0p10 - 0p3
+assert(diff == 0p7)
 
 // Negation: -a + a = 0
-let neg = -field(5)
-assert(neg + field(5) == field(0))
+let neg = -0p5
+assert(neg + 0p5 == 0p0)
 
 // Multiplicative identity
-assert(field(1) * field(99) == field(99))
+assert(0p1 * 0p99 == 0p99)
 
 // Additive identity
-assert(field(0) + field(42) == field(42))
+assert(0p0 + 0p42 == 0p42)
 
 // Division (modular inverse)
-let q = field(10) / field(2)
-assert(q == field(5))
+let q = 0p10 / 0p2
+assert(q == 0p5)
 
 // Self-inverse: x / x = 1
-assert(field(7) / field(7) == field(1))
+assert(0p7 / 0p7 == 0p1)
 
 // (a + b) * c == a*c + b*c (distributive)
-let fa = field(3)
-let fb = field(5)
-let fc = field(7)
+let fa = 0p3
+let fb = 0p5
+let fc = 0p7
 assert((fa + fb) * fc == fa * fc + fb * fc)
 
 print("PASS: data_types/field")

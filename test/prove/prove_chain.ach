@@ -1,0 +1,30 @@
+// Prove chain: two prove blocks sharing a secret
+// First proves commitment, second proves nullifier from same secret
+
+let secret = 0p12345
+let blinding = 0p98765
+let leaf_index = 0p7
+
+// Commitment
+let commitment = 0p15821827533831706895311370460935892504340243883398501882094686585300515289302
+
+prove {
+    witness secret
+    witness blinding
+    public commitment
+    let cm = poseidon(secret, blinding)
+    assert_eq(cm, commitment)
+}
+
+// Nullifier from same secret
+let nullifier = 0p4736362406665208364747685732453189199131835045859587280506752441838311700156
+
+prove {
+    witness secret
+    witness leaf_index
+    public nullifier
+    let nf = poseidon(secret, leaf_index)
+    assert_eq(nf, nullifier)
+}
+
+print("PASS: prove_chain")

@@ -1,0 +1,55 @@
+// Test: 0p field literal syntax
+// All three radixes: decimal, hex, binary
+
+// Decimal literals
+let a = 0p42
+let b = 0p0
+let c = 0p1
+assert(typeof(a) == "Field")
+assert(typeof(b) == "Field")
+assert(typeof(c) == "Field")
+
+// Hex literals
+let h1 = 0pxFF
+let h2 = 0px2a
+let h3 = 0px0
+assert(typeof(h1) == "Field")
+
+// Binary literals
+let bin1 = 0pb101010
+let bin2 = 0pb0
+let bin3 = 0pb1
+let bin4 = 0pb11111111
+assert(typeof(bin1) == "Field")
+
+// Arithmetic with field literals
+let sum = 0p10 + 0p20
+let prod = 0p6 * 0p7
+assert(sum == 0p30)
+assert(prod == 0p42)
+
+// Hex and decimal produce same value
+assert(0px2a == 0p42)
+assert(0pxFF == 0p255)
+
+// Binary and decimal produce same value
+assert(0pb101010 == 0p42)
+assert(0pb11111111 == 0p255)
+
+// Large decimal literal (> 2^59, impossible with integers)
+let big = 0p21888242871839275222246405745257275088548364400416034343698204186575808495617
+assert(typeof(big) == "Field")
+
+// Negation
+let neg = 0p0 - 0p1
+assert(neg + 0p1 == 0p0)
+
+// Division
+let d = 0p42 / 0p7
+assert(d == 0p6)
+
+// Power
+let p = 0p3 ^ 3
+assert(p == 0p27)
+
+print("All field literal tests passed")

@@ -1,7 +1,7 @@
 // Prove block: exponentiation constraints
-let base = field(3)
-let sq = field(9)
-let cube = field(27)
+let base = 0p3
+let sq = 0p9
+let cube = 0p27
 
 prove {
     witness base

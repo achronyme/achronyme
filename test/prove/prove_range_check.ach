@@ -1,5 +1,5 @@
 // Prove block: range check constraints
-let val = field(200)
+let val = 0p200
 
 prove {
     witness val
@@ -7,7 +7,7 @@ prove {
 }
 
 // Second prove: 16-bit range check
-let big = field(65000)
+let big = 0p65000
 
 prove {
     witness big

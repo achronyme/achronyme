@@ -13,17 +13,22 @@ fn run_source(source: &str) -> Result<VM, String> {
 
     let mut vm = VM::new();
     vm.heap.import_strings(compiler.interner.strings);
+    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
-    for proto in &compiler.prototypes {
+    for proto in &mut compiler.prototypes {
+        remap_field_handles(&mut proto.constants, &field_map);
         let handle = vm.heap.alloc_function(proto.clone());
         vm.prototypes.push(handle);
     }
+
+    let mut main_constants = main_func.constants.clone();
+    remap_field_handles(&mut main_constants, &field_map);
 
     let func = Function {
         name: "main".to_string(),
         arity: 0,
         chunk: bytecode,
-        constants: main_func.constants.clone(),
+        constants: main_constants,
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
         line_info: vec![],
@@ -53,17 +58,22 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
 
     let mut vm = VM::new();
     vm.heap.import_strings(compiler.interner.strings);
+    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
-    for proto in &compiler.prototypes {
+    for proto in &mut compiler.prototypes {
+        remap_field_handles(&mut proto.constants, &field_map);
         let handle = vm.heap.alloc_function(proto.clone());
         vm.prototypes.push(handle);
     }
+
+    let mut main_constants = main_func.constants.clone();
+    remap_field_handles(&mut main_constants, &field_map);
 
     let func = Function {
         name: "main".to_string(),
         arity: 0,
         chunk: bytecode,
-        constants: main_func.constants.clone(),
+        constants: main_constants,
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
         line_info: vec![],
@@ -141,7 +151,7 @@ impl ProveHandler for RealProveHandler {
 #[test]
 fn prove_handler_not_configured() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         prove {
             witness x
             assert_eq(x, 42)
@@ -220,7 +230,7 @@ fn value_to_field_element_negative_int() {
 #[test]
 fn prove_simple_assert_eq() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         prove {
             witness x
             assert_eq(x, 42)
@@ -237,9 +247,9 @@ fn prove_simple_assert_eq() {
 #[test]
 fn prove_addition() {
     let source = r#"
-        let a = field(3)
-        let b = field(5)
-        let c = field(8)
+        let a = 0p3
+        let b = 0p5
+        let c = 0p8
         prove {
             witness a, b
             public c
@@ -253,9 +263,9 @@ fn prove_addition() {
 #[test]
 fn prove_multiplication() {
     let source = r#"
-        let a = field(6)
-        let b = field(7)
-        let c = field(42)
+        let a = 0p6
+        let b = 0p7
+        let c = 0p42
         prove {
             witness a, b
             public c
@@ -273,9 +283,9 @@ fn prove_multiplication() {
 #[test]
 fn prove_failing_constraint() {
     let source = r#"
-        let a = field(3)
-        let b = field(5)
-        let c = field(42)
+        let a = 0p3
+        let b = 0p5
+        let c = 0p42
         prove {
             witness a, b
             public c
@@ -333,7 +343,7 @@ fn prove_missing_variable_compile_error() {
 fn prove_result_is_nil() {
     // prove {} evaluates to nil — verify no runtime error
     let source = r#"
-        let x = field(1)
+        let x = 0p1
         let result = prove {
             witness x
             assert_eq(x, 1)
@@ -346,9 +356,9 @@ fn prove_result_is_nil() {
 fn prove_wrong_witness_fails() {
     // Witness doesn't satisfy constraint
     let source = r#"
-        let a = field(10)
-        let b = field(20)
-        let c = field(999)
+        let a = 0p10
+        let b = 0p20
+        let c = 0p999
         prove {
             witness a, b
             public c
@@ -372,8 +382,8 @@ fn prove_poseidon_inside_prove_block() {
 
     let source = format!(
         r#"
-        let s = field(42)
-        let h = field("{hash_str}")
+        let s = 0p42
+        let h = 0p{hash_str}
         prove {{
             witness s
             public h
@@ -397,8 +407,8 @@ fn prove_poseidon_wrong_witness() {
 
     let source = format!(
         r#"
-        let s = field(99)
-        let h = field("{hash_str}")
+        let s = 0p99
+        let h = 0p{hash_str}
         prove {{
             witness s
             public h
@@ -417,8 +427,8 @@ fn prove_poseidon_wrong_witness() {
 fn prove_multiple_blocks() {
     // Multiple prove blocks in sequence
     let source = r#"
-        let a = field(10)
-        let b = field(20)
+        let a = 0p10
+        let b = 0p20
         prove {
             witness a
             assert_eq(a, 10)
@@ -439,8 +449,8 @@ fn prove_multiple_blocks() {
 #[test]
 fn prove_power_circuit() {
     let source = r#"
-        let x = field(3)
-        let y = field(27)
+        let x = 0p3
+        let y = 0p27
         prove {
             witness x
             public y
@@ -480,17 +490,22 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
 
     let mut vm = VM::new();
     vm.heap.import_strings(compiler.interner.strings);
+    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
-    for proto in &compiler.prototypes {
+    for proto in &mut compiler.prototypes {
+        remap_field_handles(&mut proto.constants, &field_map);
         let handle = vm.heap.alloc_function(proto.clone());
         vm.prototypes.push(handle);
     }
+
+    let mut main_constants = main_func.constants.clone();
+    remap_field_handles(&mut main_constants, &field_map);
 
     let func = Function {
         name: "main".to_string(),
         arity: 0,
         chunk: bytecode,
-        constants: main_func.constants.clone(),
+        constants: main_constants,
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
         line_info: vec![],
@@ -517,7 +532,7 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
 #[test]
 fn prove_returns_proof_object_when_handler_provides_proof() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -536,7 +551,7 @@ fn prove_returns_proof_object_when_handler_provides_proof() {
 fn prove_verified_only_returns_nil() {
     // The RealProveHandler returns VerifiedOnly → nil
     let source = r#"
-        let x = field(1)
+        let x = 0p1
         let result = prove {
             witness x
             assert_eq(x, 1)
@@ -548,7 +563,7 @@ fn prove_verified_only_returns_nil() {
 #[test]
 fn proof_json_native_returns_correct_string() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -564,7 +579,7 @@ fn proof_json_native_returns_correct_string() {
 #[test]
 fn proof_public_native_returns_correct_string() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -579,7 +594,7 @@ fn proof_public_native_returns_correct_string() {
 #[test]
 fn proof_vkey_native_returns_correct_string() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -610,7 +625,7 @@ fn proof_json_on_non_proof_gives_type_error() {
 #[test]
 fn typeof_proof_returns_proof_string() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -625,7 +640,7 @@ fn typeof_proof_returns_proof_string() {
 #[test]
 fn proof_object_gc_survives_when_rooted() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -644,16 +659,22 @@ fn proof_object_gc_survives_when_rooted() {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     vm.heap.import_strings(compiler.interner.strings);
-    for proto in &compiler.prototypes {
+    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+
+    for proto in &mut compiler.prototypes {
+        remap_field_handles(&mut proto.constants, &field_map);
         let handle = vm.heap.alloc_function(proto.clone());
         vm.prototypes.push(handle);
     }
+
+    let mut main_constants = main_func.constants.clone();
+    remap_field_handles(&mut main_constants, &field_map);
 
     let func = Function {
         name: "main".to_string(),
         arity: 0,
         chunk: bytecode,
-        constants: main_func.constants.clone(),
+        constants: main_constants,
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
         line_info: vec![],
@@ -728,17 +749,22 @@ fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> 
 
     let mut vm = VM::new();
     vm.heap.import_strings(compiler.interner.strings);
+    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
-    for proto in &compiler.prototypes {
+    for proto in &mut compiler.prototypes {
+        remap_field_handles(&mut proto.constants, &field_map);
         let handle = vm.heap.alloc_function(proto.clone());
         vm.prototypes.push(handle);
     }
+
+    let mut main_constants = main_func.constants.clone();
+    remap_field_handles(&mut main_constants, &field_map);
 
     let func = Function {
         name: "main".to_string(),
         arity: 0,
         chunk: bytecode,
-        constants: main_func.constants.clone(),
+        constants: main_constants,
         max_slots: main_func.max_slots,
         upvalue_info: vec![],
         line_info: vec![],
@@ -770,7 +796,7 @@ fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> 
 #[test]
 fn verify_proof_returns_true_for_valid() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -783,7 +809,7 @@ fn verify_proof_returns_true_for_valid() {
 #[test]
 fn verify_proof_returns_false_for_invalid() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -812,7 +838,7 @@ fn verify_proof_type_error_on_non_proof() {
 #[test]
 fn verify_proof_no_handler_gives_error() {
     let source = r#"
-        let x = field(42)
+        let x = 0p42
         let p = prove {
             witness x
             assert_eq(x, 42)
@@ -827,5 +853,16 @@ fn verify_proof_no_handler_gives_error() {
             err.contains("no verify handler"),
             "Expected handler error, got: {err}"
         ),
+    }
+}
+
+fn remap_field_handles(constants: &mut [Value], field_map: &[u32]) {
+    for val in constants.iter_mut() {
+        if val.is_field() {
+            let old_handle = val.as_handle().expect("Field value must have handle");
+            if let Some(&new_handle) = field_map.get(old_handle as usize) {
+                *val = Value::field(new_handle);
+            }
+        }
     }
 }

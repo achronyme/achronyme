@@ -1,8 +1,8 @@
 // Prove block: boolean logic with range_check and mux
-let flag = field(1)
-let a = field(10)
-let b = field(20)
-let expected = field(10)
+let flag = 0p1
+let a = 0p10
+let b = 0p20
+let expected = 0p10
 
 prove {
     witness flag

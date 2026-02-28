@@ -3,16 +3,16 @@
 // that typed syntax is accepted without errors.
 
 // Typed let bindings
-let x: Field = field(42)
-assert(x == field(42))
+let x: Field = 0p42
+assert(x == 0p42)
 
 let flag: Bool = true
 assert(flag == true)
 
 // Typed mut bindings
-mut counter: Field = field(0)
-counter = field(10)
-assert(counter == field(10))
+mut counter: Field = 0p0
+counter = 0p10
+assert(counter == 0p10)
 
 mut ok: Bool = false
 ok = true
