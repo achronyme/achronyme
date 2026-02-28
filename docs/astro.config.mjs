@@ -92,6 +92,7 @@ export default defineConfig({
 						{ label: 'Merkle Membership Proof', slug: 'tutorials/merkle-proof' },
 						{ label: 'Inline Proofs', slug: 'tutorials/inline-proofs' },
 						{ label: 'Poseidon Hashing', slug: 'tutorials/poseidon-hashing' },
+						{ label: 'BigInt Arithmetic', slug: 'tutorials/bigint-arithmetic' },
 					],
 				},
 			],

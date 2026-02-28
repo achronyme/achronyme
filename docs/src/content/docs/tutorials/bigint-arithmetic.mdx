@@ -1,0 +1,233 @@
+---
+title: "BigInt Arithmetic"
+description: "Fixed-width unsigned integers for cryptographic operations."
+---
+
+BigInt provides 256-bit and 512-bit unsigned integer arithmetic in the VM. Unlike Field elements (which use modular arithmetic over BN254), BigInts use non-modular arithmetic with explicit overflow/underflow errors. This makes them ideal for operations where you need exact integer semantics at cryptographic widths.
+
+## Creating BigInts
+
+There are three ways to create BigInt values:
+
+### Literal syntax
+
+Use the `0i` prefix followed by width (`256` or `512`) and radix (`x` for hex, `d` for decimal, `b` for binary):
+
+```
+let a = 0i256xFF           // 256-bit, hex
+let b = 0i256d255          // 256-bit, decimal
+let c = 0i256b11111111     // 256-bit, binary
+let d = 0i512x1234ABCD     // 512-bit, hex
+```
+
+All three representations of 255 are equal:
+
+```
+assert(0i256xFF == 0i256d255)
+assert(0i256d255 == 0i256b11111111)
+```
+
+### Constructor functions
+
+`bigint256()` and `bigint512()` construct from integers or strings:
+
+```
+let a = bigint256(42)          // from integer
+let b = bigint256("0xFF")     // from hex string
+let c = bigint256("12345")    // from decimal string
+let d = bigint512(0)           // 512-bit zero
+```
+
+### Type checking
+
+Use `typeof()` to inspect BigInt values:
+
+```
+let x = 0i256d42
+print(typeof(x))   // "BigInt256"
+
+let y = 0i512d42
+print(typeof(y))   // "BigInt512"
+```
+
+## Arithmetic
+
+Standard operators work between BigInts of the same width:
+
+```
+let a = 0i256d100
+let b = 0i256d200
+
+print(a + b)   // BigInt256(0x12c)  (300)
+print(b - a)   // BigInt256(0x64)   (100)
+print(a * b)   // BigInt256(0x4e20) (20000)
+print(b / a)   // BigInt256(0x2)    (2)
+print(b % a)   // BigInt256(0x0)    (0)
+```
+
+Exponentiation uses `^` with an integer exponent:
+
+```
+let base = 0i256d2
+let result = base ^ 128
+print(result)  // 2^128 as a 256-bit integer
+```
+
+## Overflow and Underflow
+
+Unlike Field elements, BigInt arithmetic does **not** wrap around. Operations that exceed the range produce runtime errors:
+
+```
+// This will error: BigInt overflow
+let max = bit_not(bigint256(0))  // all bits set = 2^256 - 1
+let boom = max + bigint256(1)    // ERROR: BigIntOverflow
+```
+
+```
+// This will error: BigInt underflow
+let zero = bigint256(0)
+let boom = zero - bigint256(1)   // ERROR: BigIntUnderflow
+```
+
+This makes bugs visible immediately rather than producing silently wrong results.
+
+## Type Safety
+
+BigInt enforces strict type boundaries. You cannot mix BigInt with Int, Field, or a different BigInt width:
+
+```
+// All of these are runtime errors:
+// bigint256(1) + 1           -- BigInt + Int
+// bigint256(1) + 0p1         -- BigInt + Field
+// bigint256(1) + bigint512(1) -- width mismatch
+```
+
+This prevents accidental arithmetic between incompatible types.
+
+## Bitwise Operations
+
+BigInt supports full bitwise manipulation through native functions:
+
+```
+let a = 0i256xFF
+let b = 0i256x0F
+
+print(bit_and(a, b))   // 0x0F
+print(bit_or(a, b))    // 0xFF
+print(bit_xor(a, b))   // 0xF0
+print(bit_not(b))      // all bits flipped
+```
+
+### Shifts
+
+```
+let one = bigint256(1)
+
+// Shift left: multiply by powers of 2
+let shifted = bit_shl(one, 128)   // 2^128
+
+// Shift right: divide by powers of 2
+let back = bit_shr(shifted, 128)  // back to 1
+assert(back == one)
+```
+
+Left shifts error if any set bits are shifted out (overflow protection). Right shifts discard shifted-out bits.
+
+## Bit Decomposition
+
+Convert between BigInts and individual bits with `to_bits()` and `from_bits()`:
+
+```
+let val = bigint256(42)
+let bits = to_bits(val)
+
+// bits is a list of 256 integers (0 or 1), LSB-first
+print(len(bits))   // 256
+print(bits[0])     // 0  (least significant bit)
+print(bits[1])     // 1
+print(bits[2])     // 0
+print(bits[3])     // 1
+print(bits[4])     // 0
+print(bits[5])     // 1
+// 42 = 0b101010, LSB-first = [0, 1, 0, 1, 0, 1, 0, 0, ...]
+
+// Reconstruct from bits
+let reconstructed = from_bits(bits, 256)
+assert(reconstructed == val)
+```
+
+The second argument to `from_bits()` is the target width (256 or 512).
+
+## Example: Bit Counting
+
+Count the number of set bits in a BigInt:
+
+```
+fn popcount(x) {
+    let bits = to_bits(x)
+    mut count = 0
+    for b in bits {
+        count = count + b
+    }
+    return count
+}
+
+assert(popcount(bigint256(0)) == 0)
+assert(popcount(bigint256(1)) == 1)
+assert(popcount(bigint256(255)) == 8)
+assert(popcount(bigint256("0xFFFF")) == 16)
+
+print("popcount(0xFF) =", popcount(bigint256(255)))  // 8
+```
+
+## Example: XOR Swap
+
+Swap two values using XOR without a temporary variable:
+
+```
+mut a = 0i256d42
+mut b = 0i256d99
+
+a = bit_xor(a, b)
+b = bit_xor(b, a)
+a = bit_xor(a, b)
+
+assert(a == 0i256d99)
+assert(b == 0i256d42)
+print("After XOR swap: a =", a, "b =", b)
+```
+
+## Example: Power of Two Check
+
+Check whether a BigInt is a power of two using the bit trick `n & (n - 1) == 0`:
+
+```
+fn is_power_of_two(n) {
+    if n == bigint256(0) {
+        return false
+    }
+    let prev = n - bigint256(1)
+    return bit_and(n, prev) == bigint256(0)
+}
+
+assert(is_power_of_two(bigint256(1)) == true)
+assert(is_power_of_two(bigint256(256)) == true)
+assert(is_power_of_two(bit_shl(bigint256(1), 128)) == true)
+assert(is_power_of_two(bigint256(3)) == false)
+assert(is_power_of_two(bigint256(100)) == false)
+
+print("2^128 is power of 2:", is_power_of_two(bit_shl(bigint256(1), 128)))
+```
+
+## BigInt vs Field
+
+| | BigInt | Field |
+|---|--------|-------|
+| Arithmetic | Non-modular (overflow errors) | Modular (wraps around BN254 prime) |
+| Widths | 256-bit, 512-bit | 254-bit (BN254 scalar field) |
+| Circuit support | VM only | Both VM and circuits |
+| Use case | Exact integer arithmetic at crypto widths | ZK circuit values, Poseidon hashing |
+| Division | Integer division (truncates) | Modular inverse |
+| Negation | Error (unsigned) | Additive inverse in field |
+
+Choose BigInt when you need exact integer semantics. Choose Field when you need modular arithmetic or circuit compatibility.
