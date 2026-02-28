@@ -1,0 +1,65 @@
+// BigInt bitwise operations, shifts, to_bits/from_bits
+
+// --- Bitwise AND ---
+let a = bigint256("0xFF")
+let b = bigint256("0x0F")
+assert(bit_and(a, b) == bigint256("0x0F"))
+
+// --- Bitwise OR ---
+assert(bit_or(bigint256("0xF0"), bigint256("0x0F")) == bigint256("0xFF"))
+
+// --- Bitwise XOR ---
+assert(bit_xor(bigint256("0xFF"), bigint256("0x0F")) == bigint256("0xF0"))
+
+// --- Bitwise NOT ---
+// NOT of zero = all ones (max value)
+let zero = bigint256(0)
+let max = bit_not(zero)
+// NOT(NOT(x)) == x
+assert(bit_not(max) == zero)
+
+// NOT(0x0F) should flip bits
+let x = bigint256("0x0F")
+let nx = bit_not(x)
+// AND of x and NOT(x) should be zero
+assert(bit_and(x, nx) == bigint256(0))
+// OR of x and NOT(x) should be max
+assert(bit_or(x, nx) == max)
+
+// --- Shift left ---
+assert(bit_shl(bigint256(1), 8) == bigint256(256))
+assert(bit_shl(bigint256(1), 0) == bigint256(1))
+
+// --- Shift right ---
+assert(bit_shr(bigint256(256), 8) == bigint256(1))
+assert(bit_shr(bigint256(255), 4) == bigint256(15))
+
+// --- to_bits / from_bits roundtrip ---
+let val = bigint256(42)
+let bits = to_bits(val)
+assert(len(bits) == 256)
+// 42 = 0b101010, LSB-first: [0,1,0,1,0,1,0,0,...]
+assert(bits[0] == 0)
+assert(bits[1] == 1)
+assert(bits[2] == 0)
+assert(bits[3] == 1)
+assert(bits[4] == 0)
+assert(bits[5] == 1)
+
+let reconstructed = from_bits(bits, 256)
+assert(reconstructed == val)
+
+// 512-bit roundtrip
+let big = bigint512(12345)
+let big_bits = to_bits(big)
+assert(len(big_bits) == 512)
+let big_back = from_bits(big_bits, 512)
+assert(big_back == big)
+
+// --- Shift roundtrip ---
+let s = bigint256(1)
+let shifted = bit_shl(s, 100)
+let back = bit_shr(shifted, 100)
+assert(back == s)
+
+print("PASS: data_types/bigint_bitwise")

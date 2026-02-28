@@ -1,0 +1,4 @@
+// Expected error: BigInt underflow (0 - 1)
+let zero = bigint256(0)
+let one = bigint256(1)
+let boom = zero - one

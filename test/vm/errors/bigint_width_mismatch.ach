@@ -1,0 +1,4 @@
+// Expected error: BigInt width mismatch (256 + 512)
+let a = bigint256(10)
+let b = bigint512(20)
+let c = a + b

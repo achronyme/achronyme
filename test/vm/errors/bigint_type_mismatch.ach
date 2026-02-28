@@ -1,0 +1,4 @@
+// Expected error: Cannot mix BigInt and Int
+let a = bigint256(10)
+let b = 10
+let c = a + b

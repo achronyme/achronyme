@@ -1,0 +1,73 @@
+// BigInt256 and BigInt512 arithmetic, comparison, typeof, constructors
+
+// --- Constructors ---
+let a = bigint256(0)
+let b = bigint256(42)
+let c = bigint512(100)
+
+assert(typeof(a) == "BigInt256")
+assert(typeof(b) == "BigInt256")
+assert(typeof(c) == "BigInt512")
+
+// Construct from string (decimal)
+let d = bigint256("255")
+assert(typeof(d) == "BigInt256")
+
+// Construct from string (hex)
+let e = bigint256("0xFF")
+assert(d == e)
+
+// Construct from string (binary)
+let f = bigint256("0b11111111")
+assert(d == f)
+
+// --- Arithmetic ---
+let x = bigint256(10)
+let y = bigint256(20)
+
+// Addition
+let sum = x + y
+assert(sum == bigint256(30))
+
+// Subtraction
+let diff = y - x
+assert(diff == bigint256(10))
+
+// Multiplication
+let prod = x * y
+assert(prod == bigint256(200))
+
+// Division
+let q = y / x
+assert(q == bigint256(2))
+
+// Modulo
+let r = bigint256(25) % bigint256(7)
+assert(r == bigint256(4))
+
+// Power
+let p = bigint256(2) ^ 10
+assert(p == bigint256(1024))
+
+// --- Comparison ---
+assert(bigint256(10) < bigint256(20))
+assert(bigint256(20) > bigint256(10))
+assert(bigint256(10) <= bigint256(10))
+assert(bigint256(10) >= bigint256(10))
+assert(bigint256(10) <= bigint256(20))
+assert(bigint256(20) >= bigint256(10))
+assert(bigint256(42) == bigint256(42))
+assert(bigint256(1) != bigint256(2))
+
+// --- 512-bit arithmetic ---
+let s1 = bigint512(1000)
+let s2 = bigint512(2000)
+assert(s1 + s2 == bigint512(3000))
+assert(s2 - s1 == bigint512(1000))
+assert(s1 * s2 == bigint512(2000000))
+
+// --- Zero and one ---
+assert(bigint256(0) + bigint256(42) == bigint256(42))
+assert(bigint256(1) * bigint256(99) == bigint256(99))
+
+print("PASS: data_types/bigint")

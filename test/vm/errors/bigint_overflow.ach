@@ -1,0 +1,4 @@
+// Expected error: BigInt overflow (max + 1)
+let max = bit_not(bigint256(0))
+let one = bigint256(1)
+let boom = max + one

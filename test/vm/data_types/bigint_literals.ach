@@ -1,0 +1,44 @@
+// BigInt literal syntax: 0i256x<hex>, 0i512d<decimal>, 0i256b<binary>
+
+// Hex literals
+let a = 0i256xFF
+assert(typeof(a) == "BigInt256")
+assert(a == bigint256(255))
+
+// Decimal literals
+let b = 0i256d255
+assert(b == a)
+
+// Binary literals
+let c = 0i256b11111111
+assert(c == a)
+
+// 512-bit literals
+let d = 0i512x1234
+assert(typeof(d) == "BigInt512")
+assert(d == bigint512("0x1234"))
+
+let e = 0i512d100
+assert(e == bigint512(100))
+
+let f = 0i512b1010
+assert(f == bigint512(10))
+
+// Cross-radix equality
+assert(0i256xFF == 0i256d255)
+assert(0i256d255 == 0i256b11111111)
+assert(0i256xFF == 0i256b11111111)
+
+// Large hex literal
+let big = 0i256xFFFFFFFFFFFFFFFF
+assert(big == bigint256("0xFFFFFFFFFFFFFFFF"))
+
+// Zero in all forms
+assert(0i256x0 == 0i256d0)
+assert(0i256d0 == 0i256b0)
+
+// Literal arithmetic
+assert(0i256d10 + 0i256d20 == 0i256d30)
+assert(0i256xFF * 0i256d2 == 0i256d510)
+
+print("PASS: data_types/bigint_literals")
