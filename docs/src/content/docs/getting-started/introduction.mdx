@@ -40,8 +40,8 @@ ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=.
 ### Inline proof generation
 
 ```
-let secret = field(42)
-let hash = field("17159...")  // poseidon(42, 0)
+let secret = 0p42
+let hash = 0p17159...  // poseidon(42, 0)
 
 let p = prove {
     witness secret

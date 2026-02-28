@@ -24,18 +24,19 @@ All arithmetic on field elements is **modular**: addition, subtraction, and mult
 Int and Field are **distinct types**. Mixing them in arithmetic is a runtime error:
 
 ```
-field(3) + 5       // Error: Cannot mix Int and Field
-field(3) + field(5) // OK: field(8)
+0p3 + 5       // Error: Cannot mix Int and Field
+0p3 + 0p5     // OK: 0p8
 ```
 
 ## Creating Field Elements
 
-Use the `field()` builtin to create field elements explicitly:
+Use the `0p` prefix to create field elements. It works like `0x` for hex:
 
 ```
-let a = field(42)          // from integer
-let b = field("0xFF")      // from hex string
-let c = field("12345")     // from decimal string
+let a = 0p42         // decimal field literal
+let b = 0pxFF        // hex field literal (0px prefix)
+let c = 0pb1010      // binary field literal (0pb prefix)
+let d = 0p12345      // large decimal
 ```
 
 ## Arithmetic
@@ -43,17 +44,17 @@ let c = field("12345")     // from decimal string
 Field elements support `+`, `-`, `*`, `/`, `^`, and `==`:
 
 ```
-let a = field(10)
-let b = field(3)
+let a = 0p10
+let b = 0p3
 
-let sum  = a + b        // field(13)
-let diff = a - b        // field(7)
-let prod = a * b        // field(30)
+let sum  = a + b        // 0p13
+let diff = a - b        // 0p7
+let prod = a * b        // 0p30
 let quot = a / b        // modular inverse of 3, times 10
 let pow  = a ^ 5        // 10^5 mod p
 
 // Negative exponents compute modular inverse
-let inv = a ^ -1        // same as field(1) / a
+let inv = a ^ -1        // same as 0p1 / a
 ```
 
 ## In Circuits
@@ -63,10 +64,10 @@ In circuit mode (`prove {}` blocks and `circuit` CLI), **all values are field el
 ```
 let x = 42
 prove {
-    // x is automatically converted to field(42) inside the circuit
+    // x is automatically converted to 0p42 inside the circuit
     public x
     assert_eq(x, 42)
 }
 ```
 
-This is the only place where Int→Field conversion happens implicitly. In regular VM execution, the conversion must always be explicit via `field()`.
+This is the only place where Int→Field conversion happens implicitly. In regular VM execution, the conversion must always be explicit via `0p` field literals.

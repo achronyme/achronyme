@@ -14,7 +14,7 @@ Achronyme is dynamically typed. All values are represented as tagged 64-bit word
 | String | `"hello"` | UTF-8 strings (heap-allocated) |
 | List | `[1, 2, 3]` | Ordered collections |
 | Map | `{"a": 1, "b": 2}` | Key-value maps |
-| Field | `field(42)`, `field("0x2a")` | BN254 scalar field element |
+| Field | `0p42`, `0pxFF`, `0pb1010` | BN254 scalar field element |
 | Function | `fn(x) { x + 1 }` | First-class functions and closures |
 | Proof | result of `prove { }` | Groth16 or PlonK proof object |
 | Nil | `nil` | Absence of value |
@@ -29,7 +29,7 @@ let y = -7
 let big = 100000000000
 ```
 
-If an arithmetic operation overflows the i60 range, a runtime error is raised. Use `field()` to convert explicitly when you need modular field arithmetic.
+If an arithmetic operation overflows the i60 range, a runtime error is raised. Use `0p` field literals when you need modular field arithmetic (e.g., `0p42`).
 
 ## Booleans
 
@@ -63,21 +63,22 @@ let person = {"name": "Alice", "age": 30}
 
 ## Field Elements
 
-BN254 scalar field elements for cryptographic operations. Montgomery form internally.
+BN254 scalar field elements for cryptographic operations. Montgomery form internally. Created using the `0p` prefix, which works like `0x` for hex:
 
 ```
-let a = field(42)                // from integer
-let b = field("0xFF")            // from hex string
-let c = field("21888242871839275222246405745257275088548364400416034343698204186575808495617")  // from decimal string
+let a = 0p42         // decimal field literal
+let b = 0pxFF        // hex field literal
+let c = 0pb1010      // binary field literal
+let d = 0p21888242871839275222246405745257275088548364400416034343698204186575808495617  // large decimal
 
 let sum = a + b
 let prod = a * b
-let inv = field(1) / a           // modular inverse
+let inv = 0p1 / a    // modular inverse
 ```
 
-Int and Field cannot be mixed in arithmetic. `field(3) + 5` is a runtime error — use `field(3) + field(5)` instead.
+Int and Field cannot be mixed in arithmetic. `0p3 + 5` is a runtime error -- use `0p3 + 0p5` instead.
 
-Field elements are essential for circuit programming — all circuit values are field elements under the hood.
+Field elements are essential for circuit programming -- all circuit values are field elements under the hood.
 
 ## Nil
 
@@ -102,9 +103,9 @@ y = y + 1           // reassignment (only for mut)
 Achronyme supports optional type annotations on variable bindings and function signatures. In circuit mode, annotations enable compile-time type checking and constraint optimization. In VM mode, annotations are parsed and accepted but execution remains dynamic.
 
 ```
-let x: Field = field(42)
+let x: Field = 0p42
 let flag: Bool = true
-mut counter: Field = field(0)
+mut counter: Field = 0p0
 ```
 
 See [Type Annotations](/circuits/type-annotations/) for the full reference in circuit context.

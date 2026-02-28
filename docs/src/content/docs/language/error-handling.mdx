@@ -40,7 +40,7 @@ let big = 576460752303423487   // 2^59 - 1 (max i60)
 let overflow = big + 1         // ERROR: IntegerOverflow
 ```
 
-To work with larger values, use `field()` to convert to BN254 field elements explicitly.
+To work with larger values, use `0p` field literals for BN254 field elements (e.g., `0p42`, `0pxFF`).
 
 ### Type Mismatch
 
@@ -48,11 +48,11 @@ Integer and field values cannot be mixed directly:
 
 ```
 let x = 42
-let y = field(10)
+let y = 0p10
 let z = x + y  // ERROR: TypeMismatch
 ```
 
-Use `field()` for explicit conversion: `let z = field(x) + y`.
+Use `0p` literals for explicit conversion: `let z = 0p42 + y`.
 
 ## Parse Errors
 

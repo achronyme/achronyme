@@ -31,8 +31,8 @@ ach circuit hash.ach --inputs "output=17159...,secret=42"
 ### 2. Inline `prove {}` block
 
 ```
-let secret = field(42)
-let hash = field("17159...")
+let secret = 0p42
+let hash = 0p17159...
 
 let p = prove {
     witness secret

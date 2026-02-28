@@ -70,11 +70,11 @@ This property is essential for Merkle trees, where left and right children must 
 
 ## Using with Field Elements
 
-For values larger than i60 or for exact BN254 field arithmetic, use `field()`:
+For values larger than i60 or for exact BN254 field arithmetic, use `0p` field literals:
 
 ```
-let a = field("21888242871839275222246405745257275088548364400416034343698204186575808495616")
-let b = field(1)
+let a = 0p21888242871839275222246405745257275088548364400416034343698204186575808495616
+let b = 0p1
 let h = poseidon(a, b)
 print(h)
 ```
@@ -112,10 +112,10 @@ Compute a Merkle root by hashing leaves pairwise, then hashing the results:
 
 ```
 // 4-leaf tree
-let leaf0 = field(100)
-let leaf1 = field(200)
-let leaf2 = field(300)
-let leaf3 = field(400)
+let leaf0 = 0p100
+let leaf1 = 0p200
+let leaf2 = 0p300
+let leaf3 = 0p400
 
 // Level 0: hash pairs
 let n0 = poseidon(leaf0, leaf1)
@@ -131,8 +131,8 @@ For larger trees, use loops:
 ```
 // 8-leaf tree
 let leaves = [
-    field(100), field(200), field(300), field(400),
-    field(500), field(600), field(700), field(800)
+    0p100, 0p200, 0p300, 0p400,
+    0p500, 0p600, 0p700, 0p800
 ]
 
 // Level 0
@@ -155,9 +155,9 @@ print(root)
 Poseidon works inside `prove {}` for inline proof generation:
 
 ```
-let a = field(1)
-let b = field(2)
-let h = field("7853200120776062878684798364095072458815029376092732009249414926327459813530")
+let a = 0p1
+let b = 0p2
+let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
 let p = prove {
     witness a

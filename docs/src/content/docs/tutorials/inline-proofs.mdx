@@ -8,9 +8,9 @@ The `prove {}` block lets you generate zero-knowledge proofs inline, without lea
 ## Basic Example
 
 ```
-let x = field(6)
-let y = field(7)
-let product = field(42)
+let x = 0p6
+let y = 0p7
+let product = 0p42
 
 let p = prove {
     witness x
@@ -34,8 +34,8 @@ The prove block:
 Inside a prove block, declare which captured variables are public (visible to the verifier) and which are witness (private):
 
 ```
-let secret = field(42)
-let hash = field("17159...")
+let secret = 0p42
+let hash = 0p17159...
 
 let p = prove {
     witness secret    // private — prover knows this
@@ -56,14 +56,14 @@ let b = 20
 let sum = 30
 
 prove {
-    witness a     // 10 becomes field(10)
-    witness b     // 20 becomes field(20)
-    public sum    // 30 becomes field(30)
+    witness a     // 10 becomes 0p10
+    witness b     // 20 becomes 0p20
+    public sum    // 30 becomes 0p30
     assert_eq(a + b, sum)
 }
 ```
 
-Outside prove blocks, mixing Int and Field raises a `TypeMismatch` error. Use `field()` for explicit conversion.
+Outside prove blocks, mixing Int and Field raises a `TypeMismatch` error. Use `0p` field literals for explicit conversion.
 
 ## Accessing Proof Components
 
@@ -110,10 +110,10 @@ print(ok)  // true
 Prove blocks support arrays, functions, and all circuit-mode features:
 
 ```
-let v0 = field(10)
-let v1 = field(20)
-let v2 = field(30)
-let total = field(60)
+let v0 = 0p10
+let v1 = 0p20
+let v2 = 0p30
+let total = 0p60
 
 prove {
     witness v0
@@ -133,9 +133,9 @@ prove {
 Cryptographic builtins work inside prove blocks:
 
 ```
-let a = field(1)
-let b = field(2)
-let h = field("7853200120776062878684798364095072458815029376092732009249414926327459813530")
+let a = 0p1
+let b = 0p2
+let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
 prove {
     witness a
@@ -150,7 +150,7 @@ prove {
 Enforce that a value fits within a certain number of bits:
 
 ```
-let val = field(200)
+let val = 0p200
 
 prove {
     witness val
@@ -163,10 +163,10 @@ prove {
 You can use multiple prove blocks in sequence:
 
 ```
-let a = field(3)
-let b = field(4)
-let sum = field(7)
-let product = field(12)
+let a = 0p3
+let b = 0p4
+let sum = 0p7
+let product = 0p12
 
 prove {
     witness a

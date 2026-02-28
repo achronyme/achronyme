@@ -1,9 +1,9 @@
 ---
 title: "Native Functions"
-description: "Reference for all 23 built-in native functions."
+description: "Reference for all 22 built-in native functions."
 ---
 
-Achronyme provides 23 native functions built into the VM. Some are also available in circuit mode.
+Achronyme provides 22 native functions built into the VM. Some are also available in circuit mode.
 
 ## Core
 
@@ -100,22 +100,6 @@ print(keys(m))  // ["name", "age"]
 ```
 
 **Mode:** VM only
-
-## Type Conversion
-
-### `field(x)`
-
-Converts an integer or decimal/hex string to a BN254 field element. This is the explicit way to work with field arithmetic in VM mode.
-
-```
-let a = field(42)
-let b = field("0x2a")
-let c = field("21888242871839275222246405745257275088548364400416034343698204186575808495617")
-```
-
-Integer values are converted via `FieldElement::from_i64()`. Strings can be decimal or hex (with `0x` prefix).
-
-**Mode:** VM only (in `prove {}` blocks, integer captures are auto-converted)
 
 ## Proof Inspection
 
@@ -269,18 +253,17 @@ print(ok)  // true
 | 5 | `push(list, item)` | 2 | VM | nil |
 | 6 | `pop(list)` | 1 | VM | value |
 | 7 | `keys(map)` | 1 | VM | list |
-| 8 | `field(x)` | 1 | VM | field |
-| 9 | `proof_json(p)` | 1 | VM | string |
-| 10 | `proof_public(p)` | 1 | VM | string |
-| 11 | `proof_vkey(p)` | 1 | VM | string |
-| 12 | `substring(s, start, end)` | 3 | VM | string |
-| 13 | `indexOf(s, sub)` | 2 | VM | int |
-| 14 | `split(s, delim)` | 2 | VM | list |
-| 15 | `trim(s)` | 1 | VM | string |
-| 16 | `replace(s, search, repl)` | 3 | VM | string |
-| 17 | `toUpper(s)` | 1 | VM | string |
-| 18 | `toLower(s)` | 1 | VM | string |
-| 19 | `chars(s)` | 1 | VM | list |
-| 20 | `poseidon(a, b)` | 2 | Both | field |
-| 21 | `poseidon_many(...)` | variadic | Both | field |
-| 22 | `verify_proof(p)` | 1 | VM | bool |
+| 8 | `proof_json(p)` | 1 | VM | string |
+| 9 | `proof_public(p)` | 1 | VM | string |
+| 10 | `proof_vkey(p)` | 1 | VM | string |
+| 11 | `substring(s, start, end)` | 3 | VM | string |
+| 12 | `indexOf(s, sub)` | 2 | VM | int |
+| 13 | `split(s, delim)` | 2 | VM | list |
+| 14 | `trim(s)` | 1 | VM | string |
+| 15 | `replace(s, search, repl)` | 3 | VM | string |
+| 16 | `toUpper(s)` | 1 | VM | string |
+| 17 | `toLower(s)` | 1 | VM | string |
+| 18 | `chars(s)` | 1 | VM | list |
+| 19 | `poseidon(a, b)` | 2 | Both | field |
+| 20 | `poseidon_many(...)` | variadic | Both | field |
+| 21 | `verify_proof(p)` | 1 | VM | bool |
