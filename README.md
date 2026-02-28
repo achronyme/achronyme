@@ -9,8 +9,8 @@ Write readable code. Decide what gets proven. Same language for general executio
 
 ```
 cargo build --release
-cargo test --workspace     # 929+ unit tests
-bash test/run_tests.sh     # 75+ integration tests
+cargo test --workspace     # 970+ unit tests
+bash test/run_tests.sh     # 90+ integration tests
 ```
 
 ---
@@ -48,8 +48,8 @@ ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=.
 ### Inline proof generation
 
 ```achronyme
-let secret = field(42)
-let hash = field("17159...")  // poseidon(42, 0)
+let secret = 0p42
+let hash = 0p17159...  // poseidon(42, 0)
 
 let p = prove {
     witness secret
@@ -110,7 +110,9 @@ Source (.ach)
 | String | `"hello"` |
 | List | `[1, 2, 3]` |
 | Map | `{"a": 1, "b": 2}` |
-| Field | `field(42)`, `field("0x2a")` |
+| Field | `0p42`, `0pxFF`, `0pb1010` |
+| BigInt256 | `0i256xFF`, `0i256d42` |
+| BigInt512 | `0i512xFF`, `0i512d100` |
 | Function | `fn(x) { x + 1 }` |
 | Proof | result of `prove { }` |
 | Nil | `nil` |
@@ -145,16 +147,27 @@ print(add5(3))  // 8
 
 ### Field Elements
 
-BN254 scalar field. Montgomery form internally, decimal/hex input.
+BN254 scalar field. Montgomery form internally. Created with the `0p` prefix:
 
 ```achronyme
-let a = field(42)
-let b = field("0xFF")
-let c = field("21888242871839275222246405745257275088548364400416034343698204186575808495617")
+let a = 0p42
+let b = 0pxFF
+let c = 0pb1010
 
 let sum = a + b
 let prod = a * b
-let inv = field(1) / a
+let inv = 0p1 / a
+```
+
+### BigInt (VM only)
+
+Fixed-width unsigned integers (256-bit and 512-bit) for cryptographic operations:
+
+```achronyme
+let a = 0i256xFF
+let b = bigint256(42)
+let bits = to_bits(a)
+let masked = bit_and(a, b)
 ```
 
 ---
@@ -271,9 +284,9 @@ snarkjs groth16 verify verification_key.json public.json proof.json
 `prove {}` compiles a circuit, captures variables from the enclosing scope, generates a witness, and returns a proof — all inline.
 
 ```achronyme
-let a = field(6)
-let b = field(7)
-let product = field(42)
+let a = 0p6
+let b = 0p7
+let product = 0p42
 
 let p = prove {
     witness a
@@ -308,11 +321,11 @@ Disable with `--no-optimize`.
 
 ```
 achronyme/
-├── achronyme-parser/   PEG grammar (pest), AST types, parser
+├── achronyme-parser/   Hand-written Pratt lexer + recursive descent parser
 ├── ir/                 SSA intermediate representation, optimization passes
 ├── compiler/           Bytecode compiler, R1CS backend, Plonkish backend
-├── vm/                 Register-based VM (40 opcodes, tagged values)
-├── memory/             Heap, GC, FieldElement (BN254 Montgomery)
+├── vm/                 Register-based VM (40+ opcodes, tagged values)
+├── memory/             Heap, GC, FieldElement (BN254 Montgomery), BigInt
 ├── constraints/        R1CS/Plonkish systems, Poseidon hash, binary export
 ├── cli/                CLI, native Groth16 (ark-groth16) & PlonK (halo2-KZG)
 └── test/
@@ -336,7 +349,6 @@ achronyme/
 | `push(list, item)` | 2 | Append to list |
 | `pop(list)` | 1 | Remove last from list |
 | `keys(map)` | 1 | Map keys as list |
-| `field(x)` | 1 | Convert Int/String to Field |
 | `proof_json(p)` | 1 | Extract proof JSON |
 | `proof_public(p)` | 1 | Extract public inputs JSON |
 | `proof_vkey(p)` | 1 | Extract verifying key JSON |
@@ -351,18 +363,29 @@ achronyme/
 | `poseidon(a, b)` | 2 | Poseidon 2-to-1 hash (BN254) |
 | `poseidon_many(a, b, ...)` | variadic | Left-fold Poseidon hash |
 | `verify_proof(p)` | 1 | Verify a Groth16 proof |
+| `bigint256(x)` | 1 | Construct 256-bit unsigned integer |
+| `bigint512(x)` | 1 | Construct 512-bit unsigned integer |
+| `to_bits(x)` | 1 | BigInt to bit list (LSB-first) |
+| `from_bits(bits, width)` | 2 | Bit list to BigInt |
+| `bit_and(a, b)` | 2 | Bitwise AND |
+| `bit_or(a, b)` | 2 | Bitwise OR |
+| `bit_xor(a, b)` | 2 | Bitwise XOR |
+| `bit_not(x)` | 1 | Bitwise NOT |
+| `bit_shl(x, n)` | 2 | Shift left |
+| `bit_shr(x, n)` | 2 | Shift right |
 
 ---
 
 ## Status
 
-- 929+ unit tests + 75+ integration tests
+- 970+ unit tests + 90+ integration tests
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export
-- 6 security audits resolved
+- Solidity verifier contract generation
 - Poseidon hash compatible with circomlibjs
 - Runtime errors with source line numbers
+- [Documentation](https://docs.achrony.me)
 
 ## License
 
