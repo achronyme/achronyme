@@ -1,0 +1,7 @@
+// Circuit: Pedersen-style commitment — poseidon(value, blinding)
+public commitment
+witness value
+witness blinding
+
+let cm = poseidon(value, blinding)
+assert_eq(cm, commitment)

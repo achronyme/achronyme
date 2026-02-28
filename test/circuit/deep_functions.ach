@@ -1,0 +1,10 @@
+// Circuit: 3-level function call chain
+public out
+witness a
+
+fn add1(x) { x + 1 }
+fn double_add1(x) { add1(x) + add1(x) }
+fn quad_add1(x) { double_add1(x) + double_add1(x) }
+
+// a=10 → add1(10)=11, double_add1(10)=22, quad_add1(10)=44
+assert_eq(quad_add1(a), out)

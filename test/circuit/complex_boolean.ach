@@ -1,0 +1,16 @@
+// Circuit: chained boolean logic with comparisons
+witness a
+witness b
+witness c
+witness d
+witness e
+witness f
+
+// (a < b) && (c > d) || !(e == f)
+let r1 = a < b
+let r2 = c > d
+let r3 = e == f
+let r4 = r1 && r2
+let r5 = !r3
+let r6 = r4 || r5
+assert(r6)

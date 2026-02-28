@@ -1,0 +1,12 @@
+// Circuit: nested for-loop accumulation (3x3 matrix sum)
+public out
+
+// sum of (i+1)*(j+1) for i in 0..3, j in 0..3
+// = (1+2+3) + (2+4+6) + (3+6+9) = 6+12+18 = 36
+let acc = 0
+for i in 0..3 {
+    for j in 0..3 {
+        let acc = acc + (i + 1) * (j + 1)
+    }
+}
+assert_eq(acc, out)

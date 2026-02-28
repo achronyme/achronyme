@@ -123,6 +123,45 @@ run_test "circuit/for_loop_unroll.ach" \
     --r1cs "$R1CS_DIR/for_loop.r1cs" --wtns "$R1CS_DIR/for_loop.wtns" \
     --inputs "total=100,vals_0=10,vals_1=20,vals_2=30,vals_3=40"
 
+# --- Complex circuit tests ---
+echo ""
+echo "=== Complex circuit tests ==="
+
+run_test "circuit/nullifier.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/nullifier.ach" \
+    --r1cs "$R1CS_DIR/nullifier.r1cs" --wtns "$R1CS_DIR/nullifier.wtns" \
+    --inputs "nullifier=4736362406665208364747685732453189199131835045859587280506752441838311700156,secret=12345,leaf_index=7"
+
+run_test "circuit/commitment.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/commitment.ach" \
+    --r1cs "$R1CS_DIR/commitment.r1cs" --wtns "$R1CS_DIR/commitment.wtns" \
+    --inputs "commitment=16301115570242784778765184033606574990417411247577491285886077462613734960794,value=1000,blinding=98765"
+
+run_test "circuit/hash_chain.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/hash_chain.ach" \
+    --r1cs "$R1CS_DIR/hash_chain.r1cs" --wtns "$R1CS_DIR/hash_chain.wtns" \
+    --inputs "expected=21508756081070400358417640840024981277893390350656564165427487686097502392670,seed=0"
+
+run_test "circuit/deep_functions.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/deep_functions.ach" \
+    --r1cs "$R1CS_DIR/deep_fn.r1cs" --wtns "$R1CS_DIR/deep_fn.wtns" \
+    --inputs "out=44,a=10"
+
+run_test "circuit/complex_boolean.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/complex_boolean.ach" \
+    --r1cs "$R1CS_DIR/complex_bool.r1cs" --wtns "$R1CS_DIR/complex_bool.wtns" \
+    --inputs "a=3,b=7,c=10,d=2,e=1,f=2"
+
+run_test "circuit/nested_loops.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/nested_loops.ach" \
+    --r1cs "$R1CS_DIR/nested_loops.r1cs" --wtns "$R1CS_DIR/nested_loops.wtns" \
+    --inputs "out=36"
+
+run_test "circuit/inner_product.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/inner_product.ach" \
+    --r1cs "$R1CS_DIR/inner_product.r1cs" --wtns "$R1CS_DIR/inner_product.wtns" \
+    --inputs "out=70,a_0=1,a_1=2,a_2=3,a_3=4,b_0=5,b_1=6,b_2=7,b_3=8"
+
 # --- Typed circuit tests (gradual type system) ---
 echo ""
 echo "=== Typed circuit tests ==="

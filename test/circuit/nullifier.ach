@@ -1,0 +1,7 @@
+// Circuit: nullifier derivation — poseidon(secret, leaf_index)
+public nullifier
+witness secret
+witness leaf_index
+
+let nf = poseidon(secret, leaf_index)
+assert_eq(nf, nullifier)
