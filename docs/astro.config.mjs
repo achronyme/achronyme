@@ -45,6 +45,7 @@ export default defineConfig({
 						{ label: 'Arrays & Collections', slug: 'language/arrays-and-collections', translations: { es: 'Arrays y Colecciones' } },
 						{ label: 'Native Functions', slug: 'language/native-functions', translations: { es: 'Funciones Nativas' } },
 						{ label: 'Error Handling', slug: 'language/error-handling', translations: { es: 'Manejo de Errores' } },
+						{ label: 'Modules', slug: 'language/modules', translations: { es: 'Módulos' } },
 					],
 				},
 				{

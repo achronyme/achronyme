@@ -1,0 +1,135 @@
+---
+title: "Modules"
+description: "Splitting programs across files with import and export."
+---
+
+Achronyme supports splitting code across multiple `.ach` files using modules. Export declarations to make them available, and import modules with a namespace alias.
+
+## Exporting Declarations
+
+Use `export` before `fn` or `let` to make a declaration available to other files.
+
+```
+// math.ach
+export fn add(a, b) { a + b }
+export fn mul(a, b) { a * b }
+export let PI = 3
+```
+
+Only `fn` and `let` can be exported. Mutable variables (`mut`), `public`, and `witness` declarations cannot be exported.
+
+```
+// These are errors:
+export mut x = 5      // ✗ cannot export mut
+export public y       // ✗ cannot export public
+```
+
+Declarations without `export` are private to the file. They can be used by exported functions internally but are not accessible from outside.
+
+```
+// helpers.ach
+fn internal_helper(x) { x * x }    // private
+
+export fn square(x) {
+    internal_helper(x)              // works inside this file
+}
+```
+
+## Importing a Module
+
+Use `import "path" as alias` to load a module. The alias is mandatory and becomes the namespace for accessing the module's exports.
+
+```
+// main.ach
+import "./math.ach" as math
+
+print(math.add(1, 2))    // 3
+print(math.PI)            // 3
+```
+
+Access exported values using dot notation: `alias.name`.
+
+## Module Paths
+
+Paths are relative to the importing file and must include the `.ach` extension.
+
+```
+import "./utils.ach" as utils          // same directory
+import "../lib/hash.ach" as hash       // parent directory
+import "./crypto/poseidon.ach" as pos  // subdirectory
+```
+
+Absolute paths are not supported. All imports use relative paths.
+
+## Transitive Imports
+
+Modules can import other modules. The chain is resolved automatically.
+
+```
+// a.ach
+export fn fa() { 1 }
+
+// b.ach
+import "./a.ach" as a
+export fn fb() { a.fa() + 1 }
+
+// c.ach
+import "./b.ach" as b
+print(b.fb())    // 2
+```
+
+## Circular Imports
+
+Circular dependencies are detected and produce an error.
+
+```
+// x.ach
+import "./y.ach" as y    // error: CircularImport
+
+// y.ach
+import "./x.ach" as x
+```
+
+## Modules in Circuits
+
+Imports work with `ach circuit` the same way as `ach run`. Imported functions are inlined at each call site.
+
+```
+// hash_lib.ach
+export fn my_hash(a, b) { poseidon(a, b) }
+
+// circuit.ach
+import "./hash_lib.ach" as h
+
+public out
+witness a, b
+
+assert_eq(h.my_hash(a, b), out)
+```
+
+`public` and `witness` declarations inside an imported module are ignored — they do not affect the importing circuit's inputs or outputs.
+
+## Errors
+
+| Error | Cause |
+|-------|-------|
+| `ModuleNotFound` | The file path does not resolve to an existing file |
+| `CircularImport` | Two or more modules import each other |
+| `ModuleLoadError` | The file was found but contains parse errors |
+| `DuplicateModuleAlias` | Two different files imported with the same alias |
+
+## Restrictions
+
+- `import` and `export` are only allowed at the top level (not inside functions or blocks)
+- `import`, `export`, and `as` are reserved keywords
+- Re-exports (`export import`) are not supported
+- Importing the same file with two different aliases is allowed (the file is parsed once)
+
+## Quick Reference
+
+| Syntax | Description |
+|--------|-------------|
+| `export fn name() { ... }` | Export a function |
+| `export let X = value` | Export a constant |
+| `import "./file.ach" as alias` | Import a module |
+| `alias.name` | Access an exported binding |
