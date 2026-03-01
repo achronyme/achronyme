@@ -40,7 +40,9 @@ jobs:
 
       - name: Rename binary (unix)
         if: runner.os != 'Windows'
-        run: mv target/${{ matrix.target }}/release/ach ${{ matrix.artifact }}
+        run: |
+          mv target/${{ matrix.target }}/release/ach ${{ matrix.artifact }}
+          chmod +x ${{ matrix.artifact }}
 
       - name: Rename binary (windows)
         if: runner.os == 'Windows'
