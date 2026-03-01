@@ -52,15 +52,20 @@ pub fn circuit_command(
     let source =
         fs::read_to_string(path).with_context(|| format!("cannot read source file: {path}"))?;
 
+    let base_path = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+
     // 1. Lower to IR — self-contained or CLI-provided declarations
     let mut program = if public.is_empty() && witness.is_empty() {
-        let (_, _, prog) = IrLowering::lower_self_contained(&source)
+        let (_, _, prog) = IrLowering::lower_self_contained_with_base(&source, base_path)
             .map_err(|e| anyhow::anyhow!("IR lowering error: {e}"))?;
         prog
     } else {
         let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
         let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
-        IrLowering::lower_circuit(&source, &pub_refs, &wit_refs)
+        IrLowering::lower_circuit_with_base(&source, &pub_refs, &wit_refs, base_path)
             .map_err(|e| anyhow::anyhow!("IR lowering error: {e}"))?
     };
 

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use achronyme_parser::ast::*;
 use achronyme_parser::parse_program as ast_parse_program;
@@ -69,6 +70,16 @@ pub struct IrLowering {
     fn_table: HashMap<String, FnDef>,
     /// Tracks active function calls to detect recursion.
     call_stack: HashSet<String>,
+    /// Directory of the file being compiled (for resolving relative imports).
+    pub base_path: Option<PathBuf>,
+    /// Canonical paths of modules currently being loaded (cycle detection).
+    loading_modules: HashSet<PathBuf>,
+    /// Canonical paths of modules already loaded → alias used for registration.
+    loaded_modules: HashMap<PathBuf, String>,
+    /// Module prefix for resolving unqualified function calls during inlining.
+    /// When inlining `mod::func`, this is set to `"mod"` so that calls to
+    /// `helper()` inside the body resolve to `mod::helper`.
+    fn_call_prefix: Option<String>,
 }
 
 impl Default for IrLowering {
@@ -84,6 +95,10 @@ impl IrLowering {
             env: HashMap::new(),
             fn_table: HashMap::new(),
             call_stack: HashSet::new(),
+            base_path: None,
+            loading_modules: HashSet::new(),
+            loaded_modules: HashMap::new(),
+            fn_call_prefix: None,
         }
     }
 
@@ -174,12 +189,13 @@ impl IrLowering {
     /// ).unwrap();
     /// assert!(!prog.instructions.is_empty());
     /// ```
-    pub fn lower_circuit(
+    /// Convenience: declare inputs, set base_path, and lower in one call.
+    pub fn lower_circuit_with_base(
         source: &str,
         public: &[&str],
         witness: &[&str],
+        base_path: PathBuf,
     ) -> Result<IrProgram, IrError> {
-        // Parse array syntax and collect flat names for duplicate check
         let pub_decls = parse_decl_specs(public)?;
         let wit_decls = parse_decl_specs(witness)?;
 
@@ -198,6 +214,7 @@ impl IrLowering {
         }
 
         let mut lowering = IrLowering::new();
+        lowering.base_path = Some(base_path);
         for (name, size) in &pub_decls {
             if let Some(n) = size {
                 lowering.declare_public_array(name, *n);
@@ -213,6 +230,14 @@ impl IrLowering {
             }
         }
         lowering.lower(source)
+    }
+
+    pub fn lower_circuit(
+        source: &str,
+        public: &[&str],
+        witness: &[&str],
+    ) -> Result<IrProgram, IrError> {
+        Self::lower_circuit_with_base(source, public, witness, PathBuf::from("."))
     }
 
     /// Parse a self-contained circuit source that uses in-source `public`/`witness`
@@ -231,9 +256,16 @@ impl IrLowering {
     pub fn lower_self_contained(
         source: &str,
     ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
+        Self::lower_self_contained_with_base(source, PathBuf::from("."))
+    }
+
+    /// Like `lower_self_contained` but with a base path for module resolution.
+    pub fn lower_self_contained_with_base(
+        source: &str,
+        base_path: PathBuf,
+    ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
         let ast_program = ast_parse_program(source).map_err(IrError::ParseError)?;
 
-        // Pass 1: collect declaration names (with optional array sizes and type annotations)
         let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
         let mut wit_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
         for stmt in &ast_program.stmts {
@@ -252,7 +284,6 @@ impl IrLowering {
             }
         }
 
-        // Build flat name lists for duplicate checking and return value
         let mut pub_names = Vec::new();
         for (name, size, _) in &pub_decls {
             if let Some(n) = size {
@@ -274,7 +305,6 @@ impl IrLowering {
             }
         }
 
-        // Check for duplicate names across public and witness
         let mut seen = HashSet::new();
         for name in pub_names.iter().chain(wit_names.iter()) {
             if !seen.insert(name.as_str()) {
@@ -282,8 +312,8 @@ impl IrLowering {
             }
         }
 
-        // Emit Inputs in correct order: public first, then witness
         let mut lowering = IrLowering::new();
+        lowering.base_path = Some(base_path);
         for (name, size, type_ann) in &pub_decls {
             if let Some(n) = size {
                 let vars = lowering.declare_public_array(name, *n);
@@ -311,10 +341,9 @@ impl IrLowering {
             }
         }
 
-        // Pass 2: process non-declaration statements
         for stmt in &ast_program.stmts {
             match stmt {
-                Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. } => {} // already processed
+                Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. } => {}
                 _ => {
                     lowering.lower_stmt(stmt)?;
                 }
@@ -322,6 +351,158 @@ impl IrLowering {
         }
 
         Ok((pub_names, wit_names, lowering.program))
+    }
+
+    // ========================================================================
+    // Module loading
+    // ========================================================================
+
+    /// Re-register all fn_table and env entries from `original` alias under `new_alias`.
+    fn alias_module_entries(&mut self, original: &str, new_alias: &str) {
+        let prefix = format!("{original}::");
+        let fn_copies: Vec<(String, FnDef)> = self
+            .fn_table
+            .iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .map(|(k, v)| {
+                let suffix = &k[prefix.len()..];
+                (format!("{new_alias}::{suffix}"), v.clone())
+            })
+            .collect();
+        for (k, v) in fn_copies {
+            self.fn_table.insert(k, v);
+        }
+
+        let env_copies: Vec<(String, EnvValue)> = self
+            .env
+            .iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .map(|(k, v)| {
+                let suffix = &k[prefix.len()..];
+                (format!("{new_alias}::{suffix}"), v.clone())
+            })
+            .collect();
+        for (k, v) in env_copies {
+            self.env.insert(k, v);
+        }
+    }
+
+    fn load_module(&mut self, path: &str, alias: &str, _span: &Span) -> Result<(), IrError> {
+        let base = self
+            .base_path
+            .clone()
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
+        let resolved = base.join(path);
+        let canonical = resolved.canonicalize().map_err(|_| {
+            IrError::ModuleNotFound(format!("{} (resolved from {})", path, base.display()))
+        })?;
+
+        if self.loading_modules.contains(&canonical) {
+            return Err(IrError::CircularImport(canonical.display().to_string()));
+        }
+
+        if let Some(original_alias) = self.loaded_modules.get(&canonical).cloned() {
+            if original_alias != alias {
+                // Same file, different alias: re-register entries under new alias
+                self.alias_module_entries(&original_alias, alias);
+            }
+            return Ok(());
+        }
+
+        self.loading_modules.insert(canonical.clone());
+
+        let source = std::fs::read_to_string(&canonical)
+            .map_err(|e| IrError::ModuleLoadError(format!("{}: {}", canonical.display(), e)))?;
+
+        let program = ast_parse_program(&source).map_err(|e| {
+            IrError::ModuleLoadError(format!("parse error in {}: {}", canonical.display(), e))
+        })?;
+
+        // Save and set base_path for nested imports
+        let old_base = self.base_path.take();
+        self.base_path = canonical.parent().map(|p| p.to_path_buf());
+
+        for stmt in &program.stmts {
+            match stmt {
+                Stmt::Export { inner, .. } => match inner.as_ref() {
+                    Stmt::FnDecl {
+                        name,
+                        params,
+                        return_type,
+                        body,
+                        ..
+                    } => {
+                        let qualified = format!("{alias}::{name}");
+                        self.fn_table.insert(
+                            qualified,
+                            FnDef {
+                                params: params.clone(),
+                                body: body.clone(),
+                                return_type: return_type.clone(),
+                            },
+                        );
+                    }
+                    Stmt::LetDecl {
+                        name,
+                        value,
+                        span: _,
+                        ..
+                    } => {
+                        let qualified = format!("{alias}::{name}");
+                        let v = self.lower_expr(value)?;
+                        self.env.insert(qualified, EnvValue::Scalar(v));
+                    }
+                    _ => {}
+                },
+                Stmt::FnDecl {
+                    name,
+                    params,
+                    return_type,
+                    body,
+                    ..
+                } => {
+                    // Internal (non-exported) functions: register with module prefix
+                    // so exported functions can call them via fn_call_prefix
+                    let qualified = format!("{alias}::{name}");
+                    self.fn_table.insert(
+                        qualified,
+                        FnDef {
+                            params: params.clone(),
+                            body: body.clone(),
+                            return_type: return_type.clone(),
+                        },
+                    );
+                }
+                Stmt::LetDecl { name, value, .. } => {
+                    // Internal (non-exported) let bindings: register in env so
+                    // exported functions that reference them can resolve
+                    let qualified = format!("{alias}::{name}");
+                    let v = self.lower_expr(value)?;
+                    self.env.insert(qualified, EnvValue::Scalar(v));
+                }
+                Stmt::Import {
+                    path: sub_path,
+                    alias: sub_alias,
+                    span: sub_span,
+                    ..
+                } => {
+                    // Handle nested imports
+                    self.load_module(sub_path, sub_alias, sub_span)?;
+                }
+                Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. } => {
+                    // Ignored: public/witness in imported modules don't affect the circuit
+                }
+                _ => {
+                    // Other statements (let without export, etc.) are ignored
+                }
+            }
+        }
+
+        self.base_path = old_base;
+        self.loading_modules.remove(&canonical);
+        self.loaded_modules.insert(canonical, alias.to_string());
+
+        Ok(())
     }
 
     // ========================================================================
@@ -400,6 +581,13 @@ impl IrLowering {
                 "return is not supported in circuits (circuits are flat constraint systems — use the final expression as the result)".into(),
                 to_ir_span(span),
             )),
+            Stmt::Import {
+                path, alias, span, ..
+            } => {
+                self.load_module(path, alias, span)?;
+                Ok(None)
+            }
+            Stmt::Export { inner, .. } => self.lower_stmt(inner),
         }
     }
 
@@ -635,7 +823,13 @@ impl IrLowering {
             }
             Expr::Ident { name, span } => {
                 let sp = to_ir_span(span);
-                match self.env.get(name.as_str()) {
+                // Try direct lookup first, then prefixed for module-internal vars
+                let val = self.env.get(name.as_str()).or_else(|| {
+                    self.fn_call_prefix
+                        .as_ref()
+                        .and_then(|prefix| self.env.get(&format!("{prefix}::{name}")))
+                });
+                match val {
                     Some(EnvValue::Scalar(v)) => Ok(*v),
                     Some(EnvValue::Array(_)) => Err(IrError::TypeMismatch {
                         expected: "scalar".into(),
@@ -681,10 +875,31 @@ impl IrLowering {
             Expr::Map { span, .. } => {
                 Err(IrError::TypeNotConstrainable("map".into(), to_ir_span(span)))
             }
-            Expr::DotAccess { span, .. } => Err(IrError::UnsupportedOperation(
-                "dot access is not supported in circuits (use arrays with static indexing instead)".into(),
-                to_ir_span(span),
-            )),
+            Expr::DotAccess {
+                object,
+                field,
+                span,
+            } => {
+                // Support module.name access for imported constants
+                if let Expr::Ident { name: module, .. } = object.as_ref() {
+                    let qualified = format!("{module}::{field}");
+                    if let Some(val) = self.env.get(&qualified) {
+                        match val {
+                            EnvValue::Scalar(v) => return Ok(*v),
+                            EnvValue::Array(_) => {
+                                return Err(IrError::UnsupportedOperation(
+                                    format!("`{module}.{field}` is an array, not a scalar"),
+                                    to_ir_span(span),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(IrError::UnsupportedOperation(
+                    "dot access is not supported in circuits (use arrays with static indexing instead)".into(),
+                    to_ir_span(span),
+                ))
+            }
             Expr::BigIntLit { span, .. } => Err(IrError::TypeNotConstrainable(
                 "BigInt".into(),
                 to_ir_span(span),
@@ -954,9 +1169,20 @@ impl IrLowering {
 
     fn lower_call(&mut self, callee: &Expr, args: &[Expr], span: &Span) -> Result<SsaVar, IrError> {
         let sp = to_ir_span(span);
-        // Only identifier callees are supported
+        // Identifier or DotAccess callees are supported
         let name = match callee {
-            Expr::Ident { name, .. } => name.as_str(),
+            Expr::Ident { name, .. } => name.clone(),
+            Expr::DotAccess { object, field, .. } => {
+                // module.func() → qualified name "module::func"
+                if let Expr::Ident { name: module, .. } = object.as_ref() {
+                    format!("{module}::{field}")
+                } else {
+                    return Err(IrError::UnsupportedOperation(
+                        "only named function calls are supported in circuits (dynamic dispatch cannot be compiled to constraints)".into(),
+                        sp,
+                    ));
+                }
+            }
             _ => {
                 return Err(IrError::UnsupportedOperation(
                     "only named function calls are supported in circuits (dynamic dispatch cannot be compiled to constraints)".into(),
@@ -965,7 +1191,7 @@ impl IrLowering {
             }
         };
 
-        match name {
+        match name.as_str() {
             "assert_eq" => self.lower_assert_eq(args, sp),
             "assert" => self.lower_assert(args, sp),
             "poseidon" => self.lower_poseidon(args, sp),
@@ -974,7 +1200,7 @@ impl IrLowering {
             "len" => self.lower_len(args, sp),
             "poseidon_many" => self.lower_poseidon_many(args, sp),
             "merkle_verify" => self.lower_merkle_verify(args, span),
-            _ => self.lower_user_fn_call(name, args, sp),
+            _ => self.lower_user_fn_call(&name, args, sp),
         }
     }
 
@@ -1288,13 +1514,28 @@ impl IrLowering {
         args: &[Expr],
         sp: Option<SourceSpan>,
     ) -> Result<SsaVar, IrError> {
-        let fn_def = match self.fn_table.get(name).cloned() {
-            Some(fd) => fd,
+        // Try direct lookup first, then prefixed lookup for internal module calls
+        let (resolved_name, fn_def) = match self.fn_table.get(name).cloned() {
+            Some(fd) => (name.to_string(), fd),
             None => {
-                return Err(IrError::UnsupportedOperation(
-                    format!("function `{name}` is not defined"),
-                    sp,
-                ));
+                // If we're inlining a module function, try module::name
+                if let Some(ref prefix) = self.fn_call_prefix {
+                    let qualified = format!("{prefix}::{name}");
+                    match self.fn_table.get(&qualified).cloned() {
+                        Some(fd) => (qualified, fd),
+                        None => {
+                            return Err(IrError::UnsupportedOperation(
+                                format!("function `{name}` is not defined"),
+                                sp,
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(IrError::UnsupportedOperation(
+                        format!("function `{name}` is not defined"),
+                        sp,
+                    ));
+                }
             }
         };
 
@@ -1340,10 +1581,10 @@ impl IrLowering {
         }
 
         // Recursion guard
-        if self.call_stack.contains(name) {
-            return Err(IrError::RecursiveFunction(name.to_string()));
+        if self.call_stack.contains(&resolved_name) {
+            return Err(IrError::RecursiveFunction(resolved_name));
         }
-        self.call_stack.insert(name.to_string());
+        self.call_stack.insert(resolved_name.clone());
 
         // Save env for params and bind args
         let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
@@ -1355,6 +1596,13 @@ impl IrLowering {
             self.env.insert(param.clone(), EnvValue::Scalar(*arg));
         }
 
+        // Set fn_call_prefix so unqualified calls inside the body resolve
+        // to the same module (e.g., helper() → mod::helper when inlining mod::func)
+        let old_prefix = self.fn_call_prefix.take();
+        if let Some(pos) = resolved_name.find("::") {
+            self.fn_call_prefix = Some(resolved_name[..pos].to_string());
+        }
+
         // Lower the function body directly (no re-parsing!)
         let mut result = self.lower_block(&fn_def.body)?;
 
@@ -1364,7 +1612,7 @@ impl IrLowering {
             if let Some(inferred) = self.program.get_type(result) {
                 if !type_compatible(ret_ty, inferred) {
                     return Err(IrError::AnnotationMismatch {
-                        name: format!("{name}() return"),
+                        name: format!("{resolved_name}() return"),
                         declared: ret_ty.to_string(),
                         inferred: inferred.to_string(),
                         span: sp.clone(),
@@ -1386,7 +1634,7 @@ impl IrLowering {
             }
         }
 
-        // Restore env
+        // Restore env and fn_call_prefix
         for (param, old_val) in saved {
             match old_val {
                 Some(v) => {
@@ -1397,8 +1645,9 @@ impl IrLowering {
                 }
             }
         }
+        self.fn_call_prefix = old_prefix;
 
-        self.call_stack.remove(name);
+        self.call_stack.remove(&resolved_name);
         Ok(result)
     }
 

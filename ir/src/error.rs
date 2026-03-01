@@ -76,6 +76,12 @@ pub enum IrError {
         inferred: String,
         span: Option<SourceSpan>,
     },
+    /// A module file could not be found.
+    ModuleNotFound(String),
+    /// A circular import was detected.
+    CircularImport(String),
+    /// An error occurred while loading a module.
+    ModuleLoadError(String),
 }
 
 impl fmt::Display for IrError {
@@ -199,6 +205,15 @@ impl fmt::Display for IrError {
                 } else {
                     write!(f, "{msg}")
                 }
+            }
+            IrError::ModuleNotFound(path) => {
+                write!(f, "module not found: {path}")
+            }
+            IrError::CircularImport(path) => {
+                write!(f, "circular import detected: {path}")
+            }
+            IrError::ModuleLoadError(msg) => {
+                write!(f, "module load error: {msg}")
             }
         }
     }
