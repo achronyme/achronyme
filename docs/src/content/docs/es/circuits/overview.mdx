@@ -1,0 +1,99 @@
+---
+title: Descripción General de Programación de Circuitos
+description: Cómo Achronyme compila programas en circuitos de conocimiento cero.
+---
+
+Achronyme es un lenguaje de modo dual. El mismo código fuente puede ejecutarse como un programa de propósito general **o** compilarse en un circuito aritmético para pruebas de conocimiento cero.
+
+## ¿Qué es un Circuito?
+
+Un circuito ZK es un sistema de restricciones polinomiales sobre un campo finito. Dadas entradas públicas (conocidas por el verificador) y entradas testigo (conocidas solo por el probador), el circuito fuerza que ciertas relaciones se cumplan — sin revelar el testigo.
+
+En Achronyme, escribes circuitos usando la misma sintaxis que los programas regulares, con algunas restricciones.
+
+## Dos Formas de Construir Circuitos
+
+### 1. Archivo de circuito independiente
+
+```
+public output
+witness secret
+
+assert_eq(poseidon(secret, 0), output)
+```
+
+Compila con el CLI:
+
+```bash
+ach circuit hash.ach --inputs "output=17159...,secret=42"
+```
+
+### 2. Bloque `prove {}` en línea
+
+```
+let secret = 0p42
+let hash = 0p17159...
+
+let p = prove {
+    witness secret
+    public hash
+    assert_eq(poseidon(secret, 0), hash)
+}
+```
+
+El bloque `prove {}` se ejecuta dentro de la VM, captura variables del ámbito, compila el cuerpo como un circuito y genera una prueba.
+
+## Qué Funciona en Circuitos
+
+| Característica | Comportamiento |
+|---------|----------|
+| Aritmética (`+`, `-`, `*`, `/`, `^`) | Se compila a operaciones de campo y restricciones |
+| Vinculaciones `let` | Alias (costo cero) |
+| `if/else` | Se compila a `mux` — ambas ramas se evalúan |
+| Bucles `for` (rango o array) | Desenrollado estático |
+| Llamadas `fn` | Se insertan en línea en cada punto de llamada |
+| [Anotaciones de tipo](/es/circuits/type-annotations/) | Tipos opcionales `Field`/`Bool` en declaraciones y vinculaciones |
+| `assert_eq(a, b)` | Fuerza `a == b` (1 restricción) |
+| `poseidon(a, b)` | Hash Poseidon 2-a-1 (361 restricciones) |
+| `range_check(x, bits)` | El valor cabe en N bits |
+| Comparaciones (`==`, `!=`, `<`, `<=`, `>`, `>=`) | Gadgets seguros para campo |
+| Lógica booleana (`&&`, `\|\|`, `!`) | Con verificación booleana |
+
+## Qué No Funciona en Circuitos
+
+| Característica | Razón |
+|---------|--------|
+| Bucles `while` | Conteo de iteraciones desconocido — no se puede desenrollar |
+| `break` / `continue` | Requiere flujo de control dinámico |
+| `print()` | Efecto secundario, sin equivalente en circuito |
+| Cadenas, mapas | No representables como elementos de campo |
+| Recursión | Las funciones se insertan en línea, sin pila |
+
+Estos se rechazan en tiempo de compilación con mensajes de error claros.
+
+## Pipeline de Compilación
+
+```
+Fuente → Parser → AST → Bajada a IR → SSA IR → Optimizar → Backend → Restricciones
+```
+
+1. **Parsear** — La gramática PEG produce un AST
+2. **Bajar** — El AST se convierte en instrucciones SSA planas (`Add`, `Mul`, `Mux`, `PoseidonHash`, ...)
+3. **Optimizar** — Plegado de constantes, eliminación de código muerto, propagación booleana
+4. **Compilar** — El backend R1CS o Plonkish genera restricciones
+5. **Testigo** — Los valores concretos llenan el sistema de restricciones
+6. **Exportar** — Archivos binarios `.r1cs` + `.wtns` (R1CS) o verificación en memoria (Plonkish)
+
+## Backends
+
+Achronyme soporta dos backends de sistema de restricciones:
+
+**R1CS** (predeterminado) — Sistema de Restricciones de Rango 1. Cada restricción es `A * B = C` donde A, B, C son combinaciones lineales de cables. Compatible con Groth16 vía snarkjs.
+
+**Plonkish** — Sistema basado en puertas con puertas personalizadas, lookups y restricciones de copia. Usa compromisos polinomiales KZG. Algunas operaciones (como `range_check`) son más eficientes con lookups.
+
+Selecciona el backend con `--backend`:
+
+```bash
+ach circuit file.ach --backend plonkish --inputs "x=42"
+```

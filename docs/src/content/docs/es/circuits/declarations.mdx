@@ -1,0 +1,105 @@
+---
+title: "Declaraciones"
+description: "Declaraciones públicas y de testigo en circuitos."
+---
+
+Cada circuito necesita declaraciones de entrada explícitas. Estas le dicen al compilador qué variables son **públicas** (visibles para el verificador) y cuáles son **testigo** (conocidas solo por el probador).
+
+## Declaraciones Escalares
+
+Declara una variable a la vez:
+
+```
+public output
+witness secret
+```
+
+O múltiples en una línea, separadas por comas:
+
+```
+public x, y
+witness a, b, c
+```
+
+Las entradas públicas se convierten en parte de la declaración pública de la prueba — cualquiera que verifique la prueba puede ver sus valores. Las entradas testigo permanecen privadas para el probador.
+
+## Declaraciones de Array
+
+Declara un array de entradas de tamaño fijo con sintaxis de corchetes:
+
+```
+witness path[3]
+witness indices[3]
+```
+
+Esto crea tres variables indexadas (`path_0`, `path_1`, `path_2`) a las que accedes con indexación estándar. Las declaraciones de array funcionan tanto para entradas públicas como de testigo:
+
+```
+public commitments[4]
+witness secrets[4]
+```
+
+## Uso de Entradas Declaradas
+
+Una vez declaradas, las entradas son variables ordinarias. Úsalas en expresiones, pásalas a funciones integradas e indexa arrays:
+
+```
+public output
+witness a
+witness b
+
+let product = a * b
+assert_eq(product, output)
+
+let sum = a + b
+assert_eq(sum, a + b)
+```
+
+Los elementos de array se acceden por índice:
+
+```
+public expected_sum
+witness vals[3]
+
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
+```
+
+## Alternativa por CLI
+
+En lugar de declaraciones en el código fuente, puedes declarar entradas con banderas del CLI:
+
+```bash
+ach circuit program.ach --public output --witness a,b --inputs "a=3,b=5,output=15"
+```
+
+Las banderas `--public` y `--witness` aceptan nombres de variables separados por comas. Si el archivo fuente ya contiene declaraciones `public`/`witness`, omite las banderas — el compilador las detecta automáticamente.
+
+Las entradas de array se pasan con nombres indexados:
+
+```bash
+ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=0,indices_1=1"
+```
+
+## Anotaciones de Tipo
+
+Las declaraciones pueden incluir anotaciones de tipo opcionales. Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para detalles.
+
+```
+public root: Field
+witness flag: Bool
+witness path[3]: Field
+witness indices[3]: Bool
+```
+
+Anotar un testigo como `Bool` ahorra 1 restricción al omitir la verificación booleana.
+
+## Errores
+
+| Error | Causa |
+|-------|-------|
+| `DuplicateInput` | Mismo nombre declarado como `public` y `witness`, o declarado dos veces |
+| `UndeclaredVariable` | Usar una variable que nunca fue declarada como `public` o `witness` |
+| `AnnotationMismatch` | Tipo declarado no coincide con el tipo inferido |

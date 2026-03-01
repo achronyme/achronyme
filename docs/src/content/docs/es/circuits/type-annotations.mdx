@@ -1,0 +1,295 @@
+---
+title: "Anotaciones de Tipo"
+description: "Anotaciones de tipo opcionales para variables de circuito, funciones y vinculaciones."
+---
+
+Achronyme soporta **tipado gradual** en circuitos. Puedes agregar anotaciones de tipo opcionales a declaraciones, vinculaciones y funciones. El código sin anotar funciona exactamente como antes — las anotaciones son estrictamente opcionales.
+
+## Universo de Tipos
+
+Cuatro tipos están disponibles en contexto de circuito:
+
+| Tipo | Descripción |
+|------|-------------|
+| `Field` | Un elemento del campo escalar BN254 (el predeterminado para todos los valores de circuito) |
+| `Bool` | Un valor booleano (0 o 1 en el campo) |
+| `Field[N]` | Array de tamaño fijo de N elementos de campo |
+| `Bool[N]` | Array de tamaño fijo de N booleanos |
+
+`Bool` es un **subtipo** de `Field` — un valor booleano puede usarse donde se espera un elemento de campo. Lo inverso es un error a menos que el valor sea un booleano probado (ej., un resultado de comparación o la constante 0/1).
+
+`Field` y `Bool` **no son palabras clave**. Son identificadores contextuales reconocidos solo después de `:` o `->`. Puedes seguir usando `Field` y `Bool` como nombres de variables en código regular.
+
+## Declaraciones de Entrada
+
+Agrega `: Type` después del nombre de la variable (o después del tamaño del array):
+
+```
+public root: Field
+witness flag: Bool
+witness secret: Field
+
+witness path[3]: Field
+witness indices[3]: Bool
+```
+
+Sin anotaciones, las entradas son no tipadas por defecto — mismo comportamiento que antes:
+
+```
+public root
+witness secret
+```
+
+Ambas formas pueden coexistir en el mismo circuito:
+
+```
+public root: Field
+witness leaf
+witness path[3]: Field
+witness indices[3]
+```
+
+## Vinculaciones Let
+
+Anota vinculaciones locales con `: Type` después del nombre, antes de `=`:
+
+```
+witness a: Field
+witness b: Field
+
+let product: Field = a * b
+let is_equal: Bool = a == b
+```
+
+El compilador maneja las anotaciones dependiendo del tipo inferido de la expresión:
+
+- **Expresión tipada coincide con la anotación**: Sin costo extra. `let eq: Bool = a == b` es gratis porque `==` ya produce `Bool`.
+- **Expresión tipada conflicta**: Error. `let x: Bool = a + 1` falla porque `+` produce `Field`, que es incompatible con `Bool`.
+- **Expresión no tipada con `: Bool`**: El compilador emite una restricción `RangeCheck(v, 1)` para forzar `v * (1 - v) = 0`, costando **1 restricción extra**. Esto es necesario para la solidez — sin verificación, un probador malicioso podría asignar cualquier valor.
+- **Expresión no tipada con `: Field`**: No se necesita verificación. `Field` es el predeterminado y no restringe el espacio de valores.
+
+```
+witness a: Field
+
+// Error: incompatibilidad de anotación de tipo para `x`: declarado como Bool,
+//        pero la expresión tiene tipo Field
+let x: Bool = a + 1
+```
+
+```
+witness w
+
+// Verificado: emite RangeCheck(w, 1) — cuesta 1 restricción
+let b: Bool = w
+```
+
+Las operaciones aritméticas (`+`, `-`, `*`, `/`, `^`) producen `Field`. Las comparaciones y operaciones lógicas (`==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`) producen `Bool`.
+
+### Vinculaciones de Array
+
+Para anotaciones de array, el compilador valida que la longitud del array coincida con el tamaño declarado:
+
+```
+witness x
+witness y
+
+// Error: incompatibilidad de longitud de array: se esperaban 3, se obtuvieron 2
+let a: Field[3] = [x, y]
+```
+
+Las anotaciones `Bool[N]` verifican cada elemento no tipado individualmente (1 restricción por elemento):
+
+```
+witness x
+witness y
+
+// Verificado: emite RangeCheck para cada elemento no tipado — cuesta 2 restricciones
+let flags: Bool[2] = [x, y]
+```
+
+## Funciones
+
+Anota parámetros con `: Type` y tipos de retorno con `-> Type`:
+
+```
+fn hash_pair(a: Field, b: Field) -> Field {
+    poseidon(a, b)
+}
+
+fn is_valid(x: Field, y: Field) -> Bool {
+    x == y
+}
+```
+
+Se permite mezclar parámetros tipados y no tipados:
+
+```
+fn scale(x: Field, factor) {
+    x * factor
+}
+```
+
+El compilador verifica que los argumentos coincidan con los tipos de parámetro declarados en cada punto de llamada:
+
+```
+fn double(x: Field) -> Field { x + x }
+
+witness a: Field
+let result: Field = double(a)    // ok
+```
+
+### Verificación Bool en Parámetros y Tipos de Retorno
+
+Cuando un parámetro `: Bool` recibe un argumento no tipado, el compilador emite un `RangeCheck` para forzar la restricción booleana (1 restricción extra por argumento no tipado):
+
+```
+witness w    // no tipado
+
+fn check(b: Bool) { assert(b) }
+check(w)     // emite RangeCheck(w, 1) — 1 restricción extra
+```
+
+De manera similar, cuando una función con tipo de retorno `-> Bool` produce un resultado no tipado en el cuerpo, el compilador fuerza el booleano en el valor de retorno:
+
+```
+witness w
+
+fn to_flag(x: Field) -> Bool { x }
+let f = to_flag(w)    // emite RangeCheck en el valor de retorno — 1 restricción extra
+```
+
+Si el argumento o valor de retorno ya tiene un tipo probado (ej., de una comparación), no se emite restricción extra.
+
+## Subtipado: Bool como Field
+
+Los valores `Bool` pueden usarse en contexto aritmético (de campo). Esto es seguro porque los booleanos son 0 o 1 en el campo:
+
+```
+witness flag: Bool
+
+// Bool usado en aritmética — permitido (Bool es subtipo de Field)
+let as_field: Field = flag + flag
+```
+
+Lo inverso depende del tipo del valor fuente:
+
+- **Tipado como `Field`**: Error. Un valor explícitamente tipado como `Field` no puede estrecharse a `Bool`:
+  ```
+  witness x: Field
+
+  // Error: x es Field, no se puede anotar como Bool
+  let b: Bool = x
+  ```
+
+- **No tipado**: Verificación. El compilador emite `RangeCheck(x, 1)` para forzar `x * (1 - v) = 0` (1 restricción):
+  ```
+  witness x    // no tipado
+
+  // Verificado: emite RangeCheck — 1 restricción extra
+  let b: Bool = x
+  ```
+
+- **Ya probado como booleano**: Gratis. No se emite restricción extra:
+  ```
+  witness a: Field
+  witness b: Field
+
+  // El resultado de comparación es un booleano probado — la anotación es gratis
+  let eq: Bool = a == b
+  ```
+
+## Ahorro de Restricciones
+
+Anotar una entrada como `: Bool` emite una restricción de verificación `RangeCheck` única (`v * (1-v) = 0`) en el sitio de declaración. Este estado booleano verificado se propaga a través de `bool_prop`, permitiendo que todos los usos posteriores **omitan** la verificación booleana redundante. El efecto neto es un ahorro cuando la variable se usa múltiples veces en contexto booleano.
+
+```
+// Sin anotación: cada mux agrega 1 verificación booleana para cond
+witness cond
+let r1 = mux(cond, a, b)   // 2 restricciones (1 verificación + 1 selección)
+let r2 = mux(cond, c, d)   // 2 restricciones (1 verificación + 1 selección)
+// Total: 4 restricciones
+
+// Con anotación: 1 verificación en la declaración, usos posteriores omiten
+witness cond: Bool          // 1 restricción (verificación RangeCheck)
+let r1 = mux(cond, a, b)   // 1 restricción (solo selección, verificación omitida)
+let r2 = mux(cond, c, d)   // 1 restricción (solo selección, verificación omitida)
+// Total: 3 restricciones (se ahorró 1)
+```
+
+Esta optimización es aplicada por el pase `bool_prop`, que rastrea variables probadas como booleanas a través del programa. El pase reconoce estas fuentes como booleanas probadas:
+
+- Constantes `0` y `1`
+- Resultados de comparación (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+- Resultados de `RangeCheck(x, 1)` (incluyendo los emitidos por verificación `: Bool` en declaraciones, vinculaciones let, parámetros de función y tipos de retorno)
+- Operandos y resultados de `Assert`
+- `Not`/`And`/`Or`/`Mux` de operandos booleanos probados
+
+### Verificación vs. Ahorro
+
+Todas las anotaciones `: Bool` emiten restricciones de verificación por solidez. El costo es único por variable; los usos posteriores se benefician del ahorro de `bool_prop`.
+
+| Escenario | Costo |
+|----------|------|
+| `witness b: Bool` | **Cuesta 1** — emite `RangeCheck(b, 1)` en la declaración |
+| `public b: Bool` | **Cuesta 1** — emite `RangeCheck(b, 1)` en la declaración |
+| `witness b: Bool` → usado en `mux(b, ...)` | **Ahorra 1 por uso** — `mux` omite verificación booleana en `b` |
+| `let b: Bool = w` donde `w` no está tipado | **Cuesta 1** — emite `RangeCheck(w, 1)` para forzar booleano |
+| `let b: Bool = (x == y)` | **Gratis** — `==` ya produce un booleano probado |
+| `fn f(b: Bool)` llamada con arg no tipado | **Cuesta 1** — emite `RangeCheck` en el argumento |
+| `fn f() -> Bool` retornando cuerpo no tipado | **Cuesta 1** — emite `RangeCheck` en el valor de retorno |
+
+El costo de verificación es una garantía de solidez única. Los usos posteriores de la variable verificada se benefician del ahorro de `bool_prop`.
+
+## Ejemplo Completo
+
+Una prueba de membresía Merkle completamente tipada:
+
+```
+public root: Field
+witness leaf: Field
+witness path[3]: Field
+witness indices[3]: Bool
+
+merkle_verify(root, leaf, path, indices)
+```
+
+El mismo circuito con funciones auxiliares tipadas:
+
+```
+public expected: Field
+witness a: Field
+witness b: Field
+witness c: Field
+
+fn hash_chain(x: Field, y: Field, z: Field) -> Field {
+    let h: Field = poseidon(x, y)
+    poseidon(h, z)
+}
+
+let result: Field = hash_chain(a, b, c)
+assert_eq(result, expected)
+```
+
+## Referencia Rápida
+
+| Sintaxis | Ejemplo | Notas |
+|--------|---------|-------|
+| Public tipado | `public x: Field` | Entrada pública anotada |
+| Witness tipado | `witness flag: Bool` | Emite `RangeCheck` (+1 restricción), ahorra 1 por uso booleano posterior |
+| Array tipado | `witness path[3]: Field` | El tipo se aplica a todos los elementos |
+| Array Bool de entrada | `witness flags[3]: Bool` | Emite `RangeCheck` por elemento (+3 restricciones) |
+| Array Bool | `let flags: Bool[2] = [x, y]` | Verifica cada elemento no tipado (+1 restricción cada uno) |
+| Let tipado (coincidente) | `let eq: Bool = a == b` | Sin costo extra — el tipo ya coincide |
+| Let tipado (verificado) | `let b: Bool = w` | Emite `RangeCheck` si `w` no está tipado (+1 restricción) |
+| Parámetro tipado | `fn f(x: Field)` | Verificado en cada punto de llamada |
+| Parámetro Bool | `fn f(b: Bool)` | Verifica args no tipados (+1 restricción cada uno) |
+| Tipo de retorno | `fn f() -> Bool` | Verifica resultado no tipado del cuerpo (+1 restricción) |
+| No tipado (predeterminado) | `witness secret` | Mismo comportamiento que antes |
+
+## Errores
+
+| Error | Causa |
+|-------|-------|
+| `AnnotationMismatch` | Tipo declarado no coincide con el tipo inferido (ej., `let x: Bool = a + b` donde `+` retorna `Field`) |
+| `ArrayLengthMismatch` | Tamaño del literal de array no coincide con el tamaño declarado (ej., `let a: Field[2] = [x, y, z]`) |
+| Error de parseo | Nombre de tipo inválido (solo se reconocen `Field` y `Bool`) |

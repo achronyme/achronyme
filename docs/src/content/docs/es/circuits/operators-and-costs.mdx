@@ -1,0 +1,97 @@
+---
+title: "Operadores y Costos"
+description: "Operadores aritméticos, de comparación y lógicos con sus costos de restricciones."
+---
+
+Cada operación en un circuito se compila a cero o más restricciones. Entender los costos te ayuda a escribir circuitos eficientes — menos restricciones significan generación de pruebas más rápida y pruebas más pequeñas.
+
+## Operadores Aritméticos
+
+| Operador | Ejemplo | Restricciones | Notas |
+|----------|---------|-------------|-------|
+| `+` | `a + b` | 0 | Combinación lineal |
+| `-` | `a - b` | 0 | Combinación lineal |
+| `*` (por constante) | `a * 3` | 0 | Multiplicación escalar de CL |
+| `*` (dos variables) | `a * b` | 1 | Puerta de multiplicación |
+| `/` (por constante) | `a / 3` | 0 | Multiplicar por inverso |
+| `/` (dos variables) | `a / b` | 2 | Inverso + multiplicación |
+| `^` (exponenciación) | `x ^ n` | O(log n) | Cuadrado y multiplicación |
+| `-` (negación) | `-a` | 0 | Negar coeficientes de CL |
+
+```
+public x2
+public x3
+public x4
+witness x
+
+assert_eq(x ^ 2, x2)
+assert_eq(x ^ 3, x3)
+assert_eq(x ^ 4, x4)
+```
+
+## Operadores de Comparación
+
+| Operador | Ejemplo | Restricciones | Notas |
+|----------|---------|-------------|-------|
+| `==` | `a == b` | 2 | Gadget IsZero |
+| `!=` | `a != b` | 2 | Gadget IsZero + negar |
+| `<` | `a < b` | ~760 | Descomposición de 253 bits + verificaciones de rango |
+| `<=` | `a <= b` | ~760 | Descomposición de 253 bits + verificaciones de rango |
+| `>` | `a > b` | ~760 | Igual que `b < a` |
+| `>=` | `a >= b` | ~760 | Igual que `b <= a` |
+
+Las verificaciones de igualdad son baratas (2 restricciones). Las comparaciones de orden son costosas (~760 restricciones cada una) porque requieren descomposición de bits sobre el campo BN254. Úsalas con moderación.
+
+```
+witness x
+witness y
+
+let eq = x == y
+let lt = x < y
+assert(lt)
+```
+
+## Operadores Lógicos
+
+| Operador | Ejemplo | Restricciones | Notas |
+|----------|---------|-------------|-------|
+| `&&` | `a && b` | 3 | 2 verificaciones booleanas + 1 multiplicación |
+| `\|\|` | `a \|\| b` | 3 | 2 verificaciones booleanas + 1 puerta |
+| `!` | `!a` | 0–1 | Gratis si el operando ya es booleano probado |
+
+```
+witness x
+witness y
+
+let both = (x < y) && (y > x)
+assert(both)
+
+let either = (x == y) || (x < y)
+assert(either)
+
+let not_eq = !(x == y)
+assert(not_eq)
+```
+
+## Por Qué Algunas Operaciones Son Gratis
+
+La suma y resta son gratis porque operan sobre **combinaciones lineales** — sumas ponderadas de variables. El sistema de restricciones R1CS representa cables como combinaciones lineales, así que sumar dos CLs solo fusiona sus términos sin crear una nueva restricción.
+
+La multiplicación por una constante también es gratis — escala todos los coeficientes en la CL. Solo la multiplicación de dos expresiones de variables requiere una puerta de restricción (`A * B = C`).
+
+## Optimización: Propagación Booleana
+
+El pase `bool_prop` del compilador rastrea qué variables ya están probadas como booleanas (0 o 1). Cuando un valor producido por `==`, `<` u otra comparación alimenta `&&`, `||` o `!`, la verificación booleana redundante se omite, ahorrando restricciones.
+
+Por ejemplo, `!(x == y)` cuesta 2 restricciones por el `==` y 0 por el `!`, porque la salida de `==` ya se sabe que es booleana.
+
+El pase reconoce estas fuentes como booleanas probadas:
+
+- Constantes `0` y `1`
+- Resultados de comparación (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+- Resultados de `RangeCheck(x, 1)` (incluyendo los de verificación `: Bool`)
+- Operandos y resultados de `Assert`
+- Variables con anotación de tipo `Bool` (de declaraciones)
+- `Not`/`And`/`Or`/`Mux` de operandos booleanos probados
+
+Las [anotaciones de tipo](/es/circuits/type-annotations/) extienden esta optimización: declarar `witness flag: Bool` marca la variable como booleana probada, ahorrando 1 restricción cada vez que se usa en contexto booleano (ej., como condición de `mux`). Anotar `: Bool` en un valor no tipado (vía `let`, parámetros de función o tipos de retorno) emite una verificación `RangeCheck` única (+1 restricción), después de lo cual el valor también se rastrea como booleano probado para ahorros posteriores.

@@ -1,0 +1,98 @@
+---
+title: "Flujo de Control en Circuitos"
+description: "Bucles for, if/else, vinculaciones let y construcciones rechazadas."
+---
+
+Los circuitos soportan un subconjunto del flujo de control de Achronyme. Cada construcción debe resolverse en tiempo de compilación — el compilador necesita conocer la estructura exacta del sistema de restricciones antes de que se proporcionen las entradas.
+
+## Bucles for
+
+Los bucles `for` se desenrollan estáticamente — el compilador expande cada iteración en restricciones separadas. Se soportan dos formas.
+
+**Forma de rango** — iterar sobre `start..end`:
+
+```
+public out
+witness a
+witness b
+
+let product = a * b
+assert_eq(product, out)
+
+let sum = a + b
+assert_eq(sum, a + b)
+```
+
+**Forma de array** — iterar sobre un array declarado:
+
+```
+public expected_sum
+witness vals[3]
+
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
+```
+
+El costo de restricciones de un bucle es igual al número de iteraciones multiplicado por el costo del cuerpo.
+
+### Bucles Anidados
+
+Se soportan bucles `for` anidados. El conteo total de iteraciones es el producto de todos los límites de los bucles:
+
+```
+witness matrix[9]
+
+for i in 0..3 {
+    for j in 0..3 {
+        range_check(matrix[i * 3 + j], 8)
+    }
+}
+```
+
+Esto se desenrolla a 9 iteraciones, cada una con un `range_check` (9 restricciones en R1CS, 9 lookups en Plonkish).
+
+## if/else como mux
+
+En circuitos, `if/else` se compila a un **mux** (multiplexor) — ambas ramas siempre se evalúan, y la condición selecciona qué resultado usar. Esto cuesta 2 restricciones (una verificación booleana para la condición, una restricción de selección).
+
+```
+witness cond
+witness a
+witness b
+
+let result = if cond { a } else { b }
+```
+
+Esto es equivalente a `mux(cond, a, b)`. No hay evaluación de cortocircuito — tanto `a` como `b` se calculan independientemente de `cond`.
+
+Un `if` sin `else` no está soportado en circuitos porque ambas ramas deben producir un valor para el mux.
+
+## Vinculaciones let
+
+Las vinculaciones `let` crean alias — no emiten restricciones. Un `let` simplemente da un nombre a una combinación lineal existente.
+
+```
+witness a
+witness b
+
+let sum = a + b        // 0 restricciones — solo un alias
+let doubled = sum + sum // 0 restricciones — sigue siendo una combinación lineal
+```
+
+Las vinculaciones solo cuestan restricciones cuando involucran operaciones que requieren puertas de multiplicación (ej., `let product = a * b` cuesta 1 restricción por la multiplicación, no por el `let`).
+
+## Construcciones Rechazadas
+
+Estas construcciones se rechazan en tiempo de compilación con mensajes de error claros:
+
+| Construcción | Error | Razón |
+|-----------|-------|--------|
+| `while` | `WhileInCircuit` | Conteo de iteraciones desconocido en tiempo de compilación |
+| `forever` | `ForeverInCircuit` | Igual — bucles sin límite no se pueden desenrollar |
+| `break` | `BreakInCircuit` | Salida dinámica no representable en restricciones |
+| `continue` | `ContinueInCircuit` | Salto dinámico no representable en restricciones |
+| `print()` | — | Efecto secundario sin equivalente en circuito |
+
+Los circuitos requieren una estructura de restricciones fija y determinista. Cualquier construcción que dependa de valores en tiempo de ejecución para determinar el flujo de control es incompatible con este modelo.

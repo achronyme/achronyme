@@ -1,0 +1,132 @@
+---
+title: "Funciones Integradas"
+description: "Funciones integradas disponibles en circuitos."
+---
+
+Los circuitos proporcionan funciones integradas para aserciones, hashing, selección condicional y verificación de rango. Cada función integrada se compila a un número fijo de restricciones.
+
+## Referencia Rápida
+
+| Función Integrada | Restricciones (R1CS) | Propósito |
+|---------|-------------------|---------|
+| `assert_eq(a, b)` | 1 | Forzar igualdad |
+| `assert(expr)` | 2 | Forzar que expresión booleana sea verdadera |
+| `poseidon(a, b)` | 361 | Hash Poseidon 2-a-1 |
+| `poseidon_many(a, b, c, ...)` | (N−1) × 361 | Hash Poseidon con plegado izquierdo |
+| `mux(cond, a, b)` | 2 | Selección condicional |
+| `range_check(x, bits)` | bits + 1 | El valor cabe en N bits |
+| `merkle_verify(root, leaf, path, indices)` | profundidad × ~363 | Prueba de membresía Merkle |
+| `len(arr)` | 0 | Longitud de array en tiempo de compilación |
+
+## assert_eq
+
+Fuerza que dos expresiones sean iguales. Cuesta 1 restricción.
+
+```
+public out
+witness a
+witness b
+
+let product = a * b
+assert_eq(product, out)
+```
+
+Esta es la función integrada más común — úsala para vincular valores calculados con salidas públicas.
+
+## assert
+
+Fuerza que una expresión booleana sea verdadera. Cuesta 2 restricciones (una para verificación booleana, una para forzar que el valor sea igual a 1).
+
+```
+witness x
+witness y
+
+assert(x < y)
+```
+
+A diferencia de `assert_eq`, funciona con cualquier expresión que evalúe a 0 o 1.
+
+## poseidon
+
+Calcula un hash Poseidon 2-a-1. Cuesta 361 restricciones (360 para las rondas de permutación + 1 para el cable de capacidad). La salida es compatible con circomlibjs.
+
+```
+public expected
+witness a
+witness b
+
+let h = poseidon(a, b)
+assert_eq(h, expected)
+```
+
+## poseidon_many
+
+Hashea un número arbitrario de valores mediante plegado izquierdo de `poseidon`. Tres argumentos cuestan 2 × 361 = 722 restricciones, cuatro argumentos cuestan 3 × 361 = 1083, y así sucesivamente.
+
+```
+public expected
+witness a
+witness b
+witness c
+
+// poseidon_many(a, b, c) == poseidon(poseidon(a, b), c)
+let h = poseidon_many(a, b, c)
+assert_eq(h, expected)
+```
+
+## mux
+
+Selección condicional: devuelve `a` cuando `cond` es 1, `b` cuando `cond` es 0. Cuesta 2 restricciones (una verificación booleana para `cond`, una restricción de selección).
+
+```
+public out
+witness cond
+witness a
+witness b
+
+let selected = mux(cond, a, b)
+assert_eq(selected, out)
+```
+
+Tanto `a` como `b` siempre se evalúan — no hay comportamiento de cortocircuito.
+
+## range_check
+
+Demuestra que un valor cabe dentro de un número dado de bits. En R1CS, cuesta `bits + 1` restricciones (descomposición booleana). En Plonkish, cuesta 1 lookup.
+
+```
+witness x
+witness y
+
+// x cabe en 8 bits (0..255)
+range_check(x, 8)
+
+// y cabe en 16 bits (0..65535)
+range_check(y, 16)
+```
+
+## merkle_verify
+
+Verifica una prueba de membresía Merkle. Toma una raíz, una hoja, un array de hashes hermanos (la ruta) y un array de índices de dirección (0 = hijo izquierdo, 1 = hijo derecho). La prueba se desenrolla a nivel de IR — cada nivel cuesta aproximadamente 363 restricciones (un hash Poseidon + un mux).
+
+```
+public root
+witness leaf
+witness path[1]
+witness indices[1]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+Los arrays `path` e `indices` deben tener la misma longitud, que determina la profundidad del árbol.
+
+## len
+
+Devuelve la longitud en tiempo de compilación de un array. Cuesta 0 restricciones — el valor se resuelve durante la compilación.
+
+```
+witness vals[3]
+
+let n = len(vals)
+assert_eq(n, 3)
+```
