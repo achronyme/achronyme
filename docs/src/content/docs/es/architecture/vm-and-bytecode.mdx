@@ -1,0 +1,275 @@
+---
+title: "VM y Bytecode"
+description: "Máquina virtual basada en registros, opcodes y formato binario."
+---
+
+La VM de Achronyme es un intérprete de bytecode basado en registros. Ejecuta archivos `.achb` compilados usando una pila de tamaño fijo de 65,536 slots de Value.
+
+## Arquitectura
+
+```
+Fuente (.ach)
+    │
+    ▼
+Compilador de Bytecode → Prototipos de función + bytecode
+    │
+    ▼
+Serializador → archivo binario .achb
+    │
+    ▼
+Cargador → heap + pila + frames de la VM
+    │
+    ▼
+Intérprete → Ejecución basada en registros
+```
+
+### Estructura de la VM
+
+```
+VM {
+    heap: Heap,              // arenas tipadas + GC
+    stack: [Value; 65536],   // pila de registros de tamaño fijo
+    frames: Vec<CallFrame>,  // pila de llamadas
+    globals: Vec<GlobalEntry>,  // variables globales
+    natives: Vec<NativeObj>,    // 23 funciones integradas
+    open_upvalues: lista enlazada, // variables de pila capturadas
+    stress_mode: bool,          // forzar GC en cada ciclo
+}
+```
+
+### Frames de Llamada
+
+Cada llamada a función apila un `CallFrame`:
+
+```
+CallFrame {
+    closure: u32,   // handle a Closure en el heap
+    ip: usize,      // puntero de instrucción
+    base: usize,    // offset base en la pila
+    dest_reg: usize, // dónde almacenar valor de retorno
+}
+```
+
+El registro `R[i]` en el frame actual mapea a `stack[frame.base + i]`.
+
+## Representación de Valores
+
+Los valores son **enteros de 64 bits etiquetados** — sin boxing para tipos comunes:
+
+```
+Bits 63..60 = etiqueta de 4 bits
+Bits 59..0  = payload de 60 bits
+```
+
+### Etiquetas
+
+| Etiqueta | Nombre | Payload |
+|-----|------|---------|
+| 0 | `INT` | entero con signo i60 (en línea) |
+| 1 | `NIL` | — |
+| 2 | `FALSE` | — |
+| 3 | `TRUE` | — |
+| 4 | `STRING` | handle u32 → arena de strings |
+| 5 | `LIST` | handle u32 → arena de listas |
+| 6 | `MAP` | handle u32 → arena de mapas |
+| 7 | `FUNCTION` | handle u32 → arena de funciones |
+| 8 | `FIELD` | handle u32 → arena de campos (BN254) |
+| 9 | `PROOF` | handle u32 → arena de pruebas |
+| 10 | `NATIVE` | handle u32 → tabla de nativos |
+| 11 | `CLOSURE` | handle u32 → arena de closures |
+| 12 | `ITER` | handle u32 → arena de iteradores |
+
+Los enteros (etiqueta 0) son el tipo de valor más común — usar la etiqueta 0 significa que no se necesita enmascaramiento para el caso común.
+
+Rango de enteros: -2^59 a 2^59 - 1 (576,460,752,303,423,487). El desbordamiento genera `IntegerOverflow`.
+
+## Codificación de Instrucciones
+
+Cada instrucción es un `u32` en uno de dos formatos:
+
+### Formato ABC
+
+```
+[opcode:8][A:8][B:8][C:8]
+```
+
+Usado para instrucciones de 3 operandos como `Add R[A] = R[B] + R[C]`.
+
+### Formato ABx
+
+```
+[opcode:8][A:8][Bx:16]
+```
+
+Usado para instrucciones con un operando de 16 bits, como `LoadConst R[A] = K[Bx]` o `Jump IP = Bx`.
+
+## Opcodes
+
+### Constantes y Movimientos
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `LoadConst` | 0 | ABx | `R[A] = K[Bx]` — cargar del pool de constantes |
+| `LoadTrue` | 1 | A | `R[A] = true` |
+| `LoadFalse` | 2 | A | `R[A] = false` |
+| `LoadNil` | 3 | A | `R[A] = nil` |
+| `Move` | 5 | AB | `R[A] = R[B]` |
+
+### Aritmética
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `Add` | 10 | ABC | `R[A] = R[B] + R[C]` |
+| `Sub` | 11 | ABC | `R[A] = R[B] - R[C]` |
+| `Mul` | 12 | ABC | `R[A] = R[B] * R[C]` |
+| `Div` | 13 | ABC | `R[A] = R[B] / R[C]` |
+| `Mod` | 14 | ABC | `R[A] = R[B] % R[C]` |
+| `Pow` | 15 | ABC | `R[A] = R[B] ^ R[C]` |
+| `Neg` | 16 | AB | `R[A] = -R[B]` |
+
+### Comparación y Lógica
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `Eq` | 20 | ABC | `R[A] = R[B] == R[C]` |
+| `Lt` | 21 | ABC | `R[A] = R[B] < R[C]` |
+| `Gt` | 22 | ABC | `R[A] = R[B] > R[C]` |
+| `NotEq` | 23 | ABC | `R[A] = R[B] != R[C]` |
+| `Le` | 24 | ABC | `R[A] = R[B] <= R[C]` |
+| `Ge` | 25 | ABC | `R[A] = R[B] >= R[C]` |
+| `LogNot` | 26 | AB | `R[A] = !R[B]` |
+
+### Closures y Upvalues
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `GetUpvalue` | 34 | AB | `R[A] = Upvalue[B]` |
+| `SetUpvalue` | 35 | AB | `Upvalue[B] = R[A]` |
+| `CloseUpvalue` | 36 | A | Cerrar upvalue en slot de pila A |
+
+### Funciones
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `Return` | 54 | A | Retornar `R[A]` del frame actual |
+| `Call` | 55 | ABC | `R[A] = Call(R[B], R[B+1]..R[B+C-1])` |
+| `Closure` | 56 | ABx | `R[A] = Closure(K[Bx])` |
+
+### Flujo de Control
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `Jump` | 60 | Bx | `IP = Bx` |
+| `JumpIfFalse` | 61 | ABx | Si `!R[A]` entonces `IP = Bx` |
+| `GetIter` | 65 | AB | `R[A] = Iterator(R[B])` |
+| `ForIter` | 66 | ABx | Siguiente elemento o saltar a Bx |
+
+### Globales
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `DefGlobalVar` | 98 | ABx | Definir global mutable |
+| `DefGlobalLet` | 99 | ABx | Definir global inmutable |
+| `GetGlobal` | 100 | ABx | `R[A] = Global[K[Bx]]` |
+| `SetGlobal` | 101 | ABx | `Global[K[Bx]] = R[A]` |
+| `Print` | 102 | A | Imprimir `R[A]` |
+
+### Estructuras de Datos
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `BuildList` | 150 | ABC | `R[A] = [R[B]..R[B+C-1]]` |
+| `BuildMap` | 151 | ABC | `R[A] = {R[B]:R[B+1], ...}` |
+| `GetIndex` | 152 | ABC | `R[A] = R[B][R[C]]` |
+| `SetIndex` | 153 | ABC | `R[A][R[B]] = R[C]` |
+
+### ZK
+
+| Opcode | Código | Formato | Descripción |
+|--------|------|--------|-------------|
+| `Prove` | 160 | — | Compilar + verificar circuito ZK |
+
+### Especiales
+
+| Opcode | Código | Descripción |
+|--------|------|-------------|
+| `Nop` | 255 | Sin operación |
+
+## Objetos de Función
+
+Cada función compilada produce un struct `Function` en el heap:
+
+```
+Function {
+    name: String,        // para depuración
+    arity: u8,           // conteo de parámetros
+    max_slots: u16,      // uso pico de registros
+    chunk: Vec<u32>,     // instrucciones de bytecode
+    constants: Vec<Value>, // pool de constantes
+    upvalue_info: Vec<u8>, // pares [is_local, index]
+    line_info: Vec<u32>, // número de línea por instrucción
+}
+```
+
+El vector `line_info` es paralelo a `chunk` — cada instrucción tiene un número de línea fuente para reporte de errores.
+
+## Formato Binario (.achb)
+
+El formato de archivo `.achb` (versión 9):
+
+```
+Magic:    b"ACH\x09"          (4 bytes)
+Metadata: max_slots (u16 LE)
+
+Global Strings:
+    count (u32 LE)
+    por cada uno: length (u32 LE) + bytes UTF-8
+
+Global Constants:
+    count (u32 LE)
+    por cada uno: tag (u8) + payload
+        INT (0):    i64 LE
+        STRING (1): handle u32 LE
+        FIELD (8):  4 × u64 LE (limbs Montgomery)
+        NIL (255):  (sin payload)
+
+Prototypes:
+    count (u32 LE)
+    por cada uno:
+        name_len (u32 LE) + bytes del nombre
+        arity (u8)
+        max_slots (u16 LE)
+        const_count (u32 LE) + constantes
+        upvalue_count (u32 LE) + info de upvalue
+        bytecode_len (u32 LE) + instrucciones (u32 LE cada una)
+
+Main Bytecode:
+    instruction_count (u32 LE)
+    instrucciones (u32 LE cada una)
+```
+
+El formato es compatible con el módulo `loader` de la VM, que deserializa en objetos del heap.
+
+## Disposición de Variables Globales
+
+```
+Índice: 0..22       23..
+        Nativos     Globales de usuario
+```
+
+Los primeros 23 slots (0–22) están reservados para funciones nativas. Las globales definidas por el usuario comienzan en el índice 23 (`USER_GLOBAL_START`).
+
+## Archivos Fuente
+
+| Componente | Archivo |
+|-----------|------|
+| Opcodes | `vm/src/opcode.rs` |
+| Intérprete VM | `vm/src/machine/vm.rs` |
+| Frames de llamada | `vm/src/machine/frame.rs` |
+| Despacho de nativos | `vm/src/specs.rs` |
+| Codificación de valores | `memory/src/value.rs` |
+| Struct Function | `memory/src/heap.rs` |
+| Compilador de bytecode | `compiler/src/codegen.rs` |
+| Compilador de funciones | `compiler/src/function_compiler.rs` |
+| Serializador binario | `cli/src/commands/compile.rs` |
+| Cargador binario | `vm/src/loader.rs` |

@@ -1,0 +1,159 @@
+---
+title: "Memoria y GC"
+description: "Arenas tipadas, recolección de basura mark-and-sweep y pruebas de estrés."
+---
+
+Achronyme gestiona la memoria del heap a través de **arenas tipadas** con un recolector de basura **mark-and-sweep**. Todos los objetos del heap se asignan en pools específicos por tipo y se recuperan cuando ya no son alcanzables.
+
+## Arenas Tipadas
+
+El `Heap` contiene 9 arenas tipadas, una por tipo de objeto del heap:
+
+| Arena | Tipo | Tamaño de Asignación |
+|-------|------|-----------------|
+| `strings` | `String` | `capacity()` bytes |
+| `lists` | `Vec<Value>` | `capacity() × 8` bytes |
+| `maps` | `HashMap<String, Value>` | `capacity × (string + value + 8)` bytes |
+| `functions` | `Function` | `chunk.len() × 4 + constants.len() × 8` bytes |
+| `closures` | `Closure` | handle de función + handles de upvalue |
+| `upvalues` | `Upvalue` | ubicación + puntero de lista enlazada |
+| `iterators` | `IteratorObj` | valor fuente + estado |
+| `fields` | `FieldElement` | 32 bytes (forma Montgomery BN254) |
+| `proofs` | `ProofObject` | 3 cadenas JSON (prueba + público + vkey) |
+
+### Implementación de Arena
+
+Cada `Arena<T>` usa un asignador basado en slots con reciclaje de lista libre:
+
+```
+Arena<T> {
+    data: Vec<T>,           // crece monótonamente
+    free_indices: Vec<u32>, // pila de slots reutilizables
+    free_set: HashSet<u32>, // verificación de membresía O(1)
+}
+```
+
+**Asignación** (`alloc`): reutiliza un slot liberado si está disponible, de lo contrario agrega a `data`.
+
+**Desasignación** (`mark_free`): agrega el índice del slot a la lista libre. El slot se pone a cero para liberar memoria (ej., `String::new()`, `Vec::new()`).
+
+**Invariante**: `free_indices` y `free_set` deben mantenerse siempre sincronizados.
+
+## Recolección de Basura
+
+El GC es un recolector **mark-and-sweep** que detiene el mundo.
+
+### Activación
+
+El heap rastrea el tamaño de asignación viva en `bytes_allocated`. Cuando excede `next_gc_threshold` (comenzando en 1 MB), se activa el GC:
+
+```
+if heap.request_gc || stress_mode {
+    collect_garbage();
+}
+```
+
+Esta verificación se ejecuta al inicio de cada ciclo del intérprete (antes de ejecutar la siguiente instrucción).
+
+### Fase de Marcado
+
+Recorrido en anchura desde las raíces usando una lista de trabajo:
+
+1. **Recolectar raíces**:
+   - Todos los valores en la pila de la VM (65,536 slots)
+   - Todas las variables globales
+   - Todos los closures de frames de llamada
+   - Todos los prototipos de función (se mantienen vivos para creación de closures)
+
+2. **Recorrer hijos**:
+   - **List**: todos los elementos se agregan a la lista de trabajo
+   - **Function**: todas las constantes se agregan a la lista de trabajo
+   - **Closure**: marca el handle de función + todos los upvalues; los upvalues cerrados agregan su valor capturado a la lista de trabajo
+   - **Map**: todos los valores se agregan (las claves son propiedad de Rust, se liberan cuando HashMap hace drop)
+   - **Iterator**: el valor fuente se agrega
+   - **Field, Proof**: tipos hoja, sin hijos
+
+3. **Enraizar upvalues abiertos**: Después del trazado principal, todos los upvalues abiertos se marcan explícitamente vía recorrido de la lista enlazada. Esto previene la recolección prematura de variables de pila capturadas por closures.
+
+Cada tipo de arena tiene su propio `HashSet<u32>` de índices marcados. Si un objeto ya está marcado, se omite (previene bucles infinitos en ciclos).
+
+### Fase de Barrido
+
+Escaneo lineal sobre cada arena:
+
+1. Para cada slot en `data`:
+   - Si **no está marcado** y **no está ya libre**: poner a cero el slot y agregar a la lista libre
+   - Si **está marcado**: dejar en su lugar
+2. Limpiar todos los conjuntos de marcado
+3. Recontar `bytes_allocated` desde cero (elimina la deriva del rastreo por mutaciones en lugar como `Vec::push`)
+
+### Ajuste de Umbral
+
+Después del barrido, el umbral se recalcula con histéresis:
+
+```
+grow = bytes_allocated × 2
+hysteresis = previous_threshold × 1.5
+next_gc_threshold = max(grow, hysteresis, 1 MB)
+```
+
+Esto previene el thrashing del GC cuando el tamaño del heap fluctúa cerca del umbral anterior.
+
+## Modo de Estrés del GC
+
+Ejecuta con `--stress-gc` para forzar la recolección de basura en cada ciclo del intérprete:
+
+```bash
+ach run program.ach --stress-gc
+```
+
+Esto activa `collect_garbage()` antes de cada instrucción, exponiendo:
+- **Punteros colgantes**: objetos liberados mientras aún están referenciados
+- **Errores de enraizamiento**: raíces no rastreadas correctamente (ej., upvalues abiertos)
+- **Errores dependientes del tiempo**: problemas que solo aparecen bajo timing específico del GC
+
+El modo de estrés se usa extensivamente en el conjunto de pruebas (`vm.stress_mode = true`) para verificar la corrección del GC.
+
+## Objetos Clave del Heap
+
+### Closure
+
+```
+Closure {
+    function: u32,       // handle a Function
+    upvalues: Vec<u32>,  // handles a la arena de Upvalue
+}
+```
+
+### Upvalue
+
+```
+Upvalue {
+    location: Open(stack_index) | Closed(Value),
+    next_open: Option<u32>,  // lista enlazada para upvalues abiertos
+}
+```
+
+Los upvalues **abiertos** apuntan a un slot de la pila — la variable aún está en ámbito. Cuando la función envolvente retorna, los upvalues abiertos se **cierran**: el valor se copia de la pila al upvalue (`Closed(value)`), y el upvalue se elimina de la lista abierta.
+
+### ProofObject
+
+```
+ProofObject {
+    proof_json: String,   // datos de prueba Groth16
+    public_json: String,  // entradas públicas
+    vkey_json: String,     // clave de verificación
+}
+```
+
+Creado por bloques `prove {}`. Accesible vía `proof_json()`, `proof_public()`, `proof_vkey()`.
+
+## Archivos Fuente
+
+| Componente | Archivo |
+|-----------|------|
+| Heap & Arena | `memory/src/heap.rs` |
+| Codificación de valores | `memory/src/value.rs` |
+| FieldElement | `memory/src/field.rs` |
+| Trait GC | `vm/src/machine/gc.rs` |
+| VM (activación GC) | `vm/src/machine/vm.rs` |

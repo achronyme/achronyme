@@ -1,0 +1,164 @@
+---
+title: "Visión General del Pipeline"
+description: "El pipeline de compilación desde el código fuente hasta las restricciones."
+---
+
+Achronyme compila el mismo lenguaje fuente a través de dos caminos distintos: **Modo VM** para ejecución general y **Modo circuito** para generación de restricciones de conocimiento cero.
+
+## Diagrama del Pipeline
+
+```
+Fuente (.ach)
+    │
+    ├─► Parser (descenso recursivo) → AST
+    │       │
+    │       ├─► Compilador de Bytecode → VM          (ach run)
+    │       │
+    │       └─► Bajada a IR → SSA IR
+    │               │
+    │           Optimizar (const_fold → dce → bool_prop)
+    │               │
+    │           ┌───┴───┐
+    │           ▼       ▼
+    │        R1CS    Plonkish
+    │      (Groth16) (KZG-PlonK)
+    │           │       │
+    │           ▼       ▼
+    │       .r1cs    Gates/Lookups
+    │       .wtns    Copy constraints
+    │           │       │
+    │           └───┬───┘
+    │               ▼
+    │         Prueba nativa
+    │
+    └─► prove { } → compilar + testigo + verificar + prueba (en línea)
+```
+
+## Etapa 1: Parseo
+
+**Punto de entrada:** `achronyme_parser::parse_program(source) -> Result<Program, String>`
+
+El parser es un parser de descenso recursivo escrito a mano con parseo de expresiones Pratt. Produce un AST con nodos `Program`, `Stmt`, `Expr` y `Block`.
+
+Precedencia de operadores (de mayor a menor):
+1. `^` (potencia)
+2. `*`, `/`, `%` (multiplicativos)
+3. `+`, `-` (aditivos)
+4. `==`, `!=`, `<`, `<=`, `>`, `>=` (comparación)
+5. `&&` (AND lógico)
+6. `||` (OR lógico)
+
+El parser maneja declaraciones `public`/`witness`, rangos `for`, definiciones `fn` y bloques `prove {}`.
+
+## Etapa 2: Bajada a IR (Modo Circuito)
+
+**Punto de entrada:** `IrLowering::lower_circuit(source, pub_vars, wit_vars) -> IrProgram`
+
+El bajador de IR convierte el AST en una lista plana de instrucciones SSA (`IrProgram`). Comportamientos clave:
+
+- Las vinculaciones **`let`** son alias — no se emite instrucción, la variable simplemente apunta a un `SsaVar` existente
+- **`if/else`** se compila a `Mux(cond, then_val, else_val)`
+- Los bucles **`for`** se desenrollan estáticamente (máximo 10,000 iteraciones)
+- Las **llamadas a funciones** se insertan en línea en cada punto de llamada; la recursión se detecta vía guardia de pila de llamadas
+- Los **arrays** soportan indexación en tiempo de compilación: `a[i]` donde `i` debe ser una constante
+
+El bajador rastrea variables vía `HashMap<String, EnvValue>` donde `EnvValue` es `Scalar(SsaVar)` o `Array(Vec<SsaVar>)`.
+
+## Etapa 3: Optimización
+
+**Punto de entrada:** `ir::passes::optimize(&mut program)`
+
+Tres pases se ejecutan secuencialmente sobre el IR:
+
+### Plegado de Constantes (`const_fold`)
+
+Pase hacia adelante que evalúa operaciones sobre constantes conocidas:
+- Pliega aritmética: `Const(3) + Const(5)` → `Const(8)`
+- Simplifica identidades: `x * 0 → 0`, `x - x → 0`, `x / x → 1`
+- Pliega lógica booleana y comparaciones sobre constantes
+
+### Eliminación de Código Muerto (`dce`)
+
+Pase hacia atrás que elimina instrucciones cuyos resultados nunca se usan. Conservador con instrucciones que tienen efectos secundarios (`Mul`, `Div`, `Mux`, `PoseidonHash`, `RangeCheck`, `Assert`, etc.).
+
+### Propagación Booleana (`bool_prop`)
+
+Pase hacia adelante que calcula el conjunto de variables SSA probadas como booleanas. Las semillas incluyen:
+- `Const(0)` y `Const(1)`
+- Resultados de comparación (`IsEq`, `IsNeq`, `IsLt`, `IsLe`)
+- Objetivos de `RangeCheck(x, 1)` y operandos de `Assert`
+- Anotaciones de tipo `Bool`
+
+Se propaga a través de `Not`, `And`, `Or` y `Mux`. Los backends usan este conjunto para omitir restricciones de verificación booleana redundantes.
+
+## Etapa 4: Compilación de Backend
+
+Dos backends compilan el IR optimizado en sistemas de restricciones:
+
+### Backend R1CS (predeterminado)
+
+**Punto de entrada:** `R1CSCompiler::compile_ir(program) -> Result<(), R1CSError>`
+
+Mapea cada `SsaVar` a una `LinearCombination`. Add/Sub/Neg son gratis (aritmética de CL). Mul/Div/Mux/Poseidon emiten restricciones R1CS reales (`A × B = C`).
+
+Disposición de cables: `[ONE, pub₁..pubₙ, wit₁..witₘ, intermedios...]`
+
+Las entradas públicas se asignan antes de los testigos para compatibilidad con snarkjs.
+
+### Backend Plonkish
+
+**Punto de entrada:** `PlonkishCompiler::compile_ir(program) -> Result<(), PlonkishError>`
+
+Usa **evaluación perezosa** con `PlonkVal` — difiere add/sub/neg hasta que un mul o función integrada fuerza la materialización. Cada multiplicación emite una fila usando la puerta aritmética estándar: `s_arith · (a·b + c − d) = 0`.
+
+Las verificaciones de rango usan una **tabla de lookup** (1 fila) en lugar de descomposición de bits (n+1 restricciones en R1CS).
+
+## Etapa 5: Generación de Testigos
+
+**Punto de entrada:** `R1CSCompiler::compile_ir_with_witness(program, inputs)`
+
+El testigo se genera vía **reproducción de traza**:
+
+1. El IR se evalúa con entradas concretas usando `ir::eval::evaluate()` para validación temprana
+2. El backend compila el IR, registrando un `WitnessOp` para cada variable intermedia
+3. Se asigna un vector de testigo (`num_variables()` slots)
+4. Las entradas públicas/testigo se llenan desde los valores proporcionados por el usuario
+5. La traza se reproduce para calcular todos los valores intermedios
+
+## Etapa 6: Exportación Binaria (solo R1CS)
+
+**Funciones:**
+- `write_r1cs(cs) -> Vec<u8>` — formato binario iden3 `.r1cs` v1
+- `write_wtns(witness) -> Vec<u8>` — formato binario iden3 `.wtns` v2
+
+Los archivos exportados son compatibles con snarkjs para generación y verificación de pruebas:
+
+```bash
+snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit_final.zkey
+snarkjs groth16 prove circuit_final.zkey witness.wtns proof.json public.json
+snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+## Bloques Prove (Modo Puente)
+
+La expresión `prove {}` conecta los modos VM y circuito:
+
+1. La VM encuentra un bloque `prove {}` durante la ejecución
+2. El cuerpo del bloque se compila como un circuito (IR → optimizar → R1CS)
+3. Las variables capturadas del ámbito de la VM se convierten en entradas testigo/públicas
+4. Se genera un testigo y se verifican las restricciones
+5. Se produce una prueba Groth16 vía snarkjs (si hay un archivo ptau disponible)
+6. La prueba se devuelve a la VM como un `ProofObject` de primera clase
+
+## Archivos Fuente
+
+| Etapa | Archivo |
+|-------|------|
+| Parser | `achronyme-parser/src/parser.rs` |
+| Bajada a IR | `ir/src/lower.rs` |
+| Optimización | `ir/src/passes/` (`const_fold.rs`, `dce.rs`, `bool_prop.rs`) |
+| Backend R1CS | `compiler/src/r1cs_backend.rs` |
+| Backend Plonkish | `compiler/src/plonkish_backend.rs` |
+| Generación de testigos | `compiler/src/witness_gen.rs` |
+| Exportación binaria | `constraints/src/export.rs` |
+| Despacho del CLI | `cli/src/commands/circuit.rs` |

@@ -1,0 +1,88 @@
+---
+title: "Mapa de Crates"
+description: "Dependencias y responsabilidades de los crates del workspace."
+---
+
+El workspace de Achronyme contiene 7 crates. Todos están en la versión 0.7.0, edición 2021.
+
+## Resumen de Crates
+
+| Crate | Ruta | Propósito |
+|-------|------|---------|
+| `memory` | `memory/` | Representación de valores, `FieldElement` (BN254 Montgomery), arenas del heap, GC |
+| `achronyme-parser` | `achronyme-parser/` | Parser de descenso recursivo, tipos del AST |
+| `constraints` | `constraints/` | Sistema de restricciones R1CS, sistema Plonkish, hash Poseidon, exportación binaria |
+| `ir` | `ir/` | Representación intermedia SSA, bajada AST→IR, pases de optimización |
+| `vm` | `vm/` | Máquina virtual basada en registros, intérprete de bytecode, funciones nativas |
+| `compiler` | `compiler/` | Backends R1CS y Plonkish, generación de testigos |
+| `cli` | `cli/` | Interfaz de línea de comandos, orquestación de pruebas (arkworks Groth16, halo2 PlonK) |
+
+## Grafo de Dependencias
+
+```
+memory          achronyme-parser
+  │                    │
+  ├──────┐             │
+  ▼      ▼             │
+constraints   ┌────────┘
+  │      │    │
+  │      ▼    ▼
+  │       ir ◄──── memory
+  │       │
+  ▼       │
+  vm      │
+  │       │
+  └──┬────┘
+     ▼
+  compiler ◄── memory, achronyme-parser
+     │
+     ▼
+    cli ◄── memory, vm, constraints, ir
+```
+
+### Fundación (sin dependencias del workspace)
+
+**`memory`** — La capa base. Define `FieldElement` (campo escalar BN254 en forma Montgomery, limbs `[u64; 4]`), `Value` etiquetado (etiqueta de 4 bits + payload de 60 bits), arenas tipadas del heap y GC mark-and-sweep.
+
+**`achronyme-parser`** — Parser independiente. Descenso recursivo con parseo de expresiones Pratt. Exporta `parse_program(source) -> Result<Program, String>` y tipos del AST (`Program`, `Stmt`, `Expr`, `Block`).
+
+### Capa Media
+
+**`constraints`** → `memory`
+
+Abstracciones centrales del sistema de restricciones. `Variable(usize)` para referencias de cables, `LinearCombination` para expresiones simbólicas dispersas, `ConstraintSystem` para forzar A×B=C. También contiene el `PlonkishSystem` (puertas, lookups, restricciones de copia), parámetros de hash Poseidon (compatible con circomlibjs) y exportación binaria (`write_r1cs`, `write_wtns` en formato iden3).
+
+**`ir`** → `memory`, `constraints`, `achronyme-parser`
+
+Representación intermedia SSA para compilación de circuitos. `IrLowering` convierte el AST en un `IrProgram` plano (19 variantes de instrucción). Incluye 4 pases de optimización (`const_fold`, `dce`, `bool_prop`, `taint`) y un evaluador para ejecución concreta del IR.
+
+**`vm`** → `memory`, `constraints`
+
+VM de bytecode basada en registros. 40+ opcodes, compilador de bytecode (`FunctionCompiler`), 23 funciones nativas, soporte de bloques `prove {}`. Usa `constraints` para cálculo de hash Poseidon en modo VM.
+
+### Capa Superior
+
+**`compiler`** → `memory`, `vm`, `constraints`, `achronyme-parser`, `ir`
+
+Compilación de backend desde IR a sistemas de restricciones. `R1CSCompiler` mapea variables SSA a combinaciones lineales y emite restricciones R1CS. `PlonkishCompiler` usa evaluación perezosa `PlonkVal` con filas basadas en celdas. Ambos backends incluyen `compile_ir_with_witness()` para compilación + generación de testigos combinada.
+
+**`cli`** → `memory`, `vm`, `compiler`, `constraints`, `ir`
+
+CLI orientado al usuario. Despacha `ach run` (ruta VM) y `ach circuit` (ruta de restricciones). Maneja orquestación de pruebas con bibliotecas criptográficas externas:
+- **arkworks**: `ark-groth16`, `ark-bn254`, `ark-relations` para pruebas Groth16
+- **halo2**: `halo2_proofs` para pruebas PlonK
+
+## Puntos de Entrada Clave
+
+| Tarea | Crate | Función |
+|------|-------|----------|
+| Parsear fuente | `achronyme-parser` | `parse_program(source)` |
+| Bajar a IR | `ir` | `IrLowering::lower_circuit(source, pub, wit)` |
+| Optimizar IR | `ir` | `passes::optimize(&mut program)` |
+| Compilar a R1CS | `compiler` | `R1CSCompiler::compile_ir(program)` |
+| Compilar a Plonkish | `compiler` | `PlonkishCompiler::compile_ir(program)` |
+| Generar testigo | `compiler` | `R1CSCompiler::compile_ir_with_witness(program, inputs)` |
+| Exportar .r1cs | `constraints` | `write_r1cs(cs)` |
+| Exportar .wtns | `constraints` | `write_wtns(witness)` |
+| Ejecutar VM | `vm` | `VM::interpret(function)` |
+| Ejecutar CLI | `cli` | `main()` → despacho de comandos |

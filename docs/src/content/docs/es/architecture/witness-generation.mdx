@@ -1,0 +1,169 @@
+---
+title: "Generación de Testigos"
+description: "Cómo se generan los testigos a partir de circuitos compilados."
+---
+
+Un **testigo** es la asignación completa de valores a todos los cables en un sistema de restricciones. Achronyme genera testigos vía **reproducción de traza** — el compilador registra cada computación intermedia durante la compilación, luego reproduce esas operaciones con valores de entrada concretos.
+
+## Resumen
+
+El pipeline de generación de testigos:
+
+1. **Compilación**: `R1CSCompiler::compile_ir()` recorre el IR y registra un `WitnessOp` para cada variable intermedia que asigna
+2. **Captura**: `WitnessGenerator::from_compiler()` captura la traza de ops, la disposición de variables y los parámetros de Poseidon
+3. **Generación**: `generate(inputs)` asigna el vector de testigo, llena los valores de entrada y reproduce las ops
+
+Alternativamente, `compile_ir_with_witness(program, inputs)` combina los tres pasos — también ejecuta el evaluador IR primero para validación temprana.
+
+## WitnessOp
+
+Cada `WitnessOp` registra cómo calcular el valor de un cable intermedio:
+
+### AssignLC
+
+```rust
+AssignLC { target: Variable, lc: LinearCombination }
+```
+
+Evalúa una combinación lineal contra el testigo actual: `target = lc.evaluate(witness)`. Emitido por `materialize_lc` cuando una combinación lineal se materializa en un nuevo cable.
+
+### Multiply
+
+```rust
+Multiply { target: Variable, a: LinearCombination, b: LinearCombination }
+```
+
+Calcula `target = a.evaluate(witness) × b.evaluate(witness)`. Emitido por `multiply_lcs` para multiplicación general.
+
+### Inverse
+
+```rust
+Inverse { target: Variable, operand: LinearCombination }
+```
+
+Calcula `target = 1 / operand.evaluate(witness)`. Emitido por `divide_lcs` para división. Error si el operando evalúa a cero.
+
+### BitExtract
+
+```rust
+BitExtract { target: Variable, source: LinearCombination, bit_index: u32 }
+```
+
+Extrae un solo bit: `target = (source >> bit_index) & 1`. Emitido por la descomposición booleana de `RangeCheck`. Los elementos de campo son de 256 bits (4 × 64 bits limbs), así que `bit_index` puede ser 0–255.
+
+### IsZero
+
+```rust
+IsZero { diff: LinearCombination, target_inv: Variable, target_result: Variable }
+```
+
+El gadget IsZero:
+- Si `diff == 0`: `inv = 0`, `result = 1`
+- Si `diff != 0`: `inv = 1/diff`, `result = 0`
+
+Usado por las instrucciones de comparación `IsEq` e `IsNeq`.
+
+### PoseidonHash
+
+```rust
+PoseidonHash { left: Variable, right: Variable, output: Variable,
+               internal_start: usize, internal_count: usize }
+```
+
+Calcula el hash Poseidon 2-a-1 reproduciendo la permutación completa nativamente. Llena ~361 valores de cables internos (360 estados de ronda + 1 inicialización de capacidad) comenzando en `internal_start`. El orden de asignación coincide exactamente con lo que `compile_poseidon` produce en el backend R1CS.
+
+## WitnessGenerator
+
+```rust
+struct WitnessGenerator {
+    ops: Vec<WitnessOp>,
+    num_variables: usize,
+    public_inputs: Vec<(String, Variable)>,
+    witnesses: Vec<(String, Variable)>,
+    poseidon_params: Option<PoseidonParams>,
+}
+```
+
+### Construcción
+
+```rust
+let wg = WitnessGenerator::from_compiler(&compiler);
+```
+
+Debe llamarse después de `compile_ir()`. Captura la traza de ops, conteo de variables, disposición de entradas/testigos y parámetros de Poseidon inicializados perezosamente.
+
+### Generación
+
+```rust
+let witness: Vec<FieldElement> = wg.generate(inputs)?;
+```
+
+El método `generate()`:
+
+1. Asigna un vector de `num_variables` elementos de campo
+2. Establece el cable 0 = 1 (el cable constante ONE)
+3. Llena cables de entradas públicas del mapa `inputs` proporcionado
+4. Llena cables de testigo del mapa `inputs` proporcionado
+5. Reproduce cada `WitnessOp` en orden para calcular valores intermedios
+6. Devuelve el vector de testigo completo
+
+### Errores
+
+```rust
+enum WitnessError {
+    MissingInput(String),                    // entrada requerida no proporcionada
+    DivisionByZero { variable_index: usize }, // inverso de cero
+}
+```
+
+## Disposición de Cables
+
+El vector de testigo sigue esta disposición (requerida para compatibilidad con snarkjs):
+
+```
+Índice: 0       1..n_pub    n_pub+1..
+        ONE     público     testigo + intermedios
+```
+
+- **Cable 0**: Siempre 1 (la constante)
+- **Cables 1..n_pub**: Entradas públicas en orden de declaración
+- **Cables restantes**: Entradas testigo seguidas de variables intermedias
+
+Las entradas públicas deben asignarse antes de las entradas testigo — snarkjs espera este orden.
+
+## Pipeline Combinado
+
+El uso más común es `compile_ir_with_witness()`, que hace todo en una llamada:
+
+```rust
+let witness = compiler.compile_ir_with_witness(&program, &inputs)?;
+```
+
+Este método:
+1. Evalúa el IR con entradas concretas (`ir::eval::evaluate()`) para validación temprana
+2. Compila el IR a restricciones (llenando `witness_ops`)
+3. Construye un `WitnessGenerator` desde el compilador
+4. Genera el testigo
+5. Verifica el testigo contra el sistema de restricciones
+
+Tanto `R1CSCompiler` como `PlonkishCompiler` proporcionan este método.
+
+## Testigo de Poseidon
+
+El hash Poseidon es la computación de testigo más compleja. `fill_poseidon` reproduce la permutación:
+
+1. Inicializar estado: `[left, right, 0]` (capacidad = 0)
+2. Aplicar la permutación Poseidon (rondas completas → rondas parciales → rondas completas)
+3. Para cada ronda: agregar constante de ronda, aplicar S-box, multiplicar por matriz MDS
+4. Registrar cada valor de estado intermedio en el testigo en el índice de cable correcto
+
+El orden de asignación de cables debe coincidir exactamente con lo que `compile_poseidon` produce — cualquier discrepancia causa que la verificación del testigo falle.
+
+## Archivos Fuente
+
+| Componente | Archivo |
+|-----------|------|
+| WitnessOp & WitnessGenerator | `compiler/src/witness_gen.rs` |
+| R1CS compile_ir_with_witness | `compiler/src/r1cs_backend.rs` |
+| Plonkish compile_ir_with_witness | `compiler/src/plonkish_backend.rs` |
+| Parámetros de Poseidon | `constraints/src/poseidon.rs` |

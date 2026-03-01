@@ -1,0 +1,156 @@
+---
+title: "Backends"
+description: "Backends de compilación de restricciones R1CS y Plonkish."
+---
+
+Achronyme compila el mismo IR SSA en dos backends de sistema de restricciones: **R1CS** (para Groth16) y **Plonkish** (para KZG-PlonK). Ambos residen en el crate `compiler`.
+
+## Backend R1CS
+
+**Archivo:** `compiler/src/r1cs_backend.rs`
+
+El backend R1CS compila instrucciones IR en restricciones del sistema de restricciones de rango 1 de la forma `A × B = C`, donde A, B, C son combinaciones lineales de valores de cables.
+
+### Estructuras de Datos Principales
+
+```
+R1CSCompiler {
+    cs: ConstraintSystem,          // restricciones A×B=C
+    bindings: HashMap<String, Variable>,  // var declarada → cable
+    vars: HashMap<SsaVar, LinearCombination>,  // var SSA → CL
+    witness_ops: Vec<WitnessOp>,   // traza para generación de testigos
+    proven_boolean: HashSet<SsaVar>,  // omitir verificación booleana
+}
+```
+
+### Disposición de Cables
+
+```
+Índice: 0       1..n_pub    n_pub+1..
+        ONE     público     testigo + intermedios
+```
+
+El cable 0 siempre es la constante 1. Las entradas públicas se asignan antes de los testigos para compatibilidad con snarkjs.
+
+### Estrategia de Compilación
+
+El backend mapea cada `SsaVar` a una `LinearCombination` (sparse `Vec<(Variable, FieldElement)>`).
+
+**Operaciones gratis** (solo aritmética de CL, sin restricciones):
+- `Add(a, b)` → `lc_a + lc_b`
+- `Sub(a, b)` → `lc_a - lc_b`
+- `Neg(a)` → `-lc_a`
+- `Const(v)` → `v * Variable::ONE`
+
+**Operaciones que emiten restricciones:**
+- `Mul(a, b)` → asignar cable, forzar `a × b = result` (1 restricción)
+- `Div(a, b)` → calcular inverso, forzar `b × inv = 1`, luego `a × inv = result` (2 restricciones)
+- `Mux(c, t, f)` → forzar `c` booleano, forzar `c × (t-f) = result - f` (2 restricciones)
+- `AssertEq(a, b)` → forzar `a = b` (1 restricción)
+
+### Costos de Restricciones
+
+| Operación | Restricciones | Notas |
+|-----------|-------------|-------|
+| Add / Sub / Neg | 0 | Aritmética de CL |
+| Const / Input | 0 | Asignación de cable |
+| Mul | 1 | `multiply_lcs` |
+| Div | 2 | inverso + multiplicar |
+| Mux | 2 | verificación booleana + selección |
+| AssertEq | 1 | `enforce_equal` |
+| Assert | 2 | verificación booleana + forzar = 1 |
+| Not | 1 | verificación booleana |
+| And / Or | 3 | 2 verificaciones booleanas + 1 multiplicar |
+| IsEq / IsNeq | 2 | Gadget IsZero |
+| IsLt / IsLe | ~760 | 2×252 bits verificaciones de rango + descomposición de 253 bits |
+| PoseidonHash | 361 | 360 restricciones de ronda + 1 capacidad |
+| RangeCheck(n) | n+1 | n descomposición de bits + verificación de suma |
+
+### Optimización Booleana
+
+Si una variable está en el conjunto `proven_boolean` (del pase `bool_prop`), el backend omite su restricción de verificación booleana. Esto ahorra 1 restricción por variable booleana conocida usada en `Mux`, `And`, `Or` o `Not`.
+
+## Backend Plonkish
+
+**Archivo:** `compiler/src/plonkish_backend.rs`
+
+El backend Plonkish compila IR en una tabla de filas de puerta con columnas, restricciones de copia y tablas de lookup.
+
+### Columnas Estándar
+
+| Columna | Tipo | Propósito |
+|--------|------|---------|
+| `s_arith` | Fija | Selector de puerta aritmética |
+| `s_range` | Fija | Selector de verificación de rango |
+| `constant` | Fija | Valores constantes |
+| `a`, `b`, `c`, `d` | Advice | Cables de computación |
+| `instance_0` | Instance | Entradas públicas |
+
+### Puerta Aritmética Estándar
+
+```
+s_arith · (a · b + c − d) = 0
+```
+
+Cada multiplicación emite una fila. La suma se codifica como `a·1 + c = d`.
+
+### Evaluación Perezosa
+
+El backend Plonkish usa `PlonkVal` para evaluación perezosa:
+
+```
+PlonkVal::Cell(CellRef)          // materializado en una celda
+PlonkVal::Constant(FieldElement)  // aún no colocado
+PlonkVal::DeferredAdd(a, b)      // diferido hasta que se necesite
+PlonkVal::DeferredSub(a, b)      // diferido hasta que se necesite
+PlonkVal::DeferredNeg(a)         // diferido hasta que se necesite
+```
+
+Las operaciones Add, Sub y Neg construyen expresiones diferidas. Solo cuando un valor se necesita para multiplicación o una función integrada, `materialize_val()` emite una fila real.
+
+Esto significa que una cadena de sumas como `a + b + c + d` emite menos filas que en un enfoque ingenuo — solo la materialización final emite filas.
+
+### Verificaciones de Rango vía Lookups
+
+A diferencia de R1CS (que usa n+1 restricciones de descomposición de bits), las verificaciones de rango Plonkish usan una **tabla de lookup**: 1 fila por verificación independientemente del ancho de bits. La tabla de rango se pre-llena con valores `[0, 2^bits)`.
+
+### Operaciones de Comparación
+
+- `IsLt(a, b)` → verificaciones de rango de 252 bits en ambos operandos + descomposición de 253 bits de `b − a + 2^252 − 1`
+- `IsLe(a, b)` → `1 − IsLt(b, a)` (intercambiar y negar)
+- `IsZero(a)` → establece `d` a constante 0 (no es un ArithRow) para verificación sólida
+
+### Generación de Testigos
+
+`PlonkishWitnessGenerator` reproduce entradas `PlonkWitnessOp` para llenar la tabla de asignación:
+
+```
+PlonkWitnessOp::AssignInput { column, row, name }
+PlonkWitnessOp::CopyValue { dst_col, dst_row, src_col, src_row }
+PlonkWitnessOp::SetConstant { column, row, value }
+PlonkWitnessOp::ArithRow { row }       // calcular d = a*b + c
+PlonkWitnessOp::InverseRow { row }     // calcular inverso
+PlonkWitnessOp::BitExtract { ... }     // extraer bit del valor
+```
+
+## Comparación de Backends
+
+| Característica | R1CS | Plonkish |
+|---------|------|----------|
+| Modelo de restricción | A×B=C | Polinomios de puerta |
+| Costo de suma | 0 (CL) | 0 (diferido) |
+| Costo de multiplicación | 1 restricción | 1 fila |
+| Verificación de rango | n+1 restricciones | 1 fila de lookup |
+| Exportación binaria | `.r1cs` + `.wtns` (iden3) | Aún no |
+| Sistema de pruebas | Groth16 (arkworks) | KZG-PlonK (halo2) |
+| Bandera CLI | `--backend r1cs` (predeterminado) | `--backend plonkish` |
+
+## Archivos Fuente
+
+| Componente | Archivo |
+|-----------|------|
+| Backend R1CS | `compiler/src/r1cs_backend.rs` |
+| Backend Plonkish | `compiler/src/plonkish_backend.rs` |
+| Sistema de restricciones | `constraints/src/r1cs.rs` |
+| Sistema Plonkish | `constraints/src/plonkish.rs` |
+| Errores R1CS | `compiler/src/r1cs_error.rs` |

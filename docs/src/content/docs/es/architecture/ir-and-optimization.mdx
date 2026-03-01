@@ -1,0 +1,194 @@
+---
+title: "IR y Optimización"
+description: "Representación intermedia SSA y pases de optimización."
+---
+
+La IR (representación intermedia) es el puente entre el AST del parser y los backends de restricciones. Usa forma de Asignación Estática Única — cada variable se define exactamente una vez.
+
+## Variables SSA
+
+```rust
+struct SsaVar(pub u32);
+```
+
+Cada `SsaVar` es una variable única e inmutable identificada por un entero. El `IrProgram` las asigna secuencialmente vía `fresh_var()`.
+
+## Instrucciones
+
+El IR tiene 19 variantes de instrucción. Cada una define exactamente una variable `result`:
+
+### Datos
+
+| Instrucción | Campos | Descripción |
+|-------------|--------|-------------|
+| `Const` | `value: FieldElement` | Constante en tiempo de compilación |
+| `Input` | `name, visibility` | Entrada del circuito (pública o testigo) |
+
+### Aritmética
+
+| Instrucción | Descripción | Costo R1CS |
+|-------------|-------------|-----------|
+| `Add(lhs, rhs)` | Suma de campo | 0 (aritmética CL) |
+| `Sub(lhs, rhs)` | Resta de campo | 0 |
+| `Mul(lhs, rhs)` | Multiplicación de campo | 1 restricción |
+| `Div(lhs, rhs)` | División de campo | 2 restricciones |
+| `Neg(operand)` | Negación de campo | 0 |
+
+### Flujo de Control
+
+| Instrucción | Descripción | Costo R1CS |
+|-------------|-------------|-----------|
+| `Mux(cond, if_true, if_false)` | Selector booleano | 2 restricciones |
+
+### Aserciones
+
+| Instrucción | Descripción | Costo R1CS |
+|-------------|-------------|-----------|
+| `AssertEq(lhs, rhs)` | Forzar igualdad | 1 restricción |
+| `Assert(operand)` | Forzar operando == 1 | 2 restricciones |
+| `RangeCheck(operand, bits)` | Forzar 0 ≤ operando < 2^bits | bits+1 restricciones |
+
+### Lógica Booleana
+
+| Instrucción | Descripción | Costo R1CS |
+|-------------|-------------|-----------|
+| `Not(operand)` | 1 − operando | 1 restricción |
+| `And(lhs, rhs)` | lhs × rhs | 3 restricciones |
+| `Or(lhs, rhs)` | lhs + rhs − lhs×rhs | 3 restricciones |
+
+### Comparaciones
+
+| Instrucción | Descripción | Costo R1CS |
+|-------------|-------------|-----------|
+| `IsEq(lhs, rhs)` | 1 si iguales, 0 en caso contrario | 2 restricciones |
+| `IsNeq(lhs, rhs)` | 1 si no iguales, 0 en caso contrario | 2 restricciones |
+| `IsLt(lhs, rhs)` | 1 si lhs < rhs | ~760 restricciones |
+| `IsLe(lhs, rhs)` | 1 si lhs ≤ rhs | ~760 restricciones |
+
+### Criptográfica
+
+| Instrucción | Descripción | Costo R1CS |
+|-------------|-------------|-----------|
+| `PoseidonHash(left, right)` | Hash Poseidon 2-a-1 | 361 restricciones |
+
+## IrProgram
+
+```rust
+struct IrProgram {
+    instructions: Vec<Instruction>,
+    next_var: u32,
+    var_names: HashMap<SsaVar, String>,   // nombres fuente para errores
+    var_types: HashMap<SsaVar, IrType>,   // Field o Bool
+}
+```
+
+El programa es una lista plana de instrucciones — no se necesitan phi-nodes porque los circuitos no tienen ramificación dinámica. Los metadatos de tipo (`IrType::Field` o `IrType::Bool`) se establecen por anotaciones de tipo y los backends los usan para omitir verificación booleana redundante.
+
+## Bajada a IR
+
+`IrLowering` convierte el AST en un `IrProgram`:
+
+```rust
+// Con declaraciones explícitas
+IrLowering::lower_circuit(source, public_vars, witness_vars) -> IrProgram
+
+// Con declaraciones en el código fuente
+IrLowering::lower_self_contained(source) -> (pub_names, wit_names, IrProgram)
+```
+
+### Reglas Clave de Bajada
+
+- Las vinculaciones **`let`** son alias — no se emite instrucción, el nombre mapea a un `SsaVar` existente
+- **`if/else`** se compila a `Mux(cond, then_val, else_val)`
+- Los bucles **`for`** se desenrollan estáticamente (máximo 10,000 iteraciones)
+- Las **llamadas a funciones** se insertan en línea en cada punto de llamada con detección de recursión vía `call_stack`
+- Los **arrays** son `EnvValue::Array(Vec<SsaVar>)` — la indexación debe ser constante en tiempo de compilación
+- **`len(arr)`** se resuelve en tiempo de compilación a una constante
+
+### Entorno
+
+Las variables se rastrean vía `HashMap<String, EnvValue>`:
+
+```rust
+enum EnvValue {
+    Scalar(SsaVar),
+    Array(Vec<SsaVar>),
+}
+```
+
+## Pases de Optimización
+
+El optimizador ejecuta tres pases secuencialmente vía `passes::optimize(&mut program)`:
+
+### 1. Plegado de Constantes (`const_fold`)
+
+Un pase hacia adelante O(n) que evalúa operaciones sobre constantes conocidas:
+
+- **Aritmética**: `Const(3) + Const(5)` → `Const(8)`
+- **Identidad**: `x * 1` → `x`, `x + 0` → `x`
+- **Aniquilación**: `x * 0` → `Const(0)`
+- **Auto-operaciones**: `x - x` → `Const(0)`, `x / x` → `Const(1)` (cuando x es una constante no cero)
+- **Lógica booleana**: pliega `Not`, `And`, `Or` sobre operandos constantes
+- **Comparaciones**: pliega `IsEq`, `IsNeq`, `IsLt`, `IsLe` sobre operandos constantes (comparación canónica de limbs)
+- **Verificaciones de rango**: verifica `RangeCheck` sobre constantes, reemplaza con pass-through
+
+### 2. Eliminación de Código Muerto (`dce`)
+
+Un pase hacia atrás que elimina instrucciones cuyos resultados nunca se usan.
+
+**Eliminables** (puros): `Const`, `Add`, `Sub`, `Neg`
+
+**Conservadores** (pueden tener efectos secundarios o ser costosos): `Mul`, `Div`, `Mux`, `PoseidonHash`, `RangeCheck`, `Not`, `And`, `Or`, `IsEq`, `IsNeq`, `IsLt`, `IsLe`, `Assert`
+
+**Nunca eliminados**: `AssertEq`, `Input`, `RangeCheck`, `Assert` (con efectos secundarios)
+
+### 3. Propagación Booleana (`bool_prop`)
+
+Un pase hacia adelante O(n) que calcula el conjunto de variables SSA probadas como booleanas (0 o 1). Los backends usan este conjunto para omitir restricciones de verificación booleana redundantes.
+
+**Semillas** (booleanas conocidas):
+- `Const(0)` y `Const(1)`
+- Resultados de comparación: `IsEq`, `IsNeq`, `IsLt`, `IsLe`
+- Objetivos de `RangeCheck(x, 1)`
+- Operandos y resultados de `Assert`
+- Variables con anotación `IrType::Bool`
+
+**Propagación**:
+- `Not(x)` → resultado es booleano si `x` es booleano
+- `And(a, b)` → resultado es booleano si ambos son booleanos
+- `Or(a, b)` → resultado es booleano si ambos son booleanos
+- `Mux(c, t, f)` → resultado es booleano si tanto `t` como `f` son booleanos
+
+## Análisis de Contaminación (`taint`)
+
+Un pase de análisis adicional (no parte de `optimize()`) que se ejecuta como diagnóstico:
+
+1. **Propagación de contaminación hacia adelante**: marca todas las variables SSA derivadas de entradas
+2. **Alcanzabilidad de restricciones hacia atrás**: marca variables usadas por aserciones/restricciones
+
+Advertencias:
+- **`UnderConstrained`**: una entrada no influye en ninguna restricción — posible problema de solidez
+- **`UnusedInput`**: una entrada se declara pero nunca se usa
+
+## Evaluador IR
+
+`ir::eval::evaluate(program, inputs)` proporciona evaluación concreta hacia adelante de un `IrProgram`:
+
+```rust
+evaluate(program: &IrProgram, inputs: &HashMap<String, FieldElement>)
+    -> Result<HashMap<SsaVar, FieldElement>, EvalError>
+```
+
+Usado por `compile_ir_with_witness()` para validación temprana antes de la generación de restricciones. Variantes de error: `MissingInput`, `DivisionByZero`, `AssertionFailed`, `AssertEqFailed`, `RangeCheckFailed`, `UndefinedVar`.
+
+## Archivos Fuente
+
+| Componente | Archivo |
+|-----------|------|
+| Tipos | `ir/src/types.rs` |
+| Bajada | `ir/src/lower.rs` |
+| Evaluador | `ir/src/eval.rs` |
+| Plegado de Constantes | `ir/src/passes/const_fold.rs` |
+| Eliminación de Código Muerto | `ir/src/passes/dce.rs` |
+| Propagación Booleana | `ir/src/passes/bool_prop.rs` |
+| Análisis de Contaminación | `ir/src/passes/taint.rs` |
