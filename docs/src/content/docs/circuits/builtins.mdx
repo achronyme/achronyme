@@ -22,7 +22,7 @@ Circuits provide built-in functions for assertions, hashing, conditional selecti
 
 Enforces that two expressions are equal. Costs 1 constraint.
 
-```
+```ach
 public out
 witness a
 witness b
@@ -37,7 +37,7 @@ This is the most common builtin — use it to bind computed values to public out
 
 Enforces that a boolean expression is true. Costs 2 constraints (one for boolean enforcement, one to enforce the value equals 1).
 
-```
+```ach
 witness x
 witness y
 
@@ -50,7 +50,7 @@ Unlike `assert_eq`, this works with any expression that evaluates to 0 or 1.
 
 Computes a Poseidon 2-to-1 hash. Costs 361 constraints (360 for the permutation rounds + 1 for the capacity wire). The output is compatible with circomlibjs.
 
-```
+```ach
 public expected
 witness a
 witness b
@@ -63,7 +63,7 @@ assert_eq(h, expected)
 
 Hashes an arbitrary number of values by left-folding `poseidon`. Three arguments cost 2 × 361 = 722 constraints, four arguments cost 3 × 361 = 1083, and so on.
 
-```
+```ach
 public expected
 witness a
 witness b
@@ -78,7 +78,7 @@ assert_eq(h, expected)
 
 Conditional selection: returns `a` when `cond` is 1, `b` when `cond` is 0. Costs 2 constraints (one boolean enforcement for `cond`, one selection constraint).
 
-```
+```ach
 public out
 witness cond
 witness a
@@ -94,7 +94,7 @@ Both `a` and `b` are always evaluated — there is no short-circuit behavior.
 
 Proves that a value fits within a given number of bits. In R1CS, this costs `bits + 1` constraints (boolean decomposition). In Plonkish, it costs 1 lookup.
 
-```
+```ach
 witness x
 witness y
 
@@ -109,7 +109,7 @@ range_check(y, 16)
 
 Verifies a Merkle membership proof. Takes a root, a leaf, an array of sibling hashes (the path), and an array of direction indices (0 = left, 1 = right). The proof is unrolled at the IR level — each level costs roughly 363 constraints (one Poseidon hash + a mux).
 
-```
+```ach
 public root
 witness leaf
 witness path[1]
@@ -124,7 +124,7 @@ The `path` and `indices` arrays must have the same length, which determines the 
 
 Returns the compile-time length of an array. Costs 0 constraints — the value is resolved during compilation.
 
-```
+```ach
 witness vals[3]
 
 let n = len(vals)

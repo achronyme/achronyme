@@ -19,7 +19,7 @@ The verifier recomputes the root from these values and checks it matches the exp
 
 Create `merkle.ach`:
 
-```
+```ach
 public root
 witness leaf
 witness path[3]
@@ -35,7 +35,7 @@ This verifies membership in a tree of depth 3 (8 leaves). The `merkle_verify` bu
 
 Internally, `merkle_verify` unrolls to:
 
-```
+```ach
 // Level 0
 let l0 = mux(indices[0], path[0], leaf)
 let r0 = mux(indices[0], leaf, path[0])
@@ -58,7 +58,7 @@ assert_eq(h2, root)
 
 To provide inputs, you need to compute the tree. In a separate script or program, build the tree bottom-up:
 
-```
+```ach
 // 8 leaves
 let leaves = [
     0p100, 0p200, 0p300, 0p400,
@@ -135,7 +135,7 @@ The verifier only sees `root` (the public input). The leaf value, path, and indi
 
 You can also generate proofs inline without the CLI:
 
-```
+```ach
 // ... compute tree values as above ...
 
 let p = prove {
@@ -154,7 +154,7 @@ print(verify_proof(p))  // true
 
 Change the array size to match your tree depth:
 
-```
+```ach
 // Depth 1 (2 leaves)
 witness path[1]
 witness indices[1]
@@ -174,7 +174,7 @@ The `path` and `indices` arrays must have the same length.
 
 For explicit type safety, add annotations:
 
-```
+```ach
 public root: Field
 witness leaf: Field
 witness path[3]: Field

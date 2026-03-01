@@ -15,7 +15,7 @@ En Achronyme, escribes circuitos usando la misma sintaxis que los programas regu
 
 ### 1. Archivo de circuito independiente
 
-```
+```ach
 public output
 witness secret
 
@@ -30,7 +30,7 @@ ach circuit hash.ach --inputs "output=17159...,secret=42"
 
 ### 2. Bloque `prove {}` en línea
 
-```
+```ach
 let secret = 0p42
 let hash = 0p17159...
 
@@ -73,7 +73,7 @@ Estos se rechazan en tiempo de compilación con mensajes de error claros.
 
 ## Pipeline de Compilación
 
-```
+```ach
 Fuente → Parser → AST → Bajada a IR → SSA IR → Optimizar → Backend → Restricciones
 ```
 

@@ -11,7 +11,7 @@ Escribe código legible. Decide qué se demuestra. El mismo lenguaje para ejecuc
 
 ### Ejecución de propósito general
 
-```
+```ach
 let make_counter = fn(init) {
     mut n = init
     return fn() { n = n + 1; return n }
@@ -23,7 +23,7 @@ print(c())  // 2
 
 ### Circuito ZK
 
-```
+```ach
 public root
 witness leaf
 witness path[3]
@@ -39,7 +39,7 @@ merkle_verify(root, leaf, path, indices)
 
 ### Generación de pruebas en línea
 
-```
+```ach
 let secret = 0p42
 let hash = 0p17159...  // poseidon(42, 0)
 
@@ -62,7 +62,7 @@ Achronyme tiene dos modos de ejecución desde el mismo código fuente:
 
 El bloque `prove {}` conecta ambos: se ejecuta dentro de la VM, compila su cuerpo como un circuito, genera un testigo a partir de variables capturadas y produce una prueba criptográfica — todo en una sola expresión.
 
-```
+```ach
 Fuente (.ach)
     │
     ├─► Parser (PEG) → AST

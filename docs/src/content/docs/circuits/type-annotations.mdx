@@ -24,7 +24,7 @@ Four types are available in circuit context:
 
 Add `: Type` after the variable name (or after the array size):
 
-```
+```ach
 public root: Field
 witness flag: Bool
 witness secret: Field
@@ -35,14 +35,14 @@ witness indices[3]: Bool
 
 Without annotations, inputs default to untyped — same behavior as before:
 
-```
+```ach
 public root
 witness secret
 ```
 
 Both forms can coexist in the same circuit:
 
-```
+```ach
 public root: Field
 witness leaf
 witness path[3]: Field
@@ -53,7 +53,7 @@ witness indices[3]
 
 Annotate local bindings with `: Type` after the name, before `=`:
 
-```
+```ach
 witness a: Field
 witness b: Field
 
@@ -68,7 +68,7 @@ The compiler handles annotations depending on the expression's inferred type:
 - **Untyped expression with `: Bool`**: The compiler emits a `RangeCheck(v, 1)` constraint to enforce `v * (1 - v) = 0`, costing **1 extra constraint**. This is necessary for soundness — without enforcement, a malicious prover could assign any value.
 - **Untyped expression with `: Field`**: No enforcement needed. `Field` is the default and doesn't restrict the value space.
 
-```
+```ach
 witness a: Field
 
 // Error: type annotation mismatch for `x`: declared as Bool,
@@ -76,7 +76,7 @@ witness a: Field
 let x: Bool = a + 1
 ```
 
-```
+```ach
 witness w
 
 // Enforced: emits RangeCheck(w, 1) — costs 1 constraint
@@ -89,7 +89,7 @@ Arithmetic operations (`+`, `-`, `*`, `/`, `^`) produce `Field`. Comparisons and
 
 For array annotations, the compiler validates that the array length matches the declared size:
 
-```
+```ach
 witness x
 witness y
 
@@ -99,7 +99,7 @@ let a: Field[3] = [x, y]
 
 `Bool[N]` annotations enforce each untyped element individually (1 constraint per element):
 
-```
+```ach
 witness x
 witness y
 
@@ -111,7 +111,7 @@ let flags: Bool[2] = [x, y]
 
 Annotate parameters with `: Type` and return types with `-> Type`:
 
-```
+```ach
 fn hash_pair(a: Field, b: Field) -> Field {
     poseidon(a, b)
 }
@@ -123,7 +123,7 @@ fn is_valid(x: Field, y: Field) -> Bool {
 
 Mixed typed and untyped parameters are allowed:
 
-```
+```ach
 fn scale(x: Field, factor) {
     x * factor
 }
@@ -131,7 +131,7 @@ fn scale(x: Field, factor) {
 
 The compiler checks that arguments match the declared parameter types at each call site:
 
-```
+```ach
 fn double(x: Field) -> Field { x + x }
 
 witness a: Field
@@ -142,7 +142,7 @@ let result: Field = double(a)    // ok
 
 When a `: Bool` parameter receives an untyped argument, the compiler emits a `RangeCheck` to enforce the boolean constraint (1 extra constraint per untyped argument):
 
-```
+```ach
 witness w    // untyped
 
 fn check(b: Bool) { assert(b) }
@@ -151,7 +151,7 @@ check(w)     // emits RangeCheck(w, 1) — 1 extra constraint
 
 Similarly, when a function with `-> Bool` return type produces an untyped body result, the compiler enforces boolean on the return value:
 
-```
+```ach
 witness w
 
 fn to_flag(x: Field) -> Bool { x }
@@ -164,7 +164,7 @@ If the argument or return value already has a proven type (e.g., from a comparis
 
 `Bool` values can be used in arithmetic (field) context. This is safe because booleans are 0 or 1 in the field:
 
-```
+```ach
 witness flag: Bool
 
 // Bool used in arithmetic — allowed (Bool is subtype of Field)
@@ -202,7 +202,7 @@ The reverse depends on the source value's type:
 
 Annotating an input as `: Bool` emits a one-time `RangeCheck` enforcement constraint (`v * (1-v) = 0`) at the declaration site. This enforced boolean status propagates through `bool_prop`, allowing all downstream uses to **skip** redundant boolean enforcement. The net effect is a saving when the variable is used multiple times in boolean context.
 
-```
+```ach
 // Without annotation: each mux adds 1 boolean enforcement for cond
 witness cond
 let r1 = mux(cond, a, b)   // 2 constraints (1 enforcement + 1 selection)
@@ -244,7 +244,7 @@ The enforcement cost is a one-time soundness guarantee. Downstream uses of the e
 
 A fully typed Merkle membership proof:
 
-```
+```ach
 public root: Field
 witness leaf: Field
 witness path[3]: Field
@@ -255,7 +255,7 @@ merkle_verify(root, leaf, path, indices)
 
 The same circuit with typed helper functions:
 
-```
+```ach
 public expected: Field
 witness a: Field
 witness b: Field

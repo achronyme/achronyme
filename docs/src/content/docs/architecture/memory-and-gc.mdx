@@ -25,7 +25,7 @@ The `Heap` contains 9 typed arenas, one per heap object type:
 
 Each `Arena<T>` uses a slot-based allocator with free list recycling:
 
-```
+```ach
 Arena<T> {
     data: Vec<T>,           // grows monotonically
     free_indices: Vec<u32>, // reusable slot stack
@@ -47,7 +47,7 @@ The GC is a stop-the-world **mark-and-sweep** collector.
 
 The heap tracks live allocation size in `bytes_allocated`. When it exceeds `next_gc_threshold` (starting at 1 MB), the GC is triggered:
 
-```
+```ach
 if heap.request_gc || stress_mode {
     collect_garbage();
 }
@@ -91,7 +91,7 @@ Linear scan over each arena:
 
 After sweeping, the threshold is recalculated with hysteresis:
 
-```
+```ach
 grow = bytes_allocated × 2
 hysteresis = previous_threshold × 1.5
 next_gc_threshold = max(grow, hysteresis, 1 MB)
@@ -118,7 +118,7 @@ Stress mode is used extensively in the test suite (`vm.stress_mode = true`) to v
 
 ### Closure
 
-```
+```ach
 Closure {
     function: u32,       // handle to Function
     upvalues: Vec<u32>,  // handles to Upvalue arena
@@ -127,7 +127,7 @@ Closure {
 
 ### Upvalue
 
-```
+```ach
 Upvalue {
     location: Open(stack_index) | Closed(Value),
     next_open: Option<u32>,  // linked list for open upvalues
@@ -138,7 +138,7 @@ Upvalue {
 
 ### ProofObject
 
-```
+```ach
 ProofObject {
     proof_json: String,   // Groth16 proof data
     public_json: String,  // public inputs

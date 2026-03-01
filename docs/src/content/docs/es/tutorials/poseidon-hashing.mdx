@@ -9,7 +9,7 @@ Poseidon es una función hash amigable con la aritmética diseñada para circuit
 
 Calcula un hash Poseidon 2-a-1:
 
-```
+```ach
 let h = poseidon(1, 2)
 print(h)
 // 7853200120776062878684798364095072458815029376092732009249414926327459813530
@@ -21,7 +21,7 @@ Ambos argumentos pueden ser enteros o elementos de campo. El resultado siempre e
 
 Estos valores coinciden con la salida de circomlibjs:
 
-```
+```ach
 // poseidon(0, 0)
 let h0 = poseidon(0, 0)
 print(h0)
@@ -39,7 +39,7 @@ Puedes usar estos vectores para verificar compatibilidad con otras implementacio
 
 Encadena múltiples valores alimentando el hash anterior como entrada:
 
-```
+```ach
 let h01 = poseidon(1, 2)
 let h012 = poseidon(h01, 3)
 let h0123 = poseidon(h012, 4)
@@ -48,7 +48,7 @@ print(h0123)
 
 O usa `poseidon_many()` para el mismo resultado con menos código:
 
-```
+```ach
 let h = poseidon_many(1, 2, 3, 4)
 print(h)
 // Igual que poseidon(poseidon(poseidon(1, 2), 3), 4)
@@ -60,7 +60,7 @@ print(h)
 
 Poseidon **no** es conmutativo — intercambiar las entradas produce un hash diferente:
 
-```
+```ach
 let h1 = poseidon(1, 2)
 let h2 = poseidon(2, 1)
 assert(h1 != h2)  // valores diferentes
@@ -72,7 +72,7 @@ Esta propiedad es esencial para árboles Merkle, donde los hijos izquierdo y der
 
 Para valores mayores que i60 o para aritmética exacta del campo BN254, usa literales de campo `0p`:
 
-```
+```ach
 let a = 0p21888242871839275222246405745257275088548364400416034343698204186575808495616
 let b = 0p1
 let h = poseidon(a, b)
@@ -83,7 +83,7 @@ print(h)
 
 Poseidon funciona tanto en modo VM como en modo circuito. En circuitos, cada hash emite 361 restricciones R1CS (360 rondas de permutación + 1 inicialización de capacidad):
 
-```
+```ach
 public expected
 witness a
 witness b
@@ -110,7 +110,7 @@ ach circuit hash.ach --inputs "expected=7853200120776062878684798364095072458815
 
 Calcula una raíz Merkle hasheando hojas por pares, luego hasheando los resultados:
 
-```
+```ach
 // Árbol de 4 hojas
 let leaf0 = 0p100
 let leaf1 = 0p200
@@ -128,7 +128,7 @@ print(root)
 
 Para árboles más grandes, usa bucles:
 
-```
+```ach
 // Árbol de 8 hojas
 let leaves = [
     0p100, 0p200, 0p300, 0p400,
@@ -154,7 +154,7 @@ print(root)
 
 Poseidon funciona dentro de `prove {}` para generación de pruebas en línea:
 
-```
+```ach
 let a = 0p1
 let b = 0p2
 let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530

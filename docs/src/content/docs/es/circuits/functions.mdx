@@ -9,7 +9,7 @@ Las funciones en circuitos usan la misma sintaxis `fn` que el código regular de
 
 Define funciones de la misma manera que en modo regular:
 
-```
+```ach
 fn double(x) {
     x + x
 }
@@ -17,7 +17,7 @@ fn double(x) {
 
 Las funciones pueden incluir [anotaciones de tipo](/es/circuits/type-annotations/) en parámetros y tipos de retorno:
 
-```
+```ach
 fn double(x: Field) -> Field {
     x + x
 }
@@ -25,7 +25,7 @@ fn double(x: Field) -> Field {
 
 Llámalas como de costumbre:
 
-```
+```ach
 witness vals[3]
 
 fn double(x) { x + x }
@@ -36,7 +36,7 @@ assert_eq(double(vals[0]), vals[0] + vals[0])
 
 No hay pila de llamadas a funciones en circuitos. Cada punto de llamada expande el cuerpo de la función con los argumentos sustituidos. Si llamas a una función 5 veces, su cuerpo se compila 5 veces.
 
-```
+```ach
 fn square(x) { x * x }
 
 // Cada llamada se inserta independientemente — 1 restricción cada una
@@ -51,7 +51,7 @@ Esto significa que las funciones son una conveniencia para organizar código, no
 
 El costo de una llamada a función es igual a la suma de las restricciones de su cuerpo, más cualquier costo de verificación de tipo. Una función con dos multiplicaciones cuesta 2 restricciones por llamada.
 
-```
+```ach
 fn dot(a0, a1, b0, b1) {
     a0 * b0 + a1 * b1      // 2 restricciones (dos multiplicaciones de variables)
 }
@@ -67,7 +67,7 @@ Cuando una función tiene parámetros tipados o un tipo de retorno, el compilado
 - **Retorno `-> Bool` con resultado no tipado en el cuerpo**: +1 restricción (emite `RangeCheck(result, 1)`)
 - **Argumentos/resultados ya tipados que coinciden**: Sin costo extra
 
-```
+```ach
 fn check(b: Bool) { assert(b) }    // cuerpo: 2 restricciones (assert)
 
 witness w                           // no tipado
@@ -94,7 +94,7 @@ Las funciones en circuitos son puramente un mecanismo de tiempo de compilación.
 
 Un circuito completo usando una función auxiliar:
 
-```
+```ach
 public expected_sum
 witness vals[3]
 

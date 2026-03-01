@@ -9,14 +9,14 @@ Cada circuito necesita declaraciones de entrada explícitas. Estas le dicen al c
 
 Declara una variable a la vez:
 
-```
+```ach
 public output
 witness secret
 ```
 
 O múltiples en una línea, separadas por comas:
 
-```
+```ach
 public x, y
 witness a, b, c
 ```
@@ -27,14 +27,14 @@ Las entradas públicas se convierten en parte de la declaración pública de la 
 
 Declara un array de entradas de tamaño fijo con sintaxis de corchetes:
 
-```
+```ach
 witness path[3]
 witness indices[3]
 ```
 
 Esto crea tres variables indexadas (`path_0`, `path_1`, `path_2`) a las que accedes con indexación estándar. Las declaraciones de array funcionan tanto para entradas públicas como de testigo:
 
-```
+```ach
 public commitments[4]
 witness secrets[4]
 ```
@@ -43,7 +43,7 @@ witness secrets[4]
 
 Una vez declaradas, las entradas son variables ordinarias. Úsalas en expresiones, pásalas a funciones integradas e indexa arrays:
 
-```
+```ach
 public output
 witness a
 witness b
@@ -57,7 +57,7 @@ assert_eq(sum, a + b)
 
 Los elementos de array se acceden por índice:
 
-```
+```ach
 public expected_sum
 witness vals[3]
 
@@ -87,7 +87,7 @@ ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=
 
 Las declaraciones pueden incluir anotaciones de tipo opcionales. Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para detalles.
 
-```
+```ach
 public root: Field
 witness flag: Bool
 witness path[3]: Field

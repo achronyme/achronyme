@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import codeTheme from './src/styles/code-theme.json';
+import achGrammar from './src/styles/achronyme.tmLanguage.json';
 
 // https://astro.build/config
 export default defineConfig({
@@ -23,6 +24,11 @@ export default defineConfig({
 			],
 			expressiveCode: {
 				themes: [codeTheme],
+				shiki: {
+					langs: [
+						{ ...achGrammar, name: 'ach', aliases: ['achronyme'] },
+					],
+				},
 			},
 			favicon: '/favicon.svg',
 			sidebar: [

@@ -13,7 +13,7 @@ There are three ways to create BigInt values:
 
 Use the `0i` prefix followed by width (`256` or `512`) and radix (`x` for hex, `d` for decimal, `b` for binary):
 
-```
+```ach
 let a = 0i256xFF           // 256-bit, hex
 let b = 0i256d255          // 256-bit, decimal
 let c = 0i256b11111111     // 256-bit, binary
@@ -22,7 +22,7 @@ let d = 0i512x1234ABCD     // 512-bit, hex
 
 All three representations of 255 are equal:
 
-```
+```ach
 assert(0i256xFF == 0i256d255)
 assert(0i256d255 == 0i256b11111111)
 ```
@@ -31,7 +31,7 @@ assert(0i256d255 == 0i256b11111111)
 
 `bigint256()` and `bigint512()` construct from integers or strings:
 
-```
+```ach
 let a = bigint256(42)          // from integer
 let b = bigint256("0xFF")     // from hex string
 let c = bigint256("12345")    // from decimal string
@@ -42,7 +42,7 @@ let d = bigint512(0)           // 512-bit zero
 
 Use `typeof()` to inspect BigInt values:
 
-```
+```ach
 let x = 0i256d42
 print(typeof(x))   // "BigInt256"
 
@@ -54,7 +54,7 @@ print(typeof(y))   // "BigInt512"
 
 Standard operators work between BigInts of the same width:
 
-```
+```ach
 let a = 0i256d100
 let b = 0i256d200
 
@@ -67,7 +67,7 @@ print(b % a)   // BigInt256(0x0)    (0)
 
 Exponentiation uses `^` with an integer exponent:
 
-```
+```ach
 let base = 0i256d2
 let result = base ^ 128
 print(result)  // 2^128 as a 256-bit integer
@@ -77,13 +77,13 @@ print(result)  // 2^128 as a 256-bit integer
 
 Unlike Field elements, BigInt arithmetic does **not** wrap around. Operations that exceed the range produce runtime errors:
 
-```
+```ach
 // This will error: BigInt overflow
 let max = bit_not(bigint256(0))  // all bits set = 2^256 - 1
 let boom = max + bigint256(1)    // ERROR: BigIntOverflow
 ```
 
-```
+```ach
 // This will error: BigInt underflow
 let zero = bigint256(0)
 let boom = zero - bigint256(1)   // ERROR: BigIntUnderflow
@@ -95,7 +95,7 @@ This makes bugs visible immediately rather than producing silently wrong results
 
 BigInt enforces strict type boundaries. You cannot mix BigInt with Int, Field, or a different BigInt width:
 
-```
+```ach
 // All of these are runtime errors:
 // bigint256(1) + 1           -- BigInt + Int
 // bigint256(1) + 0p1         -- BigInt + Field
@@ -108,7 +108,7 @@ This prevents accidental arithmetic between incompatible types.
 
 BigInt supports full bitwise manipulation through native functions:
 
-```
+```ach
 let a = 0i256xFF
 let b = 0i256x0F
 
@@ -120,7 +120,7 @@ print(bit_not(b))      // all bits flipped
 
 ### Shifts
 
-```
+```ach
 let one = bigint256(1)
 
 // Shift left: multiply by powers of 2
@@ -137,7 +137,7 @@ Left shifts error if any set bits are shifted out (overflow protection). Right s
 
 Convert between BigInts and individual bits with `to_bits()` and `from_bits()`:
 
-```
+```ach
 let val = bigint256(42)
 let bits = to_bits(val)
 
@@ -162,7 +162,7 @@ The second argument to `from_bits()` is the target width (256 or 512).
 
 Count the number of set bits in a BigInt:
 
-```
+```ach
 fn popcount(x) {
     let bits = to_bits(x)
     mut count = 0
@@ -184,7 +184,7 @@ print("popcount(0xFF) =", popcount(bigint256(255)))  // 8
 
 Swap two values using XOR without a temporary variable:
 
-```
+```ach
 mut a = 0i256d42
 mut b = 0i256d99
 
@@ -201,7 +201,7 @@ print("After XOR swap: a =", a, "b =", b)
 
 Check whether a BigInt is a power of two using the bit trick `n & (n - 1) == 0`:
 
-```
+```ach
 fn is_power_of_two(n) {
     if n == bigint256(0) {
         return false

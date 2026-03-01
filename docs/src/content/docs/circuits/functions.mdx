@@ -9,7 +9,7 @@ Functions in circuits use the same `fn` syntax as regular Achronyme code, but th
 
 Define functions the same way as in regular mode:
 
-```
+```ach
 fn double(x) {
     x + x
 }
@@ -17,7 +17,7 @@ fn double(x) {
 
 Functions can include [type annotations](/circuits/type-annotations/) on parameters and return types:
 
-```
+```ach
 fn double(x: Field) -> Field {
     x + x
 }
@@ -25,7 +25,7 @@ fn double(x: Field) -> Field {
 
 Call them as usual:
 
-```
+```ach
 witness vals[3]
 
 fn double(x) { x + x }
@@ -36,7 +36,7 @@ assert_eq(double(vals[0]), vals[0] + vals[0])
 
 There is no function call stack in circuits. Every call site expands the function body with the arguments substituted in. If you call a function 5 times, its body is compiled 5 times.
 
-```
+```ach
 fn square(x) { x * x }
 
 // Each call inlines independently — 1 constraint each
@@ -51,7 +51,7 @@ This means functions are a convenience for code organization, not a mechanism fo
 
 The cost of a function call equals the sum of its body's constraints, plus any type enforcement costs. A function with two multiplications costs 2 constraints per call.
 
-```
+```ach
 fn dot(a0, a1, b0, b1) {
     a0 * b0 + a1 * b1      // 2 constraints (two variable multiplications)
 }
@@ -67,7 +67,7 @@ When a function has typed parameters or a return type, the compiler may emit add
 - **`-> Bool` return with untyped body result**: +1 constraint (emits `RangeCheck(result, 1)`)
 - **Already-typed arguments/results that match**: No extra cost
 
-```
+```ach
 fn check(b: Bool) { assert(b) }    // body: 2 constraints (assert)
 
 witness w                           // untyped
@@ -94,7 +94,7 @@ Functions in circuits are purely a compile-time mechanism. They cannot capture v
 
 A complete circuit using a helper function:
 
-```
+```ach
 public expected_sum
 witness vals[3]
 

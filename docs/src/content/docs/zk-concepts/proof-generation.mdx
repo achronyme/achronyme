@@ -19,7 +19,7 @@ Achronyme generates zero-knowledge proofs natively — no external tools require
 
 Whether using the CLI or inline `prove {}` blocks, the proof pipeline follows the same steps:
 
-```
+```ach
 Source → Parse → AST → IR → Optimize → Compile → Witness → Verify → Prove
 ```
 
@@ -87,7 +87,7 @@ This produces a Solidity contract that verifies Groth16 proofs for the specific 
 
 Prove blocks let you generate proofs inline within regular Achronyme programs:
 
-```
+```ach
 let secret = 42
 let hash = 0p18569430475105882...
 

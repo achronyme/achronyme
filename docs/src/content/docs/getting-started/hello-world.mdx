@@ -7,7 +7,7 @@ description: Your first Achronyme program and your first circuit.
 
 Create a file `hello.ach`:
 
-```
+```ach
 print("Hello, world!")
 ```
 
@@ -19,13 +19,13 @@ ach run hello.ach
 
 Output:
 
-```
+```ach
 Hello, world!
 ```
 
 ### A more interesting example
 
-```
+```ach
 let fib = fn fib(n) {
     if n < 2 { return n }
     return fib(n - 1) + fib(n - 2)
@@ -40,7 +40,7 @@ for i in 0..10 {
 
 Create a file `multiply.ach`:
 
-```
+```ach
 public product
 witness a
 witness b
@@ -70,7 +70,7 @@ This produces `circuit.r1cs` and `witness.wtns`, ready for snarkjs proof generat
 
 You can also generate proofs directly from Achronyme code:
 
-```
+```ach
 let a = 0p6
 let b = 0p7
 let product = 0p42

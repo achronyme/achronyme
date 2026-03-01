@@ -18,7 +18,7 @@ Every operation in a circuit compiles to zero or more constraints. Understanding
 | `^` (exponentiation) | `x ^ n` | O(log n) | Square-and-multiply |
 | `-` (negation) | `-a` | 0 | Negate LC coefficients |
 
-```
+```ach
 public x2
 public x3
 public x4
@@ -42,7 +42,7 @@ assert_eq(x ^ 4, x4)
 
 Equality checks are cheap (2 constraints). Ordering comparisons are expensive (~760 constraints each) because they require bit decomposition over the BN254 field. Use them sparingly.
 
-```
+```ach
 witness x
 witness y
 
@@ -59,7 +59,7 @@ assert(lt)
 | `\|\|` | `a \|\| b` | 3 | 2 boolean enforcements + 1 gate |
 | `!` | `!a` | 0–1 | Free if operand is already proven boolean |
 
-```
+```ach
 witness x
 witness y
 

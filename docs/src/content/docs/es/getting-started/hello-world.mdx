@@ -7,7 +7,7 @@ description: Tu primer programa Achronyme y tu primer circuito.
 
 Crea un archivo `hello.ach`:
 
-```
+```ach
 print("Hello, world!")
 ```
 
@@ -19,13 +19,13 @@ ach run hello.ach
 
 Salida:
 
-```
+```ach
 Hello, world!
 ```
 
 ### Un ejemplo más interesante
 
-```
+```ach
 let fib = fn fib(n) {
     if n < 2 { return n }
     return fib(n - 1) + fib(n - 2)
@@ -40,7 +40,7 @@ for i in 0..10 {
 
 Crea un archivo `multiply.ach`:
 
-```
+```ach
 public product
 witness a
 witness b
@@ -70,7 +70,7 @@ Esto produce `circuit.r1cs` y `witness.wtns`, listos para generación de pruebas
 
 También puedes generar pruebas directamente desde código Achronyme:
 
-```
+```ach
 let a = 0p6
 let b = 0p7
 let product = 0p42

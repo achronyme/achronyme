@@ -25,7 +25,7 @@ El `Heap` contiene 9 arenas tipadas, una por tipo de objeto del heap:
 
 Cada `Arena<T>` usa un asignador basado en slots con reciclaje de lista libre:
 
-```
+```ach
 Arena<T> {
     data: Vec<T>,           // crece monótonamente
     free_indices: Vec<u32>, // pila de slots reutilizables
@@ -47,7 +47,7 @@ El GC es un recolector **mark-and-sweep** que detiene el mundo.
 
 El heap rastrea el tamaño de asignación viva en `bytes_allocated`. Cuando excede `next_gc_threshold` (comenzando en 1 MB), se activa el GC:
 
-```
+```ach
 if heap.request_gc || stress_mode {
     collect_garbage();
 }
@@ -91,7 +91,7 @@ Escaneo lineal sobre cada arena:
 
 Después del barrido, el umbral se recalcula con histéresis:
 
-```
+```ach
 grow = bytes_allocated × 2
 hysteresis = previous_threshold × 1.5
 next_gc_threshold = max(grow, hysteresis, 1 MB)
@@ -118,7 +118,7 @@ El modo de estrés se usa extensivamente en el conjunto de pruebas (`vm.stress_m
 
 ### Closure
 
-```
+```ach
 Closure {
     function: u32,       // handle a Function
     upvalues: Vec<u32>,  // handles a la arena de Upvalue
@@ -127,7 +127,7 @@ Closure {
 
 ### Upvalue
 
-```
+```ach
 Upvalue {
     location: Open(stack_index) | Closed(Value),
     next_open: Option<u32>,  // lista enlazada para upvalues abiertos
@@ -138,7 +138,7 @@ Los upvalues **abiertos** apuntan a un slot de la pila — la variable aún est�
 
 ### ProofObject
 
-```
+```ach
 ProofObject {
     proof_json: String,   // datos de prueba Groth16
     public_json: String,  // entradas públicas

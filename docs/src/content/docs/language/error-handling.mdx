@@ -9,7 +9,7 @@ Achronyme provides detailed error messages across all execution modes. Errors in
 
 When running with `ach run`, the VM reports errors with line numbers:
 
-```
+```ach
 [line 5] in main: DivisionByZero
 ```
 
@@ -35,7 +35,7 @@ When running with `ach run`, the VM reports errors with line numbers:
 
 Achronyme uses 60-bit signed integers (range: -2^59 to 2^59 - 1). Overflow is always an error:
 
-```
+```ach
 let big = 576460752303423487   // 2^59 - 1 (max i60)
 let overflow = big + 1         // ERROR: IntegerOverflow
 ```
@@ -46,7 +46,7 @@ To work with larger values, use `0p` field literals for BN254 field elements (e.
 
 Integer and field values cannot be mixed directly:
 
-```
+```ach
 let x = 42
 let y = 0p10
 let z = x + y  // ERROR: TypeMismatch
@@ -58,7 +58,7 @@ Use `0p` literals for explicit conversion: `let z = 0p42 + y`.
 
 Syntax errors include line and column information:
 
-```
+```ach
 parse error at line 3, col 10: expected expression
 ```
 
@@ -84,7 +84,7 @@ When compiling circuits with `ach circuit`, the IR lowering phase reports errors
 
 Some errors include user-friendly guidance:
 
-```
+```ach
 // Using a string in a circuit:
 "cannot be used in circuits (circuits operate on field elements only)"
 
@@ -99,7 +99,7 @@ Some errors include user-friendly guidance:
 
 Errors during constraint generation:
 
-```
+```ach
 R1CS compilation error: [3:5] undeclared variable 'x'
 ```
 
@@ -121,7 +121,7 @@ When using `compile_ir_with_witness()`, the IR evaluator validates inputs before
 
 These errors include the concrete values that caused the failure, making debugging easier:
 
-```
+```ach
 assert_eq failed: x (= 42) != y (= 43)
 ```
 
@@ -131,7 +131,7 @@ After circuit compilation, the taint analysis pass checks for potential soundnes
 
 ### UnderConstrained
 
-```
+```ach
 witness input 'secret' is under-constrained (not in any assert_eq)
 ```
 
@@ -139,7 +139,7 @@ A declared input is not used in any constraint. This means a malicious prover co
 
 ### UnusedInput
 
-```
+```ach
 public input 'unused_var' is unused
 ```
 
@@ -158,7 +158,7 @@ Errors inside `prove {}` blocks are categorized by pipeline phase:
 
 Example:
 
-```
+```ach
 prove block error: IR lowering: undeclared variable 'x'
 ```
 
@@ -188,7 +188,7 @@ Always review taint analysis output. An `UnderConstrained` warning often indicat
 
 In VM mode, use `print()` to inspect values:
 
-```
+```ach
 let h = poseidon(1, 2)
 print("hash:", h)
 ```

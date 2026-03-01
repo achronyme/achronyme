@@ -18,7 +18,7 @@ Cada operación en un circuito se compila a cero o más restricciones. Entender 
 | `^` (exponenciación) | `x ^ n` | O(log n) | Cuadrado y multiplicación |
 | `-` (negación) | `-a` | 0 | Negar coeficientes de CL |
 
-```
+```ach
 public x2
 public x3
 public x4
@@ -42,7 +42,7 @@ assert_eq(x ^ 4, x4)
 
 Las verificaciones de igualdad son baratas (2 restricciones). Las comparaciones de orden son costosas (~760 restricciones cada una) porque requieren descomposición de bits sobre el campo BN254. Úsalas con moderación.
 
-```
+```ach
 witness x
 witness y
 
@@ -59,7 +59,7 @@ assert(lt)
 | `\|\|` | `a \|\| b` | 3 | 2 verificaciones booleanas + 1 puerta |
 | `!` | `!a` | 0–1 | Gratis si el operando ya es booleano probado |
 
-```
+```ach
 witness x
 witness y
 

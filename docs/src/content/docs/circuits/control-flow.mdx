@@ -11,7 +11,7 @@ Circuits support a subset of Achronyme's control flow. Every construct must reso
 
 **Range form** — iterate over `start..end`:
 
-```
+```ach
 public out
 witness a
 witness b
@@ -25,7 +25,7 @@ assert_eq(sum, a + b)
 
 **Array form** — iterate over a declared array:
 
-```
+```ach
 public expected_sum
 witness vals[3]
 
@@ -41,7 +41,7 @@ The constraint cost of a loop equals the number of iterations multiplied by the 
 
 Nested `for` loops are supported. The total iteration count is the product of all loop bounds:
 
-```
+```ach
 witness matrix[9]
 
 for i in 0..3 {
@@ -57,7 +57,7 @@ This unrolls to 9 iterations, each with a `range_check` (9 constraints in R1CS, 
 
 In circuits, `if/else` compiles to a **mux** (multiplexer) — both branches are always evaluated, and the condition selects which result to use. This costs 2 constraints (one boolean enforcement for the condition, one selection constraint).
 
-```
+```ach
 witness cond
 witness a
 witness b
@@ -73,7 +73,7 @@ An `if` without `else` is not supported in circuits because both branches must p
 
 `let` bindings create aliases — they do not emit constraints. A `let` just gives a name to an existing linear combination.
 
-```
+```ach
 witness a
 witness b
 

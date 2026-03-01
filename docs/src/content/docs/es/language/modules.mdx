@@ -9,7 +9,7 @@ Achronyme permite dividir código entre múltiples archivos `.ach` usando módul
 
 Usa `export` antes de `fn` o `let` para hacer una declaración disponible a otros archivos.
 
-```
+```ach
 // math.ach
 export fn add(a, b) { a + b }
 export fn mul(a, b) { a * b }
@@ -18,7 +18,7 @@ export let PI = 3
 
 Solo `fn` y `let` pueden exportarse. Variables mutables (`mut`), declaraciones `public` y `witness` no pueden exportarse.
 
-```
+```ach
 // Estos son errores:
 export mut x = 5      // ✗ no se puede exportar mut
 export public y       // ✗ no se puede exportar public
@@ -26,7 +26,7 @@ export public y       // ✗ no se puede exportar public
 
 Las declaraciones sin `export` son privadas al archivo. Pueden ser usadas por funciones exportadas internamente pero no son accesibles desde afuera.
 
-```
+```ach
 // helpers.ach
 fn internal_helper(x) { x * x }    // privada
 
@@ -39,7 +39,7 @@ export fn square(x) {
 
 Usa `import "ruta" as alias` para cargar un módulo. El alias es obligatorio y se convierte en el namespace para acceder a las exportaciones del módulo.
 
-```
+```ach
 // main.ach
 import "./math.ach" as math
 
@@ -53,7 +53,7 @@ Accede a los valores exportados usando notación de punto: `alias.nombre`.
 
 Las rutas son relativas al archivo que importa y deben incluir la extensión `.ach`.
 
-```
+```ach
 import "./utils.ach" as utils          // mismo directorio
 import "../lib/hash.ach" as hash       // directorio padre
 import "./crypto/poseidon.ach" as pos  // subdirectorio
@@ -65,7 +65,7 @@ Las rutas absolutas no están soportadas. Todas las importaciones usan rutas rel
 
 Los módulos pueden importar otros módulos. La cadena se resuelve automáticamente.
 
-```
+```ach
 // a.ach
 export fn fa() { 1 }
 
@@ -82,7 +82,7 @@ print(b.fb())    // 2
 
 Las dependencias circulares se detectan y producen un error.
 
-```
+```ach
 // x.ach
 import "./y.ach" as y    // error: CircularImport
 
@@ -94,7 +94,7 @@ import "./x.ach" as x
 
 Las importaciones funcionan con `ach circuit` de la misma manera que con `ach run`. Las funciones importadas se inlinean en cada punto de llamada.
 
-```
+```ach
 // hash_lib.ach
 export fn my_hash(a, b) { poseidon(a, b) }
 

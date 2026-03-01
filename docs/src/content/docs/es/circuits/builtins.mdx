@@ -22,7 +22,7 @@ Los circuitos proporcionan funciones integradas para aserciones, hashing, selecc
 
 Fuerza que dos expresiones sean iguales. Cuesta 1 restricción.
 
-```
+```ach
 public out
 witness a
 witness b
@@ -37,7 +37,7 @@ Esta es la función integrada más común — úsala para vincular valores calcu
 
 Fuerza que una expresión booleana sea verdadera. Cuesta 2 restricciones (una para verificación booleana, una para forzar que el valor sea igual a 1).
 
-```
+```ach
 witness x
 witness y
 
@@ -50,7 +50,7 @@ A diferencia de `assert_eq`, funciona con cualquier expresión que evalúe a 0 o
 
 Calcula un hash Poseidon 2-a-1. Cuesta 361 restricciones (360 para las rondas de permutación + 1 para el cable de capacidad). La salida es compatible con circomlibjs.
 
-```
+```ach
 public expected
 witness a
 witness b
@@ -63,7 +63,7 @@ assert_eq(h, expected)
 
 Hashea un número arbitrario de valores mediante plegado izquierdo de `poseidon`. Tres argumentos cuestan 2 × 361 = 722 restricciones, cuatro argumentos cuestan 3 × 361 = 1083, y así sucesivamente.
 
-```
+```ach
 public expected
 witness a
 witness b
@@ -78,7 +78,7 @@ assert_eq(h, expected)
 
 Selección condicional: devuelve `a` cuando `cond` es 1, `b` cuando `cond` es 0. Cuesta 2 restricciones (una verificación booleana para `cond`, una restricción de selección).
 
-```
+```ach
 public out
 witness cond
 witness a
@@ -94,7 +94,7 @@ Tanto `a` como `b` siempre se evalúan — no hay comportamiento de cortocircuit
 
 Demuestra que un valor cabe dentro de un número dado de bits. En R1CS, cuesta `bits + 1` restricciones (descomposición booleana). En Plonkish, cuesta 1 lookup.
 
-```
+```ach
 witness x
 witness y
 
@@ -109,7 +109,7 @@ range_check(y, 16)
 
 Verifica una prueba de membresía Merkle. Toma una raíz, una hoja, un array de hashes hermanos (la ruta) y un array de índices de dirección (0 = hijo izquierdo, 1 = hijo derecho). La prueba se desenrolla a nivel de IR — cada nivel cuesta aproximadamente 363 restricciones (un hash Poseidon + un mux).
 
-```
+```ach
 public root
 witness leaf
 witness path[1]
@@ -124,7 +124,7 @@ Los arrays `path` e `indices` deben tener la misma longitud, que determina la pr
 
 Devuelve la longitud en tiempo de compilación de un array. Cuesta 0 restricciones — el valor se resuelve durante la compilación.
 
-```
+```ach
 witness vals[3]
 
 let n = len(vals)

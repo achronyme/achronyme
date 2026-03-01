@@ -7,7 +7,7 @@ El bloque `prove {}` te permite generar pruebas de conocimiento cero en línea, 
 
 ## Ejemplo Básico
 
-```
+```ach
 let x = 0p6
 let y = 0p7
 let product = 0p42
@@ -33,7 +33,7 @@ El bloque prove:
 
 Dentro de un bloque prove, declara qué variables capturadas son públicas (visibles para el verificador) y cuáles son testigo (privadas):
 
-```
+```ach
 let secret = 0p42
 let hash = 0p17159...
 
@@ -50,7 +50,7 @@ El verificador aprende solo que *algún* valor hashea a `hash`, sin conocer `sec
 
 Los enteros capturados por bloques prove se convierten automáticamente a elementos de campo. Este es el único lugar donde la conversión Int→Field ocurre implícitamente:
 
-```
+```ach
 let a = 10
 let b = 20
 let sum = 30
@@ -69,7 +69,7 @@ Fuera de los bloques prove, mezclar Int y Field genera un error `TypeMismatch`. 
 
 Un `ProofObject` contiene tres componentes JSON:
 
-```
+```ach
 let p = prove {
     witness x
     public y
@@ -94,7 +94,7 @@ print(vkey)
 
 Usa `verify_proof()` para verificar una prueba dentro de la VM:
 
-```
+```ach
 let p = prove {
     witness secret
     public hash
@@ -109,7 +109,7 @@ print(ok)  // true
 
 Los bloques prove soportan arrays, funciones y todas las características del modo circuito:
 
-```
+```ach
 let v0 = 0p10
 let v1 = 0p20
 let v2 = 0p30
@@ -132,7 +132,7 @@ prove {
 
 Las funciones criptográficas integradas funcionan dentro de bloques prove:
 
-```
+```ach
 let a = 0p1
 let b = 0p2
 let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
@@ -149,7 +149,7 @@ prove {
 
 Fuerza que un valor quepa dentro de cierto número de bits:
 
-```
+```ach
 let val = 0p200
 
 prove {
@@ -162,7 +162,7 @@ prove {
 
 Puedes usar múltiples bloques prove en secuencia:
 
-```
+```ach
 let a = 0p3
 let b = 0p4
 let sum = 0p7

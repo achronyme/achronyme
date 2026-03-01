@@ -11,7 +11,7 @@ Achronyme provides 32 native functions built into the VM. Some are also availabl
 
 Prints all arguments separated by spaces, followed by a newline. Returns `nil`.
 
-```
+```ach
 print("hello", 42, true)  // hello 42 true
 ```
 
@@ -21,7 +21,7 @@ print("hello", 42, true)  // hello 42 true
 
 Returns the length of a string (character count), list (element count), or map (entry count).
 
-```
+```ach
 len("abc")     // 3
 len([1, 2, 3]) // 3
 len({a: 1})    // 1
@@ -33,7 +33,7 @@ len({a: 1})    // 1
 
 Returns a string describing the type of the value: `"Number"`, `"String"`, `"Bool"`, `"Nil"`, `"List"`, `"Map"`, `"Field"`, `"BigInt256"`, `"BigInt512"`, `"Proof"`, `"Function"`, `"Native"`.
 
-```
+```ach
 typeof(42)      // "Number"
 typeof("hi")    // "String"
 typeof(true)    // "Bool"
@@ -45,7 +45,7 @@ typeof(true)    // "Bool"
 
 Asserts that the condition is true. Returns `nil` on success, raises `AssertionFailed` on failure.
 
-```
+```ach
 assert(1 + 1 == 2)  // ok
 assert(false)        // error: AssertionFailed
 ```
@@ -56,7 +56,7 @@ assert(false)        // error: AssertionFailed
 
 Returns the current time as milliseconds since the Unix epoch.
 
-```
+```ach
 let t = time()
 print(t)  // 1740700800000
 ```
@@ -69,7 +69,7 @@ print(t)  // 1740700800000
 
 Appends an item to the end of a list. Mutates the list in-place. Returns `nil`.
 
-```
+```ach
 let a = [1, 2]
 push(a, 3)
 print(a)  // [1, 2, 3]
@@ -81,7 +81,7 @@ print(a)  // [1, 2, 3]
 
 Removes and returns the last element of a list. Returns `nil` if the list is empty.
 
-```
+```ach
 let a = [1, 2, 3]
 let x = pop(a)
 print(x)  // 3
@@ -94,7 +94,7 @@ print(a)  // [1, 2]
 
 Returns a list of all keys in a map.
 
-```
+```ach
 let m = {name: "alice", age: 30}
 print(keys(m))  // ["name", "age"]
 ```
@@ -109,7 +109,7 @@ These functions extract components from a `ProofObject` returned by `prove {}`.
 
 Returns the Groth16 proof as a JSON string.
 
-```
+```ach
 let p = prove { ... }
 print(proof_json(p))  // {"pi_a": [...], "pi_b": [...], ...}
 ```
@@ -120,7 +120,7 @@ print(proof_json(p))  // {"pi_a": [...], "pi_b": [...], ...}
 
 Returns the public inputs as a JSON string.
 
-```
+```ach
 print(proof_public(p))  // ["21888...", "17159..."]
 ```
 
@@ -130,7 +130,7 @@ print(proof_public(p))  // ["21888...", "17159..."]
 
 Returns the verification key as a JSON string.
 
-```
+```ach
 print(proof_vkey(p))  // {"protocol": "groth16", "curve": "bn128", ...}
 ```
 
@@ -142,7 +142,7 @@ print(proof_vkey(p))  // {"protocol": "groth16", "curve": "bn128", ...}
 
 Extracts a substring from character position `start` to `end` (exclusive). Indices are clamped to string bounds.
 
-```
+```ach
 substring("hello", 1, 4)  // "ell"
 ```
 
@@ -150,7 +150,7 @@ substring("hello", 1, 4)  // "ell"
 
 Returns the character index of the first occurrence of `sub` in `s`. Returns `-1` if not found.
 
-```
+```ach
 indexOf("hello world", "world")  // 6
 indexOf("hello", "xyz")          // -1
 ```
@@ -159,7 +159,7 @@ indexOf("hello", "xyz")          // -1
 
 Splits a string by the given delimiter. Returns a list of strings.
 
-```
+```ach
 split("a,b,c", ",")  // ["a", "b", "c"]
 ```
 
@@ -167,7 +167,7 @@ split("a,b,c", ",")  // ["a", "b", "c"]
 
 Removes leading and trailing whitespace.
 
-```
+```ach
 trim("  hello  ")  // "hello"
 ```
 
@@ -175,7 +175,7 @@ trim("  hello  ")  // "hello"
 
 Replaces all occurrences of `search` with `replacement`.
 
-```
+```ach
 replace("aabbcc", "bb", "XX")  // "aaXXcc"
 ```
 
@@ -183,7 +183,7 @@ replace("aabbcc", "bb", "XX")  // "aaXXcc"
 
 Converts all characters to uppercase.
 
-```
+```ach
 toUpper("hello")  // "HELLO"
 ```
 
@@ -191,7 +191,7 @@ toUpper("hello")  // "HELLO"
 
 Converts all characters to lowercase.
 
-```
+```ach
 toLower("HELLO")  // "hello"
 ```
 
@@ -199,7 +199,7 @@ toLower("HELLO")  // "hello"
 
 Splits a string into a list of individual characters.
 
-```
+```ach
 chars("abc")  // ["a", "b", "c"]
 ```
 
@@ -211,7 +211,7 @@ All string functions are **VM only**.
 
 Computes the Poseidon 2-to-1 hash over BN254. Both arguments can be integers or field elements.
 
-```
+```ach
 let h = poseidon(1, 2)
 print(h)  // field element
 ```
@@ -222,7 +222,7 @@ print(h)  // field element
 
 Left-fold Poseidon hash: `poseidon(poseidon(a, b), c)` and so on. Requires at least 2 arguments.
 
-```
+```ach
 let h = poseidon_many(1, 2, 3, 4)
 // equivalent to: poseidon(poseidon(poseidon(1, 2), 3), 4)
 ```
@@ -233,7 +233,7 @@ let h = poseidon_many(1, 2, 3, 4)
 
 Verifies a Groth16 proof. Returns `true` if valid, `false` otherwise. Requires a verify handler to be configured in the VM.
 
-```
+```ach
 let p = prove { ... }
 let ok = verify_proof(p)
 print(ok)  // true
@@ -247,7 +247,7 @@ print(ok)  // true
 
 Constructs a 256-bit unsigned integer from an integer (>= 0) or string. Strings can use `0x` (hex), `0b` (binary), or decimal format.
 
-```
+```ach
 let a = bigint256(42)
 let b = bigint256("0xFF")
 let c = bigint256("12345")
@@ -259,7 +259,7 @@ let c = bigint256("12345")
 
 Constructs a 512-bit unsigned integer. Same argument formats as `bigint256`.
 
-```
+```ach
 let a = bigint512(42)
 let b = bigint512("0xFF")
 ```
@@ -270,7 +270,7 @@ let b = bigint512("0xFF")
 
 Converts a BigInt to a list of 0/1 integers in LSB-first order. Length is 256 or 512 depending on width.
 
-```
+```ach
 let bits = to_bits(bigint256(42))
 // bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1, bits[4] = 0, bits[5] = 1
 ```
@@ -281,7 +281,7 @@ let bits = to_bits(bigint256(42))
 
 Constructs a BigInt from a list of 0/1 integers (LSB-first). Width must be 256 or 512.
 
-```
+```ach
 let val = from_bits(to_bits(bigint256(42)), 256)
 assert(val == bigint256(42))
 ```
@@ -292,7 +292,7 @@ assert(val == bigint256(42))
 
 Bitwise AND of two BigInts (must be same width).
 
-```
+```ach
 bit_and(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0x0F")
 ```
 
@@ -302,7 +302,7 @@ bit_and(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0x0F")
 
 Bitwise OR of two BigInts (must be same width).
 
-```
+```ach
 bit_or(bigint256("0xF0"), bigint256("0x0F"))  // bigint256("0xFF")
 ```
 
@@ -312,7 +312,7 @@ bit_or(bigint256("0xF0"), bigint256("0x0F"))  // bigint256("0xFF")
 
 Bitwise XOR of two BigInts (must be same width).
 
-```
+```ach
 bit_xor(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0xF0")
 ```
 
@@ -322,7 +322,7 @@ bit_xor(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0xF0")
 
 Bitwise NOT of a BigInt (flips all bits).
 
-```
+```ach
 let x = bit_not(bigint256(0))  // all bits set
 ```
 
@@ -332,7 +332,7 @@ let x = bit_not(bigint256(0))  // all bits set
 
 Shifts a BigInt left by `n` bits. Errors if any set bits are shifted out (overflow).
 
-```
+```ach
 bit_shl(bigint256(1), 8)  // bigint256(256)
 ```
 
@@ -342,7 +342,7 @@ bit_shl(bigint256(1), 8)  // bigint256(256)
 
 Shifts a BigInt right by `n` bits. Bits shifted out are discarded.
 
-```
+```ach
 bit_shr(bigint256(256), 8)  // bigint256(1)
 ```
 

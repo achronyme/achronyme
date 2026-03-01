@@ -5,7 +5,7 @@ description: "BN254 scalar field arithmetic."
 
 A **field element** is a number in the BN254 scalar field — integers modulo the prime:
 
-```
+```ach
 p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
 ```
 
@@ -23,7 +23,7 @@ All arithmetic on field elements is **modular**: addition, subtraction, and mult
 
 Int and Field are **distinct types**. Mixing them in arithmetic is a runtime error:
 
-```
+```ach
 0p3 + 5       // Error: Cannot mix Int and Field
 0p3 + 0p5     // OK: 0p8
 ```
@@ -32,7 +32,7 @@ Int and Field are **distinct types**. Mixing them in arithmetic is a runtime err
 
 Use the `0p` prefix to create field elements. It works like `0x` for hex:
 
-```
+```ach
 let a = 0p42         // decimal field literal
 let b = 0pxFF        // hex field literal (0px prefix)
 let c = 0pb1010      // binary field literal (0pb prefix)
@@ -43,7 +43,7 @@ let d = 0p12345      // large decimal
 
 Field elements support `+`, `-`, `*`, `/`, `^`, and `==`:
 
-```
+```ach
 let a = 0p10
 let b = 0p3
 
@@ -61,7 +61,7 @@ let inv = a ^ -1        // same as 0p1 / a
 
 In circuit mode (`prove {}` blocks and `circuit` CLI), **all values are field elements** implicitly. Integer variables captured by a `prove {}` block are converted to field elements automatically:
 
-```
+```ach
 let x = 42
 prove {
     // x is automatically converted to 0p42 inside the circuit

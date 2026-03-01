@@ -13,7 +13,7 @@ El backend R1CS compila instrucciones IR en restricciones del sistema de restric
 
 ### Estructuras de Datos Principales
 
-```
+```ach
 R1CSCompiler {
     cs: ConstraintSystem,          // restricciones A×B=C
     bindings: HashMap<String, Variable>,  // var declarada → cable
@@ -25,7 +25,7 @@ R1CSCompiler {
 
 ### Disposición de Cables
 
-```
+```ach
 Índice: 0       1..n_pub    n_pub+1..
         ONE     público     testigo + intermedios
 ```
@@ -88,7 +88,7 @@ El backend Plonkish compila IR en una tabla de filas de puerta con columnas, res
 
 ### Puerta Aritmética Estándar
 
-```
+```ach
 s_arith · (a · b + c − d) = 0
 ```
 
@@ -98,7 +98,7 @@ Cada multiplicación emite una fila. La suma se codifica como `a·1 + c = d`.
 
 El backend Plonkish usa `PlonkVal` para evaluación perezosa:
 
-```
+```ach
 PlonkVal::Cell(CellRef)          // materializado en una celda
 PlonkVal::Constant(FieldElement)  // aún no colocado
 PlonkVal::DeferredAdd(a, b)      // diferido hasta que se necesite
@@ -124,7 +124,7 @@ A diferencia de R1CS (que usa n+1 restricciones de descomposición de bits), las
 
 `PlonkishWitnessGenerator` reproduce entradas `PlonkWitnessOp` para llenar la tabla de asignación:
 
-```
+```ach
 PlonkWitnessOp::AssignInput { column, row, name }
 PlonkWitnessOp::CopyValue { dst_col, dst_row, src_col, src_row }
 PlonkWitnessOp::SetConstant { column, row, value }

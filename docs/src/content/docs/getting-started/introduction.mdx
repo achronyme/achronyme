@@ -11,7 +11,7 @@ Write readable code. Decide what gets proven. Same language for general executio
 
 ### General-purpose execution
 
-```
+```ach
 let make_counter = fn(init) {
     mut n = init
     return fn() { n = n + 1; return n }
@@ -23,7 +23,7 @@ print(c())  // 2
 
 ### ZK circuit
 
-```
+```ach
 public root
 witness leaf
 witness path[3]
@@ -39,7 +39,7 @@ ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=.
 
 ### Inline proof generation
 
-```
+```ach
 let secret = 0p42
 let hash = 0p17159...  // poseidon(42, 0)
 
@@ -62,7 +62,7 @@ Achronyme has two execution modes from the same source:
 
 The `prove {}` block bridges both: it runs inside the VM, compiles its body as a circuit, generates a witness from captured variables, and produces a cryptographic proof — all in one expression.
 
-```
+```ach
 Source (.ach)
     │
     ├─► Parser (PEG) → AST

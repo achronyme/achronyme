@@ -11,7 +11,7 @@ Los bucles `for` se desenrollan estáticamente — el compilador expande cada it
 
 **Forma de rango** — iterar sobre `start..end`:
 
-```
+```ach
 public out
 witness a
 witness b
@@ -25,7 +25,7 @@ assert_eq(sum, a + b)
 
 **Forma de array** — iterar sobre un array declarado:
 
-```
+```ach
 public expected_sum
 witness vals[3]
 
@@ -41,7 +41,7 @@ El costo de restricciones de un bucle es igual al número de iteraciones multipl
 
 Se soportan bucles `for` anidados. El conteo total de iteraciones es el producto de todos los límites de los bucles:
 
-```
+```ach
 witness matrix[9]
 
 for i in 0..3 {
@@ -57,7 +57,7 @@ Esto se desenrolla a 9 iteraciones, cada una con un `range_check` (9 restriccion
 
 En circuitos, `if/else` se compila a un **mux** (multiplexor) — ambas ramas siempre se evalúan, y la condición selecciona qué resultado usar. Esto cuesta 2 restricciones (una verificación booleana para la condición, una restricción de selección).
 
-```
+```ach
 witness cond
 witness a
 witness b
@@ -73,7 +73,7 @@ Un `if` sin `else` no está soportado en circuitos porque ambas ramas deben prod
 
 Las vinculaciones `let` crean alias — no emiten restricciones. Un `let` simplemente da un nombre a una combinación lineal existente.
 
-```
+```ach
 witness a
 witness b
 

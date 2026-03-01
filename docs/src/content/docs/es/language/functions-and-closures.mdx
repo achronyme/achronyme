@@ -9,7 +9,7 @@ Las funciones son valores de primera clase en Achronyme. Pueden asignarse a vari
 
 Define funciones con nombre usando `fn name(params) { body }`.
 
-```
+```ach
 fn add(a, b) {
     return a + b
 }
@@ -25,7 +25,7 @@ assert(greet() == "hello")
 
 Crea funciones sin nombre con `fn(params) { body }` y asígnalas a variables.
 
-```
+```ach
 let double = fn(x) { x * 2 }
 assert(double(5) == 10)
 
@@ -37,7 +37,7 @@ assert(mul(3, 7) == 21)
 
 La última expresión en el cuerpo de una función es su valor de retorno. Usa `return` para salidas anticipadas.
 
-```
+```ach
 fn square(x) {
     x * x
 }
@@ -56,7 +56,7 @@ Las funciones sin `return` y sin expresión final devuelven `nil`.
 
 Las funciones capturan variables de su ámbito circundante por referencia. Los cambios en variables capturadas son visibles para todos los closures que las comparten.
 
-```
+```ach
 fn make_adder(n) {
     return fn(x) { x + n }
 }
@@ -66,7 +66,7 @@ assert(add5(3) == 8)
 
 Los closures pueden capturar y mutar estado:
 
-```
+```ach
 fn make_counter() {
     mut count = 0
     return fn() {
@@ -82,7 +82,7 @@ assert(counter() == 3)
 
 Múltiples closures pueden compartir la misma variable mutable:
 
-```
+```ach
 fn make_pair() {
     mut val = 0
     let getter = fn() { val }
@@ -101,14 +101,14 @@ assert(get() == 42)
 
 Las funciones pueden aceptar y devolver otras funciones.
 
-```
+```ach
 fn apply(f, x) {
     return f(x)
 }
 assert(apply(fn(x) { x * x }, 5) == 25)
 ```
 
-```
+```ach
 fn compose(f, g) {
     return fn(x) { f(g(x)) }
 }
@@ -120,7 +120,7 @@ assert(inc_then_dbl(3) == 8)
 
 Patrones comunes como map, filter y reduce:
 
-```
+```ach
 fn filter(arr, pred) {
     mut result = []
     for x in arr {
@@ -143,7 +143,7 @@ assert(reduce([1, 2, 3, 4, 5], 0, fn(a, b) { a + b }) == 15)
 
 Las funciones con nombre pueden llamarse a sí mismas. Usa expresiones de función con nombre (`fn name(params) { ... }`) cuando asignes una función recursiva a una variable.
 
-```
+```ach
 fn factorial(n) {
     if n <= 1 { return 1 }
     return n * factorial(n - 1)
@@ -161,7 +161,7 @@ assert(fib(10) == 55)
 
 Las funciones pueden incluir anotaciones de tipo opcionales en parámetros y tipos de retorno:
 
-```
+```ach
 fn add(a: Field, b: Field) -> Field {
     return a + b
 }
@@ -175,7 +175,7 @@ let double = fn(x: Field) -> Field { x * 2 }
 
 Se permite mezclar parámetros tipados y no tipados — esto es tipado gradual:
 
-```
+```ach
 fn scale(x: Field, factor) {
     x * factor
 }

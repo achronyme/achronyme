@@ -19,7 +19,7 @@ El verificador recalcula la raíz a partir de estos valores y comprueba que coin
 
 Crea `merkle.ach`:
 
-```
+```ach
 public root
 witness leaf
 witness path[3]
@@ -35,7 +35,7 @@ Esto verifica membresía en un árbol de profundidad 3 (8 hojas). La función in
 
 Internamente, `merkle_verify` se desenrolla a:
 
-```
+```ach
 // Nivel 0
 let l0 = mux(indices[0], path[0], leaf)
 let r0 = mux(indices[0], leaf, path[0])
@@ -58,7 +58,7 @@ assert_eq(h2, root)
 
 Para proporcionar las entradas, necesitas calcular el árbol. En un script o programa separado, construye el árbol de abajo hacia arriba:
 
-```
+```ach
 // 8 hojas
 let leaves = [
     0p100, 0p200, 0p300, 0p400,
@@ -135,7 +135,7 @@ El verificador solo ve `root` (la entrada pública). El valor de la hoja, la rut
 
 También puedes generar pruebas en línea sin el CLI:
 
-```
+```ach
 // ... calcular valores del árbol como arriba ...
 
 let p = prove {
@@ -154,7 +154,7 @@ print(verify_proof(p))  // true
 
 Cambia el tamaño del array para que coincida con la profundidad de tu árbol:
 
-```
+```ach
 // Profundidad 1 (2 hojas)
 witness path[1]
 witness indices[1]
@@ -174,7 +174,7 @@ Los arrays `path` e `indices` deben tener la misma longitud.
 
 Para seguridad de tipos explícita, agrega anotaciones:
 
-```
+```ach
 public root: Field
 witness leaf: Field
 witness path[3]: Field

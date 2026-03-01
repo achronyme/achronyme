@@ -9,7 +9,7 @@ Achronyme tiene dos tipos de colecciones integrados: arrays (listas ordenadas) y
 
 Crea arrays con corchetes. Accede a los elementos por índice (basado en cero).
 
-```
+```ach
 let arr = [10, 20, 30]
 assert(arr[0] == 10)
 assert(arr[2] == 30)
@@ -23,7 +23,7 @@ assert(nested[0][1] == 2)
 
 Modifica arrays con asignación por índice, `push()` y `pop()`:
 
-```
+```ach
 mut nums = [0, 0, 0]
 nums[0] = 10
 assert(nums[0] == 10)
@@ -49,7 +49,7 @@ assert(len(items) == 2)
 
 Crea mapas con llaves. Las claves pueden ser identificadores sin comillas o cadenas entre comillas.
 
-```
+```ach
 let person = {name: "Alice", age: 30}
 assert(person.name == "Alice")
 assert(person["age"] == 30)
@@ -60,7 +60,7 @@ assert(m["hello"] == 1)
 
 Accede a los valores con notación de punto o notación de corchetes. La notación de corchetes soporta claves dinámicas.
 
-```
+```ach
 let key = "name"
 assert(person[key] == "Alice")
 
@@ -70,7 +70,7 @@ assert(nested.a.b.c == 42)
 
 Agrega o actualiza campos por asignación:
 
-```
+```ach
 mut config = {}
 config.debug = true
 config["port"] = 8080
@@ -88,7 +88,7 @@ assert(len(config) == 2)
 
 Usa `for..in` para iterar sobre arrays directamente o sobre claves de mapas con `keys()`.
 
-```
+```ach
 mut total = 0
 for x in [10, 20, 30] {
     total = total + x
@@ -107,7 +107,7 @@ assert(sum == 275)
 
 **Tabla de despacho** — almacena funciones en un mapa para búsqueda dinámica:
 
-```
+```ach
 let ops = {
     add: fn(a, b) { a + b },
     sub: fn(a, b) { a - b },
@@ -119,7 +119,7 @@ assert(ops["mul"](4, 5) == 20)
 
 **Registros** — usa mapas como structs ligeros:
 
-```
+```ach
 fn make_point(x, y) {
     return {x: x, y: y}
 }
@@ -129,7 +129,7 @@ assert(p.x == 3)
 
 **Conteo de palabras** — claves dinámicas para agregación:
 
-```
+```ach
 mut counts = {}
 let words = ["apple", "banana", "apple", "cherry", "banana", "apple"]
 for w in words {
@@ -144,7 +144,7 @@ assert(counts.banana == 2)
 
 **Estructuras anidadas** — arrays de mapas, mapas de arrays:
 
-```
+```ach
 let people = [
     {name: "Alice", age: 30},
     {name: "Bob", age: 25}

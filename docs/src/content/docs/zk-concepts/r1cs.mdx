@@ -9,7 +9,7 @@ A **Rank-1 Constraint System** (R1CS) is the default backend in Achronyme. It re
 
 Every R1CS constraint has the form:
 
-```
+```ach
 A * B = C
 ```
 
@@ -37,7 +37,7 @@ The compiler translates each operation into linear combinations and constraints:
 
 Addition, subtraction, negation, and multiplication by a constant are all linear operations — they just combine existing wires without needing new constraints:
 
-```
+```ach
 // These are free:
 let sum = a + b          // LC: a + b
 let diff = a - b         // LC: a - b
@@ -49,7 +49,7 @@ let neg = -a             // LC: (-1)*a
 
 Multiplying two variables requires a constraint because it's the one non-linear operation:
 
-```
+```ach
 let product = a * b
 // Emits: A=a, B=b, C=product → a * b = product
 ```
@@ -58,7 +58,7 @@ let product = a * b
 
 Division by a variable requires computing the modular inverse:
 
-```
+```ach
 let quotient = a / b
 // Constraint 1: b * b_inv = 1     (computes inverse)
 // Constraint 2: a * b_inv = quotient
@@ -68,7 +68,7 @@ Division by a constant is free (multiply by the constant's inverse).
 
 ### Equality (1 constraint)
 
-```
+```ach
 assert_eq(x, y)
 // Emits: x * 1 = y
 ```
@@ -77,7 +77,7 @@ assert_eq(x, y)
 
 A `LinearCombination` is stored as sparse `(variable, coefficient)` pairs:
 
-```
+```ach
 3x + 5y + 7 = [(x, 3), (y, 5), (ONE, 7)]
 ```
 
@@ -91,7 +91,7 @@ When a linear combination needs to become a concrete wire (for example, as input
 
 Consider proving knowledge of `x` such that `x^2 + x + 5 = 35`:
 
-```
+```ach
 public out;
 witness x;
 let x_sq = x * x;
@@ -111,7 +111,7 @@ With witness `x = 5, out = 35`, both constraints are satisfied: `5*5 = 25` and `
 
 Several operations need to verify that a value is boolean (0 or 1). The standard gadget:
 
-```
+```ach
 b * (1 - b) = 0
 ```
 
@@ -123,7 +123,7 @@ The `bool_prop` optimization pass tracks which variables are provably boolean (o
 
 Equality and inequality comparisons use the **IsZero** gadget. Given a value `d`, it outputs 1 if `d = 0`, and 0 otherwise:
 
-```
+```ach
 d * inv = 1 - result
 d * result = 0
 ```

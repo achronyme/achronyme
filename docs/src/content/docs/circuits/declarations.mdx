@@ -9,14 +9,14 @@ Every circuit needs explicit input declarations. These tell the compiler which v
 
 Declare one variable at a time:
 
-```
+```ach
 public output
 witness secret
 ```
 
 Or multiple on one line, separated by commas:
 
-```
+```ach
 public x, y
 witness a, b, c
 ```
@@ -27,14 +27,14 @@ Public inputs become part of the proof's public statement — anyone verifying t
 
 Declare a fixed-size array of inputs with bracket syntax:
 
-```
+```ach
 witness path[3]
 witness indices[3]
 ```
 
 This creates three indexed variables (`path_0`, `path_1`, `path_2`) that you access with standard indexing. Array declarations work for both public and witness inputs:
 
-```
+```ach
 public commitments[4]
 witness secrets[4]
 ```
@@ -43,7 +43,7 @@ witness secrets[4]
 
 Once declared, inputs are ordinary variables. Use them in expressions, pass them to builtins, and index into arrays:
 
-```
+```ach
 public output
 witness a
 witness b
@@ -57,7 +57,7 @@ assert_eq(sum, a + b)
 
 Array elements are accessed by index:
 
-```
+```ach
 public expected_sum
 witness vals[3]
 
@@ -87,7 +87,7 @@ ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=
 
 Declarations can include optional type annotations. See [Type Annotations](/circuits/type-annotations/) for details.
 
-```
+```ach
 public root: Field
 witness flag: Bool
 witness path[3]: Field

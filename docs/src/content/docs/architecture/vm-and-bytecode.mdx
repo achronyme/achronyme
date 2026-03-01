@@ -7,7 +7,7 @@ The Achronyme VM is a register-based bytecode interpreter. It executes compiled 
 
 ## Architecture
 
-```
+```ach
 Source (.ach)
     │
     ▼
@@ -25,7 +25,7 @@ Interpreter → Register-based execution
 
 ### VM Structure
 
-```
+```ach
 VM {
     heap: Heap,              // typed arenas + GC
     stack: [Value; 65536],   // fixed-size register stack
@@ -41,7 +41,7 @@ VM {
 
 Each function call pushes a `CallFrame`:
 
-```
+```ach
 CallFrame {
     closure: u32,   // handle to Closure on heap
     ip: usize,      // instruction pointer
@@ -56,7 +56,7 @@ Register `R[i]` in the current frame maps to `stack[frame.base + i]`.
 
 Values are **tagged 64-bit integers** — no boxing for common types:
 
-```
+```ach
 Bits 63..60 = 4-bit tag
 Bits 59..0  = 60-bit payload
 ```
@@ -89,7 +89,7 @@ Each instruction is a `u32` in one of two formats:
 
 ### ABC Format
 
-```
+```ach
 [opcode:8][A:8][B:8][C:8]
 ```
 
@@ -97,7 +97,7 @@ Used for 3-operand instructions like `Add R[A] = R[B] + R[C]`.
 
 ### ABx Format
 
-```
+```ach
 [opcode:8][A:8][Bx:16]
 ```
 
@@ -199,7 +199,7 @@ Used for instructions with a 16-bit operand, like `LoadConst R[A] = K[Bx]` or `J
 
 Each compiled function produces a `Function` struct on the heap:
 
-```
+```ach
 Function {
     name: String,        // for debugging
     arity: u8,           // parameter count
@@ -217,7 +217,7 @@ The `line_info` vector is parallel to `chunk` — each instruction has a source 
 
 The `.achb` file format (version 9):
 
-```
+```ach
 Magic:    b"ACH\x09"          (4 bytes)
 Metadata: max_slots (u16 LE)
 
@@ -252,7 +252,7 @@ The format is compatible with the VM's `loader` module, which deserializes into 
 
 ## Global Variable Layout
 
-```
+```ach
 Index:  0..22       23..
         Natives     User globals
 ```

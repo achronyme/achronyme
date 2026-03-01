@@ -21,7 +21,7 @@ Selecciónalo con `--backend plonkish`.
 
 Un circuito Plonkish es una **tabla 2D** donde cada columna tiene un tipo y cada fila representa un paso de computación:
 
-```
+```ach
 Fila | s_arith | constant | a   | b   | c   | d
 -----+---------+----------+-----+-----+-----+-----
   0  |    1    |    0     |  3  |  4  |  5  |  17
@@ -39,7 +39,7 @@ Fila | s_arith | constant | a   | b   | c   | d
 
 Una **puerta** es una expresión polinomial que debe evaluar a cero en cada fila. La puerta aritmética estándar de Achronyme:
 
-```
+```ach
 s_arith * (a * b + c - d) = 0
 ```
 
@@ -58,7 +58,7 @@ Esta puerta única maneja toda la aritmética:
 
 En R1CS, los cables se comparten implícitamente a través de combinaciones lineales. En Plonkish, la igualdad entre celdas en diferentes filas o columnas debe forzarse explícitamente con **restricciones de copia**:
 
-```
+```ach
 (advice_a, fila 0) == (advice_c, fila 5)
 ```
 
@@ -74,7 +74,7 @@ Los **argumentos de lookup** prueban que un valor pertenece a una tabla precalcu
 
 En R1CS, una verificación de rango para `n` bits cuesta `n + 1` restricciones (una por bit más una suma). En Plonkish, cuesta **1 fila de lookup**:
 
-```
+```ach
 s_range activo → a ∈ {0, 1, 2, ..., 2^n - 1}
 ```
 
@@ -93,7 +93,7 @@ Esto previene que filas inactivas (rellenadas con ceros) causen fallos falsos de
 
 El compilador Plonkish usa **evaluación perezosa** para operaciones lineales. En lugar de emitir una fila de tabla para cada suma o resta, construye un árbol `PlonkVal`:
 
-```
+```ach
 DeferredAdd(
     Cell(a, fila 0),
     DeferredNeg(Cell(b, fila 1))

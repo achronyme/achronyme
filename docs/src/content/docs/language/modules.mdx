@@ -9,7 +9,7 @@ Achronyme supports splitting code across multiple `.ach` files using modules. Ex
 
 Use `export` before `fn` or `let` to make a declaration available to other files.
 
-```
+```ach
 // math.ach
 export fn add(a, b) { a + b }
 export fn mul(a, b) { a * b }
@@ -18,7 +18,7 @@ export let PI = 3
 
 Only `fn` and `let` can be exported. Mutable variables (`mut`), `public`, and `witness` declarations cannot be exported.
 
-```
+```ach
 // These are errors:
 export mut x = 5      // ✗ cannot export mut
 export public y       // ✗ cannot export public
@@ -26,7 +26,7 @@ export public y       // ✗ cannot export public
 
 Declarations without `export` are private to the file. They can be used by exported functions internally but are not accessible from outside.
 
-```
+```ach
 // helpers.ach
 fn internal_helper(x) { x * x }    // private
 
@@ -39,7 +39,7 @@ export fn square(x) {
 
 Use `import "path" as alias` to load a module. The alias is mandatory and becomes the namespace for accessing the module's exports.
 
-```
+```ach
 // main.ach
 import "./math.ach" as math
 
@@ -53,7 +53,7 @@ Access exported values using dot notation: `alias.name`.
 
 Paths are relative to the importing file and must include the `.ach` extension.
 
-```
+```ach
 import "./utils.ach" as utils          // same directory
 import "../lib/hash.ach" as hash       // parent directory
 import "./crypto/poseidon.ach" as pos  // subdirectory
@@ -65,7 +65,7 @@ Absolute paths are not supported. All imports use relative paths.
 
 Modules can import other modules. The chain is resolved automatically.
 
-```
+```ach
 // a.ach
 export fn fa() { 1 }
 
@@ -82,7 +82,7 @@ print(b.fb())    // 2
 
 Circular dependencies are detected and produce an error.
 
-```
+```ach
 // x.ach
 import "./y.ach" as y    // error: CircularImport
 
@@ -94,7 +94,7 @@ import "./x.ach" as x
 
 Imports work with `ach circuit` the same way as `ach run`. Imported functions are inlined at each call site.
 
-```
+```ach
 // hash_lib.ach
 export fn my_hash(a, b) { poseidon(a, b) }
 

@@ -25,7 +25,7 @@ Achronyme es de tipado dinámico. Todos los valores se representan como palabras
 
 Los enteros son valores con signo de 60 bits almacenados en línea (sin asignación en heap). Rango: -576460752303423488 a 576460752303423487.
 
-```
+```ach
 let x = 42
 let y = -7
 let big = 100000000000
@@ -35,7 +35,7 @@ Si una operación aritmética desborda el rango i60, se genera un error en tiemp
 
 ## Booleanos
 
-```
+```ach
 let yes = true
 let no = false
 ```
@@ -44,14 +44,14 @@ En circuitos, `true` se mapea al elemento de campo 1 y `false` al 0.
 
 ## Cadenas
 
-```
+```ach
 let greeting = "hello, world"
 let empty = ""
 ```
 
 ## Listas
 
-```
+```ach
 let nums = [1, 2, 3]
 let mixed = [1, "two", true]
 let nested = [[1, 2], [3, 4]]
@@ -59,7 +59,7 @@ let nested = [[1, 2], [3, 4]]
 
 ## Mapas
 
-```
+```ach
 let person = {"name": "Alice", "age": 30}
 ```
 
@@ -67,7 +67,7 @@ let person = {"name": "Alice", "age": 30}
 
 Elementos del campo escalar BN254 para operaciones criptográficas. Internamente en forma Montgomery. Se crean usando el prefijo `0p`, que funciona como `0x` para hexadecimal:
 
-```
+```ach
 let a = 0p42         // literal de campo decimal
 let b = 0pxFF        // literal de campo hexadecimal
 let c = 0pb1010      // literal de campo binario
@@ -90,7 +90,7 @@ Enteros sin signo de ancho fijo para operaciones criptográficas. Dos anchos: 25
 
 Los literales BigInt usan el prefijo `0i`, seguido del ancho y la base:
 
-```
+```ach
 let a = 0i256xFF           // 256 bits hexadecimal
 let b = 0i256d255          // 256 bits decimal
 let c = 0i256b11111111     // 256 bits binario
@@ -99,7 +99,7 @@ let d = 0i512x1234         // 512 bits hexadecimal
 
 ### Funciones constructoras
 
-```
+```ach
 let a = bigint256(42)       // desde entero
 let b = bigint256("0xFF")   // desde cadena hexadecimal
 let c = bigint512(100)      // 512 bits desde entero
@@ -109,7 +109,7 @@ let c = bigint512(100)      // 512 bits desde entero
 
 Los operadores estándar funcionan entre BigInts del mismo ancho:
 
-```
+```ach
 let x = 0i256d10
 let y = 0i256d20
 let sum = x + y              // 30
@@ -124,7 +124,7 @@ let p = 0i256d2 ^ 10         // 1024
 
 BigInt no se puede mezclar con Int, Field, ni con un BigInt de diferente ancho:
 
-```
+```ach
 // Todos estos son errores en tiempo de ejecución:
 // bigint256(1) + 1           -- BigInt + Int
 // bigint256(1) + 0p1         -- BigInt + Field
@@ -133,7 +133,7 @@ BigInt no se puede mezclar con Int, Field, ni con un BigInt de diferente ancho:
 
 ### Operaciones a nivel de bits
 
-```
+```ach
 bit_and(a, b)     // AND a nivel de bits
 bit_or(a, b)      // OR a nivel de bits
 bit_xor(a, b)     // XOR a nivel de bits
@@ -151,7 +151,7 @@ let val = from_bits(bits, 256) // reconstruir desde bits
 
 ## Nil
 
-```
+```ach
 let nothing = nil
 ```
 
@@ -159,7 +159,7 @@ let nothing = nil
 
 ## Vinculaciones de Variables
 
-```
+```ach
 let x = 42          // vinculación inmutable
 mut y = 0           // vinculación mutable
 y = y + 1           // reasignación (solo para mut)
@@ -171,7 +171,7 @@ y = y + 1           // reasignación (solo para mut)
 
 Achronyme soporta anotaciones de tipo opcionales en vinculaciones de variables y firmas de funciones. En modo circuito, las anotaciones habilitan verificación de tipos en tiempo de compilación y optimización de restricciones. En modo VM, las anotaciones se parsean y aceptan pero la ejecución sigue siendo dinámica.
 
-```
+```ach
 let x: Field = 0p42
 let flag: Bool = true
 mut counter: Field = 0p0

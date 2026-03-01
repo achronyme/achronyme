@@ -13,7 +13,7 @@ The R1CS backend compiles IR instructions into rank-1 constraint system constrai
 
 ### Core Data Structures
 
-```
+```ach
 R1CSCompiler {
     cs: ConstraintSystem,          // A×B=C constraints
     bindings: HashMap<String, Variable>,  // declared var → wire
@@ -25,7 +25,7 @@ R1CSCompiler {
 
 ### Wire Layout
 
-```
+```ach
 Index:  0       1..n_pub    n_pub+1..
         ONE     public      witness + intermediate
 ```
@@ -88,7 +88,7 @@ The Plonkish backend compiles IR into a table of gate rows with columns, copy co
 
 ### Standard Arithmetic Gate
 
-```
+```ach
 s_arith · (a · b + c − d) = 0
 ```
 
@@ -98,7 +98,7 @@ Each multiplication emits one row. Addition is encoded as `a·1 + c = d`.
 
 The Plonkish backend uses `PlonkVal` for lazy evaluation:
 
-```
+```ach
 PlonkVal::Cell(CellRef)          // materialized in a cell
 PlonkVal::Constant(FieldElement)  // not yet placed
 PlonkVal::DeferredAdd(a, b)      // deferred until needed
@@ -124,7 +124,7 @@ Unlike R1CS (which uses n+1 bit decomposition constraints), Plonkish range check
 
 `PlonkishWitnessGenerator` replays `PlonkWitnessOp` entries to fill the assignment table:
 
-```
+```ach
 PlonkWitnessOp::AssignInput { column, row, name }
 PlonkWitnessOp::CopyValue { dst_col, dst_row, src_col, src_row }
 PlonkWitnessOp::SetConstant { column, row, value }

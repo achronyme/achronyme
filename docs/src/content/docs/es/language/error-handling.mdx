@@ -9,7 +9,7 @@ Achronyme proporciona mensajes de error detallados en todos los modos de ejecuci
 
 Al ejecutar con `ach run`, la VM reporta errores con números de línea:
 
-```
+```ach
 [line 5] in main: DivisionByZero
 ```
 
@@ -35,7 +35,7 @@ Al ejecutar con `ach run`, la VM reporta errores con números de línea:
 
 Achronyme usa enteros con signo de 60 bits (rango: -2^59 a 2^59 - 1). El desbordamiento siempre es un error:
 
-```
+```ach
 let big = 576460752303423487   // 2^59 - 1 (máximo i60)
 let overflow = big + 1         // ERROR: IntegerOverflow
 ```
@@ -46,7 +46,7 @@ Para trabajar con valores más grandes, usa literales de campo `0p` para element
 
 Los valores enteros y de campo no pueden mezclarse directamente:
 
-```
+```ach
 let x = 42
 let y = 0p10
 let z = x + y  // ERROR: TypeMismatch
@@ -58,7 +58,7 @@ Usa literales `0p` para conversión explícita: `let z = 0p42 + y`.
 
 Los errores de sintaxis incluyen información de línea y columna:
 
-```
+```ach
 parse error at line 3, col 10: expected expression
 ```
 
@@ -84,7 +84,7 @@ Al compilar circuitos con `ach circuit`, la fase de bajada a IR reporta errores 
 
 Algunos errores incluyen orientación amigable para el usuario:
 
-```
+```ach
 // Usando una cadena en un circuito:
 "cannot be used in circuits (circuits operate on field elements only)"
 
@@ -99,7 +99,7 @@ Algunos errores incluyen orientación amigable para el usuario:
 
 Errores durante la generación de restricciones:
 
-```
+```ach
 R1CS compilation error: [3:5] undeclared variable 'x'
 ```
 
@@ -121,7 +121,7 @@ Al usar `compile_ir_with_witness()`, el evaluador IR valida las entradas antes d
 
 Estos errores incluyen los valores concretos que causaron el fallo, facilitando la depuración:
 
-```
+```ach
 assert_eq failed: x (= 42) != y (= 43)
 ```
 
@@ -131,7 +131,7 @@ Después de la compilación del circuito, el pase de análisis de contaminación
 
 ### SubRestringido
 
-```
+```ach
 witness input 'secret' is under-constrained (not in any assert_eq)
 ```
 
@@ -139,7 +139,7 @@ Una entrada declarada no se usa en ninguna restricción. Esto significa que un p
 
 ### Entrada No Utilizada
 
-```
+```ach
 public input 'unused_var' is unused
 ```
 
@@ -158,7 +158,7 @@ Los errores dentro de bloques `prove {}` se categorizan por fase del pipeline:
 
 Ejemplo:
 
-```
+```ach
 prove block error: IR lowering: undeclared variable 'x'
 ```
 
@@ -188,7 +188,7 @@ Siempre revisa la salida del análisis de contaminación. Una advertencia `Under
 
 En modo VM, usa `print()` para inspeccionar valores:
 
-```
+```ach
 let h = poseidon(1, 2)
 print("hash:", h)
 ```

@@ -24,7 +24,7 @@ Cuatro tipos están disponibles en contexto de circuito:
 
 Agrega `: Type` después del nombre de la variable (o después del tamaño del array):
 
-```
+```ach
 public root: Field
 witness flag: Bool
 witness secret: Field
@@ -35,14 +35,14 @@ witness indices[3]: Bool
 
 Sin anotaciones, las entradas son no tipadas por defecto — mismo comportamiento que antes:
 
-```
+```ach
 public root
 witness secret
 ```
 
 Ambas formas pueden coexistir en el mismo circuito:
 
-```
+```ach
 public root: Field
 witness leaf
 witness path[3]: Field
@@ -53,7 +53,7 @@ witness indices[3]
 
 Anota vinculaciones locales con `: Type` después del nombre, antes de `=`:
 
-```
+```ach
 witness a: Field
 witness b: Field
 
@@ -68,7 +68,7 @@ El compilador maneja las anotaciones dependiendo del tipo inferido de la expresi
 - **Expresión no tipada con `: Bool`**: El compilador emite una restricción `RangeCheck(v, 1)` para forzar `v * (1 - v) = 0`, costando **1 restricción extra**. Esto es necesario para la solidez — sin verificación, un probador malicioso podría asignar cualquier valor.
 - **Expresión no tipada con `: Field`**: No se necesita verificación. `Field` es el predeterminado y no restringe el espacio de valores.
 
-```
+```ach
 witness a: Field
 
 // Error: incompatibilidad de anotación de tipo para `x`: declarado como Bool,
@@ -76,7 +76,7 @@ witness a: Field
 let x: Bool = a + 1
 ```
 
-```
+```ach
 witness w
 
 // Verificado: emite RangeCheck(w, 1) — cuesta 1 restricción
@@ -89,7 +89,7 @@ Las operaciones aritméticas (`+`, `-`, `*`, `/`, `^`) producen `Field`. Las com
 
 Para anotaciones de array, el compilador valida que la longitud del array coincida con el tamaño declarado:
 
-```
+```ach
 witness x
 witness y
 
@@ -99,7 +99,7 @@ let a: Field[3] = [x, y]
 
 Las anotaciones `Bool[N]` verifican cada elemento no tipado individualmente (1 restricción por elemento):
 
-```
+```ach
 witness x
 witness y
 
@@ -111,7 +111,7 @@ let flags: Bool[2] = [x, y]
 
 Anota parámetros con `: Type` y tipos de retorno con `-> Type`:
 
-```
+```ach
 fn hash_pair(a: Field, b: Field) -> Field {
     poseidon(a, b)
 }
@@ -123,7 +123,7 @@ fn is_valid(x: Field, y: Field) -> Bool {
 
 Se permite mezclar parámetros tipados y no tipados:
 
-```
+```ach
 fn scale(x: Field, factor) {
     x * factor
 }
@@ -131,7 +131,7 @@ fn scale(x: Field, factor) {
 
 El compilador verifica que los argumentos coincidan con los tipos de parámetro declarados en cada punto de llamada:
 
-```
+```ach
 fn double(x: Field) -> Field { x + x }
 
 witness a: Field
@@ -142,7 +142,7 @@ let result: Field = double(a)    // ok
 
 Cuando un parámetro `: Bool` recibe un argumento no tipado, el compilador emite un `RangeCheck` para forzar la restricción booleana (1 restricción extra por argumento no tipado):
 
-```
+```ach
 witness w    // no tipado
 
 fn check(b: Bool) { assert(b) }
@@ -151,7 +151,7 @@ check(w)     // emite RangeCheck(w, 1) — 1 restricción extra
 
 De manera similar, cuando una función con tipo de retorno `-> Bool` produce un resultado no tipado en el cuerpo, el compilador fuerza el booleano en el valor de retorno:
 
-```
+```ach
 witness w
 
 fn to_flag(x: Field) -> Bool { x }
@@ -164,7 +164,7 @@ Si el argumento o valor de retorno ya tiene un tipo probado (ej., de una compara
 
 Los valores `Bool` pueden usarse en contexto aritmético (de campo). Esto es seguro porque los booleanos son 0 o 1 en el campo:
 
-```
+```ach
 witness flag: Bool
 
 // Bool usado en aritmética — permitido (Bool es subtipo de Field)
@@ -202,7 +202,7 @@ Lo inverso depende del tipo del valor fuente:
 
 Anotar una entrada como `: Bool` emite una restricción de verificación `RangeCheck` única (`v * (1-v) = 0`) en el sitio de declaración. Este estado booleano verificado se propaga a través de `bool_prop`, permitiendo que todos los usos posteriores **omitan** la verificación booleana redundante. El efecto neto es un ahorro cuando la variable se usa múltiples veces en contexto booleano.
 
-```
+```ach
 // Sin anotación: cada mux agrega 1 verificación booleana para cond
 witness cond
 let r1 = mux(cond, a, b)   // 2 restricciones (1 verificación + 1 selección)
@@ -244,7 +244,7 @@ El costo de verificación es una garantía de solidez única. Los usos posterior
 
 Una prueba de membresía Merkle completamente tipada:
 
-```
+```ach
 public root: Field
 witness leaf: Field
 witness path[3]: Field
@@ -255,7 +255,7 @@ merkle_verify(root, leaf, path, indices)
 
 El mismo circuito con funciones auxiliares tipadas:
 
-```
+```ach
 public expected: Field
 witness a: Field
 witness b: Field

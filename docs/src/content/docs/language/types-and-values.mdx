@@ -25,7 +25,7 @@ Achronyme is dynamically typed. All values are represented as tagged 64-bit word
 
 Integers are 60-bit signed values stored inline (no heap allocation). Range: -576460752303423488 to 576460752303423487.
 
-```
+```ach
 let x = 42
 let y = -7
 let big = 100000000000
@@ -35,7 +35,7 @@ If an arithmetic operation overflows the i60 range, a runtime error is raised. U
 
 ## Booleans
 
-```
+```ach
 let yes = true
 let no = false
 ```
@@ -44,14 +44,14 @@ In circuits, `true` maps to field element 1 and `false` maps to 0.
 
 ## Strings
 
-```
+```ach
 let greeting = "hello, world"
 let empty = ""
 ```
 
 ## Lists
 
-```
+```ach
 let nums = [1, 2, 3]
 let mixed = [1, "two", true]
 let nested = [[1, 2], [3, 4]]
@@ -59,7 +59,7 @@ let nested = [[1, 2], [3, 4]]
 
 ## Maps
 
-```
+```ach
 let person = {"name": "Alice", "age": 30}
 ```
 
@@ -67,7 +67,7 @@ let person = {"name": "Alice", "age": 30}
 
 BN254 scalar field elements for cryptographic operations. Montgomery form internally. Created using the `0p` prefix, which works like `0x` for hex:
 
-```
+```ach
 let a = 0p42         // decimal field literal
 let b = 0pxFF        // hex field literal
 let c = 0pb1010      // binary field literal
@@ -90,7 +90,7 @@ Fixed-width unsigned integers for cryptographic operations. Two widths: 256-bit 
 
 BigInt literals use the `0i` prefix, followed by width and radix:
 
-```
+```ach
 let a = 0i256xFF           // 256-bit hex
 let b = 0i256d255          // 256-bit decimal
 let c = 0i256b11111111     // 256-bit binary
@@ -99,7 +99,7 @@ let d = 0i512x1234         // 512-bit hex
 
 ### Constructor functions
 
-```
+```ach
 let a = bigint256(42)       // from integer
 let b = bigint256("0xFF")   // from hex string
 let c = bigint512(100)      // 512-bit from integer
@@ -109,7 +109,7 @@ let c = bigint512(100)      // 512-bit from integer
 
 Standard operators work between BigInts of the same width:
 
-```
+```ach
 let x = 0i256d10
 let y = 0i256d20
 let sum = x + y              // 30
@@ -124,7 +124,7 @@ let p = 0i256d2 ^ 10         // 1024
 
 BigInt cannot be mixed with Int, Field, or a different BigInt width:
 
-```
+```ach
 // All of these are runtime errors:
 // bigint256(1) + 1           -- BigInt + Int
 // bigint256(1) + 0p1         -- BigInt + Field
@@ -133,7 +133,7 @@ BigInt cannot be mixed with Int, Field, or a different BigInt width:
 
 ### Bitwise operations
 
-```
+```ach
 bit_and(a, b)     // bitwise AND
 bit_or(a, b)      // bitwise OR
 bit_xor(a, b)     // bitwise XOR
@@ -151,7 +151,7 @@ let val = from_bits(bits, 256) // reconstruct from bits
 
 ## Nil
 
-```
+```ach
 let nothing = nil
 ```
 
@@ -159,7 +159,7 @@ let nothing = nil
 
 ## Variable Bindings
 
-```
+```ach
 let x = 42          // immutable binding
 mut y = 0           // mutable binding
 y = y + 1           // reassignment (only for mut)
@@ -171,7 +171,7 @@ y = y + 1           // reassignment (only for mut)
 
 Achronyme supports optional type annotations on variable bindings and function signatures. In circuit mode, annotations enable compile-time type checking and constraint optimization. In VM mode, annotations are parsed and accepted but execution remains dynamic.
 
-```
+```ach
 let x: Field = 0p42
 let flag: Bool = true
 mut counter: Field = 0p0

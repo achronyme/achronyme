@@ -21,7 +21,7 @@ Select it with `--backend plonkish`.
 
 A Plonkish circuit is a **2D table** where each column has a type and each row represents one step of computation:
 
-```
+```ach
 Row  | s_arith | constant | a   | b   | c   | d
 -----+---------+----------+-----+-----+-----+-----
   0  |    1    |    0     |  3  |  4  |  5  |  17
@@ -39,7 +39,7 @@ Row  | s_arith | constant | a   | b   | c   | d
 
 A **gate** is a polynomial expression that must evaluate to zero on every row. Achronyme's standard arithmetic gate:
 
-```
+```ach
 s_arith * (a * b + c - d) = 0
 ```
 
@@ -58,7 +58,7 @@ This single gate handles all arithmetic:
 
 In R1CS, wires are shared implicitly through linear combinations. In Plonkish, equality between cells in different rows or columns must be enforced explicitly with **copy constraints**:
 
-```
+```ach
 (advice_a, row 0) == (advice_c, row 5)
 ```
 
@@ -74,7 +74,7 @@ Copy constraints can also link advice columns to the constant column, enforcing 
 
 In R1CS, a range check for `n` bits costs `n + 1` constraints (one per bit plus a sum). In Plonkish, it costs **1 lookup row**:
 
-```
+```ach
 s_range active → a ∈ {0, 1, 2, ..., 2^n - 1}
 ```
 
@@ -93,7 +93,7 @@ This prevents inactive (zero-padded) rows from causing false lookup failures.
 
 The Plonkish compiler uses **lazy evaluation** for linear operations. Instead of emitting a table row for every addition or subtraction, it builds a `PlonkVal` tree:
 
-```
+```ach
 DeferredAdd(
     Cell(a, row 0),
     DeferredNeg(Cell(b, row 1))
