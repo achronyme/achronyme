@@ -1,0 +1,233 @@
+---
+title: "Aritmética BigInt"
+description: "Enteros sin signo de ancho fijo para operaciones criptográficas."
+---
+
+BigInt proporciona aritmética de enteros sin signo de 256 y 512 bits en la VM. A diferencia de los elementos de campo (que usan aritmética modular sobre BN254), los BigInts usan aritmética no modular con errores explícitos de desbordamiento. Esto los hace ideales para operaciones donde necesitas semántica de enteros exacta a anchos criptográficos.
+
+## Crear BigInts
+
+Hay tres formas de crear valores BigInt:
+
+### Sintaxis literal
+
+Usa el prefijo `0i` seguido del ancho (`256` o `512`) y la base (`x` para hex, `d` para decimal, `b` para binario):
+
+```
+let a = 0i256xFF           // 256 bits, hex
+let b = 0i256d255          // 256 bits, decimal
+let c = 0i256b11111111     // 256 bits, binario
+let d = 0i512x1234ABCD     // 512 bits, hex
+```
+
+Las tres representaciones de 255 son iguales:
+
+```
+assert(0i256xFF == 0i256d255)
+assert(0i256d255 == 0i256b11111111)
+```
+
+### Funciones constructoras
+
+`bigint256()` y `bigint512()` construyen desde enteros o cadenas:
+
+```
+let a = bigint256(42)          // desde entero
+let b = bigint256("0xFF")     // desde cadena hexadecimal
+let c = bigint256("12345")    // desde cadena decimal
+let d = bigint512(0)           // 512 bits cero
+```
+
+### Verificación de tipo
+
+Usa `typeof()` para inspeccionar valores BigInt:
+
+```
+let x = 0i256d42
+print(typeof(x))   // "BigInt256"
+
+let y = 0i512d42
+print(typeof(y))   // "BigInt512"
+```
+
+## Aritmética
+
+Los operadores estándar funcionan entre BigInts del mismo ancho:
+
+```
+let a = 0i256d100
+let b = 0i256d200
+
+print(a + b)   // BigInt256(0x12c)  (300)
+print(b - a)   // BigInt256(0x64)   (100)
+print(a * b)   // BigInt256(0x4e20) (20000)
+print(b / a)   // BigInt256(0x2)    (2)
+print(b % a)   // BigInt256(0x0)    (0)
+```
+
+La exponenciación usa `^` con un exponente entero:
+
+```
+let base = 0i256d2
+let result = base ^ 128
+print(result)  // 2^128 como entero de 256 bits
+```
+
+## Desbordamiento y Subdesbordamiento
+
+A diferencia de los elementos de campo, la aritmética BigInt **no** se envuelve. Las operaciones que exceden el rango producen errores en tiempo de ejecución:
+
+```
+// Esto generará error: desbordamiento BigInt
+let max = bit_not(bigint256(0))  // todos los bits activados = 2^256 - 1
+let boom = max + bigint256(1)    // ERROR: BigIntOverflow
+```
+
+```
+// Esto generará error: subdesbordamiento BigInt
+let zero = bigint256(0)
+let boom = zero - bigint256(1)   // ERROR: BigIntUnderflow
+```
+
+Esto hace los errores visibles inmediatamente en lugar de producir resultados silenciosamente incorrectos.
+
+## Seguridad de Tipos
+
+BigInt aplica límites estrictos de tipo. No puedes mezclar BigInt con Int, Field, ni con un BigInt de diferente ancho:
+
+```
+// Todos estos son errores en tiempo de ejecución:
+// bigint256(1) + 1           -- BigInt + Int
+// bigint256(1) + 0p1         -- BigInt + Field
+// bigint256(1) + bigint512(1) -- incompatibilidad de ancho
+```
+
+Esto previene aritmética accidental entre tipos incompatibles.
+
+## Operaciones a Nivel de Bits
+
+BigInt soporta manipulación completa a nivel de bits a través de funciones nativas:
+
+```
+let a = 0i256xFF
+let b = 0i256x0F
+
+print(bit_and(a, b))   // 0x0F
+print(bit_or(a, b))    // 0xFF
+print(bit_xor(a, b))   // 0xF0
+print(bit_not(b))      // todos los bits invertidos
+```
+
+### Desplazamientos
+
+```
+let one = bigint256(1)
+
+// Desplazar a la izquierda: multiplicar por potencias de 2
+let shifted = bit_shl(one, 128)   // 2^128
+
+// Desplazar a la derecha: dividir por potencias de 2
+let back = bit_shr(shifted, 128)  // de vuelta a 1
+assert(back == one)
+```
+
+Los desplazamientos a la izquierda generan error si algún bit activado es desplazado fuera (protección contra desbordamiento). Los desplazamientos a la derecha descartan los bits desplazados.
+
+## Descomposición de Bits
+
+Convierte entre BigInts y bits individuales con `to_bits()` y `from_bits()`:
+
+```
+let val = bigint256(42)
+let bits = to_bits(val)
+
+// bits es una lista de 256 enteros (0 o 1), LSB primero
+print(len(bits))   // 256
+print(bits[0])     // 0  (bit menos significativo)
+print(bits[1])     // 1
+print(bits[2])     // 0
+print(bits[3])     // 1
+print(bits[4])     // 0
+print(bits[5])     // 1
+// 42 = 0b101010, LSB primero = [0, 1, 0, 1, 0, 1, 0, 0, ...]
+
+// Reconstruir desde bits
+let reconstructed = from_bits(bits, 256)
+assert(reconstructed == val)
+```
+
+El segundo argumento de `from_bits()` es el ancho objetivo (256 o 512).
+
+## Ejemplo: Conteo de Bits
+
+Contar el número de bits activados en un BigInt:
+
+```
+fn popcount(x) {
+    let bits = to_bits(x)
+    mut count = 0
+    for b in bits {
+        count = count + b
+    }
+    return count
+}
+
+assert(popcount(bigint256(0)) == 0)
+assert(popcount(bigint256(1)) == 1)
+assert(popcount(bigint256(255)) == 8)
+assert(popcount(bigint256("0xFFFF")) == 16)
+
+print("popcount(0xFF) =", popcount(bigint256(255)))  // 8
+```
+
+## Ejemplo: Intercambio XOR
+
+Intercambiar dos valores usando XOR sin variable temporal:
+
+```
+mut a = 0i256d42
+mut b = 0i256d99
+
+a = bit_xor(a, b)
+b = bit_xor(b, a)
+a = bit_xor(a, b)
+
+assert(a == 0i256d99)
+assert(b == 0i256d42)
+print("Después del intercambio XOR: a =", a, "b =", b)
+```
+
+## Ejemplo: Verificación de Potencia de Dos
+
+Verificar si un BigInt es potencia de dos usando el truco de bits `n & (n - 1) == 0`:
+
+```
+fn is_power_of_two(n) {
+    if n == bigint256(0) {
+        return false
+    }
+    let prev = n - bigint256(1)
+    return bit_and(n, prev) == bigint256(0)
+}
+
+assert(is_power_of_two(bigint256(1)) == true)
+assert(is_power_of_two(bigint256(256)) == true)
+assert(is_power_of_two(bit_shl(bigint256(1), 128)) == true)
+assert(is_power_of_two(bigint256(3)) == false)
+assert(is_power_of_two(bigint256(100)) == false)
+
+print("2^128 es potencia de 2:", is_power_of_two(bit_shl(bigint256(1), 128)))
+```
+
+## BigInt vs Field
+
+| | BigInt | Field |
+|---|--------|-------|
+| Aritmética | No modular (errores de desbordamiento) | Modular (se envuelve en primo BN254) |
+| Anchos | 256 bits, 512 bits | 254 bits (campo escalar BN254) |
+| Soporte de circuitos | Solo VM | VM y circuitos |
+| Caso de uso | Aritmética entera exacta a anchos criptográficos | Valores de circuito ZK, hashing Poseidon |
+| División | División entera (trunca) | Inverso modular |
+| Negación | Error (sin signo) | Inverso aditivo en campo |
+
+Elige BigInt cuando necesites semántica de enteros exacta. Elige Field cuando necesites aritmética modular o compatibilidad con circuitos.

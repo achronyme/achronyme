@@ -1,0 +1,186 @@
+---
+title: "Prueba de Membresía Merkle"
+description: "Tutorial completo de prueba de membresía en árbol Merkle."
+---
+
+Este tutorial muestra cómo probar que una hoja pertenece a un árbol Merkle sin revelar la posición de la hoja ni el contenido restante del árbol.
+
+## Conceptos
+
+Un árbol Merkle es un árbol hash binario donde cada nodo no hoja es el hash Poseidon de sus dos hijos. Para probar membresía, el probador proporciona:
+
+- **leaf**: el valor en una posición específica
+- **path**: hashes hermanos en cada nivel (de la hoja a la raíz)
+- **indices**: bits de dirección en cada nivel (0 = hijo izquierdo, 1 = hijo derecho)
+
+El verificador recalcula la raíz a partir de estos valores y comprueba que coincida con la raíz esperada.
+
+## Definición del Circuito
+
+Crea `merkle.ach`:
+
+```
+public root
+witness leaf
+witness path[3]
+witness indices[3]
+
+merkle_verify(root, leaf, path, indices)
+```
+
+Esto verifica membresía en un árbol de profundidad 3 (8 hojas). La función integrada `merkle_verify`:
+1. En cada nivel, posiciona el hash actual y el hermano según el bit de dirección
+2. Los hashea juntos con Poseidon
+3. Después de todos los niveles, afirma que el resultado es igual a `root`
+
+Internamente, `merkle_verify` se desenrolla a:
+
+```
+// Nivel 0
+let l0 = mux(indices[0], path[0], leaf)
+let r0 = mux(indices[0], leaf, path[0])
+let h0 = poseidon(l0, r0)
+
+// Nivel 1
+let l1 = mux(indices[1], path[1], h0)
+let r1 = mux(indices[1], h0, path[1])
+let h1 = poseidon(l1, r1)
+
+// Nivel 2
+let l2 = mux(indices[2], path[2], h1)
+let r2 = mux(indices[2], h1, path[2])
+let h2 = poseidon(l2, r2)
+
+assert_eq(h2, root)
+```
+
+## Construir el Árbol
+
+Para proporcionar las entradas, necesitas calcular el árbol. En un script o programa separado, construye el árbol de abajo hacia arriba:
+
+```
+// 8 hojas
+let leaves = [
+    0p100, 0p200, 0p300, 0p400,
+    0p500, 0p600, 0p700, 0p800
+]
+
+// Nivel 0: hashear pares de hojas
+let n0 = poseidon(leaves[0], leaves[1])
+let n1 = poseidon(leaves[2], leaves[3])
+let n2 = poseidon(leaves[4], leaves[5])
+let n3 = poseidon(leaves[6], leaves[7])
+
+// Nivel 1: hashear pares de nodos nivel 0
+let n4 = poseidon(n0, n1)
+let n5 = poseidon(n2, n3)
+
+// Nivel 2: raíz
+let root = poseidon(n4, n5)
+print(root)
+```
+
+Ejecuta esto con `ach run` para obtener valores hash concretos.
+
+## Generar una Ruta de Prueba
+
+Para probar que `leaves[2]` (valor 300) está en el árbol:
+
+1. **Nivel 0**: `leaves[2]` es el hijo izquierdo de `poseidon(leaves[2], leaves[3])`. Hermano = `leaves[3]`, índice = 0 (estamos a la izquierda).
+2. **Nivel 1**: `n1` es el hijo derecho de `poseidon(n0, n1)`. Hermano = `n0`, índice = 1 (estamos a la derecha).
+3. **Nivel 2**: `n4` es el hijo izquierdo de `poseidon(n4, n5)`. Hermano = `n5`, índice = 0 (estamos a la izquierda).
+
+Entonces:
+- `leaf = 300`
+- `path = [leaves[3], n0, n5]` (hermano en cada nivel)
+- `indices = [0, 1, 0]` (nuestra posición en cada nivel)
+
+## Compilar el Circuito
+
+```bash
+ach circuit merkle.ach \
+  --inputs "root=<valor_raiz>,leaf=300,path_0=<leaves[3]>,path_1=<n0>,path_2=<n5>,indices_0=0,indices_1=1,indices_2=0"
+```
+
+Nota la sintaxis de entrada de arrays: `path_0`, `path_1`, `path_2` para `path[3]`.
+
+Esto produce `circuit.r1cs` y `witness.wtns`, compatibles con snarkjs.
+
+## Costo de Restricciones
+
+Cada nivel del árbol cuesta aproximadamente 363 restricciones R1CS:
+- 1 hash Poseidon: 361 restricciones
+- 1 `mux` para selección izquierda/derecha: 2 restricciones
+
+Un árbol de profundidad 3 usa ~1,089 restricciones. Un árbol de profundidad 20 (para ~1M hojas) usa ~7,260 restricciones.
+
+## Verificar con snarkjs
+
+Después de compilar, genera y verifica una prueba Groth16:
+
+```bash
+# Setup (una vez, necesita archivo de ceremonia Powers of Tau)
+snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit_final.zkey
+
+# Generar prueba
+snarkjs groth16 prove circuit_final.zkey witness.wtns proof.json public.json
+
+# Verificar
+snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+El verificador solo ve `root` (la entrada pública). El valor de la hoja, la ruta y los índices permanecen privados.
+
+## Usando prove {} en su lugar
+
+También puedes generar pruebas en línea sin el CLI:
+
+```
+// ... calcular valores del árbol como arriba ...
+
+let p = prove {
+    witness leaf
+    witness path[3]
+    witness indices[3]
+    public root
+
+    merkle_verify(root, leaf, path, indices)
+}
+
+print(verify_proof(p))  // true
+```
+
+## Ajustar la Profundidad del Árbol
+
+Cambia el tamaño del array para que coincida con la profundidad de tu árbol:
+
+```
+// Profundidad 1 (2 hojas)
+witness path[1]
+witness indices[1]
+
+// Profundidad 5 (32 hojas)
+witness path[5]
+witness indices[5]
+
+// Profundidad 20 (~1M hojas)
+witness path[20]
+witness indices[20]
+```
+
+Los arrays `path` e `indices` deben tener la misma longitud.
+
+## Anotaciones de Tipo
+
+Para seguridad de tipos explícita, agrega anotaciones:
+
+```
+public root: Field
+witness leaf: Field
+witness path[3]: Field
+witness indices[3]: Bool
+
+merkle_verify(root, leaf, path, indices)
+```
+
+La anotación `Bool` en `indices` asegura que estén restringidos a 0 o 1, lo que el pase de optimización `bool_prop` puede usar para omitir verificación booleana redundante.

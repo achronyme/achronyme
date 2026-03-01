@@ -1,0 +1,206 @@
+---
+title: "Pruebas en Línea"
+description: "Usando bloques prove para generación de pruebas en línea."
+---
+
+El bloque `prove {}` te permite generar pruebas de conocimiento cero en línea, sin salir de la VM. Compila su cuerpo como un circuito, genera un testigo a partir de variables capturadas y devuelve una prueba criptográfica.
+
+## Ejemplo Básico
+
+```
+let x = 0p6
+let y = 0p7
+let product = 0p42
+
+let p = prove {
+    witness x
+    witness y
+    public product
+    assert_eq(x * y, product)
+}
+
+print(proof_json(p))
+```
+
+El bloque prove:
+1. Captura `x`, `y` y `product` del ámbito externo
+2. Compila `assert_eq(x * y, product)` como un circuito R1CS
+3. Usa los valores capturados como entradas testigo/públicas
+4. Genera una prueba Groth16
+5. Devuelve un `ProofObject`
+
+## Declaraciones de Variables
+
+Dentro de un bloque prove, declara qué variables capturadas son públicas (visibles para el verificador) y cuáles son testigo (privadas):
+
+```
+let secret = 0p42
+let hash = 0p17159...
+
+let p = prove {
+    witness secret    // privado — el probador lo conoce
+    public hash       // público — el verificador lo ve
+    assert_eq(poseidon(secret, 0), hash)
+}
+```
+
+El verificador aprende solo que *algún* valor hashea a `hash`, sin conocer `secret`.
+
+## Auto-Conversión de Enteros
+
+Los enteros capturados por bloques prove se convierten automáticamente a elementos de campo. Este es el único lugar donde la conversión Int→Field ocurre implícitamente:
+
+```
+let a = 10
+let b = 20
+let sum = 30
+
+prove {
+    witness a     // 10 se convierte en 0p10
+    witness b     // 20 se convierte en 0p20
+    public sum    // 30 se convierte en 0p30
+    assert_eq(a + b, sum)
+}
+```
+
+Fuera de los bloques prove, mezclar Int y Field genera un error `TypeMismatch`. Usa literales de campo `0p` para conversión explícita.
+
+## Acceder a Componentes de la Prueba
+
+Un `ProofObject` contiene tres componentes JSON:
+
+```
+let p = prove {
+    witness x
+    public y
+    assert_eq(x, y)
+}
+
+// Datos de prueba Groth16 (pi_a, pi_b, pi_c)
+let proof = proof_json(p)
+
+// Entradas públicas como array de cadenas decimales
+let inputs = proof_public(p)
+
+// Clave de verificación (para verificación on-chain)
+let vkey = proof_vkey(p)
+
+print(proof)
+print(inputs)
+print(vkey)
+```
+
+## Verificar Pruebas
+
+Usa `verify_proof()` para verificar una prueba dentro de la VM:
+
+```
+let p = prove {
+    witness secret
+    public hash
+    assert_eq(poseidon(secret, 0), hash)
+}
+
+let ok = verify_proof(p)
+print(ok)  // true
+```
+
+## Arrays y Funciones
+
+Los bloques prove soportan arrays, funciones y todas las características del modo circuito:
+
+```
+let v0 = 0p10
+let v1 = 0p20
+let v2 = 0p30
+let total = 0p60
+
+prove {
+    witness v0
+    witness v1
+    witness v2
+    public total
+
+    let vals = [v0, v1, v2]
+    let acc = vals[0] + vals[1] + vals[2]
+    assert_eq(acc, total)
+    assert_eq(len(vals), 3)
+}
+```
+
+## Poseidon en Bloques Prove
+
+Las funciones criptográficas integradas funcionan dentro de bloques prove:
+
+```
+let a = 0p1
+let b = 0p2
+let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
+
+prove {
+    witness a
+    witness b
+    public h
+    assert_eq(poseidon(a, b), h)
+}
+```
+
+## Verificaciones de Rango
+
+Fuerza que un valor quepa dentro de cierto número de bits:
+
+```
+let val = 0p200
+
+prove {
+    witness val
+    range_check(val, 8)   // 0 ≤ val < 256
+}
+```
+
+## Múltiples Bloques Prove
+
+Puedes usar múltiples bloques prove en secuencia:
+
+```
+let a = 0p3
+let b = 0p4
+let sum = 0p7
+let product = 0p12
+
+prove {
+    witness a
+    witness b
+    public sum
+    assert_eq(a + b, sum)
+}
+
+prove {
+    witness a
+    witness b
+    public product
+    assert_eq(a * b, product)
+}
+```
+
+Cada bloque prove compila y prueba independientemente.
+
+## Ejecutar con Generación de Pruebas
+
+Para generar pruebas Groth16 reales, proporciona un archivo Powers of Tau:
+
+```bash
+ach run my_program.ach --ptau pot12_final.ptau
+```
+
+Sin `--ptau`, los bloques prove aún verifican restricciones pero devuelven `VerifiedOnly` (no se genera prueba criptográfica).
+
+La zkey se cachea en `~/.achronyme/cache/` para ejecuciones posteriores más rápidas.
+
+## Selección de Backend
+
+Por defecto, los bloques prove usan el backend R1CS/Groth16. Para usar Plonkish/KZG-PlonK:
+
+```bash
+ach run my_program.ach --prove-backend plonkish
+```
