@@ -1,0 +1,71 @@
+---
+title: "Comandos del CLI"
+description: "Referencia de comandos del CLI de Achronyme."
+---
+
+## `run` — Ejecutar un programa
+
+Ejecuta un archivo fuente de Achronyme (`.ach`) o un binario compilado (`.achb`).
+
+```bash
+ach run script.ach
+ach run script.achb
+```
+
+### Banderas
+
+| Bandera | Descripción |
+|------|-------------|
+| `--stress-gc` | Ejecutar GC en cada asignación (para pruebas) |
+| `--prove-backend <backend>` | Backend para bloques `prove {}`: `r1cs` (predeterminado) o `plonkish` |
+
+### Ejemplos
+
+```bash
+ach run hello.ach
+ach run hello.ach --prove-backend plonkish
+```
+
+---
+
+## `circuit` — Compilar un circuito ZK
+
+Compila un archivo fuente de circuito Achronyme en restricciones R1CS/Plonkish y genera un testigo.
+
+```bash
+ach circuit circuit.ach --inputs "x=42,y=7"
+```
+
+Consulta [Opciones de Circuito](/es/cli/circuit-options) para todas las banderas disponibles.
+
+---
+
+## `compile` — Compilar a bytecode
+
+Compila un archivo fuente de Achronyme en un binario (`.achb`) que se puede ejecutar con `ach run`.
+
+```bash
+ach compile script.ach --output script.achb
+```
+
+### Banderas
+
+| Bandera | Descripción |
+|------|-------------|
+| `--output <ruta>` | Ruta del archivo de salida (requerido) |
+
+---
+
+## `disassemble` — Mostrar bytecode
+
+Desensambla un archivo fuente o binario de Achronyme, mostrando las instrucciones de bytecode.
+
+```bash
+ach disassemble script.ach
+```
+
+---
+
+## `repl` — Modo interactivo
+
+Inicia un bucle interactivo de Lectura-Evaluación-Impresión. (Aún no implementado.)

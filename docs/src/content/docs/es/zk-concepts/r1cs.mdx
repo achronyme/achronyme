@@ -1,0 +1,179 @@
+---
+title: "R1CS"
+description: "Sistemas de Restricciones de Rango 1 explicados."
+---
+
+Un **Sistema de Restricciones de Rango 1** (R1CS) es el backend predeterminado en Achronyme. Representa la computación como un conjunto de ecuaciones que un probador debe satisfacer, habilitando pruebas de conocimiento cero Groth16.
+
+## La Idea Central
+
+Cada restricción R1CS tiene la forma:
+
+```
+A * B = C
+```
+
+donde `A`, `B` y `C` son **combinaciones lineales** de variables del circuito (cables). Una combinación lineal es una suma ponderada como `3x + 5y + 1`.
+
+La restricción clave es **rango 1**: cada restricción permite exactamente una multiplicación. Esto es lo que hace R1CS "suficientemente simple" para sistemas de pruebas eficientes, pero requiere que el compilador descomponga expresiones complejas en pasos de multiplicación única.
+
+## Cables y Disposición
+
+Un circuito tiene tres tipos de cables:
+
+| Cable | Índice | Descripción |
+|------|-------|-------------|
+| ONE | 0 | Cable constante, siempre 1. Usado para codificar constantes en combinaciones lineales. |
+| Entradas públicas | 1..N | Valores que el verificador ve. Declarados con `public`. |
+| Testigo | N+1.. | Entradas privadas + valores intermedios. Declarados con `witness` o asignados por el compilador. |
+
+Esta disposición es **compatible con snarkjs** — los archivos `.r1cs` y `.wtns` que Achronyme exporta funcionan directamente con las herramientas de snarkjs.
+
+## De Achronyme a Restricciones
+
+El compilador traduce cada operación en combinaciones lineales y restricciones:
+
+### Operaciones gratis (0 restricciones)
+
+La suma, resta, negación y multiplicación por una constante son todas operaciones lineales — solo combinan cables existentes sin necesitar nuevas restricciones:
+
+```
+// Estas son gratis:
+let sum = a + b          // CL: a + b
+let diff = a - b         // CL: a - b
+let scaled = a * 3       // CL: 3*a
+let neg = -a             // CL: (-1)*a
+```
+
+### Multiplicación (1 restricción)
+
+Multiplicar dos variables requiere una restricción porque es la única operación no lineal:
+
+```
+let product = a * b
+// Emite: A=a, B=b, C=product → a * b = product
+```
+
+### División (2 restricciones)
+
+La división por una variable requiere calcular el inverso modular:
+
+```
+let quotient = a / b
+// Restricción 1: b * b_inv = 1     (calcula inverso)
+// Restricción 2: a * b_inv = quotient
+```
+
+La división por una constante es gratis (multiplicar por el inverso de la constante).
+
+### Igualdad (1 restricción)
+
+```
+assert_eq(x, y)
+// Emite: x * 1 = y
+```
+
+## Combinaciones Lineales
+
+Una `LinearCombination` se almacena como pares dispersos `(variable, coeficiente)`:
+
+```
+3x + 5y + 7 = [(x, 3), (y, 5), (ONE, 7)]
+```
+
+El sistema simplifica automáticamente: `x - x` se convierte en la CL vacía (cero), y `3x + 5x` se convierte en `8x`. Esta deduplicación previene la inflación de restricciones.
+
+Cuando una combinación lineal necesita convertirse en un cable concreto (por ejemplo, como entrada a una multiplicación), el compilador la **materializa**:
+- Si la CL ya es una sola variable (como solo `x`), no se necesita restricción
+- De lo contrario, se asigna un cable testigo nuevo y se agrega una restricción de igualdad (1 restricción)
+
+## Ejemplo: Ecuación Cuadrática
+
+Considera probar conocimiento de `x` tal que `x^2 + x + 5 = 35`:
+
+```
+public out;
+witness x;
+let x_sq = x * x;
+assert_eq(x_sq + x + 5, out);
+```
+
+Esto produce 2 restricciones:
+
+| # | A | B | C | Propósito |
+|---|---|---|---|---------|
+| 1 | x | x | x_sq | `x * x = x_sq` |
+| 2 | x_sq + x + 5*ONE | 1 | out | `x_sq + x + 5 = out` |
+
+Con testigo `x = 5, out = 35`, ambas restricciones se satisfacen: `5*5 = 25` y `25 + 5 + 5 = 35`.
+
+## Verificación Booleana
+
+Varias operaciones necesitan verificar que un valor es booleano (0 o 1). El gadget estándar:
+
+```
+b * (1 - b) = 0
+```
+
+Esta restricción única fuerza a `b` a ser 0 o 1 — las únicas dos soluciones.
+
+El pase de optimización `bool_prop` rastrea qué variables son probablemente booleanas (salidas de comparaciones, `RangeCheck(x, 1)`, etc.) y omite la verificación redundante, ahorrando restricciones.
+
+## Gadget IsZero
+
+Las comparaciones de igualdad y desigualdad usan el gadget **IsZero**. Dado un valor `d`, produce 1 si `d = 0`, y 0 en caso contrario:
+
+```
+d * inv = 1 - result
+d * result = 0
+```
+
+- Si `d = 0`: `result = 1`, `inv` puede ser cualquier cosa (la segunda restricción fuerza a `result` o `d` a ser 0)
+- Si `d != 0`: `result = 0`, `inv = 1/d`
+
+Costo: 2 restricciones.
+
+## Comparaciones de Orden
+
+`<`, `<=`, `>`, `>=` son las operaciones más costosas. El enfoque:
+
+1. Asegurar que ambos operandos estén acotados (verificación de rango de 252 bits si no están probados)
+2. Calcular `diff = b - a + 2^bits - 1` (desplazamiento para mantener el resultado positivo)
+3. Descomponer `diff` en `bits + 1` bits con verificación booleana
+4. El bit superior indica el resultado de la comparación
+
+Costo: ~760 restricciones sin cotas previas de rango. Con `range_check`, el compilador reutiliza cotas probadas, reduciendo a `O(bits)`.
+
+## Referencia de Costos de Restricciones
+
+| Operación | Restricciones | Notas |
+|-----------|-------------|-------|
+| `+`, `-`, negación | 0 | Combinación lineal |
+| `* constante` | 0 | Multiplicación escalar |
+| `* variable` | 1 | Una restricción R1CS |
+| `/ constante` | 0 | Multiplicar por inverso |
+| `/ variable` | 2 | Inverso + multiplicación |
+| `assert_eq` | 1 | Forzar igualdad |
+| `assert` | 2 | Verificación booleana + forzar = 1 |
+| `==`, `!=` | 2 | Gadget IsZero |
+| `<`, `<=`, `>`, `>=` | ~760 | 2x252 rango + descomposición de 253 bits |
+| `&&`, `\|\|` | 3 | 2 verificaciones booleanas + 1 multiplicación |
+| `!` | 1 | Verificación booleana (0 si probado) |
+| `mux` (if/else) | 2 | Verificación booleana + selección |
+| `range_check(x, n)` | n + 1 | n bits booleanos + 1 igualdad de suma |
+| `poseidon(l, r)` | 361 | 360 permutación + 1 capacidad |
+
+## Exportación Binaria
+
+Achronyme exporta archivos `.r1cs` y `.wtns` en el **formato binario iden3**, compatible con snarkjs:
+
+- `.r1cs` (v1): 3 secciones — encabezado, restricciones, mapeo cable-a-etiqueta
+- `.wtns` (v2): 2 secciones — encabezado, valores del testigo (32 bytes por elemento de campo)
+
+Ambos usan codificación little-endian con el primo del campo escalar BN254 incrustado en el encabezado.
+
+## Lectura Adicional
+
+- [Operadores y Costos](/es/circuits/operators-and-costs/) — costos detallados de restricciones para todas las operaciones de circuito
+- [Funciones Integradas](/es/circuits/builtins/) — costos de restricciones de funciones integradas
+- [Generación de Pruebas](/es/zk-concepts/proof-generation/) — usando R1CS para pruebas Groth16

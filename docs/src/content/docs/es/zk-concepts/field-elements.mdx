@@ -1,0 +1,73 @@
+---
+title: "Elementos de Campo"
+description: "Aritmética del campo escalar BN254."
+---
+
+Un **elemento de campo** es un número en el campo escalar BN254 — enteros módulo el primo:
+
+```
+p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+```
+
+Toda la aritmética sobre elementos de campo es **modular**: la suma, resta y multiplicación se envuelven en `p`, y la división calcula el inverso modular.
+
+## Int vs Field
+
+| | Int | Field |
+|---|---|---|
+| Rango | -2^59 a 2^59-1 | 0 a p-1 |
+| Desbordamiento | Error en tiempo de ejecución | Se envuelve módulo p |
+| Negación | `-x` | `p - x` |
+| División | Truncante (`7 / 2 = 3`) | Inverso modular (`1/2 = (p+1)/2`) |
+| Almacenamiento | En línea (60 bits etiquetados) | En heap (Montgomery de 256 bits) |
+
+Int y Field son **tipos distintos**. Mezclarlos en aritmética es un error en tiempo de ejecución:
+
+```
+0p3 + 5       // Error: No se puede mezclar Int y Field
+0p3 + 0p5     // OK: 0p8
+```
+
+## Crear Elementos de Campo
+
+Usa el prefijo `0p` para crear elementos de campo. Funciona como `0x` para hexadecimal:
+
+```
+let a = 0p42         // literal de campo decimal
+let b = 0pxFF        // literal de campo hexadecimal (prefijo 0px)
+let c = 0pb1010      // literal de campo binario (prefijo 0pb)
+let d = 0p12345      // decimal grande
+```
+
+## Aritmética
+
+Los elementos de campo soportan `+`, `-`, `*`, `/`, `^` y `==`:
+
+```
+let a = 0p10
+let b = 0p3
+
+let sum  = a + b        // 0p13
+let diff = a - b        // 0p7
+let prod = a * b        // 0p30
+let quot = a / b        // inverso modular de 3, por 10
+let pow  = a ^ 5        // 10^5 mod p
+
+// Exponentes negativos calculan el inverso modular
+let inv = a ^ -1        // igual que 0p1 / a
+```
+
+## En Circuitos
+
+En modo circuito (bloques `prove {}` y CLI `circuit`), **todos los valores son elementos de campo** implícitamente. Las variables enteras capturadas por un bloque `prove {}` se convierten a elementos de campo automáticamente:
+
+```
+let x = 42
+prove {
+    // x se convierte automáticamente a 0p42 dentro del circuito
+    public x
+    assert_eq(x, 42)
+}
+```
+
+Este es el único lugar donde la conversión Int→Field ocurre implícitamente. En la ejecución regular de la VM, la conversión siempre debe ser explícita vía literales de campo `0p`.

@@ -1,0 +1,186 @@
+---
+title: "Generación de Pruebas"
+description: "Generando y verificando pruebas de conocimiento cero."
+---
+
+Achronyme genera pruebas de conocimiento cero nativamente — no se requieren herramientas externas. Ambos backends producen pruebas reales y verificables usando protocolos criptográficos estándar.
+
+## Dos Sistemas de Pruebas
+
+| | R1CS + Groth16 | Plonkish + KZG-PlonK |
+|---|---|---|
+| Biblioteca | ark-groth16 | PSE halo2 |
+| Curva | BN254 | BN254 |
+| Tamaño de prueba | ~128 bytes (constante) | Mayor (escala con el circuito) |
+| Setup | Setup confiable por circuito | Params KZG universales (reutilizables) |
+| Verificación | Tiempo constante | Logarítmica |
+
+## El Pipeline
+
+Ya sea usando el CLI o bloques `prove {}` en línea, el pipeline de pruebas sigue los mismos pasos:
+
+```
+Fuente → Parsear → AST → IR → Optimizar → Compilar → Testigo → Verificar → Probar
+```
+
+1. **Parsear**: código fuente a AST
+2. **Bajada a IR**: AST a representación intermedia SSA, extrayendo declaraciones `public`/`witness`
+3. **Optimizar**: pases `const_fold`, `dce`, `bool_prop` reducen el conteo de restricciones
+4. **Compilar**: instrucciones IR se convierten en restricciones R1CS o filas de tabla Plonkish
+5. **Testigo**: valores de entrada concretos llenan el vector/tabla de testigo
+6. **Verificar**: las restricciones se comprueban contra el testigo (detecta errores antes de probar)
+7. **Probar**: se genera la prueba criptográfica
+
+## CLI: Comando `circuit`
+
+El comando `circuit` compila un archivo `.ach` independiente:
+
+```sh
+# R1CS (predeterminado): compilar + testigo + exportar .r1cs/.wtns
+achronyme circuit multiply.ach --inputs "x=6,y=7,out=42"
+
+# Plonkish: compilar + verificar
+achronyme circuit multiply.ach --backend plonkish --inputs "x=6,y=7,out=42"
+
+# Plonkish con generación de prueba
+achronyme circuit multiply.ach --backend plonkish --inputs "x=6,y=7,out=42" --prove
+```
+
+### Archivos de Salida R1CS
+
+Con el backend R1CS, el CLI exporta dos archivos binarios:
+
+- **`circuit.r1cs`**: el sistema de restricciones en formato iden3 (compatible con snarkjs)
+- **`circuit.wtns`**: el vector de testigo en formato iden3
+
+Estos pueden usarse directamente con snarkjs para generación de pruebas Groth16:
+
+```sh
+# Usando snarkjs (externo)
+snarkjs r1cs info circuit.r1cs
+snarkjs wtns check circuit.r1cs circuit.wtns
+snarkjs groth16 setup circuit.r1cs pot_final.ptau circuit.zkey
+snarkjs groth16 prove circuit.zkey circuit.wtns proof.json public.json
+snarkjs groth16 verify vkey.json public.json proof.json
+```
+
+O deja que Achronyme lo maneje nativamente — consulta la sección de bloques `prove {}` más abajo.
+
+### Salida Plonkish
+
+Con `--prove`, el backend Plonkish genera:
+- `proof.json`: la prueba KZG-PlonK (bytes codificados en hex)
+- `public.json`: valores de entradas públicas
+- `vkey.json`: la clave de verificación (codificada en hex)
+
+### Verificador Solidity
+
+Para R1CS/Groth16, puedes generar un verificador on-chain:
+
+```sh
+achronyme circuit multiply.ach --inputs "x=6,y=7,out=42" --solidity Verifier.sol
+```
+
+Esto produce un contrato Solidity que verifica pruebas Groth16 para el circuito específico.
+
+## En Línea: Bloques `prove {}`
+
+Los bloques prove te permiten generar pruebas en línea dentro de programas regulares de Achronyme:
+
+```
+let secret = 42
+let hash = 0p18569430475105882...
+
+let p = prove {
+    witness s;
+    public h;
+    assert_eq(poseidon(s, 0), h)
+}
+
+// p es un objeto de prueba
+print(proof_json(p))
+print(proof_public(p))
+print(proof_vkey(p))
+```
+
+### Cómo Funcionan los Bloques Prove
+
+1. La VM encuentra el bloque `prove {}`
+2. Las variables del ámbito externo se **capturan** — `secret` y `hash` se convierten en entradas del circuito
+3. Los valores Int se **convierten automáticamente** a elementos de campo (el único lugar donde esto ocurre implícitamente)
+4. El bloque se compila como un circuito, se genera un testigo a partir de los valores capturados y se produce una prueba
+5. El resultado es un `ProofObject` en el heap, accesible vía funciones nativas
+
+### ProveResult
+
+Un bloque prove devuelve uno de:
+
+- **`Proof`**: contiene cadenas `proof_json`, `public_json` y `vkey_json`
+- **`VerifiedOnly`**: las restricciones fueron verificadas pero no se generó prueba (modo solo verificación)
+
+### Funciones Nativas del Objeto de Prueba
+
+| Función | Devuelve | Descripción |
+|----------|---------|-------------|
+| `proof_json(p)` | String | Los datos de la prueba (formato Groth16 o PlonK) |
+| `proof_public(p)` | String | Entradas públicas como array JSON de cadenas decimales |
+| `proof_vkey(p)` | String | La clave de verificación |
+
+### Selección de Backend
+
+Los bloques prove soportan ambos backends:
+
+- **R1CS + Groth16** (predeterminado): nativo vía ark-groth16
+- **Plonkish + KZG-PlonK**: nativo vía halo2
+
+## Caché de Claves
+
+La generación de pruebas requiere claves criptográficas (clave de prueba + clave de verificación). Estas son costosas de calcular, así que Achronyme las cachea:
+
+- **Ubicación**: `~/.achronyme/cache/`
+- **R1CS (Groth16)**: cacheado por un hash SHA256 de la estructura del sistema de restricciones. Mismo circuito = mismas claves, incluso entre ejecuciones.
+- **Plonkish (KZG)**: params universales cacheados por `k` (el log2 del tamaño de tabla). Reutilizables entre diferentes circuitos del mismo tamaño.
+
+En la primera ejecución para un circuito nuevo, la generación de claves puede tomar unos segundos. Las ejecuciones posteriores con la misma estructura de circuito son casi instantáneas.
+
+## Generación de Testigos
+
+El testigo es la asignación completa de valores a todos los cables del circuito — entradas, intermedios y salidas. El compilador lo construye en tres pases:
+
+1. **Evaluar**: ejecuta el IR con entradas concretas para validación temprana. Detecta fallos de aserción, división por cero y entradas faltantes *antes* de emitir restricciones.
+2. **Compilar**: baja el IR a restricciones, registrando una traza de instrucciones `WitnessOp` como efecto secundario.
+3. **Reproducir**: llena el vector de testigo reproduciendo la traza de ops con valores concretos.
+
+### Operaciones de Testigo
+
+Cada cable intermedio se calcula por una operación registrada:
+
+| Op | Descripción |
+|----|-------------|
+| `AssignLC` | Evaluar una combinación lineal |
+| `Multiply` | Multiplicar dos CLs |
+| `Inverse` | Calcular inverso modular |
+| `BitExtract` | Extraer el n-ésimo bit de un elemento de campo |
+| `IsZero` | Gadget IsZero: establecer resultado e inverso |
+| `PoseidonHash` | Calcular permutación Poseidon (llena ~360 cables internos) |
+
+## Manejo de Errores
+
+El pipeline reporta errores en la etapa más temprana posible:
+
+| Etapa | Error | Ejemplo |
+|-------|-------|---------|
+| Bajada a IR | Errores de parseo/declaración | `variable 'x' not declared` |
+| Evaluación | Errores de aserción/aritmética | `assert_eq failed: 5 != 6` |
+| Compilación | Errores de restricciones | `division by zero` |
+| Verificación | Restricciones no satisfechas | `constraint 3 failed` |
+| Generación de prueba | Errores criptográficos | `Groth16 setup failed` |
+
+El pase de evaluación temprana es intencional: detecta errores lógicos antes de gastar tiempo en generación de restricciones y pruebas.
+
+## Lectura Adicional
+
+- [R1CS](/es/zk-concepts/r1cs/) — cómo funcionan las restricciones en el backend R1CS
+- [Plonkish](/es/zk-concepts/plonkish/) — cómo funciona el backend Plonkish
+- [Descripción General de Circuitos](/es/circuits/overview/) — escribir circuitos en Achronyme
+- [Funciones Integradas](/es/circuits/builtins/) — funciones integradas de circuitos y sus costos

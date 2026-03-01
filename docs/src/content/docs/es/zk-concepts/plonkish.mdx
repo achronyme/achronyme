@@ -1,0 +1,148 @@
+---
+title: "Plonkish"
+description: "Aritmetización Plonkish con puertas, lookups y restricciones de copia."
+---
+
+**Plonkish** es el segundo backend de Achronyme, que ofrece circuitos más eficientes para ciertas operaciones — especialmente verificaciones de rango. Usa compromisos polinomiales KZG sobre BN254 vía halo2.
+
+Selecciónalo con `--backend plonkish`.
+
+## Cómo se Diferencia de R1CS
+
+| | R1CS | Plonkish |
+|---|---|---|
+| Forma de restricción | `A * B = C` (combinaciones lineales) | Polinomios de puerta personalizados sobre una tabla 2D |
+| Costo de range check | O(bits) restricciones | O(1) vía tabla de lookup |
+| Sistema de pruebas | Groth16 (prueba de tamaño constante) | KZG-PlonK (ligeramente más grande, sin setup confiable por circuito) |
+| Modelo de datos | Vector de testigo 1D | Tabla 2D (columnas x filas) |
+| Igualdad | Implícita en combinaciones lineales | Restricciones de copia explícitas |
+
+## La Traza de Ejecución
+
+Un circuito Plonkish es una **tabla 2D** donde cada columna tiene un tipo y cada fila representa un paso de computación:
+
+```
+Fila | s_arith | constant | a   | b   | c   | d
+-----+---------+----------+-----+-----+-----+-----
+  0  |    1    |    0     |  3  |  4  |  5  |  17
+  1  |    1    |    0     |  6  |  7  |  0  |  42
+  2  |    0    |    0     |  0  |  0  |  0  |  0
+```
+
+### Tipos de Columna
+
+- **Fijas**: Valores establecidos en tiempo de diseño del circuito. Incluyen selectores (`s_arith`, `s_range`) y la columna `constant`. El verificador los conoce.
+- **Advice**: Valores proporcionados por el probador — los datos del "testigo". Las columnas `a`, `b`, `c`, `d` contienen valores de computación intermedios.
+- **Instance**: Entradas públicas visibles para el verificador.
+
+## Puertas
+
+Una **puerta** es una expresión polinomial que debe evaluar a cero en cada fila. La puerta aritmética estándar de Achronyme:
+
+```
+s_arith * (a * b + c - d) = 0
+```
+
+Cuando el selector `s_arith = 1`, la puerta fuerza `a * b + c = d`. Cuando `s_arith = 0`, la fila está inactiva — cualquier valor es permitido.
+
+Esta puerta única maneja toda la aritmética:
+
+| Operación | a | b | c | d | Efecto |
+|-----------|---|---|---|---|--------|
+| Multiplicar | x | y | 0 | x*y | `x * y + 0 = x*y` |
+| Sumar | 1 | x | y | x+y | `1 * x + y = x+y` |
+| Restar | 1 | x | -y | x-y | `1 * x + (-y) = x-y` |
+| Constante | 1 | 0 | k | k | `1 * 0 + k = k` (vía copia de col constante) |
+
+## Restricciones de Copia
+
+En R1CS, los cables se comparten implícitamente a través de combinaciones lineales. En Plonkish, la igualdad entre celdas en diferentes filas o columnas debe forzarse explícitamente con **restricciones de copia**:
+
+```
+(advice_a, fila 0) == (advice_c, fila 5)
+```
+
+Esto le dice al sistema de pruebas: "el valor en la columna `a` en la fila 0 debe ser igual al valor en la columna `c` en la fila 5." El compilador las emite automáticamente cuando un valor calculado en una fila se usa en otra.
+
+Las restricciones de copia también pueden vincular columnas advice con la columna de constantes, forzando que una celda advice contenga un valor constante específico.
+
+## Lookups
+
+Los **argumentos de lookup** prueban que un valor pertenece a una tabla precalculada — sin descomponerlo en bits. Aquí es donde Plonkish brilla sobre R1CS.
+
+### Verificaciones de Rango
+
+En R1CS, una verificación de rango para `n` bits cuesta `n + 1` restricciones (una por bit más una suma). En Plonkish, cuesta **1 fila de lookup**:
+
+```
+s_range activo → a ∈ {0, 1, 2, ..., 2^n - 1}
+```
+
+La tabla es una columna fija llenada con valores de `0` a `2^n - 1`, y el lookup prueba la membresía.
+
+### Lookups Basados en Selectores
+
+Los lookups usan un selector para controlar qué filas están activas:
+
+- `selector = 1`: la entrada de la fila debe aparecer en la tabla
+- `selector = 0`: la fila se omite (cualquier valor permitido)
+
+Esto previene que filas inactivas (rellenadas con ceros) causen fallos falsos de lookup.
+
+## Evaluación Diferida
+
+El compilador Plonkish usa **evaluación perezosa** para operaciones lineales. En lugar de emitir una fila de tabla para cada suma o resta, construye un árbol `PlonkVal`:
+
+```
+DeferredAdd(
+    Cell(a, fila 0),
+    DeferredNeg(Cell(b, fila 1))
+)
+```
+
+Este árbol solo se **materializa** (colapsa en una fila real de tabla) cuando:
+- El valor se necesita para una multiplicación (`a * b` requiere celdas concretas)
+- El valor se usa en una función integrada (`poseidon`, `range_check`)
+- El valor es una salida
+
+Esta optimización elimina filas innecesarias y mantiene la tabla compacta.
+
+## Comparaciones de Orden
+
+Como R1CS, `<`, `<=`, `>`, `>=` requieren descomposiciones de bits y verificaciones de rango. Pero en Plonkish, cada verificación de rango es una sola fila de lookup en lugar de `O(bits)` restricciones:
+
+- `a < b`: verificación de rango de 252 bits en ambos operandos (si no están ya acotados) + descomposición de 253 bits de `b - a + 2^252 - 1`
+- `a <= b`: calculado como `1 - (b < a)` (intercambiar y negar)
+
+## Gadget IsZero
+
+La verificación de igualdad (`==`, `!=`) usa el mismo enfoque IsZero que R1CS, pero materializado como dos filas de puerta aritmética:
+
+- **Fila 1**: fuerza `diff * inv + eq = 1` con `d` restringido a 1. Si `diff = 0`, entonces `eq = 1`; de lo contrario `inv = 1/diff` y `eq = 0`.
+- **Fila 2**: fuerza `diff * eq = 0` con `d` restringido a 0. Esto asegura que `eq` solo pueda ser 1 cuando `diff` es verdaderamente cero.
+
+## Plonkish vs R1CS: Cuándo Usar Cuál
+
+| Caso de Uso | Mejor Backend | Por Qué |
+|----------|---------------|-----|
+| Muchas verificaciones de rango | Plonkish | O(1) vs O(bits) por verificación |
+| Tamaño mínimo de prueba | R1CS (Groth16) | Prueba constante de 128 bytes |
+| Interop con snarkjs | R1CS | Exportación nativa `.r1cs`/`.wtns` |
+| Sin setup por circuito | Plonkish | Params KZG universales |
+| Aritmética general | Similar | Ambos usan 1 restricción/fila por multiplicación |
+
+## Verificación
+
+El verificador Plonkish comprueba tres cosas:
+
+1. **Satisfacción de puertas**: cada polinomio de puerta evalúa a cero en cada fila
+2. **Restricciones de copia**: todas las celdas vinculadas contienen valores iguales
+3. **Membresía de lookup**: cada tupla de entrada activa aparece en la tabla correspondiente
+
+Si las tres pasan, la traza de ejecución es válida y se puede generar una prueba.
+
+## Lectura Adicional
+
+- [R1CS](/es/zk-concepts/r1cs/) — el backend predeterminado y pruebas Groth16
+- [Operadores y Costos](/es/circuits/operators-and-costs/) — costos de restricciones en ambos backends
+- [Generación de Pruebas](/es/zk-concepts/proof-generation/) — generando pruebas con cualquier backend

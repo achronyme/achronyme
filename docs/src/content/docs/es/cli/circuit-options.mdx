@@ -1,0 +1,90 @@
+---
+title: "Opciones de Circuito"
+description: "Opciones para el comando circuit."
+---
+
+## Uso
+
+```bash
+ach circuit <ruta> [opciones]
+```
+
+## Declaración de Entradas
+
+| Bandera | Descripción |
+|------|-------------|
+| `--public <vars>` | Nombres de entradas públicas separados por comas (ej., `--public "out,hash"`) |
+| `--witness <vars>` | Nombres de entradas testigo separados por comas (ej., `--witness "a,b,secret"`) |
+
+Si `--public` y `--witness` se omiten, el compilador usa las declaraciones `public` y `witness` del código fuente.
+
+## Valores de Entrada
+
+| Bandera | Descripción |
+|------|-------------|
+| `--inputs <vals>` | Pares `clave=valor` separados por comas (ej., `--inputs "a=6,b=7,c=42"`) |
+
+Los valores se parsean como elementos del campo BN254. Se soportan valores negativos.
+
+## Selección de Backend
+
+| Bandera | Descripción |
+|------|-------------|
+| `--backend <backend>` | Backend de restricciones: `r1cs` (predeterminado) o `plonkish` |
+
+### Backend R1CS (predeterminado)
+
+Genera archivos `.r1cs` y `.wtns` compatibles con snarkjs.
+
+### Backend Plonkish
+
+Genera puertas Plonkish, lookups y restricciones de copia. Verifica localmente (sin exportación binaria aún).
+
+## Generación de Pruebas
+
+| Bandera | Descripción |
+|------|-------------|
+| `--prove` | Generar una prueba criptográfica después de compilar y verificar |
+| `--solidity` | Generar un contrato verificador Solidity (solo R1CS/Groth16) |
+
+## Optimización
+
+| Bandera | Descripción |
+|------|-------------|
+| `--no-optimize` | Omitir pases de optimización del IR SSA (plegado de constantes, DCE, propagación booleana) |
+
+## Ejemplos
+
+```bash
+# Declaraciones en el código fuente, salida R1CS
+ach circuit circuit.ach --inputs "x=42,y=7"
+
+# Declaraciones por CLI
+ach circuit circuit.ach --public "out" --witness "a,b" --inputs "out=42,a=6,b=7"
+
+# Backend Plonkish
+ach circuit circuit.ach --backend plonkish --inputs "x=42"
+
+# Generar prueba Groth16
+ach circuit circuit.ach --inputs "x=42,y=7" --prove
+
+# Generar verificador Solidity
+ach circuit circuit.ach --inputs "x=42,y=7" --solidity
+
+# Compilación sin optimizar
+ach circuit circuit.ach --inputs "x=42" --no-optimize
+```
+
+## Archivos de Salida (R1CS)
+
+| Archivo | Descripción |
+|------|-------------|
+| `circuit.r1cs` | Sistema de restricciones R1CS (formato binario iden3 v1) |
+| `witness.wtns` | Valores del testigo (formato binario iden3 v2) |
+
+Ambos archivos son compatibles con snarkjs:
+
+```bash
+snarkjs r1cs info circuit.r1cs
+snarkjs wtns check circuit.r1cs witness.wtns
+```
