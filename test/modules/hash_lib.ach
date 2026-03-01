@@ -1,0 +1,1 @@
+export fn my_hash(a, b) { poseidon(a, b) }

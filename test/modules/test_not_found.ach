@@ -1,0 +1,2 @@
+import "./nonexistent.ach" as foo
+print(foo.bar())

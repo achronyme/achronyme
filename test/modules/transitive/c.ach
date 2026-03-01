@@ -1,0 +1,2 @@
+import "./b.ach" as b
+print(b.fb())

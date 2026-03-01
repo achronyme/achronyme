@@ -1,0 +1,2 @@
+import "./circular_a.ach" as a
+export fn fb() { 2 }

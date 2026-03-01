@@ -1,0 +1,5 @@
+import "./hash_lib.ach" as h
+public out
+witness a
+witness b
+assert_eq(h.my_hash(a, b), out)

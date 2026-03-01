@@ -1,0 +1,2 @@
+import "./internal_helper.ach" as ih
+print(ih.pub_fn())
