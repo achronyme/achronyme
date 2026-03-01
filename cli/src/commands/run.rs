@@ -48,6 +48,17 @@ pub fn run_file(
     } else {
         let content = fs::read_to_string(path).context("Failed to source file")?;
         let mut compiler = Compiler::new();
+        let source_path = std::path::Path::new(path);
+        compiler.base_path = Some(
+            source_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf(),
+        );
+        // Register the main file as "compiling" for circular import detection
+        if let Ok(canonical) = source_path.canonicalize() {
+            compiler.compiling_modules.insert(canonical);
+        }
         let bytecode = compiler
             .compile(&content)
             .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;

@@ -9,6 +9,10 @@ pub enum CompilerError {
     RegisterOverflow,
     CompilerLimitation(String),
     CompileError(String),
+    ModuleNotFound(String),
+    CircularImport(String),
+    ModuleLoadError(String),
+    DuplicateModuleAlias(String),
 }
 
 impl From<String> for CompilerError {

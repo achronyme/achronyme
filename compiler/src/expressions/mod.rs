@@ -205,10 +205,20 @@ impl Compiler {
             self.emit_abx(OpCode::GetUpvalue, reg, upval_idx as u16);
             Ok(reg)
         } else {
-            // 3. Fall back to global lookup
-            let idx = *self.global_symbols.get(name).ok_or_else(|| {
-                CompilerError::UnknownOperator(format!("Undefined variable: {}", name))
-            })?;
+            // 3. Fall back to global lookup (try plain name first, then prefixed)
+            let idx = if let Some(&idx) = self.global_symbols.get(name) {
+                idx
+            } else if let Some(ref prefix) = self.module_prefix {
+                let mangled = format!("{prefix}::{name}");
+                *self.global_symbols.get(&mangled).ok_or_else(|| {
+                    CompilerError::UnknownOperator(format!("Undefined variable: {}", name))
+                })?
+            } else {
+                return Err(CompilerError::UnknownOperator(format!(
+                    "Undefined variable: {}",
+                    name
+                )));
+            };
             self.emit_abx(OpCode::GetGlobal, reg, idx);
             Ok(reg)
         }

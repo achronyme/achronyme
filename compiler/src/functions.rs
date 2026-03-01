@@ -38,7 +38,11 @@ impl FunctionDefinitionCompiler for Compiler {
             }
             let idx = self.next_global_idx;
             self.next_global_idx += 1;
-            self.global_symbols.insert(fn_name.clone(), idx);
+            let global_name = match &self.module_prefix {
+                Some(prefix) => format!("{prefix}::{fn_name}"),
+                None => fn_name.clone(),
+            };
+            self.global_symbols.insert(global_name, idx);
             Some(idx)
         } else {
             None

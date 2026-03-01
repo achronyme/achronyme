@@ -1,9 +1,11 @@
 use crate::error::CompilerError;
 use crate::function_compiler::FunctionCompiler;
 use crate::interner::{BigIntInterner, FieldInterner, StringInterner};
+use crate::module_loader::ModuleLoader;
 use crate::statements::StatementCompiler;
 use memory::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use vm::opcode::OpCode;
 
 /// The main compiler orchestrator
@@ -25,6 +27,15 @@ pub struct Compiler {
 
     // BigInt Interner (shared across all functions)
     pub bigint_interner: BigIntInterner,
+
+    // Module system
+    pub base_path: Option<PathBuf>,
+    pub module_loader: ModuleLoader,
+    pub module_prefix: Option<String>,
+    /// Tracks imported module aliases to detect duplicates.
+    pub imported_aliases: HashMap<String, PathBuf>,
+    /// Tracks modules currently being compiled (for cycle detection).
+    pub compiling_modules: HashSet<PathBuf>,
 }
 
 use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
@@ -57,6 +68,11 @@ impl Compiler {
             interner: StringInterner::new(),
             field_interner: FieldInterner::new(),
             bigint_interner: BigIntInterner::new(),
+            base_path: None,
+            module_loader: ModuleLoader::new(),
+            module_prefix: None,
+            imported_aliases: HashMap::new(),
+            compiling_modules: HashSet::new(),
         }
     }
 

@@ -32,7 +32,11 @@ impl DeclarationCompiler for Compiler {
             let idx = self.next_global_idx;
             self.next_global_idx += 1;
 
-            self.global_symbols.insert(name.to_string(), idx);
+            let global_name = match &self.module_prefix {
+                Some(prefix) => format!("{prefix}::{name}"),
+                None => name.to_string(),
+            };
+            self.global_symbols.insert(global_name, idx);
             self.emit_abx(OpCode::DefGlobalLet, reg, idx);
             self.free_reg(reg);
         }
@@ -57,7 +61,11 @@ impl DeclarationCompiler for Compiler {
             let idx = self.next_global_idx;
             self.next_global_idx += 1;
 
-            self.global_symbols.insert(name.to_string(), idx);
+            let global_name = match &self.module_prefix {
+                Some(prefix) => format!("{prefix}::{name}"),
+                None => name.to_string(),
+            };
+            self.global_symbols.insert(global_name, idx);
             self.emit_abx(OpCode::DefGlobalVar, reg, idx);
             self.free_reg(reg);
         }
