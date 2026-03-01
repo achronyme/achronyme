@@ -64,6 +64,15 @@ pub enum Stmt {
     Continue {
         span: Span,
     },
+    Import {
+        path: String,
+        alias: String,
+        span: Span,
+    },
+    Export {
+        inner: Box<Stmt>,
+        span: Span,
+    },
     Expr(Expr),
 }
 

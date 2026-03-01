@@ -549,6 +549,9 @@ impl<'a> Lexer<'a> {
             "witness" => TokenKind::Witness,
             "prove" => TokenKind::Prove,
             "forever" => TokenKind::Forever,
+            "import" => TokenKind::Import,
+            "export" => TokenKind::Export,
+            "as" => TokenKind::As,
             _ => TokenKind::Ident,
         };
         Token {

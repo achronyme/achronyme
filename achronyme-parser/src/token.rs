@@ -40,6 +40,9 @@ pub enum TokenKind {
     Witness,
     Prove,
     Forever,
+    Import,
+    Export,
+    As,
 
     // Identifier
     Ident,

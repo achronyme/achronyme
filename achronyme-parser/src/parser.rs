@@ -48,6 +48,8 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     source: String,
+    /// Nesting depth: 0 = top-level, >0 = inside block/function.
+    block_depth: usize,
 }
 
 impl Parser {
@@ -56,6 +58,7 @@ impl Parser {
             tokens,
             pos: 0,
             source,
+            block_depth: 0,
         }
     }
 
@@ -143,11 +146,13 @@ impl Parser {
     fn parse_block_inner(&mut self) -> Result<Block, ParseError> {
         let sp = self.span();
         self.expect(&TokenKind::LBrace)?;
+        self.block_depth += 1;
         let mut stmts = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
             stmts.push(self.parse_stmt()?);
             self.eat(&TokenKind::Semicolon);
         }
+        self.block_depth -= 1;
         self.expect(&TokenKind::RBrace)?;
         Ok(Block { stmts, span: sp })
     }
@@ -158,6 +163,8 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.peek_kind() {
+            TokenKind::Import => self.parse_import(),
+            TokenKind::Export => self.parse_export(),
             TokenKind::Let => self.parse_let_decl(),
             TokenKind::Mut => self.parse_mut_decl(),
             TokenKind::Public => self.parse_public_decl(),
@@ -303,6 +310,82 @@ impl Parser {
             params,
             return_type,
             body,
+            span: sp,
+        })
+    }
+
+    fn parse_import(&mut self) -> Result<Stmt, ParseError> {
+        let sp = self.span();
+        if self.block_depth > 0 {
+            return Err(ParseError::new(
+                "import statements are only allowed at the top level",
+                sp.line,
+                sp.col,
+            ));
+        }
+        self.advance(); // eat `import`
+        let tok = self.peek().clone();
+        if tok.kind != TokenKind::StringLit {
+            return Err(ParseError::new(
+                format!(
+                    "expected string literal for import path, found `{}`",
+                    tok_display(&tok)
+                ),
+                tok.span.line,
+                tok.span.col,
+            ));
+        }
+        let path = tok.lexeme.clone();
+        self.advance();
+        self.expect(&TokenKind::As)?;
+        let alias = self.expect_ident()?;
+        Ok(Stmt::Import {
+            path,
+            alias,
+            span: sp,
+        })
+    }
+
+    fn parse_export(&mut self) -> Result<Stmt, ParseError> {
+        let sp = self.span();
+        if self.block_depth > 0 {
+            return Err(ParseError::new(
+                "export statements are only allowed at the top level",
+                sp.line,
+                sp.col,
+            ));
+        }
+        self.advance(); // eat `export`
+        let inner = match self.peek_kind() {
+            TokenKind::Fn => {
+                if matches!(self.lookahead(1), TokenKind::Ident)
+                    && matches!(self.lookahead(2), TokenKind::LParen)
+                {
+                    self.parse_fn_decl()?
+                } else {
+                    let tok = self.peek();
+                    return Err(ParseError::new(
+                        "export only applies to named `fn` or `let` declarations",
+                        tok.span.line,
+                        tok.span.col,
+                    ));
+                }
+            }
+            TokenKind::Let => self.parse_let_decl()?,
+            _ => {
+                let tok = self.peek();
+                return Err(ParseError::new(
+                    format!(
+                        "export only applies to `fn` or `let` declarations, found `{}`",
+                        tok_display(tok)
+                    ),
+                    tok.span.line,
+                    tok.span.col,
+                ));
+            }
+        };
+        Ok(Stmt::Export {
+            inner: Box::new(inner),
             span: sp,
         })
     }
@@ -1000,6 +1083,9 @@ fn kind_name(kind: &TokenKind) -> &'static str {
         TokenKind::Witness => "witness",
         TokenKind::Prove => "prove",
         TokenKind::Forever => "forever",
+        TokenKind::Import => "import",
+        TokenKind::Export => "export",
+        TokenKind::As => "as",
         TokenKind::Ident => "identifier",
         TokenKind::Plus => "+",
         TokenKind::Minus => "-",
@@ -1775,5 +1861,73 @@ mod tests {
             Stmt::LetDecl { name, .. } => assert_eq!(name, "Field"),
             other => panic!("expected LetDecl, got {other:?}"),
         }
+    }
+
+    // ====================================================================
+    // Import / Export tests
+    // ====================================================================
+
+    #[test]
+    fn parse_import_basic() {
+        let prog = parse_program(r#"import "./utils.ach" as utils"#).unwrap();
+        assert_eq!(prog.stmts.len(), 1);
+        match &prog.stmts[0] {
+            Stmt::Import { path, alias, .. } => {
+                assert_eq!(path, "./utils.ach");
+                assert_eq!(alias, "utils");
+            }
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_export_fn() {
+        let prog = parse_program("export fn add(a, b) { a + b }").unwrap();
+        assert_eq!(prog.stmts.len(), 1);
+        match &prog.stmts[0] {
+            Stmt::Export { inner, .. } => match inner.as_ref() {
+                Stmt::FnDecl { name, params, .. } => {
+                    assert_eq!(name, "add");
+                    assert_eq!(params.len(), 2);
+                }
+                other => panic!("expected FnDecl inside Export, got {other:?}"),
+            },
+            other => panic!("expected Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_export_let() {
+        let prog = parse_program("export let PI = 3").unwrap();
+        assert_eq!(prog.stmts.len(), 1);
+        match &prog.stmts[0] {
+            Stmt::Export { inner, .. } => match inner.as_ref() {
+                Stmt::LetDecl { name, .. } => assert_eq!(name, "PI"),
+                other => panic!("expected LetDecl inside Export, got {other:?}"),
+            },
+            other => panic!("expected Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_export_mut_error() {
+        // export mut should fail
+        let result = parse_program("export mut x = 5");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_import_no_as_error() {
+        // import without "as" should fail
+        let result = parse_program(r#"import "./foo.ach""#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn import_export_as_are_keywords() {
+        // import, export, and as are now keywords and cannot be used as variable names
+        assert!(parse_program("let import = 5").is_err());
+        assert!(parse_program("let export = 5").is_err());
+        assert!(parse_program("let as = 5").is_err());
     }
 }
