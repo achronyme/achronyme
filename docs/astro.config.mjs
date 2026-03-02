@@ -108,6 +108,7 @@ export default defineConfig({
 						{ label: 'Inline Proofs', slug: 'tutorials/inline-proofs', translations: { es: 'Pruebas en Línea' } },
 						{ label: 'Poseidon Hashing', slug: 'tutorials/poseidon-hashing', translations: { es: 'Hashing Poseidon' } },
 						{ label: 'BigInt Arithmetic', slug: 'tutorials/bigint-arithmetic', translations: { es: 'Aritmética BigInt' } },
+					{ label: 'Secret Voting', slug: 'tutorials/secret-voting', translations: { es: 'Votación Secreta' } },
 					],
 				},
 			],

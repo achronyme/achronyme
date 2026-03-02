@@ -162,6 +162,11 @@ run_test "circuit/inner_product.ach" \
     --r1cs "$R1CS_DIR/inner_product.r1cs" --wtns "$R1CS_DIR/inner_product.wtns" \
     --inputs "out=70,a_0=1,a_1=2,a_2=3,a_3=4,b_0=5,b_1=6,b_2=7,b_3=8"
 
+run_test "circuit/secret_vote.ach" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/secret_vote.ach" \
+    --r1cs "$R1CS_DIR/secret_vote.r1cs" --wtns "$R1CS_DIR/secret_vote.wtns" \
+    --inputs "merkle_root=16562627490493722277540343453474560507943355785745140792129356826951042972366,nullifier=4027913667401648903638418705764660665764112454358309045410324429160920395813,vote=1,election_id=1001,secret=42,path_0=6742193431752037917634653485837689273334250178444557194345979079134234961755,path_1=2479855382401079998356559563096754868958560665915964078751529288374953894653,indices_0=0,indices_1=0"
+
 # --- Typed circuit tests (gradual type system) ---
 echo ""
 echo "=== Typed circuit tests ==="
