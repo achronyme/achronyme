@@ -1,0 +1,95 @@
+---
+title: Configuración del Editor
+description: Cómo configurar VS Code con resaltado de sintaxis, diagnósticos y ejecución para Achronyme.
+---
+
+## Extensión de VS Code
+
+La extensión oficial de [Achronyme](https://github.com/achronyme/achronyme-editor) agrega soporte completo del lenguaje a Visual Studio Code.
+
+### Características
+
+- **Resaltado de sintaxis** — Keywords, builtins, literales de campo (`0p...`), literales BigInt (`0i256x...`), operadores, strings
+- **Diagnósticos en tiempo real** — Errores de parseo mientras escribes, impulsado por el servidor `ach-lsp`
+- **Documentación al pasar el cursor** — Pasa el cursor sobre cualquier keyword o función builtin para ver su firma, parámetros y ejemplos
+- **Autocompletado** — Keywords, las 32 funciones builtin con placeholders de snippet, y 7 snippets de código
+- **Botón de ejecución** — Ejecución con un clic de archivos `.ach` desde la barra de título del editor
+
+### Instalación desde Código Fuente
+
+```bash
+# Clonar el repositorio del editor
+git clone https://github.com/achronyme/achronyme-editor.git
+cd achronyme-editor
+
+# Compilar el servidor LSP
+cargo build --release -p ach-lsp
+
+# Colocar el binario en el directorio bin de la extensión
+mkdir -p editors/vscode/bin
+cp target/release/ach-lsp editors/vscode/bin/
+
+# Instalar dependencias de la extensión y compilar
+cd editors/vscode
+npm ci
+npm run build
+```
+
+Luego abre VS Code con la extensión en modo desarrollo:
+
+```bash
+code --extensionDevelopmentPath=editors/vscode
+```
+
+### Auto-descarga del CLI
+
+Cuando haces clic en el botón **Run** en un archivo `.ach`, la extensión busca el binario `ach` en este orden:
+
+1. La ruta configurada en `achronyme.executablePath`
+2. `~/.achronyme/bin/ach` (ubicación de auto-descarga)
+3. PATH del sistema
+
+Si no se encuentra, la extensión ofrece descargar el binario correcto para tu plataforma (Linux x86_64, macOS x86_64/ARM64, Windows x86_64) desde [GitHub Releases](https://github.com/achronyme/achronyme/releases).
+
+La extensión también verifica actualizaciones al activarse y te avisa cuando hay una nueva versión disponible.
+
+## Configuración
+
+| Ajuste | Valor por defecto | Descripción |
+|--------|-------------------|-------------|
+| `achronyme.executablePath` | `""` | Ruta al binario `ach`. Dejar vacío para auto-detección. |
+| `achronyme.lspPath` | `""` | Ruta al binario `ach-lsp`. Dejar vacío para usar el binario incluido. |
+
+## Snippets de Código
+
+La extensión proporciona estos snippets a través del autocompletado:
+
+| Prefijo | Se expande a |
+|---------|-------------|
+| `fn` | `fn nombre(params) { ... }` |
+| `prove` | `prove { ... }` |
+| `for` | `for item in colección { ... }` |
+| `forr` | `for i in 0..n { ... }` |
+| `if` | `if condición { ... }` |
+| `ife` | `if condición { ... } else { ... }` |
+| `while` | `while condición { ... }` |
+
+## Capacidades del LSP
+
+El servidor de lenguaje (`ach-lsp`) proporciona:
+
+| Característica | Estado |
+|----------------|--------|
+| Diagnósticos (errores de parseo) | Soportado |
+| Documentación al pasar el cursor | Soportado (49 keywords + builtins) |
+| Autocompletado | Soportado (keywords, builtins, snippets) |
+| Ir a definición | Aún no |
+| Buscar referencias | Aún no |
+| Renombrar | Aún no |
+| Formateo | Aún no |
+
+Los diagnósticos se actualizan en tiempo real mientras escribes — no necesitas guardar el archivo primero.
+
+## Otros Editores
+
+El servidor LSP se comunica por stdio y sigue el Language Server Protocol, por lo que puede integrarse con cualquier editor que soporte LSP (Neovim, Helix, Zed, etc.). Apunta la configuración LSP de tu editor al binario `ach-lsp`.

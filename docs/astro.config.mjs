@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: 'Introduction', slug: 'getting-started/introduction', translations: { es: 'Introducción' } },
 						{ label: 'Installation', slug: 'getting-started/installation', translations: { es: 'Instalación' } },
 						{ label: 'Hello World', slug: 'getting-started/hello-world', translations: { es: 'Hola Mundo' } },
+					{ label: 'Editor Setup', slug: 'getting-started/editor-setup', translations: { es: 'Configuración del Editor' } },
 					],
 				},
 				{
