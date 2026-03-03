@@ -8,8 +8,6 @@
 
 ## Lenguaje & Compilador
 
-- [ ] **Sistema de imports/módulos** — Todo es un archivo. Circuitos grandes son inmanejables. Implementar `import "path"` con resolución de nombres.
-- [ ] **REPL** — Registrado en CLI pero es un stub (`cli/src/repl.rs`). Necesita readline, loop de ejecución, y pipeline de compilación incremental.
 - [ ] **Stdlib: iteradores funcionales** — `map`, `filter`, `reduce` para listas. Actualmente no hay equivalentes.
 - [ ] **Global mutability check en compile-time** — Solo se verifica en runtime (`vm/src/machine/globals.rs`). Mover a compile-time donde sea posible.
 - [ ] **MAX_UNROLL sin memory guard** — `MAX_UNROLL_ITERATIONS = 10,000` limita iteraciones pero no hay budget de instrucciones acumulativo. Un circuito con múltiples loops grandes puede agotar memoria. Agregar instruction count budget o check progresivo.
