@@ -114,7 +114,7 @@ EU Digital Identity Wallet, passports ZK, pruebas de humanidad. Nicho donde un e
 
 ```
 ┌──────────────────────────────────────────────────┐
-│   NaN-Boxing Value System (64-bit tagged union)   │
+│   Tagged Value System (64-bit tagged union)        │
 │                                                   │
 │   TAG_INT (i32)  ──→ Contadores, índices          │
 │   TAG_NUMBER (f64) → Aritmética general           │

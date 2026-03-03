@@ -15,7 +15,7 @@ This crate is divided into the following modules:
 
 ## Features
 
-- **NaN Boxing**: Uses NaN-boxed `Value` types (via `memory` crate).
+- **Tagged Values**: Uses 64-bit tagged `Value` types (4-bit tag in bits 63..60, via `memory` crate).
 - **Flat Prototype Table**: `vm.prototypes: Vec<u32>` for O(1) function dispatch.
 - **Function Calls**: 
     - `Call A, B, C` - Call function in R[B] with C args, result to R[A].
