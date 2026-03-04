@@ -9,8 +9,49 @@
 ///   1..=n_pub   = public inputs (instance)
 ///   n_pub+1..   = private inputs + intermediate (witness)
 use std::collections::BTreeMap;
+use std::fmt;
 
 use memory::FieldElement;
+
+// ============================================================================
+// Error types
+// ============================================================================
+
+/// Errors from R1CS evaluation and verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstraintError {
+    /// A variable index in a linear combination exceeds the witness length.
+    VariableOutOfBounds { variable: usize, witness_len: usize },
+    /// Witness vector length doesn't match the constraint system.
+    WitnessLengthMismatch { expected: usize, got: usize },
+    /// `witness[0]` is not the ONE constant.
+    BadConstantWire,
+    /// Constraint at the given index is not satisfied (A * B != C).
+    ConstraintUnsatisfied(usize),
+}
+
+impl fmt::Display for ConstraintError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstraintError::VariableOutOfBounds {
+                variable,
+                witness_len,
+            } => write!(
+                f,
+                "variable index {variable} out of bounds (witness length {witness_len})"
+            ),
+            ConstraintError::WitnessLengthMismatch { expected, got } => {
+                write!(f, "witness length {got} != expected {expected}")
+            }
+            ConstraintError::BadConstantWire => write!(f, "witness[0] is not ONE"),
+            ConstraintError::ConstraintUnsatisfied(idx) => {
+                write!(f, "constraint {idx} unsatisfied")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConstraintError {}
 
 // ============================================================================
 // Variable (Wire reference)
@@ -162,22 +203,18 @@ impl LinearCombination {
 
     /// Evaluate the LC given a full witness assignment.
     /// witness[i] = value of variable i.
-    ///
-    /// # Panics
-    /// Panics if any variable index is out of bounds.
-    pub fn evaluate(&self, witness: &[FieldElement]) -> FieldElement {
+    pub fn evaluate(&self, witness: &[FieldElement]) -> Result<FieldElement, ConstraintError> {
         let mut sum = FieldElement::ZERO;
         for (var, coeff) in &self.terms {
-            let val = witness.get(var.0).unwrap_or_else(|| {
-                panic!(
-                    "LC::evaluate: variable index {} out of bounds (witness length {})",
-                    var.0,
-                    witness.len()
-                )
-            });
+            let val = witness
+                .get(var.0)
+                .ok_or(ConstraintError::VariableOutOfBounds {
+                    variable: var.0,
+                    witness_len: witness.len(),
+                })?;
             sum = sum.add(&coeff.mul(val));
         }
-        sum
+        Ok(sum)
     }
 }
 
@@ -361,24 +398,27 @@ impl ConstraintSystem {
     ///
     /// Returns Ok(()) if all constraints satisfied, or the index
     /// of the first failing constraint.
-    pub fn verify(&self, witness: &[FieldElement]) -> Result<(), usize> {
+    pub fn verify(&self, witness: &[FieldElement]) -> Result<(), ConstraintError> {
         if witness.len() != self.num_variables {
-            return Err(usize::MAX);
+            return Err(ConstraintError::WitnessLengthMismatch {
+                expected: self.num_variables,
+                got: witness.len(),
+            });
         }
         // witness[0] must be 1
         if witness[0] != FieldElement::ONE {
-            return Err(usize::MAX);
+            return Err(ConstraintError::BadConstantWire);
         }
 
         for (i, constraint) in self.constraints.iter().enumerate() {
-            let a_val = constraint.a.evaluate(witness);
-            let b_val = constraint.b.evaluate(witness);
-            let c_val = constraint.c.evaluate(witness);
+            let a_val = constraint.a.evaluate(witness)?;
+            let b_val = constraint.b.evaluate(witness)?;
+            let c_val = constraint.c.evaluate(witness)?;
 
             // Check: A * B == C
             let ab = a_val.mul(&b_val);
             if ab != c_val {
-                return Err(i);
+                return Err(ConstraintError::ConstraintUnsatisfied(i));
             }
         }
 
@@ -506,7 +546,10 @@ mod tests {
             FieldElement::from_u64(7),
         ];
 
-        assert_eq!(cs.verify(&witness), Err(0));
+        assert_eq!(
+            cs.verify(&witness),
+            Err(ConstraintError::ConstraintUnsatisfied(0))
+        );
     }
 
     #[test]
@@ -526,17 +569,22 @@ mod tests {
         ];
 
         // 3*10 + 5*4 = 50
-        assert_eq!(lc.evaluate(&witness), FieldElement::from_u64(50));
+        assert_eq!(lc.evaluate(&witness).unwrap(), FieldElement::from_u64(50));
     }
 
     #[test]
-    #[should_panic(expected = "out of bounds")]
-    fn test_evaluate_oob_panics() {
+    fn test_evaluate_oob_returns_error() {
         let x = Variable(10); // index 10, way out of bounds
         let mut lc = LinearCombination::zero();
         lc.add_term(x, FieldElement::ONE);
         let witness = vec![FieldElement::ONE]; // only 1 element
-        lc.evaluate(&witness);
+        assert_eq!(
+            lc.evaluate(&witness),
+            Err(ConstraintError::VariableOutOfBounds {
+                variable: 10,
+                witness_len: 1,
+            })
+        );
     }
 
     #[test]

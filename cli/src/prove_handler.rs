@@ -90,7 +90,7 @@ impl DefaultProveHandler {
 
         r1cs.cs
             .verify(&witness)
-            .map_err(|idx| ProveError::Verification(format!("constraint {idx} failed")))?;
+            .map_err(|e| ProveError::Verification(format!("{e}")))?;
 
         crate::groth16::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
             .map_err(ProveError::ProofGeneration)

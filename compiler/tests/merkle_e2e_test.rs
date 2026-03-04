@@ -230,9 +230,10 @@ fn merkle_depth3_all_leaf_positions() {
 
         let wg = WitnessGenerator::from_compiler(&compiler);
         let witness = wg.generate(&inputs).unwrap();
-        compiler.cs.verify(&witness).unwrap_or_else(|idx| {
-            panic!("leaf index {index}: verification failed at constraint {idx}")
-        });
+        compiler
+            .cs
+            .verify(&witness)
+            .unwrap_or_else(|e| panic!("leaf index {index}: verification failed: {e}"));
     }
 }
 

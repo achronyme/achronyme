@@ -67,13 +67,23 @@ impl R1CSCompiler {
         for op in &self.witness_ops {
             match op {
                 WitnessOp::AssignLC { target, lc } => {
-                    witness[target.index()] = lc.evaluate(&witness);
+                    witness[target.index()] = lc
+                        .evaluate(&witness)
+                        .map_err(|e| R1CSError::EvalError(e.to_string()))?;
                 }
                 WitnessOp::Multiply { target, a, b } => {
-                    witness[target.index()] = a.evaluate(&witness).mul(&b.evaluate(&witness));
+                    let a_val = a
+                        .evaluate(&witness)
+                        .map_err(|e| R1CSError::EvalError(e.to_string()))?;
+                    let b_val = b
+                        .evaluate(&witness)
+                        .map_err(|e| R1CSError::EvalError(e.to_string()))?;
+                    witness[target.index()] = a_val.mul(&b_val);
                 }
                 WitnessOp::Inverse { target, operand } => {
-                    let val = operand.evaluate(&witness);
+                    let val = operand
+                        .evaluate(&witness)
+                        .map_err(|e| R1CSError::EvalError(e.to_string()))?;
                     witness[target.index()] = val.inv().ok_or_else(|| {
                         R1CSError::EvalError(format!("division by zero at wire {}", target.index()))
                     })?;
@@ -83,7 +93,9 @@ impl R1CSCompiler {
                     source,
                     bit_index,
                 } => {
-                    let val = source.evaluate(&witness);
+                    let val = source
+                        .evaluate(&witness)
+                        .map_err(|e| R1CSError::EvalError(e.to_string()))?;
                     let limbs = val.to_canonical();
                     let li = (*bit_index / 64) as usize;
                     let bp = *bit_index % 64;
@@ -95,7 +107,9 @@ impl R1CSCompiler {
                     target_inv,
                     target_result,
                 } => {
-                    let d = diff.evaluate(&witness);
+                    let d = diff
+                        .evaluate(&witness)
+                        .map_err(|e| R1CSError::EvalError(e.to_string()))?;
                     if d.is_zero() {
                         witness[target_inv.index()] = FieldElement::ZERO;
                         witness[target_result.index()] = FieldElement::ONE;

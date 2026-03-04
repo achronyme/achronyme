@@ -175,15 +175,23 @@ impl WitnessGenerator {
     fn execute_op(&self, op: &WitnessOp, witness: &mut [FieldElement]) -> Result<(), WitnessError> {
         match op {
             WitnessOp::AssignLC { target, lc } => {
-                witness[target.index()] = lc.evaluate(witness);
+                witness[target.index()] = lc
+                    .evaluate(witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
             }
             WitnessOp::Multiply { target, a, b } => {
-                let a_val = a.evaluate(witness);
-                let b_val = b.evaluate(witness);
+                let a_val = a
+                    .evaluate(witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
+                let b_val = b
+                    .evaluate(witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
                 witness[target.index()] = a_val.mul(&b_val);
             }
             WitnessOp::Inverse { target, operand } => {
-                let val = operand.evaluate(witness);
+                let val = operand
+                    .evaluate(witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
                 let inv = val.inv().ok_or(WitnessError::DivisionByZero {
                     variable_index: target.index(),
                 })?;
@@ -194,7 +202,9 @@ impl WitnessGenerator {
                 source,
                 bit_index,
             } => {
-                let val = source.evaluate(witness);
+                let val = source
+                    .evaluate(witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
                 let limbs = val.to_canonical();
                 let limb_idx = (*bit_index / 64) as usize;
                 let bit_pos = *bit_index % 64;
@@ -210,7 +220,9 @@ impl WitnessGenerator {
                 target_inv,
                 target_result,
             } => {
-                let diff_val = diff.evaluate(witness);
+                let diff_val = diff
+                    .evaluate(witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
                 if diff_val.is_zero() {
                     witness[target_inv.index()] = FieldElement::ZERO;
                     witness[target_result.index()] = FieldElement::ONE;

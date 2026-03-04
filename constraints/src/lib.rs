@@ -5,4 +5,4 @@ pub mod r1cs;
 pub mod witness;
 
 pub use export::{write_r1cs, write_wtns};
-pub use r1cs::{ConstraintSystem, LinearCombination, Variable};
+pub use r1cs::{ConstraintError, ConstraintSystem, LinearCombination, Variable};
