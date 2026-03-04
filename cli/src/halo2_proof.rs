@@ -31,14 +31,11 @@ use vm::ProveResult;
 // ============================================================================
 
 /// Convert an Achronyme `FieldElement` (BN254 Fr) to a halo2 `Fr`.
-fn fe_to_halo2(fe: &FieldElement) -> Fr {
+fn fe_to_halo2(fe: &FieldElement) -> Result<Fr, String> {
     let bytes = fe.to_le_bytes();
     let mut repr = [0u8; 32];
     repr.copy_from_slice(&bytes);
-    let opt = Fr::from_repr(repr);
-    // CtOption::unwrap panics if None
-    assert!(bool::from(opt.is_some()), "invalid BN254 field element");
-    opt.unwrap()
+    Option::from(Fr::from_repr(repr)).ok_or_else(|| "invalid BN254 field element".to_string())
 }
 
 /// Convert a halo2 `Fr` back to decimal string via `FieldElement`.
@@ -173,11 +170,12 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                     }
 
                     let const_val = sys.assignments.get(self.compiler.col_constant, row);
+                    let const_fr = fe_to_halo2(&const_val).map_err(|_| plonk::Error::Synthesis)?;
                     let fixed_cell = region.assign_fixed(
                         || format!("constant[{row}]"),
                         config.col_constant,
                         row,
-                        || Value::known(fe_to_halo2(&const_val)),
+                        || Value::known(const_fr),
                     )?;
                     assigned_constant[row] = Some(fixed_cell.cell());
                 }
@@ -194,11 +192,12 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                     #[allow(clippy::needless_range_loop)]
                     for row in 0..num_rows {
                         let val = sys.assignments.get(achr_col, row);
+                        let val_fr = fe_to_halo2(&val).map_err(|_| plonk::Error::Synthesis)?;
                         let cell = region.assign_advice(
                             || format!("advice_{idx}[{row}]"),
                             h2_col,
                             row,
-                            || Value::known(fe_to_halo2(&val)),
+                            || Value::known(val_fr),
                         )?;
                         assigned_advice[idx][row] = Some(cell);
                     }
@@ -354,7 +353,7 @@ pub fn generate_plonkish_proof(
             let val = compiler.system.assignments.get(compiler.col_instance, i);
             fe_to_halo2(&val)
         })
-        .collect();
+        .collect::<Result<Vec<Fr>, String>>()?;
 
     // KZG params (cached by k)
     let params_path = cache_dir.join("plonkish").join(format!("params_k{k}.bin"));

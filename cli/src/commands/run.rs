@@ -90,7 +90,10 @@ pub fn run_file(
         vm.debug_symbols = Some(debug_map);
 
         // Get constants and max_slots from the main function compiler
-        let main_func = compiler.compilers.last().expect("No main compiler");
+        let main_func = compiler
+            .compilers
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("compiler has no main function"))?;
 
         // Allocate ALL prototypes on heap (flat global architecture)
         for proto in &compiler.prototypes {

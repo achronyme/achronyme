@@ -29,7 +29,10 @@ pub fn disassemble_file(path: &str) -> Result<()> {
 
         match OpCode::from_u8(op_byte) {
             Some(OpCode::LoadConst) => {
-                let main_func = compiler.compilers.last().expect("No main compiler");
+                let main_func = compiler
+                    .compilers
+                    .last()
+                    .ok_or_else(|| anyhow::anyhow!("compiler has no main function"))?;
                 let val_opt = main_func.constants.get(bx as usize);
 
                 let val_str = if let Some(val) = val_opt {

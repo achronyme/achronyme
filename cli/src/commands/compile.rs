@@ -21,7 +21,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         file.write_all(b"ACH\x0A")?;
 
         // Metadata
-        let main_func = compiler.compilers.last().expect("No main compiler");
+        let main_func = compiler
+            .compilers
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("compiler has no main function"))?;
         file.write_u16::<LittleEndian>(main_func.max_slots)?;
 
         // --- String Table ---
@@ -59,7 +62,10 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         }
 
         // --- Constants ---
-        let main_func = compiler.compilers.last().expect("No main compiler");
+        let main_func = compiler
+            .compilers
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("compiler has no main function"))?;
         file.write_u32::<LittleEndian>(main_func.constants.len() as u32)?;
         for c in &main_func.constants {
             if let Some(n) = c.as_int() {
