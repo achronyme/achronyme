@@ -20,6 +20,7 @@ pub enum RuntimeError {
     Unknown(String),
     OutOfBounds(String),
     SystemError(String),
+    InstructionBudgetExhausted,
     ProveBlockFailed(ProveError),
     ProveHandlerNotConfigured,
 }
@@ -43,6 +44,9 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Unknown(msg) => write!(f, "{msg}"),
             RuntimeError::OutOfBounds(msg) => write!(f, "out of bounds: {msg}"),
             RuntimeError::SystemError(msg) => write!(f, "system error: {msg}"),
+            RuntimeError::InstructionBudgetExhausted => {
+                write!(f, "instruction budget exhausted")
+            }
             RuntimeError::ProveBlockFailed(e) => write!(f, "prove block failed: {e}"),
             RuntimeError::ProveHandlerNotConfigured => {
                 write!(f, "prove handler not configured")

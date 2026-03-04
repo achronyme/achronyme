@@ -68,6 +68,14 @@ impl InterpreterOps for super::vm::VM {
             let chunk_len = func.chunk.len();
             self.frames[frame_idx].ip += 1;
 
+            // Instruction fuel check
+            if let Some(ref mut budget) = self.instruction_budget {
+                if *budget == 0 {
+                    return Err(RuntimeError::InstructionBudgetExhausted);
+                }
+                *budget -= 1;
+            }
+
             let op_byte = decode_opcode(instruction);
             let op = OpCode::from_u8(op_byte).ok_or(RuntimeError::InvalidOpcode(op_byte))?;
 
@@ -315,7 +323,12 @@ impl InterpreterOps for super::vm::VM {
                 LoadConst => {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
-                    let val = func.constants.get(bx).cloned().unwrap_or(Value::nil());
+                    let val = func.constants.get(bx).cloned().ok_or_else(|| {
+                        RuntimeError::OutOfBounds(format!(
+                            "constant index {bx} out of range (len {})",
+                            func.constants.len()
+                        ))
+                    })?;
                     self.set_reg(base, a, val)?;
                 }
 
@@ -426,19 +439,24 @@ impl InterpreterOps for super::vm::VM {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
 
-                    let (upval_count, _max_slots) = {
-                        let proto_idx = self
-                            .prototypes
-                            .get(bx)
-                            .ok_or(RuntimeError::FunctionNotFound)?;
+                    let proto_idx = *self
+                        .prototypes
+                        .get(bx)
+                        .ok_or(RuntimeError::FunctionNotFound)?;
+
+                    let upval_count = {
                         let proto = self
                             .heap
-                            .get_function(*proto_idx)
+                            .get_function(proto_idx)
                             .ok_or(RuntimeError::FunctionNotFound)?;
-                        (proto.upvalue_info.len(), proto.max_slots)
+                        let len = proto.upvalue_info.len();
+                        if len % 2 != 0 {
+                            return Err(RuntimeError::OutOfBounds(format!(
+                                "upvalue_info length {len} is not even"
+                            )));
+                        }
+                        len
                     };
-
-                    let proto_idx = self.prototypes[bx];
 
                     let mut captured = Vec::with_capacity(upval_count / 2);
                     let mut i = 0;

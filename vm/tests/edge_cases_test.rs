@@ -292,12 +292,18 @@ fn malicious_bytecode_invalid_opcode() {
 // ======================================================================
 
 #[test]
-fn malicious_bytecode_oob_constant_no_panic() {
+fn malicious_bytecode_oob_constant_returns_error() {
     // LoadConst R[0] = K[9999] with only 1 constant.
-    // VM uses .get().unwrap_or(nil) — gracefully returns nil, no panic.
+    // VM must return OutOfBounds error instead of silently loading nil.
     let chunk = vec![encode_abx(OpCode::LoadConst.as_u8(), 0, 9999)];
-    let result = run_raw(chunk, vec![Value::int(1)], 4);
-    assert!(result.is_ok(), "oob constant should not panic");
+    let err = expect_err(
+        run_raw(chunk, vec![Value::int(1)], 4),
+        "oob constant index must return error",
+    );
+    assert!(
+        matches!(err, RuntimeError::OutOfBounds(_)),
+        "expected OutOfBounds, got {err:?}"
+    );
 }
 
 // ======================================================================
@@ -516,4 +522,79 @@ fn all_invalid_opcodes_rejected() {
             "opcode {invalid_op}: expected InvalidOpcode, got {err:?}"
         );
     }
+}
+
+// ======================================================================
+// 19. Instruction budget — finite program completes within budget
+// ======================================================================
+
+#[test]
+fn instruction_budget_sufficient() {
+    // 3 nops = 3 instructions; budget of 10 is plenty.
+    let chunk = vec![
+        encode_abc(OpCode::Nop.as_u8(), 0, 0, 0),
+        encode_abc(OpCode::Nop.as_u8(), 0, 0, 0),
+        encode_abc(OpCode::Nop.as_u8(), 0, 0, 0),
+    ];
+    let mut vm = VM::new();
+    let func = Function {
+        name: "raw".to_string(),
+        arity: 0,
+        chunk,
+        constants: vec![],
+        max_slots: 4,
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let func_idx = vm.heap.alloc_function(func);
+    let closure_idx = vm.heap.alloc_closure(Closure {
+        function: func_idx,
+        upvalues: vec![],
+    });
+    vm.frames.push(CallFrame {
+        closure: closure_idx,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    });
+    vm.instruction_budget = Some(10);
+    assert!(vm.interpret().is_ok(), "should complete within budget");
+}
+
+// ======================================================================
+// 20. Instruction budget — exhausted returns error
+// ======================================================================
+
+#[test]
+fn instruction_budget_exhausted() {
+    // Infinite loop: Jump to self. Budget of 100 must stop it.
+    let chunk = vec![encode_abx(OpCode::Jump.as_u8(), 0, 0)];
+    let mut vm = VM::new();
+    let func = Function {
+        name: "raw".to_string(),
+        arity: 0,
+        chunk,
+        constants: vec![],
+        max_slots: 4,
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let func_idx = vm.heap.alloc_function(func);
+    let closure_idx = vm.heap.alloc_closure(Closure {
+        function: func_idx,
+        upvalues: vec![],
+    });
+    vm.frames.push(CallFrame {
+        closure: closure_idx,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    });
+    vm.instruction_budget = Some(100);
+    let result = vm.interpret();
+    let err = result.expect_err("infinite loop should exhaust budget");
+    assert!(
+        matches!(err, RuntimeError::InstructionBudgetExhausted),
+        "expected InstructionBudgetExhausted, got {err:?}"
+    );
 }
