@@ -6,6 +6,7 @@ pub mod opcode;
 pub use error::RuntimeError;
 pub use globals::GlobalEntry;
 pub use machine::prove::ProveError;
+pub use machine::value_ops::ValueOps;
 pub use machine::{CallFrame, ProveHandler, ProveResult, VerifyHandler, VM};
 pub use opcode::OpCode;
 pub mod native;

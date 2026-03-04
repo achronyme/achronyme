@@ -1,4 +1,5 @@
 use crate::error::RuntimeError;
+use crate::machine::value_ops::ValueOps;
 use crate::machine::VM;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use memory::{FieldElement, Value};

@@ -3,6 +3,7 @@ use crate::opcode::{instruction::*, OpCode};
 use memory::Value;
 
 use super::stack::StackOps;
+use super::upvalue::UpvalueOps;
 
 /// Trait for control flow instruction handlers
 pub trait ControlFlowOps {

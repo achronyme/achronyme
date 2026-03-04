@@ -4,6 +4,7 @@ use memory::{BigIntError, FieldElement, Value, I60_MAX, I60_MIN, TAG_BIGINT};
 
 use super::promotion::TypePromotion;
 use super::stack::StackOps;
+use super::value_ops::ValueOps;
 
 fn map_bigint_err(e: BigIntError) -> RuntimeError {
     match e {

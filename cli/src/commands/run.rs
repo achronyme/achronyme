@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use compiler::Compiler;
 use memory::Function;
 use std::fs;
-use vm::{CallFrame, VM};
+use vm::{CallFrame, ValueOps, VM};
 
 use crate::prove_handler::{DefaultProveHandler, ProveBackend};
 

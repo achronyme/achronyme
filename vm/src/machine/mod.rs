@@ -9,10 +9,13 @@ mod data;
 mod frame;
 mod gc;
 mod globals;
+mod interpreter;
 mod native;
 mod promotion;
 pub mod prove;
 mod stack;
+mod upvalue;
+pub mod value_ops;
 mod vm;
 
 // Public API
