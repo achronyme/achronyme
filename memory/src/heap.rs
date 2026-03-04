@@ -193,11 +193,7 @@ impl Heap {
     }
 
     pub fn alloc_map(&mut self, m: HashMap<String, Value>) -> u32 {
-        let capacity = m.capacity();
-        let entry_size = std::mem::size_of::<String>()
-            + std::mem::size_of::<Value>()
-            + std::mem::size_of::<u64>();
-        self.bytes_allocated += capacity * entry_size;
+        self.bytes_allocated += m.capacity() * Self::map_entry_size();
         self.check_gc();
         self.maps.alloc(m)
     }
@@ -208,6 +204,38 @@ impl Heap {
 
     pub fn get_map_mut(&mut self, index: u32) -> Option<&mut HashMap<String, Value>> {
         self.maps.get_mut(index)
+    }
+
+    /// Push a value onto a heap-allocated list, tracking capacity growth.
+    pub fn list_push(&mut self, index: u32, value: Value) -> Option<()> {
+        let list = self.lists.get_mut(index)?;
+        let old_cap = list.capacity();
+        list.push(value);
+        let new_cap = list.capacity();
+        if new_cap > old_cap {
+            self.bytes_allocated += (new_cap - old_cap) * std::mem::size_of::<Value>();
+            self.check_gc();
+        }
+        Some(())
+    }
+
+    /// Insert a key-value pair into a heap-allocated map, tracking capacity growth.
+    pub fn map_insert(&mut self, index: u32, key: String, value: Value) -> Option<()> {
+        let map = self.maps.get_mut(index)?;
+        let old_cap = map.capacity();
+        map.insert(key, value);
+        let new_cap = map.capacity();
+        if new_cap > old_cap {
+            self.bytes_allocated += (new_cap - old_cap) * Self::map_entry_size();
+            self.check_gc();
+        }
+        Some(())
+    }
+
+    /// Estimated cost per map entry (key + value + hash overhead).
+    /// Used by both `alloc_map` and `recount_live_bytes` for consistency.
+    fn map_entry_size() -> usize {
+        std::mem::size_of::<String>() + std::mem::size_of::<Value>() + std::mem::size_of::<u64>()
     }
 
     // Tracing (Mark Phase) logic
@@ -546,9 +574,7 @@ impl Heap {
         }
         for (i, m) in self.maps.data.iter().enumerate() {
             if !self.maps.is_free(i as u32) {
-                let capacity = m.capacity();
-                let entry_size = std::mem::size_of::<String>() + std::mem::size_of::<Value>();
-                total += capacity * entry_size;
+                total += m.capacity() * Self::map_entry_size();
             }
         }
         total

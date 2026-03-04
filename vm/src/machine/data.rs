@@ -259,11 +259,9 @@ impl DataOps for super::vm::VM {
                             .ok_or(RuntimeError::SystemError("String missing in heap".into()))?
                             .clone();
 
-                        let map = self
-                            .heap
-                            .get_map_mut(handle)
+                        self.heap
+                            .map_insert(handle, k_str, val)
                             .ok_or(RuntimeError::SystemError("Map missing".into()))?;
-                        map.insert(k_str, val);
                     } else {
                         return Err(RuntimeError::TypeMismatch(
                             "Map key must be a string".into(),

@@ -99,14 +99,11 @@ pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = target
         .as_handle()
         .ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
-    let list = vm
-        .heap
-        .get_list_mut(handle)
+    vm.heap
+        .list_push(handle, item)
         .ok_or(RuntimeError::SystemError(
             "List corrupted or missing".into(),
         ))?;
-
-    list.push(item);
 
     Ok(Value::nil())
 }
