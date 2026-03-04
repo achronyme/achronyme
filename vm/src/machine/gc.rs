@@ -39,8 +39,17 @@ impl GarbageCollector for super::vm::VM {
     fn mark_roots(&self) -> Vec<Value> {
         let mut roots = Vec::new();
 
-        // 1. Stack
-        roots.extend_from_slice(&self.stack);
+        // 1. Stack — only root the active region, not all 65K slots.
+        //    Compute stack_top as max(frame.base + max_slots) across all frames.
+        let mut stack_top = 0usize;
+        for frame in &self.frames {
+            if let Some(closure) = self.heap.get_closure(frame.closure) {
+                if let Some(func) = self.heap.get_function(closure.function) {
+                    stack_top = stack_top.max(frame.base + func.max_slots as usize);
+                }
+            }
+        }
+        roots.extend_from_slice(&self.stack[..stack_top]);
 
         // 2. Globals
         for entry in &self.globals {
