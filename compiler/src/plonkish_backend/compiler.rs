@@ -18,6 +18,7 @@ pub struct PlonkishCompiler {
     pub col_s_arith: Column,
     pub col_s_range: Column,
     pub col_constant: Column,
+    pub col_zero: Column,
     pub col_a: Column,
     pub col_b: Column,
     pub col_c: Column,
@@ -54,6 +55,7 @@ impl PlonkishCompiler {
         let col_s_arith = system.alloc_fixed();
         let col_s_range = system.alloc_fixed();
         let col_constant = system.alloc_fixed();
+        let col_zero = system.alloc_fixed(); // Always zero (default), used for zero constraints
         let col_a = system.alloc_advice();
         let col_b = system.alloc_advice();
         let col_c = system.alloc_advice();
@@ -74,6 +76,7 @@ impl PlonkishCompiler {
             col_s_arith,
             col_s_range,
             col_constant,
+            col_zero,
             col_a,
             col_b,
             col_c,

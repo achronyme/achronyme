@@ -53,6 +53,28 @@ impl PlonkishCompiler {
     }
 
     // ========================================================================
+    // Constrain zero: uses dedicated col_zero fixed column (always zero)
+    // ========================================================================
+
+    /// Constrain an advice cell to zero using the dedicated col_zero fixed column.
+    /// Unlike `constrain_constant`, this never conflicts with other constants on
+    /// the same row because it uses a separate fixed column.
+    pub(super) fn constrain_zero(&mut self, cell: CellRef) {
+        self.witness_ops.push(PlonkWitnessOp::SetConstant {
+            cell,
+            value: FieldElement::ZERO,
+        });
+        // col_zero defaults to zero everywhere — no need to set it
+        self.system.add_copy(
+            cell,
+            CellRef {
+                column: self.col_zero,
+                row: cell.row,
+            },
+        );
+    }
+
+    // ========================================================================
     // Materialization: PlonkVal → CellRef
     // ========================================================================
 
@@ -75,6 +97,11 @@ impl PlonkishCompiler {
                 // Row: 0 * 0 + fe = fe → gate: s*(0*0 + fe - fe) = 0
                 let row = self.alloc_row();
                 self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                // Constrain col_a to zero so prover cannot inject a*b offset
+                self.constrain_zero(CellRef {
+                    column: self.col_a,
+                    row,
+                });
                 self.constrain_constant(
                     CellRef {
                         column: self.col_c,
@@ -181,6 +208,11 @@ impl PlonkishCompiler {
             },
             FieldElement::ONE.neg(),
         );
+        // Constrain col_c to zero so prover cannot add arbitrary offset
+        self.constrain_zero(CellRef {
+            column: self.col_c,
+            row,
+        });
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
         CellRef {
             column: self.col_d,
@@ -222,6 +254,12 @@ impl PlonkishCompiler {
                     row,
                 },
             );
+        } else {
+            // Constrain col_c to zero so prover cannot add arbitrary offset
+            self.constrain_zero(CellRef {
+                column: self.col_c,
+                row,
+            });
         }
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
         CellRef {

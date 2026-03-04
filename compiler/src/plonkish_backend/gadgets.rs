@@ -23,6 +23,11 @@ impl PlonkishCompiler {
             },
         );
         // b = inv (filled by InverseRow)
+        // c = 0 (constrain to zero so den*inv = 1 is enforced exactly)
+        self.constrain_zero(CellRef {
+            column: self.col_c,
+            row: inv_row,
+        });
         // d = 1 (set as constant, copy-constrained to fixed column)
         self.constrain_constant(
             CellRef {
@@ -73,6 +78,11 @@ impl PlonkishCompiler {
                 row: bool_row,
             },
         );
+        // Constrain col_c to zero so cond^2 + 0 = cond is enforced exactly
+        self.constrain_zero(CellRef {
+            column: self.col_c,
+            row: bool_row,
+        });
         self.witness_ops
             .push(PlonkWitnessOp::ArithRow { row: bool_row });
 
@@ -141,6 +151,11 @@ impl PlonkishCompiler {
                 row,
             },
         );
+        // Constrain col_c to zero so cell^2 + 0 = cell is enforced exactly
+        self.constrain_zero(CellRef {
+            column: self.col_c,
+            row,
+        });
         self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
     }
 
@@ -194,6 +209,11 @@ impl PlonkishCompiler {
                 row: inv_row,
             },
         );
+        // Constrain col_c to zero (defense in depth — also transitively constrained by enforce_row)
+        self.constrain_zero(CellRef {
+            column: self.col_c,
+            row: inv_row,
+        });
         self.witness_ops
             .push(PlonkWitnessOp::IsZeroRow { row: inv_row });
         let inv_cell = CellRef {
@@ -292,13 +312,15 @@ impl PlonkishCompiler {
                 row: check_row,
             },
         );
-        self.constrain_constant(
-            CellRef {
-                column: self.col_d,
-                row: check_row,
-            },
-            FieldElement::ZERO,
-        );
+        // Constrain col_c to zero so diff*eq + 0 = 0 is enforced exactly
+        self.constrain_zero(CellRef {
+            column: self.col_c,
+            row: check_row,
+        });
+        self.constrain_zero(CellRef {
+            column: self.col_d,
+            row: check_row,
+        });
 
         eq_cell
     }
@@ -341,6 +363,12 @@ impl PlonkishCompiler {
                         row: acc_row,
                     },
                 );
+            } else {
+                // First iteration: constrain col_c to zero so bit*coeff + 0 = sum
+                self.constrain_zero(CellRef {
+                    column: self.col_c,
+                    row: acc_row,
+                });
             }
             self.witness_ops
                 .push(PlonkWitnessOp::ArithRow { row: acc_row });
@@ -425,6 +453,12 @@ impl PlonkishCompiler {
                         row: acc_row,
                     },
                 );
+            } else {
+                // First iteration: constrain col_c to zero so bit*coeff + 0 = sum
+                self.constrain_zero(CellRef {
+                    column: self.col_c,
+                    row: acc_row,
+                });
             }
             self.witness_ops
                 .push(PlonkWitnessOp::ArithRow { row: acc_row });
