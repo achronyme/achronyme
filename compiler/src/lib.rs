@@ -9,6 +9,8 @@ pub mod module_loader;
 pub mod plonkish_backend;
 pub mod r1cs_backend;
 pub mod r1cs_error;
+pub mod r1cs_gadgets;
+pub mod r1cs_witness;
 pub mod scopes;
 pub mod statements;
 pub mod types;
