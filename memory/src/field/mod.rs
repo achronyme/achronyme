@@ -638,6 +638,64 @@ mod tests {
     }
 
     #[test]
+    fn test_from_decimal_str_overflow_2_256_plus_1() {
+        // 2^256 + 1 — previously produced wrong result (1) due to carry overflow
+        let input =
+            "115792089237316195423570985008687907853269984665640564039457584007913129639937";
+        let fe = FieldElement::from_decimal_str(input).unwrap();
+        // Expected: (2^256 + 1) mod p
+        // 2^256 mod p = R constant, so (2^256 + 1) mod p = R + 1 in canonical form
+        // But we need to compute it properly: 2^256 mod p + 1
+        let two_256_mod_p = FieldElement::from_canonical(R);
+        let expected = two_256_mod_p.add(&FieldElement::ONE);
+        assert_eq!(
+            fe, expected,
+            "from_decimal_str(2^256 + 1) should be correct"
+        );
+    }
+
+    #[test]
+    fn test_from_decimal_str_overflow_2_257() {
+        // 2^257 = 2 * 2^256
+        let input =
+            "231584178474632390847141970017375815706539969331281128078915168015826259279872";
+        let fe = FieldElement::from_decimal_str(input).unwrap();
+        // Expected: 2 * (2^256 mod p) mod p
+        let two_256_mod_p = FieldElement::from_canonical(R);
+        let two = FieldElement::from_u64(2);
+        let expected = two_256_mod_p.mul(&two);
+        assert_eq!(fe, expected, "from_decimal_str(2^257) should be correct");
+    }
+
+    #[test]
+    fn test_from_decimal_str_very_large() {
+        // 10^100 — a 101-digit number, well beyond 2^256
+        let input = "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        let fe = FieldElement::from_decimal_str(input).unwrap();
+        // Verify roundtrip: from_decimal_str → to_decimal_string → from_decimal_str
+        let decimal = fe.to_decimal_string();
+        let fe2 = FieldElement::from_decimal_str(&decimal).unwrap();
+        assert_eq!(fe, fe2, "very large decimal should roundtrip");
+    }
+
+    #[test]
+    fn test_from_decimal_str_exactly_p() {
+        // Input = p itself → should yield 0
+        let p_str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+        let fe = FieldElement::from_decimal_str(p_str).unwrap();
+        assert_eq!(fe, FieldElement::ZERO, "p mod p should be 0");
+    }
+
+    #[test]
+    fn test_from_decimal_str_p_plus_1() {
+        // Input = p + 1 → should yield 1
+        let p_plus_1 =
+            "21888242871839275222246405745257275088548364400416034343698204186575808495618";
+        let fe = FieldElement::from_decimal_str(p_plus_1).unwrap();
+        assert_eq!(fe, FieldElement::ONE, "p + 1 mod p should be 1");
+    }
+
+    #[test]
     fn test_vector_montgomery_r() {
         // 2^256 mod p = R constant = 6350874878119819312338956282401532410528162663560392320966563075034087161851
         let r_expected = FieldElement::from_decimal_str(

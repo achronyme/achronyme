@@ -44,11 +44,13 @@ impl FieldElement {
     /// assert_eq!(fe.to_decimal_string(), "123456789");
     /// ```
     pub fn from_decimal_str(s: &str) -> Option<Self> {
-        // Parse into [u64; 4] canonical form using repeated multiply-add
-        let mut result = [0u64; 4];
+        // Use 5-limb accumulator (320 bits) to capture overflow past 256 bits.
+        // After each digit, reduce mod p so intermediate values stay bounded.
+        // Invariant: result < p before each digit → after *10 + digit < 10p + 10 < 2^258 (fits in 5 limbs).
+        let mut result = [0u64; 5];
         for ch in s.chars() {
             let digit = ch.to_digit(10)? as u64;
-            // result = result * 10 + digit (in 256-bit arithmetic)
+            // result = result * 10 + digit (in 320-bit arithmetic)
             let mut carry = 0u128;
             for limb in result.iter_mut() {
                 let wide = *limb as u128 * 10 + carry;
@@ -62,16 +64,22 @@ impl FieldElement {
                 *limb = wide as u64;
                 add_carry = wide >> 64;
             }
+            // Reduce mod p (5-limb subtract until result < p)
+            loop {
+                if result[4] == 0 && !gte(&[result[0], result[1], result[2], result[3]], &MODULUS) {
+                    break;
+                }
+                let (r0, borrow) = sbb(result[0], MODULUS[0], 0);
+                let (r1, borrow) = sbb(result[1], MODULUS[1], borrow);
+                let (r2, borrow) = sbb(result[2], MODULUS[2], borrow);
+                let (r3, borrow) = sbb(result[3], MODULUS[3], borrow);
+                let (r4, _) = sbb(result[4], 0, borrow);
+                result = [r0, r1, r2, r3, r4];
+            }
         }
-        // Reduce mod p if needed
-        while gte(&result, &MODULUS) {
-            let (r0, borrow) = sbb(result[0], MODULUS[0], 0);
-            let (r1, borrow) = sbb(result[1], MODULUS[1], borrow);
-            let (r2, borrow) = sbb(result[2], MODULUS[2], borrow);
-            let (r3, _) = sbb(result[3], MODULUS[3], borrow);
-            result = [r0, r1, r2, r3];
-        }
-        Some(Self::from_canonical(result))
+        Some(Self::from_canonical([
+            result[0], result[1], result[2], result[3],
+        ]))
     }
 
     /// Parse from hex string (with or without "0x" prefix)
