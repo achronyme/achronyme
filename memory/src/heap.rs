@@ -294,17 +294,17 @@ impl Heap {
                 // Value is Copy (u64), so Vec<Value> clone is efficient (memcpy).
                 match val.tag() {
                     crate::value::TAG_LIST => {
-                        if let Some(l) = self.lists.data.get(handle as usize) {
+                        if let Some(l) = self.lists.get(handle) {
                             worklist.extend(l.clone());
                         }
                     }
                     crate::value::TAG_FUNCTION => {
-                        if let Some(f) = self.functions.data.get(handle as usize) {
+                        if let Some(f) = self.functions.get(handle) {
                             worklist.extend(f.constants.clone());
                         }
                     }
                     crate::value::TAG_CLOSURE => {
-                        if let Some(c) = self.closures.data.get(handle as usize) {
+                        if let Some(c) = self.closures.get(handle) {
                             // 1. Mark Function
                             worklist.push(Value::function(c.function));
                             // 2. Mark Upvalues
@@ -313,7 +313,7 @@ impl Heap {
                                     self.marked_upvalues.insert(up_idx);
                                     // Trace value inside upvalue (if closed, it matters)
                                     // If open, it's stack or Nil, safe to trace
-                                    if let Some(u) = self.upvalues.data.get(up_idx as usize) {
+                                    if let Some(u) = self.upvalues.get(up_idx) {
                                         if let UpvalueLocation::Closed(val) = u.location {
                                             worklist.push(val);
                                         }
@@ -326,14 +326,14 @@ impl Heap {
                         // Keys are Rust-owned Strings inside HashMap<String, Value>,
                         // NOT arena handles — they are freed when the HashMap drops.
                         // Only values need GC tracing.
-                        if let Some(m) = self.maps.data.get(handle as usize) {
+                        if let Some(m) = self.maps.get(handle) {
                             for v in m.values() {
                                 worklist.push(*v);
                             }
                         }
                     }
                     crate::value::TAG_ITER => {
-                        if let Some(iter) = self.iterators.data.get(handle as usize) {
+                        if let Some(iter) = self.iterators.get(handle) {
                             worklist.push(iter.source);
                         }
                     }
