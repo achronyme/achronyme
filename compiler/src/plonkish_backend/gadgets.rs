@@ -332,6 +332,12 @@ impl PlonkishCompiler {
     /// Enforce that `cell` holds a value in [0, 2^num_bits).
     /// Decomposes into `num_bits` boolean-enforced bits and checks sum == cell.
     fn enforce_n_range(&mut self, cell: CellRef, num_bits: u32) {
+        if num_bits == 0 {
+            // [0, 2^0) = {0}: the only valid value is zero.
+            self.constrain_zero(cell);
+            return;
+        }
+
         let mut running_sum: Option<CellRef> = None;
 
         for i in 0..num_bits {
@@ -550,5 +556,19 @@ impl PlonkishCompiler {
         let idx = self.system.lookup_tables.len() - 1;
         self.range_tables.insert(bits, idx);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enforce_n_range_zero_bits_does_not_panic() {
+        let mut compiler = PlonkishCompiler::new();
+        // Allocate a cell with value zero
+        let cell = compiler.materialize_val(&PlonkVal::Constant(FieldElement::ZERO));
+        // Must not panic — constrains cell == 0
+        compiler.enforce_n_range(cell, 0);
     }
 }
