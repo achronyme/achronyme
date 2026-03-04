@@ -1,3 +1,4 @@
+pub(crate) mod arena;
 pub mod bigint;
 pub mod field;
 pub mod heap;
