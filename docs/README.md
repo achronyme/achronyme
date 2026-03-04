@@ -1,49 +1,56 @@
-# Starlight Starter Kit: Basics
+# Achronyme Docs
 
+[![Deploy Docs](https://github.com/achronyme/achronyme/actions/workflows/docs.yml/badge.svg)](https://github.com/achronyme/achronyme/actions/workflows/docs.yml)
 [![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
 
+Documentation site for the [Achronyme](https://github.com/achronyme/achronyme) ZK programming language, built with Astro and Starlight.
+
+---
+
+## Features
+
+- **Markdown & MDX support** — Write documentation using standard Markdown or interactive MDX components
+- **Static Site Generation** — Fast page loads and optimized assets out of the box
+- **Starlight theme** — Beautiful, responsive documentation template with search and navigation
+
+---
+
+## Development
+
+All commands are run from the `docs/` directory:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start local dev server at localhost:4321
+pnpm dev
+
+# Build the production site to ./dist/
+pnpm build
+
+# Preview the build locally
+pnpm preview
 ```
-pnpm create astro@latest -- --template starlight
-```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+---
 
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
+## Project Structure
 
 ```
-.
-├── public/
+docs/
 ├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+│   ├── assets/             Images to be embedded in Markdown
+│   └── content/
+│       └── docs/           Documentation pages (.md or .mdx)
+├── public/                 Static assets like favicons
+├── astro.config.mjs        Astro configuration
+├── package.json            Dependencies and scripts
+└── tsconfig.json           TypeScript configuration
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+---
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+## License
 
-Static assets, like favicons, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `pnpm install`             | Installs dependencies                            |
-| `pnpm dev`             | Starts local dev server at `localhost:4321`      |
-| `pnpm build`           | Build your production site to `./dist/`          |
-| `pnpm preview`         | Preview your build locally, before deploying     |
-| `pnpm astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `pnpm astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+GPL-3.0
