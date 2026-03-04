@@ -408,7 +408,7 @@ impl InterpreterOps for super::vm::VM {
                 CloseUpvalue => {
                     let a = decode_a(instruction) as usize;
                     let stack_idx = base + a;
-                    self.close_upvalues(stack_idx);
+                    self.close_upvalues(stack_idx)?;
                 }
 
                 Closure => {
@@ -446,7 +446,7 @@ impl InterpreterOps for super::vm::VM {
 
                         if is_local {
                             let stack_idx = base + index;
-                            let upval_idx = self.capture_upvalue(stack_idx);
+                            let upval_idx = self.capture_upvalue(stack_idx)?;
                             captured.push(upval_idx);
                         } else {
                             let current_closure_idx = self.frames[frame_idx].closure;

@@ -84,7 +84,8 @@ impl VM {
     /// CRITICAL: Must close all open upvalues to prevent them from pointing to dead stack slots.
     pub fn reset(&mut self) {
         // 1. Close ALL open upvalues (stack index 0 = everything)
-        self.close_upvalues(0);
+        // Ignore errors here — reset drains the upvalue list regardless.
+        let _ = self.close_upvalues(0);
 
         // 2. Clear Runtime State
         self.frames.clear();
