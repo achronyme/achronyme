@@ -139,6 +139,11 @@ impl VM {
             match tag {
                 SER_TAG_INT => {
                     let n = reader.read_i64::<LittleEndian>()?;
+                    if !(memory::I60_MIN..=memory::I60_MAX).contains(&n) {
+                        return Err(LoaderError::Security(format!(
+                            "Integer constant {n} outside i60 range"
+                        )));
+                    }
                     constants.push(Value::int(n));
                 }
                 SER_TAG_STRING => {
@@ -222,6 +227,11 @@ impl VM {
                 match tag {
                     SER_TAG_INT => {
                         let n = reader.read_i64::<LittleEndian>()?;
+                        if !(memory::I60_MIN..=memory::I60_MAX).contains(&n) {
+                            return Err(LoaderError::Security(format!(
+                                "Integer constant {n} outside i60 range"
+                            )));
+                        }
                         proto_constants.push(Value::int(n));
                     }
                     SER_TAG_STRING => {

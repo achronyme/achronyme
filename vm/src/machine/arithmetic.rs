@@ -174,7 +174,14 @@ impl ArithmeticOps for super::vm::VM {
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
-                    self.set_reg(base, a, Value::int(ib / ic))?;
+                    match ib.checked_div(ic) {
+                        Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                            self.set_reg(base, a, Value::int(result))?;
+                        }
+                        _ => {
+                            return Err(RuntimeError::IntegerOverflow);
+                        }
+                    }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
                     let ha = vb.as_handle().unwrap();
                     let hb = vc.as_handle().unwrap();
@@ -212,7 +219,14 @@ impl ArithmeticOps for super::vm::VM {
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
-                    self.set_reg(base, a, Value::int(ib % ic))?;
+                    match ib.checked_rem(ic) {
+                        Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                            self.set_reg(base, a, Value::int(result))?;
+                        }
+                        _ => {
+                            return Err(RuntimeError::IntegerOverflow);
+                        }
+                    }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
                     let ha = vb.as_handle().unwrap();
                     let hb = vc.as_handle().unwrap();

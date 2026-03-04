@@ -125,6 +125,9 @@ impl ExpressionCompiler for Compiler {
 impl Compiler {
     fn compile_number(&mut self, value: &str) -> Result<u8, CompilerError> {
         let val: i64 = value.parse().map_err(|_| CompilerError::InvalidNumber)?;
+        if !(memory::I60_MIN..=memory::I60_MAX).contains(&val) {
+            return Err(CompilerError::InvalidNumber);
+        }
         let reg = self.alloc_reg()?;
         let const_idx = self.add_constant(Value::int(val));
         if const_idx > 0xFFFF {

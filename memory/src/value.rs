@@ -53,7 +53,23 @@ impl Value {
 
     #[inline]
     pub fn int(val: i64) -> Self {
+        debug_assert!(
+            (I60_MIN..=I60_MAX).contains(&val),
+            "Value::int() overflow: {val} is outside i60 range [{I60_MIN}, {I60_MAX}]"
+        );
         Value((TAG_INT << TAG_SHIFT) | ((val as u64) & PAYLOAD_MASK))
+    }
+
+    /// Checked version of `int()`. Returns `None` if `val` is outside i60 range.
+    #[inline]
+    pub fn try_int(val: i64) -> Option<Self> {
+        if (I60_MIN..=I60_MAX).contains(&val) {
+            Some(Value(
+                (TAG_INT << TAG_SHIFT) | ((val as u64) & PAYLOAD_MASK),
+            ))
+        } else {
+            None
+        }
     }
 
     #[inline]
