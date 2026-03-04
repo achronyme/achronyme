@@ -78,31 +78,34 @@ impl Compiler {
 
     // Wrappers for FunctionCompiler
     pub fn alloc_reg(&mut self) -> Result<u8, CompilerError> {
-        self.current().alloc_reg()
+        self.current()?.alloc_reg()
     }
 
     pub fn alloc_contiguous(&mut self, count: u8) -> Result<u8, CompilerError> {
-        self.current().alloc_contiguous(count)
+        self.current()?.alloc_contiguous(count)
     }
 
-    pub fn free_reg(&mut self, reg: u8) {
-        self.current().free_reg(reg)
+    pub fn free_reg(&mut self, reg: u8) -> Result<(), CompilerError> {
+        self.current()?.free_reg(reg);
+        Ok(())
     }
 
-    pub fn add_constant(&mut self, val: Value) -> usize {
-        self.current().add_constant(val)
+    pub fn add_constant(&mut self, val: Value) -> Result<usize, CompilerError> {
+        Ok(self.current()?.add_constant(val))
     }
 
-    pub fn add_upvalue(&mut self, is_local: bool, index: u8) -> u8 {
-        self.current().add_upvalue(is_local, index)
+    pub fn add_upvalue(&mut self, is_local: bool, index: u8) -> Result<u8, CompilerError> {
+        Ok(self.current()?.add_upvalue(is_local, index))
     }
 
-    pub fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) {
-        self.current().emit_abc(op, a, b, c)
+    pub fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) -> Result<(), CompilerError> {
+        self.current()?.emit_abc(op, a, b, c);
+        Ok(())
     }
 
-    pub fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) {
-        self.current().emit_abx(op, a, bx)
+    pub fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) -> Result<(), CompilerError> {
+        self.current()?.emit_abx(op, a, bx);
+        Ok(())
     }
 
     pub fn intern_string(&mut self, s: &str) -> u32 {
@@ -118,13 +121,17 @@ impl Compiler {
     }
 
     /// Returns a mutable reference to the current (top) function compiler
-    pub fn current(&mut self) -> &mut FunctionCompiler {
-        self.compilers.last_mut().expect("Compiler stack underflow")
+    pub fn current(&mut self) -> Result<&mut FunctionCompiler, CompilerError> {
+        self.compilers
+            .last_mut()
+            .ok_or_else(|| CompilerError::InternalError("compiler stack underflow".into()))
     }
 
     /// Returns an immutable reference to the current function compiler
-    pub fn current_ref(&self) -> &FunctionCompiler {
-        self.compilers.last().expect("Compiler stack underflow")
+    pub fn current_ref(&self) -> Result<&FunctionCompiler, CompilerError> {
+        self.compilers
+            .last()
+            .ok_or_else(|| CompilerError::InternalError("compiler stack underflow".into()))
     }
 
     pub fn append_debug_symbols(&self, buffer: &mut Vec<u8>) {
@@ -156,8 +163,8 @@ impl Compiler {
         }
 
         // Final return
-        self.emit_abc(OpCode::Return, 0, 0, 0); // Return Nil/0
+        self.emit_abc(OpCode::Return, 0, 0, 0)?; // Return Nil/0
 
-        Ok(self.current().bytecode.clone())
+        Ok(self.current()?.bytecode.clone())
     }
 }

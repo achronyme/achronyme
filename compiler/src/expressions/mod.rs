@@ -31,17 +31,17 @@ impl ExpressionCompiler for Compiler {
             Expr::StringLit { value, .. } => self.compile_string(value),
             Expr::Bool { value: true, .. } => {
                 let reg = self.alloc_reg()?;
-                self.emit_abx(OpCode::LoadTrue, reg, 0);
+                self.emit_abx(OpCode::LoadTrue, reg, 0)?;
                 Ok(reg)
             }
             Expr::Bool { value: false, .. } => {
                 let reg = self.alloc_reg()?;
-                self.emit_abx(OpCode::LoadFalse, reg, 0);
+                self.emit_abx(OpCode::LoadFalse, reg, 0)?;
                 Ok(reg)
             }
             Expr::Nil { .. } => {
                 let reg = self.alloc_reg()?;
-                self.emit_abx(OpCode::LoadNil, reg, 0);
+                self.emit_abx(OpCode::LoadNil, reg, 0)?;
                 Ok(reg)
             }
             Expr::Ident { name, .. } => self.compile_ident(name),
@@ -67,8 +67,8 @@ impl ExpressionCompiler for Compiler {
             Expr::UnaryOp { op, operand, .. } => {
                 let reg = self.compile_expr(operand)?;
                 match op {
-                    UnaryOp::Neg => self.emit_abc(OpCode::Neg, reg, reg, 0),
-                    UnaryOp::Not => self.emit_abc(OpCode::LogNot, reg, reg, 0),
+                    UnaryOp::Neg => self.emit_abc(OpCode::Neg, reg, reg, 0)?,
+                    UnaryOp::Not => self.emit_abc(OpCode::LogNot, reg, reg, 0)?,
                 }
                 Ok(reg)
             }
@@ -114,8 +114,8 @@ impl ExpressionCompiler for Compiler {
     fn compile_expr_into(&mut self, expr: &Expr, target: u8) -> Result<(), CompilerError> {
         let reg = self.compile_expr(expr)?;
         if reg != target {
-            self.emit_abc(OpCode::Move, target, reg, 0);
-            self.free_reg(reg);
+            self.emit_abc(OpCode::Move, target, reg, 0)?;
+            self.free_reg(reg)?;
         }
         Ok(())
     }
@@ -129,11 +129,11 @@ impl Compiler {
             return Err(CompilerError::InvalidNumber);
         }
         let reg = self.alloc_reg()?;
-        let const_idx = self.add_constant(Value::int(val));
+        let const_idx = self.add_constant(Value::int(val))?;
         if const_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants);
         }
-        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
     }
 
@@ -146,12 +146,12 @@ impl Compiler {
         .ok_or(CompilerError::InvalidNumber)?;
         let handle = self.intern_field(fe);
         let val = Value::field(handle);
-        let const_idx = self.add_constant(val);
+        let const_idx = self.add_constant(val)?;
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants);
         }
-        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
     }
 
@@ -174,12 +174,12 @@ impl Compiler {
         .ok_or(CompilerError::InvalidNumber)?;
         let handle = self.intern_bigint(bi);
         let val = Value::bigint(handle);
-        let const_idx = self.add_constant(val);
+        let const_idx = self.add_constant(val)?;
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants);
         }
-        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
     }
 
@@ -187,12 +187,12 @@ impl Compiler {
         let processed = achronyme_parser::unescape(value);
         let handle = self.intern_string(&processed);
         let val = Value::string(handle);
-        let const_idx = self.add_constant(val);
+        let const_idx = self.add_constant(val)?;
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants);
         }
-        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16);
+        self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
     }
 
@@ -201,11 +201,11 @@ impl Compiler {
 
         // 1. First check locals (including function parameters)
         if let Some((_, local_reg)) = self.resolve_local(name) {
-            self.emit_abc(OpCode::Move, reg, local_reg, 0);
+            self.emit_abc(OpCode::Move, reg, local_reg, 0)?;
             Ok(reg)
         } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name) {
             // 2. Upvalue lookup
-            self.emit_abx(OpCode::GetUpvalue, reg, upval_idx as u16);
+            self.emit_abx(OpCode::GetUpvalue, reg, upval_idx as u16)?;
             Ok(reg)
         } else {
             // 3. Fall back to global lookup (try plain name first, then prefixed)
@@ -222,7 +222,7 @@ impl Compiler {
                     name
                 )));
             };
-            self.emit_abx(OpCode::GetGlobal, reg, idx);
+            self.emit_abx(OpCode::GetGlobal, reg, idx)?;
             Ok(reg)
         }
     }
@@ -230,7 +230,7 @@ impl Compiler {
     fn compile_list(&mut self, elements: &[Expr]) -> Result<u8, CompilerError> {
         let target_reg = self.alloc_reg()?;
         let count = elements.len();
-        let start_reg = self.current().reg_top;
+        let start_reg = self.current()?.reg_top;
 
         for (i, elem) in elements.iter().enumerate() {
             let reg = self.compile_expr(elem)?;
@@ -245,11 +245,11 @@ impl Compiler {
             return Err(CompilerError::TooManyConstants);
         }
 
-        self.emit_abc(OpCode::BuildList, target_reg, start_reg, count as u8);
+        self.emit_abc(OpCode::BuildList, target_reg, start_reg, count as u8)?;
 
         for _ in 0..count {
-            let top = self.current().reg_top - 1;
-            self.free_reg(top);
+            let top = self.current()?.reg_top - 1;
+            self.free_reg(top)?;
         }
 
         Ok(target_reg)
@@ -267,7 +267,7 @@ impl Compiler {
         let start_reg = if count > 0 {
             self.alloc_contiguous((count * 2) as u8)?
         } else {
-            self.current().reg_top
+            self.current()?.reg_top
         };
 
         for (i, (key, value)) in pairs.iter().enumerate() {
@@ -282,23 +282,23 @@ impl Compiler {
 
             let key_handle = self.intern_string(key_str);
             let key_val = Value::string(key_handle);
-            let const_idx = self.add_constant(key_val);
+            let const_idx = self.add_constant(key_val)?;
 
             if const_idx > 0xFFFF {
                 return Err(CompilerError::TooManyConstants);
             }
-            self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16);
+            self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16)?;
 
             // Value
             self.compile_expr_into(value, val_reg)?;
         }
 
-        self.emit_abc(OpCode::BuildMap, target_reg, start_reg, count as u8);
+        self.emit_abc(OpCode::BuildMap, target_reg, start_reg, count as u8)?;
 
         if count > 0 {
             for _ in 0..(count * 2) {
-                let top = self.current().reg_top - 1;
-                self.free_reg(top);
+                let top = self.current()?.reg_top - 1;
+                self.free_reg(top)?;
             }
         }
 
@@ -319,11 +319,11 @@ impl Compiler {
             )));
         }
 
-        self.emit_abc(OpCode::Call, func_reg, func_reg, arg_count as u8);
+        self.emit_abc(OpCode::Call, func_reg, func_reg, arg_count as u8)?;
 
         for _ in 0..arg_count {
-            let top = self.current().reg_top - 1;
-            self.free_reg(top);
+            let top = self.current()?.reg_top - 1;
+            self.free_reg(top)?;
         }
 
         Ok(func_reg)
@@ -332,28 +332,28 @@ impl Compiler {
     fn compile_index_expr(&mut self, object: &Expr, index: &Expr) -> Result<u8, CompilerError> {
         let obj_reg = self.compile_expr(object)?;
         let key_reg = self.compile_expr(index)?;
-        self.emit_abc(OpCode::GetIndex, obj_reg, obj_reg, key_reg);
-        self.free_reg(key_reg);
+        self.emit_abc(OpCode::GetIndex, obj_reg, obj_reg, key_reg)?;
+        self.free_reg(key_reg)?;
         Ok(obj_reg)
     }
 
     fn compile_dot_access(&mut self, object: &Expr, field: &str) -> Result<u8, CompilerError> {
         let obj_reg = self.compile_expr(object)?;
         let key_reg = self.compile_dot_key(field)?;
-        self.emit_abc(OpCode::GetIndex, obj_reg, obj_reg, key_reg);
-        self.free_reg(key_reg);
+        self.emit_abc(OpCode::GetIndex, obj_reg, obj_reg, key_reg)?;
+        self.free_reg(key_reg)?;
         Ok(obj_reg)
     }
 
     pub fn compile_dot_key(&mut self, name: &str) -> Result<u8, CompilerError> {
         let handle = self.intern_string(name);
         let val = Value::string(handle);
-        let const_idx = self.add_constant(val);
+        let const_idx = self.add_constant(val)?;
         let r = self.alloc_reg()?;
         if const_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants);
         }
-        self.emit_abx(OpCode::LoadConst, r, const_idx as u16);
+        self.emit_abx(OpCode::LoadConst, r, const_idx as u16)?;
         Ok(r)
     }
 }

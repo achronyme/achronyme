@@ -15,6 +15,7 @@ pub enum CompilerError {
     CircularImport(String),
     ModuleLoadError(String),
     DuplicateModuleAlias(String),
+    InternalError(String),
 }
 
 impl fmt::Display for CompilerError {
@@ -35,6 +36,7 @@ impl fmt::Display for CompilerError {
             CompilerError::DuplicateModuleAlias(name) => {
                 write!(f, "duplicate module alias: {name}")
             }
+            CompilerError::InternalError(msg) => write!(f, "internal compiler error: {msg}"),
         }
     }
 }

@@ -1,19 +1,21 @@
 use crate::codegen::Compiler;
+use crate::error::CompilerError;
 
 pub trait ScopeCompiler {
-    fn begin_scope(&mut self);
-    fn end_scope(&mut self);
+    fn begin_scope(&mut self) -> Result<(), CompilerError>;
+    fn end_scope(&mut self) -> Result<(), CompilerError>;
     fn resolve_local(&self, name: &str) -> Option<(usize, u8)>;
     fn resolve_upvalue(&mut self, compiler_idx: usize, name: &str) -> Option<u8>;
 }
 
 impl ScopeCompiler for Compiler {
-    fn begin_scope(&mut self) {
-        self.current().scope_depth += 1;
+    fn begin_scope(&mut self) -> Result<(), CompilerError> {
+        self.current()?.scope_depth += 1;
+        Ok(())
     }
 
-    fn end_scope(&mut self) {
-        let func = self.current();
+    fn end_scope(&mut self) -> Result<(), CompilerError> {
+        let func = self.current()?;
         func.scope_depth -= 1;
         let current_depth = func.scope_depth;
 
@@ -38,10 +40,11 @@ impl ScopeCompiler for Compiler {
                 func.free_reg(local.reg);
             }
         }
+        Ok(())
     }
 
     fn resolve_local(&self, name: &str) -> Option<(usize, u8)> {
-        self.current_ref().resolve_local(name)
+        self.current_ref().ok()?.resolve_local(name)
     }
 
     fn resolve_upvalue(&mut self, compiler_idx: usize, name: &str) -> Option<u8> {

@@ -52,7 +52,7 @@ impl FunctionDefinitionCompiler for Compiler {
             .push(FunctionCompiler::new(fn_name.clone(), arity));
 
         for (i, param) in params.iter().enumerate() {
-            self.current().locals.push(Local {
+            self.current()?.locals.push(Local {
                 name: param.name.clone(),
                 depth: 0,
                 is_captured: false,
@@ -63,9 +63,12 @@ impl FunctionDefinitionCompiler for Compiler {
         let body_reg = self.alloc_reg()?;
         self.compile_block(body, body_reg)?;
 
-        self.emit_abc(OpCode::Return, body_reg, 1, 0);
+        self.emit_abc(OpCode::Return, body_reg, 1, 0)?;
 
-        let mut compiled_func = self.compilers.pop().expect("Compiler stack underflow");
+        let mut compiled_func = self
+            .compilers
+            .pop()
+            .ok_or_else(|| CompilerError::InternalError("compiler stack underflow".into()))?;
         compiled_func.max_slots = compiled_func.max_slots.max(compiled_func.reg_top as u16);
 
         let func = Function {
@@ -86,10 +89,10 @@ impl FunctionDefinitionCompiler for Compiler {
         self.prototypes.push(func);
 
         let target_reg = self.alloc_reg()?;
-        self.emit_abx(OpCode::Closure, target_reg, global_func_idx as u16);
+        self.emit_abx(OpCode::Closure, target_reg, global_func_idx as u16)?;
 
         if let Some(idx) = global_idx {
-            self.emit_abx(OpCode::DefGlobalLet, target_reg, idx);
+            self.emit_abx(OpCode::DefGlobalLet, target_reg, idx)?;
         }
 
         Ok(target_reg)

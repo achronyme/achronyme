@@ -45,7 +45,7 @@ fn expr_line(expr: &Expr) -> u32 {
 impl StatementCompiler for Compiler {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompilerError> {
         // Track source line for error reporting
-        self.current().current_line = stmt_line(stmt);
+        self.current()?.current_line = stmt_line(stmt);
 
         match stmt {
             Stmt::LetDecl { name, value, .. } => self.compile_let_decl(name, value),
@@ -57,20 +57,19 @@ impl StatementCompiler for Compiler {
                 let arg_reg = self.alloc_reg()?; // Must be func_reg + 1
 
                 // 2. Load "print" (Pre-defined)
-                let print_idx = *self
-                    .global_symbols
-                    .get("print")
-                    .expect("Natives not initialized");
-                self.emit_abx(OpCode::GetGlobal, func_reg, print_idx);
+                let print_idx = *self.global_symbols.get("print").ok_or_else(|| {
+                    CompilerError::InternalError("native function 'print' not registered".into())
+                })?;
+                self.emit_abx(OpCode::GetGlobal, func_reg, print_idx)?;
 
                 // 3. Compile Argument
                 self.compile_expr_into(value, arg_reg)?;
 
                 // 4. Call
-                self.emit_abc(OpCode::Call, func_reg, func_reg, 1);
+                self.emit_abc(OpCode::Call, func_reg, func_reg, 1)?;
 
-                self.free_reg(arg_reg);
-                self.free_reg(func_reg);
+                self.free_reg(arg_reg)?;
+                self.free_reg(func_reg)?;
                 Ok(())
             }
             Stmt::Break { .. } => self.compile_break(),
@@ -78,11 +77,11 @@ impl StatementCompiler for Compiler {
             Stmt::Return { value, .. } => {
                 if let Some(expr) = value {
                     let reg = self.compile_expr(expr)?;
-                    self.emit_abc(OpCode::Return, reg, 1, 0);
-                    self.free_reg(reg);
+                    self.emit_abc(OpCode::Return, reg, 1, 0)?;
+                    self.free_reg(reg)?;
                 } else {
                     // Void return (0 values), do NOT load Nil
-                    self.emit_abc(OpCode::Return, 0, 0, 0);
+                    self.emit_abc(OpCode::Return, 0, 0, 0)?;
                 }
                 Ok(())
             }
@@ -90,7 +89,7 @@ impl StatementCompiler for Compiler {
                 name, params, body, ..
             } => {
                 let reg = self.compile_fn_core(Some(name), params, body)?;
-                self.free_reg(reg);
+                self.free_reg(reg)?;
                 Ok(())
             }
             Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. } => Ok(()), // no-op in VM
@@ -100,7 +99,7 @@ impl StatementCompiler for Compiler {
             Stmt::Export { inner, .. } => self.compile_stmt(inner),
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;
-                self.free_reg(reg);
+                self.free_reg(reg)?;
                 Ok(())
             }
         }
@@ -177,7 +176,7 @@ impl StatementCompiler for Compiler {
         let start_reg = if count > 0 {
             self.alloc_contiguous((count * 2) as u8)?
         } else {
-            self.current().reg_top
+            self.current()?.reg_top
         };
 
         for (i, name) in exported_names.iter().enumerate() {
@@ -187,11 +186,11 @@ impl StatementCompiler for Compiler {
             // Key: the export name as a string constant
             let key_handle = self.intern_string(name);
             let key_val = Value::string(key_handle);
-            let const_idx = self.add_constant(key_val);
+            let const_idx = self.add_constant(key_val)?;
             if const_idx > 0xFFFF {
                 return Err(CompilerError::TooManyConstants);
             }
-            self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16);
+            self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16)?;
 
             // Value: load from the mangled global
             let mangled = format!("{}::{}", alias, name);
@@ -201,16 +200,16 @@ impl StatementCompiler for Compiler {
                     mangled
                 ))
             })?;
-            self.emit_abx(OpCode::GetGlobal, val_reg, global_idx);
+            self.emit_abx(OpCode::GetGlobal, val_reg, global_idx)?;
         }
 
-        self.emit_abc(OpCode::BuildMap, map_reg, start_reg, count as u8);
+        self.emit_abc(OpCode::BuildMap, map_reg, start_reg, count as u8)?;
 
         // Free pair registers (LIFO: last allocated = first freed)
         if count > 0 {
             for _ in 0..(count * 2) {
-                let top = self.current().reg_top - 1;
-                self.free_reg(top);
+                let top = self.current()?.reg_top - 1;
+                self.free_reg(top)?;
             }
         }
 
@@ -221,8 +220,8 @@ impl StatementCompiler for Compiler {
         let idx = self.next_global_idx;
         self.next_global_idx += 1;
         self.global_symbols.insert(alias.to_string(), idx);
-        self.emit_abx(OpCode::DefGlobalLet, map_reg, idx);
-        self.free_reg(map_reg);
+        self.emit_abx(OpCode::DefGlobalLet, map_reg, idx)?;
+        self.free_reg(map_reg)?;
 
         Ok(())
     }

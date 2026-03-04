@@ -33,8 +33,8 @@ impl BinaryCompiler for Compiler {
             BinOp::And | BinOp::Or => unreachable!(),
         };
 
-        self.emit_abc(opcode, left_reg, left_reg, right_reg);
-        self.free_reg(right_reg);
+        self.emit_abc(opcode, left_reg, left_reg, right_reg)?;
+        self.free_reg(right_reg)?;
         Ok(left_reg)
     }
 
@@ -42,13 +42,13 @@ impl BinaryCompiler for Compiler {
         let left_reg = self.compile_expr(lhs)?;
 
         // Short-circuit: if left is false, skip right
-        let jump_end = self.emit_jump(OpCode::JumpIfFalse, left_reg);
+        let jump_end = self.emit_jump(OpCode::JumpIfFalse, left_reg)?;
 
         let right_reg = self.compile_expr(rhs)?;
-        self.emit_abc(OpCode::Move, left_reg, right_reg, 0);
-        self.free_reg(right_reg);
+        self.emit_abc(OpCode::Move, left_reg, right_reg, 0)?;
+        self.free_reg(right_reg)?;
 
-        self.patch_jump(jump_end);
+        self.patch_jump(jump_end)?;
 
         Ok(left_reg)
     }
@@ -57,15 +57,15 @@ impl BinaryCompiler for Compiler {
         let left_reg = self.compile_expr(lhs)?;
 
         // Short-circuit: if left is true, skip right
-        let skip_jump = self.emit_jump(OpCode::JumpIfFalse, left_reg);
-        let end_jump = self.emit_jump(OpCode::Jump, 0);
-        self.patch_jump(skip_jump);
+        let skip_jump = self.emit_jump(OpCode::JumpIfFalse, left_reg)?;
+        let end_jump = self.emit_jump(OpCode::Jump, 0)?;
+        self.patch_jump(skip_jump)?;
 
         let right_reg = self.compile_expr(rhs)?;
-        self.emit_abc(OpCode::Move, left_reg, right_reg, 0);
-        self.free_reg(right_reg);
+        self.emit_abc(OpCode::Move, left_reg, right_reg, 0)?;
+        self.free_reg(right_reg)?;
 
-        self.patch_jump(end_jump);
+        self.patch_jump(end_jump)?;
 
         Ok(left_reg)
     }
