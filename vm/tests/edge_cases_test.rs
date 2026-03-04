@@ -355,10 +355,13 @@ fn prove_handler_not_configured_empty_scope() {
 
 #[test]
 fn malicious_bytecode_jump_oob() {
-    // Jump past the end → ip >= chunk.len() → frame pops → clean exit.
+    // Jump target 9999 far exceeds chunk length 1 → OutOfBounds error.
     let chunk = vec![encode_abx(OpCode::Jump.as_u8(), 0, 9999)];
-    let result = run_raw(chunk, vec![], 4);
-    assert!(result.is_ok(), "jump past end should exit cleanly");
+    let err = expect_err(run_raw(chunk, vec![], 4), "OOB jump should error");
+    assert!(
+        matches!(err, RuntimeError::OutOfBounds(_)),
+        "expected OutOfBounds, got {err:?}"
+    );
 }
 
 // ======================================================================

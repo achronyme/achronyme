@@ -65,6 +65,7 @@ impl InterpreterOps for super::vm::VM {
 
             let instruction = func.chunk[ip];
             let max_slots = func.max_slots as usize;
+            let chunk_len = func.chunk.len();
             self.frames[frame_idx].ip += 1;
 
             let op_byte = decode_opcode(instruction);
@@ -91,12 +92,22 @@ impl InterpreterOps for super::vm::VM {
                 // Control Flow - Jumps
                 Jump => {
                     let dest = decode_bx(instruction) as usize;
+                    if dest > chunk_len {
+                        return Err(RuntimeError::OutOfBounds(format!(
+                            "Jump target {dest} exceeds chunk length {chunk_len}"
+                        )));
+                    }
                     self.frames[frame_idx].ip = dest;
                 }
 
                 JumpIfFalse => {
                     let a = decode_a(instruction) as usize;
                     let dest = decode_bx(instruction) as usize;
+                    if dest > chunk_len {
+                        return Err(RuntimeError::OutOfBounds(format!(
+                            "JumpIfFalse target {dest} exceeds chunk length {chunk_len}"
+                        )));
+                    }
                     let val = self.get_reg(base, a)?;
                     if val.is_falsey() {
                         self.frames[frame_idx].ip = dest;
@@ -539,6 +550,11 @@ impl InterpreterOps for super::vm::VM {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
 
+                    if bx > chunk_len {
+                        return Err(RuntimeError::OutOfBounds(format!(
+                            "ForIter exit target {bx} exceeds chunk length {chunk_len}"
+                        )));
+                    }
                     if a + 1 >= max_slots {
                         return Err(RuntimeError::StackOverflow);
                     }
