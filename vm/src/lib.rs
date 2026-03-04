@@ -7,7 +7,7 @@ pub use error::RuntimeError;
 pub use globals::GlobalEntry;
 pub use machine::prove::ProveError;
 pub use machine::value_ops::ValueOps;
-pub use machine::{CallFrame, ProveHandler, ProveResult, VerifyHandler, VM};
+pub use machine::{CallFrame, ProveHandler, ProveResult, VerifyHandler, MAX_FRAMES, VM};
 pub use opcode::OpCode;
 pub mod native;
 pub use native::{NativeFn, NativeObj};

@@ -6,7 +6,7 @@
 use compiler::Compiler;
 use memory::{Closure, Function, Value};
 use vm::opcode::instruction::{encode_abc, encode_abx};
-use vm::{CallFrame, OpCode, RuntimeError, VM};
+use vm::{CallFrame, OpCode, RuntimeError, MAX_FRAMES, VM};
 
 // ======================================================================
 // Helpers
@@ -154,6 +154,74 @@ fn deep_recursion_stack_overflow() {
     assert!(
         matches!(err, RuntimeError::StackOverflow),
         "expected StackOverflow, got {err:?}"
+    );
+}
+
+// ======================================================================
+// 1b. Frame depth limit — max_slots=1 hits MAX_FRAMES before STACK_MAX
+// ======================================================================
+
+#[test]
+fn frame_depth_limit_before_stack_max() {
+    // With max_slots=1, STACK_MAX (65536) would allow ~65K frames.
+    // MAX_FRAMES (4096) must trigger first.
+    let mut vm = VM::new();
+    let user_global_idx: u16 = vm::specs::USER_GLOBAL_START;
+
+    let recurse_chunk = vec![
+        encode_abx(OpCode::GetGlobal.as_u8(), 0, user_global_idx),
+        encode_abc(OpCode::Call.as_u8(), 0, 0, 0),
+    ];
+    let recurse_func = Function {
+        name: "recurse".to_string(),
+        arity: 0,
+        chunk: recurse_chunk,
+        constants: vec![],
+        max_slots: 1, // Minimal slots — won't hit STACK_MAX
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let proto_handle = vm.heap.alloc_function(recurse_func);
+    vm.prototypes.push(proto_handle);
+
+    let main_chunk = vec![
+        encode_abx(OpCode::Closure.as_u8(), 0, 0),
+        encode_abx(OpCode::DefGlobalVar.as_u8(), 0, user_global_idx),
+        encode_abx(OpCode::GetGlobal.as_u8(), 0, user_global_idx),
+        encode_abc(OpCode::Call.as_u8(), 0, 0, 0),
+    ];
+    let main_func = Function {
+        name: "main".to_string(),
+        arity: 0,
+        chunk: main_chunk,
+        constants: vec![],
+        max_slots: 1,
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let main_handle = vm.heap.alloc_function(main_func);
+    let closure_handle = vm.heap.alloc_closure(Closure {
+        function: main_handle,
+        upvalues: vec![],
+    });
+    vm.frames.push(CallFrame {
+        closure: closure_handle,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    });
+
+    let result = vm.interpret();
+    let err = result.expect_err("deep recursion should hit frame limit");
+    assert!(
+        matches!(err, RuntimeError::StackOverflow),
+        "expected StackOverflow from frame limit, got {err:?}"
+    );
+    // Verify it was the frame limit, not STACK_MAX
+    assert!(
+        vm.frames.len() <= MAX_FRAMES,
+        "frames should be capped at MAX_FRAMES ({MAX_FRAMES}), got {}",
+        vm.frames.len()
     );
 }
 

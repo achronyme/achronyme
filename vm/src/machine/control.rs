@@ -84,6 +84,9 @@ impl ControlFlowOps for super::vm::VM {
                         .checked_add(a)
                         .filter(|&d| d < crate::machine::vm::STACK_MAX)
                         .ok_or(RuntimeError::StackOverflow)?;
+                    if self.frames.len() >= crate::machine::vm::MAX_FRAMES {
+                        return Err(RuntimeError::StackOverflow);
+                    }
                     self.frames.push(crate::machine::frame::CallFrame {
                         closure: handle, // Points to Closure
                         ip: 0,

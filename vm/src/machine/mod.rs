@@ -21,4 +21,4 @@ mod vm;
 // Public API
 pub use frame::CallFrame;
 pub use prove::{ProveError, ProveHandler, ProveResult, VerifyHandler};
-pub use vm::VM;
+pub use vm::{MAX_FRAMES, VM};

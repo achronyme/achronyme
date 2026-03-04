@@ -44,6 +44,7 @@ pub struct VM {
 }
 
 pub const STACK_MAX: usize = 65_536;
+pub const MAX_FRAMES: usize = 4096;
 
 impl Default for VM {
     fn default() -> Self {
