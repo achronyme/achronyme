@@ -8,6 +8,7 @@ mod parsing;
 
 pub use arithmetic::MODULUS;
 
+use crate::limb_ops::{adc, sbb};
 use arithmetic::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

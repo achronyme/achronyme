@@ -61,32 +61,7 @@ pub struct BigInt {
     width: BigIntWidth,
 }
 
-// ============================================================================
-// Low-level helpers
-// ============================================================================
-
-/// Add with carry: (result, carry) = a + b + carry_in
-#[inline(always)]
-const fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
-    let tmp = a as u128 + b as u128 + carry as u128;
-    (tmp as u64, (tmp >> 64) as u64)
-}
-
-/// Subtract with borrow: (result, borrow) = a - b - borrow_in
-#[inline(always)]
-const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
-    let tmp = (a as u128)
-        .wrapping_sub(b as u128)
-        .wrapping_sub(borrow as u128);
-    (tmp as u64, (tmp >> 127) as u64)
-}
-
-/// Multiply-accumulate: (lo, carry) = a * b + c + carry_in
-#[inline(always)]
-const fn mac(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
-    let tmp = a as u128 * b as u128 + c as u128 + carry as u128;
-    (tmp as u64, (tmp >> 64) as u64)
-}
+use crate::limb_ops::{adc, mac, sbb};
 
 // ============================================================================
 // BigInt public API

@@ -1,5 +1,6 @@
-use super::arithmetic::{gte, sbb, MODULUS};
+use super::arithmetic::{gte, MODULUS};
 use super::FieldElement;
+use crate::limb_ops::sbb;
 
 impl FieldElement {
     /// Convert to 32 bytes in little-endian canonical form.

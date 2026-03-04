@@ -1,6 +1,7 @@
 pub mod bigint;
 pub mod field;
 pub mod heap;
+pub(crate) mod limb_ops;
 pub mod value;
 
 #[cfg(test)]
