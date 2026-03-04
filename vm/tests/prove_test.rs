@@ -12,7 +12,7 @@ fn run_source(source: &str) -> Result<VM, String> {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -57,7 +57,7 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -489,7 +489,7 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -658,7 +658,7 @@ fn proof_object_gc_survives_when_rooted() {
         .unwrap();
     let main_func = compiler.compilers.last().expect("No main compiler");
 
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -748,7 +748,7 @@ fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> 
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {

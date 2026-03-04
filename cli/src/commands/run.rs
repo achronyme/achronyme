@@ -70,7 +70,7 @@ pub fn run_file(
         vm.prove_handler = Some(Box::new(handler));
 
         // Transfer strings from compiler to VM
-        vm.heap.import_strings(compiler.interner.strings);
+        vm.import_strings(compiler.interner.strings);
 
         // Transfer field literals from compiler to VM
         let field_map = vm.heap.import_fields(compiler.field_interner.fields);

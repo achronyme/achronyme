@@ -9,7 +9,7 @@ fn run_source(source: &str) -> Result<VM, String> {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
 
     for proto in &compiler.prototypes {
         let handle = vm.heap.alloc_function(proto.clone());

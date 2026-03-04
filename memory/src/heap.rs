@@ -607,7 +607,24 @@ impl Heap {
         self.functions.get(index)
     }
 
+    /// Replace the string arena wholesale with compiler output.
+    ///
+    /// # Safety invariant
+    ///
+    /// This invalidates **all** existing string handles. It must only be
+    /// called during VM initialization, before `interpret()`. Any external
+    /// string-handle caches (e.g. the VM's interner) must be cleared after
+    /// this call.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the string arena's free list is non-empty, which indicates
+    /// that GC has already swept the arena (i.e. execution has started).
     pub fn import_strings(&mut self, strings: Vec<String>) {
+        assert!(
+            self.strings.free_indices.is_empty(),
+            "import_strings called after execution started (string arena has freed slots)"
+        );
         let cost: usize = strings.iter().map(|s| s.capacity()).sum();
         self.strings.data = strings;
         self.strings.clear_free();

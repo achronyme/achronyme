@@ -9,7 +9,7 @@ fn run_program(source: &str) -> Result<Value, vm::RuntimeError> {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {

@@ -21,7 +21,7 @@ fn run(source: &str) -> Result<VM, RuntimeError> {
     let main_func = compiler.compilers.last().expect("no main compiler");
 
     let mut vm = VM::new();
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
 
     for proto in &compiler.prototypes {
         let handle = vm.heap.alloc_function(proto.clone());
@@ -247,7 +247,7 @@ fn gc_stress_many_allocations() {
 
     let mut vm = VM::new();
     vm.stress_mode = true;
-    vm.heap.import_strings(compiler.interner.strings);
+    vm.import_strings(compiler.interner.strings);
 
     let func = Function {
         name: "main".to_string(),

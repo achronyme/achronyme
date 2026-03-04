@@ -75,7 +75,7 @@ impl VM {
         }
 
         // Sync Strings to Heap
-        self.heap.import_strings(strings);
+        self.import_strings(strings);
 
         // --- Field Table (v10+) ---
         let field_handles = if version >= 0x0A {

@@ -86,6 +86,21 @@ impl VM {
         vm
     }
 
+    /// Import compiler strings into the VM heap.
+    ///
+    /// This replaces the heap's entire string arena with the compiler's
+    /// string table and clears the VM's string interner (whose handle
+    /// mappings become stale after the arena swap).
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after execution has started (the string arena's
+    /// free list is non-empty, indicating GC has already run).
+    pub fn import_strings(&mut self, strings: Vec<String>) {
+        self.heap.import_strings(strings);
+        self.interner.clear();
+    }
+
     /// Soft Reset: Clears stack and frames for REPL/Running new script.
     /// CRITICAL: Must close all open upvalues to prevent them from pointing to dead stack slots.
     pub fn reset(&mut self) {
