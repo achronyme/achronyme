@@ -1,5 +1,50 @@
 # Achronyme Changelog
 
+## [0.1.0-beta.3] - 2026-03-04
+
+### Security & Robustness (16 fixes)
+
+All `.expect()`, `.unwrap()`, and `assert!` panics across the compiler, VM, memory, and constraint backends have been replaced with proper `Result` error propagation. The entire codebase was audited for panic paths (AUDIT-2026-03-03).
+
+- **Plonkish ZK soundness**: constrain unused advice columns to zero (#45)
+- **VM call frame depth limit**: prevent stack overflow from deep/infinite recursion (#46)
+- **GC precision**: root only active stack region, not entire 65K array (#47)
+- **Upvalue safety**: replace `.unwrap()` with error propagation in upvalue operations (#48)
+- **GC trace safety**: use `Arena::get()` bounds-checked access instead of direct `.data` (#49)
+- **Jump target validation**: reject out-of-bounds jump targets at VM dispatch (#50)
+- **i60 range validation**: enforce 60-bit signed range in `Value::int()` and all entry points (#51)
+- **BigInt overflow**: `from_decimal_str` now rejects inputs >= 2^256 (#52)
+- **Constraint evaluation**: `LC::evaluate` returns `Result` instead of panicking (#53)
+- **Error trait compliance**: implement `Display` and `std::error::Error` for all error types (#54)
+- **CLI entry points**: replace `.expect()` with `anyhow` error propagation (#55)
+- **VM defense-in-depth**: bounds-check `LoadConst`, add instruction fuel budget, validate `upvalue_info` (#56)
+- **GC accounting**: fix `bytes_allocated` drift for maps and lists with capacity growth (#57)
+- **String import safety**: `import_strings` clears stale interner after arena swap (#58)
+- **Plonkish range check**: `enforce_n_range(0)` constrains to zero instead of panicking (#59)
+- **Compiler stacks**: `current()`/`current_ref()` return `Result` instead of panicking (#60)
+
+### Architecture (13 refactors)
+
+Monolithic source files split into focused submodules for maintainability:
+
+- `vm.rs` → interpreter, upvalues, value ops (#39)
+- `field.rs` → arithmetic primitives and parsers (#40)
+- `bigint.rs` → extract tests (#41 deduplicate adc/sbb/mac into limb_ops)
+- `parser.rs` → core, precedence, statements, expressions (#34)
+- `poseidon.rs` → constants, params, LFSR, native, R1CS synthesis (#38)
+- `plonkish_backend.rs` → types, primitives, compiler, gadgets, Poseidon emitter, witness (#35)
+- `lower.rs` → 6 focused submodules
+- `eval.rs` → extract tests
+- `Arena<T>` extracted from `heap.rs` into standalone module (#42)
+- R1CS gadgets and witness gen extracted (#43)
+- String utilities extracted from `stdlib/core.rs` (#44)
+
+### Documentation
+
+- VS Code extension documentation (EN + ES)
+- Secret voting circuit tutorial with integration tests
+- Updated STRATEGY.md and crate READMEs
+
 ## [Unreleased] - Current Dev
 
 ### Added (Features)
