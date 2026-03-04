@@ -52,6 +52,8 @@ impl fmt::Display for BigIntError {
     }
 }
 
+impl std::error::Error for BigIntError {}
+
 /// Fixed-width unsigned big integer.
 ///
 /// Limbs are stored in little-endian order (limbs[0] is least significant).

@@ -45,6 +45,8 @@ impl fmt::Display for ProveError {
     }
 }
 
+impl std::error::Error for ProveError {}
+
 /// Trait for handling `prove { }` blocks at runtime.
 ///
 /// The VM calls this when it encounters a `Prove` opcode.

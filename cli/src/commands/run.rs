@@ -34,7 +34,7 @@ pub fn run_file(
 
         // Use the new secure loader
         vm.load_executable(&mut file)
-            .map_err(|e| anyhow::anyhow!("Loader Error: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Loader error: {e}"))?;
 
         if let Err(e) = vm.interpret() {
             let msg = format_runtime_error(&vm, &e);
@@ -61,7 +61,7 @@ pub fn run_file(
         }
         let bytecode = compiler
             .compile(&content)
-            .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
@@ -164,7 +164,7 @@ fn remap_bigint_handles(constants: &mut [memory::Value], bigint_map: &[u32]) {
 /// Format a runtime error with source location if available.
 fn format_runtime_error(vm: &VM, err: &vm::RuntimeError) -> String {
     match &vm.last_error_location {
-        Some((func_name, line)) => format!("[line {line}] in {func_name}: {err:?}"),
-        None => format!("Runtime Error: {err:?}"),
+        Some((func_name, line)) => format!("[line {line}] in {func_name}: {err}"),
+        None => format!("Runtime error: {err}"),
     }
 }

@@ -8,7 +8,7 @@ pub fn disassemble_file(path: &str) -> Result<()> {
     let mut compiler = Compiler::new();
     let bytecode = compiler
         .compile(&content)
-        .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
 
     let mut inv_globals = std::collections::HashMap::new();
     for (name, idx) in &compiler.global_symbols {

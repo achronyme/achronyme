@@ -8,7 +8,7 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
     let mut compiler = Compiler::new();
     let bytecode = compiler
         .compile(&content)
-        .map_err(|e| anyhow::anyhow!("Compile error: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
 
     println!("Compiled {} instructions.", bytecode.len());
 

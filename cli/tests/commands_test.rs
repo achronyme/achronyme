@@ -75,7 +75,7 @@ fn run_source_with_runtime_error() {
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
-        err.contains("DivisionByZero"),
+        err.contains("division by zero"),
         "expected runtime error, got: {err}"
     );
 }

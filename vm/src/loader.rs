@@ -11,6 +11,18 @@ pub enum LoaderError {
     Security(String),
 }
 
+impl std::fmt::Display for LoaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoaderError::Io(e) => write!(f, "I/O error: {e}"),
+            LoaderError::Format(msg) => write!(f, "format error: {msg}"),
+            LoaderError::Security(msg) => write!(f, "security error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for LoaderError {}
+
 impl From<std::io::Error> for LoaderError {
     fn from(e: std::io::Error) -> Self {
         LoaderError::Io(e)

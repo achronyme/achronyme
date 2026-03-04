@@ -49,8 +49,8 @@ fn import_circular_detected() {
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
-        err.contains("CircularImport"),
-        "expected CircularImport error, got: {err}"
+        err.contains("circular import"),
+        "expected circular import error, got: {err}"
     );
 }
 
@@ -60,8 +60,8 @@ fn import_module_not_found() {
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
-        err.contains("ModuleNotFound"),
-        "expected ModuleNotFound error, got: {err}"
+        err.contains("module not found"),
+        "expected module not found error, got: {err}"
     );
 }
 
