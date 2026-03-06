@@ -127,8 +127,8 @@ impl Parser {
             let size: usize = tok.lexeme.parse().map_err(|_| {
                 ParseError::new(
                     format!("invalid array size: {}", tok.lexeme),
-                    tok.span.line,
-                    tok.span.col,
+                    tok.span.line_start,
+                    tok.span.col_start,
                 )
             })?;
             // Need to clone span info before expecting
@@ -168,8 +168,8 @@ impl Parser {
         if self.block_depth > 0 {
             return Err(ParseError::new(
                 "import statements are only allowed at the top level",
-                sp.line,
-                sp.col,
+                sp.line_start,
+                sp.col_start,
             ));
         }
         self.advance(); // eat `import`
@@ -180,8 +180,8 @@ impl Parser {
                     "expected string literal for import path, found `{}`",
                     tok_display(&tok)
                 ),
-                tok.span.line,
-                tok.span.col,
+                tok.span.line_start,
+                tok.span.col_start,
             ));
         }
         let path = tok.lexeme.clone();
@@ -200,8 +200,8 @@ impl Parser {
         if self.block_depth > 0 {
             return Err(ParseError::new(
                 "export statements are only allowed at the top level",
-                sp.line,
-                sp.col,
+                sp.line_start,
+                sp.col_start,
             ));
         }
         self.advance(); // eat `export`
@@ -215,8 +215,8 @@ impl Parser {
                     let tok = self.peek();
                     return Err(ParseError::new(
                         "export only applies to named `fn` or `let` declarations",
-                        tok.span.line,
-                        tok.span.col,
+                        tok.span.line_start,
+                        tok.span.col_start,
                     ));
                 }
             }
@@ -228,8 +228,8 @@ impl Parser {
                         "export only applies to `fn` or `let` declarations, found `{}`",
                         tok_display(tok)
                     ),
-                    tok.span.line,
-                    tok.span.col,
+                    tok.span.line_start,
+                    tok.span.col_start,
                 ));
             }
         };
@@ -308,8 +308,8 @@ impl Parser {
         } else {
             Err(ParseError::new(
                 format!("expected identifier, found `{}`", tok_display(&tok)),
-                tok.span.line,
-                tok.span.col,
+                tok.span.line_start,
+                tok.span.col_start,
             ))
         }
     }
@@ -347,16 +347,16 @@ impl Parser {
                     "expected type (`Field` or `Bool`), found `{}`",
                     tok_display(&tok)
                 ),
-                tok.span.line,
-                tok.span.col,
+                tok.span.line_start,
+                tok.span.col_start,
             ));
         }
         let base = tok.lexeme.as_str();
         if base != "Field" && base != "Bool" {
             return Err(ParseError::new(
                 format!("expected type (`Field` or `Bool`), found `{base}`"),
-                tok.span.line,
-                tok.span.col,
+                tok.span.line_start,
+                tok.span.col_start,
             ));
         }
         self.advance();
@@ -367,8 +367,8 @@ impl Parser {
             let size: usize = size_tok.lexeme.parse().map_err(|_| {
                 ParseError::new(
                     format!("invalid array size: {}", size_tok.lexeme),
-                    size_tok.span.line,
-                    size_tok.span.col,
+                    size_tok.span.line_start,
+                    size_tok.span.col_start,
                 )
             })?;
             self.expect(&TokenKind::RBracket)?;

@@ -67,8 +67,8 @@ impl Parser {
                     let next = self.peek();
                     return Err(ParseError::new(
                         "comparison operators cannot be chained; use `&&` to combine: `a < b && b < c`",
-                        next.span.line,
-                        next.span.col,
+                        next.span.line_start,
+                        next.span.col_start,
                     ));
                 }
                 continue;
@@ -134,9 +134,9 @@ impl Parser {
                     .lexeme
                     .find(|c: char| !c.is_ascii_digit())
                     .unwrap_or(tok.lexeme.len());
-                let width: u16 = tok.lexeme[..width_end]
-                    .parse()
-                    .map_err(|_| ParseError::new("invalid BigInt width", sp.line, sp.col))?;
+                let width: u16 = tok.lexeme[..width_end].parse().map_err(|_| {
+                    ParseError::new("invalid BigInt width", sp.line_start, sp.col_start)
+                })?;
                 let rest = &tok.lexeme[width_end..];
                 let (value, radix) = if let Some(hex) = rest.strip_prefix('x') {
                     (hex.to_string(), BigIntRadix::Hex)
@@ -147,8 +147,8 @@ impl Parser {
                 } else {
                     return Err(ParseError::new(
                         "invalid BigInt literal radix",
-                        sp.line,
-                        sp.col,
+                        sp.line_start,
+                        sp.col_start,
                     ));
                 };
                 Ok(Expr::BigIntLit {
@@ -208,8 +208,8 @@ impl Parser {
                 let tok = self.peek();
                 Err(ParseError::new(
                     format!("expected expression, found `{}`", tok_display(tok)),
-                    tok.span.line,
-                    tok.span.col,
+                    tok.span.line_start,
+                    tok.span.col_start,
                 ))
             }
         }
@@ -344,8 +344,8 @@ impl Parser {
                         "expected map key (identifier or string), found `{}`",
                         tok_display(tok)
                     ),
-                    tok.span.line,
-                    tok.span.col,
+                    tok.span.line_start,
+                    tok.span.col_start,
                 ));
             }
         };
@@ -402,15 +402,15 @@ impl Parser {
             let start: u64 = start_tok.lexeme.parse().map_err(|e| {
                 ParseError::new(
                     format!("invalid range start: {e}"),
-                    start_tok.span.line,
-                    start_tok.span.col,
+                    start_tok.span.line_start,
+                    start_tok.span.col_start,
                 )
             })?;
             let end: u64 = end_tok.lexeme.parse().map_err(|e| {
                 ParseError::new(
                     format!("invalid range end: {e}"),
-                    end_tok.span.line,
-                    end_tok.span.col,
+                    end_tok.span.line_start,
+                    end_tok.span.col_start,
                 )
             })?;
             ForIterable::Range { start, end }
@@ -458,13 +458,13 @@ impl Parser {
 
     fn parse_prove(&mut self) -> Result<Expr, ParseError> {
         let sp = self.span();
-        let start = self.peek().byte_offset;
+        let start = self.peek().span.byte_start;
         self.advance(); // eat `prove`
 
         let body = self.parse_block_inner()?;
 
         // The closing `}` was the token just before current position
-        let end = self.tokens[self.pos - 1].byte_offset + 1;
+        let end = self.tokens[self.pos - 1].span.byte_end;
         let source_text = self.source[start..end].to_string();
 
         Ok(Expr::Prove {

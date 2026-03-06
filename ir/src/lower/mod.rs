@@ -21,8 +21,8 @@ pub const MAX_UNROLL_ITERATIONS: u64 = 10_000;
 /// Convert an AST span to an IR source span.
 pub(super) fn to_ir_span(span: &Span) -> Option<SourceSpan> {
     Some(SourceSpan {
-        line: span.line,
-        col: span.col,
+        line: span.line_start,
+        col: span.col_start,
     })
 }
 

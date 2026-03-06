@@ -173,7 +173,7 @@ impl IrLowering {
             FieldRadix::Binary => FieldElement::from_binary_str(value),
         }
         .ok_or_else(|| {
-            IrError::ParseError(format!("invalid field literal at line {}", span.line))
+            IrError::ParseError(format!("invalid field literal at line {}", span.line_start))
         })?;
         let v = self.program.fresh_var();
         self.program.push(Instruction::Const {

@@ -50,10 +50,20 @@ impl<'a> Lexer<'a> {
         ch
     }
 
-    fn span(&self) -> Span {
+    /// Capture current position as start of a span.
+    fn start_pos(&self) -> (usize, usize, usize) {
+        (self.pos, self.line, self.col)
+    }
+
+    /// Build a span from a captured start position to the current position.
+    fn make_span(&self, start: (usize, usize, usize)) -> Span {
         Span {
-            line: self.line,
-            col: self.col,
+            byte_start: start.0,
+            byte_end: self.pos,
+            line_start: start.1,
+            col_start: start.2,
+            line_end: self.line,
+            col_end: self.col,
         }
     }
 
@@ -115,31 +125,29 @@ impl<'a> Lexer<'a> {
     fn next_token(&mut self) -> Result<Token, ParseError> {
         self.skip_whitespace_and_comments()?;
 
-        let sp = self.span();
-        let offset = self.pos;
+        let start = self.start_pos();
 
         let Some(ch) = self.peek() else {
             return Ok(Token {
                 kind: TokenKind::Eof,
-                span: sp,
+                span: self.make_span(start),
                 lexeme: String::new(),
-                byte_offset: offset,
             });
         };
 
         // Numbers
         if ch.is_ascii_digit() {
-            return self.lex_number(sp);
+            return self.lex_number(start);
         }
 
         // Identifiers and keywords
         if ch.is_ascii_alphabetic() || ch == b'_' {
-            return Ok(self.lex_ident(sp));
+            return Ok(self.lex_ident(start));
         }
 
         // Strings
         if ch == b'"' {
-            return self.lex_string(sp);
+            return self.lex_string(start);
         }
 
         // Multi-character operators
@@ -150,16 +158,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::Eq,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "==".into(),
-                        byte_offset: offset,
                     });
                 }
                 return Ok(Token {
                     kind: TokenKind::Assign,
-                    span: sp,
+                    span: self.make_span(start),
                     lexeme: "=".into(),
-                    byte_offset: offset,
                 });
             }
             b'!' => {
@@ -168,16 +174,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::Neq,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "!=".into(),
-                        byte_offset: offset,
                     });
                 }
                 return Ok(Token {
                     kind: TokenKind::Not,
-                    span: sp,
+                    span: self.make_span(start),
                     lexeme: "!".into(),
-                    byte_offset: offset,
                 });
             }
             b'<' => {
@@ -186,16 +190,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::Le,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "<=".into(),
-                        byte_offset: offset,
                     });
                 }
                 return Ok(Token {
                     kind: TokenKind::Lt,
-                    span: sp,
+                    span: self.make_span(start),
                     lexeme: "<".into(),
-                    byte_offset: offset,
                 });
             }
             b'>' => {
@@ -204,16 +206,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::Ge,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: ">=".into(),
-                        byte_offset: offset,
                     });
                 }
                 return Ok(Token {
                     kind: TokenKind::Gt,
-                    span: sp,
+                    span: self.make_span(start),
                     lexeme: ">".into(),
-                    byte_offset: offset,
                 });
             }
             b'&' => {
@@ -222,12 +222,15 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::And,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "&&".into(),
-                        byte_offset: offset,
                     });
                 }
-                return Err(ParseError::new("unexpected character `&`", sp.line, sp.col));
+                return Err(ParseError::new(
+                    "unexpected character `&`",
+                    start.1,
+                    start.2,
+                ));
             }
             b'|' => {
                 self.advance();
@@ -235,12 +238,15 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::Or,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "||".into(),
-                        byte_offset: offset,
                     });
                 }
-                return Err(ParseError::new("unexpected character `|`", sp.line, sp.col));
+                return Err(ParseError::new(
+                    "unexpected character `|`",
+                    start.1,
+                    start.2,
+                ));
             }
             b'-' => {
                 self.advance();
@@ -248,16 +254,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::Arrow,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "->".into(),
-                        byte_offset: offset,
                     });
                 }
                 return Ok(Token {
                     kind: TokenKind::Minus,
-                    span: sp,
+                    span: self.make_span(start),
                     lexeme: "-".into(),
-                    byte_offset: offset,
                 });
             }
             b'.' => {
@@ -266,16 +270,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Ok(Token {
                         kind: TokenKind::DotDot,
-                        span: sp,
+                        span: self.make_span(start),
                         lexeme: "..".into(),
-                        byte_offset: offset,
                     });
                 }
                 return Ok(Token {
                     kind: TokenKind::Dot,
-                    span: sp,
+                    span: self.make_span(start),
                     lexeme: ".".into(),
-                    byte_offset: offset,
                 });
             }
             _ => {}
@@ -301,32 +303,30 @@ impl<'a> Lexer<'a> {
             _ => {
                 return Err(ParseError::new(
                     format!("unexpected character `{}`", ch as char),
-                    sp.line,
-                    sp.col,
+                    start.1,
+                    start.2,
                 ));
             }
         };
         Ok(Token {
             kind,
-            span: sp,
+            span: self.make_span(start),
             lexeme: lexeme.into(),
-            byte_offset: offset,
         })
     }
 
-    fn lex_number(&mut self, sp: Span) -> Result<Token, ParseError> {
-        let start = self.pos;
+    fn lex_number(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         // Check for 0p field literal prefix
         if self.peek() == Some(b'0') && self.peek2() == Some(b'p') {
             self.advance(); // consume '0'
             self.advance(); // consume 'p'
-            return self.lex_field_lit(sp, start);
+            return self.lex_field_lit(start);
         }
         // Check for 0i bigint literal prefix
         if self.peek() == Some(b'0') && self.peek2() == Some(b'i') {
             self.advance(); // consume '0'
             self.advance(); // consume 'i'
-            return self.lex_bigint_lit(sp, start);
+            return self.lex_bigint_lit(start);
         }
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
@@ -335,21 +335,20 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let lexeme = std::str::from_utf8(&self.source[start..self.pos])
+        let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
             .unwrap()
             .to_string();
         Ok(Token {
             kind: TokenKind::Integer,
-            span: sp,
+            span: self.make_span(start),
             lexeme,
-            byte_offset: start,
         })
     }
 
-    fn lex_field_lit(&mut self, sp: Span, start: usize) -> Result<Token, ParseError> {
+    fn lex_field_lit(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         let next = self
             .peek()
-            .ok_or_else(|| ParseError::new("expected digits after 0p", sp.line, sp.col))?;
+            .ok_or_else(|| ParseError::new("expected digits after 0p", start.1, start.2))?;
         let lexeme = match next {
             b'x' => {
                 self.advance(); // consume 'x'
@@ -364,8 +363,8 @@ impl<'a> Lexer<'a> {
                 if self.pos == digit_start {
                     return Err(ParseError::new(
                         "expected hex digits after 0px",
-                        sp.line,
-                        sp.col,
+                        start.1,
+                        start.2,
                     ));
                 }
                 let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
@@ -384,8 +383,8 @@ impl<'a> Lexer<'a> {
                 if self.pos == digit_start {
                     return Err(ParseError::new(
                         "expected binary digits after 0pb",
-                        sp.line,
-                        sp.col,
+                        start.1,
+                        start.2,
                     ));
                 }
                 let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
@@ -405,18 +404,21 @@ impl<'a> Lexer<'a> {
                     .to_string()
             }
             _ => {
-                return Err(ParseError::new("expected digits after 0p", sp.line, sp.col));
+                return Err(ParseError::new(
+                    "expected digits after 0p",
+                    start.1,
+                    start.2,
+                ));
             }
         };
         Ok(Token {
             kind: TokenKind::FieldLit,
-            span: sp,
+            span: self.make_span(start),
             lexeme,
-            byte_offset: start,
         })
     }
 
-    fn lex_bigint_lit(&mut self, sp: Span, start: usize) -> Result<Token, ParseError> {
+    fn lex_bigint_lit(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         // Parse width: 256 or 512
         let width_start = self.pos;
         while let Some(ch) = self.peek() {
@@ -431,14 +433,18 @@ impl<'a> Lexer<'a> {
         if width_str != "256" && width_str != "512" {
             return Err(ParseError::new(
                 format!("invalid BigInt width `{width_str}`, expected 256 or 512"),
-                sp.line,
-                sp.col,
+                start.1,
+                start.2,
             ));
         }
 
         // Parse radix char and digits
         let radix_ch = self.peek().ok_or_else(|| {
-            ParseError::new("expected radix (x/d/b) after BigInt width", sp.line, sp.col)
+            ParseError::new(
+                "expected radix (x/d/b) after BigInt width",
+                start.1,
+                start.2,
+            )
         })?;
         let lexeme = match radix_ch {
             b'x' => {
@@ -454,8 +460,8 @@ impl<'a> Lexer<'a> {
                 if self.pos == digit_start {
                     return Err(ParseError::new(
                         "expected hex digits after 0i<width>x",
-                        sp.line,
-                        sp.col,
+                        start.1,
+                        start.2,
                     ));
                 }
                 let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
@@ -474,8 +480,8 @@ impl<'a> Lexer<'a> {
                 if self.pos == digit_start {
                     return Err(ParseError::new(
                         "expected decimal digits after 0i<width>d",
-                        sp.line,
-                        sp.col,
+                        start.1,
+                        start.2,
                     ));
                 }
                 let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
@@ -494,8 +500,8 @@ impl<'a> Lexer<'a> {
                 if self.pos == digit_start {
                     return Err(ParseError::new(
                         "expected binary digits after 0i<width>b",
-                        sp.line,
-                        sp.col,
+                        start.1,
+                        start.2,
                     ));
                 }
                 let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
@@ -504,21 +510,19 @@ impl<'a> Lexer<'a> {
             _ => {
                 return Err(ParseError::new(
                     "expected radix (x/d/b) after BigInt width",
-                    sp.line,
-                    sp.col,
+                    start.1,
+                    start.2,
                 ));
             }
         };
         Ok(Token {
             kind: TokenKind::BigIntLit,
-            span: sp,
+            span: self.make_span(start),
             lexeme,
-            byte_offset: start,
         })
     }
 
-    fn lex_ident(&mut self, sp: Span) -> Token {
-        let start = self.pos;
+    fn lex_ident(&mut self, start: (usize, usize, usize)) -> Token {
         while let Some(ch) = self.peek() {
             if ch.is_ascii_alphanumeric() || ch == b'_' {
                 self.advance();
@@ -526,7 +530,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let lexeme = std::str::from_utf8(&self.source[start..self.pos])
+        let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
             .unwrap()
             .to_string();
         let kind = match lexeme.as_str() {
@@ -556,14 +560,12 @@ impl<'a> Lexer<'a> {
         };
         Token {
             kind,
-            span: sp,
+            span: self.make_span(start),
             lexeme,
-            byte_offset: start,
         }
     }
 
-    fn lex_string(&mut self, sp: Span) -> Result<Token, ParseError> {
-        let start = self.pos;
+    fn lex_string(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         self.advance(); // consume opening "
         let mut value = String::new();
         loop {
@@ -571,8 +573,8 @@ impl<'a> Lexer<'a> {
                 None => {
                     return Err(ParseError::new(
                         "unterminated string literal",
-                        sp.line,
-                        sp.col,
+                        start.1,
+                        start.2,
                     ));
                 }
                 Some(b'"') => {
@@ -588,18 +590,19 @@ impl<'a> Lexer<'a> {
                             self.advance();
                         }
                         Some(ch) => {
-                            let esc_sp = self.span();
+                            let esc_line = self.line;
+                            let esc_col = self.col;
                             return Err(ParseError::new(
                                 format!("invalid escape sequence `\\{}`", ch as char),
-                                esc_sp.line,
-                                esc_sp.col,
+                                esc_line,
+                                esc_col,
                             ));
                         }
                         None => {
                             return Err(ParseError::new(
                                 "unterminated string literal",
-                                sp.line,
-                                sp.col,
+                                start.1,
+                                start.2,
                             ));
                         }
                     }
@@ -616,11 +619,12 @@ impl<'a> Lexer<'a> {
                             value.push(c);
                         }
                         Err(_) => {
-                            let byte_sp = self.span();
+                            let byte_line = self.line;
+                            let byte_col = self.col;
                             return Err(ParseError::new(
                                 "invalid UTF-8 in string literal",
-                                byte_sp.line,
-                                byte_sp.col,
+                                byte_line,
+                                byte_col,
                             ));
                         }
                     }
@@ -629,9 +633,8 @@ impl<'a> Lexer<'a> {
         }
         Ok(Token {
             kind: TokenKind::StringLit,
-            span: sp,
+            span: self.make_span(start),
             lexeme: value,
-            byte_offset: start,
         })
     }
 }
@@ -819,5 +822,37 @@ mod tests {
         assert_eq!(unescape(r"\b\f\r"), "\u{08}\u{0C}\r");
         assert_eq!(unescape("no escapes"), "no escapes");
         assert_eq!(unescape(""), "");
+    }
+
+    #[test]
+    fn token_span_has_byte_range() {
+        let tokens = Lexer::tokenize("let x = 42").unwrap();
+        // "let" is at bytes 0..3
+        assert_eq!(tokens[0].span.byte_start, 0);
+        assert_eq!(tokens[0].span.byte_end, 3);
+        assert_eq!(tokens[0].span.line_start, 1);
+        assert_eq!(tokens[0].span.col_start, 1);
+        assert_eq!(tokens[0].span.line_end, 1);
+        assert_eq!(tokens[0].span.col_end, 4);
+        // "x" is at bytes 4..5
+        assert_eq!(tokens[1].span.byte_start, 4);
+        assert_eq!(tokens[1].span.byte_end, 5);
+        // "=" is at bytes 6..7
+        assert_eq!(tokens[2].span.byte_start, 6);
+        assert_eq!(tokens[2].span.byte_end, 7);
+        // "42" is at bytes 8..10
+        assert_eq!(tokens[3].span.byte_start, 8);
+        assert_eq!(tokens[3].span.byte_end, 10);
+    }
+
+    #[test]
+    fn token_span_multiline() {
+        let tokens = Lexer::tokenize("a\nb").unwrap();
+        // "a" on line 1
+        assert_eq!(tokens[0].span.line_start, 1);
+        assert_eq!(tokens[0].span.line_end, 1);
+        // "b" on line 2
+        assert_eq!(tokens[1].span.line_start, 2);
+        assert_eq!(tokens[1].span.line_end, 2);
     }
 }

@@ -32,14 +32,14 @@ fn stmt_line(stmt: &Stmt) -> u32 {
         | Stmt::Break { span }
         | Stmt::Continue { span }
         | Stmt::Import { span, .. }
-        | Stmt::Export { span, .. } => span.line as u32,
+        | Stmt::Export { span, .. } => span.line_start as u32,
         Stmt::Expr(expr) => expr_line(expr),
     }
 }
 
 /// Extract the source line number from an expression (1-based), or 0 if unavailable.
 fn expr_line(expr: &Expr) -> u32 {
-    expr.span().line as u32
+    expr.span().line_start as u32
 }
 
 impl StatementCompiler for Compiler {

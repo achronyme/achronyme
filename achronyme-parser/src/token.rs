@@ -7,8 +7,6 @@ pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
     pub lexeme: String,
-    /// Byte offset of this token's first character in the source string.
-    pub byte_offset: usize,
 }
 
 /// All token variants recognized by the lexer.

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::ast::Span;
+
 /// Byte-range span with line/column start and end positions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanRange {
@@ -191,6 +193,34 @@ impl fmt::Display for Diagnostic {
             )?;
         }
         Ok(())
+    }
+}
+
+impl From<Span> for SpanRange {
+    fn from(span: Span) -> Self {
+        Self {
+            file: None,
+            byte_start: span.byte_start,
+            byte_end: span.byte_end,
+            line_start: span.line_start,
+            col_start: span.col_start,
+            line_end: span.line_end,
+            col_end: span.col_end,
+        }
+    }
+}
+
+impl From<&Span> for SpanRange {
+    fn from(span: &Span) -> Self {
+        Self {
+            file: None,
+            byte_start: span.byte_start,
+            byte_end: span.byte_end,
+            line_start: span.line_start,
+            col_start: span.col_start,
+            line_end: span.line_end,
+            col_end: span.col_end,
+        }
     }
 }
 

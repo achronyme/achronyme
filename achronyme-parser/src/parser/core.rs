@@ -57,8 +57,8 @@ impl Parser {
                     kind_name(kind),
                     tok_display(tok)
                 ),
-                tok.span.line,
-                tok.span.col,
+                tok.span.line_start,
+                tok.span.col_start,
             ))
         }
     }
