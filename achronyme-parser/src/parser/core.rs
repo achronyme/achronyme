@@ -67,6 +67,20 @@ impl Parser {
         self.peek().span.clone()
     }
 
+    /// Return the span of the most recently consumed token.
+    pub(super) fn prev_span(&self) -> Span {
+        if self.pos > 0 {
+            self.tokens[self.pos - 1].span.clone()
+        } else {
+            self.peek().span.clone()
+        }
+    }
+
+    /// Build a span from `start` to the most recently consumed token.
+    pub(super) fn span_to_prev(&self, start: &Span) -> Span {
+        Span::from_to(start, &self.prev_span())
+    }
+
     pub(super) fn eat(&mut self, kind: &TokenKind) -> bool {
         if self.at(kind) {
             self.advance();
@@ -114,6 +128,9 @@ impl Parser {
         }
         self.block_depth -= 1;
         self.expect(&TokenKind::RBrace)?;
-        Ok(Block { stmts, span: sp })
+        Ok(Block {
+            stmts,
+            span: self.span_to_prev(&sp),
+        })
     }
 }

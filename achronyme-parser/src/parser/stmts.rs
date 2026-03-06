@@ -37,12 +37,16 @@ impl Parser {
             TokenKind::Break => {
                 let sp = self.span();
                 self.advance();
-                Ok(Stmt::Break { span: sp })
+                Ok(Stmt::Break {
+                    span: self.span_to_prev(&sp),
+                })
             }
             TokenKind::Continue => {
                 let sp = self.span();
                 self.advance();
-                Ok(Stmt::Continue { span: sp })
+                Ok(Stmt::Continue {
+                    span: self.span_to_prev(&sp),
+                })
             }
             _ => {
                 let expr = self.parse_expr()?;
@@ -60,7 +64,7 @@ impl Parser {
             Ok(Stmt::Assignment {
                 target: expr,
                 value,
-                span: sp,
+                span: self.span_to_prev(&sp),
             })
         } else {
             Ok(Stmt::Expr(expr))
@@ -78,7 +82,7 @@ impl Parser {
             name,
             type_ann,
             value,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -93,7 +97,7 @@ impl Parser {
             name,
             type_ann,
             value,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -101,14 +105,20 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `public`
         let names = self.parse_input_decl_list()?;
-        Ok(Stmt::PublicDecl { names, span: sp })
+        Ok(Stmt::PublicDecl {
+            names,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     fn parse_witness_decl(&mut self) -> Result<Stmt, ParseError> {
         let sp = self.span();
         self.advance(); // eat `witness`
         let names = self.parse_input_decl_list()?;
-        Ok(Stmt::WitnessDecl { names, span: sp })
+        Ok(Stmt::WitnessDecl {
+            names,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     fn parse_input_decl_list(&mut self) -> Result<Vec<InputDecl>, ParseError> {
@@ -159,7 +169,7 @@ impl Parser {
             params,
             return_type,
             body,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -191,7 +201,7 @@ impl Parser {
         Ok(Stmt::Import {
             path,
             alias,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -235,7 +245,7 @@ impl Parser {
         };
         Ok(Stmt::Export {
             inner: Box::new(inner),
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -260,7 +270,10 @@ impl Parser {
         self.expect(&TokenKind::LParen)?;
         let value = self.parse_expr()?;
         self.expect(&TokenKind::RParen)?;
-        Ok(Stmt::Print { value, span: sp })
+        Ok(Stmt::Print {
+            value,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {
@@ -273,7 +286,10 @@ impl Parser {
         } else {
             None
         };
-        Ok(Stmt::Return { value, span: sp })
+        Ok(Stmt::Return {
+            value,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     /// Whether the current token can start an expression.

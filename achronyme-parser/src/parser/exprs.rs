@@ -60,7 +60,7 @@ impl Parser {
                     op,
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 };
                 // Reject chained comparisons: `a < b < c` is a silent bug
                 if was_cmp && is_comparison(self.peek_kind()) {
@@ -94,7 +94,7 @@ impl Parser {
                 Ok(Expr::UnaryOp {
                     op,
                     operand: Box::new(operand),
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             _ => self.parse_atom(),
@@ -108,7 +108,7 @@ impl Parser {
                 let tok = self.advance().clone();
                 Ok(Expr::Number {
                     value: tok.lexeme,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::FieldLit => {
@@ -123,7 +123,7 @@ impl Parser {
                 Ok(Expr::FieldLit {
                     value,
                     radix,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::BigIntLit => {
@@ -155,39 +155,41 @@ impl Parser {
                     value,
                     width,
                     radix,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::StringLit => {
                 let tok = self.advance().clone();
                 Ok(Expr::StringLit {
                     value: tok.lexeme,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::Bool {
                     value: true,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::False => {
                 self.advance();
                 Ok(Expr::Bool {
                     value: false,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::Nil => {
                 self.advance();
-                Ok(Expr::Nil { span: sp })
+                Ok(Expr::Nil {
+                    span: self.span_to_prev(&sp),
+                })
             }
             TokenKind::Ident => {
                 let tok = self.advance().clone();
                 Ok(Expr::Ident {
                     name: tok.lexeme,
-                    span: sp,
+                    span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::LParen => {
@@ -236,7 +238,7 @@ impl Parser {
         Ok(Expr::Call {
             callee: Box::new(callee),
             args,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -248,7 +250,7 @@ impl Parser {
         Ok(Expr::Index {
             object: Box::new(object),
             index: Box::new(index),
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -259,7 +261,7 @@ impl Parser {
         Ok(Expr::DotAccess {
             object: Box::new(object),
             field,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -281,7 +283,10 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBracket)?;
-        Ok(Expr::Array { elements, span: sp })
+        Ok(Expr::Array {
+            elements,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     /// Disambiguate `{` — map literal vs block.
@@ -324,7 +329,10 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBrace)?;
-        Ok(Expr::Map { pairs, span: sp })
+        Ok(Expr::Map {
+            pairs,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     fn parse_map_pair(&mut self) -> Result<(MapKey, Expr), ParseError> {
@@ -372,7 +380,7 @@ impl Parser {
             condition,
             then_block,
             else_branch,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -384,7 +392,7 @@ impl Parser {
         Ok(Expr::While {
             condition,
             body,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -423,7 +431,7 @@ impl Parser {
             var,
             iterable,
             body,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -431,7 +439,10 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `forever`
         let body = self.parse_block_inner()?;
-        Ok(Expr::Forever { body, span: sp })
+        Ok(Expr::Forever {
+            body,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     fn parse_fn_expr(&mut self) -> Result<Expr, ParseError> {
@@ -452,7 +463,7 @@ impl Parser {
             params,
             return_type,
             body,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 
@@ -470,7 +481,7 @@ impl Parser {
         Ok(Expr::Prove {
             body,
             source: source_text,
-            span: sp,
+            span: self.span_to_prev(&sp),
         })
     }
 }
