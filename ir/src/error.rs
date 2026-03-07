@@ -201,3 +201,23 @@ impl fmt::Display for IrError {
 }
 
 impl std::error::Error for IrError {}
+
+impl IrError {
+    /// Convert this error into a unified Diagnostic.
+    pub fn to_diagnostic(&self) -> achronyme_parser::Diagnostic {
+        let span = match self {
+            IrError::UndeclaredVariable(_, s)
+            | IrError::UnsupportedOperation(_, s)
+            | IrError::TypeNotConstrainable(_, s)
+            | IrError::UnboundedLoop(s) => s.as_deref().cloned(),
+            IrError::WrongArgumentCount { span, .. }
+            | IrError::IndexOutOfBounds { span, .. }
+            | IrError::ArrayLengthMismatch { span, .. }
+            | IrError::TypeMismatch { span, .. }
+            | IrError::AnnotationMismatch { span, .. } => span.as_deref().cloned(),
+            _ => None,
+        };
+        let primary = span.unwrap_or_else(|| SpanRange::point(0, 0, 0));
+        achronyme_parser::Diagnostic::error(self.to_string(), primary)
+    }
+}

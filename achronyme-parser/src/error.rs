@@ -29,3 +29,12 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::diagnostic::Diagnostic {
+    fn from(err: ParseError) -> Self {
+        crate::diagnostic::Diagnostic::error(
+            err.message,
+            crate::diagnostic::SpanRange::point(err.line, err.col, 0),
+        )
+    }
+}
