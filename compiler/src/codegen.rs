@@ -137,11 +137,11 @@ impl Compiler {
             }
             CompilerError::DiagnosticError(Box::new(diag))
         } else {
-            let mut msg = format!("Undefined variable: {name}");
+            let mut msg = format!("undefined variable: `{name}`");
             if let Some(similar) = suggestion {
                 msg.push_str(&format!(" (did you mean `{similar}`?)"));
             }
-            CompilerError::UnknownOperator(msg, None)
+            CompilerError::CompileError(msg, None)
         }
     }
 

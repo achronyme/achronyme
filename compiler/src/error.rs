@@ -19,7 +19,6 @@ pub enum CompilerError {
     InvalidNumber(OptSpan),
     TooManyConstants(OptSpan),
     UnexpectedRule(String, OptSpan),
-    MissingOperand(OptSpan),
     RegisterOverflow(OptSpan),
     CompilerLimitation(String, OptSpan),
     CompileError(String, OptSpan),
@@ -54,9 +53,6 @@ impl fmt::Display for CompilerError {
             }
             CompilerError::UnexpectedRule(msg, span) => {
                 write!(f, "{}unexpected rule: {msg}", fmt_span(span))
-            }
-            CompilerError::MissingOperand(span) => {
-                write!(f, "{}missing operand", fmt_span(span))
             }
             CompilerError::RegisterOverflow(span) => {
                 write!(f, "{}register overflow (too many locals)", fmt_span(span))
@@ -98,7 +94,6 @@ impl CompilerError {
             | CompilerError::InvalidNumber(s)
             | CompilerError::TooManyConstants(s)
             | CompilerError::UnexpectedRule(_, s)
-            | CompilerError::MissingOperand(s)
             | CompilerError::RegisterOverflow(s)
             | CompilerError::CompilerLimitation(_, s)
             | CompilerError::CompileError(_, s)
