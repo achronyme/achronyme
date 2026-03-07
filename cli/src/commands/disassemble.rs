@@ -6,9 +6,10 @@ use vm::opcode::{instruction::*, OpCode};
 pub fn disassemble_file(path: &str) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
     let mut compiler = Compiler::new();
-    let bytecode = compiler
-        .compile(&content)
-        .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
+    let bytecode = compiler.compile(&content).map_err(|e| {
+        let rendered = super::render_compile_error(&e, &content);
+        anyhow::anyhow!("{rendered}")
+    })?;
 
     super::print_warnings(&mut compiler, &content);
 

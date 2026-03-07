@@ -2,6 +2,7 @@ use std::fmt;
 
 use achronyme_parser::ast::Span;
 use achronyme_parser::diagnostic::SpanRange;
+use achronyme_parser::Diagnostic;
 
 /// Boxed span to keep error enum small.
 pub type OptSpan = Option<Box<SpanRange>>;
@@ -27,6 +28,8 @@ pub enum CompilerError {
     ModuleLoadError(String),
     DuplicateModuleAlias(String, OptSpan),
     InternalError(String),
+    /// A rich error that already carries a full Diagnostic (for structured suggestions).
+    DiagnosticError(Box<Diagnostic>),
 }
 
 fn fmt_span(span: &OptSpan) -> String {
@@ -75,6 +78,7 @@ impl fmt::Display for CompilerError {
                 write!(f, "{}duplicate module alias: {name}", fmt_span(span))
             }
             CompilerError::InternalError(msg) => write!(f, "internal compiler error: {msg}"),
+            CompilerError::DiagnosticError(diag) => write!(f, "{diag}"),
         }
     }
 }
@@ -83,7 +87,12 @@ impl std::error::Error for CompilerError {}
 
 impl CompilerError {
     /// Convert this error into a unified Diagnostic.
-    pub fn to_diagnostic(&self) -> achronyme_parser::Diagnostic {
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        // DiagnosticError already carries the full Diagnostic
+        if let CompilerError::DiagnosticError(diag) = self {
+            return *diag.clone();
+        }
+
         let span = match self {
             CompilerError::UnknownOperator(_, s)
             | CompilerError::InvalidNumber(s)
@@ -98,9 +107,10 @@ impl CompilerError {
             | CompilerError::DuplicateModuleAlias(_, s) => s.as_deref().cloned(),
             CompilerError::ParseError(_)
             | CompilerError::ModuleLoadError(_)
-            | CompilerError::InternalError(_) => None,
+            | CompilerError::InternalError(_)
+            | CompilerError::DiagnosticError(_) => None,
         };
         let primary = span.unwrap_or_else(|| SpanRange::point(0, 0, 0));
-        achronyme_parser::Diagnostic::error(self.to_string(), primary)
+        Diagnostic::error(self.to_string(), primary)
     }
 }

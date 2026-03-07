@@ -13,6 +13,7 @@ pub mod r1cs_gadgets;
 pub mod r1cs_witness;
 pub mod scopes;
 pub mod statements;
+pub mod suggest;
 pub mod types;
 pub mod witness_gen;
 

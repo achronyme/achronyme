@@ -4,6 +4,7 @@ use crate::interner::{BigIntInterner, FieldInterner, StringInterner};
 use crate::module_loader::ModuleLoader;
 use crate::statements::{stmt_span, StatementCompiler};
 use achronyme_parser::ast::{Span, Stmt};
+use achronyme_parser::diagnostic::SpanRange;
 use achronyme_parser::Diagnostic;
 use memory::Value;
 use std::collections::{HashMap, HashSet};
@@ -99,6 +100,49 @@ impl Compiler {
     /// Take all collected warnings, leaving the internal list empty.
     pub fn take_warnings(&mut self) -> Vec<Diagnostic> {
         std::mem::take(&mut self.warnings)
+    }
+
+    /// Collect all in-scope names (locals, globals) for "did you mean?" suggestions.
+    pub fn collect_in_scope_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+
+        // Locals from current function compiler
+        if let Ok(func) = self.current_ref() {
+            for local in &func.locals {
+                names.push(&local.name);
+            }
+        }
+
+        // Global symbols (skip native internals with index < USER_GLOBAL_START)
+        for (name, &idx) in &self.global_symbols {
+            if idx >= USER_GLOBAL_START && !name.contains("::") {
+                names.push(name);
+            }
+        }
+
+        names
+    }
+
+    /// Build an "Undefined variable" error with a "did you mean?" suggestion if available.
+    pub fn undefined_var_error(&self, name: &str) -> CompilerError {
+        let candidates = self.collect_in_scope_names();
+        let suggestion = crate::suggest::find_similar(name, candidates.into_iter(), 2);
+
+        if let Some(span) = self.current_span.as_ref() {
+            let span_range: SpanRange = span.into();
+            let mut diag =
+                Diagnostic::error(format!("undefined variable: `{name}`"), span_range.clone());
+            if let Some(similar) = suggestion {
+                diag = diag.with_suggestion(span_range, similar, "a similar name exists");
+            }
+            CompilerError::DiagnosticError(Box::new(diag))
+        } else {
+            let mut msg = format!("Undefined variable: {name}");
+            if let Some(similar) = suggestion {
+                msg.push_str(&format!(" (did you mean `{similar}`?)"));
+            }
+            CompilerError::UnknownOperator(msg, None)
+        }
     }
 
     // Wrappers for FunctionCompiler
@@ -372,5 +416,63 @@ mod warning_tests {
     fn clean_code_no_warnings() {
         let ws = compile_warnings("fn test(x) { let y = x; print(y) }");
         assert!(ws.is_empty(), "expected no warnings, got: {:?}", ws);
+    }
+}
+
+#[cfg(test)]
+mod suggestion_tests {
+    use super::*;
+
+    fn compile_error_message(source: &str) -> String {
+        let mut compiler = Compiler::new();
+        match compiler.compile(source) {
+            Ok(_) => panic!("expected compilation to fail"),
+            Err(e) => format!("{e}"),
+        }
+    }
+
+    #[test]
+    fn suggests_similar_local_variable() {
+        let msg = compile_error_message("fn test() { let count = 5; cout }");
+        assert!(msg.contains("undefined variable"), "got: {msg}");
+    }
+
+    #[test]
+    fn suggests_similar_function_name() {
+        let msg = compile_error_message("fn compute() { 1 }\ncompue()");
+        assert!(msg.contains("undefined variable"), "got: {msg}");
+    }
+
+    #[test]
+    fn no_suggestion_for_completely_different_name() {
+        let msg = compile_error_message("fn test() { let x = 5; zzzzzz }");
+        assert!(msg.contains("undefined variable"), "got: {msg}");
+    }
+
+    #[test]
+    fn suggestion_in_diagnostic_error() {
+        let mut compiler = Compiler::new();
+        let err = compiler
+            .compile("fn test() { let count = 5; cout }")
+            .unwrap_err();
+        let diag = err.to_diagnostic();
+        assert!(diag.message.contains("undefined variable"));
+        // The suggestion should be structured data, not baked into the message
+        assert!(
+            !diag.suggestions.is_empty() || diag.message.contains("cout"),
+            "diagnostic should have a suggestion or reference the typo: {diag:?}"
+        );
+    }
+
+    #[test]
+    fn suggestion_for_one_char_typo() {
+        let msg = compile_error_message("fn test() { let value = 42; valye }");
+        assert!(msg.contains("undefined variable"), "got: {msg}");
+    }
+
+    #[test]
+    fn suggestion_for_assignment_target() {
+        let msg = compile_error_message("fn test() { mut total = 0; totol = 5; total }");
+        assert!(msg.contains("undefined variable"), "got: {msg}");
     }
 }

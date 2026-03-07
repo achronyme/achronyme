@@ -227,17 +227,12 @@ impl Compiler {
                 idx
             } else if let Some(ref prefix) = self.module_prefix {
                 let mangled = format!("{prefix}::{name}");
-                *self.global_symbols.get(&mangled).ok_or_else(|| {
-                    CompilerError::UnknownOperator(
-                        format!("Undefined variable: {}", name),
-                        self.cur_span(),
-                    )
-                })?
+                *self
+                    .global_symbols
+                    .get(&mangled)
+                    .ok_or_else(|| self.undefined_var_error(name))?
             } else {
-                return Err(CompilerError::UnknownOperator(
-                    format!("Undefined variable: {}", name),
-                    self.cur_span(),
-                ));
+                return Err(self.undefined_var_error(name));
             };
             self.emit_abx(OpCode::GetGlobal, reg, idx)?;
             Ok(reg)

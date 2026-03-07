@@ -45,10 +45,7 @@ fn compile_invalid_source_returns_error() {
     let result = cli::commands::compile::compile_file(src.path().to_str().unwrap(), None);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
-    assert!(
-        err.contains("Compile error"),
-        "expected compile error, got: {err}"
-    );
+    assert!(err.contains("error"), "expected compile error, got: {err}");
 }
 
 #[test]

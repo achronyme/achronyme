@@ -369,8 +369,16 @@ impl Parser {
         }
         let base = tok.lexeme.as_str();
         if base != "Field" && base != "Bool" {
+            let hint = match base.to_lowercase().as_str() {
+                "field" => " (did you mean `Field`?)",
+                "bool" | "boolean" => " (did you mean `Bool`?)",
+                "int" | "integer" | "number" | "u32" | "u64" | "i32" | "i64" => {
+                    " (valid types are `Field`, `Bool`, `Field[N]`, `Bool[N]`)"
+                }
+                _ => " (valid types are `Field`, `Bool`, `Field[N]`, `Bool[N]`)",
+            };
             return Err(ParseError::new(
-                format!("expected type (`Field` or `Bool`), found `{base}`"),
+                format!("expected type, found `{base}`{hint}"),
                 tok.span.line_start,
                 tok.span.col_start,
             ));

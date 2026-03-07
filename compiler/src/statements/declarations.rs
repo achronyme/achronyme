@@ -1,5 +1,5 @@
 use crate::codegen::Compiler;
-use crate::error::{span_box, CompilerError};
+use crate::error::CompilerError;
 use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
 use crate::types::Local;
@@ -93,7 +93,7 @@ impl DeclarationCompiler for Compiler {
 
     fn compile_assignment(&mut self, target: &Expr, value: &Expr) -> Result<(), CompilerError> {
         match target {
-            Expr::Ident { name, span, .. } => {
+            Expr::Ident { name, .. } => {
                 // Simple identifier assignment
                 let val_reg = self.compile_expr(value)?;
 
@@ -106,10 +106,7 @@ impl DeclarationCompiler for Compiler {
                 } else if let Some(global_idx) = self.global_symbols.get(name) {
                     self.emit_abx(OpCode::SetGlobal, val_reg, *global_idx)?;
                 } else {
-                    return Err(CompilerError::UnknownOperator(
-                        format!("Undefined variable '{}'", name),
-                        span_box(span),
-                    ));
+                    return Err(self.undefined_var_error(name));
                 }
 
                 self.free_reg(val_reg)?;
