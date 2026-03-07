@@ -122,6 +122,10 @@ impl IrLowering {
                 "BigInt".into(),
                 to_ir_span(span),
             )),
+            Expr::Error { span } => Err(IrError::UnsupportedOperation(
+                "cannot compile error placeholder (source has parse errors)".into(),
+                to_ir_span(span),
+            )),
         }
     }
 

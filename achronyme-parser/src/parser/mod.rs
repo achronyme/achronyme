@@ -2,7 +2,7 @@
 ///
 /// Drop-in replacement for `build_ast::parse_program` / `build_ast::parse_block`.
 use crate::ast::*;
-use crate::error::ParseError;
+use crate::diagnostic::Diagnostic;
 use crate::lexer::Lexer;
 
 mod core;
@@ -26,7 +26,13 @@ use core::Parser;
 pub fn parse_program(source: &str) -> Result<Program, String> {
     let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, source.to_string());
-    parser.do_parse_program().map_err(|e| e.to_string())
+    let program = parser.do_parse_program().map_err(|e| e.to_string())?;
+    let errors = parser.take_errors();
+    if errors.is_empty() {
+        Ok(program)
+    } else {
+        Err(errors[0].message.clone())
+    }
 }
 
 /// Parse a block source (including braces) into an AST Block.
@@ -40,15 +46,39 @@ pub fn parse_program(source: &str) -> Result<Program, String> {
 /// assert!(matches!(&prog.stmts[0], Stmt::PublicDecl { .. }));
 /// assert!(matches!(&prog.stmts[1], Stmt::WitnessDecl { .. }));
 /// ```
-/// Parse a complete source string, returning a structured [`ParseError`] on failure.
-pub fn parse_program_with_errors(source: &str) -> Result<Program, ParseError> {
-    let tokens = Lexer::tokenize(source)?;
-    let mut parser = Parser::new(tokens, source.to_string());
-    parser.do_parse_program()
-}
-
 pub fn parse_block(source: &str) -> Result<Block, String> {
     let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
     let mut parser = Parser::new(tokens, source.to_string());
     parser.do_parse_block().map_err(|e| e.to_string())
+}
+
+/// Parse a complete source string, collecting multiple errors via recovery.
+///
+/// Returns the (possibly partial) AST and all diagnostics. Failed regions
+/// appear as `Stmt::Error` nodes in the AST.
+///
+/// ```
+/// use achronyme_parser::parse_program_with_errors;
+///
+/// let (prog, errors) = parse_program_with_errors("let x = 1\nlet y = ");
+/// // First statement parses fine, second has an error
+/// assert_eq!(prog.stmts.len(), 2);
+/// assert!(!errors.is_empty());
+/// ```
+pub fn parse_program_with_errors(source: &str) -> (Program, Vec<Diagnostic>) {
+    match Lexer::tokenize(source) {
+        Ok(tokens) => {
+            let mut parser = Parser::new(tokens, source.to_string());
+            // do_parse_program now always returns Ok thanks to error recovery
+            let program = parser
+                .do_parse_program()
+                .unwrap_or_else(|_| Program { stmts: Vec::new() });
+            let errors = parser.take_errors();
+            (program, errors)
+        }
+        Err(lex_err) => {
+            let diag: Diagnostic = lex_err.into();
+            (Program { stmts: Vec::new() }, vec![diag])
+        }
+    }
 }

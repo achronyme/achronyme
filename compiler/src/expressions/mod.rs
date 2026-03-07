@@ -108,6 +108,13 @@ impl ExpressionCompiler for Compiler {
 
             // === ZK ===
             Expr::Prove { body, source, .. } => self.compile_prove(body, source),
+
+            // === Error recovery placeholder ===
+            Expr::Error { .. } => {
+                let reg = self.alloc_reg()?;
+                self.emit_abx(OpCode::LoadNil, reg, 0)?;
+                Ok(reg)
+            }
         }
     }
 

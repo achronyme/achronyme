@@ -85,6 +85,7 @@ impl IrLowering {
                 Ok(None)
             }
             Stmt::Export { inner, .. } => self.lower_stmt(inner),
+            Stmt::Error { .. } => Ok(None),
         }
     }
 

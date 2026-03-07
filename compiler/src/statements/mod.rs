@@ -32,7 +32,8 @@ fn stmt_line(stmt: &Stmt) -> u32 {
         | Stmt::Break { span }
         | Stmt::Continue { span }
         | Stmt::Import { span, .. }
-        | Stmt::Export { span, .. } => span.line_start as u32,
+        | Stmt::Export { span, .. }
+        | Stmt::Error { span } => span.line_start as u32,
         Stmt::Expr(expr) => expr_line(expr),
     }
 }
@@ -97,6 +98,7 @@ impl StatementCompiler for Compiler {
                 path, alias, span, ..
             } => self.compile_import(path, alias, span),
             Stmt::Export { inner, .. } => self.compile_stmt(inner),
+            Stmt::Error { .. } => Ok(()),
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;
                 self.free_reg(reg)?;

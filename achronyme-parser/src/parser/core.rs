@@ -1,8 +1,12 @@
 use crate::ast::*;
+use crate::diagnostic::{Diagnostic, SpanRange};
 use crate::error::ParseError;
 use crate::token::{Token, TokenKind};
 
 use super::tables::{kind_name, tok_display};
+
+/// Maximum number of errors before the parser aborts.
+const MAX_ERRORS: usize = 20;
 
 pub(super) struct Parser {
     pub(super) tokens: Vec<Token>,
@@ -10,6 +14,8 @@ pub(super) struct Parser {
     pub(super) source: String,
     /// Nesting depth: 0 = top-level, >0 = inside block/function.
     pub(super) block_depth: usize,
+    /// Collected diagnostics from error recovery.
+    pub(super) errors: Vec<Diagnostic>,
 }
 
 impl Parser {
@@ -19,6 +25,7 @@ impl Parser {
             pos: 0,
             source,
             block_depth: 0,
+            errors: Vec::new(),
         }
     }
 
@@ -101,13 +108,75 @@ impl Parser {
     }
 
     // ========================================================================
+    // Error recovery
+    // ========================================================================
+
+    /// Record a parse error as a diagnostic and check the error limit.
+    /// Returns `true` if the parser should abort (too many errors).
+    pub(super) fn record_error(&mut self, err: &ParseError) -> bool {
+        let diag = Diagnostic::error(err.message.clone(), SpanRange::point(err.line, err.col, 0));
+        self.errors.push(diag);
+        self.errors.len() >= MAX_ERRORS
+    }
+
+    /// Skip tokens until a synchronization point is found.
+    /// Sync tokens: `;`, `}`, `fn`, `let`, `mut`, `public`, `witness`, `import`, `export`, `EOF`.
+    pub(super) fn synchronize(&mut self) {
+        loop {
+            match self.peek_kind() {
+                TokenKind::Eof => break,
+                TokenKind::Semicolon => {
+                    self.advance(); // consume the `;`
+                    break;
+                }
+                TokenKind::RBrace => {
+                    // Don't consume — let block-closing logic handle it
+                    break;
+                }
+                TokenKind::Fn
+                | TokenKind::Let
+                | TokenKind::Mut
+                | TokenKind::Public
+                | TokenKind::Witness
+                | TokenKind::Import
+                | TokenKind::Export => {
+                    // Don't consume — this starts the next statement
+                    break;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Take all collected errors, leaving the internal vec empty.
+    pub(super) fn take_errors(&mut self) -> Vec<Diagnostic> {
+        std::mem::take(&mut self.errors)
+    }
+
+    // ========================================================================
     // Program / Block
     // ========================================================================
 
     pub(super) fn do_parse_program(&mut self) -> Result<Program, ParseError> {
         let mut stmts = Vec::new();
         while !self.at(&TokenKind::Eof) {
-            stmts.push(self.parse_stmt()?);
+            match self.parse_stmt() {
+                Ok(stmt) => {
+                    stmts.push(stmt);
+                }
+                Err(err) => {
+                    let error_span = self.span();
+                    let abort = self.record_error(&err);
+                    self.synchronize();
+                    stmts.push(Stmt::Error { span: error_span });
+                    if abort {
+                        break;
+                    }
+                    continue;
+                }
+            }
             self.eat(&TokenKind::Semicolon);
         }
         Ok(Program { stmts })
@@ -123,7 +192,21 @@ impl Parser {
         self.block_depth += 1;
         let mut stmts = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
-            stmts.push(self.parse_stmt()?);
+            match self.parse_stmt() {
+                Ok(stmt) => {
+                    stmts.push(stmt);
+                }
+                Err(err) => {
+                    let error_span = self.span();
+                    let abort = self.record_error(&err);
+                    self.synchronize();
+                    stmts.push(Stmt::Error { span: error_span });
+                    if abort {
+                        break;
+                    }
+                    continue;
+                }
+            }
             self.eat(&TokenKind::Semicolon);
         }
         self.block_depth -= 1;

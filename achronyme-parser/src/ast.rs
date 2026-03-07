@@ -94,6 +94,10 @@ pub enum Stmt {
         span: Span,
     },
     Expr(Expr),
+    /// Placeholder for a statement that failed to parse (error recovery).
+    Error {
+        span: Span,
+    },
 }
 
 /// A public/witness input declaration with optional array size.
@@ -228,6 +232,10 @@ pub enum Expr {
         pairs: Vec<(MapKey, Expr)>,
         span: Span,
     },
+    /// Placeholder for an expression that failed to parse (error recovery).
+    Error {
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -252,7 +260,8 @@ impl Expr {
             | Expr::FnExpr { span, .. }
             | Expr::Prove { span, .. }
             | Expr::Array { span, .. }
-            | Expr::Map { span, .. } => span,
+            | Expr::Map { span, .. }
+            | Expr::Error { span } => span,
             Expr::Block(block) => &block.span,
         }
     }
