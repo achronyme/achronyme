@@ -68,13 +68,14 @@ A complete circuit compilation follows these steps:
 ### 1. Parse
 
 ```rust
-// achronyme-parser/src/parser.rs
-pub fn parse_program(source: &str) -> Result<Program, String>
+// achronyme-parser/src/parser/mod.rs
+pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>)
 ```
 
-Recursive descent parser with Pratt expression parsing. Produces an owned AST
-with `Stmt` and `Expr` nodes. Handles `public`/`witness` declarations,
-`for` ranges, `fn` definitions, and `prove {}` blocks.
+Recursive descent parser with Pratt expression parsing. Returns a (possibly partial)
+AST plus all collected diagnostics. The parser recovers at statement boundaries,
+so a single call can report multiple errors. Handles `public`/`witness` declarations,
+`for` ranges, `fn` definitions, `import`/`export`, and `prove {}` blocks.
 
 ### 2. Lower to IR
 
@@ -227,6 +228,130 @@ witness vector:
 - `BitExtract` — extract bit `i` from a value
 - `PoseidonHash` — replay the full Poseidon permutation
 - `IsZero` — compute the inverse-or-zero witness
+
+## Diagnostic Pipeline
+
+All compilation phases produce errors and warnings through a unified `Diagnostic` type
+defined in `achronyme-parser/src/diagnostic.rs`. This ensures consistent formatting
+regardless of where an error originates.
+
+### Types
+
+```
+achronyme-parser/src/diagnostic.rs
+├── SpanRange          Byte-range span with line/col start and end
+├── Severity           Error | Warning | Note | Help
+├── Label              Secondary span with message
+├── Suggestion         Code replacement (span + replacement text + message)
+└── Diagnostic         The unified diagnostic (severity, message, code, primary_span, labels, suggestions, notes)
+```
+
+`Diagnostic` uses a builder pattern:
+
+```rust
+Diagnostic::error("undefined variable: `x`", span)
+    .with_code("E001")
+    .with_label(other_span, "defined here")
+    .with_suggestion(span, "y", "did you mean `y`?")
+    .with_note("variables must be declared before use")
+```
+
+### Error → Diagnostic Conversion
+
+Each crate's error type implements a `to_diagnostic()` method:
+
+| Error Type | Crate | Conversion |
+|------------|-------|------------|
+| `ParseError` | `achronyme-parser` | Already a `Diagnostic` (parser emits diagnostics directly) |
+| `CompilerError` | `compiler` | `to_diagnostic()` — extracts `OptSpan` from each variant |
+| `CompilerError::DiagnosticError` | `compiler` | Passthrough — already wraps a `Box<Diagnostic>` |
+| `IrError` | `ir` | `to_diagnostic()` — `ParseError` variant wraps `Box<Diagnostic>` directly |
+
+### Rendering
+
+```
+achronyme-parser/src/render.rs
+├── ColorMode          Always | Never | Auto (TTY detection via isatty(2))
+└── DiagnosticRenderer Renders source snippets with margin, line numbers, underline carets
+```
+
+The `DiagnosticRenderer` produces rustc-style output:
+
+```
+error[E001]: type mismatch
+ --> 3:5
+  |
+3 |     let x: u32 = "hello"
+  |                   ^^^^^^^
+  |
+  = note: expected u32, found string
+```
+
+Features:
+- Single-line and multi-line span rendering
+- Secondary labels at related locations
+- Footer lines for notes (`= note:`) and suggestions (`= help:`)
+- ANSI color codes gated on `ColorMode` (auto-detects TTY)
+
+### Output Formats (CLI)
+
+The CLI (`cli/src/commands/mod.rs`) supports three output formats via `--error-format`:
+
+| Format | Function | Output |
+|--------|----------|--------|
+| `human` | `DiagnosticRenderer::render()` | Source snippets with colors |
+| `json` | `diagnostic_to_json()` | JSON Lines — one object per diagnostic |
+| `short` | `diagnostic_to_short()` | `file:line:col: severity: message` |
+
+`ErrorFormat` is threaded through all CLI commands (`run`, `compile`, `circuit`, `disassemble`).
+
+### Compiler Warnings
+
+The bytecode compiler (`compiler/src/codegen.rs`) collects warnings in a `Vec<Diagnostic>`.
+They are emitted after successful compilation via `Compiler::take_warnings()`.
+
+| Code | Warning | Emitted by |
+|------|---------|------------|
+| W001 | Unused variable | `scopes.rs` (end_scope) and `functions.rs` (function params) |
+| W002 | Variable declared `mut` but never mutated | `scopes.rs` (end_scope) |
+| W003 | Unreachable code after `return` | `control_flow.rs` and `codegen.rs` |
+| W004 | Variable shadows previous binding in same scope | `statements/declarations.rs` |
+
+Variables prefixed with `_` are exempt from W001.
+
+### "Did You Mean?" Suggestions
+
+When an undefined variable is encountered (`codegen.rs:undefined_var_error`):
+
+1. `collect_in_scope_names()` gathers all locals (from current function compiler) and globals
+2. `suggest::find_similar()` computes Levenshtein distance against each candidate
+3. Threshold: max distance 2, but scaled down to 1 for names ≤ 3 characters
+4. Exact matches and `_`-prefixed names are excluded
+5. If a match is found, it's attached as a `Suggestion` on the `Diagnostic`
+
+Source: `compiler/src/suggest.rs`
+
+### Error Recovery (Parser)
+
+`parse_program()` returns `(Program, Vec<Diagnostic>)` — a possibly-partial AST plus all
+collected errors. The parser synchronizes at statement boundaries after encountering an error,
+allowing it to report multiple problems in a single pass. Failed regions appear as `Stmt::Error`
+nodes in the AST.
+
+### Adding a New Warning
+
+1. Choose the next available code (`W005`, etc.)
+2. Build a `Diagnostic::warning(message, span).with_code("W005")` at the detection point
+3. Call `self.emit_warning(diag)` on the `Compiler`
+4. Warnings are collected in `self.warnings` and retrieved via `take_warnings()`
+5. Document the new code in `docs/src/content/docs/language/diagnostics.mdx`
+
+### Adding a New Error Format
+
+1. Add a variant to `ErrorFormat` in `cli/src/commands/mod.rs`
+2. Handle the new variant in `render_diagnostic()`
+3. Update `parse_error_format()` in `cli/src/main.rs` to accept the new string
+4. Update the `--error-format` help text in `cli/src/args.rs`
 
 ## Extension Points
 
