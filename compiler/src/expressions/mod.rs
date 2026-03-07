@@ -213,7 +213,8 @@ impl Compiler {
         let reg = self.alloc_reg()?;
 
         // 1. First check locals (including function parameters)
-        if let Some((_, local_reg)) = self.resolve_local(name) {
+        if let Some((idx, local_reg)) = self.resolve_local(name) {
+            self.current()?.locals[idx].is_read = true;
             self.emit_abc(OpCode::Move, reg, local_reg, 0)?;
             Ok(reg)
         } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name) {

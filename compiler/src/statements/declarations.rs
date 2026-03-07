@@ -4,6 +4,7 @@ use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
 use crate::types::Local;
 use achronyme_parser::ast::*;
+use achronyme_parser::Diagnostic;
 use memory::Value;
 use vm::opcode::OpCode;
 
@@ -19,11 +20,20 @@ impl DeclarationCompiler for Compiler {
 
         if self.current()?.scope_depth > 0 {
             let depth = self.current()?.scope_depth;
+            let span = self.current_span.clone();
+
+            // Check for shadowing at same scope depth
+            check_shadowing(self, name, depth, span.as_ref());
+
             self.current()?.locals.push(Local {
                 name: name.to_string(),
                 depth,
                 is_captured: false,
+                is_mutable: false,
+                is_read: false,
+                is_mutated: false,
                 reg,
+                span,
             });
         } else {
             if self.next_global_idx == u16::MAX {
@@ -48,11 +58,20 @@ impl DeclarationCompiler for Compiler {
 
         if self.current()?.scope_depth > 0 {
             let depth = self.current()?.scope_depth;
+            let span = self.current_span.clone();
+
+            // Check for shadowing at same scope depth
+            check_shadowing(self, name, depth, span.as_ref());
+
             self.current()?.locals.push(Local {
                 name: name.to_string(),
                 depth,
                 is_captured: false,
+                is_mutable: true,
+                is_read: false,
+                is_mutated: false,
                 reg,
+                span,
             });
         } else {
             if self.next_global_idx == u16::MAX {
@@ -78,7 +97,8 @@ impl DeclarationCompiler for Compiler {
                 // Simple identifier assignment
                 let val_reg = self.compile_expr(value)?;
 
-                if let Some((_, local_reg)) = self.resolve_local(name) {
+                if let Some((idx, local_reg)) = self.resolve_local(name) {
+                    self.current()?.locals[idx].is_mutated = true;
                     self.emit_abc(OpCode::Move, local_reg, val_reg, 0)?;
                 } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
                 {
@@ -134,6 +154,29 @@ impl DeclarationCompiler for Compiler {
                 "Invalid assignment target".into(),
                 self.cur_span(),
             )),
+        }
+    }
+}
+
+/// Emit a warning if a variable with the same name exists at the same scope depth.
+fn check_shadowing(compiler: &mut Compiler, name: &str, depth: u32, span: Option<&Span>) {
+    if name.starts_with('_') {
+        return;
+    }
+    let shadowed = compiler.current_ref().ok().is_some_and(|func| {
+        func.locals
+            .iter()
+            .any(|l| l.name == name && l.depth == depth)
+    });
+    if shadowed {
+        if let Some(s) = span {
+            compiler.emit_warning(
+                Diagnostic::warning(
+                    format!("variable `{name}` shadows a previous binding in the same scope"),
+                    s.into(),
+                )
+                .with_code("W004"),
+            );
         }
     }
 }

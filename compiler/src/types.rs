@@ -1,8 +1,14 @@
+use achronyme_parser::ast::Span;
+
 pub struct Local {
     pub name: String,
     pub depth: u32,
     pub is_captured: bool,
+    pub is_mutable: bool,
+    pub is_read: bool,
+    pub is_mutated: bool,
     pub reg: u8,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

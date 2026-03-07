@@ -1,10 +1,11 @@
-use crate::codegen::Compiler;
+use crate::codegen::{is_terminator, Compiler};
 use crate::error::CompilerError;
 use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
-use crate::statements::StatementCompiler;
+use crate::statements::{stmt_span, StatementCompiler};
 use crate::types::{Local, LoopContext};
 use achronyme_parser::ast::*;
+use achronyme_parser::Diagnostic;
 use memory::Value;
 use vm::opcode::{instruction::encode_abx, OpCode};
 
@@ -83,8 +84,20 @@ impl ControlFlowCompiler for Compiler {
         self.begin_scope()?;
         let len = block.stmts.len();
         let mut last_processed = false;
+        let mut terminated = false;
+        let mut unreachable_warned = false;
 
         for (i, stmt) in block.stmts.iter().enumerate() {
+            // Warn once about unreachable code after a terminator
+            if terminated && !unreachable_warned {
+                if let Some(span) = stmt_span(stmt) {
+                    self.emit_warning(
+                        Diagnostic::warning("unreachable code", span.into()).with_code("W003"),
+                    );
+                }
+                unreachable_warned = true;
+            }
+
             let is_last = i == len - 1;
 
             if is_last {
@@ -100,6 +113,10 @@ impl ControlFlowCompiler for Compiler {
                 last_processed = true;
             } else {
                 self.compile_stmt(stmt)?;
+            }
+
+            if !terminated && is_terminator(stmt) {
+                terminated = true;
             }
         }
 
@@ -281,11 +298,16 @@ impl ControlFlowCompiler for Compiler {
 
         self.begin_scope()?;
         let depth = self.current()?.scope_depth;
+        let var_span = self.current_span.clone();
         self.current()?.locals.push(Local {
             name: var.to_string(),
             depth,
             is_captured: false,
+            is_mutable: false,
+            is_read: false,
+            is_mutated: false,
             reg: val_reg,
+            span: var_span,
         });
 
         let body_target = self.alloc_reg()?;
@@ -383,7 +405,8 @@ impl ControlFlowCompiler for Compiler {
                 self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16)?;
 
                 // Value: resolve from current scope
-                if let Some((_, local_reg)) = self.resolve_local(name) {
+                if let Some((idx, local_reg)) = self.resolve_local(name) {
+                    self.current()?.locals[idx].is_read = true;
                     self.emit_abc(OpCode::Move, val_reg, local_reg, 0)?;
                 } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
                 {

@@ -24,7 +24,7 @@ fn stmt_line(stmt: &Stmt) -> u32 {
 }
 
 /// Extract the span from a statement, if available.
-fn stmt_span(stmt: &Stmt) -> Option<&Span> {
+pub(crate) fn stmt_span(stmt: &Stmt) -> Option<&Span> {
     match stmt {
         Stmt::LetDecl { span, .. }
         | Stmt::MutDecl { span, .. }

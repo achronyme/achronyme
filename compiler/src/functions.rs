@@ -4,6 +4,7 @@ use crate::error::CompilerError;
 use crate::function_compiler::FunctionCompiler;
 use crate::types::Local;
 use achronyme_parser::ast::*;
+use achronyme_parser::Diagnostic;
 use memory::Function;
 use vm::opcode::OpCode;
 
@@ -51,6 +52,9 @@ impl FunctionDefinitionCompiler for Compiler {
             None
         };
 
+        // Use the current span (pointing to the fn declaration) for param locals
+        let fn_span = self.current_span.clone();
+
         self.compilers
             .push(FunctionCompiler::new(fn_name.clone(), arity));
 
@@ -59,7 +63,11 @@ impl FunctionDefinitionCompiler for Compiler {
                 name: param.name.clone(),
                 depth: 0,
                 is_captured: false,
+                is_mutable: false,
+                is_read: false,
+                is_mutated: false,
                 reg: i as u8,
+                span: fn_span.clone(),
             });
         }
 
@@ -67,6 +75,31 @@ impl FunctionDefinitionCompiler for Compiler {
         self.compile_block(body, body_reg)?;
 
         self.emit_abc(OpCode::Return, body_reg, 1, 0)?;
+
+        // Check for unused function parameters before popping the compiler
+        let param_warns = {
+            let func = self.current()?;
+            let mut warns = Vec::new();
+            for local in &func.locals {
+                if local.depth == 0 && !local.name.starts_with('_') && !local.is_read {
+                    if let Some(ref span) = local.span {
+                        warns.push(
+                            Diagnostic::warning(
+                                format!("unused function parameter: `{}`", local.name),
+                                span.into(),
+                            )
+                            .with_code("W001")
+                            .with_note(format!(
+                                "if this is intentional, prefix with underscore: `_{}`",
+                                local.name
+                            )),
+                        );
+                    }
+                }
+            }
+            warns
+        };
+        self.warnings.extend(param_warns);
 
         let mut compiled_func = self
             .compilers

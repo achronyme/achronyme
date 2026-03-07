@@ -10,6 +10,8 @@ pub fn compile_file(path: &str, output: Option<&str>) -> Result<()> {
         .compile(&content)
         .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
 
+    super::print_warnings(&mut compiler, &content);
+
     println!("Compiled {} instructions.", bytecode.len());
 
     if let Some(out_path) = output {

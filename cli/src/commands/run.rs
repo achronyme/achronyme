@@ -63,6 +63,8 @@ pub fn run_file(
             .compile(&content)
             .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
 
+        super::print_warnings(&mut compiler, &content);
+
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
         let handler = DefaultProveHandler::new(backend);

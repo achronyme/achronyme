@@ -10,6 +10,8 @@ pub fn disassemble_file(path: &str) -> Result<()> {
         .compile(&content)
         .map_err(|e| anyhow::anyhow!("Compile error: {e}"))?;
 
+    super::print_warnings(&mut compiler, &content);
+
     let mut inv_globals = std::collections::HashMap::new();
     for (name, idx) in &compiler.global_symbols {
         inv_globals.insert(*idx, name);
