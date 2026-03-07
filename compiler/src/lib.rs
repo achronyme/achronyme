@@ -22,6 +22,7 @@ pub use error::CompilerError;
 pub use interner::{FieldInterner, StringInterner};
 
 // Re-export diagnostic types for consumers (CLI, LSP)
+pub use achronyme_parser::diagnostic;
 pub use achronyme_parser::{ColorMode, Diagnostic, DiagnosticRenderer, Severity};
 
 // Re-exports for convenience if needed, but Compiler has most traits implemented.

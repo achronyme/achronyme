@@ -3,23 +3,134 @@ pub mod compile;
 pub mod disassemble;
 pub mod run;
 
-use compiler::{ColorMode, Compiler, CompilerError, DiagnosticRenderer};
+use compiler::{ColorMode, Compiler, CompilerError, Diagnostic, DiagnosticRenderer};
 
-/// Render any compiler warnings to stderr.
-pub fn print_warnings(compiler: &mut Compiler, source: &str) {
+/// Output format for compiler diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorFormat {
+    /// Rich output with source snippets and colors (default)
+    Human,
+    /// JSON Lines — one JSON object per diagnostic (machine-readable)
+    Json,
+    /// Compact `file:line:col: severity: message` (grep-friendly)
+    Short,
+}
+
+/// Emit any compiler warnings to stderr in the requested format.
+pub fn print_warnings(compiler: &mut Compiler, source: &str, fmt: ErrorFormat) {
     let warnings = compiler.take_warnings();
     if warnings.is_empty() {
         return;
     }
-    let renderer = DiagnosticRenderer::new(source, ColorMode::Auto);
     for w in &warnings {
-        eprintln!("{}", renderer.render(w));
+        emit_diagnostic(w, source, fmt);
     }
 }
 
-/// Convert a CompilerError to a rendered diagnostic string with source snippets.
-pub fn render_compile_error(err: &CompilerError, source: &str) -> String {
+/// Convert a CompilerError to a rendered diagnostic string.
+pub fn render_compile_error(err: &CompilerError, source: &str, fmt: ErrorFormat) -> String {
     let diag = err.to_diagnostic();
-    let renderer = DiagnosticRenderer::new(source, ColorMode::Auto);
-    renderer.render(&diag)
+    render_diagnostic(&diag, source, fmt)
+}
+
+/// Render a single diagnostic to a string in the requested format.
+fn render_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) -> String {
+    match fmt {
+        ErrorFormat::Human => {
+            let renderer = DiagnosticRenderer::new(source, ColorMode::Auto);
+            renderer.render(diag)
+        }
+        ErrorFormat::Json => diagnostic_to_json(diag),
+        ErrorFormat::Short => diagnostic_to_short(diag),
+    }
+}
+
+/// Emit a single diagnostic to stderr.
+fn emit_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) {
+    eprintln!("{}", render_diagnostic(diag, source, fmt));
+}
+
+/// Format a diagnostic as a single JSON line (JSON Lines format).
+fn diagnostic_to_json(diag: &Diagnostic) -> String {
+    let mut labeled_spans: Vec<serde_json::Value> = Vec::new();
+    // Primary span
+    labeled_spans.push(span_to_json(&diag.primary_span, Some("primary")));
+    // Secondary labels
+    for label in &diag.labels {
+        labeled_spans.push(span_to_json_with_label(&label.span, &label.message));
+    }
+
+    let suggestions: Vec<serde_json::Value> = diag
+        .suggestions
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "span": span_to_json(&s.span, None),
+                "replacement": s.replacement,
+                "message": s.message,
+            })
+        })
+        .collect();
+
+    let obj = serde_json::json!({
+        "message": diag.message,
+        "code": diag.code,
+        "level": format!("{}", diag.severity),
+        "spans": labeled_spans,
+        "notes": diag.notes,
+        "suggestions": suggestions,
+    });
+
+    // serde_json::to_string produces a single line (no pretty-print)
+    serde_json::to_string(&obj).unwrap_or_else(|_| format!("{{\"message\":\"{}\"}}", diag.message))
+}
+
+fn span_to_json(span: &compiler::diagnostic::SpanRange, label: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "file_name": span.file.as_ref().map(|p| p.display().to_string()),
+        "byte_start": span.byte_start,
+        "byte_end": span.byte_end,
+        "line_start": span.line_start,
+        "line_end": span.line_end,
+        "column_start": span.col_start,
+        "column_end": span.col_end,
+        "label": label,
+    })
+}
+
+fn span_to_json_with_label(
+    span: &compiler::diagnostic::SpanRange,
+    message: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "file_name": span.file.as_ref().map(|p| p.display().to_string()),
+        "byte_start": span.byte_start,
+        "byte_end": span.byte_end,
+        "line_start": span.line_start,
+        "line_end": span.line_end,
+        "column_start": span.col_start,
+        "column_end": span.col_end,
+        "label": message,
+    })
+}
+
+/// Format a diagnostic in short format: `file:line:col: severity: message`
+fn diagnostic_to_short(diag: &Diagnostic) -> String {
+    let span = &diag.primary_span;
+    let file = span
+        .file
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    if file.is_empty() {
+        format!(
+            "{}:{}:{}: {}: {}",
+            span.line_start, span.col_start, span.col_end, diag.severity, diag.message
+        )
+    } else {
+        format!(
+            "{}:{}:{}: {}: {}",
+            file, span.line_start, span.col_start, diag.severity, diag.message
+        )
+    }
 }

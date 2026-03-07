@@ -4,6 +4,10 @@ use clap::{Parser, Subcommand};
 #[command(name = "ach")]
 #[command(about = "Achronyme CLI", long_about = None)]
 pub struct Cli {
+    /// Diagnostic output format: human (default), json, or short
+    #[arg(long, default_value = "human", global = true)]
+    pub error_format: String,
+
     #[command(subcommand)]
     pub command: Commands,
 }

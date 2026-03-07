@@ -4,6 +4,7 @@ use memory::Function;
 use std::fs;
 use vm::{CallFrame, ValueOps, VM};
 
+use super::ErrorFormat;
 use crate::prove_handler::{DefaultProveHandler, ProveBackend};
 
 pub fn run_file(
@@ -11,6 +12,7 @@ pub fn run_file(
     stress_gc: bool,
     ptau: Option<&str>,
     prove_backend: &str,
+    error_format: ErrorFormat,
 ) -> Result<()> {
     if ptau.is_some() {
         eprintln!(
@@ -60,11 +62,11 @@ pub fn run_file(
             compiler.compiling_modules.insert(canonical);
         }
         let bytecode = compiler.compile(&content).map_err(|e| {
-            let rendered = super::render_compile_error(&e, &content);
+            let rendered = super::render_compile_error(&e, &content, error_format);
             anyhow::anyhow!("{rendered}")
         })?;
 
-        super::print_warnings(&mut compiler, &content);
+        super::print_warnings(&mut compiler, &content, error_format);
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
