@@ -10,5 +10,5 @@ pub use diagnostic::{Diagnostic, Label, Severity, SpanRange, Suggestion};
 pub use error::ParseError;
 pub use lexer::unescape;
 /// Re-export the hand-written parser as the primary API.
-pub use parser::{parse_block, parse_program, parse_program_with_errors};
+pub use parser::{parse_block, parse_program};
 pub use render::{ColorMode, DiagnosticRenderer};

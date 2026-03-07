@@ -224,8 +224,10 @@ impl Compiler {
     }
 
     pub fn compile(&mut self, source: &str) -> Result<Vec<u32>, CompilerError> {
-        let program = achronyme_parser::parse_program(source)
-            .map_err(|e| CompilerError::ParseError(e.to_string()))?;
+        let (program, parse_errors) = achronyme_parser::parse_program(source);
+        if let Some(err) = parse_errors.into_iter().next() {
+            return Err(CompilerError::DiagnosticError(Box::new(err)));
+        }
 
         let mut terminated = false;
         let mut unreachable_warned = false;

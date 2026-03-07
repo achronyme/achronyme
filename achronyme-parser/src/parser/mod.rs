@@ -1,6 +1,4 @@
 /// Recursive descent parser with Pratt expression parsing for Achronyme.
-///
-/// Drop-in replacement for `build_ast::parse_program` / `build_ast::parse_block`.
 use crate::ast::*;
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Lexer;
@@ -15,61 +13,22 @@ mod tests;
 
 use core::Parser;
 
-/// Parse a complete source string into an AST Program.
-///
-/// ```
-/// use achronyme_parser::parse_program;
-///
-/// let prog = parse_program("let x = 1 + 2").unwrap();
-/// assert_eq!(prog.stmts.len(), 1);
-/// ```
-pub fn parse_program(source: &str) -> Result<Program, String> {
-    let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
-    let mut parser = Parser::new(tokens, source.to_string());
-    let program = parser.do_parse_program().map_err(|e| e.to_string())?;
-    let errors = parser.take_errors();
-    if errors.is_empty() {
-        Ok(program)
-    } else {
-        Err(errors[0].message.clone())
-    }
-}
-
-/// Parse a block source (including braces) into an AST Block.
-///
-/// ```
-/// use achronyme_parser::parse_program;
-/// use achronyme_parser::ast::Stmt;
-///
-/// let prog = parse_program("public x\nwitness y\nassert_eq(x, y)").unwrap();
-/// assert_eq!(prog.stmts.len(), 3);
-/// assert!(matches!(&prog.stmts[0], Stmt::PublicDecl { .. }));
-/// assert!(matches!(&prog.stmts[1], Stmt::WitnessDecl { .. }));
-/// ```
-pub fn parse_block(source: &str) -> Result<Block, String> {
-    let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
-    let mut parser = Parser::new(tokens, source.to_string());
-    parser.do_parse_block().map_err(|e| e.to_string())
-}
-
 /// Parse a complete source string, collecting multiple errors via recovery.
 ///
 /// Returns the (possibly partial) AST and all diagnostics. Failed regions
 /// appear as `Stmt::Error` nodes in the AST.
 ///
 /// ```
-/// use achronyme_parser::parse_program_with_errors;
+/// use achronyme_parser::parse_program;
 ///
-/// let (prog, errors) = parse_program_with_errors("let x = 1\nlet y = ");
-/// // First statement parses fine, second has an error
-/// assert_eq!(prog.stmts.len(), 2);
-/// assert!(!errors.is_empty());
+/// let (prog, errors) = parse_program("let x = 1 + 2");
+/// assert!(errors.is_empty());
+/// assert_eq!(prog.stmts.len(), 1);
 /// ```
-pub fn parse_program_with_errors(source: &str) -> (Program, Vec<Diagnostic>) {
+pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>) {
     match Lexer::tokenize(source) {
         Ok(tokens) => {
             let mut parser = Parser::new(tokens, source.to_string());
-            // do_parse_program now always returns Ok thanks to error recovery
             let program = parser
                 .do_parse_program()
                 .unwrap_or_else(|_| Program { stmts: Vec::new() });
@@ -81,4 +40,22 @@ pub fn parse_program_with_errors(source: &str) -> (Program, Vec<Diagnostic>) {
             (Program { stmts: Vec::new() }, vec![diag])
         }
     }
+}
+
+/// Parse a block source (including braces) into an AST Block.
+///
+/// ```
+/// use achronyme_parser::parse_program;
+/// use achronyme_parser::ast::Stmt;
+///
+/// let (prog, errors) = parse_program("public x\nwitness y\nassert_eq(x, y)");
+/// assert!(errors.is_empty());
+/// assert_eq!(prog.stmts.len(), 3);
+/// assert!(matches!(&prog.stmts[0], Stmt::PublicDecl { .. }));
+/// assert!(matches!(&prog.stmts[1], Stmt::WitnessDecl { .. }));
+/// ```
+pub fn parse_block(source: &str) -> Result<Block, String> {
+    let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens, source.to_string());
+    parser.do_parse_block().map_err(|e| e.to_string())
 }

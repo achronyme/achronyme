@@ -45,13 +45,14 @@ impl ModuleLoader {
             ))
         })?;
 
-        let program = achronyme_parser::parse_program(&source).map_err(|e| {
-            CompilerError::ModuleLoadError(format!(
+        let (program, parse_errors) = achronyme_parser::parse_program(&source);
+        if let Some(err) = parse_errors.into_iter().next() {
+            return Err(CompilerError::ModuleLoadError(format!(
                 "parse error in {}: {}",
                 canonical_path.display(),
-                e
-            ))
-        })?;
+                err.message
+            )));
+        }
 
         let exported_names = collect_exports(&program);
 

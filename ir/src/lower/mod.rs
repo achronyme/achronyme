@@ -201,7 +201,10 @@ impl IrLowering {
     /// Parse and lower an Achronyme source string into an IR program.
     /// Public/witness inputs must be declared before calling this.
     pub fn lower(mut self, source: &str) -> Result<IrProgram, IrError> {
-        let program = ast_parse_program(source).map_err(IrError::ParseError)?;
+        let (program, parse_errors) = ast_parse_program(source);
+        if let Some(err) = parse_errors.into_iter().next() {
+            return Err(IrError::ParseError(err.message));
+        }
         self.lower_program(&program)?;
         Ok(self.program)
     }
@@ -294,7 +297,10 @@ impl IrLowering {
         source: &str,
         base_path: PathBuf,
     ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
-        let ast_program = ast_parse_program(source).map_err(IrError::ParseError)?;
+        let (ast_program, parse_errors) = ast_parse_program(source);
+        if let Some(err) = parse_errors.into_iter().next() {
+            return Err(IrError::ParseError(err.message));
+        }
 
         let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
         let mut wit_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();

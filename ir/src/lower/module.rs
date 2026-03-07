@@ -70,9 +70,14 @@ impl IrLowering {
         let source = std::fs::read_to_string(&canonical)
             .map_err(|e| IrError::ModuleLoadError(format!("{}: {}", canonical.display(), e)))?;
 
-        let program = ast_parse_program(&source).map_err(|e| {
-            IrError::ModuleLoadError(format!("parse error in {}: {}", canonical.display(), e))
-        })?;
+        let (program, parse_errors) = ast_parse_program(&source);
+        if let Some(err) = parse_errors.into_iter().next() {
+            return Err(IrError::ModuleLoadError(format!(
+                "parse error in {}: {}",
+                canonical.display(),
+                err.message
+            )));
+        }
 
         // Save and set base_path for nested imports
         let old_base = self.base_path.take();

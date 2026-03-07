@@ -1,8 +1,21 @@
 use super::*;
 
+/// Parse source and return the AST, panicking on any parse error.
+fn parse_ok(source: &str) -> Program {
+    let (prog, errors) = parse_program(source);
+    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+    prog
+}
+
+/// Parse source expecting errors, returning true if any errors were produced.
+fn has_errors(source: &str) -> bool {
+    let (_, errors) = parse_program(source);
+    !errors.is_empty()
+}
+
 #[test]
 fn parse_simple_number() {
-    let prog = parse_program("42").unwrap();
+    let prog = parse_ok("42");
     assert_eq!(prog.stmts.len(), 1);
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Number { value, .. }) => assert_eq!(value, "42"),
@@ -12,7 +25,7 @@ fn parse_simple_number() {
 
 #[test]
 fn parse_negative_number() {
-    let prog = parse_program("-7").unwrap();
+    let prog = parse_ok("-7");
     assert_eq!(prog.stmts.len(), 1);
     match &prog.stmts[0] {
         Stmt::Expr(Expr::UnaryOp { op, operand, .. }) => {
@@ -28,7 +41,7 @@ fn parse_negative_number() {
 
 #[test]
 fn parse_let_decl() {
-    let prog = parse_program("let x = 5").unwrap();
+    let prog = parse_ok("let x = 5");
     match &prog.stmts[0] {
         Stmt::LetDecl { name, value, .. } => {
             assert_eq!(name, "x");
@@ -43,7 +56,7 @@ fn parse_let_decl() {
 
 #[test]
 fn parse_binary_add() {
-    let prog = parse_program("a + b").unwrap();
+    let prog = parse_ok("a + b");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
             assert_eq!(*op, BinOp::Add);
@@ -62,7 +75,7 @@ fn parse_binary_add() {
 
 #[test]
 fn parse_function_call() {
-    let prog = parse_program("foo(1, 2)").unwrap();
+    let prog = parse_ok("foo(1, 2)");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Call { callee, args, .. }) => {
             match callee.as_ref() {
@@ -77,7 +90,7 @@ fn parse_function_call() {
 
 #[test]
 fn parse_array_literal() {
-    let prog = parse_program("let arr = [1, 2, 3]").unwrap();
+    let prog = parse_ok("let arr = [1, 2, 3]");
     match &prog.stmts[0] {
         Stmt::LetDecl { value, .. } => match value {
             Expr::Array { elements, .. } => assert_eq!(elements.len(), 3),
@@ -89,7 +102,7 @@ fn parse_array_literal() {
 
 #[test]
 fn parse_if_else() {
-    let prog = parse_program("if x { 1 } else { 2 }").unwrap();
+    let prog = parse_ok("if x { 1 } else { 2 }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::If { else_branch, .. }) => {
             assert!(else_branch.is_some());
@@ -100,7 +113,7 @@ fn parse_if_else() {
 
 #[test]
 fn parse_for_range() {
-    let prog = parse_program("for i in 0..5 { i }").unwrap();
+    let prog = parse_ok("for i in 0..5 { i }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::For { var, iterable, .. }) => {
             assert_eq!(var, "i");
@@ -118,7 +131,7 @@ fn parse_for_range() {
 
 #[test]
 fn parse_fn_decl() {
-    let prog = parse_program("fn add(a, b) { a + b }").unwrap();
+    let prog = parse_ok("fn add(a, b) { a + b }");
     match &prog.stmts[0] {
         Stmt::FnDecl {
             name,
@@ -138,7 +151,7 @@ fn parse_fn_decl() {
 
 #[test]
 fn parse_public_witness_decl() {
-    let prog = parse_program("public x, y\nwitness z[3]").unwrap();
+    let prog = parse_ok("public x, y\nwitness z[3]");
     assert_eq!(prog.stmts.len(), 2);
     match &prog.stmts[0] {
         Stmt::PublicDecl { names, .. } => {
@@ -161,7 +174,7 @@ fn parse_public_witness_decl() {
 
 #[test]
 fn parse_prove_block() {
-    let prog = parse_program("prove { 1 + 2 }").unwrap();
+    let prog = parse_ok("prove { 1 + 2 }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Prove { source, .. }) => {
             assert!(source.contains("1 + 2"));
@@ -173,18 +186,18 @@ fn parse_prove_block() {
 #[test]
 fn reject_chained_comparisons() {
     // P-03: comparison operators cannot be chained
-    assert!(parse_program("a < b < c").is_err());
-    assert!(parse_program("a == b == c").is_err());
-    assert!(parse_program("a >= b <= c").is_err());
+    assert!(has_errors("a < b < c"));
+    assert!(has_errors("a == b == c"));
+    assert!(has_errors("a >= b <= c"));
     // Single comparison is fine
-    assert!(parse_program("a < b").is_ok());
+    assert!(!has_errors("a < b"));
     // Combining with && is fine
-    assert!(parse_program("a < b && b < c").is_ok());
+    assert!(!has_errors("a < b && b < c"));
 }
 
 #[test]
 fn parse_unary_ops() {
-    let prog = parse_program("-x").unwrap();
+    let prog = parse_ok("-x");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::UnaryOp { op, .. }) => assert_eq!(*op, UnaryOp::Neg),
         other => panic!("expected UnaryOp, got {other:?}"),
@@ -193,7 +206,7 @@ fn parse_unary_ops() {
 
 #[test]
 fn parse_index_access() {
-    let prog = parse_program("arr[0]").unwrap();
+    let prog = parse_ok("arr[0]");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Index { .. }) => {}
         other => panic!("expected Index, got {other:?}"),
@@ -202,7 +215,7 @@ fn parse_index_access() {
 
 #[test]
 fn parse_dot_access() {
-    let prog = parse_program("obj.field").unwrap();
+    let prog = parse_ok("obj.field");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::DotAccess { field, .. }) => assert_eq!(field, "field"),
         other => panic!("expected DotAccess, got {other:?}"),
@@ -211,7 +224,7 @@ fn parse_dot_access() {
 
 #[test]
 fn parse_map_literal() {
-    let prog = parse_program(r#"{ key: 1, "str_key": 2 }"#).unwrap();
+    let prog = parse_ok(r#"{ key: 1, "str_key": 2 }"#);
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Map { pairs, .. }) => {
             assert_eq!(pairs.len(), 2);
@@ -229,7 +242,7 @@ fn parse_block_source() {
 #[test]
 fn parse_precedence() {
     // a + b * c should parse as a + (b * c)
-    let prog = parse_program("a + b * c").unwrap();
+    let prog = parse_ok("a + b * c");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::BinOp {
             op: BinOp::Add,
@@ -245,7 +258,7 @@ fn parse_precedence() {
 
 #[test]
 fn parse_chained_comparison() {
-    let prog = parse_program("a == b").unwrap();
+    let prog = parse_ok("a == b");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::BinOp { op: BinOp::Eq, .. }) => {}
         other => panic!("expected Eq, got {other:?}"),
@@ -254,7 +267,7 @@ fn parse_chained_comparison() {
 
 #[test]
 fn parse_logical_operators() {
-    let prog = parse_program("a && b || c").unwrap();
+    let prog = parse_ok("a && b || c");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::BinOp {
             op: BinOp::Or, lhs, ..
@@ -269,7 +282,7 @@ fn parse_logical_operators() {
 #[test]
 fn parse_right_assoc_pow() {
     // 2^3^4 should parse as 2^(3^4)
-    let prog = parse_program("2^3^4").unwrap();
+    let prog = parse_ok("2^3^4");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::BinOp {
             op: BinOp::Pow,
@@ -293,7 +306,7 @@ fn parse_right_assoc_pow() {
 #[test]
 fn parse_neg_before_pow() {
     // -a^2 should parse as -(a^2)
-    let prog = parse_program("-a^2").unwrap();
+    let prog = parse_ok("-a^2");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::UnaryOp {
             op: UnaryOp::Neg,
@@ -309,7 +322,7 @@ fn parse_neg_before_pow() {
 
 #[test]
 fn parse_assignment() {
-    let prog = parse_program("x = 5").unwrap();
+    let prog = parse_ok("x = 5");
     match &prog.stmts[0] {
         Stmt::Assignment { target, value, .. } => {
             match target {
@@ -327,19 +340,20 @@ fn parse_assignment() {
 
 #[test]
 fn parse_empty_program() {
-    let prog = parse_program("").unwrap();
+    let prog = parse_ok("");
     assert!(prog.stmts.is_empty());
 }
 
 #[test]
 fn parse_error_unexpected() {
-    let err = parse_program(")").unwrap_err();
-    assert!(err.contains("expected expression"));
+    let (_, errors) = parse_program(")");
+    assert!(!errors.is_empty());
+    assert!(errors[0].message.contains("expected expression"));
 }
 
 #[test]
 fn parse_while_loop() {
-    let prog = parse_program("while x { 1 }").unwrap();
+    let prog = parse_ok("while x { 1 }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::While { .. }) => {}
         other => panic!("expected While, got {other:?}"),
@@ -348,7 +362,7 @@ fn parse_while_loop() {
 
 #[test]
 fn parse_forever_loop() {
-    let prog = parse_program("forever { 1 }").unwrap();
+    let prog = parse_ok("forever { 1 }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Forever { .. }) => {}
         other => panic!("expected Forever, got {other:?}"),
@@ -357,7 +371,7 @@ fn parse_forever_loop() {
 
 #[test]
 fn parse_fn_expr_anonymous() {
-    let prog = parse_program("fn(x) { x + 1 }").unwrap();
+    let prog = parse_ok("fn(x) { x + 1 }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::FnExpr { name, params, .. }) => {
             assert!(name.is_none());
@@ -370,7 +384,7 @@ fn parse_fn_expr_anonymous() {
 
 #[test]
 fn parse_for_in_expr() {
-    let prog = parse_program("for x in arr { x }").unwrap();
+    let prog = parse_ok("for x in arr { x }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::For { var, iterable, .. }) => {
             assert_eq!(var, "x");
@@ -388,7 +402,7 @@ fn parse_for_in_expr() {
 
 #[test]
 fn parse_else_if() {
-    let prog = parse_program("if a { 1 } else if b { 2 } else { 3 }").unwrap();
+    let prog = parse_ok("if a { 1 } else if b { 2 } else { 3 }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::If {
             else_branch: Some(ElseBranch::If(inner)),
@@ -406,7 +420,7 @@ fn parse_else_if() {
 
 #[test]
 fn parse_mut_decl() {
-    let prog = parse_program("mut x = 10").unwrap();
+    let prog = parse_ok("mut x = 10");
     match &prog.stmts[0] {
         Stmt::MutDecl { name, .. } => assert_eq!(name, "x"),
         other => panic!("expected MutDecl, got {other:?}"),
@@ -415,7 +429,7 @@ fn parse_mut_decl() {
 
 #[test]
 fn parse_return_with_value() {
-    let prog = parse_program("return 42").unwrap();
+    let prog = parse_ok("return 42");
     match &prog.stmts[0] {
         Stmt::Return {
             value: Some(Expr::Number { value, .. }),
@@ -430,7 +444,7 @@ fn parse_return_with_value() {
 #[test]
 fn parse_return_without_value() {
     // `return` followed by `}` has no value
-    let prog = parse_program("if true { return }").unwrap();
+    let prog = parse_ok("if true { return }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::If { then_block, .. }) => match &then_block.stmts[0] {
             Stmt::Return { value: None, .. } => {}
@@ -442,7 +456,7 @@ fn parse_return_without_value() {
 
 #[test]
 fn parse_nil() {
-    let prog = parse_program("nil").unwrap();
+    let prog = parse_ok("nil");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Nil { .. }) => {}
         other => panic!("expected Nil, got {other:?}"),
@@ -451,7 +465,7 @@ fn parse_nil() {
 
 #[test]
 fn parse_bool_true() {
-    let prog = parse_program("true").unwrap();
+    let prog = parse_ok("true");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Bool { value: true, .. }) => {}
         other => panic!("expected Bool(true), got {other:?}"),
@@ -460,7 +474,7 @@ fn parse_bool_true() {
 
 #[test]
 fn parse_string() {
-    let prog = parse_program(r#""hello""#).unwrap();
+    let prog = parse_ok(r#""hello""#);
     match &prog.stmts[0] {
         Stmt::Expr(Expr::StringLit { value, .. }) => assert_eq!(value, "hello"),
         other => panic!("expected StringLit, got {other:?}"),
@@ -469,7 +483,7 @@ fn parse_string() {
 
 #[test]
 fn parse_not_operator() {
-    let prog = parse_program("!x").unwrap();
+    let prog = parse_ok("!x");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::UnaryOp {
             op: UnaryOp::Not, ..
@@ -480,13 +494,13 @@ fn parse_not_operator() {
 
 #[test]
 fn parse_semicolons() {
-    let prog = parse_program("1; 2; 3").unwrap();
+    let prog = parse_ok("1; 2; 3");
     assert_eq!(prog.stmts.len(), 3);
 }
 
 #[test]
 fn parse_nested_call() {
-    let prog = parse_program("f(g(x))").unwrap();
+    let prog = parse_ok("f(g(x))");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::Call { callee, args, .. }) => {
             match callee.as_ref() {
@@ -509,7 +523,7 @@ fn parse_nested_call() {
 
 #[test]
 fn parse_let_with_type() {
-    let prog = parse_program("let x: Field = 5").unwrap();
+    let prog = parse_ok("let x: Field = 5");
     match &prog.stmts[0] {
         Stmt::LetDecl { name, type_ann, .. } => {
             assert_eq!(name, "x");
@@ -521,7 +535,7 @@ fn parse_let_with_type() {
 
 #[test]
 fn parse_let_with_bool_type() {
-    let prog = parse_program("let ok: Bool = true").unwrap();
+    let prog = parse_ok("let ok: Bool = true");
     match &prog.stmts[0] {
         Stmt::LetDecl { name, type_ann, .. } => {
             assert_eq!(name, "ok");
@@ -533,7 +547,7 @@ fn parse_let_with_bool_type() {
 
 #[test]
 fn parse_let_without_type() {
-    let prog = parse_program("let x = 5").unwrap();
+    let prog = parse_ok("let x = 5");
     match &prog.stmts[0] {
         Stmt::LetDecl { type_ann, .. } => {
             assert!(type_ann.is_none());
@@ -544,7 +558,7 @@ fn parse_let_without_type() {
 
 #[test]
 fn parse_mut_with_type() {
-    let prog = parse_program("mut x: Field = 10").unwrap();
+    let prog = parse_ok("mut x: Field = 10");
     match &prog.stmts[0] {
         Stmt::MutDecl { name, type_ann, .. } => {
             assert_eq!(name, "x");
@@ -556,7 +570,7 @@ fn parse_mut_with_type() {
 
 #[test]
 fn parse_public_with_type() {
-    let prog = parse_program("public x: Field").unwrap();
+    let prog = parse_ok("public x: Field");
     match &prog.stmts[0] {
         Stmt::PublicDecl { names, .. } => {
             assert_eq!(names[0].name, "x");
@@ -568,7 +582,7 @@ fn parse_public_with_type() {
 
 #[test]
 fn parse_witness_with_type() {
-    let prog = parse_program("witness flag: Bool").unwrap();
+    let prog = parse_ok("witness flag: Bool");
     match &prog.stmts[0] {
         Stmt::WitnessDecl { names, .. } => {
             assert_eq!(names[0].name, "flag");
@@ -580,7 +594,7 @@ fn parse_witness_with_type() {
 
 #[test]
 fn parse_witness_array_with_type() {
-    let prog = parse_program("witness path[3]: Field").unwrap();
+    let prog = parse_ok("witness path[3]: Field");
     match &prog.stmts[0] {
         Stmt::WitnessDecl { names, .. } => {
             assert_eq!(names[0].name, "path");
@@ -593,7 +607,7 @@ fn parse_witness_array_with_type() {
 
 #[test]
 fn parse_public_without_type() {
-    let prog = parse_program("public x").unwrap();
+    let prog = parse_ok("public x");
     match &prog.stmts[0] {
         Stmt::PublicDecl { names, .. } => {
             assert!(names[0].type_ann.is_none());
@@ -604,7 +618,7 @@ fn parse_public_without_type() {
 
 #[test]
 fn parse_fn_with_typed_params() {
-    let prog = parse_program("fn hash(a: Field, b: Field) -> Field { a + b }").unwrap();
+    let prog = parse_ok("fn hash(a: Field, b: Field) -> Field { a + b }");
     match &prog.stmts[0] {
         Stmt::FnDecl {
             name,
@@ -626,7 +640,7 @@ fn parse_fn_with_typed_params() {
 
 #[test]
 fn parse_fn_mixed_typed_untyped_params() {
-    let prog = parse_program("fn f(a: Field, b) { a + b }").unwrap();
+    let prog = parse_ok("fn f(a: Field, b) { a + b }");
     match &prog.stmts[0] {
         Stmt::FnDecl {
             params,
@@ -643,7 +657,7 @@ fn parse_fn_mixed_typed_untyped_params() {
 
 #[test]
 fn parse_fn_expr_with_return_type() {
-    let prog = parse_program("fn(x: Bool) -> Bool { !x }").unwrap();
+    let prog = parse_ok("fn(x: Bool) -> Bool { !x }");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::FnExpr {
             params,
@@ -661,7 +675,7 @@ fn parse_fn_expr_with_return_type() {
 #[test]
 fn parse_arrow_token() {
     // Ensure -> doesn't interfere with subtraction
-    let prog = parse_program("a - b").unwrap();
+    let prog = parse_ok("a - b");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::BinOp { op: BinOp::Sub, .. }) => {}
         other => panic!("expected Sub, got {other:?}"),
@@ -671,7 +685,7 @@ fn parse_arrow_token() {
 #[test]
 fn parse_negative_still_works() {
     // Ensure negation still works after lexer change
-    let prog = parse_program("-5").unwrap();
+    let prog = parse_ok("-5");
     match &prog.stmts[0] {
         Stmt::Expr(Expr::UnaryOp {
             op: UnaryOp::Neg, ..
@@ -682,7 +696,7 @@ fn parse_negative_still_works() {
 
 #[test]
 fn parse_type_annotation_array() {
-    let prog = parse_program("let a: Field[4] = [1, 2, 3, 4]").unwrap();
+    let prog = parse_ok("let a: Field[4] = [1, 2, 3, 4]");
     match &prog.stmts[0] {
         Stmt::LetDecl { type_ann, .. } => {
             assert_eq!(*type_ann, Some(TypeAnnotation::FieldArray(4)));
@@ -693,7 +707,7 @@ fn parse_type_annotation_array() {
 
 #[test]
 fn parse_type_annotation_bool_array() {
-    let prog = parse_program("witness flags[2]: Bool[2]").unwrap();
+    let prog = parse_ok("witness flags[2]: Bool[2]");
     match &prog.stmts[0] {
         Stmt::WitnessDecl { names, .. } => {
             assert_eq!(names[0].type_ann, Some(TypeAnnotation::BoolArray(2)));
@@ -704,12 +718,12 @@ fn parse_type_annotation_bool_array() {
 
 #[test]
 fn parse_invalid_type_annotation() {
-    assert!(parse_program("let x: Integer = 5").is_err());
+    assert!(has_errors("let x: Integer = 5"));
 }
 
 #[test]
 fn parse_multiple_public_with_types() {
-    let prog = parse_program("public x: Field, y: Bool").unwrap();
+    let prog = parse_ok("public x: Field, y: Bool");
     match &prog.stmts[0] {
         Stmt::PublicDecl { names, .. } => {
             assert_eq!(names.len(), 2);
@@ -723,7 +737,7 @@ fn parse_multiple_public_with_types() {
 #[test]
 fn field_and_bool_not_keywords() {
     // Field and Bool are NOT keywords, they can be used as identifiers
-    let prog = parse_program("let Field = 5").unwrap();
+    let prog = parse_ok("let Field = 5");
     match &prog.stmts[0] {
         Stmt::LetDecl { name, .. } => assert_eq!(name, "Field"),
         other => panic!("expected LetDecl, got {other:?}"),
@@ -736,7 +750,7 @@ fn field_and_bool_not_keywords() {
 
 #[test]
 fn parse_import_basic() {
-    let prog = parse_program(r#"import "./utils.ach" as utils"#).unwrap();
+    let prog = parse_ok(r#"import "./utils.ach" as utils"#);
     assert_eq!(prog.stmts.len(), 1);
     match &prog.stmts[0] {
         Stmt::Import { path, alias, .. } => {
@@ -749,7 +763,7 @@ fn parse_import_basic() {
 
 #[test]
 fn parse_export_fn() {
-    let prog = parse_program("export fn add(a, b) { a + b }").unwrap();
+    let prog = parse_ok("export fn add(a, b) { a + b }");
     assert_eq!(prog.stmts.len(), 1);
     match &prog.stmts[0] {
         Stmt::Export { inner, .. } => match inner.as_ref() {
@@ -765,7 +779,7 @@ fn parse_export_fn() {
 
 #[test]
 fn parse_export_let() {
-    let prog = parse_program("export let PI = 3").unwrap();
+    let prog = parse_ok("export let PI = 3");
     assert_eq!(prog.stmts.len(), 1);
     match &prog.stmts[0] {
         Stmt::Export { inner, .. } => match inner.as_ref() {
@@ -779,35 +793,31 @@ fn parse_export_let() {
 #[test]
 fn parse_export_mut_error() {
     // export mut should fail
-    let result = parse_program("export mut x = 5");
-    assert!(result.is_err());
+    assert!(has_errors("export mut x = 5"));
 }
 
 #[test]
 fn parse_import_no_as_error() {
     // import without "as" should fail
-    let result = parse_program(r#"import "./foo.ach""#);
-    assert!(result.is_err());
+    assert!(has_errors(r#"import "./foo.ach""#));
 }
 
 #[test]
 fn import_export_as_are_keywords() {
     // import, export, and as are now keywords and cannot be used as variable names
-    assert!(parse_program("let import = 5").is_err());
-    assert!(parse_program("let export = 5").is_err());
-    assert!(parse_program("let as = 5").is_err());
+    assert!(has_errors("let import = 5"));
+    assert!(has_errors("let export = 5"));
+    assert!(has_errors("let as = 5"));
 }
 
 // ====================================================================
 // Error recovery tests (issue #63)
 // ====================================================================
 
-use crate::parser::parse_program_with_errors;
-
 #[test]
 fn recovery_collects_multiple_errors() {
     let source = "let x = \nlet y = 2\nlet z = ";
-    let (prog, errors) = parse_program_with_errors(source);
+    let (prog, errors) = parse_program(source);
     // Should collect 2 errors (lines 1 and 3) and still parse line 2
     assert_eq!(errors.len(), 2);
     // AST should have 3 statements (Error, LetDecl, Error)
@@ -820,7 +830,7 @@ fn recovery_collects_multiple_errors() {
 #[test]
 fn recovery_at_semicolons() {
     let source = "let a = ; let b = 2; let c = ;";
-    let (prog, errors) = parse_program_with_errors(source);
+    let (prog, errors) = parse_program(source);
     assert_eq!(errors.len(), 2);
     // a errors, b succeeds, c errors
     assert!(matches!(&prog.stmts[1], Stmt::LetDecl { name, .. } if name == "b"));
@@ -830,7 +840,7 @@ fn recovery_at_semicolons() {
 fn recovery_at_declaration_keywords() {
     // `)` fails; `let x = 1` ok; `let = 5` fails (missing ident); `fn add` ok
     let source = ")\nlet x = 1\nlet = 5\nfn add(a, b) { a + b }";
-    let (prog, errors) = parse_program_with_errors(source);
+    let (prog, errors) = parse_program(source);
     assert!(errors.len() >= 2);
     let good_stmts: Vec<_> = prog
         .stmts
@@ -845,7 +855,7 @@ fn recovery_at_declaration_keywords() {
 #[test]
 fn recovery_valid_program_no_errors() {
     let source = "let x = 1\nlet y = 2\nlet z = x + y";
-    let (prog, errors) = parse_program_with_errors(source);
+    let (prog, errors) = parse_program(source);
     assert!(errors.is_empty());
     assert_eq!(prog.stmts.len(), 3);
     assert!(prog.stmts.iter().all(|s| !matches!(s, Stmt::Error { .. })));
@@ -855,14 +865,14 @@ fn recovery_valid_program_no_errors() {
 fn recovery_error_limit() {
     // Generate 25 errors — should stop at 20
     let source = (0..25).map(|_| "let = ;").collect::<Vec<_>>().join("\n");
-    let (_prog, errors) = parse_program_with_errors(&source);
+    let (_prog, errors) = parse_program(&source);
     assert_eq!(errors.len(), 20);
 }
 
 #[test]
 fn recovery_single_error_still_works() {
     let source = ")";
-    let (prog, errors) = parse_program_with_errors(source);
+    let (prog, errors) = parse_program(source);
     assert_eq!(errors.len(), 1);
     assert_eq!(prog.stmts.len(), 1);
     assert!(matches!(&prog.stmts[0], Stmt::Error { .. }));
@@ -870,7 +880,7 @@ fn recovery_single_error_still_works() {
 
 #[test]
 fn recovery_empty_source_no_errors() {
-    let (prog, errors) = parse_program_with_errors("");
+    let (prog, errors) = parse_program("");
     assert!(errors.is_empty());
     assert!(prog.stmts.is_empty());
 }
@@ -879,7 +889,7 @@ fn recovery_empty_source_no_errors() {
 fn recovery_interleaved_good_and_bad() {
     // `let = ` fails (missing ident); valid lets succeed
     let source = "let a = 1\nlet = 5\nlet b = 2\nlet = 5\nlet c = 3";
-    let (prog, errors) = parse_program_with_errors(source);
+    let (prog, errors) = parse_program(source);
     assert_eq!(errors.len(), 2);
     let good: Vec<_> = prog
         .stmts
