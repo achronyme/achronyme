@@ -1,8 +1,9 @@
-use crate::error::CompilerError;
+use crate::error::{CompilerError, OptSpan};
 use crate::function_compiler::FunctionCompiler;
 use crate::interner::{BigIntInterner, FieldInterner, StringInterner};
 use crate::module_loader::ModuleLoader;
 use crate::statements::StatementCompiler;
+use achronyme_parser::ast::Span;
 use memory::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -36,6 +37,9 @@ pub struct Compiler {
     pub imported_aliases: HashMap<String, PathBuf>,
     /// Tracks modules currently being compiled (for cycle detection).
     pub compiling_modules: HashSet<PathBuf>,
+
+    /// Span of the expression/statement currently being compiled.
+    pub current_span: Option<Span>,
 }
 
 use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
@@ -73,7 +77,13 @@ impl Compiler {
             module_prefix: None,
             imported_aliases: HashMap::new(),
             compiling_modules: HashSet::new(),
+            current_span: None,
         }
+    }
+
+    /// Get the OptSpan for the current expression/statement being compiled.
+    pub fn cur_span(&self) -> OptSpan {
+        self.current_span.as_ref().map(|s| Box::new(s.into()))
     }
 
     // Wrappers for FunctionCompiler

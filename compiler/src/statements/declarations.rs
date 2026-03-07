@@ -1,5 +1,5 @@
 use crate::codegen::Compiler;
-use crate::error::CompilerError;
+use crate::error::{span_box, CompilerError};
 use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
 use crate::types::Local;
@@ -27,7 +27,7 @@ impl DeclarationCompiler for Compiler {
             });
         } else {
             if self.next_global_idx == u16::MAX {
-                return Err(CompilerError::TooManyConstants);
+                return Err(CompilerError::TooManyConstants(self.cur_span()));
             }
             let idx = self.next_global_idx;
             self.next_global_idx += 1;
@@ -56,7 +56,7 @@ impl DeclarationCompiler for Compiler {
             });
         } else {
             if self.next_global_idx == u16::MAX {
-                return Err(CompilerError::TooManyConstants);
+                return Err(CompilerError::TooManyConstants(self.cur_span()));
             }
             let idx = self.next_global_idx;
             self.next_global_idx += 1;
@@ -74,7 +74,7 @@ impl DeclarationCompiler for Compiler {
 
     fn compile_assignment(&mut self, target: &Expr, value: &Expr) -> Result<(), CompilerError> {
         match target {
-            Expr::Ident { name, .. } => {
+            Expr::Ident { name, span, .. } => {
                 // Simple identifier assignment
                 let val_reg = self.compile_expr(value)?;
 
@@ -86,10 +86,10 @@ impl DeclarationCompiler for Compiler {
                 } else if let Some(global_idx) = self.global_symbols.get(name) {
                     self.emit_abx(OpCode::SetGlobal, val_reg, *global_idx)?;
                 } else {
-                    return Err(CompilerError::UnknownOperator(format!(
-                        "Undefined variable '{}'",
-                        name
-                    )));
+                    return Err(CompilerError::UnknownOperator(
+                        format!("Undefined variable '{}'", name),
+                        span_box(span),
+                    ));
                 }
 
                 self.free_reg(val_reg)?;
@@ -117,7 +117,7 @@ impl DeclarationCompiler for Compiler {
                 let const_idx = self.add_constant(key_val)?;
                 let key_reg = self.alloc_reg()?;
                 if const_idx > 0xFFFF {
-                    return Err(CompilerError::TooManyConstants);
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
                 }
                 self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16)?;
 
@@ -132,6 +132,7 @@ impl DeclarationCompiler for Compiler {
             }
             _ => Err(CompilerError::UnexpectedRule(
                 "Invalid assignment target".into(),
+                self.cur_span(),
             )),
         }
     }

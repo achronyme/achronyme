@@ -47,7 +47,7 @@ impl FunctionCompiler {
     pub fn alloc_contiguous(&mut self, count: u8) -> Result<u8, CompilerError> {
         let start = self.reg_top;
         if (start as usize) + (count as usize) > 255 {
-            return Err(CompilerError::RegisterOverflow);
+            return Err(CompilerError::RegisterOverflow(None));
         }
         self.reg_top += count;
 
@@ -60,7 +60,7 @@ impl FunctionCompiler {
     pub fn alloc_reg(&mut self) -> Result<u8, CompilerError> {
         let r = self.reg_top;
         if r == 255 {
-            return Err(CompilerError::RegisterOverflow);
+            return Err(CompilerError::RegisterOverflow(None));
         }
         self.reg_top += 1;
 

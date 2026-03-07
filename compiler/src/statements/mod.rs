@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::codegen::Compiler;
 use crate::control_flow::ControlFlowCompiler;
 use crate::declarations::DeclarationCompiler;
-use crate::error::CompilerError;
+use crate::error::{span_box, CompilerError};
 use crate::expressions::ExpressionCompiler;
 use crate::functions::FunctionDefinitionCompiler;
 use achronyme_parser::ast::*;
@@ -20,6 +20,11 @@ pub trait StatementCompiler {
 
 /// Extract the source line number from a statement (1-based), or 0 if unavailable.
 fn stmt_line(stmt: &Stmt) -> u32 {
+    stmt_span(stmt).map_or(0, |s| s.line_start as u32)
+}
+
+/// Extract the span from a statement, if available.
+fn stmt_span(stmt: &Stmt) -> Option<&Span> {
     match stmt {
         Stmt::LetDecl { span, .. }
         | Stmt::MutDecl { span, .. }
@@ -33,20 +38,17 @@ fn stmt_line(stmt: &Stmt) -> u32 {
         | Stmt::Continue { span }
         | Stmt::Import { span, .. }
         | Stmt::Export { span, .. }
-        | Stmt::Error { span } => span.line_start as u32,
-        Stmt::Expr(expr) => expr_line(expr),
+        | Stmt::Error { span } => Some(span),
+        Stmt::Expr(expr) => Some(expr.span()),
     }
-}
-
-/// Extract the source line number from an expression (1-based), or 0 if unavailable.
-fn expr_line(expr: &Expr) -> u32 {
-    expr.span().line_start as u32
 }
 
 impl StatementCompiler for Compiler {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompilerError> {
         // Track source line for error reporting
         self.current()?.current_line = stmt_line(stmt);
+        // Track span for error diagnostics
+        self.current_span = stmt_span(stmt).cloned();
 
         match stmt {
             Stmt::LetDecl { name, value, .. } => self.compile_let_decl(name, value),
@@ -111,7 +113,7 @@ impl StatementCompiler for Compiler {
         &mut self,
         path: &str,
         alias: &str,
-        _span: &Span,
+        span: &Span,
     ) -> Result<(), CompilerError> {
         // 1. Resolve path relative to base_path
         let base = self
@@ -120,17 +122,23 @@ impl StatementCompiler for Compiler {
             .unwrap_or_else(|| Path::new(".").to_path_buf());
         let resolved = base.join(path);
         let canonical = resolved.canonicalize().map_err(|_| {
-            CompilerError::ModuleNotFound(format!(
-                "module not found: {} (resolved from {})",
-                path,
-                base.display()
-            ))
+            CompilerError::ModuleNotFound(
+                format!(
+                    "module not found: {} (resolved from {})",
+                    path,
+                    base.display()
+                ),
+                span_box(span),
+            )
         })?;
 
         // 2. Check for duplicate alias
         if let Some(existing) = self.imported_aliases.get(alias) {
             if *existing != canonical {
-                return Err(CompilerError::DuplicateModuleAlias(alias.to_string()));
+                return Err(CompilerError::DuplicateModuleAlias(
+                    alias.to_string(),
+                    span_box(span),
+                ));
             }
             // Same path, same alias → already imported, skip
             return Ok(());
@@ -142,6 +150,7 @@ impl StatementCompiler for Compiler {
         if self.compiling_modules.contains(&canonical) {
             return Err(CompilerError::CircularImport(
                 canonical.display().to_string(),
+                span_box(span),
             ));
         }
 
@@ -190,17 +199,20 @@ impl StatementCompiler for Compiler {
             let key_val = Value::string(key_handle);
             let const_idx = self.add_constant(key_val)?;
             if const_idx > 0xFFFF {
-                return Err(CompilerError::TooManyConstants);
+                return Err(CompilerError::TooManyConstants(span_box(span)));
             }
             self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16)?;
 
             // Value: load from the mangled global
             let mangled = format!("{}::{}", alias, name);
             let global_idx = *self.global_symbols.get(&mangled).ok_or_else(|| {
-                CompilerError::CompileError(format!(
-                    "internal error: mangled global `{}` not found after module compilation",
-                    mangled
-                ))
+                CompilerError::CompileError(
+                    format!(
+                        "internal error: mangled global `{}` not found after module compilation",
+                        mangled
+                    ),
+                    span_box(span),
+                )
             })?;
             self.emit_abx(OpCode::GetGlobal, val_reg, global_idx)?;
         }
@@ -217,7 +229,7 @@ impl StatementCompiler for Compiler {
 
         // Bind the map to the alias as a global
         if self.next_global_idx == u16::MAX {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(span_box(span)));
         }
         let idx = self.next_global_idx;
         self.next_global_idx += 1;

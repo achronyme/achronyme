@@ -161,7 +161,10 @@ impl ControlFlowCompiler for Compiler {
             .current_ref()?
             .loop_stack
             .last()
-            .ok_or(CompilerError::CompileError("break outside of loop".into()))?;
+            .ok_or(CompilerError::CompileError(
+                "break outside of loop".into(),
+                self.cur_span(),
+            ))?;
 
         let target_depth = loop_ctx.scope_depth;
 
@@ -197,6 +200,7 @@ impl ControlFlowCompiler for Compiler {
             .last()
             .ok_or(CompilerError::CompileError(
                 "continue outside of loop".into(),
+                self.cur_span(),
             ))?;
 
         let target_depth = loop_ctx.scope_depth;
@@ -238,6 +242,7 @@ impl ControlFlowCompiler for Compiler {
                     return Err(CompilerError::CompilerLimitation(
                         "for..in range with more than 255 iterations; use a while loop instead"
                             .into(),
+                        self.cur_span(),
                     ));
                 }
 
@@ -248,7 +253,7 @@ impl ControlFlowCompiler for Compiler {
                     let r = self.alloc_reg()?;
                     let ci = self.add_constant(Value::int(i as i64))?;
                     if ci > 0xFFFF {
-                        return Err(CompilerError::TooManyConstants);
+                        return Err(CompilerError::TooManyConstants(self.cur_span()));
                     }
                     self.emit_abx(OpCode::LoadConst, r, ci as u16)?;
                 }
@@ -355,6 +360,7 @@ impl ControlFlowCompiler for Compiler {
         if count > 127 {
             return Err(CompilerError::CompilerLimitation(
                 "prove block captures too many variables".into(),
+                self.cur_span(),
             ));
         }
 
@@ -372,7 +378,7 @@ impl ControlFlowCompiler for Compiler {
                 let key_val = Value::string(key_handle);
                 let key_idx = self.add_constant(key_val)?;
                 if key_idx > 0xFFFF {
-                    return Err(CompilerError::TooManyConstants);
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
                 }
                 self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16)?;
 
@@ -385,9 +391,10 @@ impl ControlFlowCompiler for Compiler {
                 } else if let Some(&global_idx) = self.global_symbols.get(name) {
                     self.emit_abx(OpCode::GetGlobal, val_reg, global_idx)?;
                 } else {
-                    return Err(CompilerError::CompileError(format!(
-                        "prove: variable `{name}` not found in scope"
-                    )));
+                    return Err(CompilerError::CompileError(
+                        format!("prove: variable `{name}` not found in scope"),
+                        self.cur_span(),
+                    ));
                 }
             }
 
@@ -411,7 +418,7 @@ impl ControlFlowCompiler for Compiler {
         let src_val = Value::string(src_handle);
         let src_idx = self.add_constant(src_val)?;
         if src_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
 
         // Emit Prove R[map_reg], K[src_idx]
@@ -433,9 +440,10 @@ fn prescan_prove_block(block: &Block) -> Result<Vec<String>, CompilerError> {
                 for decl in decls {
                     if let Some(n) = decl.array_size {
                         if n > 10_000 {
-                            return Err(CompilerError::CompilerLimitation(format!(
-                                "array size {n} exceeds maximum of 10,000"
-                            )));
+                            return Err(CompilerError::CompilerLimitation(
+                                format!("array size {n} exceeds maximum of 10,000"),
+                                None,
+                            ));
                         }
                         for i in 0..n {
                             names.push(format!("{}_{i}", decl.name));

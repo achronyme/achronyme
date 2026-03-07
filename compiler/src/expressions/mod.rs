@@ -18,6 +18,7 @@ pub trait ExpressionCompiler {
 
 impl ExpressionCompiler for Compiler {
     fn compile_expr(&mut self, expr: &Expr) -> Result<u8, CompilerError> {
+        self.current_span = Some(expr.span().clone());
         match expr {
             // === Atoms ===
             Expr::Number { value, .. } => self.compile_number(value),
@@ -131,32 +132,36 @@ impl ExpressionCompiler for Compiler {
 // Private helpers
 impl Compiler {
     fn compile_number(&mut self, value: &str) -> Result<u8, CompilerError> {
-        let val: i64 = value.parse().map_err(|_| CompilerError::InvalidNumber)?;
+        let sp = self.cur_span();
+        let val: i64 = value
+            .parse()
+            .map_err(|_| CompilerError::InvalidNumber(sp.clone()))?;
         if !(memory::I60_MIN..=memory::I60_MAX).contains(&val) {
-            return Err(CompilerError::InvalidNumber);
+            return Err(CompilerError::InvalidNumber(sp));
         }
         let reg = self.alloc_reg()?;
         let const_idx = self.add_constant(Value::int(val))?;
         if const_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
     }
 
     fn compile_field_lit(&mut self, value: &str, radix: &FieldRadix) -> Result<u8, CompilerError> {
+        let sp = self.cur_span();
         let fe = match radix {
             FieldRadix::Decimal => memory::FieldElement::from_decimal_str(value),
             FieldRadix::Hex => memory::FieldElement::from_hex_str(value),
             FieldRadix::Binary => memory::FieldElement::from_binary_str(value),
         }
-        .ok_or(CompilerError::InvalidNumber)?;
+        .ok_or(CompilerError::InvalidNumber(sp))?;
         let handle = self.intern_field(fe);
         let val = Value::field(handle);
         let const_idx = self.add_constant(val)?;
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
@@ -168,23 +173,24 @@ impl Compiler {
         width: u16,
         radix: &BigIntRadix,
     ) -> Result<u8, CompilerError> {
+        let sp = self.cur_span();
         let w = match width {
             256 => memory::BigIntWidth::W256,
             512 => memory::BigIntWidth::W512,
-            _ => return Err(CompilerError::InvalidNumber),
+            _ => return Err(CompilerError::InvalidNumber(sp)),
         };
         let bi = match radix {
             BigIntRadix::Hex => memory::BigInt::from_hex_str(value, w),
             BigIntRadix::Decimal => memory::BigInt::from_decimal_str(value, w),
             BigIntRadix::Binary => memory::BigInt::from_binary_str(value, w),
         }
-        .ok_or(CompilerError::InvalidNumber)?;
+        .ok_or(CompilerError::InvalidNumber(self.cur_span()))?;
         let handle = self.intern_bigint(bi);
         let val = Value::bigint(handle);
         let const_idx = self.add_constant(val)?;
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
@@ -197,7 +203,7 @@ impl Compiler {
         let const_idx = self.add_constant(val)?;
         let reg = self.alloc_reg()?;
         if const_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
         Ok(reg)
@@ -221,13 +227,16 @@ impl Compiler {
             } else if let Some(ref prefix) = self.module_prefix {
                 let mangled = format!("{prefix}::{name}");
                 *self.global_symbols.get(&mangled).ok_or_else(|| {
-                    CompilerError::UnknownOperator(format!("Undefined variable: {}", name))
+                    CompilerError::UnknownOperator(
+                        format!("Undefined variable: {}", name),
+                        self.cur_span(),
+                    )
                 })?
             } else {
-                return Err(CompilerError::UnknownOperator(format!(
-                    "Undefined variable: {}",
-                    name
-                )));
+                return Err(CompilerError::UnknownOperator(
+                    format!("Undefined variable: {}", name),
+                    self.cur_span(),
+                ));
             };
             self.emit_abx(OpCode::GetGlobal, reg, idx)?;
             Ok(reg)
@@ -244,12 +253,13 @@ impl Compiler {
             if reg != start_reg.wrapping_add(i as u8) {
                 return Err(CompilerError::CompilerLimitation(
                     "Register allocation fragmentation in list literal".into(),
+                    self.cur_span(),
                 ));
             }
         }
 
         if count > 255 {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
 
         self.emit_abc(OpCode::BuildList, target_reg, start_reg, count as u8)?;
@@ -266,7 +276,7 @@ impl Compiler {
         let count = pairs.len();
 
         if count > 127 {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
 
         let target_reg = self.alloc_reg()?;
@@ -292,7 +302,7 @@ impl Compiler {
             let const_idx = self.add_constant(key_val)?;
 
             if const_idx > 0xFFFF {
-                return Err(CompilerError::TooManyConstants);
+                return Err(CompilerError::TooManyConstants(self.cur_span()));
             }
             self.emit_abx(OpCode::LoadConst, key_reg, const_idx as u16)?;
 
@@ -321,9 +331,10 @@ impl Compiler {
         }
 
         if arg_count > 255 {
-            return Err(CompilerError::CompilerLimitation(format!(
-                "function call has {arg_count} arguments (maximum is 255)"
-            )));
+            return Err(CompilerError::CompilerLimitation(
+                format!("function call has {arg_count} arguments (maximum is 255)"),
+                self.cur_span(),
+            ));
         }
 
         self.emit_abc(OpCode::Call, func_reg, func_reg, arg_count as u8)?;
@@ -358,7 +369,7 @@ impl Compiler {
         let const_idx = self.add_constant(val)?;
         let r = self.alloc_reg()?;
         if const_idx > 0xFFFF {
-            return Err(CompilerError::TooManyConstants);
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, r, const_idx as u16)?;
         Ok(r)

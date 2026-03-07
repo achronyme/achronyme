@@ -25,16 +25,19 @@ impl FunctionDefinitionCompiler for Compiler {
     ) -> Result<u8, CompilerError> {
         let fn_name = name.unwrap_or("lambda").to_string();
         if params.len() > 255 {
-            return Err(CompilerError::CompilerLimitation(format!(
-                "function `{fn_name}` has {} parameters (maximum is 255)",
-                params.len()
-            )));
+            return Err(CompilerError::CompilerLimitation(
+                format!(
+                    "function `{fn_name}` has {} parameters (maximum is 255)",
+                    params.len()
+                ),
+                self.cur_span(),
+            ));
         }
         let arity = params.len() as u8;
 
         let global_idx = if name.is_some() {
             if self.next_global_idx == u16::MAX {
-                return Err(CompilerError::TooManyConstants);
+                return Err(CompilerError::TooManyConstants(self.cur_span()));
             }
             let idx = self.next_global_idx;
             self.next_global_idx += 1;
