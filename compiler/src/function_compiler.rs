@@ -72,11 +72,16 @@ impl FunctionCompiler {
         Ok(r)
     }
 
-    pub fn free_reg(&mut self, reg: u8) {
-        // Assert hygiene?
-        // In robust compiler, we might check if reg == reg_top - 1.
-        assert_eq!(reg, self.reg_top - 1, "Register Hygiene Error");
+    pub fn free_reg(&mut self, reg: u8) -> Result<(), CompilerError> {
+        if reg != self.reg_top - 1 {
+            return Err(CompilerError::InternalError(format!(
+                "register hygiene: expected to free r{}, but reg_top is r{}",
+                reg,
+                self.reg_top - 1
+            )));
+        }
         self.reg_top -= 1;
+        Ok(())
     }
 
     pub fn add_constant(&mut self, val: Value) -> usize {

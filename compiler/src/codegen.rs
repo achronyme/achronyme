@@ -155,8 +155,7 @@ impl Compiler {
     }
 
     pub fn free_reg(&mut self, reg: u8) -> Result<(), CompilerError> {
-        self.current()?.free_reg(reg);
-        Ok(())
+        self.current()?.free_reg(reg)
     }
 
     pub fn add_constant(&mut self, val: Value) -> Result<usize, CompilerError> {
