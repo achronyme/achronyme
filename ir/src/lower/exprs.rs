@@ -142,7 +142,7 @@ impl IrLowering {
             (false, s)
         };
         let fe = FieldElement::from_decimal_str(digits)
-            .ok_or_else(|| IrError::ParseError(format!("invalid integer: {s}")))?;
+            .ok_or_else(|| IrError::parse_error(format!("invalid integer: {s}")))?;
         let v = self.program.fresh_var();
         if negative {
             let pos = self.program.fresh_var();
@@ -177,7 +177,7 @@ impl IrLowering {
             FieldRadix::Binary => FieldElement::from_binary_str(value),
         }
         .ok_or_else(|| {
-            IrError::ParseError(format!("invalid field literal at line {}", span.line_start))
+            IrError::parse_error(format!("invalid field literal at line {}", span.line_start))
         })?;
         let v = self.program.fresh_var();
         self.program.push(Instruction::Const {

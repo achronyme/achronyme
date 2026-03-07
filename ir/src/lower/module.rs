@@ -71,12 +71,9 @@ impl IrLowering {
             .map_err(|e| IrError::ModuleLoadError(format!("{}: {}", canonical.display(), e)))?;
 
         let (program, parse_errors) = ast_parse_program(&source);
-        if let Some(err) = parse_errors.into_iter().next() {
-            return Err(IrError::ModuleLoadError(format!(
-                "parse error in {}: {}",
-                canonical.display(),
-                err.message
-            )));
+        if let Some(mut err) = parse_errors.into_iter().next() {
+            err.message = format!("in {}: {}", canonical.display(), err.message);
+            return Err(IrError::ParseError(Box::new(err)));
         }
 
         // Save and set base_path for nested imports

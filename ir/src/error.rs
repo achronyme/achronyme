@@ -1,6 +1,6 @@
 use std::fmt;
 
-use achronyme_parser::SpanRange;
+use achronyme_parser::{Diagnostic, SpanRange};
 
 /// Boxed span to keep error enum small.
 pub type OptSpan = Option<Box<SpanRange>>;
@@ -21,8 +21,8 @@ pub enum IrError {
     TypeNotConstrainable(String, OptSpan),
     /// A loop without a statically-known bound.
     UnboundedLoop(OptSpan),
-    /// The input failed to parse.
-    ParseError(String),
+    /// The input failed to parse (carries the full Diagnostic for span info).
+    ParseError(Box<Diagnostic>),
     /// A variable was declared as both public and witness, or declared twice.
     DuplicateInput(String),
     /// A builtin function was called with the wrong number of arguments.
@@ -120,8 +120,8 @@ impl fmt::Display for IrError {
             IrError::UnboundedLoop(span) => {
                 write!(f, "{}unbounded loops (while/forever) are not allowed in circuits (all iterations must be known at compile time for constraint generation)", fmt_span(span))
             }
-            IrError::ParseError(msg) => {
-                write!(f, "parse error: {msg}")
+            IrError::ParseError(diag) => {
+                write!(f, "parse error: {}", diag.message)
             }
             IrError::DuplicateInput(name) => {
                 write!(f, "duplicate input declaration: `{name}`")
@@ -203,8 +203,19 @@ impl fmt::Display for IrError {
 impl std::error::Error for IrError {}
 
 impl IrError {
+    /// Create a ParseError from a plain message (no source location).
+    pub fn parse_error(msg: impl Into<String>) -> Self {
+        let msg = msg.into();
+        IrError::ParseError(Box::new(Diagnostic::error(msg, SpanRange::point(0, 0, 0))))
+    }
+
     /// Convert this error into a unified Diagnostic.
-    pub fn to_diagnostic(&self) -> achronyme_parser::Diagnostic {
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        // ParseError already carries a full Diagnostic — return it directly.
+        if let IrError::ParseError(diag) = self {
+            return *diag.clone();
+        }
+
         let span = match self {
             IrError::UndeclaredVariable(_, s)
             | IrError::UnsupportedOperation(_, s)
@@ -218,6 +229,6 @@ impl IrError {
             _ => None,
         };
         let primary = span.unwrap_or_else(|| SpanRange::point(0, 0, 0));
-        achronyme_parser::Diagnostic::error(self.to_string(), primary)
+        Diagnostic::error(self.to_string(), primary)
     }
 }

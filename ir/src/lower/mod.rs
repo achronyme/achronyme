@@ -73,7 +73,7 @@ fn parse_decl_specs(specs: &[&str]) -> Result<Vec<(String, Option<usize>)>, IrEr
             let size_str = spec[bracket_pos + 1..].trim_end_matches(']');
             let size: usize = size_str
                 .parse()
-                .map_err(|_| IrError::ParseError(format!("invalid array size in `{spec}`")))?;
+                .map_err(|_| IrError::parse_error(format!("invalid array size in `{spec}`")))?;
             result.push((name, Some(size)));
         } else {
             result.push((spec.to_string(), None));
@@ -203,7 +203,7 @@ impl IrLowering {
     pub fn lower(mut self, source: &str) -> Result<IrProgram, IrError> {
         let (program, parse_errors) = ast_parse_program(source);
         if let Some(err) = parse_errors.into_iter().next() {
-            return Err(IrError::ParseError(err.message));
+            return Err(IrError::ParseError(Box::new(err)));
         }
         self.lower_program(&program)?;
         Ok(self.program)
@@ -299,7 +299,7 @@ impl IrLowering {
     ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
         let (ast_program, parse_errors) = ast_parse_program(source);
         if let Some(err) = parse_errors.into_iter().next() {
-            return Err(IrError::ParseError(err.message));
+            return Err(IrError::ParseError(Box::new(err)));
         }
 
         let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();

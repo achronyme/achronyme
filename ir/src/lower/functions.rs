@@ -181,11 +181,13 @@ impl IrLowering {
                         sp.clone(),
                     )
                 })?;
-                let idx = field_to_u64(&idx_fe).ok_or_else(|| IrError::IndexOutOfBounds {
-                    name: name.clone(),
-                    index: usize::MAX,
-                    length: elements.len(),
-                    span: sp.clone(),
+                let idx = field_to_u64(&idx_fe).ok_or_else(|| {
+                    IrError::UnsupportedOperation(
+                        format!(
+                            "array index for `{name}` is too large to represent (must fit in 64 bits)"
+                        ),
+                        sp.clone(),
+                    )
                 })? as usize;
                 if idx >= elements.len() {
                     return Err(IrError::IndexOutOfBounds {
