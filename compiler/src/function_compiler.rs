@@ -73,11 +73,10 @@ impl FunctionCompiler {
     }
 
     pub fn free_reg(&mut self, reg: u8) -> Result<(), CompilerError> {
-        if reg != self.reg_top - 1 {
+        if self.reg_top == 0 || reg != self.reg_top - 1 {
             return Err(CompilerError::InternalError(format!(
-                "register hygiene: expected to free r{}, but reg_top is r{}",
-                reg,
-                self.reg_top - 1
+                "register hygiene: expected to free r{}, but reg_top is {}",
+                reg, self.reg_top
             )));
         }
         self.reg_top -= 1;
