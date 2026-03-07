@@ -459,10 +459,10 @@ mod suggestion_tests {
             .unwrap_err();
         let diag = err.to_diagnostic();
         assert!(diag.message.contains("undefined variable"));
-        // The suggestion should be structured data, not baked into the message
+        // The suggestion should be structured data
         assert!(
-            !diag.suggestions.is_empty() || diag.message.contains("cout"),
-            "diagnostic should have a suggestion or reference the typo: {diag:?}"
+            !diag.suggestions.is_empty(),
+            "diagnostic should have a suggestion for `cout` → `count`: {diag:?}"
         );
     }
 

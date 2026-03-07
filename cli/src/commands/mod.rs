@@ -106,16 +106,9 @@ fn diagnostic_to_short(diag: &Diagnostic) -> String {
         .file
         .as_ref()
         .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    if file.is_empty() {
-        format!(
-            "{}:{}:{}: {}: {}",
-            span.line_start, span.col_start, span.col_end, diag.severity, diag.message
-        )
-    } else {
-        format!(
-            "{}:{}:{}: {}: {}",
-            file, span.line_start, span.col_start, diag.severity, diag.message
-        )
-    }
+        .unwrap_or_else(|| "<stdin>".to_string());
+    format!(
+        "{}:{}:{}: {}: {}",
+        file, span.line_start, span.col_start, diag.severity, diag.message
+    )
 }

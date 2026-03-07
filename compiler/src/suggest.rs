@@ -25,19 +25,28 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 /// Find the best match for `name` among `candidates` within `max_distance`.
+/// The effective distance threshold is scaled by name length to avoid
+/// suggesting unrelated identifiers for short names (e.g., "ab" → distance 2
+/// would match anything of length 2).
 /// Returns the closest candidate, or `None` if nothing is close enough.
 pub fn find_similar<'a>(
     name: &str,
     candidates: impl Iterator<Item = &'a str>,
     max_distance: usize,
 ) -> Option<&'a str> {
+    // Scale threshold: for names <= 3 chars, allow at most 1 edit.
+    let threshold = if name.len() <= 3 {
+        max_distance.min(1)
+    } else {
+        max_distance
+    };
     let mut best: Option<(&str, usize)> = None;
     for candidate in candidates {
         if candidate == name || candidate.starts_with('_') {
             continue;
         }
         let dist = levenshtein(name, candidate);
-        if dist <= max_distance && best.is_none_or(|(_, d)| dist < d) {
+        if dist <= threshold && best.is_none_or(|(_, d)| dist < d) {
             best = Some((candidate, dist));
         }
     }
