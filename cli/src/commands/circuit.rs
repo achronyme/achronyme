@@ -9,6 +9,8 @@ use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;
 use memory::FieldElement;
 
+use super::ErrorFormat;
+
 /// Parse an `--inputs` string like `"out=42,a=6,b=0x07"` into a map.
 fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
     let mut map = HashMap::new();
@@ -48,6 +50,7 @@ pub fn circuit_command(
     backend: &str,
     prove: bool,
     solidity_path: Option<&str>,
+    error_format: ErrorFormat,
 ) -> Result<()> {
     let source =
         fs::read_to_string(path).with_context(|| format!("cannot read source file: {path}"))?;
@@ -57,16 +60,22 @@ pub fn circuit_command(
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
 
+    let render_ir_error = |e: ir::error::IrError| -> anyhow::Error {
+        let diag = e.to_diagnostic();
+        let rendered = super::render_diagnostic(&diag, &source, error_format);
+        anyhow::anyhow!("{rendered}")
+    };
+
     // 1. Lower to IR — self-contained or CLI-provided declarations
     let mut program = if public.is_empty() && witness.is_empty() {
         let (_, _, prog) = IrLowering::lower_self_contained_with_base(&source, base_path)
-            .map_err(|e| anyhow::anyhow!("IR lowering error: {e}"))?;
+            .map_err(render_ir_error)?;
         prog
     } else {
         let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
         let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
         IrLowering::lower_circuit_with_base(&source, &pub_refs, &wit_refs, base_path)
-            .map_err(|e| anyhow::anyhow!("IR lowering error: {e}"))?
+            .map_err(render_ir_error)?
     };
 
     // 2. Optimize (unless --no-optimize)
@@ -77,7 +86,11 @@ pub fn circuit_command(
     // 3. Analyze for under-constrained inputs
     let warnings = ir::passes::analyze(&program);
     for w in &warnings {
-        eprintln!("warning: {w}");
+        let diag = compiler::Diagnostic::warning(
+            w.to_string(),
+            compiler::diagnostic::SpanRange::point(0, 0, 0),
+        );
+        super::emit_diagnostic(&diag, &source, error_format);
     }
 
     if solidity_path.is_some() && backend != "r1cs" {

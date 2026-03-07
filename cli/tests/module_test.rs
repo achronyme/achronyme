@@ -102,6 +102,7 @@ fn circuit_import_with_poseidon() {
         "r1cs",
         false,
         None,
+        EF,
     );
     assert!(result.is_ok(), "circuit_command failed: {:?}", result.err());
     assert!(r1cs.exists(), "R1CS file was not created");

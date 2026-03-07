@@ -34,7 +34,7 @@ pub fn render_compile_error(err: &CompilerError, source: &str, fmt: ErrorFormat)
 }
 
 /// Render a single diagnostic to a string in the requested format.
-fn render_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) -> String {
+pub(super) fn render_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) -> String {
     match fmt {
         ErrorFormat::Human => {
             let renderer = DiagnosticRenderer::new(source, ColorMode::Auto);
@@ -46,7 +46,7 @@ fn render_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) -> Strin
 }
 
 /// Emit a single diagnostic to stderr.
-fn emit_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) {
+pub(super) fn emit_diagnostic(diag: &Diagnostic, source: &str, fmt: ErrorFormat) {
     eprintln!("{}", render_diagnostic(diag, source, fmt));
 }
 
@@ -57,7 +57,7 @@ fn diagnostic_to_json(diag: &Diagnostic) -> String {
     labeled_spans.push(span_to_json(&diag.primary_span, Some("primary")));
     // Secondary labels
     for label in &diag.labels {
-        labeled_spans.push(span_to_json_with_label(&label.span, &label.message));
+        labeled_spans.push(span_to_json(&label.span, Some(&label.message)));
     }
 
     let suggestions: Vec<serde_json::Value> = diag
@@ -82,7 +82,8 @@ fn diagnostic_to_json(diag: &Diagnostic) -> String {
     });
 
     // serde_json::to_string produces a single line (no pretty-print)
-    serde_json::to_string(&obj).unwrap_or_else(|_| format!("{{\"message\":\"{}\"}}", diag.message))
+    serde_json::to_string(&obj)
+        .unwrap_or_else(|_| serde_json::json!({"message": diag.message}).to_string())
 }
 
 fn span_to_json(span: &compiler::diagnostic::SpanRange, label: Option<&str>) -> serde_json::Value {
@@ -95,22 +96,6 @@ fn span_to_json(span: &compiler::diagnostic::SpanRange, label: Option<&str>) -> 
         "column_start": span.col_start,
         "column_end": span.col_end,
         "label": label,
-    })
-}
-
-fn span_to_json_with_label(
-    span: &compiler::diagnostic::SpanRange,
-    message: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "file_name": span.file.as_ref().map(|p| p.display().to_string()),
-        "byte_start": span.byte_start,
-        "byte_end": span.byte_end,
-        "line_start": span.line_start,
-        "line_end": span.line_end,
-        "column_start": span.col_start,
-        "column_end": span.col_end,
-        "label": message,
     })
 }
 

@@ -53,6 +53,7 @@ fn main() -> Result<()> {
             backend,
             *prove,
             solidity.as_deref(),
+            ef,
         ),
     }
 }
