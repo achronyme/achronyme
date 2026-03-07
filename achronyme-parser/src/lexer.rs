@@ -50,6 +50,13 @@ impl<'a> Lexer<'a> {
         ch
     }
 
+    /// Advance `pos` by `byte_len` bytes but increment `col` only once.
+    /// Used for multi-byte UTF-8 characters that occupy one visual column.
+    fn advance_multibyte(&mut self, byte_len: usize) {
+        self.pos += byte_len;
+        self.col += 1;
+    }
+
     /// Capture current position as start of a span.
     fn start_pos(&self) -> (usize, usize, usize) {
         (self.pos, self.line, self.col)
@@ -613,9 +620,7 @@ impl<'a> Lexer<'a> {
                     match std::str::from_utf8(rest) {
                         Ok(s) => {
                             let c = s.chars().next().unwrap();
-                            for _ in 0..c.len_utf8() {
-                                self.advance();
-                            }
+                            self.advance_multibyte(c.len_utf8());
                             value.push(c);
                         }
                         Err(_) => {
@@ -811,6 +816,32 @@ mod tests {
         // Emoji (4-byte UTF-8)
         let tokens = Lexer::tokenize("\"🎉\"").unwrap();
         assert_eq!(tokens[0].lexeme, "🎉");
+    }
+
+    #[test]
+    fn string_utf8_column_tracking() {
+        // After a string with multi-byte chars, the next token's column must be correct.
+        // "café" = 6 chars (c,a,f,é,") + opening quote = columns 1..7, next token at col 9
+        let tokens = Lexer::tokenize("\"café\" x").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        // String span: col 1 (opening ") to col 7 (after closing ")
+        assert_eq!(tokens[0].span.col_start, 1);
+        assert_eq!(tokens[0].span.col_end, 7);
+        // "x" should be at col 8 (space at col 7, x at col 8)
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].span.col_start, 8);
+
+        // 3-byte UTF-8: "世" (3 bytes) — string "世" is 3 columns: " 世 "
+        let tokens = Lexer::tokenize("\"世\" y").unwrap();
+        assert_eq!(tokens[0].span.col_start, 1);
+        assert_eq!(tokens[0].span.col_end, 4); // " at 1, 世 at 2, " at 3, end at 4
+        assert_eq!(tokens[1].span.col_start, 5);
+
+        // 4-byte UTF-8: emoji
+        let tokens = Lexer::tokenize("\"🎉\" z").unwrap();
+        assert_eq!(tokens[0].span.col_start, 1);
+        assert_eq!(tokens[0].span.col_end, 4);
+        assert_eq!(tokens[1].span.col_start, 5);
     }
 
     #[test]
