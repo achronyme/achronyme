@@ -4,6 +4,6 @@ pub mod lower;
 pub mod passes;
 pub mod types;
 
-pub use error::{IrError, SourceSpan};
+pub use error::IrError;
 pub use lower::IrLowering;
 pub use types::{Instruction, IrProgram, IrType, SsaVar, Visibility};

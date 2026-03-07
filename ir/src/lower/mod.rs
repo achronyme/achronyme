@@ -5,7 +5,7 @@ use achronyme_parser::ast::*;
 use achronyme_parser::parse_program as ast_parse_program;
 use memory::FieldElement;
 
-use crate::error::{IrError, SourceSpan};
+use crate::error::{span_box, IrError, OptSpan};
 use crate::types::{Instruction, IrProgram, IrType, SsaVar, Visibility};
 
 mod builtins;
@@ -18,12 +18,9 @@ mod stmts;
 /// Prevents DoS via `for i in 0..1000000` which would generate millions of IR instructions.
 pub const MAX_UNROLL_ITERATIONS: u64 = 10_000;
 
-/// Convert an AST span to an IR source span.
-pub(super) fn to_ir_span(span: &Span) -> Option<SourceSpan> {
-    Some(SourceSpan {
-        line: span.line_start,
-        col: span.col_start,
-    })
+/// Convert an AST span to a boxed SpanRange for error reporting.
+pub(super) fn to_ir_span(span: &Span) -> OptSpan {
+    span_box(Some(achronyme_parser::SpanRange::from(span)))
 }
 
 /// A value in the lowering environment: either a single SSA variable or an array.

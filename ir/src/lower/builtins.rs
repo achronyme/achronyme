@@ -1,7 +1,7 @@
 use achronyme_parser::ast::*;
 use memory::FieldElement;
 
-use crate::error::{IrError, SourceSpan};
+use crate::error::{IrError, OptSpan};
 use crate::types::{Instruction, IrType, SsaVar};
 
 use super::{to_ir_span, EnvValue, IrLowering};
@@ -49,11 +49,7 @@ impl IrLowering {
         }
     }
 
-    fn lower_assert_eq(
-        &mut self,
-        args: &[Expr],
-        sp: Option<SourceSpan>,
-    ) -> Result<SsaVar, IrError> {
+    fn lower_assert_eq(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "assert_eq".into(),
@@ -73,7 +69,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_assert(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_assert(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 1 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "assert".into(),
@@ -89,7 +85,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_poseidon(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_poseidon(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "poseidon".into(),
@@ -110,7 +106,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_mux(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_mux(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 3 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "mux".into(),
@@ -141,11 +137,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_range_check(
-        &mut self,
-        args: &[Expr],
-        sp: Option<SourceSpan>,
-    ) -> Result<SsaVar, IrError> {
+    fn lower_range_check(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "range_check".into(),
@@ -176,7 +168,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_len(&mut self, args: &[Expr], sp: Option<SourceSpan>) -> Result<SsaVar, IrError> {
+    fn lower_len(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 1 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "len".into(),
@@ -207,11 +199,7 @@ impl IrLowering {
         }
     }
 
-    fn lower_poseidon_many(
-        &mut self,
-        args: &[Expr],
-        sp: Option<SourceSpan>,
-    ) -> Result<SsaVar, IrError> {
+    fn lower_poseidon_many(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.is_empty() {
             return Err(IrError::WrongArgumentCount {
                 builtin: "poseidon_many".into(),

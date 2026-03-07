@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use achronyme_parser::ast::*;
 use memory::FieldElement;
 
-use crate::error::{IrError, SourceSpan};
+use crate::error::{IrError, OptSpan};
 use crate::types::{Instruction, IrType, SsaVar};
 
 use super::{
@@ -16,7 +16,7 @@ impl IrLowering {
         &mut self,
         name: &str,
         args: &[Expr],
-        sp: Option<SourceSpan>,
+        sp: OptSpan,
     ) -> Result<SsaVar, IrError> {
         // Try direct lookup first, then prefixed lookup for internal module calls
         let (resolved_name, fn_def) = match self.fn_table.get(name).cloned() {
