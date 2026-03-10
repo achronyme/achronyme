@@ -101,6 +101,121 @@ fn test_r1cs_range_check_zero() {
 }
 
 // ============================================================================
+// T8: R1CS range_check edge cases
+// ============================================================================
+
+#[test]
+fn test_r1cs_range_check_1bit_zero() {
+    // bits=1: value=0 should pass (0 < 2^1 = 2)
+    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    // 1 boolean + 1 sum = 2 constraints
+    assert_eq!(compiler.cs.num_constraints(), 2);
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ZERO);
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+#[test]
+fn test_r1cs_range_check_1bit_one() {
+    // bits=1: value=1 should pass (1 < 2)
+    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ONE);
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+#[test]
+fn test_r1cs_range_check_1bit_invalid() {
+    // bits=1: value=2 should fail (2 >= 2^1)
+    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(2));
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&witness).is_err(),
+        "value=2 should not fit in 1 bit"
+    );
+}
+
+#[test]
+fn test_r1cs_range_check_boundary_exact_max() {
+    // bits=8: value=255 (2^8 - 1) should pass
+    let program = IrLowering::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(255));
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+#[test]
+fn test_r1cs_range_check_32bit_max() {
+    // bits=32: value=2^32-1 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 32)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    assert_eq!(compiler.cs.num_constraints(), 33); // 32 boolean + 1 sum
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(u32::MAX as u64));
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+#[test]
+fn test_r1cs_range_check_32bit_overflow() {
+    // bits=32: value=2^32 should fail
+    let program = IrLowering::lower_circuit("range_check(x, 32)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert(
+        "x".to_string(),
+        FieldElement::from_u64((u32::MAX as u64) + 1),
+    );
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&witness).is_err(),
+        "2^32 should not fit in 32 bits"
+    );
+}
+
+#[test]
+fn test_r1cs_range_check_64bit_max() {
+    // bits=64: value=2^64-1 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 64)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    assert_eq!(compiler.cs.num_constraints(), 65); // 64 boolean + 1 sum
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(u64::MAX));
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+// ============================================================================
 // Plonkish range_check tests
 // ============================================================================
 
@@ -158,6 +273,73 @@ fn test_plonkish_range_check_cost_one_row() {
     let rows = compiler.num_circuit_rows();
     // Witness allocation (1 row) + materialization (1 row for cell copy) + range check (1 row)
     assert!(rows <= 3, "expected <= 3 rows, got {rows}");
+}
+
+// ============================================================================
+// T8: Plonkish range_check edge cases
+// ============================================================================
+
+#[test]
+fn test_plonkish_range_check_1bit_zero() {
+    // bits=1: value=0 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ZERO);
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler.system.verify().unwrap();
+}
+
+#[test]
+fn test_plonkish_range_check_1bit_one() {
+    // bits=1: value=1 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ONE);
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler.system.verify().unwrap();
+}
+
+#[test]
+fn test_plonkish_range_check_1bit_invalid() {
+    // bits=1: value=2 should fail
+    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(2));
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "value=2 should not fit in 1 bit (Plonkish)"
+    );
+}
+
+#[test]
+fn test_plonkish_range_check_boundary_exact_max() {
+    // bits=8: value=255 (2^8 - 1) should pass
+    let program = IrLowering::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::from_u64(255));
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler.system.verify().unwrap();
 }
 
 // ============================================================================
