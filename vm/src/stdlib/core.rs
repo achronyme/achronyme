@@ -162,13 +162,14 @@ pub fn native_keys(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         map.keys().cloned().collect()
     };
 
+    vm.heap.lock_gc();
     let mut key_values = Vec::with_capacity(keys_raw.len());
     for k in keys_raw {
         let handle = vm.heap.alloc_string(k);
         key_values.push(Value::string(handle));
     }
-
     let list_handle = vm.heap.alloc_list(key_values);
+    vm.heap.unlock_gc();
 
     Ok(Value::list(list_handle))
 }

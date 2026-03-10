@@ -116,6 +116,7 @@ pub fn native_split(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         .ok_or(RuntimeError::SystemError("String missing".into()))?
         .clone();
 
+    vm.heap.lock_gc();
     let parts: Vec<Value> = s
         .split(&delim)
         .map(|part| {
@@ -123,8 +124,9 @@ pub fn native_split(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
             Value::string(h)
         })
         .collect();
-
     let list_h = vm.heap.alloc_list(parts);
+    vm.heap.unlock_gc();
+
     Ok(Value::list(list_h))
 }
 
@@ -258,6 +260,7 @@ pub fn native_chars(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         .ok_or(RuntimeError::SystemError("String missing".into()))?
         .clone();
 
+    vm.heap.lock_gc();
     let char_vals: Vec<Value> = s
         .chars()
         .map(|ch| {
@@ -265,7 +268,8 @@ pub fn native_chars(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
             Value::string(h)
         })
         .collect();
-
     let list_h = vm.heap.alloc_list(char_vals);
+    vm.heap.unlock_gc();
+
     Ok(Value::list(list_h))
 }
