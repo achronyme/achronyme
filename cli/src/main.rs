@@ -30,7 +30,6 @@ fn main() -> Result<()> {
         Commands::Compile { path, output } => {
             cli::commands::compile::compile_file(path, output.as_deref(), ef)
         }
-        Commands::Repl => cli::repl::run_repl(),
         Commands::Circuit {
             path,
             r1cs,

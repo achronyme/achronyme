@@ -41,8 +41,6 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
-    /// Start the REPL
-    Repl,
     /// Compile a circuit to .r1cs (and optionally generate .wtns)
     Circuit {
         /// Path to the source file (.ach)

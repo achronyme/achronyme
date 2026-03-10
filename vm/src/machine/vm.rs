@@ -101,7 +101,7 @@ impl VM {
         self.interner.clear();
     }
 
-    /// Soft Reset: Clears stack and frames for REPL/Running new script.
+    /// Soft Reset: Clears stack and frames for running a new script.
     /// CRITICAL: Must close all open upvalues to prevent them from pointing to dead stack slots.
     pub fn reset(&mut self) {
         // 1. Close ALL open upvalues (stack index 0 = everything)

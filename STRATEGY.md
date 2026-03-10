@@ -228,7 +228,6 @@ Los 3 niveles de integración están completados:
 | Prioridad | Item | Esfuerzo |
 |-----------|------|----------|
 | Alta | Sistema de imports/módulos (`import "path"`) | Medio |
-| Alta | REPL funcional | Bajo |
 | Media | Mensajes de error educativos en IrLowering | Bajo |
 | Media | Stdlib: `map`, `filter`, `reduce` para listas | Medio |
 | Media | Export Plonkish binario | Medio |
@@ -274,7 +273,6 @@ Los 3 niveles de integración están completados:
 |---|-----------|---------|----------|
 | D7 | **Comparaciones caras (~760 constraints)** | `x < y` es prohibitivo en circuitos sensibles al tamaño. Batching o range proofs más eficientes no implementados. | Alto |
 | D8 | **Sin LSP / IDE support** | No hay autocompletado, go-to-definition, ni syntax highlighting oficial. | Medio |
-| D9 | **REPL no funcional** | Registrado en CLI pero es un stub. | Bajo |
 | D12 | **Sin export Plonkish binario** | El backend Plonkish compila y prueba pero no genera artefactos exportables. | Medio |
 
 ### Resueltas (desde la última revisión)
