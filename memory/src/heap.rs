@@ -83,6 +83,8 @@ pub struct Heap {
     pub next_gc_threshold: usize,
     pub request_gc: bool,
     gc_lock_depth: u32,
+    pub max_heap_bytes: usize,
+    pub heap_limit_exceeded: bool,
 }
 
 impl Default for Heap {
@@ -120,12 +122,17 @@ impl Heap {
             next_gc_threshold: 1024 * 1024, // Start at 1MB
             request_gc: false,
             gc_lock_depth: 0,
+            max_heap_bytes: usize::MAX,
+            heap_limit_exceeded: false,
         }
     }
 
     pub fn check_gc(&mut self) {
         if self.gc_lock_depth == 0 && self.bytes_allocated > self.next_gc_threshold {
             self.request_gc = true;
+        }
+        if self.bytes_allocated > self.max_heap_bytes {
+            self.heap_limit_exceeded = true;
         }
     }
 

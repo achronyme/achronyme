@@ -41,6 +41,18 @@ impl InterpreterOps for super::vm::VM {
                 self.heap.request_gc = false;
             }
 
+            // Heap Limit Check Point
+            if self.heap.heap_limit_exceeded {
+                self.collect_garbage();
+                self.heap.heap_limit_exceeded = false;
+                if self.heap.bytes_allocated > self.heap.max_heap_bytes {
+                    return Err(RuntimeError::HeapLimitExceeded {
+                        limit: self.heap.max_heap_bytes,
+                        allocated: self.heap.bytes_allocated,
+                    });
+                }
+            }
+
             let frame_idx = self.frames.len() - 1;
 
             let (closure_idx, ip, base) = {

@@ -23,6 +23,7 @@ pub enum RuntimeError {
     InstructionBudgetExhausted,
     ProveBlockFailed(ProveError),
     ProveHandlerNotConfigured,
+    HeapLimitExceeded { limit: usize, allocated: usize },
 }
 
 impl fmt::Display for RuntimeError {
@@ -50,6 +51,12 @@ impl fmt::Display for RuntimeError {
             RuntimeError::ProveBlockFailed(e) => write!(f, "prove block failed: {e}"),
             RuntimeError::ProveHandlerNotConfigured => {
                 write!(f, "prove handler not configured")
+            }
+            RuntimeError::HeapLimitExceeded { limit, allocated } => {
+                write!(
+                    f,
+                    "heap limit exceeded: {allocated} bytes allocated, limit is {limit} bytes"
+                )
             }
         }
     }
