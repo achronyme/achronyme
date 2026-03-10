@@ -65,3 +65,81 @@ fn test_gc_cycle_collection() {
     assert!(heap.is_list_free(a_idx));
     assert!(heap.is_list_free(b_idx));
 }
+
+#[test]
+fn test_gc_lock_prevents_request() {
+    let mut heap = Heap::new();
+    heap.next_gc_threshold = 0; // Force threshold to be always exceeded
+
+    // Without lock: alloc should set request_gc
+    heap.alloc_string("hello".into());
+    assert!(heap.request_gc);
+    heap.request_gc = false;
+
+    // With lock: alloc should NOT set request_gc
+    heap.lock_gc();
+    assert!(heap.is_gc_locked());
+    heap.alloc_string("world".into());
+    assert!(!heap.request_gc);
+
+    // After unlock: deferred check_gc() fires immediately
+    heap.unlock_gc();
+    assert!(!heap.is_gc_locked());
+    assert!(
+        heap.request_gc,
+        "unlock_gc should call check_gc for deferred threshold"
+    );
+}
+
+#[test]
+fn test_gc_lock_nesting() {
+    let mut heap = Heap::new();
+    heap.next_gc_threshold = 0;
+
+    // Nested locks: inner unlock should NOT release the lock
+    heap.lock_gc();
+    heap.lock_gc();
+    assert!(heap.is_gc_locked());
+
+    heap.unlock_gc(); // depth 2 → 1
+    assert!(
+        heap.is_gc_locked(),
+        "inner unlock should not release outer lock"
+    );
+    heap.alloc_string("test".into());
+    assert!(!heap.request_gc, "should still be locked at depth 1");
+
+    heap.unlock_gc(); // depth 1 → 0, triggers check_gc
+    assert!(!heap.is_gc_locked());
+    assert!(
+        heap.request_gc,
+        "outermost unlock should catch deferred threshold"
+    );
+}
+
+#[test]
+fn test_gc_lock_default_state() {
+    let heap = Heap::new();
+    assert!(!heap.is_gc_locked());
+}
+
+#[test]
+fn test_gc_lock_survives_sweep() {
+    let mut heap = Heap::new();
+
+    // Lock, then run a full GC cycle — lock should remain held
+    heap.lock_gc();
+    heap.alloc_string("survivor".into());
+    heap.trace(vec![]);
+    heap.sweep();
+    assert!(heap.is_gc_locked(), "sweep should not affect gc lock state");
+    heap.unlock_gc();
+    assert!(!heap.is_gc_locked());
+}
+
+#[test]
+#[should_panic(expected = "unlock_gc called without matching lock_gc")]
+fn test_gc_unlock_without_lock_panics() {
+    let mut heap = Heap::new();
+    heap.unlock_gc(); // should panic in debug mode
+}
