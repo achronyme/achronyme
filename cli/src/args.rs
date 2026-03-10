@@ -27,6 +27,9 @@ pub enum Commands {
         /// Backend for prove {} blocks: "r1cs" (default) or "plonkish"
         #[arg(long, default_value = "r1cs")]
         prove_backend: String,
+        /// Maximum heap size (e.g., "256M", "1G", "512K", or raw bytes)
+        #[arg(long)]
+        max_heap: Option<String>,
     },
     /// Disassemble a source file or binary
     Disassemble {

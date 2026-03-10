@@ -25,7 +25,15 @@ fn main() -> Result<()> {
             stress_gc,
             ptau,
             prove_backend,
-        } => cli::commands::run::run_file(path, *stress_gc, ptau.as_deref(), prove_backend, ef),
+            max_heap,
+        } => cli::commands::run::run_file(
+            path,
+            *stress_gc,
+            ptau.as_deref(),
+            prove_backend,
+            max_heap.as_deref(),
+            ef,
+        ),
         Commands::Disassemble { path } => cli::commands::disassemble::disassemble_file(path, ef),
         Commands::Compile { path, output } => {
             cli::commands::compile::compile_file(path, output.as_deref(), ef)

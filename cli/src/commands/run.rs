@@ -12,6 +12,7 @@ pub fn run_file(
     stress_gc: bool,
     ptau: Option<&str>,
     prove_backend: &str,
+    max_heap: Option<&str>,
     error_format: ErrorFormat,
 ) -> Result<()> {
     if ptau.is_some() {
@@ -30,6 +31,14 @@ pub fn run_file(
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
+        if let Some(limit_str) = max_heap {
+            let limit = parse_size(limit_str).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid --max-heap value: `{limit_str}` (expected e.g. \"256M\", \"1G\", \"512K\")"
+                )
+            })?;
+            vm.heap.max_heap_bytes = limit;
+        }
         let handler = DefaultProveHandler::new(backend);
         vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend)));
         vm.prove_handler = Some(Box::new(handler));
@@ -70,6 +79,14 @@ pub fn run_file(
 
         let mut vm = VM::new();
         vm.stress_mode = stress_gc;
+        if let Some(limit_str) = max_heap {
+            let limit = parse_size(limit_str).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid --max-heap value: `{limit_str}` (expected e.g. \"256M\", \"1G\", \"512K\")"
+                )
+            })?;
+            vm.heap.max_heap_bytes = limit;
+        }
         let handler = DefaultProveHandler::new(backend);
         vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend)));
         vm.prove_handler = Some(Box::new(handler));
@@ -169,10 +186,64 @@ fn remap_bigint_handles(constants: &mut [memory::Value], bigint_map: &[u32]) {
     }
 }
 
+/// Parse a human-readable size string (e.g., "256M", "1G", "512K") into bytes.
+fn parse_size(s: &str) -> Option<usize> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (num_part, multiplier) = match s.as_bytes().last()? {
+        b'K' | b'k' => (&s[..s.len() - 1], 1024usize),
+        b'M' | b'm' => (&s[..s.len() - 1], 1024 * 1024),
+        b'G' | b'g' => (&s[..s.len() - 1], 1024 * 1024 * 1024),
+        _ => (s, 1),
+    };
+    let num: usize = num_part.parse().ok()?;
+    num.checked_mul(multiplier)
+}
+
 /// Format a runtime error with source location if available.
 fn format_runtime_error(vm: &VM, err: &vm::RuntimeError) -> String {
     match &vm.last_error_location {
         Some((func_name, line)) => format!("[line {line}] in {func_name}: {err}"),
         None => format!("Runtime error: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_size;
+
+    #[test]
+    fn test_parse_size_bytes() {
+        assert_eq!(parse_size("1048576"), Some(1048576));
+    }
+    #[test]
+    fn test_parse_size_kb() {
+        assert_eq!(parse_size("512K"), Some(524288));
+    }
+    #[test]
+    fn test_parse_size_mb() {
+        assert_eq!(parse_size("256M"), Some(268435456));
+    }
+    #[test]
+    fn test_parse_size_gb() {
+        assert_eq!(parse_size("1G"), Some(1073741824));
+    }
+    #[test]
+    fn test_parse_size_lowercase() {
+        assert_eq!(parse_size("256m"), Some(268435456));
+    }
+    #[test]
+    fn test_parse_size_zero() {
+        assert_eq!(parse_size("0"), Some(0));
+    }
+    #[test]
+    fn test_parse_size_empty() {
+        assert_eq!(parse_size(""), None);
+    }
+    #[test]
+    fn test_parse_size_invalid() {
+        assert_eq!(parse_size("abc"), None);
     }
 }
