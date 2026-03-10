@@ -1,0 +1,131 @@
+use compiler::Compiler;
+use memory::Function;
+use vm::{CallFrame, VM};
+
+/// Helper: compile and run Achronyme source with stress_mode enabled.
+fn run_stress(source: &str) -> Result<VM, String> {
+    let mut compiler = Compiler::new();
+    let bytecode = compiler.compile(source).map_err(|e| format!("{e:?}"))?;
+    let main_func = compiler.compilers.last().expect("No main compiler");
+
+    let mut vm = VM::new();
+    vm.stress_mode = true;
+    vm.import_strings(compiler.interner.strings);
+
+    for proto in &compiler.prototypes {
+        let handle = vm.heap.alloc_function(proto.clone());
+        vm.prototypes.push(handle);
+    }
+
+    let func = Function {
+        name: "main".to_string(),
+        arity: 0,
+        chunk: bytecode,
+        constants: main_func.constants.clone(),
+        max_slots: main_func.max_slots,
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let func_idx = vm.heap.alloc_function(func);
+    let closure_idx = vm.heap.alloc_closure(memory::Closure {
+        function: func_idx,
+        upvalues: vec![],
+    });
+
+    vm.frames.push(CallFrame {
+        closure: closure_idx,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    });
+
+    vm.interpret().map_err(|e| format!("{e:?}"))?;
+    Ok(vm)
+}
+
+fn result_int(vm: &VM) -> i64 {
+    vm.stack[0].as_int().expect("expected int in R[0]")
+}
+
+fn result_string_list(vm: &VM) -> Vec<String> {
+    let val = vm.stack[0];
+    assert!(val.is_list(), "expected list in R[0]");
+    let handle = val.as_handle().unwrap();
+    let list = vm.heap.get_list(handle).unwrap();
+    list.iter()
+        .map(|v| {
+            let h = v.as_handle().unwrap();
+            vm.heap.get_string(h).unwrap().clone()
+        })
+        .collect()
+}
+
+// =============================================================================
+// GC stress tests — verify multi-alloc natives survive aggressive GC
+// =============================================================================
+
+#[test]
+fn test_stress_gc_keys() {
+    let vm = run_stress(
+        r#"let m = { "a": 1, "b": 2, "c": 3 }
+let x = len(keys(m))"#,
+    )
+    .unwrap();
+    assert_eq!(result_int(&vm), 3);
+}
+
+#[test]
+fn test_stress_gc_split() {
+    let vm = run_stress(r#"let x = split("a,b,c,d,e", ",")"#).unwrap();
+    assert_eq!(result_string_list(&vm), vec!["a", "b", "c", "d", "e"]);
+}
+
+#[test]
+fn test_stress_gc_chars() {
+    let vm = run_stress(r#"let x = chars("hello")"#).unwrap();
+    assert_eq!(result_string_list(&vm), vec!["h", "e", "l", "l", "o"]);
+}
+
+#[test]
+fn test_stress_gc_for_in_map() {
+    // Exercises the GetIter map path (N alloc_string + alloc_list + alloc_iterator)
+    let vm = run_stress(
+        r#"let m = { "x": 10, "y": 20, "z": 30 }
+mut total = 0
+for k in m {
+    total = total + m[k]
+}
+let x = total"#,
+    )
+    .unwrap();
+    assert_eq!(result_int(&vm), 60);
+}
+
+#[test]
+fn test_stress_gc_closure_capture() {
+    // Exercises the Closure opcode path (N alloc_upvalue + alloc_closure)
+    let vm = run_stress(
+        r#"let a = 10
+let b = 20
+let c = 30
+fn sum() {
+    return a + b + c
+}
+let x = sum()"#,
+    )
+    .unwrap();
+    assert_eq!(result_int(&vm), 60);
+}
+
+#[test]
+fn test_stress_gc_combined_natives() {
+    // Chain multiple multi-alloc natives in one program
+    let vm = run_stress(
+        r#"let parts = split("hello world foo", " ")
+let k = keys({ "a": 1, "b": 2 })
+let c = chars("abc")
+let x = len(parts) + len(k) + len(c)"#,
+    )
+    .unwrap();
+    assert_eq!(result_int(&vm), 8); // 3 + 2 + 3
+}
