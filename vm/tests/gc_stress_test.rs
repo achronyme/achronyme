@@ -47,6 +47,48 @@ fn result_int(vm: &VM) -> i64 {
     vm.stack[0].as_int().expect("expected int in R[0]")
 }
 
+/// Helper: compile and run with a heap limit, returning error string on failure.
+fn run_with_heap_limit(source: &str, max_heap_bytes: usize) -> Result<VM, String> {
+    let mut compiler = Compiler::new();
+    let bytecode = compiler.compile(source).map_err(|e| format!("{e:?}"))?;
+    let main_func = compiler.compilers.last().expect("No main compiler");
+
+    let mut vm = VM::new();
+    vm.heap.max_heap_bytes = max_heap_bytes;
+    vm.instruction_budget = Some(200_000);
+    vm.import_strings(compiler.interner.strings);
+
+    for proto in &compiler.prototypes {
+        let handle = vm.heap.alloc_function(proto.clone());
+        vm.prototypes.push(handle);
+    }
+
+    let func = Function {
+        name: "main".to_string(),
+        arity: 0,
+        chunk: bytecode,
+        constants: main_func.constants.clone(),
+        max_slots: main_func.max_slots,
+        upvalue_info: vec![],
+        line_info: vec![],
+    };
+    let func_idx = vm.heap.alloc_function(func);
+    let closure_idx = vm.heap.alloc_closure(memory::Closure {
+        function: func_idx,
+        upvalues: vec![],
+    });
+
+    vm.frames.push(CallFrame {
+        closure: closure_idx,
+        ip: 0,
+        base: 0,
+        dest_reg: 0,
+    });
+
+    vm.interpret().map_err(|e| format!("{e}"))?;
+    Ok(vm)
+}
+
 fn result_string_list(vm: &VM) -> Vec<String> {
     let val = vm.stack[0];
     assert!(val.is_list(), "expected list in R[0]");
@@ -128,4 +170,50 @@ let x = len(parts) + len(k) + len(c)"#,
     )
     .unwrap();
     assert_eq!(result_int(&vm), 8); // 3 + 2 + 3
+}
+
+// =============================================================================
+// Heap limit tests
+// =============================================================================
+
+#[test]
+fn test_heap_limit_exceeded_error() {
+    let source = r#"
+mut list = []
+mut i = 0
+while i < 10000 {
+    push(list, "x")
+    i = i + 1
+}
+"#;
+    let result = run_with_heap_limit(source, 4096);
+    match result {
+        Ok(_) => panic!("Expected heap limit exceeded error"),
+        Err(err) => assert!(
+            err.contains("heap limit exceeded"),
+            "Expected 'heap limit exceeded', got: {err}"
+        ),
+    }
+}
+
+#[test]
+fn test_heap_limit_sufficient() {
+    let source = r#"let x = 42"#;
+    let result = run_with_heap_limit(source, 10 * 1024 * 1024);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_heap_limit_gc_frees_enough() {
+    // Each iteration creates a temporary string that becomes garbage.
+    // GC should reclaim it, keeping the heap under the limit.
+    let source = r#"
+mut i = 0
+while i < 500 {
+    let tmp = "temp"
+    i = i + 1
+}
+"#;
+    let result = run_with_heap_limit(source, 1024 * 1024);
+    assert!(result.is_ok());
 }

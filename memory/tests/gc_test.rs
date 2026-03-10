@@ -143,3 +143,38 @@ fn test_gc_unlock_without_lock_panics() {
     let mut heap = Heap::new();
     heap.unlock_gc(); // should panic in debug mode
 }
+
+#[test]
+fn test_heap_limit_flag_set_on_exceed() {
+    let mut heap = Heap::new();
+    heap.max_heap_bytes = 100;
+    for _ in 0..20 {
+        heap.alloc_string("hello world".to_string());
+    }
+    assert!(heap.heap_limit_exceeded);
+}
+
+#[test]
+fn test_heap_limit_not_set_when_under() {
+    let mut heap = Heap::new();
+    // default usize::MAX
+    heap.alloc_string("hello".into());
+    assert!(!heap.heap_limit_exceeded);
+}
+
+#[test]
+fn test_heap_limit_ignores_gc_lock() {
+    let mut heap = Heap::new();
+    heap.max_heap_bytes = 10;
+    heap.lock_gc();
+    heap.alloc_string("this exceeds the limit".to_string());
+    assert!(heap.heap_limit_exceeded);
+    heap.unlock_gc();
+}
+
+#[test]
+fn test_heap_limit_default_no_limit() {
+    let heap = Heap::new();
+    assert_eq!(heap.max_heap_bytes, usize::MAX);
+    assert!(!heap.heap_limit_exceeded);
+}
