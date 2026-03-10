@@ -8,6 +8,10 @@ pub trait GarbageCollector {
 
 impl GarbageCollector for super::vm::VM {
     fn collect_garbage(&mut self) {
+        debug_assert!(
+            !self.heap.is_gc_locked(),
+            "GC triggered while GC lock is held"
+        );
         let _before = self.heap.bytes_allocated;
         if self.stress_mode {
             println!("-- GC Triggered (Stress Mode) --");
