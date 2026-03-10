@@ -535,6 +535,7 @@ impl InterpreterOps for super::vm::VM {
                                 map.keys().cloned().collect()
                             };
 
+                            self.heap.lock_gc();
                             let mut val_keys = Vec::with_capacity(map_keys.len());
                             for s in map_keys {
                                 let handle = if let Some(&h) = self.interner.get(&s) {
@@ -548,6 +549,7 @@ impl InterpreterOps for super::vm::VM {
                             }
 
                             let list_handle = self.heap.alloc_list(val_keys);
+                            self.heap.unlock_gc();
                             memory::IteratorObj {
                                 source: Value::list(list_handle),
                                 index: 0,
