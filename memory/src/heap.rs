@@ -82,6 +82,7 @@ pub struct Heap {
     pub bytes_allocated: usize,
     pub next_gc_threshold: usize,
     pub request_gc: bool,
+    gc_lock_depth: u32,
 }
 
 impl Default for Heap {
@@ -118,13 +119,38 @@ impl Heap {
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
             request_gc: false,
+            gc_lock_depth: 0,
         }
     }
 
     pub fn check_gc(&mut self) {
-        if self.bytes_allocated > self.next_gc_threshold {
+        if self.gc_lock_depth == 0 && self.bytes_allocated > self.next_gc_threshold {
             self.request_gc = true;
         }
+    }
+
+    /// Prevent `check_gc()` from requesting a GC cycle.
+    /// Supports reentrant (nested) locking via a depth counter.
+    pub fn lock_gc(&mut self) {
+        self.gc_lock_depth += 1;
+    }
+
+    /// Re-enable GC requests when the outermost lock is released.
+    /// Calls `check_gc()` on full unlock to catch deferred threshold crossings.
+    pub fn unlock_gc(&mut self) {
+        debug_assert!(
+            self.gc_lock_depth > 0,
+            "unlock_gc called without matching lock_gc"
+        );
+        self.gc_lock_depth -= 1;
+        if self.gc_lock_depth == 0 {
+            self.check_gc();
+        }
+    }
+
+    /// Returns whether the GC is currently locked.
+    pub fn is_gc_locked(&self) -> bool {
+        self.gc_lock_depth > 0
     }
 
     /// Mark an upvalue index as reachable (for open upvalue rooting in GC).
