@@ -124,6 +124,64 @@ fn test_poseidon_wrong_arg_count_too_many() {
 }
 
 // ====================================================================
+// T7: Poseidon(0,0) through circuit pipeline
+// ====================================================================
+
+#[test]
+fn test_poseidon_zero_zero_r1cs() {
+    // T7: poseidon(0, 0) must produce the correct hash through the R1CS pipeline
+    use constraints::poseidon::{poseidon_hash, PoseidonParams};
+
+    let params = PoseidonParams::bn254_t3();
+    let expected = poseidon_hash(&params, FieldElement::ZERO, FieldElement::ZERO);
+
+    let mut program =
+        IrLowering::lower_circuit("assert_eq(poseidon(a, b), out)", &["out"], &["a", "b"]).unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut rc = R1CSCompiler::new();
+    let mut inputs = HashMap::new();
+    inputs.insert("out".to_string(), expected);
+    inputs.insert("a".to_string(), FieldElement::ZERO);
+    inputs.insert("b".to_string(), FieldElement::ZERO);
+    let witness = rc.compile_ir_with_witness(&program, &inputs).unwrap();
+
+    assert!(
+        rc.cs.verify(&witness).is_ok(),
+        "poseidon(0, 0) should satisfy R1CS constraints"
+    );
+}
+
+#[test]
+fn test_poseidon_expression_evaluating_to_zero_r1cs() {
+    // poseidon(a - a, b - b) should produce the same hash as poseidon(0, 0)
+    use constraints::poseidon::{poseidon_hash, PoseidonParams};
+
+    let params = PoseidonParams::bn254_t3();
+    let expected = poseidon_hash(&params, FieldElement::ZERO, FieldElement::ZERO);
+
+    let mut program = IrLowering::lower_circuit(
+        "assert_eq(poseidon(a - a, b - b), out)",
+        &["out"],
+        &["a", "b"],
+    )
+    .unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut rc = R1CSCompiler::new();
+    let mut inputs = HashMap::new();
+    inputs.insert("out".to_string(), expected);
+    inputs.insert("a".to_string(), FieldElement::from_u64(42));
+    inputs.insert("b".to_string(), FieldElement::from_u64(99));
+    let witness = rc.compile_ir_with_witness(&program, &inputs).unwrap();
+
+    assert!(
+        rc.cs.verify(&witness).is_ok(),
+        "poseidon(a-a, b-b) should equal poseidon(0, 0)"
+    );
+}
+
+// ====================================================================
 // Mux builtin tests
 // ====================================================================
 
