@@ -4,6 +4,14 @@ use crate::field::FieldElement;
 use crate::Value;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Default)]
+pub struct GcStats {
+    pub collections: u64,
+    pub total_freed_bytes: u64,
+    pub peak_heap_bytes: usize,
+    pub total_gc_time_ns: u64,
+}
+
 /// Where an upvalue's value lives.
 #[derive(Debug, Clone, Copy)]
 pub enum UpvalueLocation {
@@ -89,6 +97,7 @@ pub struct Heap {
     gc_lock_depth: u32,
     pub max_heap_bytes: usize,
     pub heap_limit_exceeded: bool,
+    pub stats: GcStats,
 }
 
 impl Default for Heap {
@@ -117,10 +126,14 @@ impl Heap {
             gc_lock_depth: 0,
             max_heap_bytes: usize::MAX,
             heap_limit_exceeded: false,
+            stats: GcStats::default(),
         }
     }
 
     pub fn check_gc(&mut self) {
+        if self.bytes_allocated > self.stats.peak_heap_bytes {
+            self.stats.peak_heap_bytes = self.bytes_allocated;
+        }
         if self.gc_lock_depth == 0 && self.bytes_allocated > self.next_gc_threshold {
             self.request_gc = true;
         }
@@ -355,14 +368,14 @@ impl Heap {
     }
 
     pub fn sweep(&mut self) {
-        let mut _freed_bytes = 0;
+        let mut freed_bytes: usize = 0;
 
         // Strings
         for i in 0..self.strings.data.len() {
             let idx = i as u32;
             if !self.strings.is_marked(idx) && !self.strings.is_free(idx) {
                 self.strings.mark_free(idx);
-                _freed_bytes += self.strings.data[i].capacity();
+                freed_bytes += self.strings.data[i].capacity();
                 self.strings.data[i] = String::new();
             }
         }
@@ -373,7 +386,7 @@ impl Heap {
             let idx = i as u32;
             if !self.lists.is_marked(idx) && !self.lists.is_free(idx) {
                 self.lists.mark_free(idx);
-                _freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
+                freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
                 self.lists.data[i] = Vec::new();
             }
         }
@@ -385,8 +398,8 @@ impl Heap {
             if !self.functions.is_marked(idx) && !self.functions.is_free(idx) {
                 self.functions.mark_free(idx);
                 let f = &self.functions.data[i];
-                _freed_bytes += f.chunk.capacity() * 4;
-                _freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
+                freed_bytes += f.chunk.capacity() * 4;
+                freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
 
                 self.functions.data[i] = Function {
                     name: String::new(),
@@ -407,7 +420,7 @@ impl Heap {
             if !self.closures.is_marked(idx) && !self.closures.is_free(idx) {
                 self.closures.mark_free(idx);
                 let c = &self.closures.data[i];
-                _freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
+                freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
 
                 self.closures.data[i] = Closure {
                     function: 0,
@@ -422,7 +435,7 @@ impl Heap {
             let idx = i as u32;
             if !self.upvalues.is_marked(idx) && !self.upvalues.is_free(idx) {
                 self.upvalues.mark_free(idx);
-                _freed_bytes += std::mem::size_of::<Upvalue>();
+                freed_bytes += std::mem::size_of::<Upvalue>();
 
                 self.upvalues.data[i] = Upvalue {
                     location: UpvalueLocation::Closed(Value::nil()),
@@ -437,7 +450,7 @@ impl Heap {
             let idx = i as u32;
             if !self.iterators.is_marked(idx) && !self.iterators.is_free(idx) {
                 self.iterators.mark_free(idx);
-                _freed_bytes += std::mem::size_of::<IteratorObj>();
+                freed_bytes += std::mem::size_of::<IteratorObj>();
                 self.iterators.data[i] = IteratorObj {
                     source: Value::nil(),
                     index: 0,
@@ -451,7 +464,7 @@ impl Heap {
             let idx = i as u32;
             if !self.fields.is_marked(idx) && !self.fields.is_free(idx) {
                 self.fields.mark_free(idx);
-                _freed_bytes += std::mem::size_of::<FieldElement>();
+                freed_bytes += std::mem::size_of::<FieldElement>();
                 self.fields.data[i] = FieldElement::ZERO;
             }
         }
@@ -463,7 +476,7 @@ impl Heap {
             if !self.proofs.is_marked(idx) && !self.proofs.is_free(idx) {
                 self.proofs.mark_free(idx);
                 let p = &self.proofs.data[i];
-                _freed_bytes += std::mem::size_of::<ProofObject>()
+                freed_bytes += std::mem::size_of::<ProofObject>()
                     + p.proof_json.capacity()
                     + p.public_json.capacity()
                     + p.vkey_json.capacity();
@@ -482,11 +495,13 @@ impl Heap {
             if !self.bigints.is_marked(idx) && !self.bigints.is_free(idx) {
                 self.bigints.mark_free(idx);
                 let bi = &self.bigints.data[i];
-                _freed_bytes += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
+                freed_bytes += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
                 self.bigints.data[i] = BigInt::zero(crate::bigint::BigIntWidth::W256);
             }
         }
         self.bigints.clear_marks();
+
+        self.stats.total_freed_bytes += freed_bytes as u64;
 
         // Recompute bytes_allocated from surviving objects (self-correcting).
         // This eliminates drift from untracked mutations (push, insert, etc.)
@@ -495,8 +510,8 @@ impl Heap {
 
         // Dynamic threshold with hysteresis to prevent GC thrashing.
         // Take the max of: 2× live heap, 1.5× previous threshold, and 1MB floor.
-        let grow = self.bytes_allocated * 2;
-        let hysteresis = self.next_gc_threshold * 3 / 2;
+        let grow = self.bytes_allocated.saturating_mul(2);
+        let hysteresis = self.next_gc_threshold.saturating_mul(3) / 2;
         self.next_gc_threshold = grow.max(hysteresis).max(1024 * 1024);
     }
 

@@ -173,6 +173,68 @@ let x = len(parts) + len(k) + len(c)"#,
 }
 
 // =============================================================================
+// GcStats tests
+// =============================================================================
+
+#[test]
+fn test_gc_stats_collections_increment() {
+    let vm = run_stress(
+        r#"mut i = 0
+while i < 100 {
+    let tmp = "garbage_" + i
+    i = i + 1
+}"#,
+    )
+    .unwrap();
+    assert!(
+        vm.heap.stats.collections > 0,
+        "stress mode should trigger GC collections"
+    );
+    assert!(
+        vm.heap.stats.total_gc_time_ns > 0,
+        "GC timing should be recorded"
+    );
+}
+
+#[test]
+fn test_gc_stats_freed_bytes_after_stress() {
+    let vm = run_stress(
+        r#"mut i = 0
+while i < 100 {
+    let tmp = "garbage_" + i
+    i = i + 1
+}"#,
+    )
+    .unwrap();
+    assert!(
+        vm.heap.stats.total_freed_bytes > 0,
+        "GC should free bytes during stress mode"
+    );
+}
+
+#[test]
+fn test_gc_stats_peak_heap_positive() {
+    let vm = run_stress(r#"let x = [1, 2, 3]"#).unwrap();
+    assert!(
+        vm.heap.stats.peak_heap_bytes > 0,
+        "peak_heap_bytes should be positive after allocations"
+    );
+}
+
+#[test]
+fn test_native_gc_stats_returns_map() {
+    let vm = run_stress(
+        r#"let s = gc_stats()
+assert(typeof(s) == "Map")
+let k = keys(s)
+assert(len(k) == 5)"#,
+    )
+    .unwrap();
+    // If we get here without error, the native returned a valid Map with 5 keys
+    let _ = vm;
+}
+
+// =============================================================================
 // Heap limit tests
 // =============================================================================
 

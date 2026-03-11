@@ -314,6 +314,34 @@ pub fn native_proof_vkey(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeEr
     Ok(Value::string(s))
 }
 
+// --- GC introspection ---
+
+pub fn native_gc_stats(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "collections".into(),
+        Value::int(vm.heap.stats.collections as i64),
+    );
+    map.insert(
+        "bytes_freed".into(),
+        Value::int(vm.heap.stats.total_freed_bytes as i64),
+    );
+    map.insert(
+        "peak_bytes".into(),
+        Value::int(vm.heap.stats.peak_heap_bytes as i64),
+    );
+    map.insert(
+        "gc_time_ms".into(),
+        Value::int((vm.heap.stats.total_gc_time_ns / 1_000_000) as i64),
+    );
+    map.insert(
+        "bytes_allocated".into(),
+        Value::int(vm.heap.bytes_allocated as i64),
+    );
+    let handle = vm.heap.alloc_map(map);
+    Ok(Value::map(handle))
+}
+
 // --- Cryptographic natives ---
 
 pub fn native_poseidon(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

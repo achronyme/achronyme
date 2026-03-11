@@ -1,6 +1,54 @@
 use memory::Heap;
 use memory::Value;
 
+// =============================================================================
+// GcStats tests
+// =============================================================================
+
+#[test]
+fn test_gc_stats_initial_values() {
+    let heap = Heap::new();
+    assert_eq!(heap.stats.collections, 0);
+    assert_eq!(heap.stats.total_freed_bytes, 0);
+    assert_eq!(heap.stats.peak_heap_bytes, 0);
+    assert_eq!(heap.stats.total_gc_time_ns, 0);
+}
+
+#[test]
+fn test_gc_stats_peak_tracking() {
+    let mut heap = Heap::new();
+    heap.alloc_string("hello".into());
+    assert!(heap.stats.peak_heap_bytes > 0);
+}
+
+#[test]
+fn test_gc_stats_freed_bytes_accumulate() {
+    let mut heap = Heap::new();
+    heap.alloc_string("hello world".into());
+    heap.trace(vec![]);
+    heap.sweep();
+    assert!(
+        heap.stats.total_freed_bytes > 0,
+        "sweep should record freed bytes"
+    );
+}
+
+#[test]
+fn test_gc_stats_peak_never_decreases() {
+    let mut heap = Heap::new();
+    // Allocate to establish a peak
+    heap.alloc_string("hello world, this is a string".into());
+    let peak1 = heap.stats.peak_heap_bytes;
+
+    // Sweep everything (no roots) — peak should not decrease
+    heap.trace(vec![]);
+    heap.sweep();
+    assert!(
+        heap.stats.peak_heap_bytes >= peak1,
+        "peak_heap_bytes must never decrease"
+    );
+}
+
 #[test]
 fn test_gc_alloc_reuse_string() {
     let mut heap = Heap::new();

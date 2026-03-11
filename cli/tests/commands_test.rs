@@ -65,16 +65,30 @@ fn compile_nonexistent_file_returns_error() {
 #[test]
 fn run_valid_arithmetic_source() {
     let src = write_temp_source("let x = 2 + 3\nprint(x)");
-    let result =
-        cli::commands::run::run_file(src.path().to_str().unwrap(), false, None, "r1cs", None, EF);
+    let result = cli::commands::run::run_file(
+        src.path().to_str().unwrap(),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
 
 #[test]
 fn run_source_with_runtime_error() {
     let src = write_temp_source("let x = 1 / 0");
-    let result =
-        cli::commands::run::run_file(src.path().to_str().unwrap(), false, None, "r1cs", None, EF);
+    let result = cli::commands::run::run_file(
+        src.path().to_str().unwrap(),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
@@ -91,6 +105,7 @@ fn run_nonexistent_file_returns_error() {
         None,
         "r1cs",
         None,
+        false,
         EF,
     );
     assert!(result.is_err());
@@ -106,7 +121,7 @@ fn run_compiled_binary() {
     cli::commands::compile::compile_file(src.path().to_str().unwrap(), Some(&out_path), EF)
         .expect("compile should succeed");
 
-    let result = cli::commands::run::run_file(&out_path, false, None, "r1cs", None, EF);
+    let result = cli::commands::run::run_file(&out_path, false, None, "r1cs", None, false, EF);
     assert!(
         result.is_ok(),
         "run compiled binary failed: {:?}",

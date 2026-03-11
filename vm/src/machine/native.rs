@@ -79,6 +79,7 @@ impl NativeRegistry for super::vm::VM {
                 "bit_not" => crate::stdlib::bigint::native_bit_not,
                 "bit_shl" => crate::stdlib::bigint::native_bit_shl,
                 "bit_shr" => crate::stdlib::bigint::native_bit_shr,
+                "gc_stats" => crate::stdlib::core::native_gc_stats,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 

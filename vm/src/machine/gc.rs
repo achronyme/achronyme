@@ -12,11 +12,9 @@ impl GarbageCollector for super::vm::VM {
             !self.heap.is_gc_locked(),
             "GC triggered while GC lock is held"
         );
-        let _before = self.heap.bytes_allocated;
+        let start = std::time::Instant::now();
         if self.stress_mode {
             println!("-- GC Triggered (Stress Mode) --");
-        } else {
-            // println!("-- GC Begin (Allocated: {} bytes) --", _before);
         }
 
         let roots = self.mark_roots();
@@ -38,6 +36,10 @@ impl GarbageCollector for super::vm::VM {
 
         self.heap.sweep();
         // Threshold is set by sweep() with hysteresis — no override needed.
+
+        let elapsed = start.elapsed().as_nanos() as u64;
+        self.heap.stats.collections += 1;
+        self.heap.stats.total_gc_time_ns += elapsed;
     }
 
     fn mark_roots(&self) -> Vec<Value> {

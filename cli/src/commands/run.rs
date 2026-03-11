@@ -13,6 +13,7 @@ pub fn run_file(
     ptau: Option<&str>,
     prove_backend: &str,
     max_heap: Option<&str>,
+    gc_stats: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
     if ptau.is_some() {
@@ -47,7 +48,9 @@ pub fn run_file(
         vm.load_executable(&mut file)
             .map_err(|e| anyhow::anyhow!("Loader error: {e}"))?;
 
-        if let Err(e) = vm.interpret() {
+        let result = vm.interpret();
+        print_gc_stats(gc_stats, &vm);
+        if let Err(e) = result {
             let msg = format_runtime_error(&vm, &e);
             return Err(anyhow::anyhow!("{}", msg));
         }
@@ -149,7 +152,9 @@ pub fn run_file(
             dest_reg: 0, // Top-level script, unused
         });
 
-        if let Err(e) = vm.interpret() {
+        let result = vm.interpret();
+        print_gc_stats(gc_stats, &vm);
+        if let Err(e) = result {
             let msg = format_runtime_error(&vm, &e);
             return Err(anyhow::anyhow!("{}", msg));
         }
@@ -159,6 +164,21 @@ pub fn run_file(
         }
 
         Ok(())
+    }
+}
+
+fn print_gc_stats(gc_stats: bool, vm: &VM) {
+    if gc_stats {
+        let s = &vm.heap.stats;
+        eprintln!("-- GC Stats --");
+        eprintln!("  Collections:    {}", s.collections);
+        eprintln!("  Freed (total):  {} bytes", s.total_freed_bytes);
+        eprintln!("  Peak heap:      {} bytes", s.peak_heap_bytes);
+        eprintln!(
+            "  GC time:        {:.3} ms",
+            s.total_gc_time_ns as f64 / 1_000_000.0
+        );
+        eprintln!("  Heap now:       {} bytes", vm.heap.bytes_allocated);
     }
 }
 

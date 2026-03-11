@@ -141,11 +141,16 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         name: "bit_shr",
         arity: 2,
     }, // Index 31
+    // GC introspection
+    NativeMeta {
+        name: "gc_stats",
+        arity: 0,
+    }, // Index 32
 ];
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 32;
+pub const NATIVE_COUNT: usize = 33;
 const _: () = assert!(
     NATIVE_TABLE.len() == NATIVE_COUNT,
     "NATIVE_TABLE length changed — update NATIVE_COUNT"

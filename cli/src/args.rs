@@ -30,6 +30,9 @@ pub enum Commands {
         /// Maximum heap size (e.g., "256M", "1G", "512K", or raw bytes)
         #[arg(long)]
         max_heap: Option<String>,
+        /// Print GC statistics to stderr after execution
+        #[arg(long)]
+        gc_stats: bool,
     },
     /// Disassemble a source file or binary
     Disassemble {
