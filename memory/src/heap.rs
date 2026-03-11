@@ -2,7 +2,7 @@ use crate::arena::Arena;
 use crate::bigint::BigInt;
 use crate::field::FieldElement;
 use crate::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Where an upvalue's value lives.
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +53,22 @@ pub struct ProofObject {
     pub vkey_json: String,
 }
 
+/// Set a mark bit in a bitmap vec. Returns true if was previously unmarked.
+/// Free function to enable split-borrow in `trace()` — takes `&mut Vec<u64>`
+/// instead of `&mut Arena<T>`, allowing disjoint borrows of `data` and `free_set`.
+#[inline]
+fn bitmap_set(mark_bits: &mut Vec<u64>, idx: u32) -> bool {
+    let word = (idx / 64) as usize;
+    let bit = idx % 64;
+    if word >= mark_bits.len() {
+        mark_bits.resize(word + 1, 0);
+    }
+    let mask = 1u64 << bit;
+    let was_unmarked = mark_bits[word] & mask == 0;
+    mark_bits[word] |= mask;
+    was_unmarked
+}
+
 pub struct Heap {
     // Typed Arenas — pub(crate) to prevent external bypass of allocation tracking
     pub(crate) strings: Arena<String>,
@@ -65,18 +81,6 @@ pub struct Heap {
     pub(crate) fields: Arena<FieldElement>,
     pub(crate) proofs: Arena<ProofObject>,
     pub(crate) bigints: Arena<BigInt>,
-
-    // Mark State — pub(crate) to prevent external mark manipulation
-    pub(crate) marked_strings: HashSet<u32>,
-    pub(crate) marked_lists: HashSet<u32>,
-    pub(crate) marked_maps: HashSet<u32>,
-    pub(crate) marked_functions: HashSet<u32>,
-    pub(crate) marked_upvalues: HashSet<u32>,
-    pub(crate) marked_closures: HashSet<u32>,
-    pub(crate) marked_iterators: HashSet<u32>,
-    pub(crate) marked_fields: HashSet<u32>,
-    pub(crate) marked_proofs: HashSet<u32>,
-    pub(crate) marked_bigints: HashSet<u32>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -106,17 +110,6 @@ impl Heap {
             fields: Arena::new(),
             proofs: Arena::new(),
             bigints: Arena::new(),
-
-            marked_strings: HashSet::new(),
-            marked_lists: HashSet::new(),
-            marked_maps: HashSet::new(),
-            marked_functions: HashSet::new(),
-            marked_upvalues: HashSet::new(),
-            marked_closures: HashSet::new(),
-            marked_iterators: HashSet::new(),
-            marked_fields: HashSet::new(),
-            marked_proofs: HashSet::new(),
-            marked_bigints: HashSet::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -162,7 +155,7 @@ impl Heap {
 
     /// Mark an upvalue index as reachable (for open upvalue rooting in GC).
     pub fn mark_upvalue(&mut self, idx: u32) {
-        self.marked_upvalues.insert(idx);
+        self.upvalues.set_mark(idx);
     }
 
     /// Returns true if the proofs arena has any live entries.
@@ -182,7 +175,7 @@ impl Heap {
 
     /// Query whether a list index is marked as reachable (for testing).
     pub fn is_list_marked(&self, idx: u32) -> bool {
-        self.marked_lists.contains(&idx)
+        self.lists.is_marked(idx)
     }
 
     pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
@@ -281,125 +274,82 @@ impl Heap {
             }
             let handle = val.as_handle().unwrap();
 
-            // Dispatch by tag to check marking status
-            let should_process = match val.tag() {
+            match val.tag() {
                 crate::value::TAG_STRING => {
-                    if !self.marked_strings.contains(&handle) {
-                        self.marked_strings.insert(handle);
-                        true
-                    } else {
-                        false
-                    }
+                    bitmap_set(&mut self.strings.mark_bits, handle);
                 }
                 crate::value::TAG_LIST => {
-                    if !self.marked_lists.contains(&handle) {
-                        self.marked_lists.insert(handle);
-                        true
-                    } else {
-                        false
+                    if bitmap_set(&mut self.lists.mark_bits, handle) {
+                        let h = handle as usize;
+                        if h < self.lists.data.len() && !self.lists.free_set.contains(&handle) {
+                            worklist.extend_from_slice(&self.lists.data[h]);
+                        }
                     }
                 }
                 crate::value::TAG_FUNCTION => {
-                    if !self.marked_functions.contains(&handle) {
-                        self.marked_functions.insert(handle);
-                        true
-                    } else {
-                        false
+                    if bitmap_set(&mut self.functions.mark_bits, handle) {
+                        let h = handle as usize;
+                        if h < self.functions.data.len()
+                            && !self.functions.free_set.contains(&handle)
+                        {
+                            worklist.extend_from_slice(&self.functions.data[h].constants);
+                        }
                     }
                 }
                 crate::value::TAG_CLOSURE => {
-                    if !self.marked_closures.contains(&handle) {
-                        self.marked_closures.insert(handle);
-                        true
-                    } else {
-                        false
-                    }
-                }
-                crate::value::TAG_MAP => {
-                    if !self.marked_maps.contains(&handle) {
-                        self.marked_maps.insert(handle);
-                        true
-                    } else {
-                        false
-                    }
-                }
-                crate::value::TAG_ITER => {
-                    if !self.marked_iterators.contains(&handle) {
-                        self.marked_iterators.insert(handle);
-                        true
-                    } else {
-                        false
-                    }
-                }
-                crate::value::TAG_FIELD => {
-                    // Leaf type: no children to trace
-                    self.marked_fields.insert(handle);
-                    false
-                }
-                crate::value::TAG_PROOF => {
-                    // Leaf type: no children to trace
-                    self.marked_proofs.insert(handle);
-                    false
-                }
-                crate::value::TAG_BIGINT => {
-                    // Leaf type: no children to trace
-                    self.marked_bigints.insert(handle);
-                    false
-                }
-                _ => false,
-            };
-
-            if should_process {
-                // If we jus marked it, we need to add its children to worklist.
-                // We clone the children containers (List/Function constants) to avoid &mut self conflicts.
-                // Value is Copy (u64), so Vec<Value> clone is efficient (memcpy).
-                match val.tag() {
-                    crate::value::TAG_LIST => {
-                        if let Some(l) = self.lists.get(handle) {
-                            worklist.extend(l.clone());
-                        }
-                    }
-                    crate::value::TAG_FUNCTION => {
-                        if let Some(f) = self.functions.get(handle) {
-                            worklist.extend(f.constants.clone());
-                        }
-                    }
-                    crate::value::TAG_CLOSURE => {
-                        if let Some(c) = self.closures.get(handle) {
-                            // 1. Mark Function
+                    if bitmap_set(&mut self.closures.mark_bits, handle) {
+                        let h = handle as usize;
+                        if h < self.closures.data.len() && !self.closures.free_set.contains(&handle)
+                        {
+                            let c = &self.closures.data[h];
                             worklist.push(Value::function(c.function));
-                            // 2. Mark Upvalues
                             for &up_idx in &c.upvalues {
-                                if !self.marked_upvalues.contains(&up_idx) {
-                                    self.marked_upvalues.insert(up_idx);
-                                    // Trace value inside upvalue (if closed, it matters)
-                                    // If open, it's stack or Nil, safe to trace
-                                    if let Some(u) = self.upvalues.get(up_idx) {
-                                        if let UpvalueLocation::Closed(val) = u.location {
-                                            worklist.push(val);
+                                if bitmap_set(&mut self.upvalues.mark_bits, up_idx) {
+                                    let uh = up_idx as usize;
+                                    if uh < self.upvalues.data.len()
+                                        && !self.upvalues.free_set.contains(&up_idx)
+                                    {
+                                        if let UpvalueLocation::Closed(v) =
+                                            self.upvalues.data[uh].location
+                                        {
+                                            worklist.push(v);
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    crate::value::TAG_MAP => {
-                        // Keys are Rust-owned Strings inside HashMap<String, Value>,
-                        // NOT arena handles — they are freed when the HashMap drops.
-                        // Only values need GC tracing.
-                        if let Some(m) = self.maps.get(handle) {
-                            for v in m.values() {
+                }
+                crate::value::TAG_MAP => {
+                    if bitmap_set(&mut self.maps.mark_bits, handle) {
+                        let h = handle as usize;
+                        if h < self.maps.data.len() && !self.maps.free_set.contains(&handle) {
+                            for v in self.maps.data[h].values() {
                                 worklist.push(*v);
                             }
                         }
                     }
-                    crate::value::TAG_ITER => {
-                        if let Some(iter) = self.iterators.get(handle) {
-                            worklist.push(iter.source);
+                }
+                crate::value::TAG_ITER => {
+                    if bitmap_set(&mut self.iterators.mark_bits, handle) {
+                        let h = handle as usize;
+                        if h < self.iterators.data.len()
+                            && !self.iterators.free_set.contains(&handle)
+                        {
+                            worklist.push(self.iterators.data[h].source);
                         }
                     }
-                    _ => {}
                 }
+                crate::value::TAG_FIELD => {
+                    bitmap_set(&mut self.fields.mark_bits, handle);
+                }
+                crate::value::TAG_PROOF => {
+                    bitmap_set(&mut self.proofs.mark_bits, handle);
+                }
+                crate::value::TAG_BIGINT => {
+                    bitmap_set(&mut self.bigints.mark_bits, handle);
+                }
+                _ => {}
             }
         }
     }
@@ -410,35 +360,34 @@ impl Heap {
         // Strings
         for i in 0..self.strings.data.len() {
             let idx = i as u32;
-            if !self.marked_strings.contains(&idx) && !self.strings.is_free(idx) {
+            if !self.strings.is_marked(idx) && !self.strings.is_free(idx) {
                 self.strings.mark_free(idx);
                 _freed_bytes += self.strings.data[i].capacity();
-                self.strings.data[i] = String::new(); // Free memory
+                self.strings.data[i] = String::new();
             }
         }
-        self.marked_strings.clear();
+        self.strings.clear_marks();
 
         // Lists
         for i in 0..self.lists.data.len() {
             let idx = i as u32;
-            if !self.marked_lists.contains(&idx) && !self.lists.is_free(idx) {
+            if !self.lists.is_marked(idx) && !self.lists.is_free(idx) {
                 self.lists.mark_free(idx);
                 _freed_bytes += self.lists.data[i].capacity() * std::mem::size_of::<Value>();
-                self.lists.data[i] = Vec::new(); // Free memory
+                self.lists.data[i] = Vec::new();
             }
         }
-        self.marked_lists.clear();
+        self.lists.clear_marks();
 
         // Functions
         for i in 0..self.functions.data.len() {
             let idx = i as u32;
-            if !self.marked_functions.contains(&idx) && !self.functions.is_free(idx) {
+            if !self.functions.is_marked(idx) && !self.functions.is_free(idx) {
                 self.functions.mark_free(idx);
                 let f = &self.functions.data[i];
                 _freed_bytes += f.chunk.capacity() * 4;
                 _freed_bytes += f.constants.capacity() * std::mem::size_of::<Value>();
 
-                // We replace with dummy
                 self.functions.data[i] = Function {
                     name: String::new(),
                     arity: 0,
@@ -450,12 +399,12 @@ impl Heap {
                 };
             }
         }
-        self.marked_functions.clear();
+        self.functions.clear_marks();
 
         // Closures
         for i in 0..self.closures.data.len() {
             let idx = i as u32;
-            if !self.marked_closures.contains(&idx) && !self.closures.is_free(idx) {
+            if !self.closures.is_marked(idx) && !self.closures.is_free(idx) {
                 self.closures.mark_free(idx);
                 let c = &self.closures.data[i];
                 _freed_bytes += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
@@ -466,12 +415,12 @@ impl Heap {
                 };
             }
         }
-        self.marked_closures.clear();
+        self.closures.clear_marks();
 
         // Upvalues
         for i in 0..self.upvalues.data.len() {
             let idx = i as u32;
-            if !self.marked_upvalues.contains(&idx) && !self.upvalues.is_free(idx) {
+            if !self.upvalues.is_marked(idx) && !self.upvalues.is_free(idx) {
                 self.upvalues.mark_free(idx);
                 _freed_bytes += std::mem::size_of::<Upvalue>();
 
@@ -481,38 +430,37 @@ impl Heap {
                 };
             }
         }
-        self.marked_upvalues.clear();
+        self.upvalues.clear_marks();
 
         // Iterators
         for i in 0..self.iterators.data.len() {
             let idx = i as u32;
-            if !self.marked_iterators.contains(&idx) && !self.iterators.is_free(idx) {
+            if !self.iterators.is_marked(idx) && !self.iterators.is_free(idx) {
                 self.iterators.mark_free(idx);
                 _freed_bytes += std::mem::size_of::<IteratorObj>();
-                // Reset iterator (Value::nil() source)
                 self.iterators.data[i] = IteratorObj {
                     source: Value::nil(),
                     index: 0,
                 };
             }
         }
-        self.marked_iterators.clear();
+        self.iterators.clear_marks();
 
         // Fields (leaf type, 32 bytes each)
         for i in 0..self.fields.data.len() {
             let idx = i as u32;
-            if !self.marked_fields.contains(&idx) && !self.fields.is_free(idx) {
+            if !self.fields.is_marked(idx) && !self.fields.is_free(idx) {
                 self.fields.mark_free(idx);
                 _freed_bytes += std::mem::size_of::<FieldElement>();
                 self.fields.data[i] = FieldElement::ZERO;
             }
         }
-        self.marked_fields.clear();
+        self.fields.clear_marks();
 
         // Proofs
         for i in 0..self.proofs.data.len() {
             let idx = i as u32;
-            if !self.marked_proofs.contains(&idx) && !self.proofs.is_free(idx) {
+            if !self.proofs.is_marked(idx) && !self.proofs.is_free(idx) {
                 self.proofs.mark_free(idx);
                 let p = &self.proofs.data[i];
                 _freed_bytes += std::mem::size_of::<ProofObject>()
@@ -526,19 +474,19 @@ impl Heap {
                 };
             }
         }
-        self.marked_proofs.clear();
+        self.proofs.clear_marks();
 
         // BigInts (leaf type)
         for i in 0..self.bigints.data.len() {
             let idx = i as u32;
-            if !self.marked_bigints.contains(&idx) && !self.bigints.is_free(idx) {
+            if !self.bigints.is_marked(idx) && !self.bigints.is_free(idx) {
                 self.bigints.mark_free(idx);
                 let bi = &self.bigints.data[i];
                 _freed_bytes += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
                 self.bigints.data[i] = BigInt::zero(crate::bigint::BigIntWidth::W256);
             }
         }
-        self.marked_bigints.clear();
+        self.bigints.clear_marks();
 
         // Recompute bytes_allocated from surviving objects (self-correcting).
         // This eliminates drift from untracked mutations (push, insert, etc.)
