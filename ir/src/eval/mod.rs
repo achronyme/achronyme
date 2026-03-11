@@ -145,13 +145,14 @@ pub fn evaluate(
     let mut values: HashMap<SsaVar, FieldElement> = HashMap::new();
     let mut poseidon_params: Option<PoseidonParams> = None;
 
-    let get =
-        |values: &HashMap<SsaVar, FieldElement>, var: &SsaVar| -> Result<FieldElement, EvalError> {
-            values
-                .get(var)
-                .copied()
-                .ok_or(EvalError::UndefinedVar(*var))
-        };
+    let get = |values: &HashMap<SsaVar, FieldElement>,
+               var: &SsaVar|
+     -> Result<FieldElement, Box<EvalError>> {
+        values
+            .get(var)
+            .copied()
+            .ok_or_else(|| Box::new(EvalError::UndefinedVar(*var)))
+    };
 
     for inst in &program.instructions {
         match inst {
