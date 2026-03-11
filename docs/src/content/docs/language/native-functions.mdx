@@ -3,7 +3,7 @@ title: "Native Functions"
 description: "Reference for all 32 built-in native functions."
 ---
 
-Achronyme provides 32 native functions built into the VM. Some are also available in circuit mode.
+Achronyme provides 33 native functions built into the VM. Some are also available in circuit mode.
 
 ## Core
 
@@ -59,6 +59,21 @@ Returns the current time as milliseconds since the Unix epoch.
 ```ach
 let t = time()
 print(t)  // 1740700800000
+```
+
+**Mode:** VM only
+
+### `gc_stats()`
+
+Returns a map with garbage collector statistics. See [GC Statistics](/architecture/memory-and-gc/#gc-statistics) for details.
+
+```ach
+let stats = gc_stats()
+print(stats["collections"])     // number of GC cycles
+print(stats["bytes_freed"])     // cumulative bytes reclaimed
+print(stats["peak_bytes"])      // maximum heap size reached
+print(stats["gc_time_ms"])      // cumulative ms spent in GC
+print(stats["bytes_allocated"]) // current live heap size
 ```
 
 **Mode:** VM only
@@ -384,3 +399,4 @@ bit_shr(bigint256(256), 8)  // bigint256(1)
 | 29 | `bit_not(x)` | 1 | VM | BigInt |
 | 30 | `bit_shl(x, n)` | 2 | VM | BigInt |
 | 31 | `bit_shr(x, n)` | 2 | VM | BigInt |
+| 32 | `gc_stats()` | 0 | VM | map |

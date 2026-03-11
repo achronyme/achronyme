@@ -26,7 +26,9 @@ ach run script.achb
 
 | Flag | Description |
 |------|-------------|
-| `--stress-gc` | Run GC on every allocation (for testing) |
+| `--stress-gc` | Run GC on every allocation (for testing). See [Stress GC Mode](/architecture/memory-and-gc/#stress-gc-mode) |
+| `--max-heap <size>` | Set maximum heap size (e.g., `256M`, `1G`, `512K`). Raises `HeapLimitExceeded` if exceeded |
+| `--gc-stats` | Print GC statistics to stderr after execution. See [GC Statistics](/architecture/memory-and-gc/#gc-statistics) |
 | `--prove-backend <backend>` | Backend for `prove {}` blocks: `r1cs` (default) or `plonkish` |
 
 ### Examples
@@ -34,6 +36,7 @@ ach run script.achb
 ```bash
 ach run hello.ach
 ach run hello.ach --prove-backend plonkish
+ach run hello.ach --max-heap 256M --gc-stats
 ```
 
 ---
