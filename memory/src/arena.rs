@@ -12,7 +12,9 @@ pub struct Arena<T> {
     /// elements as `free_indices` at all times. Maintained by `mark_free`,
     /// `reclaim_free`, and `clear_free` — direct mutation of `free_indices`
     /// without updating this set will break sweep correctness.
-    free_set: HashSet<u32>,
+    pub(crate) free_set: HashSet<u32>,
+    /// Bitmap for GC mark bits — 1 bit per slot. Lazily grown by `set_mark`.
+    pub(crate) mark_bits: Vec<u64>,
 }
 
 impl<T> Default for Arena<T> {
@@ -27,6 +29,7 @@ impl<T> Arena<T> {
             data: Vec::new(),
             free_indices: Vec::new(),
             free_set: HashSet::new(),
+            mark_bits: Vec::new(),
         }
     }
 
@@ -56,6 +59,7 @@ impl<T> Arena<T> {
     pub fn clear_free(&mut self) {
         self.free_indices.clear();
         self.free_set.clear();
+        self.mark_bits.clear();
     }
 
     /// Return a reference to the element at `idx`, or `None` if out of bounds or freed.
@@ -81,6 +85,34 @@ impl<T> Arena<T> {
         self.data.len() - self.free_set.len()
     }
 
+    /// Set mark bit. Returns true if was previously unmarked.
+    #[inline]
+    pub fn set_mark(&mut self, idx: u32) -> bool {
+        let word = (idx / 64) as usize;
+        let bit = idx % 64;
+        if word >= self.mark_bits.len() {
+            self.mark_bits.resize(word + 1, 0);
+        }
+        let mask = 1u64 << bit;
+        let was_unmarked = self.mark_bits[word] & mask == 0;
+        self.mark_bits[word] |= mask;
+        was_unmarked
+    }
+
+    /// Check whether slot is marked.
+    #[inline]
+    pub fn is_marked(&self, idx: u32) -> bool {
+        let word = (idx / 64) as usize;
+        let bit = idx % 64;
+        word < self.mark_bits.len() && self.mark_bits[word] & (1u64 << bit) != 0
+    }
+
+    /// Clear all mark bits. O(N/64) memset, preserves capacity.
+    #[inline]
+    pub fn clear_marks(&mut self) {
+        self.mark_bits.iter_mut().for_each(|w| *w = 0);
+    }
+
     /// Insert a value, reusing a freed slot if available, or appending.
     /// Panics if the arena grows beyond `u32::MAX` entries.
     pub fn alloc(&mut self, val: T) -> u32 {
@@ -93,5 +125,68 @@ impl<T> Arena<T> {
             self.data.push(val);
             index
         }
+    }
+}
+
+#[cfg(test)]
+mod bitmap_tests {
+    use super::Arena;
+
+    #[test]
+    fn set_mark_returns_true_first_time() {
+        let mut arena: Arena<u32> = Arena::new();
+        arena.alloc(42);
+        assert!(arena.set_mark(0));
+        assert!(!arena.set_mark(0)); // already marked
+    }
+
+    #[test]
+    fn is_marked_after_set() {
+        let mut arena: Arena<u32> = Arena::new();
+        arena.alloc(1);
+        assert!(!arena.is_marked(0));
+        arena.set_mark(0);
+        assert!(arena.is_marked(0));
+    }
+
+    #[test]
+    fn clear_marks_resets_all() {
+        let mut arena: Arena<u32> = Arena::new();
+        arena.alloc(1);
+        arena.alloc(2);
+        arena.set_mark(0);
+        arena.set_mark(1);
+        arena.clear_marks();
+        assert!(!arena.is_marked(0));
+        assert!(!arena.is_marked(1));
+    }
+
+    #[test]
+    fn mark_high_index_grows_bitmap() {
+        let mut arena: Arena<u32> = Arena::new();
+        for i in 0..200 {
+            arena.alloc(i);
+        }
+        assert!(arena.set_mark(199));
+        assert!(arena.is_marked(199));
+        assert!(!arena.is_marked(198));
+    }
+
+    #[test]
+    fn is_marked_out_of_range() {
+        let arena: Arena<u32> = Arena::new();
+        assert!(!arena.is_marked(9999));
+    }
+
+    #[test]
+    fn clear_marks_preserves_capacity() {
+        let mut arena: Arena<u32> = Arena::new();
+        for i in 0..100 {
+            arena.alloc(i);
+        }
+        arena.set_mark(99);
+        let cap_before = arena.mark_bits.capacity();
+        arena.clear_marks();
+        assert_eq!(arena.mark_bits.capacity(), cap_before);
     }
 }
