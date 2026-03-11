@@ -80,6 +80,17 @@ impl NativeRegistry for super::vm::VM {
                 "bit_shl" => crate::stdlib::bigint::native_bit_shl,
                 "bit_shr" => crate::stdlib::bigint::native_bit_shr,
                 "gc_stats" => crate::stdlib::core::native_gc_stats,
+                // Higher-order collections
+                "map" => crate::stdlib::collections::native_map,
+                "filter" => crate::stdlib::collections::native_filter,
+                "reduce" => crate::stdlib::collections::native_reduce,
+                "forEach" => crate::stdlib::collections::native_for_each,
+                "find" => crate::stdlib::collections::native_find,
+                "any" => crate::stdlib::collections::native_any,
+                "all" => crate::stdlib::collections::native_all,
+                "sort" => crate::stdlib::collections::native_sort,
+                "flatMap" => crate::stdlib::collections::native_flat_map,
+                "zip" => crate::stdlib::collections::native_zip,
                 _ => panic!("VM Implementation missing for native: {}", meta.name),
             };
 

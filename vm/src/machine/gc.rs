@@ -72,6 +72,9 @@ impl GarbageCollector for super::vm::VM {
             roots.push(Value::function(proto_idx));
         }
 
+        // 5. Native roots (values held by higher-order natives during reentrant calls)
+        roots.extend_from_slice(&self.native_roots);
+
         roots
     }
 }

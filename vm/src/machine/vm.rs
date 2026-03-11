@@ -46,6 +46,14 @@ pub struct VM {
     /// Location of the last runtime error: (function_name, line_number).
     /// Set by interpret() before returning Err.
     pub last_error_location: Option<(String, u32)>,
+
+    /// GC roots for values held by native functions during reentrant calls.
+    ///
+    /// Higher-order natives (map, filter, reduce, etc.) re-enter the
+    /// interpreter via `call_value()`. Intermediate results live in Rust
+    /// locals that the GC cannot see. Pushing them here keeps them rooted
+    /// across closure invocations that may trigger garbage collection.
+    pub native_roots: Vec<Value>,
 }
 
 pub const STACK_MAX: usize = 65_536;
@@ -78,12 +86,120 @@ impl VM {
             prove_handler: None,
             verify_handler: None,
             last_error_location: None,
+            native_roots: Vec::new(),
         };
 
         // Bootstrap native functions
         vm.bootstrap_natives();
 
         vm
+    }
+
+    /// Invoke a callable Value (Closure or Native) with the given arguments.
+    ///
+    /// Used by higher-order native functions (map, filter, reduce, etc.) to
+    /// re-enter the interpreter loop and execute user-provided closures.
+    ///
+    /// For closures, this pushes a CallFrame, runs the interpreter until the
+    /// closure returns, and yields the return value. GC runs normally during
+    /// execution — callers must root any intermediate heap values via
+    /// `self.native_roots` before invoking this method.
+    ///
+    /// For natives, this delegates directly to the function pointer.
+    pub fn call_value(&mut self, callee: Value, args: &[Value]) -> Result<Value, RuntimeError> {
+        // Fast path: native-to-native call (no frame push needed)
+        if callee.is_native() {
+            let handle = callee
+                .as_handle()
+                .ok_or_else(|| RuntimeError::TypeMismatch("Expected native handle".into()))?;
+            let (func, arity) = {
+                let n = self
+                    .natives
+                    .get(handle as usize)
+                    .ok_or(RuntimeError::FunctionNotFound)?;
+                (n.func, n.arity)
+            };
+            if arity != -1 && arity as usize != args.len() {
+                return Err(RuntimeError::ArityMismatch(format!(
+                    "Expected {} args, got {}",
+                    arity,
+                    args.len()
+                )));
+            }
+            return func(self, args);
+        }
+
+        if !callee.is_closure() {
+            return Err(RuntimeError::TypeMismatch(
+                "call_value target must be a Closure or Native".into(),
+            ));
+        }
+
+        let closure_handle = callee
+            .as_handle()
+            .ok_or_else(|| RuntimeError::TypeMismatch("Expected closure handle".into()))?;
+
+        let (arity, max_slots) = {
+            let closure = self
+                .heap
+                .get_closure(closure_handle)
+                .ok_or(RuntimeError::FunctionNotFound)?;
+            let func = self
+                .heap
+                .get_function(closure.function)
+                .ok_or(RuntimeError::FunctionNotFound)?;
+            (func.arity as usize, func.max_slots as usize)
+        };
+
+        if arity != args.len() {
+            return Err(RuntimeError::ArityMismatch(format!(
+                "Expected {} args, got {}",
+                arity,
+                args.len()
+            )));
+        }
+
+        // Compute the next safe stack base above all active frames.
+        let mut new_base = 0usize;
+        for frame in &self.frames {
+            if let Some(cl) = self.heap.get_closure(frame.closure) {
+                if let Some(f) = self.heap.get_function(cl.function) {
+                    new_base = new_base.max(frame.base + f.max_slots as usize);
+                }
+            }
+        }
+
+        if new_base + max_slots >= STACK_MAX {
+            return Err(RuntimeError::StackOverflow);
+        }
+
+        // Copy arguments into the new frame's register window.
+        for (i, arg) in args.iter().enumerate() {
+            self.stack[new_base + i] = *arg;
+        }
+
+        // dest_reg: the Return opcode writes the closure's return value here.
+        // We reuse new_base (R0 of the new frame) so we can read it back after
+        // the frame is popped.
+        let dest_reg = new_base;
+
+        if self.frames.len() >= MAX_FRAMES {
+            return Err(RuntimeError::StackOverflow);
+        }
+
+        let saved_depth = self.frames.len();
+        self.frames
+            .push(CallFrame::new(closure_handle, new_base, dest_reg));
+
+        match self.run_until_frame_depth(saved_depth) {
+            Ok(()) => Ok(self.stack[dest_reg]),
+            Err(e) => {
+                // Clean up any frames left by a failed closure (e.g. error mid-execution
+                // of a closure that called other closures).
+                self.frames.truncate(saved_depth);
+                Err(e)
+            }
+        }
     }
 
     /// Import compiler strings into the VM heap.

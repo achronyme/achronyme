@@ -146,11 +146,52 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         name: "gc_stats",
         arity: 0,
     }, // Index 32
+    // Higher-order collections
+    NativeMeta {
+        name: "map",
+        arity: 2,
+    }, // Index 33
+    NativeMeta {
+        name: "filter",
+        arity: 2,
+    }, // Index 34
+    NativeMeta {
+        name: "reduce",
+        arity: 3,
+    }, // Index 35
+    NativeMeta {
+        name: "forEach",
+        arity: 2,
+    }, // Index 36
+    NativeMeta {
+        name: "find",
+        arity: 2,
+    }, // Index 37
+    NativeMeta {
+        name: "any",
+        arity: 2,
+    }, // Index 38
+    NativeMeta {
+        name: "all",
+        arity: 2,
+    }, // Index 39
+    NativeMeta {
+        name: "sort",
+        arity: 2,
+    }, // Index 40
+    NativeMeta {
+        name: "flatMap",
+        arity: 2,
+    }, // Index 41
+    NativeMeta {
+        name: "zip",
+        arity: 2,
+    }, // Index 42
 ];
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 33;
+pub const NATIVE_COUNT: usize = 43;
 const _: () = assert!(
     NATIVE_TABLE.len() == NATIVE_COUNT,
     "NATIVE_TABLE length changed — update NATIVE_COUNT"

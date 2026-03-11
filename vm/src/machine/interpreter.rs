@@ -34,7 +34,22 @@ impl InterpreterOps for super::vm::VM {
             }
         }
 
-        while !self.frames.is_empty() {
+        self.run_until_frame_depth(0)
+    }
+}
+
+impl super::vm::VM {
+    /// Run the interpreter loop until the frame stack drops to `target_depth`.
+    ///
+    /// This is the core execution engine. `interpret_inner()` delegates here
+    /// with `target_depth = 0` (run until all frames are consumed).
+    /// `call_value()` uses a higher target to execute a single closure call
+    /// and return to the native caller.
+    pub(crate) fn run_until_frame_depth(
+        &mut self,
+        target_depth: usize,
+    ) -> Result<(), RuntimeError> {
+        while self.frames.len() > target_depth {
             // GC Check Point
             if self.heap.request_gc || self.stress_mode {
                 self.collect_garbage();
