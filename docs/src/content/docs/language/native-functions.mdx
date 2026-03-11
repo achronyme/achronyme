@@ -1,9 +1,9 @@
 ---
 title: "Native Functions"
-description: "Reference for all 32 built-in native functions."
+description: "Reference for all 43 built-in native functions."
 ---
 
-Achronyme provides 33 native functions built into the VM. Some are also available in circuit mode.
+Achronyme provides 43 native functions built into the VM. Some are also available in circuit mode.
 
 ## Core
 
@@ -161,13 +161,13 @@ Extracts a substring from character position `start` to `end` (exclusive). Indic
 substring("hello", 1, 4)  // "ell"
 ```
 
-### `indexOf(s, sub)`
+### `index_of(s, sub)`
 
 Returns the character index of the first occurrence of `sub` in `s`. Returns `-1` if not found.
 
 ```ach
-indexOf("hello world", "world")  // 6
-indexOf("hello", "xyz")          // -1
+index_of("hello world", "world")  // 6
+index_of("hello", "xyz")          // -1
 ```
 
 ### `split(s, delimiter)`
@@ -194,20 +194,20 @@ Replaces all occurrences of `search` with `replacement`.
 replace("aabbcc", "bb", "XX")  // "aaXXcc"
 ```
 
-### `toUpper(s)`
+### `to_upper(s)`
 
 Converts all characters to uppercase.
 
 ```ach
-toUpper("hello")  // "HELLO"
+to_upper("hello")  // "HELLO"
 ```
 
-### `toLower(s)`
+### `to_lower(s)`
 
 Converts all characters to lowercase.
 
 ```ach
-toLower("HELLO")  // "hello"
+to_lower("HELLO")  // "hello"
 ```
 
 ### `chars(s)`
@@ -363,6 +363,90 @@ bit_shr(bigint256(256), 8)  // bigint256(1)
 
 **Mode:** VM only
 
+## Higher-Order Collections
+
+These functions accept closures as callbacks and re-enter the interpreter loop to execute them. All are **VM only**.
+
+### `map(list, fn)`
+
+Returns a new list with `fn(elem)` applied to each element.
+
+```ach
+map([1, 2, 3], fn(n) { n * 2 })  // [2, 4, 6]
+```
+
+### `filter(list, fn)`
+
+Returns a new list containing only elements where `fn(elem)` is truthy.
+
+```ach
+filter([1, 2, 3, 4], fn(n) { n % 2 == 0 })  // [2, 4]
+```
+
+### `reduce(list, initial, fn)`
+
+Folds the list into a single value: `acc = fn(acc, elem)` for each element.
+
+```ach
+reduce([1, 2, 3], 0, fn(acc, n) { acc + n })  // 6
+```
+
+### `for_each(list, fn)`
+
+Calls `fn(elem)` for each element (for side effects). Returns `nil`.
+
+```ach
+for_each([1, 2, 3], fn(n) { print(n) })
+```
+
+### `find(list, fn)`
+
+Returns the first element where `fn(elem)` is truthy, or `nil` if none match.
+
+```ach
+find([1, 2, 3, 4], fn(n) { n > 2 })  // 3
+```
+
+### `any(list, fn)`
+
+Returns `true` if `fn(elem)` is truthy for any element. Short-circuits on first match.
+
+```ach
+any([1, 2, 3], fn(n) { n == 2 })  // true
+```
+
+### `all(list, fn)`
+
+Returns `true` if `fn(elem)` is truthy for all elements. Short-circuits on first failure.
+
+```ach
+all([1, 2, 3], fn(n) { n > 0 })  // true
+```
+
+### `sort(list, fn)`
+
+Returns a new sorted list. The comparator `fn(a, b)` must return a negative number if `a < b`, zero if equal, positive if `a > b`.
+
+```ach
+sort([3, 1, 2], fn(a, b) { a - b })  // [1, 2, 3]
+```
+
+### `flat_map(list, fn)`
+
+Like `map`, but flattens one level of nested lists. Non-list return values are kept as-is.
+
+```ach
+flat_map([1, 2, 3], fn(n) { [n, n * 10] })  // [1, 10, 2, 20, 3, 30]
+```
+
+### `zip(list1, list2)`
+
+Returns a list of `[a, b]` pairs, truncated to the length of the shorter list.
+
+```ach
+zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
+```
+
 ## Summary Table
 
 | # | Function | Arity | Mode | Returns |
@@ -379,12 +463,12 @@ bit_shr(bigint256(256), 8)  // bigint256(1)
 | 9 | `proof_public(p)` | 1 | VM | string |
 | 10 | `proof_vkey(p)` | 1 | VM | string |
 | 11 | `substring(s, start, end)` | 3 | VM | string |
-| 12 | `indexOf(s, sub)` | 2 | VM | int |
+| 12 | `index_of(s, sub)` | 2 | VM | int |
 | 13 | `split(s, delim)` | 2 | VM | list |
 | 14 | `trim(s)` | 1 | VM | string |
 | 15 | `replace(s, search, repl)` | 3 | VM | string |
-| 16 | `toUpper(s)` | 1 | VM | string |
-| 17 | `toLower(s)` | 1 | VM | string |
+| 16 | `to_upper(s)` | 1 | VM | string |
+| 17 | `to_lower(s)` | 1 | VM | string |
 | 18 | `chars(s)` | 1 | VM | list |
 | 19 | `poseidon(a, b)` | 2 | Both | field |
 | 20 | `poseidon_many(...)` | variadic | Both | field |
@@ -400,3 +484,13 @@ bit_shr(bigint256(256), 8)  // bigint256(1)
 | 30 | `bit_shl(x, n)` | 2 | VM | BigInt |
 | 31 | `bit_shr(x, n)` | 2 | VM | BigInt |
 | 32 | `gc_stats()` | 0 | VM | map |
+| 33 | `map(list, fn)` | 2 | VM | list |
+| 34 | `filter(list, fn)` | 2 | VM | list |
+| 35 | `reduce(list, init, fn)` | 3 | VM | value |
+| 36 | `for_each(list, fn)` | 2 | VM | nil |
+| 37 | `find(list, fn)` | 2 | VM | value |
+| 38 | `any(list, fn)` | 2 | VM | bool |
+| 39 | `all(list, fn)` | 2 | VM | bool |
+| 40 | `sort(list, fn)` | 2 | VM | list |
+| 41 | `flat_map(list, fn)` | 2 | VM | list |
+| 42 | `zip(list1, list2)` | 2 | VM | list |

@@ -198,37 +198,37 @@ fn test_substring_multibyte() {
 }
 
 // =============================================================================
-// indexOf(str, substr)
+// index_of(str, substr)
 // =============================================================================
 
 #[test]
 fn test_index_of_found() {
-    let vm = run_source(r#"let x = indexOf("hello world", "world")"#).unwrap();
+    let vm = run_source(r#"let x = index_of("hello world", "world")"#).unwrap();
     assert_eq!(result_int(&vm), 6);
 }
 
 #[test]
 fn test_index_of_not_found() {
-    let vm = run_source(r#"let x = indexOf("hello", "xyz")"#).unwrap();
+    let vm = run_source(r#"let x = index_of("hello", "xyz")"#).unwrap();
     assert_eq!(result_int(&vm), -1);
 }
 
 #[test]
 fn test_index_of_beginning() {
-    let vm = run_source(r#"let x = indexOf("hello", "hel")"#).unwrap();
+    let vm = run_source(r#"let x = index_of("hello", "hel")"#).unwrap();
     assert_eq!(result_int(&vm), 0);
 }
 
 #[test]
 fn test_index_of_multibyte() {
     // "café latte" — "latte" starts at char index 5
-    let vm = run_source(r#"let x = indexOf("café latte", "latte")"#).unwrap();
+    let vm = run_source(r#"let x = index_of("café latte", "latte")"#).unwrap();
     assert_eq!(result_int(&vm), 5);
 }
 
 #[test]
 fn test_index_of_empty_needle() {
-    let vm = run_source(r#"let x = indexOf("hello", "")"#).unwrap();
+    let vm = run_source(r#"let x = index_of("hello", "")"#).unwrap();
     assert_eq!(result_int(&vm), 0);
 }
 
@@ -299,30 +299,30 @@ fn test_replace_no_match() {
 }
 
 // =============================================================================
-// toUpper(str) / toLower(str)
+// to_upper(str) / to_lower(str)
 // =============================================================================
 
 #[test]
 fn test_to_upper() {
-    let vm = run_source(r#"let x = toUpper("hello")"#).unwrap();
+    let vm = run_source(r#"let x = to_upper("hello")"#).unwrap();
     assert_eq!(result_string(&vm), "HELLO");
 }
 
 #[test]
 fn test_to_lower() {
-    let vm = run_source(r#"let x = toLower("HELLO")"#).unwrap();
+    let vm = run_source(r#"let x = to_lower("HELLO")"#).unwrap();
     assert_eq!(result_string(&vm), "hello");
 }
 
 #[test]
 fn test_to_upper_mixed() {
-    let vm = run_source(r#"let x = toUpper("Hello World 123!")"#).unwrap();
+    let vm = run_source(r#"let x = to_upper("Hello World 123!")"#).unwrap();
     assert_eq!(result_string(&vm), "HELLO WORLD 123!");
 }
 
 #[test]
 fn test_to_lower_mixed() {
-    let vm = run_source(r#"let x = toLower("Hello World 123!")"#).unwrap();
+    let vm = run_source(r#"let x = to_lower("Hello World 123!")"#).unwrap();
     assert_eq!(result_string(&vm), "hello world 123!");
 }
 
@@ -370,7 +370,7 @@ let x = parts[1]"#,
 
 #[test]
 fn test_trim_and_upper() {
-    let vm = run_source(r#"let x = toUpper(trim("  hello  "))"#).unwrap();
+    let vm = run_source(r#"let x = to_upper(trim("  hello  "))"#).unwrap();
     assert_eq!(result_string(&vm), "HELLO");
 }
 
@@ -404,7 +404,7 @@ let x = result"#,
 fn test_substring_with_index_of() {
     let vm = run_source(
         r#"let s = "hello world"
-let pos = indexOf(s, " ")
+let pos = index_of(s, " ")
 let x = substring(s, 0, pos)"#,
     )
     .unwrap();

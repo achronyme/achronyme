@@ -60,7 +60,7 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         arity: 3,
     }, // Index 11
     NativeMeta {
-        name: "indexOf",
+        name: "index_of",
         arity: 2,
     }, // Index 12
     NativeMeta {
@@ -76,11 +76,11 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         arity: 3,
     }, // Index 15
     NativeMeta {
-        name: "toUpper",
+        name: "to_upper",
         arity: 1,
     }, // Index 16
     NativeMeta {
-        name: "toLower",
+        name: "to_lower",
         arity: 1,
     }, // Index 17
     NativeMeta {
@@ -160,7 +160,7 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         arity: 3,
     }, // Index 35
     NativeMeta {
-        name: "forEach",
+        name: "for_each",
         arity: 2,
     }, // Index 36
     NativeMeta {
@@ -180,7 +180,7 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         arity: 2,
     }, // Index 40
     NativeMeta {
-        name: "flatMap",
+        name: "flat_map",
         arity: 2,
     }, // Index 41
     NativeMeta {

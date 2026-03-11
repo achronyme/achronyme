@@ -168,23 +168,23 @@ fn test_reduce_single_element() {
 }
 
 // =============================================================================
-// forEach
+// for_each
 // =============================================================================
 
 #[test]
 fn test_for_each_returns_nil() {
     let vm = run(r#"mut total = 0
-forEach([1, 2, 3], fn(n) { total = total + n })
+for_each([1, 2, 3], fn(n) { total = total + n })
 let x = total"#)
     .unwrap();
-    // forEach mutates via upvalue; check that total accumulated
+    // for_each mutates via upvalue; check that total accumulated
     assert_eq!(result_int(&vm), 6);
 }
 
 #[test]
 fn test_for_each_empty_list() {
     let vm = run(r#"mut total = 0
-forEach([], fn(n) { total = total + n })
+for_each([], fn(n) { total = total + n })
 let x = total"#)
     .unwrap();
     assert_eq!(result_int(&vm), 0);
@@ -288,30 +288,30 @@ fn test_sort_already_sorted() {
 }
 
 // =============================================================================
-// flatMap
+// flat_map
 // =============================================================================
 
 #[test]
 fn test_flat_map_basic() {
-    let vm = run("let x = flatMap([1, 2, 3], fn(n) { [n, n * 10] })").unwrap();
+    let vm = run("let x = flat_map([1, 2, 3], fn(n) { [n, n * 10] })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 10, 2, 20, 3, 30]);
 }
 
 #[test]
 fn test_flat_map_identity() {
-    let vm = run("let x = flatMap([[1, 2], [3, 4]], fn(l) { l })").unwrap();
+    let vm = run("let x = flat_map([[1, 2], [3, 4]], fn(l) { l })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 2, 3, 4]);
 }
 
 #[test]
 fn test_flat_map_non_list_passthrough() {
-    let vm = run("let x = flatMap([1, 2, 3], fn(n) { n * 2 })").unwrap();
+    let vm = run("let x = flat_map([1, 2, 3], fn(n) { n * 2 })").unwrap();
     assert_eq!(result_int_list(&vm), vec![2, 4, 6]);
 }
 
 #[test]
 fn test_flat_map_empty_list() {
-    let vm = run("let x = flatMap([], fn(n) { [n] })").unwrap();
+    let vm = run("let x = flat_map([], fn(n) { [n] })").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
@@ -488,7 +488,7 @@ let x = reduce(doubled, 0, fn(acc, n) { acc + n })"#,
 
 #[test]
 fn test_stress_flat_map() {
-    let vm = run_stress("let x = flatMap([1, 2, 3], fn(n) { [n, n * 10] })").unwrap();
+    let vm = run_stress("let x = flat_map([1, 2, 3], fn(n) { [n, n * 10] })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 10, 2, 20, 3, 30]);
 }
 
@@ -506,7 +506,7 @@ let x = len(pairs)"#,
 fn test_stress_for_each_with_upvalue() {
     let vm = run_stress(
         r#"mut sum = 0
-forEach([10, 20, 30], fn(n) { sum = sum + n })
+for_each([10, 20, 30], fn(n) { sum = sum + n })
 let x = sum"#,
     )
     .unwrap();

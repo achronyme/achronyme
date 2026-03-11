@@ -101,7 +101,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.ach",
-          "match": "\\b(print|len|typeof|assert|time|push|pop|keys|proof_json|proof_public|proof_vkey|substring|indexOf|split|trim|replace|toUpper|toLower|chars|poseidon|poseidon_many|verify_proof|bigint256|bigint512|to_bits|from_bits|bit_and|bit_or|bit_xor|bit_not|bit_shl|bit_shr)\\b(?=\\s*\\()"
+          "match": "\\b(print|len|typeof|assert|time|push|pop|keys|proof_json|proof_public|proof_vkey|substring|index_of|split|trim|replace|to_upper|to_lower|chars|poseidon|poseidon_many|verify_proof|bigint256|bigint512|to_bits|from_bits|bit_and|bit_or|bit_xor|bit_not|bit_shl|bit_shr|gc_stats|map|filter|reduce|for_each|find|any|all|sort|flat_map|zip)\\b(?=\\s*\\()"
         }
       ]
     },

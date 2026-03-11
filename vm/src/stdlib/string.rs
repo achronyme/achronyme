@@ -46,17 +46,17 @@ pub fn native_substring(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
 pub fn native_index_of(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::ArityMismatch(
-            "indexOf(str, substr) takes exactly 2 arguments".into(),
+            "index_of(str, substr) takes exactly 2 arguments".into(),
         ));
     }
     if !args[0].is_string() {
         return Err(RuntimeError::TypeMismatch(
-            "First argument to indexOf must be a String".into(),
+            "First argument to index_of must be a String".into(),
         ));
     }
     if !args[1].is_string() {
         return Err(RuntimeError::TypeMismatch(
-            "Second argument to indexOf must be a String".into(),
+            "Second argument to index_of must be a String".into(),
         ));
     }
     let h0 = args[0]
@@ -197,12 +197,12 @@ pub fn native_replace(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
 pub fn native_to_upper(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::ArityMismatch(
-            "toUpper(str) takes exactly 1 argument".into(),
+            "to_upper(str) takes exactly 1 argument".into(),
         ));
     }
     if !args[0].is_string() {
         return Err(RuntimeError::TypeMismatch(
-            "Argument to toUpper must be a String".into(),
+            "Argument to to_upper must be a String".into(),
         ));
     }
     let handle = args[0]
@@ -220,12 +220,12 @@ pub fn native_to_upper(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErro
 pub fn native_to_lower(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::ArityMismatch(
-            "toLower(str) takes exactly 1 argument".into(),
+            "to_lower(str) takes exactly 1 argument".into(),
         ));
     }
     if !args[0].is_string() {
         return Err(RuntimeError::TypeMismatch(
-            "Argument to toLower must be a String".into(),
+            "Argument to to_lower must be a String".into(),
         ));
     }
     let handle = args[0]

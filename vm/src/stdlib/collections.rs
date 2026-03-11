@@ -119,13 +119,13 @@ pub fn native_reduce(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     result
 }
 
-/// `forEach(list, fn)` — Calls `fn(elem)` for each element. Returns nil.
+/// `for_each(list, fn)` — Calls `fn(elem)` for each element. Returns nil.
 pub fn native_for_each(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let list_handle = require_list(args[0], "forEach", "first argument")?;
+    let list_handle = require_list(args[0], "for_each", "first argument")?;
     let callback = args[1];
-    require_callable(callback, "forEach")?;
+    require_callable(callback, "for_each")?;
 
-    let elements = snapshot_list(vm, list_handle, "forEach")?;
+    let elements = snapshot_list(vm, list_handle, "for_each")?;
 
     for elem in &elements {
         vm.call_value(callback, &[*elem])?;
@@ -252,13 +252,13 @@ fn merge_sort(vm: &mut VM, slice: &[Value], cmp: Value) -> Result<Vec<Value>, Ru
     Ok(merged)
 }
 
-/// `flatMap(list, fn)` — Like map, but flattens one level of nested lists.
+/// `flat_map(list, fn)` — Like map, but flattens one level of nested lists.
 pub fn native_flat_map(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let list_handle = require_list(args[0], "flatMap", "first argument")?;
+    let list_handle = require_list(args[0], "flat_map", "first argument")?;
     let callback = args[1];
-    require_callable(callback, "flatMap")?;
+    require_callable(callback, "flat_map")?;
 
-    let elements = snapshot_list(vm, list_handle, "flatMap")?;
+    let elements = snapshot_list(vm, list_handle, "flat_map")?;
 
     let result_handle = vm.heap.alloc_list(Vec::new());
     let root_idx = vm.native_roots.len();
@@ -268,13 +268,15 @@ pub fn native_flat_map(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErro
         for elem in &elements {
             let mapped = vm.call_value(callback, &[*elem])?;
             if mapped.is_list() {
-                let inner_handle = mapped
-                    .as_handle()
-                    .ok_or_else(|| RuntimeError::TypeMismatch("flatMap: bad list handle".into()))?;
+                let inner_handle = mapped.as_handle().ok_or_else(|| {
+                    RuntimeError::TypeMismatch("flat_map: bad list handle".into())
+                })?;
                 let inner = vm
                     .heap
                     .get_list(inner_handle)
-                    .ok_or_else(|| RuntimeError::SystemError("flatMap: inner list missing".into()))?
+                    .ok_or_else(|| {
+                        RuntimeError::SystemError("flat_map: inner list missing".into())
+                    })?
                     .clone();
                 for v in inner {
                     vm.heap.list_push(result_handle, v);

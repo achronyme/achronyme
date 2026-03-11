@@ -146,13 +146,13 @@ Extrae una subcadena desde la posición de carácter `inicio` hasta `fin` (exclu
 substring("hello", 1, 4)  // "ell"
 ```
 
-### `indexOf(s, sub)`
+### `index_of(s, sub)`
 
 Devuelve el índice de carácter de la primera aparición de `sub` en `s`. Devuelve `-1` si no se encuentra.
 
 ```ach
-indexOf("hello world", "world")  // 6
-indexOf("hello", "xyz")          // -1
+index_of("hello world", "world")  // 6
+index_of("hello", "xyz")          // -1
 ```
 
 ### `split(s, delimitador)`
@@ -179,20 +179,20 @@ Reemplaza todas las apariciones de `buscar` con `reemplazo`.
 replace("aabbcc", "bb", "XX")  // "aaXXcc"
 ```
 
-### `toUpper(s)`
+### `to_upper(s)`
 
 Convierte todos los caracteres a mayúsculas.
 
 ```ach
-toUpper("hello")  // "HELLO"
+to_upper("hello")  // "HELLO"
 ```
 
-### `toLower(s)`
+### `to_lower(s)`
 
 Convierte todos los caracteres a minúsculas.
 
 ```ach
-toLower("HELLO")  // "hello"
+to_lower("HELLO")  // "hello"
 ```
 
 ### `chars(s)`
@@ -364,12 +364,12 @@ bit_shr(bigint256(256), 8)  // bigint256(1)
 | 9 | `proof_public(p)` | 1 | VM | string |
 | 10 | `proof_vkey(p)` | 1 | VM | string |
 | 11 | `substring(s, inicio, fin)` | 3 | VM | string |
-| 12 | `indexOf(s, sub)` | 2 | VM | int |
+| 12 | `index_of(s, sub)` | 2 | VM | int |
 | 13 | `split(s, delim)` | 2 | VM | lista |
 | 14 | `trim(s)` | 1 | VM | string |
 | 15 | `replace(s, buscar, reempl)` | 3 | VM | string |
-| 16 | `toUpper(s)` | 1 | VM | string |
-| 17 | `toLower(s)` | 1 | VM | string |
+| 16 | `to_upper(s)` | 1 | VM | string |
+| 17 | `to_lower(s)` | 1 | VM | string |
 | 18 | `chars(s)` | 1 | VM | lista |
 | 19 | `poseidon(a, b)` | 2 | Ambos | field |
 | 20 | `poseidon_many(...)` | variádica | Ambos | field |
