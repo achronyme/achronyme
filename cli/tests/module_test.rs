@@ -22,14 +22,21 @@ fn fixture(name: &str) -> String {
 #[test]
 fn import_basic_function_call() {
     // utils.ach exports add(a,b) and PI=3; main_vm.ach imports and calls utils.add(1,2)
-    let result = cli::commands::run::run_file(&fixture("main_vm.ach"), false, None, "r1cs", None, EF);
+    let result =
+        cli::commands::run::run_file(&fixture("main_vm.ach"), false, None, "r1cs", None, EF);
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
 
 #[test]
 fn import_constants_access() {
-    let result =
-        cli::commands::run::run_file(&fixture("test_constants.ach"), false, None, "r1cs", None, EF);
+    let result = cli::commands::run::run_file(
+        &fixture("test_constants.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        EF,
+    );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
 
@@ -51,7 +58,8 @@ fn import_transitive() {
 
 #[test]
 fn import_circular_detected() {
-    let result = cli::commands::run::run_file(&fixture("circular_a.ach"), false, None, "r1cs", None, EF);
+    let result =
+        cli::commands::run::run_file(&fixture("circular_a.ach"), false, None, "r1cs", None, EF);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
@@ -62,8 +70,14 @@ fn import_circular_detected() {
 
 #[test]
 fn import_module_not_found() {
-    let result =
-        cli::commands::run::run_file(&fixture("test_not_found.ach"), false, None, "r1cs", None, EF);
+    let result = cli::commands::run::run_file(
+        &fixture("test_not_found.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        EF,
+    );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
@@ -75,8 +89,14 @@ fn import_module_not_found() {
 #[test]
 fn import_no_exports_module() {
     // Importing a module with no exports should work (empty namespace)
-    let result =
-        cli::commands::run::run_file(&fixture("test_no_exports.ach"), false, None, "r1cs", None, EF);
+    let result = cli::commands::run::run_file(
+        &fixture("test_no_exports.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        EF,
+    );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
 
