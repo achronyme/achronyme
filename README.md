@@ -353,12 +353,12 @@ achronyme/
 | `proof_public(p)` | 1 | Extract public inputs JSON |
 | `proof_vkey(p)` | 1 | Extract verifying key JSON |
 | `substring(s, start, end)` | 3 | Substring extraction |
-| `indexOf(s, sub)` | 2 | Find substring index (-1 if not found) |
+| `index_of(s, sub)` | 2 | Find substring index (-1 if not found) |
 | `split(s, delim)` | 2 | Split string into list |
 | `trim(s)` | 1 | Trim whitespace |
 | `replace(s, search, repl)` | 3 | Replace all occurrences |
-| `toUpper(s)` | 1 | Uppercase |
-| `toLower(s)` | 1 | Lowercase |
+| `to_upper(s)` | 1 | Uppercase |
+| `to_lower(s)` | 1 | Lowercase |
 | `chars(s)` | 1 | String to list of characters |
 | `poseidon(a, b)` | 2 | Poseidon 2-to-1 hash (BN254) |
 | `poseidon_many(a, b, ...)` | variadic | Left-fold Poseidon hash |
@@ -373,12 +373,23 @@ achronyme/
 | `bit_not(x)` | 1 | Bitwise NOT |
 | `bit_shl(x, n)` | 2 | Shift left |
 | `bit_shr(x, n)` | 2 | Shift right |
+| `gc_stats()` | 0 | GC statistics as map |
+| `map(list, fn)` | 2 | Apply fn to each element |
+| `filter(list, fn)` | 2 | Keep elements where fn is truthy |
+| `reduce(list, init, fn)` | 3 | Fold list into single value |
+| `for_each(list, fn)` | 2 | Call fn for side effects |
+| `find(list, fn)` | 2 | First element where fn is truthy |
+| `any(list, fn)` | 2 | True if any element matches |
+| `all(list, fn)` | 2 | True if all elements match |
+| `sort(list, fn)` | 2 | Stable sort with comparator |
+| `flat_map(list, fn)` | 2 | Map + flatten one level |
+| `zip(list1, list2)` | 2 | Pair elements into [a, b] lists |
 
 ---
 
 ## Status
 
-- 970+ unit tests + 90+ integration tests
+- 1,100+ unit tests + 140+ integration tests
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export

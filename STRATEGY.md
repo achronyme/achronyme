@@ -130,7 +130,7 @@ EU Digital Identity Wallet, passports ZK, pruebas de humanidad. Nicho donde un e
 ├──────────────────────────────────────────────────┤
 │   Register-based VM (65K stack, mark-sweep GC)    │
 │   36 opcodes, closures, upvalues, iterators       │
-│   32 natives, 20 IR instructions                  │
+│   43 natives, 20 IR instructions                  │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -282,7 +282,7 @@ Los 3 niveles de integración están completados:
 | ~~D1~~ | ~~Sin verificador on-chain~~ | `--solidity` genera contratos Solidity verificadores |
 | ~~D3~~ | ~~GC placeholder~~ | Mark-sweep funcional, tri-color, arena-based, threshold adaptativo |
 | ~~D5~~ | ~~Errores no educativos~~ | Errores con line numbers y function names (`last_error_location`) |
-| ~~D6~~ | ~~Sin stdlib~~ | 32 natives: strings (substring, indexOf, split, trim, replace, toUpper, toLower, chars), collections (push, pop, keys), crypto (poseidon, poseidon_many, verify_proof), bigint (8 ops) |
+| ~~D6~~ | ~~Sin stdlib~~ | 43 natives: strings (substring, index_of, split, trim, replace, to_upper, to_lower, chars), collections (push, pop, keys), higher-order (map, filter, reduce, for_each, find, any, all, sort, flat_map, zip), crypto (poseidon, poseidon_many, verify_proof), bigint (8 ops), gc_stats |
 | ~~D10~~ | ~~Lookup O(N²)~~ | `HashSet` para membership O(1) |
 | ~~D11~~ | ~~Dependencia snarkjs~~ | Provers nativos Rust: ark-groth16 + halo2-KZG, in-process |
 

@@ -31,7 +31,7 @@ VM {
     stack: [Value; 65536],   // fixed-size register stack
     frames: Vec<CallFrame>,  // call stack
     globals: Vec<GlobalEntry>,  // global variables
-    natives: Vec<NativeObj>,    // 23 built-in functions
+    natives: Vec<NativeObj>,    // 43 built-in functions
     open_upvalues: linked list, // captured stack variables
     stress_mode: bool,          // force GC every cycle
 }

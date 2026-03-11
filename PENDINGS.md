@@ -8,7 +8,7 @@
 
 ## Lenguaje & Compilador
 
-- [ ] **Stdlib: iteradores funcionales** — `map`, `filter`, `reduce` para listas. Actualmente no hay equivalentes.
+- [x] **Stdlib: iteradores funcionales** — `map`, `filter`, `reduce`, `for_each`, `find`, `any`, `all`, `sort`, `flat_map`, `zip` implementados en `vm/src/stdlib/collections.rs`.
 - [ ] **Global mutability check en compile-time** — Solo se verifica en runtime (`vm/src/machine/globals.rs`). Mover a compile-time donde sea posible.
 - [ ] **MAX_UNROLL sin memory guard** — `MAX_UNROLL_ITERATIONS = 10,000` limita iteraciones pero no hay budget de instrucciones acumulativo. Un circuito con múltiples loops grandes puede agotar memoria. Agregar instruction count budget o check progresivo.
 

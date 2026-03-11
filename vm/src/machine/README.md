@@ -20,7 +20,7 @@ The machine module implements the core Virtual Machine for Achronyme, segmented 
 ### Support
 
 - **`stack.rs`**: Stack/register operations trait
-- **`native.rs`**: Native function registration and bootstrapping (23 natives)
+- **`native.rs`**: Native function registration and bootstrapping (43 natives)
 - **`gc.rs`**: Mark-and-sweep garbage collection
 - **`promotion.rs`**: Type promotion helpers
 
