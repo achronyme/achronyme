@@ -412,6 +412,9 @@ impl ControlFlowCompiler for Compiler {
                 {
                     self.emit_abx(OpCode::GetUpvalue, val_reg, upval_idx as u16)?;
                 } else if let Some(&global_idx) = self.global_symbols.get(name) {
+                    if self.imported_names.contains_key(name) {
+                        self.used_imported_names.insert(name.to_string());
+                    }
                     self.emit_abx(OpCode::GetGlobal, val_reg, global_idx)?;
                 } else {
                     return Err(CompilerError::CompileError(

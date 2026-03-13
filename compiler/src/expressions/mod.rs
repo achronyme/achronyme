@@ -224,6 +224,10 @@ impl Compiler {
         } else {
             // 3. Fall back to global lookup (try plain name first, then prefixed)
             let idx = if let Some(&idx) = self.global_symbols.get(name) {
+                // Mark selectively imported name as used (for W005)
+                if self.imported_names.contains_key(name) {
+                    self.used_imported_names.insert(name.to_string());
+                }
                 idx
             } else if let Some(ref prefix) = self.module_prefix {
                 let mangled = format!("{prefix}::{name}");

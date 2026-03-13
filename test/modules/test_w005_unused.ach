@@ -1,0 +1,2 @@
+import { add, PI } from "./utils.ach"
+print(add(1, 2))

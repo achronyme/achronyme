@@ -309,7 +309,7 @@ impl StatementCompiler for Compiler {
 
         // 5. Check for conflicts with existing names
         for name in names {
-            if let Some(existing_path) = self.imported_names.get(name) {
+            if let Some((existing_path, _)) = self.imported_names.get(name) {
                 if *existing_path != canonical {
                     return Err(CompilerError::CompileError(
                         format!(
@@ -388,7 +388,8 @@ impl StatementCompiler for Compiler {
             self.emit_abx(OpCode::DefGlobalLet, tmp_reg, new_idx)?;
             self.free_reg(tmp_reg)?;
 
-            self.imported_names.insert(name.clone(), canonical.clone());
+            self.imported_names
+                .insert(name.clone(), (canonical.clone(), span.clone()));
         }
 
         Ok(())

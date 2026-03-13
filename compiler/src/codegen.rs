@@ -39,8 +39,10 @@ pub struct Compiler {
     pub imported_aliases: HashMap<String, PathBuf>,
     /// Tracks modules currently being compiled (for cycle detection).
     pub compiling_modules: HashSet<PathBuf>,
-    /// Tracks selectively imported names → source module path.
-    pub imported_names: HashMap<String, PathBuf>,
+    /// Tracks selectively imported names → (source module path, import span).
+    pub imported_names: HashMap<String, (PathBuf, Span)>,
+    /// Tracks which selectively imported names have been referenced.
+    pub used_imported_names: HashSet<String>,
 
     /// Span of the expression/statement currently being compiled.
     pub current_span: Option<Span>,
@@ -85,6 +87,7 @@ impl Compiler {
             imported_aliases: HashMap::new(),
             compiling_modules: HashSet::new(),
             imported_names: HashMap::new(),
+            used_imported_names: HashSet::new(),
             current_span: None,
             warnings: Vec::new(),
         }
@@ -245,6 +248,19 @@ impl Compiler {
             self.compile_stmt(stmt)?;
             if !terminated && is_terminator(stmt) {
                 terminated = true;
+            }
+        }
+
+        // W005: unused selective imports
+        for (name, (_path, span)) in &self.imported_names {
+            if !self.used_imported_names.contains(name) && !name.starts_with('_') {
+                self.warnings.push(
+                    Diagnostic::warning(
+                        format!("imported name `{name}` is never used"),
+                        span.into(),
+                    )
+                    .with_code("W005"),
+                );
             }
         }
 

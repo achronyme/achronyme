@@ -1,0 +1,2 @@
+import { add, _PI } from "./utils_underscore.ach"
+print(add(1, 2))

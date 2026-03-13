@@ -235,6 +235,65 @@ fn export_list_undefined_name() {
 }
 
 // ======================================================================
+// W005: Unused selective imports
+// ======================================================================
+
+/// Helper: compile a fixture file and return warning messages as strings.
+fn compile_fixture_warning_messages(name: &str) -> Vec<String> {
+    let path = fixture(name);
+    let content = std::fs::read_to_string(&path).unwrap();
+    let mut compiler = compiler::Compiler::new();
+    let source_path = Path::new(&path);
+    compiler.base_path = Some(source_path.parent().unwrap_or(Path::new(".")).to_path_buf());
+    let _ = compiler.compile(&content);
+    compiler
+        .take_warnings()
+        .into_iter()
+        .map(|w| w.message)
+        .collect()
+}
+
+#[test]
+fn w005_unused_selective_import() {
+    // imports { add, PI } but only uses add → PI should trigger W005
+    let ws = compile_fixture_warning_messages("test_w005_unused.ach");
+    assert!(
+        ws.iter()
+            .any(|m| m.contains("imported name `PI` is never used")),
+        "expected W005 for unused `PI`, got: {:?}",
+        ws
+    );
+    // add IS used, so no warning for it
+    assert!(
+        !ws.iter().any(|m| m.contains("imported name `add`")),
+        "should NOT warn about `add` which is used"
+    );
+}
+
+#[test]
+fn w005_all_used_no_warning() {
+    // imports { add, PI } and uses both → no W005
+    let ws = compile_fixture_warning_messages("test_w005_all_used.ach");
+    let w005s: Vec<_> = ws.iter().filter(|m| m.contains("imported name")).collect();
+    assert!(
+        w005s.is_empty(),
+        "expected no W005 warnings, got: {:?}",
+        w005s
+    );
+}
+
+#[test]
+fn w005_underscore_suppresses_warning() {
+    // imports { add, _PI } but only uses add → _PI should NOT trigger W005
+    let ws = compile_fixture_warning_messages("test_w005_underscore.ach");
+    assert!(
+        !ws.iter().any(|m| m.contains("_PI")),
+        "underscore-prefixed import should suppress W005, got: {:?}",
+        ws
+    );
+}
+
+// ======================================================================
 // Circuit (IR) tests
 // ======================================================================
 
