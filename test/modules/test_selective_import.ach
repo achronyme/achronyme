@@ -1,0 +1,3 @@
+import { add, PI } from "./utils.ach"
+assert(add(1, 2) == 3)
+assert(PI == 3)

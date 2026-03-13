@@ -1,0 +1,5 @@
+fn square(x) { x * x }
+fn cube(x) { x * x * x }
+let TAU = 6
+
+export { square, cube, TAU }

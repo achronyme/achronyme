@@ -1,0 +1,2 @@
+fn real_fn() { 42 }
+export { real_fn, ghost_fn }

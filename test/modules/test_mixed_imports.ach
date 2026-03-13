@@ -1,0 +1,5 @@
+import { add } from "./utils.ach"
+import "./utils.ach" as utils
+assert(add(10, 20) == 30)
+assert(utils.add(10, 20) == 30)
+assert(utils.PI == 3)
