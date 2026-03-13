@@ -1,0 +1,4 @@
+// Parser error: empty export list
+// Expected: parse error "empty export list"
+
+export { }

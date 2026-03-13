@@ -1,0 +1,4 @@
+// Parser error: missing `from` keyword
+// Expected: parse error "expected `from`"
+
+import { add } "../../modules/utils.ach"

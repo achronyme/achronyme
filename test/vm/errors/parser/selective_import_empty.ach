@@ -1,0 +1,4 @@
+// Parser error: empty selective import list
+// Expected: parse error "empty import list"
+
+import { } from "../../modules/utils.ach"
