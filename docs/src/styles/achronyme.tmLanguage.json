@@ -32,6 +32,31 @@
     "import-statement": {
       "patterns": [
         {
+          "comment": "Selective import: import { x, y } from \"path\"",
+          "begin": "\\b(import)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.import.ach" },
+            "2": { "name": "punctuation.definition.block.ach" }
+          },
+          "end": "(\\})\\s+(from)\\s+(\"[^\"]*\")",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.block.ach" },
+            "2": { "name": "keyword.control.from.ach" },
+            "3": { "name": "string.quoted.double.ach" }
+          },
+          "patterns": [
+            {
+              "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+              "name": "variable.other.import.ach"
+            },
+            {
+              "match": ",",
+              "name": "punctuation.separator.comma.ach"
+            }
+          ]
+        },
+        {
+          "comment": "Namespace import: import \"path\" as alias",
           "match": "\\b(import)\\s+(\"[^\"]*\")\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
           "captures": {
             "1": { "name": "keyword.control.import.ach" },
@@ -41,6 +66,29 @@
           }
         },
         {
+          "comment": "Export list: export { x, y }",
+          "begin": "\\b(export)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.export.ach" },
+            "2": { "name": "punctuation.definition.block.ach" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.block.ach" }
+          },
+          "patterns": [
+            {
+              "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+              "name": "variable.other.export.ach"
+            },
+            {
+              "match": ",",
+              "name": "punctuation.separator.comma.ach"
+            }
+          ]
+        },
+        {
+          "comment": "Inline export keyword",
           "match": "\\b(export)\\b",
           "name": "keyword.control.export.ach"
         }

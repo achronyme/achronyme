@@ -78,6 +78,25 @@ let x = 1
 let x = 2  // warning[W004]: variable `x` shadows a previous binding in the same scope
 ```
 
+### W005: Unused Selective Import
+
+Triggers when a name brought in by a selective import is never used:
+
+```ach
+import { add, PI } from "./math.ach"
+print(add(1, 2))
+// warning[W005]: imported name `PI` is never used
+```
+
+Prefix with `_` to silence the warning:
+
+```ach
+import { add, _PI } from "./math.ach"
+print(add(1, 2))  // no warning for _PI
+```
+
+This warning only applies to selective imports (`import { ... } from`). Namespace imports (`import "..." as alias`) are not checked because the alias is a single binding.
+
 ## "Did You Mean?" Suggestions
 
 When the compiler encounters an undefined variable, it searches all in-scope names (locals, globals, upvalues) for similar identifiers using Levenshtein distance. If a close match is found, it suggests the correction:

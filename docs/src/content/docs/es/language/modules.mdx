@@ -3,9 +3,11 @@ title: "Módulos"
 description: "Dividir programas entre archivos con import y export."
 ---
 
-Achronyme permite dividir código entre múltiples archivos `.ach` usando módulos. Exporta declaraciones para hacerlas disponibles e importa módulos con un alias de namespace.
+Achronyme permite dividir código entre múltiples archivos `.ach` usando módulos. Exporta declaraciones para hacerlas disponibles e importa módulos por namespace o por nombre.
 
 ## Exportar Declaraciones
+
+### Exports Inline
 
 Usa `export` antes de `fn` o `let` para hacer una declaración disponible a otros archivos.
 
@@ -24,6 +26,21 @@ export mut x = 5      // ✗ no se puede exportar mut
 export public y       // ✗ no se puede exportar public
 ```
 
+### Listas de Export
+
+También puedes agrupar los exports al final del archivo usando `export { ... }`:
+
+```ach
+// math.ach
+fn add(a, b) { a + b }
+fn mul(a, b) { a * b }
+let PI = 3
+
+export { add, mul, PI }
+```
+
+Esto es equivalente a marcar cada declaración con `export` individualmente. Puedes mezclar ambos estilos en el mismo archivo. Exportar el mismo nombre dos veces (inline + lista, o listado dos veces) es un error.
+
 Las declaraciones sin `export` son privadas al archivo. Pueden ser usadas por funciones exportadas internamente pero no son accesibles desde afuera.
 
 ```ach
@@ -37,6 +54,8 @@ export fn square(x) {
 
 ## Importar un Módulo
 
+### Import de Namespace
+
 Usa `import "ruta" as alias` para cargar un módulo. El alias es obligatorio y se convierte en el namespace para acceder a las exportaciones del módulo.
 
 ```ach
@@ -48,6 +67,35 @@ print(math.PI)            // 3
 ```
 
 Accede a los valores exportados usando notación de punto: `alias.nombre`.
+
+### Import Selectivo
+
+Usa `import { nombre1, nombre2 } from "ruta"` para importar nombres específicos directamente al ámbito, sin prefijo de namespace:
+
+```ach
+import { add, PI } from "./math.ach"
+
+print(add(1, 2))    // 3 — sin prefijo
+print(PI)            // 3
+```
+
+Los imports selectivos copian el valor al momento de importar (semántica de snapshot). Los cambios en los globals del módulo original después de la importación no se reflejan.
+
+Si un nombre solicitado no es exportado por el módulo, el compilador sugiere la coincidencia más cercana:
+
+```
+error: module "math.ach" does not export `ad`. Did you mean `add`?
+```
+
+Puedes combinar ambos estilos para el mismo módulo:
+
+```ach
+import { add } from "./math.ach"
+import "./math.ach" as math
+
+print(add(1, 2))        // selectivo — sin prefijo
+print(math.mul(3, 4))   // namespace — con prefijo
+```
 
 ## Rutas de Módulos
 
@@ -117,11 +165,23 @@ Las declaraciones `public` y `witness` dentro de un módulo importado son ignora
 | `CircularImport` | Dos o más módulos se importan entre sí |
 | `ModuleLoadError` | El archivo fue encontrado pero contiene errores de parseo |
 | `DuplicateModuleAlias` | Dos archivos diferentes importados con el mismo alias |
+| Nombre no exportado | `import { x }` donde `x` no es exportado por el módulo (con sugerencia "did you mean?") |
+| Export duplicado | El mismo nombre se exporta más de una vez (inline + lista, o listado dos veces) |
+| Conflicto de import | Un nombre importado selectivamente entra en conflicto con un global existente o un import previo de otro módulo |
+| Export list indefinido | `export { x }` donde `x` no está definido en el módulo |
+
+## Advertencias
+
+| Código | Causa |
+|--------|-------|
+| W005 | Un nombre importado selectivamente nunca se usa (prefija con `_` para suprimir) |
 
 ## Restricciones
 
 - `import` y `export` solo están permitidos a nivel superior (no dentro de funciones o bloques)
 - `import`, `export` y `as` son palabras reservadas
+- `from` **no** es una palabra reservada — se reconoce contextualmente solo después de `import { ... }`, por lo que puede usarse como nombre de variable en otros contextos
+- Los imports selectivos usan semántica de snapshot (el valor se copia al momento de importar)
 - Las re-exportaciones (`export import`) no están soportadas
 - Importar el mismo archivo con dos alias diferentes está permitido (el archivo se parsea una sola vez)
 
@@ -129,7 +189,9 @@ Las declaraciones `public` y `witness` dentro de un módulo importado son ignora
 
 | Sintaxis | Descripción |
 |----------|-------------|
-| `export fn name() { ... }` | Exportar una función |
-| `export let X = value` | Exportar una constante |
-| `import "./file.ach" as alias` | Importar un módulo |
-| `alias.name` | Acceder a un binding exportado |
+| `export fn name() { ... }` | Exportar una función (inline) |
+| `export let X = value` | Exportar una constante (inline) |
+| `export { a, b, c }` | Exportar múltiples nombres (lista) |
+| `import "./file.ach" as alias` | Import de namespace |
+| `import { a, b } from "./file.ach"` | Import selectivo |
+| `alias.name` | Acceder a un binding de namespace |

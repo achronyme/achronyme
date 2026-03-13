@@ -78,6 +78,25 @@ let x = 1
 let x = 2  // warning[W004]: variable `x` shadows a previous binding in the same scope
 ```
 
+### W005: Import Selectivo No Utilizado
+
+Se activa cuando un nombre traído por un import selectivo nunca se usa:
+
+```ach
+import { add, PI } from "./math.ach"
+print(add(1, 2))
+// warning[W005]: imported name `PI` is never used
+```
+
+Prefija con `_` para silenciar la advertencia:
+
+```ach
+import { add, _PI } from "./math.ach"
+print(add(1, 2))  // sin advertencia para _PI
+```
+
+Esta advertencia solo aplica a imports selectivos (`import { ... } from`). Los imports de namespace (`import "..." as alias`) no se verifican porque el alias es un solo binding.
+
 ## Sugerencias "¿Quisiste Decir?"
 
 Cuando el compilador encuentra una variable no definida, busca en todos los nombres en ámbito (locales, globales, upvalues) identificadores similares usando distancia de Levenshtein. Si encuentra una coincidencia cercana, sugiere la corrección:
