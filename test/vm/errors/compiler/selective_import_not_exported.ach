@@ -1,0 +1,4 @@
+// Compiler error: importing a name that is not exported
+// Expected: error "does not export"
+
+import { nonexistent } from "../../../modules/utils.ach"

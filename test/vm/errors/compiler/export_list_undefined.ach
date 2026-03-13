@@ -1,0 +1,4 @@
+// Compiler error: export list references undefined name
+// Expected: error "not defined in this module"
+
+import "../../../modules/bad_export_list.ach" as bad

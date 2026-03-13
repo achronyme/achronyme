@@ -1,0 +1,4 @@
+// Compiler error: exporting the same name twice
+// Expected: error "exported more than once"
+
+import "../../../modules/duplicate_export.ach" as dup
