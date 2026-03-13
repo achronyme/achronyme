@@ -1,0 +1,4 @@
+// Parser error: lowercase bool type with hint
+// Expected: error with suggestion "(did you mean `Bool`?)"
+
+public flag: bool

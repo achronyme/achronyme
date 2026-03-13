@@ -1,0 +1,5 @@
+// Parser error: unclosed bracket in array literal
+// Expected: error about expected `]`
+
+let items = [1, 2, 3, 4
+let other = 5

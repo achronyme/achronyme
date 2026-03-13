@@ -1,0 +1,6 @@
+// Parser error: fn declaration at statement level without name
+// Expected: error because `fn 123()` is not a valid function name
+
+fn 123() {
+    return 0
+}

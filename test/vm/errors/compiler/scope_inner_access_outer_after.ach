@@ -1,0 +1,8 @@
+// Compiler error: accessing variable from inner scope after scope ends
+// Expected: undefined variable error for `inner_val`
+
+fn setup() {
+    let inner_val = 99
+}
+setup()
+print(inner_val)

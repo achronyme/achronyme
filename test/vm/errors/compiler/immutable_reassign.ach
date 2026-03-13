@@ -1,0 +1,5 @@
+// Compiler error: assignment to immutable variable
+// Expected: error indicating `x` was declared with `let`, not `mut`
+
+let x = 10
+x = 20

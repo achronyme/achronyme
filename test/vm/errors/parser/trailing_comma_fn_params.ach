@@ -1,0 +1,6 @@
+// Parser error: missing parameter name after comma in function definition
+// Expected: error about expected identifier
+
+fn broken(a, b, ) {
+    return a + b
+}

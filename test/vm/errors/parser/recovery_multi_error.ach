@@ -1,0 +1,10 @@
+// Parser error recovery: multiple errors collected in one pass
+// Expected: parser should recover at sync points and report multiple errors
+// Tests the synchronization mechanism (recovers at `let`, `fn`, `}`, etc.)
+
+let a = @
+let b = 10
+let c = #
+let d = 20
+fn valid() { return 1 }
+let e = $

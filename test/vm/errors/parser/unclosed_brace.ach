@@ -1,0 +1,7 @@
+// Parser error: unclosed brace
+// Expected: error about expected `}` or unexpected EOF
+
+fn broken() {
+    let x = 1
+    let y = 2
+

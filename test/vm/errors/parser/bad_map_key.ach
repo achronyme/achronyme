@@ -1,0 +1,4 @@
+// Parser error: invalid map key (not identifier or string)
+// Expected: error about expected map key
+
+let m = {123: "value"}

@@ -1,0 +1,6 @@
+// Compiler error: "did you mean?" for short names (<=3 chars, max distance 1)
+// Expected: suggestion for `val` when `va` is used (distance 1)
+// Should NOT suggest for completely different names
+
+let val = 42
+let x = va

@@ -1,0 +1,4 @@
+// Parser error: lowercase type name with "did you mean?" hint
+// Expected: error with suggestion "(did you mean `Field`?)"
+
+public x: field

@@ -1,0 +1,5 @@
+// Compiler error: "did you mean?" suggestion for misspelled local variable
+// Expected: error with suggestion pointing to `counter`
+
+let counter = 0
+let result = conter + 1

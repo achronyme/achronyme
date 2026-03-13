@@ -1,0 +1,5 @@
+// Parser error: unclosed parenthesis
+// Expected: error about expected `)`, found something else
+
+let x = (1 + 2 * 3
+let y = 10

@@ -1,0 +1,6 @@
+// Parser error: unexpected token at statement position
+// Expected: parser error about unexpected token
+
+let x = 10
+) + 5
+let y = 20

@@ -1,0 +1,8 @@
+// Compiler error: "did you mean?" suggestion for misspelled function name
+// Expected: error with suggestion pointing to `calculate`
+
+fn calculate(x, y) {
+    return x * y + 1
+}
+
+let result = calculat(10, 20)

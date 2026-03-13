@@ -1,0 +1,4 @@
+// Parser error: consecutive binary operators
+// Expected: error about expected expression
+
+let x = 5 + + 3

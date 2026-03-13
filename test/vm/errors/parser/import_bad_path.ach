@@ -1,0 +1,4 @@
+// Parser error: import with non-string path
+// Expected: error about expected string literal for import path
+
+import 42 as numbers

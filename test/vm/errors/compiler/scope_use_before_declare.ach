@@ -1,0 +1,5 @@
+// Compiler error: variable used before declaration
+// Expected: undefined variable error for `result`
+
+print(result)
+let result = 42

@@ -1,0 +1,4 @@
+// Compiler error: invalid assignment target (not an lvalue)
+// Expected: error about invalid assignment target
+
+(1 + 2) = 5

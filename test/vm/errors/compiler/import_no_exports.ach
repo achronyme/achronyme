@@ -1,0 +1,5 @@
+// Compiler/runtime error: calling non-existent export from module
+// Expected: error when trying to call nil as a function
+
+import "../../../modules/no_exports.ach" as empty
+let x = empty.something()

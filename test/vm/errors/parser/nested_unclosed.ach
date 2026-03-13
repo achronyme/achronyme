@@ -1,0 +1,8 @@
+// Parser error: multiple levels of unclosed delimiters
+// Expected: error about mismatched or missing closing delimiters
+
+fn outer() {
+    if true {
+        let x = [1, 2, (3 + 4
+    }
+}

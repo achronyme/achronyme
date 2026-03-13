@@ -1,0 +1,5 @@
+// Compiler error: undefined variable with no similar name in scope
+// Expected: plain "undefined variable" error, no suggestion
+
+let alpha = 1
+let result = zzzzz

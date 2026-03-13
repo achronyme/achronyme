@@ -1,0 +1,7 @@
+// Compiler error: attempt to mutate immutable variable inside loop
+// Expected: error on the assignment inside the while body
+
+let count = 0
+while count < 10 {
+    count = count + 1
+}

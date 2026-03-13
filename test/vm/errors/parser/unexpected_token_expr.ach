@@ -1,0 +1,4 @@
+// Parser error: unexpected token where expression expected
+// Expected: "expected expression, found ..."
+
+let x = * 5

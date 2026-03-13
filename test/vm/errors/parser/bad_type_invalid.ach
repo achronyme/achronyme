@@ -1,0 +1,4 @@
+// Parser error: completely invalid type name
+// Expected: error listing valid types (Field, Bool, Field[N], Bool[N])
+
+public value: int

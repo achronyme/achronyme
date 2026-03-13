@@ -1,0 +1,5 @@
+// Compiler error: duplicate module alias
+// Expected: error about duplicate alias `utils`
+
+import "../../../modules/utils.ach" as utils
+import "../../../modules/constants.ach" as utils
