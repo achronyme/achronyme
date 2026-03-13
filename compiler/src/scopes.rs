@@ -7,6 +7,7 @@ pub trait ScopeCompiler {
     fn end_scope(&mut self) -> Result<(), CompilerError>;
     fn resolve_local(&self, name: &str) -> Option<(usize, u8)>;
     fn resolve_upvalue(&mut self, compiler_idx: usize, name: &str) -> Option<u8>;
+    fn mark_upvalue_mutated(&mut self, compiler_idx: usize, name: &str);
 }
 
 impl ScopeCompiler for Compiler {
@@ -105,5 +106,23 @@ impl ScopeCompiler for Compiler {
         }
 
         None
+    }
+
+    /// Walk the compiler chain to find the original `Local` captured by an
+    /// upvalue and mark it as mutated.  Called from `compile_assignment` when
+    /// an assignment resolves through `resolve_upvalue`.
+    fn mark_upvalue_mutated(&mut self, compiler_idx: usize, name: &str) {
+        if compiler_idx == 0 {
+            return;
+        }
+
+        let parent_idx = compiler_idx - 1;
+
+        if let Some((idx, _)) = self.compilers[parent_idx].resolve_local(name) {
+            self.compilers[parent_idx].locals[idx].is_mutated = true;
+            return;
+        }
+
+        self.mark_upvalue_mutated(parent_idx, name);
     }
 }

@@ -102,6 +102,7 @@ impl DeclarationCompiler for Compiler {
                     self.emit_abc(OpCode::Move, local_reg, val_reg, 0)?;
                 } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
                 {
+                    self.mark_upvalue_mutated(self.compilers.len() - 1, name);
                     self.emit_abx(OpCode::SetUpvalue, val_reg, upval_idx as u16)?;
                 } else if let Some(global_idx) = self.global_symbols.get(name) {
                     self.emit_abx(OpCode::SetGlobal, val_reg, *global_idx)?;
