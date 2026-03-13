@@ -93,6 +93,15 @@ pub enum Stmt {
         inner: Box<Stmt>,
         span: Span,
     },
+    SelectiveImport {
+        names: Vec<String>,
+        path: String,
+        span: Span,
+    },
+    ExportList {
+        names: Vec<String>,
+        span: Span,
+    },
     Expr(Expr),
     /// Placeholder for a statement that failed to parse (error recovery).
     Error {

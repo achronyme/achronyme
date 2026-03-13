@@ -84,7 +84,12 @@ impl IrLowering {
                 self.load_module(path, alias, span)?;
                 Ok(None)
             }
+            Stmt::SelectiveImport { span, .. } => Err(IrError::UnsupportedOperation(
+                "selective imports not yet implemented in circuit mode".into(),
+                to_ir_span(span),
+            )),
             Stmt::Export { inner, .. } => self.lower_stmt(inner),
+            Stmt::ExportList { .. } => Ok(None),
             Stmt::Error { .. } => Ok(None),
         }
     }

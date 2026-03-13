@@ -38,6 +38,8 @@ pub(crate) fn stmt_span(stmt: &Stmt) -> Option<&Span> {
         | Stmt::Continue { span }
         | Stmt::Import { span, .. }
         | Stmt::Export { span, .. }
+        | Stmt::SelectiveImport { span, .. }
+        | Stmt::ExportList { span, .. }
         | Stmt::Error { span } => Some(span),
         Stmt::Expr(expr) => Some(expr.span()),
     }
@@ -99,7 +101,14 @@ impl StatementCompiler for Compiler {
             Stmt::Import {
                 path, alias, span, ..
             } => self.compile_import(path, alias, span),
+            Stmt::SelectiveImport { span, .. } => {
+                Err(CompilerError::CompilerLimitation(
+                    "selective imports not yet implemented".into(),
+                    span_box(span),
+                ))
+            }
             Stmt::Export { inner, .. } => self.compile_stmt(inner),
+            Stmt::ExportList { .. } => Ok(()),
             Stmt::Error { .. } => Ok(()),
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;
