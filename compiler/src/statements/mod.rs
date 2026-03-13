@@ -16,6 +16,12 @@ pub trait StatementCompiler {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompilerError>;
     fn compile_import(&mut self, path: &str, alias: &str, span: &Span)
         -> Result<(), CompilerError>;
+    fn compile_selective_import(
+        &mut self,
+        names: &[String],
+        path: &str,
+        span: &Span,
+    ) -> Result<(), CompilerError>;
 }
 
 /// Extract the source line number from a statement (1-based), or 0 if unavailable.
@@ -101,14 +107,14 @@ impl StatementCompiler for Compiler {
             Stmt::Import {
                 path, alias, span, ..
             } => self.compile_import(path, alias, span),
-            Stmt::SelectiveImport { span, .. } => {
-                Err(CompilerError::CompilerLimitation(
-                    "selective imports not yet implemented".into(),
-                    span_box(span),
-                ))
-            }
+            Stmt::SelectiveImport {
+                names, path, span, ..
+            } => self.compile_selective_import(names, path, span),
             Stmt::Export { inner, .. } => self.compile_stmt(inner),
-            Stmt::ExportList { .. } => Ok(()),
+            Stmt::ExportList { .. } => {
+                // Export lists are metadata — handled by collect_exports, no bytecode to emit
+                Ok(())
+            }
             Stmt::Error { .. } => Ok(()),
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;
@@ -245,6 +251,145 @@ impl StatementCompiler for Compiler {
         self.global_symbols.insert(alias.to_string(), idx);
         self.emit_abx(OpCode::DefGlobalLet, map_reg, idx)?;
         self.free_reg(map_reg)?;
+
+        Ok(())
+    }
+
+    fn compile_selective_import(
+        &mut self,
+        names: &[String],
+        path: &str,
+        span: &Span,
+    ) -> Result<(), CompilerError> {
+        // 1. Resolve path relative to base_path
+        let base = self
+            .base_path
+            .clone()
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
+        let resolved = base.join(path);
+        let canonical = resolved.canonicalize().map_err(|_| {
+            CompilerError::ModuleNotFound(
+                format!(
+                    "module not found: {} (resolved from {})",
+                    path,
+                    base.display()
+                ),
+                span_box(span),
+            )
+        })?;
+
+        // 2. Check for circular imports
+        if self.compiling_modules.contains(&canonical) {
+            return Err(CompilerError::CircularImport(
+                canonical.display().to_string(),
+                span_box(span),
+            ));
+        }
+
+        // 3. Load and parse the module
+        let module = self.module_loader.load(&canonical)?;
+        let module_stmts = module.program.stmts.clone();
+        let exported_names = module.exported_names.clone();
+
+        // 4. Validate that all requested names are exported
+        for name in names {
+            if !exported_names.contains(name) {
+                let suggestion = crate::suggest::find_similar(
+                    name,
+                    exported_names.iter().map(|s| s.as_str()),
+                    2,
+                );
+                let mut msg = format!("module \"{}\" does not export `{}`", path, name);
+                if let Some(s) = suggestion {
+                    msg.push_str(&format!(". Did you mean `{s}`?"));
+                }
+                return Err(CompilerError::CompileError(msg, span_box(span)));
+            }
+        }
+
+        // 5. Check for conflicts with existing names
+        for name in names {
+            if let Some(existing_path) = self.imported_names.get(name) {
+                if *existing_path != canonical {
+                    return Err(CompilerError::CompileError(
+                        format!(
+                            "`{}` already imported from \"{}\"",
+                            name,
+                            existing_path.display()
+                        ),
+                        span_box(span),
+                    ));
+                }
+                // Same name from same module — already imported, skip
+                continue;
+            }
+            if self.global_symbols.contains_key(name) {
+                return Err(CompilerError::CompileError(
+                    format!(
+                        "cannot import `{}`: a global with this name already exists",
+                        name
+                    ),
+                    span_box(span),
+                ));
+            }
+        }
+
+        // 6. Generate internal module prefix
+        let internal_prefix = format!("__sel_{}", self.imported_aliases.len());
+
+        // 7. Mark as compiling (for cycle detection)
+        self.compiling_modules.insert(canonical.clone());
+
+        // 8. Save and set module_prefix + base_path for name mangling
+        let old_prefix = self.module_prefix.take();
+        let old_base = self.base_path.take();
+        self.module_prefix = Some(internal_prefix.clone());
+        self.base_path = canonical.parent().map(|p| p.to_path_buf());
+
+        // 9. Compile the module's statements
+        for stmt in &module_stmts {
+            self.compile_stmt(stmt)?;
+        }
+
+        // 10. Restore prefix and base_path, remove from compiling set
+        self.module_prefix = old_prefix;
+        self.base_path = old_base;
+        self.compiling_modules.remove(&canonical);
+
+        // 11. Copy only the requested names from mangled globals to user-visible globals
+        for name in names {
+            if self.imported_names.contains_key(name) {
+                // Already imported from same module — skip
+                continue;
+            }
+
+            let mangled = format!("{}::{}", internal_prefix, name);
+            let global_idx = *self.global_symbols.get(&mangled).ok_or_else(|| {
+                CompilerError::CompileError(
+                    format!(
+                        "internal error: mangled global `{}` not found after module compilation",
+                        mangled
+                    ),
+                    span_box(span),
+                )
+            })?;
+
+            // Emit GetGlobal + DefGlobalLet to copy value to a new global slot
+            let tmp_reg = self.alloc_reg()?;
+            self.emit_abx(OpCode::GetGlobal, tmp_reg, global_idx)?;
+
+            if self.next_global_idx == u16::MAX {
+                self.free_reg(tmp_reg)?;
+                return Err(CompilerError::TooManyConstants(span_box(span)));
+            }
+            let new_idx = self.next_global_idx;
+            self.next_global_idx += 1;
+            self.global_symbols.insert(name.clone(), new_idx);
+            self.emit_abx(OpCode::DefGlobalLet, tmp_reg, new_idx)?;
+            self.free_reg(tmp_reg)?;
+
+            self.imported_names.insert(name.clone(), canonical.clone());
+        }
 
         Ok(())
     }
