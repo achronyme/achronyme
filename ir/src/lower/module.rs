@@ -8,6 +8,87 @@ use crate::error::IrError;
 use super::{EnvValue, FnDef, IrLowering};
 
 impl IrLowering {
+    pub(super) fn load_module_selective(
+        &mut self,
+        names: &[String],
+        path: &str,
+        span: &Span,
+    ) -> Result<(), IrError> {
+        let base = self
+            .base_path
+            .clone()
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
+        let resolved = base.join(path);
+        let canonical = resolved.canonicalize().map_err(|_| {
+            IrError::ModuleNotFound(format!("{} (resolved from {})", path, base.display()))
+        })?;
+
+        if self.loading_modules.contains(&canonical) {
+            return Err(IrError::CircularImport(canonical.display().to_string()));
+        }
+
+        // Use a generated internal alias to avoid collisions
+        let internal_alias = format!("__sel_{}", self.loaded_modules.len());
+
+        // Check if module is already loaded under some alias
+        let alias_to_use =
+            if let Some(existing_alias) = self.loaded_modules.get(&canonical).cloned() {
+                existing_alias
+            } else {
+                // Load module with internal alias
+                self.load_module(path, &internal_alias, span)?;
+                internal_alias
+            };
+
+        // Collect all exported names from the module source
+        let source = std::fs::read_to_string(&canonical)
+            .map_err(|e| IrError::ModuleLoadError(format!("{}: {}", canonical.display(), e)))?;
+        let (program, _) = ast_parse_program(&source);
+
+        let mut all_exports: Vec<String> = Vec::new();
+        for stmt in &program.stmts {
+            match stmt {
+                Stmt::Export { inner, .. } => match inner.as_ref() {
+                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => {
+                        all_exports.push(name.clone());
+                    }
+                    _ => {}
+                },
+                Stmt::ExportList {
+                    names: export_names,
+                    ..
+                } => {
+                    all_exports.extend(export_names.clone());
+                }
+                _ => {}
+            }
+        }
+
+        for name in names {
+            if !all_exports.contains(name) {
+                let suggestion =
+                    crate::suggest::find_similar_ir(name, all_exports.iter().map(|s| s.as_str()));
+                let mut msg = format!("module \"{}\" does not export `{}`", path, name);
+                if let Some(s) = suggestion {
+                    msg.push_str(&format!(". Did you mean `{s}`?"));
+                }
+                return Err(IrError::ModuleLoadError(msg));
+            }
+
+            let qualified = format!("{alias_to_use}::{name}");
+
+            // Copy from qualified → unqualified name
+            if let Some(fn_def) = self.fn_table.get(&qualified).cloned() {
+                self.fn_table.insert(name.clone(), fn_def);
+            }
+            if let Some(env_val) = self.env.get(&qualified).cloned() {
+                self.env.insert(name.clone(), env_val);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Re-register all fn_table and env entries from `original` alias under `new_alias`.
     pub(super) fn alias_module_entries(&mut self, original: &str, new_alias: &str) {
         let prefix = format!("{original}::");
