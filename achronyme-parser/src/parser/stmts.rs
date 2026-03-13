@@ -183,6 +183,12 @@ impl Parser {
             ));
         }
         self.advance(); // eat `import`
+
+        // Branch: selective import `import { x, y } from "path"`
+        if self.at(&TokenKind::LBrace) {
+            return self.parse_selective_import(sp);
+        }
+
         let tok = self.peek().clone();
         if tok.kind != TokenKind::StringLit {
             return Err(ParseError::new(
@@ -201,6 +207,70 @@ impl Parser {
         Ok(Stmt::Import {
             path,
             alias,
+            span: self.span_to_prev(&sp),
+        })
+    }
+
+    fn parse_selective_import(&mut self, sp: Span) -> Result<Stmt, ParseError> {
+        self.advance(); // eat `{`
+
+        // Parse comma-separated list of identifiers
+        let mut names = Vec::new();
+        if !self.at(&TokenKind::RBrace) {
+            names.push(self.expect_ident()?);
+            while self.eat(&TokenKind::Comma) {
+                // Allow trailing comma
+                if self.at(&TokenKind::RBrace) {
+                    break;
+                }
+                names.push(self.expect_ident()?);
+            }
+        }
+
+        if names.is_empty() {
+            let tok = self.peek();
+            return Err(ParseError::new(
+                "empty import list — specify at least one name to import",
+                tok.span.line_start,
+                tok.span.col_start,
+            ));
+        }
+
+        self.expect(&TokenKind::RBrace)?;
+
+        // Expect contextual keyword `from` (parsed as Ident)
+        let from_tok = self.peek().clone();
+        if from_tok.kind == TokenKind::Ident && from_tok.lexeme == "from" {
+            self.advance();
+        } else {
+            return Err(ParseError::new(
+                format!(
+                    "expected `from` after import list, found `{}` (hint: `import {{...}} from \"path\"`)",
+                    tok_display(&from_tok)
+                ),
+                from_tok.span.line_start,
+                from_tok.span.col_start,
+            ));
+        }
+
+        // Parse the module path
+        let path_tok = self.peek().clone();
+        if path_tok.kind != TokenKind::StringLit {
+            return Err(ParseError::new(
+                format!(
+                    "expected string literal for import path, found `{}`",
+                    tok_display(&path_tok)
+                ),
+                path_tok.span.line_start,
+                path_tok.span.col_start,
+            ));
+        }
+        let path = path_tok.lexeme.clone();
+        self.advance();
+
+        Ok(Stmt::SelectiveImport {
+            names,
+            path,
             span: self.span_to_prev(&sp),
         })
     }
