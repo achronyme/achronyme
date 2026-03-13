@@ -285,6 +285,12 @@ impl Parser {
             ));
         }
         self.advance(); // eat `export`
+
+        // Branch: export list `export { x, y }`
+        if self.at(&TokenKind::LBrace) {
+            return self.parse_export_list(sp);
+        }
+
         let inner = match self.peek_kind() {
             TokenKind::Fn => {
                 if matches!(self.lookahead(1), TokenKind::Ident)
@@ -305,7 +311,7 @@ impl Parser {
                 let tok = self.peek();
                 return Err(ParseError::new(
                     format!(
-                        "export only applies to `fn` or `let` declarations, found `{}`",
+                        "export only applies to `fn`, `let` declarations, or `{{...}}` list, found `{}`",
                         tok_display(tok)
                     ),
                     tok.span.line_start,
@@ -315,6 +321,38 @@ impl Parser {
         };
         Ok(Stmt::Export {
             inner: Box::new(inner),
+            span: self.span_to_prev(&sp),
+        })
+    }
+
+    fn parse_export_list(&mut self, sp: Span) -> Result<Stmt, ParseError> {
+        self.advance(); // eat `{`
+
+        let mut names = Vec::new();
+        if !self.at(&TokenKind::RBrace) {
+            names.push(self.expect_ident()?);
+            while self.eat(&TokenKind::Comma) {
+                // Allow trailing comma
+                if self.at(&TokenKind::RBrace) {
+                    break;
+                }
+                names.push(self.expect_ident()?);
+            }
+        }
+
+        if names.is_empty() {
+            let tok = self.peek();
+            return Err(ParseError::new(
+                "empty export list — specify at least one name to export",
+                tok.span.line_start,
+                tok.span.col_start,
+            ));
+        }
+
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(Stmt::ExportList {
+            names,
             span: self.span_to_prev(&sp),
         })
     }
