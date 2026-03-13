@@ -1,0 +1,11 @@
+// Test mixing selective import + namespace import of the same module
+
+import { add } from "../../modules/utils.ach"
+import "../../modules/utils.ach" as utils
+
+// Both styles should work
+assert(add(10, 20) == 30)
+assert(utils.add(10, 20) == 30)
+assert(utils.PI == 3)
+
+print("mixed imports: all tests passed")

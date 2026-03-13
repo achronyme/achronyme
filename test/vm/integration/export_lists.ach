@@ -1,0 +1,10 @@
+// Test export lists: export { name1, name2 }
+
+// math.ach uses export { square, cube, TAU }
+// Verify it works with namespace import too
+import "./../../modules/math.ach" as math
+assert(math.square(4) == 16)
+assert(math.cube(2) == 8)
+assert(math.TAU == 6)
+
+print("export lists: all tests passed")

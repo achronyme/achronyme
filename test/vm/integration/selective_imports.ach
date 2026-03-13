@@ -1,0 +1,16 @@
+// Test selective imports: import { name } from "path"
+
+// Test 1: Single selective import
+import { add } from "../../modules/utils.ach"
+assert(add(1, 2) == 3)
+
+// Test 2: Multiple selective imports
+import { square, TAU } from "../../modules/math.ach"
+assert(square(5) == 25)
+assert(TAU == 6)
+
+// Test 3: Selective import with trailing comma
+import { cube, } from "../../modules/math.ach"
+assert(cube(3) == 27)
+
+print("selective imports: all tests passed")
