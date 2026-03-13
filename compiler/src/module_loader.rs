@@ -54,7 +54,7 @@ impl ModuleLoader {
             )));
         }
 
-        let exported_names = collect_exports(&program);
+        let exported_names = collect_exports(&program)?;
 
         let key = canonical_path.to_path_buf();
         self.cache.insert(
@@ -69,17 +69,82 @@ impl ModuleLoader {
     }
 }
 
-/// Collect the names of all exported declarations in a program.
-fn collect_exports(program: &Program) -> Vec<String> {
-    let mut names = Vec::new();
+/// Collect all top-level defined names (fn and let declarations) in a program.
+fn collect_defined_names(program: &Program) -> std::collections::HashSet<String> {
+    let mut defined = std::collections::HashSet::new();
     for stmt in &program.stmts {
-        if let Stmt::Export { inner, .. } = stmt {
-            match inner.as_ref() {
-                Stmt::FnDecl { name, .. } => names.push(name.clone()),
-                Stmt::LetDecl { name, .. } => names.push(name.clone()),
-                _ => {}
+        match stmt {
+            Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => {
+                defined.insert(name.clone());
             }
+            Stmt::Export { inner, .. } => match inner.as_ref() {
+                Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => {
+                    defined.insert(name.clone());
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
-    names
+    defined
+}
+
+/// Collect the names of all exported declarations in a program.
+/// Returns an error if a name is exported more than once or if an export list
+/// references undefined names.
+fn collect_exports(program: &Program) -> Result<Vec<String>, CompilerError> {
+    let defined = collect_defined_names(program);
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for stmt in &program.stmts {
+        match stmt {
+            Stmt::Export { inner, span, .. } => {
+                let name = match inner.as_ref() {
+                    Stmt::FnDecl { name, .. } => Some(name.clone()),
+                    Stmt::LetDecl { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    if !seen.insert(name.clone()) {
+                        return Err(CompilerError::CompileError(
+                            format!("`{name}` is exported more than once"),
+                            crate::error::span_box(span),
+                        ));
+                    }
+                    names.push(name);
+                }
+            }
+            Stmt::ExportList {
+                names: export_names,
+                span,
+            } => {
+                for name in export_names {
+                    if !defined.contains(name) {
+                        let suggestion = crate::suggest::find_similar(
+                            name,
+                            defined.iter().map(|s| s.as_str()),
+                            2,
+                        );
+                        let mut msg = format!("cannot export `{name}`: not defined in this module");
+                        if let Some(s) = suggestion {
+                            msg.push_str(&format!(". Did you mean `{s}`?"));
+                        }
+                        return Err(CompilerError::CompileError(
+                            msg,
+                            crate::error::span_box(span),
+                        ));
+                    }
+                    if !seen.insert(name.clone()) {
+                        return Err(CompilerError::CompileError(
+                            format!("`{name}` is exported more than once"),
+                            crate::error::span_box(span),
+                        ));
+                    }
+                    names.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(names)
 }
