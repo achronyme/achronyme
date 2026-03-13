@@ -132,6 +132,109 @@ fn import_no_exports_module() {
 }
 
 // ======================================================================
+// Selective imports (beta.6)
+// ======================================================================
+
+#[test]
+fn selective_import_basic() {
+    let result = cli::commands::run::run_file(
+        &fixture("test_selective_import.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
+    assert!(result.is_ok(), "run_file failed: {:?}", result.err());
+}
+
+#[test]
+fn export_list_via_namespace() {
+    let result = cli::commands::run::run_file(
+        &fixture("test_export_list.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
+    assert!(result.is_ok(), "run_file failed: {:?}", result.err());
+}
+
+#[test]
+fn mixed_selective_and_namespace_import() {
+    let result = cli::commands::run::run_file(
+        &fixture("test_mixed_imports.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
+    assert!(result.is_ok(), "run_file failed: {:?}", result.err());
+}
+
+#[test]
+fn selective_import_nonexistent_name() {
+    let result = cli::commands::run::run_file(
+        &fixture("test_selective_not_exported.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("does not export"),
+        "expected 'does not export' error, got: {err}"
+    );
+}
+
+#[test]
+fn duplicate_export_detected() {
+    let result = cli::commands::run::run_file(
+        &fixture("test_duplicate_export.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("exported more than once"),
+        "expected 'exported more than once' error, got: {err}"
+    );
+}
+
+#[test]
+fn export_list_undefined_name() {
+    let result = cli::commands::run::run_file(
+        &fixture("test_bad_export_list.ach"),
+        false,
+        None,
+        "r1cs",
+        None,
+        false,
+        EF,
+    );
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("not defined in this module"),
+        "expected 'not defined in this module' error, got: {err}"
+    );
+}
+
+// ======================================================================
 // Circuit (IR) tests
 // ======================================================================
 
