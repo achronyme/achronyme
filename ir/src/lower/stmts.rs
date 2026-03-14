@@ -15,12 +15,12 @@ impl IrLowering {
 
     pub(super) fn lower_stmt(&mut self, stmt: &Stmt) -> Result<Option<SsaVar>, IrError> {
         match stmt {
-            Stmt::PublicDecl { names, .. } => {
-                self.lower_public_decl(names)?;
+            Stmt::PublicDecl { names, span } => {
+                self.lower_public_decl(names, span)?;
                 Ok(None)
             }
-            Stmt::WitnessDecl { names, .. } => {
-                self.lower_witness_decl(names)?;
+            Stmt::WitnessDecl { names, span } => {
+                self.lower_witness_decl(names, span)?;
                 Ok(None)
             }
             Stmt::LetDecl {
@@ -99,8 +99,9 @@ impl IrLowering {
         }
     }
 
-    fn lower_public_decl(&mut self, names: &[InputDecl]) -> Result<(), IrError> {
+    fn lower_public_decl(&mut self, names: &[InputDecl], span: &Span) -> Result<(), IrError> {
         for decl in names {
+            self.record_input_span(&decl.name, span);
             if let Some(size) = decl.array_size {
                 let vars = self.declare_public_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
@@ -116,8 +117,9 @@ impl IrLowering {
         Ok(())
     }
 
-    fn lower_witness_decl(&mut self, names: &[InputDecl]) -> Result<(), IrError> {
+    fn lower_witness_decl(&mut self, names: &[InputDecl], span: &Span) -> Result<(), IrError> {
         for decl in names {
+            self.record_input_span(&decl.name, span);
             if let Some(size) = decl.array_size {
                 let vars = self.declare_witness_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {

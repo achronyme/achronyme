@@ -132,6 +132,22 @@ impl IrLowering {
         }
     }
 
+    /// Record the source span for an input variable declaration.
+    pub(super) fn record_input_span(&mut self, name: &str, span: &Span) {
+        use achronyme_parser::diagnostic::SpanRange;
+        self.program.input_spans.insert(
+            name.to_string(),
+            SpanRange::new(
+                span.byte_start,
+                span.byte_end,
+                span.line_start,
+                span.col_start,
+                span.line_end,
+                span.col_end,
+            ),
+        );
+    }
+
     /// Declare a public input and emit an `Input` instruction.
     pub fn declare_public(&mut self, name: &str) -> SsaVar {
         let v = self.program.fresh_var();
@@ -302,18 +318,28 @@ impl IrLowering {
             return Err(IrError::ParseError(Box::new(err)));
         }
 
-        let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
-        let mut wit_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>)> = Vec::new();
+        let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>, Span)> = Vec::new();
+        let mut wit_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>, Span)> = Vec::new();
         for stmt in &ast_program.stmts {
             match stmt {
-                Stmt::PublicDecl { names, .. } => {
+                Stmt::PublicDecl { names, span } => {
                     for decl in names {
-                        pub_decls.push((decl.name.clone(), decl.array_size, decl.type_ann.clone()));
+                        pub_decls.push((
+                            decl.name.clone(),
+                            decl.array_size,
+                            decl.type_ann.clone(),
+                            span.clone(),
+                        ));
                     }
                 }
-                Stmt::WitnessDecl { names, .. } => {
+                Stmt::WitnessDecl { names, span } => {
                     for decl in names {
-                        wit_decls.push((decl.name.clone(), decl.array_size, decl.type_ann.clone()));
+                        wit_decls.push((
+                            decl.name.clone(),
+                            decl.array_size,
+                            decl.type_ann.clone(),
+                            span.clone(),
+                        ));
                     }
                 }
                 _ => {}
@@ -321,7 +347,7 @@ impl IrLowering {
         }
 
         let mut pub_names = Vec::new();
-        for (name, size, _) in &pub_decls {
+        for (name, size, _, _) in &pub_decls {
             if let Some(n) = size {
                 for i in 0..*n {
                     pub_names.push(format!("{name}_{i}"));
@@ -331,7 +357,7 @@ impl IrLowering {
             }
         }
         let mut wit_names = Vec::new();
-        for (name, size, _) in &wit_decls {
+        for (name, size, _, _) in &wit_decls {
             if let Some(n) = size {
                 for i in 0..*n {
                     wit_names.push(format!("{name}_{i}"));
@@ -350,7 +376,8 @@ impl IrLowering {
 
         let mut lowering = IrLowering::new();
         lowering.base_path = Some(base_path);
-        for (name, size, type_ann) in &pub_decls {
+        for (name, size, type_ann, span) in &pub_decls {
+            lowering.record_input_span(name, span);
             if let Some(n) = size {
                 let vars = lowering.declare_public_array(name, *n);
                 if let Some(ann) = type_ann {
@@ -363,7 +390,8 @@ impl IrLowering {
                 }
             }
         }
-        for (name, size, type_ann) in &wit_decls {
+        for (name, size, type_ann, span) in &wit_decls {
+            lowering.record_input_span(name, span);
             if let Some(n) = size {
                 let vars = lowering.declare_witness_array(name, *n);
                 if let Some(ann) = type_ann {

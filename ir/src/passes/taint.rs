@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use achronyme_parser::diagnostic::SpanRange;
+
 use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
 
 /// Taint level for an SSA variable.
@@ -30,13 +32,24 @@ pub enum TaintWarning {
         name: String,
         var: SsaVar,
         visibility: Visibility,
+        span: Option<SpanRange>,
     },
     /// An input variable that is never referenced by any instruction.
     UnusedInput {
         name: String,
         var: SsaVar,
         visibility: Visibility,
+        span: Option<SpanRange>,
     },
+}
+
+impl TaintWarning {
+    pub fn span(&self) -> Option<&SpanRange> {
+        match self {
+            TaintWarning::UnderConstrained { span, .. }
+            | TaintWarning::UnusedInput { span, .. } => span.as_ref(),
+        }
+    }
 }
 
 impl fmt::Display for TaintWarning {
@@ -211,17 +224,20 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
     // Generate warnings
     let mut warnings = Vec::new();
     for (var, name, visibility) in &inputs {
+        let span = program.input_spans.get(name).cloned();
         if !used_vars.contains(var) {
             warnings.push(TaintWarning::UnusedInput {
                 name: name.clone(),
                 var: *var,
                 visibility: *visibility,
+                span,
             });
         } else if !constrained_vars.contains(var) {
             warnings.push(TaintWarning::UnderConstrained {
                 name: name.clone(),
                 var: *var,
                 visibility: *visibility,
+                span,
             });
         }
     }

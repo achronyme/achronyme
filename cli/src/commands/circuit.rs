@@ -107,10 +107,11 @@ pub fn circuit_command(
     // 3. Analyze for under-constrained inputs
     let warnings = ir::passes::analyze(&program);
     for w in &warnings {
-        let diag = compiler::Diagnostic::warning(
-            w.to_string(),
-            compiler::diagnostic::SpanRange::point(0, 0, 0),
-        );
+        let span = w
+            .span()
+            .cloned()
+            .unwrap_or_else(|| compiler::diagnostic::SpanRange::point(0, 0, 0));
+        let diag = compiler::Diagnostic::warning(w.to_string(), span);
         super::emit_diagnostic(&diag, &source, error_format);
     }
 

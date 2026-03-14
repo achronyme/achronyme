@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use achronyme_parser::diagnostic::SpanRange;
 use memory::FieldElement;
 
 /// An SSA variable — defined exactly once.
@@ -239,6 +240,8 @@ pub struct IrProgram {
     pub var_names: HashMap<SsaVar, String>,
     /// Maps SSA variables to their IR types (set by type annotations and inference).
     pub var_types: HashMap<SsaVar, IrType>,
+    /// Maps input variable names to their source declaration spans.
+    pub input_spans: HashMap<String, SpanRange>,
 }
 
 impl Default for IrProgram {
@@ -254,6 +257,7 @@ impl IrProgram {
             next_var: 0,
             var_names: HashMap::new(),
             var_types: HashMap::new(),
+            input_spans: HashMap::new(),
         }
     }
 
