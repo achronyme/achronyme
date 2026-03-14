@@ -428,9 +428,9 @@ pub fn generate_plonkish_proof(
     .map_err(|e| format!("halo2 proof verification failed: {e:?}"))?;
 
     // Serialize to JSON
-    let proof_json = serialize_proof_json(&proof_bytes, &instance_values, k);
-    let public_json = serialize_public_json(&instance_values);
-    let vkey_json = serialize_vkey_json(&vk, k);
+    let proof_json = serialize_proof_json(&proof_bytes, &instance_values, k)?;
+    let public_json = serialize_public_json(&instance_values)?;
+    let vkey_json = serialize_vkey_json(&vk, k)?;
 
     Ok(ProveResult::Proof {
         proof_json,
@@ -471,7 +471,11 @@ fn load_or_create_kzg_params(k: u32, path: &Path) -> Result<ParamsKZG<Bn256>, St
 // JSON serialization
 // ============================================================================
 
-fn serialize_proof_json(proof_bytes: &[u8], public_inputs: &[Fr], k: u32) -> String {
+fn serialize_proof_json(
+    proof_bytes: &[u8],
+    public_inputs: &[Fr],
+    k: u32,
+) -> Result<String, String> {
     let proof_hex = format!("0x{}", hex_encode(proof_bytes));
     let public: Vec<String> = public_inputs.iter().map(fr_to_decimal).collect();
     let obj = serde_json::json!({
@@ -481,18 +485,19 @@ fn serialize_proof_json(proof_bytes: &[u8], public_inputs: &[Fr], k: u32) -> Str
         "public_inputs": public,
         "k": k
     });
-    serde_json::to_string_pretty(&obj).unwrap()
+    serde_json::to_string_pretty(&obj).map_err(|e| format!("proof JSON serialization failed: {e}"))
 }
 
-fn serialize_public_json(inputs: &[Fr]) -> String {
+fn serialize_public_json(inputs: &[Fr]) -> Result<String, String> {
     let arr: Vec<String> = inputs.iter().map(fr_to_decimal).collect();
-    serde_json::to_string_pretty(&arr).unwrap()
+    serde_json::to_string_pretty(&arr)
+        .map_err(|e| format!("public JSON serialization failed: {e}"))
 }
 
-fn serialize_vkey_json(vk: &VerifyingKey<G1Affine>, k: u32) -> String {
+fn serialize_vkey_json(vk: &VerifyingKey<G1Affine>, k: u32) -> Result<String, String> {
     let mut vk_bytes = Vec::new();
     vk.write(&mut vk_bytes, SerdeFormat::RawBytes)
-        .unwrap_or_default();
+        .map_err(|e| format!("vkey serialization failed: {e}"))?;
     let vk_hex = format!("0x{}", hex_encode(&vk_bytes));
     let obj = serde_json::json!({
         "protocol": "plonk",
@@ -500,7 +505,7 @@ fn serialize_vkey_json(vk: &VerifyingKey<G1Affine>, k: u32) -> String {
         "k": k,
         "vkey": vk_hex
     });
-    serde_json::to_string_pretty(&obj).unwrap()
+    serde_json::to_string_pretty(&obj).map_err(|e| format!("vkey JSON serialization failed: {e}"))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

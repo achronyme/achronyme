@@ -53,6 +53,25 @@ pub fn circuit_command(
     plonkish_json_path: Option<&str>,
     error_format: ErrorFormat,
 ) -> Result<()> {
+    // 0. Validate flag combinations early (before expensive IR lowering)
+    if solidity_path.is_some() && backend != "r1cs" {
+        return Err(anyhow::anyhow!(
+            "--solidity is only supported with the r1cs backend"
+        ));
+    }
+
+    if plonkish_json_path.is_some() && backend != "plonkish" {
+        return Err(anyhow::anyhow!(
+            "--plonkish-json is only supported with the plonkish backend"
+        ));
+    }
+
+    if !matches!(backend, "r1cs" | "plonkish") {
+        return Err(anyhow::anyhow!(
+            "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
+        ));
+    }
+
     let source =
         fs::read_to_string(path).with_context(|| format!("cannot read source file: {path}"))?;
 
@@ -94,24 +113,11 @@ pub fn circuit_command(
         super::emit_diagnostic(&diag, &source, error_format);
     }
 
-    if solidity_path.is_some() && backend != "r1cs" {
-        return Err(anyhow::anyhow!(
-            "--solidity is only supported with the r1cs backend"
-        ));
-    }
-
-    if plonkish_json_path.is_some() && backend != "plonkish" {
-        return Err(anyhow::anyhow!(
-            "--plonkish-json is only supported with the plonkish backend"
-        ));
-    }
-
     match backend {
         "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs, solidity_path),
         "plonkish" => run_plonkish_pipeline(&program, inputs, prove, plonkish_json_path),
-        _ => Err(anyhow::anyhow!(
-            "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
-        )),
+        // Unreachable: backend validated at the top of this function
+        _ => unreachable!(),
     }
 }
 
