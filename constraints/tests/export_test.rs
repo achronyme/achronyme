@@ -223,6 +223,40 @@ fn test_snarkjs_groth16_full() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Integration test: compile a circuit through the Plonkish pipeline and export to JSON.
+#[test]
+fn test_plonkish_json_export_roundtrip() {
+    use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+    use ir::IrLowering;
+    use std::collections::HashMap;
+
+    let source = "assert_eq(a * b, out)";
+    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    let mut inputs = HashMap::new();
+    inputs.insert("out".to_string(), FieldElement::from_u64(42));
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler.system.verify().unwrap();
+
+    let json = constraints::write_plonkish_json(&compiler.system);
+    constraints::validate_plonkish_json(&json).expect("validation failed");
+
+    // Verify structure
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["format"], "achronyme-plonkish-v1");
+    assert!(parsed["num_rows"].as_u64().unwrap() > 0);
+    assert!(parsed["num_advice"].as_u64().unwrap() > 0);
+    assert!(parsed["gates"].as_array().unwrap().len() > 0);
+    assert!(parsed["copies"].as_array().unwrap().len() > 0);
+}
+
 /// snarkjs integration test (requires npx/snarkjs installed).
 #[test]
 #[ignore]

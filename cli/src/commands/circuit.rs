@@ -50,6 +50,7 @@ pub fn circuit_command(
     backend: &str,
     prove: bool,
     solidity_path: Option<&str>,
+    plonkish_json_path: Option<&str>,
     error_format: ErrorFormat,
 ) -> Result<()> {
     let source =
@@ -99,9 +100,15 @@ pub fn circuit_command(
         ));
     }
 
+    if plonkish_json_path.is_some() && backend != "plonkish" {
+        return Err(anyhow::anyhow!(
+            "--plonkish-json is only supported with the plonkish backend"
+        ));
+    }
+
     match backend {
         "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs, solidity_path),
-        "plonkish" => run_plonkish_pipeline(&program, inputs, prove),
+        "plonkish" => run_plonkish_pipeline(&program, inputs, prove, plonkish_json_path),
         _ => Err(anyhow::anyhow!(
             "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
         )),
@@ -182,7 +189,12 @@ fn run_r1cs_pipeline(
     Ok(())
 }
 
-fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>, prove: bool) -> Result<()> {
+fn run_plonkish_pipeline(
+    program: &ir::IrProgram,
+    inputs: Option<&str>,
+    prove: bool,
+    plonkish_json_path: Option<&str>,
+) -> Result<()> {
     let mut compiler = PlonkishCompiler::new();
     let proven = ir::passes::bool_prop::compute_proven_boolean(program);
     compiler.set_proven_boolean(proven);
@@ -207,6 +219,13 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>, prove: b
             .verify()
             .map_err(|e| anyhow::anyhow!("Plonkish verification error: {e}"))?;
         eprintln!("plonkish verification: OK");
+
+        // Export Plonkish circuit + witness to JSON if requested
+        if let Some(json_path) = plonkish_json_path {
+            let json = constraints::write_plonkish_json(&compiler.system);
+            fs::write(json_path, &json).with_context(|| format!("cannot write {json_path}"))?;
+            eprintln!("wrote {} (Plonkish JSON export)", json_path);
+        }
 
         if prove {
             let cache_dir = crate::cache_dir();
@@ -245,6 +264,13 @@ fn run_plonkish_pipeline(program: &ir::IrProgram, inputs: Option<&str>, prove: b
             compiler.system.copies.len(),
             compiler.system.lookups.len(),
         );
+
+        // Export Plonkish circuit to JSON if requested (no witness in this path)
+        if let Some(json_path) = plonkish_json_path {
+            let json = constraints::write_plonkish_json(&compiler.system);
+            fs::write(json_path, &json).with_context(|| format!("cannot write {json_path}"))?;
+            eprintln!("wrote {} (Plonkish JSON export, no witness)", json_path);
+        }
     }
 
     Ok(())

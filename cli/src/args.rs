@@ -78,5 +78,8 @@ pub enum Commands {
         /// Generate a Solidity Groth16 verifier contract at the given path
         #[arg(long)]
         solidity: Option<String>,
+        /// Export Plonkish circuit + witness to JSON at the given path
+        #[arg(long)]
+        plonkish_json: Option<String>,
     },
 }
