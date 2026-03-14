@@ -1,6 +1,7 @@
 use constraints::r1cs::{ConstraintSystem, LinearCombination};
 use constraints::{write_r1cs, write_wtns};
 use memory::FieldElement;
+use std::process::Command;
 
 /// Build a*b=c circuit (1 public output, 2 witnesses, 1 constraint).
 fn make_mul_circuit() -> (ConstraintSystem, Vec<FieldElement>) {
@@ -102,11 +103,39 @@ fn test_e2e_pipeline_export() {
     assert_eq!(&wtns_data[0..4], b"wtns");
 }
 
+/// Check if snarkjs is available (skip tests gracefully if not installed).
+fn snarkjs_available() -> bool {
+    Command::new("npx")
+        .args(["snarkjs", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Run an npx snarkjs command, panic on failure.
+fn snarkjs(args: &[&str]) {
+    let output = Command::new("npx")
+        .args(args)
+        .output()
+        .expect("npx not available");
+    assert!(
+        output.status.success(),
+        "command failed: npx {}\nstdout: {}\nstderr: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Full Groth16 integration test: powers of tau → setup → prove → verify.
-/// Requires node.js and snarkjs to be installed (npx snarkjs).
+/// Requires node.js and snarkjs (npx snarkjs).
 #[test]
-#[ignore]
 fn test_snarkjs_groth16_full() {
+    if !snarkjs_available() {
+        eprintln!("SKIP: snarkjs not available");
+        return;
+    }
+
     use compiler::r1cs_backend::R1CSCompiler;
     use compiler::witness_gen::WitnessGenerator;
     use ir::IrLowering;
@@ -118,11 +147,12 @@ fn test_snarkjs_groth16_full() {
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
 
-    let dir = "/tmp/achronyme_groth16_test";
-    std::fs::create_dir_all(dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let p = |name: &str| d.join(name).to_str().unwrap().to_string();
 
-    let r1cs_path = format!("{dir}/circuit.r1cs");
-    let wtns_path = format!("{dir}/witness.wtns");
+    let r1cs_path = p("circuit.r1cs");
+    let wtns_path = p("witness.wtns");
 
     std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
 
@@ -136,25 +166,12 @@ fn test_snarkjs_groth16_full() {
     compiler.cs.verify(&witness).unwrap();
     std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
 
-    let run = |args: &[&str]| {
-        let output = std::process::Command::new("npx")
-            .args(args)
-            .output()
-            .expect("npx not available");
-        assert!(
-            output.status.success(),
-            "command failed: npx {}\nstderr: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-
     // Powers of Tau ceremony
-    let pot12 = format!("{dir}/pot12_0000.ptau");
-    let pot12_1 = format!("{dir}/pot12_0001.ptau");
-    let pot12_final = format!("{dir}/pot12_final.ptau");
-    run(&["snarkjs", "powersoftau", "new", "bn128", "12", &pot12, "-v"]);
-    run(&[
+    let pot12 = p("pot12_0000.ptau");
+    let pot12_1 = p("pot12_0001.ptau");
+    let pot12_final = p("pot12_final.ptau");
+    snarkjs(&["snarkjs", "powersoftau", "new", "bn128", "12", &pot12, "-v"]);
+    snarkjs(&[
         "snarkjs",
         "powersoftau",
         "contribute",
@@ -164,7 +181,7 @@ fn test_snarkjs_groth16_full() {
         "-v",
         "-e=random",
     ]);
-    run(&[
+    snarkjs(&[
         "snarkjs",
         "powersoftau",
         "prepare",
@@ -175,10 +192,10 @@ fn test_snarkjs_groth16_full() {
     ]);
 
     // Groth16 setup
-    let zkey_0 = format!("{dir}/circuit_0000.zkey");
-    let zkey_1 = format!("{dir}/circuit_0001.zkey");
-    let vkey = format!("{dir}/verification_key.json");
-    run(&[
+    let zkey_0 = p("circuit_0000.zkey");
+    let zkey_1 = p("circuit_0001.zkey");
+    let vkey = p("verification_key.json");
+    snarkjs(&[
         "snarkjs",
         "groth16",
         "setup",
@@ -186,7 +203,7 @@ fn test_snarkjs_groth16_full() {
         &pot12_final,
         &zkey_0,
     ]);
-    run(&[
+    snarkjs(&[
         "snarkjs",
         "zkey",
         "contribute",
@@ -196,7 +213,7 @@ fn test_snarkjs_groth16_full() {
         "-v",
         "-e=random",
     ]);
-    run(&[
+    snarkjs(&[
         "snarkjs",
         "zkey",
         "export",
@@ -206,9 +223,9 @@ fn test_snarkjs_groth16_full() {
     ]);
 
     // Prove and verify
-    let proof = format!("{dir}/proof.json");
-    let public_json = format!("{dir}/public.json");
-    run(&[
+    let proof = p("proof.json");
+    let public_json = p("public.json");
+    snarkjs(&[
         "snarkjs",
         "groth16",
         "prove",
@@ -217,10 +234,7 @@ fn test_snarkjs_groth16_full() {
         &proof,
         &public_json,
     ]);
-    run(&["snarkjs", "groth16", "verify", &vkey, &public_json, &proof]);
-
-    // Cleanup
-    std::fs::remove_dir_all(dir).ok();
+    snarkjs(&["snarkjs", "groth16", "verify", &vkey, &public_json, &proof]);
 }
 
 /// Integration test: compile a circuit through the Plonkish pipeline and export to JSON.
@@ -257,10 +271,14 @@ fn test_plonkish_json_export_roundtrip() {
     assert!(parsed["copies"].as_array().unwrap().len() > 0);
 }
 
-/// snarkjs integration test (requires npx/snarkjs installed).
+/// snarkjs r1cs info + wtns check integration test.
 #[test]
-#[ignore]
 fn test_snarkjs_r1cs_info() {
+    if !snarkjs_available() {
+        eprintln!("SKIP: snarkjs not available");
+        return;
+    }
+
     use compiler::r1cs_backend::R1CSCompiler;
     use compiler::witness_gen::WitnessGenerator;
     use ir::IrLowering;
@@ -272,10 +290,12 @@ fn test_snarkjs_r1cs_info() {
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
 
-    let r1cs_path = "/tmp/achronyme_test.r1cs";
-    let wtns_path = "/tmp/achronyme_test.wtns";
+    let dir = tempfile::tempdir().unwrap();
+    let p = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
+    let r1cs_path = p("circuit.r1cs");
+    let wtns_path = p("witness.wtns");
 
-    std::fs::write(r1cs_path, write_r1cs(&compiler.cs)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
 
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), FieldElement::from_u64(42));
@@ -284,30 +304,8 @@ fn test_snarkjs_r1cs_info() {
 
     let wg = WitnessGenerator::from_compiler(&compiler);
     let witness = wg.generate(&inputs).unwrap();
-    std::fs::write(wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
 
-    // snarkjs r1cs info
-    let output = std::process::Command::new("npx")
-        .args(["snarkjs", "r1cs", "info", r1cs_path])
-        .output()
-        .expect("npx snarkjs not available");
-    assert!(
-        output.status.success(),
-        "r1cs info failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // snarkjs wtns check
-    let output = std::process::Command::new("npx")
-        .args(["snarkjs", "wtns", "check", r1cs_path, wtns_path])
-        .output()
-        .expect("npx snarkjs not available");
-    assert!(
-        output.status.success(),
-        "wtns check failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    std::fs::remove_file(r1cs_path).ok();
-    std::fs::remove_file(wtns_path).ok();
+    snarkjs(&["snarkjs", "r1cs", "info", &r1cs_path]);
+    snarkjs(&["snarkjs", "wtns", "check", &r1cs_path, &wtns_path]);
 }

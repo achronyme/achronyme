@@ -26,7 +26,7 @@
 - [x] **T10**: Detección de corrupción de witness — tests de wrong witness, malicious division, assert false
 - [x] **T11**: Field serialization round-trip — LE bytes, decimal strings, valores multi-limb (2^256+1, 2^257, 10^100)
 - [x] **T12**: `from_decimal_str` edge cases — "0", p, p+1, string vacío, chars inválidos, overflow
-- [ ] **T13**: Tests de integración snarkjs en CI — actualmente `#[ignore]`, necesitan Node.js
+- [x] **T13**: Tests de integración snarkjs — habilitados, skip graceful si snarkjs no disponible
 - [x] **T14**: Tests de integración CLI — 20 tests cubriendo ambos backends, flags, JSON export, error formats
 
 ## Futuro (sin prioridad definida)

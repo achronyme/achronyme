@@ -17,3 +17,4 @@ serde_json = "1"
 [dev-dependencies]
 compiler = { path = "../compiler" }
 ir = { path = "../ir" }
+tempfile = "3"
