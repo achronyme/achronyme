@@ -105,23 +105,45 @@ fn test_e2e_pipeline_export() {
 
 /// Check if snarkjs is available (skip tests gracefully if not installed).
 fn snarkjs_available() -> bool {
-    Command::new("npx")
-        .args(["snarkjs", "--version"])
+    // Try direct `snarkjs` first (global install), fall back to `npx snarkjs`
+    Command::new("snarkjs")
+        .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+        || Command::new("npx")
+            .args(["snarkjs", "--version"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
 }
 
-/// Run an npx snarkjs command, panic on failure.
-fn snarkjs(args: &[&str]) {
-    let output = Command::new("npx")
-        .args(args)
+/// Resolve whether to run snarkjs directly or via npx.
+fn snarkjs_cmd() -> (&'static str, bool) {
+    if Command::new("snarkjs")
+        .arg("--version")
         .output()
-        .expect("npx not available");
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        ("snarkjs", true) // direct: args start at index 1 (skip "snarkjs")
+    } else {
+        ("npx", false) // npx: pass all args including "snarkjs"
+    }
+}
+
+/// Run a snarkjs command. Args should start with "snarkjs" (e.g. &["snarkjs", "groth16", ...]).
+fn snarkjs(args: &[&str]) {
+    let (cmd, direct) = snarkjs_cmd();
+    let effective_args = if direct { &args[1..] } else { args };
+    let output = Command::new(cmd)
+        .args(effective_args)
+        .output()
+        .unwrap_or_else(|e| panic!("{cmd} not available: {e}"));
     assert!(
         output.status.success(),
-        "command failed: npx {}\nstdout: {}\nstderr: {}",
-        args.join(" "),
+        "command failed: {cmd} {}\nstdout: {}\nstderr: {}",
+        effective_args.join(" "),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
