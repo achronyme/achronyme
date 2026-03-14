@@ -20,14 +20,14 @@
 
 ## Testing
 
-- [ ] **T7**: `poseidon(0,0)` solo testeado nativamente, no a través del pipeline de circuito
-- [ ] **T8**: `range_check` edge cases — bits=0, bits=1, bits=253, max valid value (2^bits-1)
-- [ ] **T9**: Equivalentes Plonkish faltantes — for loops, if/else, poseidon con expresiones, power
-- [ ] **T10**: Detección de corrupción de witness — corromper valor intermedio, verify debe fallar
-- [ ] **T11**: Field serialization round-trip para valores multi-limb
-- [ ] **T12**: `from_decimal_str` edge cases — "0", p, p+1, chars inválidos, string vacío
+- [x] **T7**: `poseidon(0,0)` testeado en ambos backends (`test_poseidon_zero_zero_r1cs`, `test_plonkish_poseidon_zero_zero`)
+- [x] **T8**: `range_check` edge cases — bits=0, bits=1, bits=253, max valid value (2^bits-1), todos cubiertos en R1CS y Plonkish
+- [x] **T9**: Equivalentes Plonkish — for loops, if/else, poseidon con expresiones, power, todos testeados
+- [x] **T10**: Detección de corrupción de witness — tests de wrong witness, malicious division, assert false
+- [x] **T11**: Field serialization round-trip — LE bytes, decimal strings, valores multi-limb (2^256+1, 2^257, 10^100)
+- [x] **T12**: `from_decimal_str` edge cases — "0", p, p+1, string vacío, chars inválidos, overflow
 - [ ] **T13**: Tests de integración snarkjs en CI — actualmente `#[ignore]`, necesitan Node.js
-- [ ] **T14**: Tests de integración CLI — zero coverage para el comando `circuit`
+- [x] **T14**: Tests de integración CLI — 20 tests cubriendo ambos backends, flags, JSON export, error formats
 
 ## Futuro (sin prioridad definida)
 

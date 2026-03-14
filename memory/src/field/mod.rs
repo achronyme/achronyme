@@ -699,6 +699,29 @@ mod tests {
     }
 
     #[test]
+    fn test_from_decimal_str_zero() {
+        let fe = FieldElement::from_decimal_str("0").unwrap();
+        assert_eq!(fe, FieldElement::ZERO);
+    }
+
+    #[test]
+    fn test_from_decimal_str_empty_string() {
+        assert!(
+            FieldElement::from_decimal_str("").is_none(),
+            "empty string should return None"
+        );
+    }
+
+    #[test]
+    fn test_from_decimal_str_invalid_chars() {
+        assert!(FieldElement::from_decimal_str("abc").is_none());
+        assert!(FieldElement::from_decimal_str("12x4").is_none());
+        assert!(FieldElement::from_decimal_str("-1").is_none());
+        assert!(FieldElement::from_decimal_str("1.5").is_none());
+        assert!(FieldElement::from_decimal_str(" 42").is_none());
+    }
+
+    #[test]
     fn test_vector_montgomery_r() {
         // 2^256 mod p = R constant = 6350874878119819312338956282401532410528162663560392320966563075034087161851
         let r_expected = FieldElement::from_decimal_str(

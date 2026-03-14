@@ -44,6 +44,9 @@ impl FieldElement {
     /// assert_eq!(fe.to_decimal_string(), "123456789");
     /// ```
     pub fn from_decimal_str(s: &str) -> Option<Self> {
+        if s.is_empty() {
+            return None;
+        }
         // Use 5-limb accumulator (320 bits) to capture overflow past 256 bits.
         // After each digit, reduce mod p so intermediate values stay bounded.
         // Invariant: result < p before each digit → after *10 + digit < 10p + 10 < 2^258 (fits in 5 limbs).

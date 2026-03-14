@@ -152,6 +152,57 @@ fn test_r1cs_range_check_1bit_invalid() {
 }
 
 #[test]
+fn test_r1cs_range_check_0bit_zero() {
+    // bits=0: [0, 2^0) = {0}, only value=0 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ZERO);
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+#[test]
+fn test_r1cs_range_check_0bit_invalid() {
+    // bits=0: value=1 should fail (only 0 allowed)
+    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ONE);
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    assert!(
+        compiler.cs.verify(&witness).is_err(),
+        "value=1 should not fit in 0 bits"
+    );
+}
+
+#[test]
+fn test_r1cs_range_check_253bit_max() {
+    // bits=253: value=2^253-1 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 253)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+    assert_eq!(compiler.cs.num_constraints(), 254); // 253 boolean + 1 sum
+
+    // 2^253 - 1 = all 253 bits set
+    let max_253 = FieldElement::from_decimal_str(
+        "14474011154664524427946373126085988481658748083205070504932198000989141204991",
+    )
+    .unwrap();
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), max_253);
+    let wg = WitnessGenerator::from_compiler(&compiler);
+    let witness = wg.generate(&inputs).unwrap();
+    compiler.cs.verify(&witness).unwrap();
+}
+
+#[test]
 fn test_r1cs_range_check_boundary_exact_max() {
     // bits=8: value=255 (2^8 - 1) should pass
     let program = IrLowering::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
@@ -340,6 +391,52 @@ fn test_plonkish_range_check_boundary_exact_max() {
     wg.generate(&inputs, &mut compiler.system.assignments)
         .unwrap();
     compiler.system.verify().unwrap();
+}
+
+#[test]
+fn test_plonkish_range_check_0bit_zero() {
+    // bits=0: only value=0 should pass
+    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ZERO);
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    compiler.system.verify().unwrap();
+}
+
+#[test]
+fn test_plonkish_range_check_0bit_invalid() {
+    // bits=0: value=1 should fail
+    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    compiler.compile_ir(&program).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::ONE);
+    let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
+    wg.generate(&inputs, &mut compiler.system.assignments)
+        .unwrap();
+    assert!(
+        compiler.system.verify().is_err(),
+        "value=1 should not fit in 0 bits"
+    );
+}
+
+#[test]
+fn test_plonkish_range_check_253bit_rejected() {
+    // Plonkish uses lookup tables: bits=253 exceeds the max table size (2^16).
+    // The compiler must reject this with an error, not panic.
+    let program = IrLowering::lower_circuit("range_check(x, 253)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::new();
+    let result = compiler.compile_ir(&program);
+    assert!(
+        result.is_err(),
+        "Plonkish should reject 253-bit range check (table too large)"
+    );
 }
 
 // ============================================================================
