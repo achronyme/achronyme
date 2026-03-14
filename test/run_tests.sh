@@ -221,6 +221,166 @@ else
     echo "  FAIL  circuit/solidity_verifier_content"
 fi
 
+# --- Plonkish circuit tests ---
+echo ""
+echo "=== Plonkish circuit tests ==="
+
+run_test "circuit/basic_arithmetic.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/basic_arithmetic.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=42,a=6,b=7"
+
+run_test "circuit/poseidon.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/poseidon.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "expected=7853200120776062878684798364095072458815029376092732009249414926327459813530,a=1,b=2,c=3"
+
+run_test "circuit/mux.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/mux.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=42,cond=1,a=42,b=99"
+
+run_test "circuit/range_check.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/range_check.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "x=200,y=65000"
+
+run_test "circuit/boolean_ops.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/boolean_ops.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "x=3,y=5"
+
+run_test "circuit/merkle.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/merkle.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "root=7853200120776062878684798364095072458815029376092732009249414926327459813530,leaf=1,path_0=2,indices_0=0"
+
+run_test "circuit/arrays_and_functions.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/arrays_and_functions.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "expected_sum=60,vals_0=10,vals_1=20,vals_2=30"
+
+run_test "circuit/power.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/power.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "x=3,x2=9,x3=27,x4=81"
+
+run_test "circuit/division.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/division.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "q=6,a=42,b=7"
+
+run_test "circuit/comparison_ops.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/comparison_ops.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "x=3,y=5"
+
+run_test "circuit/nested_functions.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/nested_functions.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "result=25,x=3"
+
+run_test "circuit/for_loop_unroll.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/for_loop_unroll.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "total=100,vals_0=10,vals_1=20,vals_2=30,vals_3=40"
+
+run_test "circuit/nullifier.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/nullifier.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "nullifier=4736362406665208364747685732453189199131835045859587280506752441838311700156,secret=12345,leaf_index=7"
+
+run_test "circuit/commitment.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/commitment.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "commitment=16301115570242784778765184033606574990417411247577491285886077462613734960794,value=1000,blinding=98765"
+
+run_test "circuit/hash_chain.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/hash_chain.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "expected=21508756081070400358417640840024981277893390350656564165427487686097502392670,seed=0"
+
+run_test "circuit/deep_functions.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/deep_functions.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=44,a=10"
+
+run_test "circuit/complex_boolean.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/complex_boolean.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "a=3,b=7,c=10,d=2,e=1,f=2"
+
+run_test "circuit/nested_loops.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/nested_loops.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=36"
+
+run_test "circuit/inner_product.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/inner_product.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=70,a_0=1,a_1=2,a_2=3,a_3=4,b_0=5,b_1=6,b_2=7,b_3=8"
+
+run_test "circuit/secret_vote.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/secret_vote.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "merkle_root=16562627490493722277540343453474560507943355785745140792129356826951042972366,nullifier=4027913667401648903638418705764660665764112454358309045410324429160920395813,vote=1,election_id=1001,secret=42,path_0=6742193431752037917634653485837689273334250178444557194345979079134234961755,path_1=2479855382401079998356559563096754868958560665915964078751529288374953894653,indices_0=0,indices_1=0"
+
+run_test "circuit/typed_arithmetic.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_arithmetic.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=42,a=6,b=7"
+
+run_test "circuit/typed_boolean_ops.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_boolean_ops.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "x=3,y=5"
+
+run_test "circuit/typed_mux.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_mux.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "out=42,cond=1,a=42,b=99"
+
+run_test "circuit/typed_arrays_and_functions.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_arrays_and_functions.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "expected_sum=60,vals_0=10,vals_1=20,vals_2=30"
+
+run_test "circuit/typed_poseidon.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_poseidon.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "expected=7853200120776062878684798364095072458815029376092732009249414926327459813530,a=1,b=2,c=3"
+
+run_test "circuit/typed_merkle.ach (plonkish)" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/typed_merkle.ach" \
+    --r1cs /dev/null --wtns /dev/null \
+    --backend plonkish \
+    --inputs "root=7853200120776062878684798364095072458815029376092732009249414926327459813530,leaf=1,path_0=2,indices_0=0"
+
 # --- Prove tests ---
 echo ""
 echo "=== Prove tests ==="
