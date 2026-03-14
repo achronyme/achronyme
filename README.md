@@ -7,10 +7,22 @@ A programming language for zero-knowledge circuits.
 
 Write readable code. Decide what gets proven. Same language for general execution and ZK circuit compilation.
 
+## Install
+
+```bash
+curl -fsSL https://achrony.me/install.sh | sh
 ```
+
+This installs the `ach` binary to `~/.local/bin`. Requires Linux or macOS (x86_64 or aarch64).
+
+### Build from source
+
+```bash
+git clone https://github.com/achronyme/achronyme.git
+cd achronyme
 cargo build --release
-cargo test --workspace     # 970+ unit tests
-bash test/run_tests.sh     # 90+ integration tests
+cargo test --workspace     # 1,300+ unit tests
+bash test/run_tests.sh     # 150+ integration tests
 ```
 
 ---
@@ -389,7 +401,7 @@ achronyme/
 
 ## Status
 
-- 1,100+ unit tests + 140+ integration tests
+- 1,300+ unit tests + 150+ integration tests
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export

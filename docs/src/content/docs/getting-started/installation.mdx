@@ -3,6 +3,22 @@ title: Installation
 description: How to install and build Achronyme.
 ---
 
+## Quick Install
+
+Install the latest release with a single command:
+
+```bash
+curl -fsSL https://achrony.me/install.sh | sh
+```
+
+This downloads the `ach` binary to `~/.local/bin`. Requires Linux or macOS (x86_64 or aarch64).
+
+Verify the installation:
+
+```bash
+ach --version
+```
+
 ## From Source
 
 Achronyme is written in Rust. You need a recent Rust toolchain (1.77+).
@@ -18,34 +34,18 @@ The binary is at `target/release/ach`.
 ### Verify the build
 
 ```bash
-cargo test --workspace     # 718 unit tests
-bash test/run_tests.sh     # 54 integration tests
+cargo test --workspace     # 1,300+ unit tests
+bash test/run_tests.sh     # 150+ integration tests
 ```
 
-## Optional: snarkjs Integration
+## Optional: snarkjs Compatibility
 
-For full Groth16 proof generation with `ach circuit`, install snarkjs:
+Achronyme includes native Groth16 (ark-groth16) and PlonK (halo2-KZG) backends — no external tools needed. Proofs are generated in-process.
 
-```bash
-npm install -g snarkjs
-```
-
-Achronyme can generate `.r1cs` and `.wtns` files directly consumable by snarkjs:
+The output `.r1cs` and `.wtns` files are also compatible with snarkjs for external workflows:
 
 ```bash
 snarkjs groth16 setup circuit.r1cs pot12_final.ptau circuit.zkey
 snarkjs groth16 prove circuit.zkey witness.wtns proof.json public.json
 snarkjs groth16 verify verification_key.json public.json proof.json
 ```
-
-## Optional: Native Proof Generation
-
-Achronyme includes native Groth16 (ark-groth16) and PlonK (halo2-KZG) backends. No external tools needed for `prove {}` blocks — proofs are generated in-process.
-
-For `prove {}` blocks with Groth16 via snarkjs, you need a Powers of Tau file:
-
-```bash
-ach run script.ach --ptau pot12_final.ptau
-```
-
-Without `--ptau`, prove blocks still compile the circuit, generate the witness, and verify constraints locally (returning `nil` instead of a proof object).
