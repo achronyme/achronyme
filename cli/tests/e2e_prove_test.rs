@@ -430,3 +430,83 @@ assert_eq(a * b, c)
         "same circuit should reuse same cache entry"
     );
 }
+
+#[test]
+fn e2e_plonkish_poseidon_hash() {
+    let source = r#"
+witness a
+witness b
+public h
+assert_eq(poseidon(a, b), h)
+"#;
+    let params = constraints::poseidon::PoseidonParams::bn254_t3();
+    let hash = constraints::poseidon::poseidon_hash(&params, fe(1), fe(2));
+
+    let mut input_map = HashMap::new();
+    input_map.insert("a".to_string(), fe(1));
+    input_map.insert("b".to_string(), fe(2));
+    input_map.insert("h".to_string(), hash);
+
+    let (_, _, mut program) = ir::IrLowering::lower_self_contained(source).expect("lower failed");
+    ir::passes::optimize(&mut program);
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+
+    let mut compiler = PlonkishCompiler::new();
+    compiler.set_proven_boolean(proven);
+    compiler
+        .compile_ir_with_witness(&program, &input_map)
+        .expect("plonkish compile_ir_with_witness failed");
+    compiler
+        .system
+        .verify()
+        .expect("Plonkish constraint verification failed");
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+        .expect("generate_plonkish_proof failed");
+
+    match result {
+        ProveResult::Proof {
+            proof_json,
+            public_json,
+            ..
+        } => {
+            let proof: serde_json::Value = serde_json::from_str(&proof_json).unwrap();
+            assert_eq!(proof["protocol"], "plonk");
+
+            let public: Vec<String> = serde_json::from_str(&public_json).unwrap();
+            assert_eq!(public.len(), 1);
+            assert_eq!(public[0], hash.to_decimal_string());
+        }
+        ProveResult::VerifiedOnly => panic!("expected Proof"),
+    }
+}
+
+#[test]
+fn e2e_plonkish_boolean_logic() {
+    // Uses mux (boolean enforcement) and if/else — exercises bool_prop path.
+    // NOTE: range_check is excluded because halo2 PSE doesn't support
+    // simple selectors in lookup arguments during proof generation.
+    let source = r#"
+witness flag
+witness a
+witness b
+public r
+assert_eq(mux(flag, a, b), r)
+"#;
+    // flag=1 → selects a=10 → r=10
+    let compiler =
+        lower_and_compile_plonkish(source, &[("flag", 1), ("a", 10), ("b", 20), ("r", 10)]);
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+        .expect("generate_plonkish_proof failed");
+
+    match result {
+        ProveResult::Proof { proof_json, .. } => {
+            let proof: serde_json::Value = serde_json::from_str(&proof_json).unwrap();
+            assert_eq!(proof["protocol"], "plonk");
+        }
+        ProveResult::VerifiedOnly => panic!("expected Proof"),
+    }
+}
