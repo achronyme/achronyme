@@ -184,6 +184,7 @@ fn merkle_depth8_256_leaves() {
         "expected >2900 constraints for depth-8 Merkle, got {}",
         rc.cs.num_constraints()
     );
+    plonkish_verify(&source, &["root"], &wit_refs, &inp);
 }
 
 #[test]
@@ -211,6 +212,17 @@ fn merkle_depth8_wrong_leaf_fails() {
         rc.cs.verify(&w).is_err(),
         "wrong leaf should fail verification"
     );
+// Also verify Plonkish rejects wrong leaf
+    let program_p = IrLowering::lower_circuit(&source, &["root"], &wit_refs).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    pc.compile_ir(&program_p).expect("compilation failed");
+    let wg_p = PlonkishWitnessGenerator::from_compiler(&pc);
+    wg_p.generate(&inp, &mut pc.system.assignments)
+        .expect("witness gen failed");
+    assert!(
+        pc.system.verify().is_err(),
+        "wrong leaf should fail Plonkish verification"
+    );
 }
 
 #[test]
@@ -229,6 +241,7 @@ fn merkle_depth8_corner_positions() {
         r1cs_verify(&source, &["root"], &wit_refs, &inp);
     }
 }
+        plonkish_verify(&source, &["root"], &wit_refs, &inp);
 
 #[test]
 #[ignore]
