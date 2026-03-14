@@ -43,15 +43,18 @@ fn r1cs_verify(
     rc
 }
 
-/// Compile source → IR → Plonkish → witness → verify. Returns the compiler.
+/// Compile source → IR → optimize → Plonkish → witness → verify. Returns the compiler.
 fn plonkish_verify(
     source: &str,
     pub_names: &[&str],
     wit_names: &[&str],
     inp: &HashMap<String, FieldElement>,
 ) -> PlonkishCompiler {
-    let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    ir::passes::optimize(&mut program);
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
     let mut compiler = PlonkishCompiler::new();
+    compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
     wg.generate(inp, &mut compiler.system.assignments)
