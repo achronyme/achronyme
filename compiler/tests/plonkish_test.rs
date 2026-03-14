@@ -1,15 +1,20 @@
 use std::collections::HashMap;
 
 use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
 use memory::FieldElement;
 
 /// Helper: compile IR, generate witness, verify.
+/// Integrates bool_prop analysis to match the real pipeline and avoid
+/// redundant boolean checks (B1 audit fix).
 fn compile_and_verify(
     program: &IrProgram,
     inputs: &HashMap<String, FieldElement>,
 ) -> PlonkishCompiler {
+    let proven = compute_proven_boolean(program);
     let mut compiler = PlonkishCompiler::new();
+    compiler.set_proven_boolean(proven);
     compiler.compile_ir(program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
     wg.generate(inputs, &mut compiler.system.assignments)
@@ -1012,7 +1017,7 @@ fn test_plonkish_range_check_zero_value() {
 // C1–C4: Malicious prover tests — copy-constrained constants must be tamper-proof
 // ============================================================================
 
-use constraints::plonkish::{CellRef, PlonkishError};
+use constraints::plonkish::PlonkishError;
 
 /// C1: Corrupting col_d on the IsZero enforce row (d=1→0) must be caught.
 #[test]

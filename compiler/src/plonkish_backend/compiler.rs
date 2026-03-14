@@ -529,6 +529,29 @@ impl PlonkishCompiler {
         self.system.num_rows = final_rows;
         self.system.assignments.ensure_rows(self.system.num_rows);
 
+        // B4 fix: pad lookup table fixed columns by duplicating the last valid
+        // entry instead of leaving zeros. Zero-filled lookup columns are a
+        // soundness attack vector — a (0, 0) tuple validates f(0)=0 for any
+        // table (cf. Plonky2 CVE GHSA-hj49-h7fq-px5h).
+        let table_padding: Vec<(Column, usize, FieldElement)> = self
+            .system
+            .lookup_tables
+            .iter()
+            .filter_map(|table| {
+                let table_len = table.values.len();
+                if table_len > 0 && table_len < self.system.num_rows {
+                    Some((table.column, table_len, table.values[table_len - 1]))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (col, start, last_val) in table_padding {
+            for row in start..self.system.num_rows {
+                self.system.assignments.set(col, row, last_val);
+            }
+        }
+
         Ok(())
     }
 

@@ -78,27 +78,36 @@ impl Expression {
     }
 
     /// Evaluate this expression at a given row using the assignments table.
-    pub fn evaluate(&self, assignments: &Assignments, row: usize) -> FieldElement {
+    ///
+    /// Returns an error if a rotation refers to a row outside `[0, num_rows)`,
+    /// preventing the silent-zero soundness bug documented in Plonky2
+    /// (CVE GHSA-hj49-h7fq-px5h) and the Halo2 wrap-around issue.
+    pub fn evaluate(&self, assignments: &Assignments, row: usize) -> Result<FieldElement, PlonkishError> {
         match self {
-            Expression::Constant(val) => *val,
+            Expression::Constant(val) => Ok(*val),
             Expression::Cell(col, rotation) => {
                 let actual = row as i64 + *rotation as i64;
                 if actual < 0 || actual as usize >= assignments.num_rows {
-                    FieldElement::ZERO
+                    Err(PlonkishError::RotationOutOfBounds {
+                        column: *col,
+                        row,
+                        rotation: *rotation,
+                        num_rows: assignments.num_rows,
+                    })
                 } else {
-                    assignments.get(*col, actual as usize)
+                    Ok(assignments.get(*col, actual as usize))
                 }
             }
-            Expression::Neg(inner) => inner.evaluate(assignments, row).neg(),
+            Expression::Neg(inner) => Ok(inner.evaluate(assignments, row)?.neg()),
             Expression::Sum(a, b) => {
-                let av = a.evaluate(assignments, row);
-                let bv = b.evaluate(assignments, row);
-                av.add(&bv)
+                let av = a.evaluate(assignments, row)?;
+                let bv = b.evaluate(assignments, row)?;
+                Ok(av.add(&bv))
             }
             Expression::Product(a, b) => {
-                let av = a.evaluate(assignments, row);
-                let bv = b.evaluate(assignments, row);
-                av.mul(&bv)
+                let av = a.evaluate(assignments, row)?;
+                let bv = b.evaluate(assignments, row)?;
+                Ok(av.mul(&bv))
             }
         }
     }
@@ -201,6 +210,7 @@ pub enum PlonkishError {
     GateNotSatisfied { gate: String, row: usize },
     CopyConstraintViolation { left: CellRef, right: CellRef },
     LookupFailed { lookup: String, row: usize },
+    RotationOutOfBounds { column: Column, row: usize, rotation: i32, num_rows: usize },
     MissingInput(String),
 }
 
@@ -219,6 +229,13 @@ impl fmt::Display for PlonkishError {
             }
             PlonkishError::LookupFailed { lookup, row } => {
                 write!(f, "lookup `{lookup}` failed at row {row}")
+            }
+            PlonkishError::RotationOutOfBounds { column, row, rotation, num_rows } => {
+                write!(
+                    f,
+                    "rotation out of bounds: column {:?}[{}] with rotation {} exceeds {} rows",
+                    column, row, rotation, num_rows
+                )
             }
             PlonkishError::MissingInput(name) => {
                 write!(f, "missing input for variable `{name}`")
@@ -368,7 +385,7 @@ impl PlonkishSystem {
         // 1. Gate check: for each gate, for each row, poly evaluates to 0
         for gate in &self.gates {
             for row in 0..self.num_rows {
-                let val = gate.poly.evaluate(&self.assignments, row);
+                let val = gate.poly.evaluate(&self.assignments, row)?;
                 if !val.is_zero() {
                     return Err(PlonkishError::GateNotSatisfied {
                         gate: gate.name.clone(),
@@ -400,14 +417,14 @@ impl PlonkishSystem {
                     .table_exprs
                     .iter()
                     .map(|e| e.evaluate(&self.assignments, row))
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
                 table_set.insert(tuple);
             }
 
             for row in 0..self.num_rows {
                 // Determine row activity via explicit selector or legacy heuristic
                 if let Some(sel) = &lookup.selector {
-                    if sel.evaluate(&self.assignments, row).is_zero() {
+                    if sel.evaluate(&self.assignments, row)?.is_zero() {
                         continue; // row inactive per selector
                     }
                 }
@@ -416,7 +433,7 @@ impl PlonkishSystem {
                     .input_exprs
                     .iter()
                     .map(|e| e.evaluate(&self.assignments, row))
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
 
                 // Legacy fallback: no selector → skip all-zero inputs (backward compat)
                 if lookup.selector.is_none() && input.iter().all(|v| v.is_zero()) {
@@ -473,7 +490,7 @@ mod tests {
         let sys = PlonkishSystem::new(4);
         let expr = Expression::constant(FieldElement::from_u64(7));
         assert_eq!(
-            expr.evaluate(&sys.assignments, 0),
+            expr.evaluate(&sys.assignments, 0).unwrap(),
             FieldElement::from_u64(7)
         );
     }
@@ -485,7 +502,7 @@ mod tests {
         sys.set(a, 2, FieldElement::from_u64(99));
         let expr = Expression::cell(a, 0);
         assert_eq!(
-            expr.evaluate(&sys.assignments, 2),
+            expr.evaluate(&sys.assignments, 2).unwrap(),
             FieldElement::from_u64(99)
         );
     }
@@ -499,11 +516,11 @@ mod tests {
         sys.set(b, 0, FieldElement::from_u64(5));
         // a + b = 8
         let sum = Expression::cell(a, 0).add(Expression::cell(b, 0));
-        assert_eq!(sum.evaluate(&sys.assignments, 0), FieldElement::from_u64(8));
+        assert_eq!(sum.evaluate(&sys.assignments, 0).unwrap(), FieldElement::from_u64(8));
         // a * b = 15
         let prod = Expression::cell(a, 0).mul(Expression::cell(b, 0));
         assert_eq!(
-            prod.evaluate(&sys.assignments, 0),
+            prod.evaluate(&sys.assignments, 0).unwrap(),
             FieldElement::from_u64(15)
         );
     }
@@ -515,9 +532,30 @@ mod tests {
         sys.set(a, 0, FieldElement::from_u64(10));
         // -a
         let neg = Expression::cell(a, 0).neg();
-        let val = neg.evaluate(&sys.assignments, 0);
+        let val = neg.evaluate(&sys.assignments, 0).unwrap();
         // -10 + 10 = 0
         assert!(val.add(&FieldElement::from_u64(10)).is_zero());
+    }
+
+    #[test]
+    fn test_rotation_out_of_bounds_error() {
+        let mut sys = PlonkishSystem::new(4);
+        let a = sys.alloc_advice();
+        sys.set(a, 3, FieldElement::from_u64(42));
+        // Rotation +1 at row 3 → row 4, out of bounds for 4-row system
+        let expr = Expression::cell(a, 1);
+        let result = expr.evaluate(&sys.assignments, 3);
+        assert!(
+            matches!(result, Err(PlonkishError::RotationOutOfBounds { .. })),
+            "rotation out of bounds must return error, not silent zero"
+        );
+        // Negative rotation at row 0 → row -1, out of bounds
+        let expr_neg = Expression::cell(a, -1);
+        let result_neg = expr_neg.evaluate(&sys.assignments, 0);
+        assert!(
+            matches!(result_neg, Err(PlonkishError::RotationOutOfBounds { .. })),
+            "negative rotation out of bounds must return error"
+        );
     }
 
     #[test]

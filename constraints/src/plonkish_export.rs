@@ -154,6 +154,9 @@ pub fn validate_plonkish_json(json_str: &str) -> Result<(), String> {
     root["lookups"]
         .as_array()
         .ok_or("missing/invalid 'lookups' array")?;
+    root["lookup_tables"]
+        .as_array()
+        .ok_or("missing/invalid 'lookup_tables' array")?;
 
     let assignments = root["assignments"]
         .as_object()
@@ -218,5 +221,25 @@ mod tests {
     #[test]
     fn validate_rejects_invalid_json() {
         assert!(validate_plonkish_json("not json").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_missing_lookup_tables() {
+        let json = r#"{
+            "format": "achronyme-plonkish-v1",
+            "num_advice": 0,
+            "num_fixed": 0,
+            "num_instance": 0,
+            "num_rows": 0,
+            "gates": [],
+            "copies": [],
+            "lookups": [],
+            "assignments": { "advice": [], "fixed": [], "instance": [] }
+        }"#;
+        let err = validate_plonkish_json(json).unwrap_err();
+        assert!(
+            err.contains("lookup_tables"),
+            "should reject missing lookup_tables: {err}"
+        );
     }
 }
