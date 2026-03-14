@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ach")]
+#[command(name = "ach", version)]
 #[command(about = "Achronyme CLI", long_about = None)]
 pub struct Cli {
     /// Diagnostic output format: human (default), json, or short
