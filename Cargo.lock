@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "achronyme-parser"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 
 [[package]]
 name = "ahash"
@@ -433,8 +433,9 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "cli"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 dependencies = [
+ "achronyme-parser",
  "anyhow",
  "ark-bn254",
  "ark-ec",
@@ -467,7 +468,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "compiler"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 dependencies = [
  "achronyme-parser",
  "constraints",
@@ -485,12 +486,13 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "constraints"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 dependencies = [
  "compiler",
  "ir",
  "memory",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -790,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 dependencies = [
  "achronyme-parser",
  "constraints",
@@ -868,7 +870,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "memory"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 dependencies = [
  "num-bigint",
  "num-integer",
@@ -1380,7 +1382,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vm"
-version = "0.1.0-beta.6"
+version = "0.1.0-beta.7"
 dependencies = [
  "byteorder",
  "compiler",

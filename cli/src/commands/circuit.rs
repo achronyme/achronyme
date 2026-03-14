@@ -51,6 +51,7 @@ pub fn circuit_command(
     prove: bool,
     solidity_path: Option<&str>,
     plonkish_json_path: Option<&str>,
+    dump_ir: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
     // 0. Validate flag combinations early (before expensive IR lowering)
@@ -104,7 +105,28 @@ pub fn circuit_command(
         ir::passes::optimize(&mut program);
     }
 
-    // 3. Analyze for under-constrained inputs
+    // 3. If --dump-ir, print the IR and exit
+    if dump_ir {
+        println!("== Circuit IR for {} ==\n", path);
+        print!("{program}");
+        let n = program.instructions.len();
+        let n_inputs = program
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, ir::Instruction::Input { .. }))
+            .count();
+        let n_constraints = program
+            .instructions
+            .iter()
+            .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
+            .count();
+        eprintln!(
+            "{n} instructions, {n_inputs} inputs, {n_constraints} constraints",
+        );
+        return Ok(());
+    }
+
+    // 4. Analyze for under-constrained inputs
     let warnings = ir::passes::analyze(&program);
     for w in &warnings {
         let span = w

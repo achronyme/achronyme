@@ -14,6 +14,21 @@ pub enum Visibility {
     Witness,
 }
 
+impl std::fmt::Display for SsaVar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "%{}", self.0)
+    }
+}
+
+impl std::fmt::Display for Visibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Visibility::Public => write!(f, "public"),
+            Visibility::Witness => write!(f, "witness"),
+        }
+    }
+}
+
 /// A single SSA instruction.
 ///
 /// Each instruction defines exactly one `result` variable. The program is a
@@ -190,6 +205,73 @@ impl Instruction {
     }
 }
 
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Const { result, value } => write!(f, "{result} = Const({value})"),
+            Instruction::Input {
+                result,
+                name,
+                visibility,
+            } => write!(f, "{result} = Input(\"{name}\", {visibility})"),
+            Instruction::Add { result, lhs, rhs } => {
+                write!(f, "{result} = Add({lhs}, {rhs})")
+            }
+            Instruction::Sub { result, lhs, rhs } => {
+                write!(f, "{result} = Sub({lhs}, {rhs})")
+            }
+            Instruction::Mul { result, lhs, rhs } => {
+                write!(f, "{result} = Mul({lhs}, {rhs})")
+            }
+            Instruction::Div { result, lhs, rhs } => {
+                write!(f, "{result} = Div({lhs}, {rhs})")
+            }
+            Instruction::Neg { result, operand } => write!(f, "{result} = Neg({operand})"),
+            Instruction::Mux {
+                result,
+                cond,
+                if_true,
+                if_false,
+            } => write!(f, "{result} = Mux({cond}, {if_true}, {if_false})"),
+            Instruction::AssertEq { result, lhs, rhs } => {
+                write!(f, "{result} = AssertEq({lhs}, {rhs})")
+            }
+            Instruction::PoseidonHash {
+                result,
+                left,
+                right,
+            } => write!(f, "{result} = PoseidonHash({left}, {right})"),
+            Instruction::RangeCheck {
+                result,
+                operand,
+                bits,
+            } => write!(f, "{result} = RangeCheck({operand}, {bits})"),
+            Instruction::Not { result, operand } => write!(f, "{result} = Not({operand})"),
+            Instruction::And { result, lhs, rhs } => {
+                write!(f, "{result} = And({lhs}, {rhs})")
+            }
+            Instruction::Or { result, lhs, rhs } => {
+                write!(f, "{result} = Or({lhs}, {rhs})")
+            }
+            Instruction::IsEq { result, lhs, rhs } => {
+                write!(f, "{result} = IsEq({lhs}, {rhs})")
+            }
+            Instruction::IsNeq { result, lhs, rhs } => {
+                write!(f, "{result} = IsNeq({lhs}, {rhs})")
+            }
+            Instruction::IsLt { result, lhs, rhs } => {
+                write!(f, "{result} = IsLt({lhs}, {rhs})")
+            }
+            Instruction::IsLe { result, lhs, rhs } => {
+                write!(f, "{result} = IsLe({lhs}, {rhs})")
+            }
+            Instruction::Assert { result, operand } => {
+                write!(f, "{result} = Assert({operand})")
+            }
+        }
+    }
+}
+
 /// The IR-level type of an SSA variable (for gradual type checking).
 ///
 /// ```
@@ -296,6 +378,23 @@ impl IrProgram {
     }
 }
 
+impl std::fmt::Display for IrProgram {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for inst in &self.instructions {
+            let var = inst.result_var();
+            write!(f, "  {inst}")?;
+            // Show source-level name as comment (skip for Input — name already visible)
+            if !matches!(inst, Instruction::Input { .. }) {
+                if let Some(name) = self.var_names.get(&var) {
+                    write!(f, "  ; {name}")?;
+                }
+            }
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +480,84 @@ mod tests {
             value: FieldElement::ZERO,
         };
         assert!(c.operands().is_empty());
+    }
+
+    #[test]
+    fn ssa_var_display() {
+        assert_eq!(format!("{}", SsaVar(0)), "%0");
+        assert_eq!(format!("{}", SsaVar(42)), "%42");
+    }
+
+    #[test]
+    fn visibility_display() {
+        assert_eq!(format!("{}", Visibility::Public), "public");
+        assert_eq!(format!("{}", Visibility::Witness), "witness");
+    }
+
+    #[test]
+    fn instruction_display() {
+        let inst = Instruction::Input {
+            result: SsaVar(0),
+            name: "x".into(),
+            visibility: Visibility::Public,
+        };
+        assert_eq!(format!("{inst}"), "%0 = Input(\"x\", public)");
+
+        let inst = Instruction::Mul {
+            result: SsaVar(2),
+            lhs: SsaVar(0),
+            rhs: SsaVar(1),
+        };
+        assert_eq!(format!("{inst}"), "%2 = Mul(%0, %1)");
+
+        let inst = Instruction::Const {
+            result: SsaVar(3),
+            value: FieldElement::from_u64(42),
+        };
+        assert_eq!(format!("{inst}"), "%3 = Const(42)");
+
+        let inst = Instruction::RangeCheck {
+            result: SsaVar(5),
+            operand: SsaVar(4),
+            bits: 8,
+        };
+        assert_eq!(format!("{inst}"), "%5 = RangeCheck(%4, 8)");
+
+        let inst = Instruction::Mux {
+            result: SsaVar(6),
+            cond: SsaVar(0),
+            if_true: SsaVar(1),
+            if_false: SsaVar(2),
+        };
+        assert_eq!(format!("{inst}"), "%6 = Mux(%0, %1, %2)");
+    }
+
+    #[test]
+    fn program_display() {
+        let mut p = IrProgram::new();
+        let v0 = p.fresh_var();
+        p.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: Visibility::Public,
+        });
+        let v1 = p.fresh_var();
+        p.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: Visibility::Witness,
+        });
+        let v2 = p.fresh_var();
+        p.push(Instruction::Mul {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+        p.set_name(v2, "product".into());
+
+        let output = format!("{p}");
+        assert!(output.contains("%0 = Input(\"x\", public)"));
+        assert!(output.contains("%1 = Input(\"y\", witness)"));
+        assert!(output.contains("%2 = Mul(%0, %1)  ; product"));
     }
 }

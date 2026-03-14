@@ -52,6 +52,7 @@ fn main() -> Result<()> {
             prove,
             solidity,
             plonkish_json,
+            dump_ir,
         } => cli::commands::circuit::circuit_command(
             path,
             r1cs,
@@ -64,6 +65,7 @@ fn main() -> Result<()> {
             *prove,
             solidity.as_deref(),
             plonkish_json.as_deref(),
+            *dump_ir,
             ef,
         ),
     }

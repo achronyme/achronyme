@@ -81,5 +81,8 @@ pub enum Commands {
         /// Export Plonkish circuit to JSON (includes witness if --inputs is provided)
         #[arg(long)]
         plonkish_json: Option<String>,
+        /// Dump the SSA IR (after optimization) and exit without compiling to constraints
+        #[arg(long)]
+        dump_ir: bool,
     },
 }

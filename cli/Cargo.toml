@@ -41,6 +41,7 @@ vm = { path = "../vm" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 ir = { path = "../ir" }
+achronyme-parser = { path = "../achronyme-parser" }
 
 [dev-dependencies]
 tempfile = "3"

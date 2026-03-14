@@ -316,6 +316,7 @@ fn circuit_import_with_poseidon() {
         false,
         None,
         None,
+        false,
         EF,
     );
     assert!(result.is_ok(), "circuit_command failed: {:?}", result.err());
