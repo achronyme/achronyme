@@ -177,7 +177,9 @@ fn validate_expr_json(expr: &Value, dims: &Dims, ctx: &str) -> Result<(), String
             return Err(format!("{ctx}: cell missing 'column'"));
         }
         validate_column_json(col, dims, &format!("{ctx}.cell"))?;
-        if cell.get("rotation").is_none() || (!cell["rotation"].is_i64() && !cell["rotation"].is_u64()) {
+        if cell.get("rotation").is_none()
+            || (!cell["rotation"].is_i64() && !cell["rotation"].is_u64())
+        {
             return Err(format!("{ctx}: cell missing 'rotation' integer"));
         }
         return Ok(());
@@ -226,7 +228,9 @@ fn validate_gate_json(gate: &Value, dims: &Dims, idx: usize) -> Result<(), Strin
 fn validate_copy_json(copy: &Value, dims: &Dims, idx: usize) -> Result<(), String> {
     let ctx = format!("copies[{idx}]");
     for side in &["left", "right"] {
-        let s = copy.get(*side).ok_or_else(|| format!("{ctx}: missing '{side}'"))?;
+        let s = copy
+            .get(*side)
+            .ok_or_else(|| format!("{ctx}: missing '{side}'"))?;
         if s.is_null() {
             return Err(format!("{ctx}: missing '{side}'"));
         }
@@ -396,9 +400,9 @@ pub fn validate_plonkish_json(json_str: &str) -> Result<(), String> {
         }
 
         for (ci, col) in cols.iter().enumerate() {
-            let rows = col.as_array().ok_or_else(|| {
-                format!("assignments.{kind}[{ci}]: expected array of strings")
-            })?;
+            let rows = col
+                .as_array()
+                .ok_or_else(|| format!("assignments.{kind}[{ci}]: expected array of strings"))?;
             if rows.len() as u64 != num_rows {
                 return Err(format!(
                     "assignments.{kind}[{ci}] has {} rows, expected {num_rows}",
@@ -406,13 +410,10 @@ pub fn validate_plonkish_json(json_str: &str) -> Result<(), String> {
                 ));
             }
             for (ri, val) in rows.iter().enumerate() {
-                let s = val.as_str().ok_or_else(|| {
-                    format!("assignments.{kind}[{ci}][{ri}]: expected string")
-                })?;
-                validate_field_element_str(
-                    s,
-                    &format!("assignments.{kind}[{ci}][{ri}]"),
-                )?;
+                let s = val
+                    .as_str()
+                    .ok_or_else(|| format!("assignments.{kind}[{ci}][{ri}]: expected string"))?;
+                validate_field_element_str(s, &format!("assignments.{kind}[{ci}][{ri}]"))?;
             }
         }
     }
@@ -705,10 +706,7 @@ mod tests {
                 .sub(Expression::cell(d, 0)),
         );
         sys.register_gate("mul", poly);
-        sys.add_copy(
-            CellRef { column: a, row: 0 },
-            CellRef { column: b, row: 1 },
-        );
+        sys.add_copy(CellRef { column: a, row: 0 }, CellRef { column: b, row: 1 });
 
         let json = write_plonkish_json(&sys);
         validate_plonkish_json(&json).expect("roundtrip validation failed");

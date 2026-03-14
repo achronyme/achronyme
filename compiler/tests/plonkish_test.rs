@@ -1833,8 +1833,7 @@ fn test_plonkish_ir_assert_false_fails() {
 fn test_plonkish_ir_is_eq_soundness() {
     // x=5, y=10 but claim eq=1 → should be rejected
     let source = "let eq = x == y\nassert_eq(eq, expected)";
-    let mut program =
-        ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1859,8 +1858,7 @@ fn test_plonkish_ir_is_eq_soundness() {
 fn test_plonkish_ir_is_neq_soundness() {
     // x=7, y=7 but claim neq=1 → should be rejected
     let source = "let neq = x != y\nassert_eq(neq, expected)";
-    let mut program =
-        ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1885,8 +1883,7 @@ fn test_plonkish_ir_is_neq_soundness() {
 fn test_plonkish_ir_is_lt_soundness() {
     // a=10, b=3 but claim lt=1 → should be rejected
     let source = "let lt = a < b\nassert_eq(lt, expected)";
-    let mut program =
-        ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1910,8 +1907,7 @@ fn test_plonkish_ir_is_lt_soundness() {
 #[test]
 fn test_plonkish_ir_and_non_boolean_fails() {
     let source = "let r = a && b\nassert_eq(r, expected)";
-    let mut program =
-        ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1935,8 +1931,7 @@ fn test_plonkish_ir_and_non_boolean_fails() {
 #[test]
 fn test_plonkish_ir_or_non_boolean_fails() {
     let source = "let r = a || b\nassert_eq(r, expected)";
-    let mut program =
-        ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();

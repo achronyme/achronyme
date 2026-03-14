@@ -163,7 +163,11 @@ impl PlonkishCompiler {
     // IsZero gadget: returns a cell that is 1 if a == b, 0 otherwise
     // ========================================================================
 
-    pub(super) fn emit_is_zero(&mut self, a: CellRef, b: CellRef) -> Result<CellRef, PlonkishError> {
+    pub(super) fn emit_is_zero(
+        &mut self,
+        a: CellRef,
+        b: CellRef,
+    ) -> Result<CellRef, PlonkishError> {
         // diff = a - b (witness computation row, gate is tautological)
         let neg_b = self.negate_cell(b);
         let diff_row = self.alloc_row();
@@ -573,7 +577,9 @@ mod tests {
     fn enforce_n_range_zero_bits_does_not_panic() {
         let mut compiler = PlonkishCompiler::new();
         // Allocate a cell with value zero
-        let cell = compiler.materialize_val(&PlonkVal::Constant(FieldElement::ZERO)).unwrap();
+        let cell = compiler
+            .materialize_val(&PlonkVal::Constant(FieldElement::ZERO))
+            .unwrap();
         // Must not panic — constrains cell == 0
         compiler.enforce_n_range(cell, 0);
     }

@@ -78,10 +78,7 @@ impl PlonkishCompiler {
     // Materialization: PlonkVal → CellRef
     // ========================================================================
 
-    pub(super) fn materialize_val(
-        &mut self,
-        val: &PlonkVal,
-    ) -> Result<CellRef, PlonkishError> {
+    pub(super) fn materialize_val(&mut self, val: &PlonkVal) -> Result<CellRef, PlonkishError> {
         self.materialize_val_depth(val, 0)
     }
 

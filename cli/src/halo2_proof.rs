@@ -490,8 +490,7 @@ fn serialize_proof_json(
 
 fn serialize_public_json(inputs: &[Fr]) -> Result<String, String> {
     let arr: Vec<String> = inputs.iter().map(fr_to_decimal).collect();
-    serde_json::to_string_pretty(&arr)
-        .map_err(|e| format!("public JSON serialization failed: {e}"))
+    serde_json::to_string_pretty(&arr).map_err(|e| format!("public JSON serialization failed: {e}"))
 }
 
 fn serialize_vkey_json(vk: &VerifyingKey<G1Affine>, k: u32) -> Result<String, String> {

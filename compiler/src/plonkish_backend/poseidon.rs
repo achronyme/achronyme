@@ -7,7 +7,11 @@ use super::types::{PlonkVal, PlonkWitnessOp};
 
 impl PlonkishCompiler {
     #[allow(clippy::needless_range_loop)]
-    pub(super) fn emit_poseidon(&mut self, left: CellRef, right: CellRef) -> Result<CellRef, PlonkishError> {
+    pub(super) fn emit_poseidon(
+        &mut self,
+        left: CellRef,
+        right: CellRef,
+    ) -> Result<CellRef, PlonkishError> {
         if self.poseidon_params.is_none() {
             self.poseidon_params = Some(PoseidonParams::bn254_t3());
         }

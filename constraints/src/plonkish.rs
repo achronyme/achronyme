@@ -82,7 +82,11 @@ impl Expression {
     /// Returns an error if a rotation refers to a row outside `[0, num_rows)`,
     /// preventing the silent-zero soundness bug documented in Plonky2
     /// (CVE GHSA-hj49-h7fq-px5h) and the Halo2 wrap-around issue.
-    pub fn evaluate(&self, assignments: &Assignments, row: usize) -> Result<FieldElement, PlonkishError> {
+    pub fn evaluate(
+        &self,
+        assignments: &Assignments,
+        row: usize,
+    ) -> Result<FieldElement, PlonkishError> {
         match self {
             Expression::Constant(val) => Ok(*val),
             Expression::Cell(col, rotation) => {
@@ -207,10 +211,24 @@ impl Assignments {
 
 #[derive(Debug)]
 pub enum PlonkishError {
-    GateNotSatisfied { gate: String, row: usize },
-    CopyConstraintViolation { left: CellRef, right: CellRef },
-    LookupFailed { lookup: String, row: usize },
-    RotationOutOfBounds { column: Column, row: usize, rotation: i32, num_rows: usize },
+    GateNotSatisfied {
+        gate: String,
+        row: usize,
+    },
+    CopyConstraintViolation {
+        left: CellRef,
+        right: CellRef,
+    },
+    LookupFailed {
+        lookup: String,
+        row: usize,
+    },
+    RotationOutOfBounds {
+        column: Column,
+        row: usize,
+        rotation: i32,
+        num_rows: usize,
+    },
     MissingInput(String),
 }
 
@@ -230,7 +248,12 @@ impl fmt::Display for PlonkishError {
             PlonkishError::LookupFailed { lookup, row } => {
                 write!(f, "lookup `{lookup}` failed at row {row}")
             }
-            PlonkishError::RotationOutOfBounds { column, row, rotation, num_rows } => {
+            PlonkishError::RotationOutOfBounds {
+                column,
+                row,
+                rotation,
+                num_rows,
+            } => {
                 write!(
                     f,
                     "rotation out of bounds: column {:?}[{}] with rotation {} exceeds {} rows",
@@ -527,7 +550,10 @@ mod tests {
         sys.set(b, 0, FieldElement::from_u64(5));
         // a + b = 8
         let sum = Expression::cell(a, 0).add(Expression::cell(b, 0));
-        assert_eq!(sum.evaluate(&sys.assignments, 0).unwrap(), FieldElement::from_u64(8));
+        assert_eq!(
+            sum.evaluate(&sys.assignments, 0).unwrap(),
+            FieldElement::from_u64(8)
+        );
         // a * b = 15
         let prod = Expression::cell(a, 0).mul(Expression::cell(b, 0));
         assert_eq!(
