@@ -212,7 +212,8 @@ fn merkle_depth8_wrong_leaf_fails() {
         rc.cs.verify(&w).is_err(),
         "wrong leaf should fail verification"
     );
-// Also verify Plonkish rejects wrong leaf
+
+    // Also verify Plonkish rejects wrong leaf
     let program_p = IrLowering::lower_circuit(&source, &["root"], &wit_refs).unwrap();
     let mut pc = PlonkishCompiler::new();
     pc.compile_ir(&program_p).expect("compilation failed");
@@ -239,9 +240,9 @@ fn merkle_depth8_corner_positions() {
         let (siblings, directions) = merkle_proof(&params, &leaves, index);
         let inp = merkle_inputs(root, leaves[index], &siblings, &directions);
         r1cs_verify(&source, &["root"], &wit_refs, &inp);
+        plonkish_verify(&source, &["root"], &wit_refs, &inp);
     }
 }
-        plonkish_verify(&source, &["root"], &wit_refs, &inp);
 
 #[test]
 #[ignore]
@@ -334,6 +335,19 @@ fn commitment_wrong_blinding_fails() {
         rc.cs.verify(&w).is_err(),
         "wrong blinding should fail verification"
     );
+
+    // Also verify Plonkish rejects wrong blinding
+    let program_p =
+        IrLowering::lower_circuit(source, &["commitment"], &["value", "blinding"]).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    pc.compile_ir(&program_p).expect("compilation failed");
+    let wg_p = PlonkishWitnessGenerator::from_compiler(&pc);
+    wg_p.generate(&inp, &mut pc.system.assignments)
+        .expect("witness gen failed");
+    assert!(
+        pc.system.verify().is_err(),
+        "wrong blinding should fail Plonkish verification"
+    );
 }
 
 #[test]
@@ -413,6 +427,23 @@ assert_eq(nf, nullifier)
         "tornado pattern should have >1800 constraints, got {}",
         rc.cs.num_constraints()
     );
+
+    plonkish_verify(
+        source,
+        &["root", "nullifier"],
+        &[
+            "secret",
+            "blinding",
+            "leaf_index",
+            "s0",
+            "s1",
+            "s2",
+            "d0",
+            "d1",
+            "d2",
+        ],
+        &inp,
+    );
 }
 
 #[test]
@@ -444,6 +475,8 @@ assert_eq(h, expected)
         "10-chain should have >3600 constraints, got {}",
         rc.cs.num_constraints()
     );
+
+    plonkish_verify(source, &["expected"], &["seed"], &inp);
 }
 
 #[test]
@@ -466,6 +499,12 @@ fn selective_disclosure_underage_fails() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_ir_with_witness(&program, &inp);
     assert!(err.is_err(), "underage should fail assertion");
+
+    // Also verify Plonkish rejects underage
+    let program_p = IrLowering::lower_circuit(source, &[], &["age"]).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    let err = pc.compile_ir_with_witness(&program_p, &inp);
+    assert!(err.is_err(), "underage should fail Plonkish assertion");
 }
 
 #[test]
@@ -752,6 +791,8 @@ assert_eq(h, expected)
         "14 chained poseidons should have ≥5000 constraints, got {}",
         rc.cs.num_constraints()
     );
+
+    plonkish_verify(source, &["expected"], &["seed"], &inp);
 }
 
 #[test]
@@ -795,6 +836,8 @@ assert_eq(r, expected)
         "mixed ops circuit should have ≥3600 constraints, got {}",
         rc.cs.num_constraints()
     );
+
+    plonkish_verify(source, &["expected"], &["a", "b"], &inp);
 }
 
 // ============================================================================
@@ -819,6 +862,18 @@ fn negative_wrong_poseidon_preimage() {
         rc.cs.verify(&w).is_err(),
         "wrong Poseidon preimage should fail"
     );
+
+    // Also verify Plonkish rejects wrong preimage
+    let program_p = IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    pc.compile_ir(&program_p).expect("compilation failed");
+    let wg_p = PlonkishWitnessGenerator::from_compiler(&pc);
+    wg_p.generate(&inp, &mut pc.system.assignments)
+        .expect("witness gen failed");
+    assert!(
+        pc.system.verify().is_err(),
+        "wrong Poseidon preimage should fail Plonkish verification"
+    );
 }
 
 #[test]
@@ -831,6 +886,12 @@ fn negative_assert_false() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_ir_with_witness(&program, &inp);
     assert!(err.is_err(), "assert(0) should fail");
+
+    // Also verify Plonkish rejects assert(0)
+    let program_p = IrLowering::lower_circuit(source, &[], &["flag"]).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    let err = pc.compile_ir_with_witness(&program_p, &inp);
+    assert!(err.is_err(), "assert(0) should fail in Plonkish");
 }
 
 #[test]
@@ -843,6 +904,12 @@ fn negative_comparison_wrong() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_ir_with_witness(&program, &inp);
     assert!(err.is_err(), "3 >= 7 should fail assertion");
+
+    // Also verify Plonkish rejects wrong comparison
+    let program_p = IrLowering::lower_circuit(source, &[], &["a", "b"]).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    let err = pc.compile_ir_with_witness(&program_p, &inp);
+    assert!(err.is_err(), "3 >= 7 should fail Plonkish assertion");
 }
 
 #[test]
@@ -880,6 +947,18 @@ fn negative_merkle_wrong_sibling() {
         rc.cs.verify(&w).is_err(),
         "wrong sibling should fail verification"
     );
+
+    // Also verify Plonkish rejects wrong sibling
+    let program_p = IrLowering::lower_circuit(&source, &["root"], &wit_refs).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    pc.compile_ir(&program_p).expect("compilation failed");
+    let wg_p = PlonkishWitnessGenerator::from_compiler(&pc);
+    wg_p.generate(&inp, &mut pc.system.assignments)
+        .expect("witness gen failed");
+    assert!(
+        pc.system.verify().is_err(),
+        "wrong sibling should fail Plonkish verification"
+    );
 }
 
 #[test]
@@ -892,4 +971,10 @@ fn negative_division_by_zero() {
     let mut rc = R1CSCompiler::new();
     let err = rc.compile_ir_with_witness(&program, &inp);
     assert!(err.is_err(), "division by zero should fail");
+
+    // Also verify Plonkish rejects division by zero
+    let program_p = IrLowering::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
+    let mut pc = PlonkishCompiler::new();
+    let err = pc.compile_ir_with_witness(&program_p, &inp);
+    assert!(err.is_err(), "division by zero should fail in Plonkish");
 }
