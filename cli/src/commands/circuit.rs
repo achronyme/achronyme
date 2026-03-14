@@ -120,9 +120,7 @@ pub fn circuit_command(
             .iter()
             .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
             .count();
-        eprintln!(
-            "{n} instructions, {n_inputs} inputs, {n_constraints} constraints",
-        );
+        eprintln!("{n} instructions, {n_inputs} inputs, {n_constraints} constraints");
         return Ok(());
     }
 
