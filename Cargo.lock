@@ -490,6 +490,7 @@ dependencies = [
  "compiler",
  "ir",
  "memory",
+ "serde_json",
 ]
 
 [[package]]
