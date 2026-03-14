@@ -486,7 +486,7 @@ assert(old_enough)
         ("age", age),
         ("blinding", blinding),
     ]);
-    r1cs_verify(source, &["commitment"], &["age", "blinding"], &inp);
+    both_verify(source, &["commitment"], &["age", "blinding"], &inp);
 }
 
 // ============================================================================
@@ -593,7 +593,7 @@ assert_eq(r, expected)
         ("e", fe(5)),
         ("f", fe(5)),
     ]);
-    r1cs_verify(source, &["expected"], &["a", "b", "c", "d", "e", "f"], &inp);
+    both_verify(source, &["expected"], &["a", "b", "c", "d", "e", "f"], &inp);
 }
 
 #[test]
