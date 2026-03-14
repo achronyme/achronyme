@@ -9,6 +9,7 @@ fn prog(instructions: Vec<Instruction>, next_var: u32) -> IrProgram {
         next_var,
         var_names: std::collections::HashMap::new(),
         var_types: std::collections::HashMap::new(),
+        input_spans: std::collections::HashMap::new(),
     }
 }
 
