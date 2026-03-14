@@ -16,7 +16,6 @@ pub struct PlonkishCompiler {
     pub system: PlonkishSystem,
     // Standard column refs
     pub col_s_arith: Column,
-    pub col_s_range: Column,
     pub col_constant: Column,
     pub col_zero: Column,
     pub col_a: Column,
@@ -36,8 +35,10 @@ pub struct PlonkishCompiler {
     pub witness_ops: Vec<PlonkWitnessOp>,
     // Poseidon params (lazy)
     pub(super) poseidon_params: Option<PoseidonParams>,
-    // Range table bits already created
+    // Range table bits already created (maps bits → lookup_table index)
     pub(super) range_tables: HashMap<u32, usize>,
+    // Per-bit-width range selector columns
+    pub range_selectors: HashMap<u32, Column>,
     // SSA variables proven to be boolean by bool_prop analysis
     pub(super) proven_boolean: HashSet<SsaVar>,
 }
@@ -53,7 +54,6 @@ impl PlonkishCompiler {
         let mut system = PlonkishSystem::new(1024);
 
         let col_s_arith = system.alloc_fixed();
-        let col_s_range = system.alloc_fixed();
         let col_constant = system.alloc_fixed();
         let col_zero = system.alloc_fixed(); // Always zero (default), used for zero constraints
         let col_a = system.alloc_advice();
@@ -74,7 +74,6 @@ impl PlonkishCompiler {
         Self {
             system,
             col_s_arith,
-            col_s_range,
             col_constant,
             col_zero,
             col_a,
@@ -91,6 +90,7 @@ impl PlonkishCompiler {
             witness_ops: Vec::new(),
             poseidon_params: None,
             range_tables: HashMap::new(),
+            range_selectors: HashMap::new(),
             proven_boolean: HashSet::new(),
         }
     }

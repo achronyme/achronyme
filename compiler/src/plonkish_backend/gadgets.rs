@@ -502,7 +502,8 @@ impl PlonkishCompiler {
         self.ensure_range_table(bits)?;
 
         let row = self.alloc_row();
-        self.system.set(self.col_s_range, row, FieldElement::ONE);
+        let sel_col = self.range_selectors[&bits];
+        self.system.set(sel_col, row, FieldElement::ONE);
         self.wire(
             operand,
             CellRef {
@@ -546,9 +547,14 @@ impl PlonkishCompiler {
             values,
         });
 
+        // Each bit-width gets its own dedicated selector column so that
+        // enabling a 16-bit range check does not activate the 8-bit lookup.
+        let sel_col = self.system.alloc_fixed();
+        self.range_selectors.insert(bits, sel_col);
+
         self.system.register_lookup_with_selector(
             &format!("range_{bits}"),
-            Expression::cell(self.col_s_range, 0),
+            Expression::cell(sel_col, 0),
             vec![Expression::cell(self.col_a, 0)],
             vec![Expression::cell(table_col, 0)],
         );

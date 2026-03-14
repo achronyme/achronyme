@@ -64,7 +64,7 @@ struct CircuitParams {
 #[derive(Clone, Debug)]
 struct AchronymeConfig {
     s_arith: Selector,
-    s_range: Selector,
+    range_selectors: Vec<Selector>,
     col_constant: H2Column<Fixed>,
     col_a: H2Column<Advice>,
     col_b: H2Column<Advice>,
@@ -164,9 +164,13 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                         config.s_arith.enable(&mut region, row)?;
                     }
 
-                    let s_range_val = sys.assignments.get(self.compiler.col_s_range, row);
-                    if !s_range_val.is_zero() {
-                        config.s_range.enable(&mut region, row)?;
+                    // Enable per-bit-width range selectors
+                    for (i, &bits) in self.params.range_table_bits.iter().enumerate() {
+                        let sel_col = self.compiler.range_selectors[&bits];
+                        let sel_val = sys.assignments.get(sel_col, row);
+                        if !sel_val.is_zero() {
+                            config.range_selectors[i].enable(&mut region, row)?;
+                        }
                     }
 
                     let const_val = sys.assignments.get(self.compiler.col_constant, row);
@@ -250,7 +254,6 @@ fn configure_impl(meta: &mut ConstraintSystem<Fr>, params: &CircuitParams) -> Ac
     meta.enable_equality(col_instance);
 
     let s_arith = meta.selector();
-    let s_range = meta.selector();
 
     // Arithmetic gate: s_arith * (a * b + c - d) = 0
     meta.create_gate("arithmetic", |vc| {
@@ -262,11 +265,14 @@ fn configure_impl(meta: &mut ConstraintSystem<Fr>, params: &CircuitParams) -> Ac
         vec![s * (a * b + c - d)]
     });
 
-    // Range check lookups
+    // Range check lookups — one selector per bit-width
     let mut range_table_cols = Vec::new();
+    let mut range_selectors = Vec::new();
     for &bits in &params.range_table_bits {
         let table_col = meta.lookup_table_column();
         range_table_cols.push(table_col);
+        let s_range = meta.selector();
+        range_selectors.push(s_range);
         meta.lookup(format!("range_{bits}"), |vc| {
             let s = vc.query_selector(s_range);
             let a = vc.query_advice(col_a, Rotation::cur());
@@ -276,7 +282,7 @@ fn configure_impl(meta: &mut ConstraintSystem<Fr>, params: &CircuitParams) -> Ac
 
     AchronymeConfig {
         s_arith,
-        s_range,
+        range_selectors,
         col_constant,
         col_a,
         col_b,
