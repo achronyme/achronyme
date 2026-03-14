@@ -75,10 +75,11 @@ pub fn circuit_command(
     let source =
         fs::read_to_string(path).with_context(|| format!("cannot read source file: {path}"))?;
 
-    let base_path = std::path::Path::new(path)
+    let source_dir = std::path::Path::new(path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
+    let base_path = source_dir.clone();
 
     let render_ir_error = |e: ir::error::IrError| -> anyhow::Error {
         let diag = e.to_diagnostic();
@@ -115,7 +116,9 @@ pub fn circuit_command(
 
     match backend {
         "r1cs" => run_r1cs_pipeline(&program, r1cs_path, wtns_path, inputs, solidity_path),
-        "plonkish" => run_plonkish_pipeline(&program, inputs, prove, plonkish_json_path),
+        "plonkish" => {
+            run_plonkish_pipeline(&program, inputs, prove, plonkish_json_path, &source_dir)
+        }
         // Unreachable: backend validated at the top of this function
         _ => unreachable!(),
     }
@@ -200,6 +203,7 @@ fn run_plonkish_pipeline(
     inputs: Option<&str>,
     prove: bool,
     plonkish_json_path: Option<&str>,
+    source_dir: &std::path::Path,
 ) -> Result<()> {
     let mut compiler = PlonkishCompiler::new();
     let proven = ir::passes::bool_prop::compute_proven_boolean(program);
@@ -245,10 +249,21 @@ fn run_plonkish_pipeline(
                     public_json,
                     vkey_json,
                 } => {
-                    fs::write("proof.json", &proof_json).context("cannot write proof.json")?;
-                    fs::write("public.json", &public_json).context("cannot write public.json")?;
-                    fs::write("vkey.json", &vkey_json).context("cannot write vkey.json")?;
-                    eprintln!("wrote proof.json, public.json, vkey.json");
+                    let proof_path = source_dir.join("proof.json");
+                    let public_path = source_dir.join("public.json");
+                    let vkey_path = source_dir.join("vkey.json");
+                    fs::write(&proof_path, &proof_json)
+                        .with_context(|| format!("cannot write {}", proof_path.display()))?;
+                    fs::write(&public_path, &public_json)
+                        .with_context(|| format!("cannot write {}", public_path.display()))?;
+                    fs::write(&vkey_path, &vkey_json)
+                        .with_context(|| format!("cannot write {}", vkey_path.display()))?;
+                    eprintln!(
+                        "wrote {}, {}, {}",
+                        proof_path.display(),
+                        public_path.display(),
+                        vkey_path.display()
+                    );
                 }
                 vm::ProveResult::VerifiedOnly => {
                     eprintln!("plonkish proof generation: verified only (no proof output)");

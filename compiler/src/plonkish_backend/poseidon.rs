@@ -1,4 +1,4 @@
-use constraints::plonkish::CellRef;
+use constraints::plonkish::{CellRef, PlonkishError};
 use constraints::poseidon::PoseidonParams;
 use memory::FieldElement;
 
@@ -7,13 +7,13 @@ use super::types::{PlonkVal, PlonkWitnessOp};
 
 impl PlonkishCompiler {
     #[allow(clippy::needless_range_loop)]
-    pub(super) fn emit_poseidon(&mut self, left: CellRef, right: CellRef) -> CellRef {
+    pub(super) fn emit_poseidon(&mut self, left: CellRef, right: CellRef) -> Result<CellRef, PlonkishError> {
         if self.poseidon_params.is_none() {
             self.poseidon_params = Some(PoseidonParams::bn254_t3());
         }
         let params = self.poseidon_params.clone().unwrap();
 
-        let zero_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ZERO));
+        let zero_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ZERO))?;
         let mut state = [zero_cell, left, right];
 
         let total_rounds = params.r_f + params.r_p;
@@ -24,7 +24,7 @@ impl PlonkishCompiler {
             for i in 0..params.t {
                 let rc = params.round_constants[r * params.t + i];
                 if !rc.is_zero() {
-                    let rc_cell = self.materialize_val(&PlonkVal::Constant(rc));
+                    let rc_cell = self.materialize_val(&PlonkVal::Constant(rc))?;
                     // state[i] = state[i]*1 + rc
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
@@ -69,11 +69,11 @@ impl PlonkishCompiler {
             // MDS
             let old = state;
             for i in 0..params.t {
-                let m0 = self.materialize_val(&PlonkVal::Constant(params.mds[i][0]));
+                let m0 = self.materialize_val(&PlonkVal::Constant(params.mds[i][0]))?;
                 let prod0 = self.emit_arith_row(m0, old[0], None);
-                let m1 = self.materialize_val(&PlonkVal::Constant(params.mds[i][1]));
+                let m1 = self.materialize_val(&PlonkVal::Constant(params.mds[i][1]))?;
                 let prod1 = self.emit_arith_row(m1, old[1], None);
-                let m2 = self.materialize_val(&PlonkVal::Constant(params.mds[i][2]));
+                let m2 = self.materialize_val(&PlonkVal::Constant(params.mds[i][2]))?;
                 let prod2 = self.emit_arith_row(m2, old[2], None);
                 // sum01 = prod0*1 + prod1
                 let sum01_row = self.alloc_row();
@@ -141,7 +141,7 @@ impl PlonkishCompiler {
         }
 
         // Output = state[0] (circomlibjs convention)
-        state[0]
+        Ok(state[0])
     }
 
     fn emit_sbox(&mut self, x: CellRef) -> CellRef {

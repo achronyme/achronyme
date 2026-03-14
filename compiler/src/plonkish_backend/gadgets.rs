@@ -163,7 +163,7 @@ impl PlonkishCompiler {
     // IsZero gadget: returns a cell that is 1 if a == b, 0 otherwise
     // ========================================================================
 
-    pub(super) fn emit_is_zero(&mut self, a: CellRef, b: CellRef) -> CellRef {
+    pub(super) fn emit_is_zero(&mut self, a: CellRef, b: CellRef) -> Result<CellRef, PlonkishError> {
         // diff = a - b (witness computation row, gate is tautological)
         let neg_b = self.negate_cell(b);
         let diff_row = self.alloc_row();
@@ -226,7 +226,7 @@ impl PlonkishCompiler {
         };
 
         // eq = 1 - diff*inv (witness computation row)
-        let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+        let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
         let neg_dti = self.negate_cell(diff_times_inv);
         let eq_row = self.alloc_row();
         self.system.set(self.col_s_arith, eq_row, FieldElement::ONE);
@@ -322,7 +322,7 @@ impl PlonkishCompiler {
             row: check_row,
         });
 
-        eq_cell
+        Ok(eq_cell)
     }
 
     // ========================================================================
@@ -406,7 +406,7 @@ impl PlonkishCompiler {
         a: CellRef,
         b: CellRef,
         bound_bits: Option<u32>,
-    ) -> CellRef {
+    ) -> Result<CellRef, PlonkishError> {
         let effective_bits = bound_bits.unwrap_or_else(|| {
             self.enforce_252_range(a);
             self.enforce_252_range(b);
@@ -423,7 +423,7 @@ impl PlonkishCompiler {
             )),
             Box::new(PlonkVal::Constant(offset)),
         );
-        let diff_cell = self.materialize_val(&diff_val);
+        let diff_cell = self.materialize_val(&diff_val)?;
 
         // Decompose diff into num_bits bits with running sum accumulation
         let mut bit_cells = Vec::with_capacity(num_bits as usize);
@@ -482,7 +482,7 @@ impl PlonkishCompiler {
         self.system.add_copy(running_sum.unwrap(), diff_cell);
 
         // Top bit is the result
-        bit_cells[effective_bits as usize]
+        Ok(bit_cells[effective_bits as usize])
     }
 
     // ========================================================================
@@ -573,7 +573,7 @@ mod tests {
     fn enforce_n_range_zero_bits_does_not_panic() {
         let mut compiler = PlonkishCompiler::new();
         // Allocate a cell with value zero
-        let cell = compiler.materialize_val(&PlonkVal::Constant(FieldElement::ZERO));
+        let cell = compiler.materialize_val(&PlonkVal::Constant(FieldElement::ZERO)).unwrap();
         // Must not panic — constrains cell == 0
         compiler.enforce_n_range(cell, 0);
     }

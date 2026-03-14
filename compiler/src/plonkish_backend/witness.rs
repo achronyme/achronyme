@@ -89,7 +89,7 @@ impl PlonkishWitnessGenerator {
                     let limbs = val.to_canonical();
                     let limb_idx = (*bit_index / 64) as usize;
                     let bit_pos = *bit_index % 64;
-                    let bit = if limb_idx < 4 {
+                    let bit = if limb_idx < FieldElement::NUM_LIMBS {
                         (limbs[limb_idx] >> bit_pos) & 1
                     } else {
                         0

@@ -22,6 +22,9 @@ pub struct FieldElement {
 // ============================================================================
 
 impl FieldElement {
+    /// Number of 64-bit limbs in the internal representation.
+    pub const NUM_LIMBS: usize = 4;
+
     /// The zero element (0 in Montgomery form = 0)
     pub const ZERO: Self = Self { limbs: [0; 4] };
 

@@ -190,8 +190,8 @@ impl PlonkishCompiler {
                         self.val_map
                             .insert(*result, PlonkVal::Constant(av.mul(&bv)));
                     } else {
-                        let a_cell = self.materialize_val(&a);
-                        let b_cell = self.materialize_val(&b);
+                        let a_cell = self.materialize_val(&a)?;
+                        let b_cell = self.materialize_val(&b)?;
                         let d_cell = self.emit_arith_row(a_cell, b_cell, None);
                         self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                     }
@@ -207,8 +207,8 @@ impl PlonkishCompiler {
                             return Err(PlonkishError::MissingInput("division by zero".into()));
                         }
                     } else {
-                        let num_cell = self.materialize_val(&a_val);
-                        let den_cell = self.materialize_val(&b_val);
+                        let num_cell = self.materialize_val(&a_val)?;
+                        let den_cell = self.materialize_val(&b_val)?;
                         let d_cell = self.emit_div(num_cell, den_cell);
                         self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                     }
@@ -222,17 +222,17 @@ impl PlonkishCompiler {
                     let cond_val = self.lookup_val(cond)?;
                     let t_val = self.lookup_val(if_true)?;
                     let f_val = self.lookup_val(if_false)?;
-                    let cond_cell = self.materialize_val(&cond_val);
-                    let t_cell = self.materialize_val(&t_val);
-                    let f_cell = self.materialize_val(&f_val);
+                    let cond_cell = self.materialize_val(&cond_val)?;
+                    let t_cell = self.materialize_val(&t_val)?;
+                    let f_cell = self.materialize_val(&f_val)?;
                     let d_cell = self.emit_mux(cond_cell, t_cell, f_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                 }
                 IrInstruction::AssertEq { result, lhs, rhs } => {
                     let a = self.lookup_val(lhs)?;
                     let b = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a);
-                    let b_cell = self.materialize_val(&b);
+                    let a_cell = self.materialize_val(&a)?;
+                    let b_cell = self.materialize_val(&b)?;
                     self.system.add_copy(a_cell, b_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(b_cell));
                 }
@@ -243,9 +243,9 @@ impl PlonkishCompiler {
                 } => {
                     let left_val = self.lookup_val(left)?;
                     let right_val = self.lookup_val(right)?;
-                    let left_cell = self.materialize_val(&left_val);
-                    let right_cell = self.materialize_val(&right_val);
-                    let d_cell = self.emit_poseidon(left_cell, right_cell);
+                    let left_cell = self.materialize_val(&left_val)?;
+                    let right_cell = self.materialize_val(&right_val)?;
+                    let d_cell = self.emit_poseidon(left_cell, right_cell)?;
                     self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                 }
                 IrInstruction::RangeCheck {
@@ -254,7 +254,7 @@ impl PlonkishCompiler {
                     bits,
                 } => {
                     let op_val = self.lookup_val(operand)?;
-                    let op_cell = self.materialize_val(&op_val);
+                    let op_cell = self.materialize_val(&op_val)?;
                     self.emit_range_check(op_cell, *bits)?;
                     // Record proven bound for IsLt/IsLe optimization
                     range_bounds.insert(*operand, *bits);
@@ -262,12 +262,12 @@ impl PlonkishCompiler {
                 }
                 IrInstruction::Not { result, operand } => {
                     let op_val = self.lookup_val(operand)?;
-                    let op_cell = self.materialize_val(&op_val);
+                    let op_cell = self.materialize_val(&op_val)?;
                     if !self.proven_boolean.contains(operand) {
                         self.emit_bool_check(op_cell);
                     }
                     // result = 1 - op: d = op * (-1) + 1
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
                     let neg_op = self.negate_cell(op_cell);
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
@@ -304,8 +304,8 @@ impl PlonkishCompiler {
                 IrInstruction::And { result, lhs, rhs } => {
                     let a_val = self.lookup_val(lhs)?;
                     let b_val = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a_val);
-                    let b_cell = self.materialize_val(&b_val);
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
                     if !self.proven_boolean.contains(lhs) {
                         self.emit_bool_check(a_cell);
                     }
@@ -319,8 +319,8 @@ impl PlonkishCompiler {
                 IrInstruction::Or { result, lhs, rhs } => {
                     let a_val = self.lookup_val(lhs)?;
                     let b_val = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a_val);
-                    let b_cell = self.materialize_val(&b_val);
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
                     if !self.proven_boolean.contains(lhs) {
                         self.emit_bool_check(a_cell);
                     }
@@ -399,19 +399,19 @@ impl PlonkishCompiler {
                 IrInstruction::IsEq { result, lhs, rhs } => {
                     let a_val = self.lookup_val(lhs)?;
                     let b_val = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a_val);
-                    let b_cell = self.materialize_val(&b_val);
-                    let eq_cell = self.emit_is_zero(a_cell, b_cell);
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
+                    let eq_cell = self.emit_is_zero(a_cell, b_cell)?;
                     self.val_map.insert(*result, PlonkVal::Cell(eq_cell));
                 }
                 IrInstruction::IsNeq { result, lhs, rhs } => {
                     let a_val = self.lookup_val(lhs)?;
                     let b_val = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a_val);
-                    let b_cell = self.materialize_val(&b_val);
-                    let eq_cell = self.emit_is_zero(a_cell, b_cell);
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
+                    let eq_cell = self.emit_is_zero(a_cell, b_cell)?;
                     // neq = 1 - eq
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
                     let neg_eq = self.negate_cell(eq_cell);
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
@@ -448,32 +448,32 @@ impl PlonkishCompiler {
                 IrInstruction::IsLt { result, lhs, rhs } => {
                     let a_val = self.lookup_val(lhs)?;
                     let b_val = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a_val);
-                    let b_cell = self.materialize_val(&b_val);
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
                     let bound_a = range_bounds.get(lhs).copied();
                     let bound_b = range_bounds.get(rhs).copied();
                     let bound = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => Some(ba.max(bb)),
                         _ => None,
                     };
-                    let lt_cell = self.emit_is_lt_bounded(a_cell, b_cell, bound);
+                    let lt_cell = self.emit_is_lt_bounded(a_cell, b_cell, bound)?;
                     self.val_map.insert(*result, PlonkVal::Cell(lt_cell));
                 }
                 IrInstruction::IsLe { result, lhs, rhs } => {
                     // a <= b ≡ !(b < a) ≡ 1 - IsLt(b, a)
                     let a_val = self.lookup_val(lhs)?;
                     let b_val = self.lookup_val(rhs)?;
-                    let a_cell = self.materialize_val(&a_val);
-                    let b_cell = self.materialize_val(&b_val);
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
                     let bound_a = range_bounds.get(lhs).copied();
                     let bound_b = range_bounds.get(rhs).copied();
                     let bound = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => Some(ba.max(bb)),
                         _ => None,
                     };
-                    let lt_cell = self.emit_is_lt_bounded(b_cell, a_cell, bound);
+                    let lt_cell = self.emit_is_lt_bounded(b_cell, a_cell, bound)?;
                     // 1 - lt
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
                     let neg_lt = self.negate_cell(lt_cell);
                     let row = self.alloc_row();
                     self.system.set(self.col_s_arith, row, FieldElement::ONE);
@@ -509,12 +509,12 @@ impl PlonkishCompiler {
                 }
                 IrInstruction::Assert { result, operand } => {
                     let op_val = self.lookup_val(operand)?;
-                    let op_cell = self.materialize_val(&op_val);
+                    let op_cell = self.materialize_val(&op_val)?;
                     if !self.proven_boolean.contains(operand) {
                         self.emit_bool_check(op_cell);
                     }
                     // Enforce op == 1 via copy constraint to a materialized 1
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE));
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
                     self.system.add_copy(op_cell, one_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }

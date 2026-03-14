@@ -330,6 +330,12 @@ impl PlonkishSystem {
 
     // --- Lookup registration ---
 
+    /// Register a lookup without an explicit selector.
+    ///
+    /// Uses the **legacy heuristic**: rows where all input expressions evaluate
+    /// to zero are silently skipped. Prefer [`register_lookup_with_selector`]
+    /// for new code — it uses an explicit selector expression and correctly
+    /// checks rows even when the input value is legitimately zero.
     pub fn register_lookup(
         &mut self,
         name: &str,
@@ -344,6 +350,11 @@ impl PlonkishSystem {
         });
     }
 
+    /// Register a lookup with an explicit selector expression.
+    ///
+    /// A row is active when the selector evaluates to non-zero. This is the
+    /// preferred API — it avoids the legacy all-zero-skip heuristic and
+    /// correctly handles cases where an input is legitimately zero.
     pub fn register_lookup_with_selector(
         &mut self,
         name: &str,

@@ -1,4 +1,4 @@
-use constraints::plonkish::CellRef;
+use constraints::plonkish::{CellRef, PlonkishError};
 use memory::FieldElement;
 
 use super::compiler::PlonkishCompiler;
@@ -78,21 +78,29 @@ impl PlonkishCompiler {
     // Materialization: PlonkVal → CellRef
     // ========================================================================
 
-    pub(super) fn materialize_val(&mut self, val: &PlonkVal) -> CellRef {
+    pub(super) fn materialize_val(
+        &mut self,
+        val: &PlonkVal,
+    ) -> Result<CellRef, PlonkishError> {
         self.materialize_val_depth(val, 0)
     }
 
     /// Recursive materialization with depth tracking to prevent stack overflow
     /// from deeply nested deferred arithmetic (e.g. 10,000 chained additions).
-    fn materialize_val_depth(&mut self, val: &PlonkVal, depth: usize) -> CellRef {
+    fn materialize_val_depth(
+        &mut self,
+        val: &PlonkVal,
+        depth: usize,
+    ) -> Result<CellRef, PlonkishError> {
         const MAX_DEPTH: usize = 1_000;
-        assert!(
-            depth < MAX_DEPTH,
-            "materialize_val: recursion depth {depth} exceeds limit {MAX_DEPTH} — \
-             circuit has too many chained deferred operations"
-        );
+        if depth >= MAX_DEPTH {
+            return Err(PlonkishError::MissingInput(format!(
+                "materialize_val: recursion depth {depth} exceeds limit {MAX_DEPTH} — \
+                 circuit has too many chained deferred operations"
+            )));
+        }
         match val {
-            PlonkVal::Cell(cell) => *cell,
+            PlonkVal::Cell(cell) => Ok(*cell),
             PlonkVal::Constant(fe) => {
                 // Row: 0 * 0 + fe = fe → gate: s*(0*0 + fe - fe) = 0
                 let row = self.alloc_row();
@@ -110,14 +118,14 @@ impl PlonkishCompiler {
                     *fe,
                 );
                 self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
-                CellRef {
+                Ok(CellRef {
                     column: self.col_d,
                     row,
-                }
+                })
             }
             PlonkVal::DeferredAdd(a, b) => {
-                let a_cell = self.materialize_val_depth(a, depth + 1);
-                let b_cell = self.materialize_val_depth(b, depth + 1);
+                let a_cell = self.materialize_val_depth(a, depth + 1)?;
+                let b_cell = self.materialize_val_depth(b, depth + 1)?;
                 // d = a*1 + b
                 let row = self.alloc_row();
                 self.system.set(self.col_s_arith, row, FieldElement::ONE);
@@ -143,14 +151,14 @@ impl PlonkishCompiler {
                     },
                 );
                 self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
-                CellRef {
+                Ok(CellRef {
                     column: self.col_d,
                     row,
-                }
+                })
             }
             PlonkVal::DeferredSub(a, b) => {
-                let a_cell = self.materialize_val_depth(a, depth + 1);
-                let b_cell = self.materialize_val_depth(b, depth + 1);
+                let a_cell = self.materialize_val_depth(a, depth + 1)?;
+                let b_cell = self.materialize_val_depth(b, depth + 1)?;
                 // d = a - b = a*1 + (-b)
                 // Negate b first
                 let neg_b = self.negate_cell(b_cell);
@@ -178,14 +186,14 @@ impl PlonkishCompiler {
                     },
                 );
                 self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
-                CellRef {
+                Ok(CellRef {
                     column: self.col_d,
                     row,
-                }
+                })
             }
             PlonkVal::DeferredNeg(inner) => {
-                let inner_cell = self.materialize_val_depth(inner, depth + 1);
-                self.negate_cell(inner_cell)
+                let inner_cell = self.materialize_val_depth(inner, depth + 1)?;
+                Ok(self.negate_cell(inner_cell))
             }
         }
     }
