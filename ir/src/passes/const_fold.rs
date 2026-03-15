@@ -352,7 +352,10 @@ pub fn constant_fold(program: &mut IrProgram) {
                     };
                 }
             }
-            Instruction::IsLt { result, lhs, rhs } => {
+            Instruction::IsLt { result, lhs, rhs }
+            | Instruction::IsLtBounded {
+                result, lhs, rhs, ..
+            } => {
                 if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
                     // Compare canonical representations (little-endian limbs)
                     let la = a.to_canonical();
@@ -370,7 +373,10 @@ pub fn constant_fold(program: &mut IrProgram) {
                     };
                 }
             }
-            Instruction::IsLe { result, lhs, rhs } => {
+            Instruction::IsLe { result, lhs, rhs }
+            | Instruction::IsLeBounded {
+                result, lhs, rhs, ..
+            } => {
                 if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
                     let la = a.to_canonical();
                     let lb = b.to_canonical();

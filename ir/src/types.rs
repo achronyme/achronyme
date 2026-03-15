@@ -123,16 +123,35 @@ pub enum Instruction {
         rhs: SsaVar,
     },
     /// Less-than check: result = 1 if lhs < rhs, 0 otherwise.
+    /// Unbounded: full 252-bit decomposition (~761 constraints). Safe by default.
     IsLt {
         result: SsaVar,
         lhs: SsaVar,
         rhs: SsaVar,
     },
     /// Less-or-equal check: result = 1 if lhs <= rhs, 0 otherwise.
+    /// Unbounded: full 252-bit decomposition. Safe by default.
     IsLe {
         result: SsaVar,
         lhs: SsaVar,
         rhs: SsaVar,
+    },
+    /// Bounded less-than: result = 1 if lhs < rhs, 0 otherwise.
+    /// Both operands proven to fit in `bitwidth` bits via prior RangeCheck.
+    /// Uses n+1 bit decomposition (~n+3 constraints). Emitted by bound_inference pass.
+    IsLtBounded {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+        bitwidth: u32,
+    },
+    /// Bounded less-or-equal: result = 1 if lhs <= rhs, 0 otherwise.
+    /// Both operands proven to fit in `bitwidth` bits via prior RangeCheck.
+    IsLeBounded {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+        bitwidth: u32,
     },
     /// Assertion: enforces operand == 1 (boolean). Side-effecting.
     Assert { result: SsaVar, operand: SsaVar },
@@ -160,6 +179,8 @@ impl Instruction {
             | Instruction::IsNeq { result, .. }
             | Instruction::IsLt { result, .. }
             | Instruction::IsLe { result, .. }
+            | Instruction::IsLtBounded { result, .. }
+            | Instruction::IsLeBounded { result, .. }
             | Instruction::Assert { result, .. } => *result,
         }
     }
@@ -191,7 +212,9 @@ impl Instruction {
             | Instruction::IsEq { lhs, rhs, .. }
             | Instruction::IsNeq { lhs, rhs, .. }
             | Instruction::IsLt { lhs, rhs, .. }
-            | Instruction::IsLe { lhs, rhs, .. } => vec![*lhs, *rhs],
+            | Instruction::IsLe { lhs, rhs, .. }
+            | Instruction::IsLtBounded { lhs, rhs, .. }
+            | Instruction::IsLeBounded { lhs, rhs, .. } => vec![*lhs, *rhs],
             Instruction::Mux {
                 cond,
                 if_true,
@@ -265,6 +288,18 @@ impl std::fmt::Display for Instruction {
             Instruction::IsLe { result, lhs, rhs } => {
                 write!(f, "{result} = IsLe({lhs}, {rhs})")
             }
+            Instruction::IsLtBounded {
+                result,
+                lhs,
+                rhs,
+                bitwidth,
+            } => write!(f, "{result} = IsLtBounded({lhs}, {rhs}, {bitwidth})"),
+            Instruction::IsLeBounded {
+                result,
+                lhs,
+                rhs,
+                bitwidth,
+            } => write!(f, "{result} = IsLeBounded({lhs}, {rhs}, {bitwidth})"),
             Instruction::Assert { result, operand } => {
                 write!(f, "{result} = Assert({operand})")
             }

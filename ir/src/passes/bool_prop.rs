@@ -47,7 +47,9 @@ pub fn compute_proven_boolean(program: &IrProgram) -> HashSet<SsaVar> {
             Instruction::IsEq { result, .. }
             | Instruction::IsNeq { result, .. }
             | Instruction::IsLt { result, .. }
-            | Instruction::IsLe { result, .. } => {
+            | Instruction::IsLe { result, .. }
+            | Instruction::IsLtBounded { result, .. }
+            | Instruction::IsLeBounded { result, .. } => {
                 booleans.insert(*result);
             }
             Instruction::Not { result, operand } => {

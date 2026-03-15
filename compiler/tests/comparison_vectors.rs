@@ -448,6 +448,48 @@ fn constraint_count_islt_bounded_8bit() {
     );
 }
 
+/// Range-bounded IsLt with 64-bit bounds — target: ~67 constraints (Circom parity).
+#[test]
+fn constraint_count_islt_bounded_64bit() {
+    let n = compile_and_verify(
+        "witness a\nwitness b\nrange_check(a, 64)\nrange_check(b, 64)\npublic out\nassert_eq(a < b, out)",
+        &[("a", fe(3)), ("b", fe(5)), ("out", fe(1))],
+    );
+    // 2×65 (range_check) + ~66 (bounded IsLt 65 bits) + 1 (assert_eq) = ~197
+    // But the key metric is the IsLt portion alone: ~66 constraints
+    // Total with range_checks: should be well under 250
+    assert!(
+        n < 250,
+        "bounded 64-bit IsLt total should be <250 constraints, got: {n}"
+    );
+}
+
+/// Range-bounded IsLe with 64-bit bounds.
+#[test]
+fn constraint_count_isle_bounded_64bit() {
+    let n = compile_and_verify(
+        "witness a\nwitness b\nrange_check(a, 64)\nrange_check(b, 64)\npublic out\nassert_eq(a <= b, out)",
+        &[("a", fe(3)), ("b", fe(5)), ("out", fe(1))],
+    );
+    assert!(
+        n < 250,
+        "bounded 64-bit IsLe total should be <250 constraints, got: {n}"
+    );
+}
+
+/// Dark Forest anti-regression: P-1 must NOT pass a 64-bit bounded comparison.
+/// With range_check(a, 64), a=P-1 must fail because P-1 > 2^64.
+#[test]
+fn soundness_dark_forest_bounded_64bit() {
+    let p_minus_1 =
+        fe_str("21888242871839275222246405745257275088548364400416034343698204186575808495616");
+    // P-1 cannot pass range_check(a, 64) — the range check itself should reject it
+    compile_expect_fail(
+        "witness a\nwitness b\nrange_check(a, 64)\nrange_check(b, 64)\npublic out\nassert_eq(a < b, out)",
+        &[("a", p_minus_1), ("b", fe(0)), ("out", fe(1))],
+    );
+}
+
 // ============================================================================
 // Wrong witness rejection — soundness
 // Source: fundamental ZK requirement; 0xPARC zk-bug-tracker patterns.

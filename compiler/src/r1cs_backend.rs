@@ -371,6 +371,33 @@ impl R1CSCompiler {
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     lc_map.insert(*result, one - lt_lc);
                 }
+                IrInstruction::IsLtBounded {
+                    result,
+                    lhs,
+                    rhs,
+                    bitwidth,
+                } => {
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
+                    let offset = compute_power_of_two(*bitwidth).sub(&FieldElement::ONE);
+                    let diff = b - a + LinearCombination::from_constant(offset);
+                    let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
+                    lc_map.insert(*result, lt_lc);
+                }
+                IrInstruction::IsLeBounded {
+                    result,
+                    lhs,
+                    rhs,
+                    bitwidth,
+                } => {
+                    let a = lookup(&lc_map, lhs)?;
+                    let b = lookup(&lc_map, rhs)?;
+                    let offset = compute_power_of_two(*bitwidth).sub(&FieldElement::ONE);
+                    let diff = a - b + LinearCombination::from_constant(offset);
+                    let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    lc_map.insert(*result, one - lt_lc);
+                }
                 IrInstruction::Assert { result, operand } => {
                     let op_lc = lookup(&lc_map, operand)?;
                     let one = LinearCombination::from_constant(FieldElement::ONE);

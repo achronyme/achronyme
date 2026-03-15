@@ -697,6 +697,42 @@ fn golden_islt_true() {
 }
 
 #[test]
+fn golden_islt_bounded_64bit() {
+    if !snarkjs_available() {
+        eprintln!("SKIP: snarkjs not available");
+        return;
+    }
+    eprintln!("\n=== GOLDEN CROSS-VALIDATION: IsLt(3, 5) BOUNDED 64-bit ===");
+    eprintln!("  With range_check(a, 64) + range_check(b, 64) → IsLtBounded(64)");
+
+    let mut inputs = HashMap::new();
+    inputs.insert("out".into(), fe(1));
+    inputs.insert("a".into(), fe(3));
+    inputs.insert("b".into(), fe(5));
+
+    let result = cross_validate(
+        "range_check(a, 64)\nrange_check(b, 64)\nassert_eq(a < b, out)",
+        &["out"],
+        &["a", "b"],
+        &inputs,
+    );
+
+    assert!(result.wtns_check_passed);
+    assert_eq!(result.wire_values[1], "1", "IsLt(3,5) bounded should be 1");
+    eprintln!("  Wire[1] = 1: ✓");
+    eprintln!("  snarkjs wtns check: ✓ (bounded optimization verified externally)");
+    eprintln!(
+        "  Constraints: {} (unbounded: 761, Circom LessThan(64): 68)",
+        result.constraint_count
+    );
+    assert!(
+        result.constraint_count < 250,
+        "bounded 64-bit IsLt should be <250 total constraints, got: {}",
+        result.constraint_count
+    );
+}
+
+#[test]
 fn golden_islt_false() {
     if !snarkjs_available() {
         eprintln!("SKIP: snarkjs not available");

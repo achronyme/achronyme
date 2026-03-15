@@ -507,6 +507,65 @@ impl PlonkishCompiler {
                         }),
                     );
                 }
+                IrInstruction::IsLtBounded {
+                    result,
+                    lhs,
+                    rhs,
+                    bitwidth,
+                } => {
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
+                    let lt_cell = self.emit_is_lt_bounded(a_cell, b_cell, Some(*bitwidth))?;
+                    self.val_map.insert(*result, PlonkVal::Cell(lt_cell));
+                }
+                IrInstruction::IsLeBounded {
+                    result,
+                    lhs,
+                    rhs,
+                    bitwidth,
+                } => {
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
+                    let lt_cell = self.emit_is_lt_bounded(b_cell, a_cell, Some(*bitwidth))?;
+                    // 1 - lt
+                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+                    let neg_lt = self.negate_cell(lt_cell);
+                    let row = self.alloc_row();
+                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.constrain_constant(
+                        CellRef {
+                            column: self.col_b,
+                            row,
+                        },
+                        FieldElement::ONE,
+                    );
+                    self.wire(
+                        one_cell,
+                        CellRef {
+                            column: self.col_a,
+                            row,
+                        },
+                    );
+                    self.wire(
+                        neg_lt,
+                        CellRef {
+                            column: self.col_c,
+                            row,
+                        },
+                    );
+                    self.witness_ops.push(PlonkWitnessOp::ArithRow { row });
+                    self.val_map.insert(
+                        *result,
+                        PlonkVal::Cell(CellRef {
+                            column: self.col_d,
+                            row,
+                        }),
+                    );
+                }
                 IrInstruction::Assert { result, operand } => {
                     let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val)?;

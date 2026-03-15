@@ -1,4 +1,5 @@
 pub mod bool_prop;
+pub mod bound_inference;
 pub mod const_fold;
 pub mod dce;
 pub mod taint;
@@ -47,6 +48,7 @@ pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
         .count();
 
     const_fold::constant_fold(program);
+    bound_inference::bound_inference(program);
 
     // Count Const instructions after folding — difference = folded
     let consts_after = program

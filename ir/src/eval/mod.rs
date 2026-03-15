@@ -304,7 +304,10 @@ pub fn evaluate(
                 };
                 values.insert(*result, neq);
             }
-            Instruction::IsLt { result, lhs, rhs } => {
+            Instruction::IsLt { result, lhs, rhs }
+            | Instruction::IsLtBounded {
+                result, lhs, rhs, ..
+            } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
                 let la = a.to_canonical();
@@ -319,7 +322,10 @@ pub fn evaluate(
                     },
                 );
             }
-            Instruction::IsLe { result, lhs, rhs } => {
+            Instruction::IsLe { result, lhs, rhs }
+            | Instruction::IsLeBounded {
+                result, lhs, rhs, ..
+            } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
                 let la = a.to_canonical();

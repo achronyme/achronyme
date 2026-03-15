@@ -187,7 +187,13 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
             | Instruction::IsEq { result, lhs, rhs }
             | Instruction::IsNeq { result, lhs, rhs }
             | Instruction::IsLt { result, lhs, rhs }
-            | Instruction::IsLe { result, lhs, rhs } => {
+            | Instruction::IsLe { result, lhs, rhs }
+            | Instruction::IsLtBounded {
+                result, lhs, rhs, ..
+            }
+            | Instruction::IsLeBounded {
+                result, lhs, rhs, ..
+            } => {
                 used_vars.insert(*lhs);
                 used_vars.insert(*rhs);
                 let t = taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs));
