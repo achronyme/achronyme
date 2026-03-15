@@ -212,6 +212,7 @@ pub fn circuit_command(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_r1cs_pipeline(
     program: &ir::IrProgram,
     r1cs_path: &str,
@@ -366,6 +367,7 @@ fn run_r1cs_pipeline(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_plonkish_pipeline(
     program: &ir::IrProgram,
     inputs: Option<&str>,

@@ -112,9 +112,8 @@ impl DefaultProveHandler {
         if self.verbose {
             if let ProveResult::Proof { ref proof_json, .. } = result {
                 eprintln!(
-                    "{} ({}, {} bytes)",
+                    "{} (Groth16, {} bytes)",
                     self.style.success("Proof generated"),
-                    "Groth16",
                     format_number(proof_json.len())
                 );
                 eprintln!(
@@ -153,9 +152,8 @@ impl DefaultProveHandler {
         if self.verbose {
             if let ProveResult::Proof { ref proof_json, .. } = result {
                 eprintln!(
-                    "{} ({}, {} bytes)",
+                    "{} (PlonK/halo2, {} bytes)",
                     self.style.success("Proof generated"),
-                    "PlonK/halo2",
                     format_number(proof_json.len())
                 );
                 eprintln!(
