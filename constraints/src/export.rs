@@ -38,8 +38,12 @@ fn write_u64(buf: &mut Vec<u8>, v: u64) {
 }
 
 fn write_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
-    write_u32(buf, lc.terms.len() as u32);
-    for (var, coeff) in &lc.terms {
+    // Simplify to merge duplicate wire IDs before serialization.
+    // The iden3 R1CS spec expects unique wire IDs per LC; snarkjs
+    // silently drops duplicates, causing witness check failures.
+    let simplified = lc.simplify();
+    write_u32(buf, simplified.terms.len() as u32);
+    for (var, coeff) in &simplified.terms {
         write_u32(buf, var.index() as u32);
         buf.extend_from_slice(&coeff.to_le_bytes());
     }
