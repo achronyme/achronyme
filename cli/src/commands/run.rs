@@ -40,8 +40,8 @@ pub fn run_file(
             })?;
             vm.heap.max_heap_bytes = limit;
         }
-        let handler = DefaultProveHandler::new(backend);
-        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend)));
+        let handler = DefaultProveHandler::new(backend, error_format);
+        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend, error_format)));
         vm.prove_handler = Some(Box::new(handler));
 
         // Use the new secure loader
@@ -90,8 +90,8 @@ pub fn run_file(
             })?;
             vm.heap.max_heap_bytes = limit;
         }
-        let handler = DefaultProveHandler::new(backend);
-        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend)));
+        let handler = DefaultProveHandler::new(backend, error_format);
+        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend, error_format)));
         vm.prove_handler = Some(Box::new(handler));
 
         // Transfer strings from compiler to VM

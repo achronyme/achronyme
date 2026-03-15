@@ -7,6 +7,9 @@ use ir::IrLowering;
 use memory::FieldElement;
 use vm::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 
+use crate::commands::ErrorFormat;
+use crate::style::{format_number, Styler};
+
 /// Backend selection for prove blocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProveBackend {
@@ -20,12 +23,21 @@ pub enum ProveBackend {
 pub struct DefaultProveHandler {
     cache_dir: PathBuf,
     backend: ProveBackend,
+    style: Styler,
+    verbose: bool,
 }
 
 impl DefaultProveHandler {
-    pub fn new(backend: ProveBackend) -> Self {
+    pub fn new(backend: ProveBackend, error_format: ErrorFormat) -> Self {
         let cache_dir = crate::cache_dir();
-        Self { cache_dir, backend }
+        let style = Styler::from_env(&error_format);
+        let verbose = style.is_verbose(&error_format);
+        Self {
+            cache_dir,
+            backend,
+            style,
+            verbose,
+        }
     }
 }
 
@@ -92,8 +104,28 @@ impl DefaultProveHandler {
             .verify(&witness)
             .map_err(|e| ProveError::Verification(format!("{e}")))?;
 
-        crate::groth16::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
-            .map_err(ProveError::ProofGeneration)
+        let n_constraints = r1cs.cs.num_constraints();
+
+        let result = crate::groth16::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
+            .map_err(ProveError::ProofGeneration)?;
+
+        if self.verbose {
+            if let ProveResult::Proof { ref proof_json, .. } = result {
+                eprintln!(
+                    "{} ({}, {} bytes)",
+                    self.style.success("Proof generated"),
+                    "Groth16",
+                    format_number(proof_json.len())
+                );
+                eprintln!(
+                    "{} — {} constraints",
+                    self.style.green("Proof verified"),
+                    format_number(n_constraints)
+                );
+            }
+        }
+
+        Ok(result)
     }
 
     fn prove_plonkish(
@@ -108,12 +140,32 @@ impl DefaultProveHandler {
             .compile_ir_with_witness(program, inputs)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;
 
+        let n_rows = compiler.num_circuit_rows();
+
         compiler
             .system
             .verify()
             .map_err(|e| ProveError::Verification(format!("plonkish: {e}")))?;
 
-        crate::halo2_proof::generate_plonkish_proof(compiler, &self.cache_dir)
-            .map_err(ProveError::ProofGeneration)
+        let result = crate::halo2_proof::generate_plonkish_proof(compiler, &self.cache_dir)
+            .map_err(ProveError::ProofGeneration)?;
+
+        if self.verbose {
+            if let ProveResult::Proof { ref proof_json, .. } = result {
+                eprintln!(
+                    "{} ({}, {} bytes)",
+                    self.style.success("Proof generated"),
+                    "PlonK/halo2",
+                    format_number(proof_json.len())
+                );
+                eprintln!(
+                    "{} — {} rows",
+                    self.style.green("Proof verified"),
+                    format_number(n_rows)
+                );
+            }
+        }
+
+        Ok(result)
     }
 }
