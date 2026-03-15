@@ -1,5 +1,43 @@
 # Achronyme Changelog
 
+## [0.1.0-beta.9] - 2026-03-15
+
+### Security Fix
+
+- **R1CS export: simplify LCs before serialization** — `write_lc()` wrote unsimplified LinearCombinations with duplicate wire IDs to the iden3 `.r1cs` binary format. Duplicate wires (from MDS mixing in Poseidon) caused snarkjs `wtns check` to fail (228/362 Poseidon constraints). Internal verification was unaffected. Discovered by the new snarkjs cross-validation tests.
+
+### Features
+
+- **IsLtBounded optimization (D7 resolved)** — New `bound_inference` IR pass automatically rewrites `IsLt`/`IsLe` to bounded variants when both operands have proven bitwidth bounds from prior `range_check` instructions. Constraint count drops from 761 to 66 for 64-bit comparisons (parity with Circom's `LessThan(64)` at 67). Safe-by-default: unbounded comparisons remain at 252-bit fallback. Dark Forest anti-regression test included.
+- **New IR instructions**: `IsLtBounded { result, lhs, rhs, bitwidth }`, `IsLeBounded { result, lhs, rhs, bitwidth }`
+- **New IR pass**: `bound_inference` — scans `RangeCheck` to build bounds map, rewrites comparisons
+
+### Testing (+326 tests, 1,799 → 2,125)
+
+- **Phase III industry test vectors** (+290 tests):
+  - `mux_select_vectors.rs` (127 tests): truth table, boundary exhaustive, nested, N-way, soundness
+  - `division_vectors.rs` (115 tests): modular inverse, roundtrip, distributive, Dark Forest
+  - `merkle_vectors.rs` (38 tests): depth 1-20 with Poseidon, constraint scaling
+- **snarkjs cross-validation** (18 tests): independent verification via `snarkjs wtns check`, wire value comparison against circomlibjs golden vectors, full Groth16 prove+verify for Poseidon(1,2)
+- **Plonkish cross-validation** (25 tests):
+  - Level 1: cross-backend consistency (R1CS ↔ Plonkish same outputs)
+  - Level 2: full halo2 KZG prove/verify cycle (7 circuits)
+  - Level 3: JSON export re-evaluation (structural validation)
+- **IsLtBounded tests**: 64-bit constraint count regression, Dark Forest anti-regression
+
+### Benchmark (measured with circom 2.2.3 + circomlib)
+
+| Primitive | Achronyme | Circom | Notes |
+|-----------|-----------|--------|-------|
+| Poseidon(t=3) | **362** | 517 | 30% more efficient |
+| IsLt (64-bit bounded) | **66** | 67 | Parity (was 761) |
+| IsEq | 3 | 3 | Parity |
+| RangeCheck(8) | 9 | 9 | Parity |
+
+Both ZK backends now have external verification:
+- R1CS/Groth16: snarkjs `wtns check` + Groth16 prove/verify
+- Plonkish/KZG: halo2 KZG prove/verify + cross-backend consistency
+
 ## [0.1.0-beta.3] - 2026-03-04
 
 ### Security & Robustness (16 fixes)
