@@ -89,9 +89,10 @@ Source (.ach)
 
 ## Status
 
-- 929 unit tests + 75 integration tests
+- 2,000+ unit tests + 150+ integration tests
+- Cross-validated against snarkjs (independent constraint verification)
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
-- snarkjs-compatible binary export
+- snarkjs-compatible binary export (Groth16 interoperability verified)
 - 6 security audits resolved
-- Poseidon hash compatible with circomlibjs
+- Poseidon hash compatible with circomlibjs (30% fewer constraints than Circom)
