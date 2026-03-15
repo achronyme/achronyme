@@ -4,7 +4,7 @@ use super::PoseidonParams;
 
 /// Compute x^5 in the field.
 #[inline]
-pub(super) fn sbox(x: FieldElement) -> FieldElement {
+pub fn sbox(x: FieldElement) -> FieldElement {
     let x2 = x.mul(&x);
     let x4 = x2.mul(&x2);
     x4.mul(&x)

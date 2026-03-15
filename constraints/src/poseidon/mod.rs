@@ -31,10 +31,10 @@
 ///
 /// The paper-compliant implementation is available via
 /// [`PoseidonParams::bn254_t3_lfsr`] for reference and auditing.
-mod circuit;
+pub mod circuit;
 mod constants;
 mod lfsr;
-mod native;
+pub mod native;
 mod params;
 
 #[cfg(test)]
