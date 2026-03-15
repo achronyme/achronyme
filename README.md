@@ -21,7 +21,7 @@ This installs the `ach` binary to `~/.local/bin`. Requires Linux or macOS (x86_6
 git clone https://github.com/achronyme/achronyme.git
 cd achronyme
 cargo build --release
-cargo test --workspace     # 1,300+ unit tests
+cargo test --workspace     # 2,000+ unit tests
 bash test/run_tests.sh     # 150+ integration tests
 ```
 
@@ -401,7 +401,8 @@ achronyme/
 
 ## Status
 
-- 1,300+ unit tests + 150+ integration tests
+- 2,000+ unit tests + 150+ integration tests
+- Cross-validated against snarkjs (independent constraint verification)
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
 - snarkjs-compatible binary export

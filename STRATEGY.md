@@ -1,7 +1,7 @@
 # Achronyme: Estrategia Técnica y de Mercado
 
-> Última actualización: Febrero 2026
-> Estado: v0.1.0-beta.1 — 1,008 tests, 2 backends con provers nativos Rust, 2 auditorías criptográficas limpias, pipeline E2E funcional.
+> Última actualización: Marzo 2026
+> Estado: v0.1.0-beta.8 — 2,000+ tests (cross-validados con snarkjs), 2 backends con provers nativos Rust, 2 auditorías criptográficas limpias, pipeline E2E funcional, interoperabilidad Groth16 verificada.
 
 ---
 
@@ -173,7 +173,7 @@ Los 3 niveles de integración están completados:
 | Métrica | Valor |
 |---------|-------|
 | Versión | 0.1.0-beta.1 |
-| Tests passing | 1,008 |
+| Tests passing | 2,000+ (cross-validados con snarkjs + circomlib) |
 | Backends | R1CS (Groth16/ark) + Plonkish (KZG-PlonK/halo2) |
 | Provers | Nativos Rust (ark-groth16 + halo2-PSE), in-process |
 | Audit findings | 100% resueltos (C1-4, H1-5, M1-8, L1-4, T1-5) |
@@ -315,7 +315,7 @@ Los 3 niveles de integración están completados:
 | **Gitcoin Rounds** | Variable | Quadratic funding |
 | **Solana SuperTeam** | Hasta $10K | Microgrants, fuerte en LATAM |
 
-**Estado**: El proyecto supera ampliamente los requisitos de MVP — pipeline E2E, 2 backends con provers nativos, 1,008 tests, 2 auditorías criptográficas completas, Solidity verifier.
+**Estado**: El proyecto supera ampliamente los requisitos de MVP — pipeline E2E, 2 backends con provers nativos, 2,000+ tests (cross-validados con snarkjs), 2 auditorías criptográficas completas, Solidity verifier, interoperabilidad Groth16 verificada.
 
 ### Tier 2: Retroactive Public Goods Funding
 - **Optimism RPGF** — Financia retroactivamente proyectos que demostraron valor.
@@ -424,7 +424,7 @@ No es técnico. Es que el proyecto se quede como "impresionante repo de GitHub q
 2. **Proofs como valores del lenguaje** — `prove {}` genera proofs Groth16/PlonK reales inline. Ningún otro DSL ZK ofrece esto.
 3. **Provers nativos Rust** — ark-groth16 + halo2-KZG, in-process. Sin dependencias externas.
 4. **Seguridad en compile-time** — Taint analysis detecta circuitos under-constrained antes de generar una sola prueba.
-5. **Testing** — 1,008 tests, 2 auditorías criptográficas completas, proptest para soundness.
+5. **Testing** — 2,000+ tests cross-validados con snarkjs/circomlib, 2 auditorías criptográficas completas, proptest para soundness, Poseidon 30% más eficiente que Circom (362 vs 517 constraints).
 6. **Posición LATAM** — Demanda creciente, poca oferta, comunidad técnica en español.
 
 ### Principio rector
