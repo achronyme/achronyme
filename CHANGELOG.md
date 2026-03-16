@@ -1,5 +1,29 @@
 # Achronyme Changelog
 
+## [0.1.0-beta.10] - 2026-03-16
+
+### Bug Fix
+
+- **Plonkish lookup gap resolved** — `range_check` and `IsLtBounded` now generate real KZG proofs with halo2 PSE. Migrated from `meta.selector()` + `meta.lookup()` to `meta.fixed_column()` + `meta.lookup_any()` to avoid halo2's selector compression corrupting lookup arguments. Pattern from PSE zkEVM-circuits.
+
+### Features
+
+- **W003 warning** — Compiler warns when comparisons (`<`, `<=`) remain unbounded (~761 constraints) with a suggestion to add `range_check` for ~67 constraints (11x reduction).
+- **Enhanced `ach circuit` output** — Shows bound inference optimization count ("N comparison(s) optimized via IsLtBounded") and Poseidon efficiency note ("362 constraints — Circom: 517, 30% more efficient").
+- **`Styler::warning()`** — Bold yellow ANSI styling for W003.
+
+### Robustness
+
+- **Property-based testing expansion** (+19 properties): Mux (3), Division (4), IsLtBounded (3), Poseidon (3), adversarial witness rejection (6). Total: 62 properties × 30-200 cases ≈ 8,000+ random verifications.
+- **cargo-fuzz targets** (3): Parser, IR lowering, full R1CS pipeline. 3.3M inputs in initial run, 0 crashes.
+- **Systematic malicious prover tests** (23 tests, 11 attack vectors): Bit flip, zero witness, field boundary, output forgery, Poseidon state corruption, mux condition bypass, division inverse forgery, Dark Forest overflow, wire swap, constant wire attack, coherent forgery.
+
+### Testing (+47 tests, 2,125 → 2,169)
+
+Both ZK backends now fully functional for all primitives:
+- R1CS/Groth16: range_check, IsLtBounded, Poseidon, Merkle ✓
+- Plonkish/KZG: range_check, IsLtBounded, Poseidon, Merkle ✓ (NEW)
+
 ## [0.1.0-beta.9] - 2026-03-15
 
 ### Security Fix
