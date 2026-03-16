@@ -272,6 +272,68 @@ fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bn254>, num_pub: usize) ->
 }
 
 // ============================================================================
+// Solidity calldata formatting
+// ============================================================================
+
+/// Format a Groth16 proof and public inputs as Solidity calldata strings.
+///
+/// Applies EIP-197 coordinate swaps for G2 points (π_B):
+/// arkworks Fq2(c0=real, c1=imag) → EVM (c1=imag, c0=real).
+///
+/// Returns (pA, pB, pC, pubSignals) as decimal strings ready for Solidity.
+pub fn format_solidity_calldata(
+    proof: &ark_groth16::Proof<Bn254>,
+    public_inputs: &[Fr],
+) -> SolidityCalldata {
+    use ark_ec::AffineRepr;
+
+    let a = proof.a;
+    let b = proof.b;
+    let c = proof.c;
+
+    // π_A (G1): direct, no swap
+    let p_a = [
+        fr_to_decimal(&a.x().expect("a.x")),
+        fr_to_decimal(&a.y().expect("a.y")),
+    ];
+
+    // π_B (G2): SWAP c0 ↔ c1 for EIP-197
+    let bx = b.x().expect("b.x");
+    let by = b.y().expect("b.y");
+    let p_b = [
+        [fr_to_decimal(&bx.c1), fr_to_decimal(&bx.c0)], // X: imag first, real second
+        [fr_to_decimal(&by.c1), fr_to_decimal(&by.c0)], // Y: imag first, real second
+    ];
+
+    // π_C (G1): direct, no swap
+    let p_c = [
+        fr_to_decimal(&c.x().expect("c.x")),
+        fr_to_decimal(&c.y().expect("c.y")),
+    ];
+
+    let pub_signals: Vec<String> = public_inputs.iter().map(fr_to_decimal).collect();
+
+    SolidityCalldata {
+        p_a,
+        p_b,
+        p_c,
+        pub_signals,
+    }
+}
+
+/// Structured Solidity calldata for a Groth16 proof.
+pub struct SolidityCalldata {
+    /// π_A point (G1): [x, y]
+    pub p_a: [String; 2],
+    /// π_B point (G2): [[x.c1, x.c0], [y.c1, y.c0]] (EIP-197 order)
+    pub p_b: [[String; 2]; 2],
+    /// π_C point (G1): [x, y]
+    pub p_c: [String; 2],
+    /// Public signals as decimal strings
+    pub pub_signals: Vec<String>,
+}
+
+// ============================================================================
 // JSON deserialization (for verify_proof)
 // ============================================================================
 
