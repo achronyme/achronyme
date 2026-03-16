@@ -5,6 +5,7 @@ mod ansi {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
     pub const DIM: &str = "\x1b[2m";
+    pub const YELLOW: &str = "\x1b[33m";
     pub const GREEN: &str = "\x1b[32m";
     pub const CYAN: &str = "\x1b[36m";
 }
@@ -78,6 +79,14 @@ impl Styler {
     pub fn success(&self, text: &str) -> String {
         if self.color {
             format!("{}{}{}{}", ansi::BOLD, ansi::GREEN, text, ansi::RESET)
+        } else {
+            text.to_string()
+        }
+    }
+
+    pub fn warning(&self, text: &str) -> String {
+        if self.color {
+            format!("{}{}{}{}", ansi::BOLD, ansi::YELLOW, text, ansi::RESET)
         } else {
             text.to_string()
         }

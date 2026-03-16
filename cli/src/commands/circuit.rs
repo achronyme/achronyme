@@ -144,6 +144,35 @@ pub fn circuit_command(
                 parts.join(" + ")
             );
         }
+
+        // W003: warn about unbounded comparisons (~761 constraints each)
+        if !stats.bound_inference.unbounded.is_empty() {
+            for &(_, lhs, rhs) in &stats.bound_inference.unbounded {
+                let lhs_name = program.get_name(lhs).unwrap_or("%?");
+                let rhs_name = program.get_name(rhs).unwrap_or("%?");
+                eprintln!(
+                    "{}: unbounded comparison between `{}` and `{}` uses ~761 constraints",
+                    style.warning("warning[W003]"),
+                    lhs_name,
+                    rhs_name,
+                );
+                eprintln!(
+                    "  {} add range_check({}, 64) and range_check({}, 64) to reduce to ~67",
+                    style.cyan("help:"),
+                    lhs_name,
+                    rhs_name,
+                );
+            }
+        }
+
+        // Show bound inference optimization info
+        if verbose && stats.bound_inference.rewritten > 0 {
+            eprintln!(
+                "    {}: {} comparison(s) optimized via IsLtBounded",
+                style.cyan("Bounds"),
+                stats.bound_inference.rewritten,
+            );
+        }
     }
 
     // 3. If --dump-ir, print the IR and exit
@@ -276,10 +305,19 @@ fn run_r1cs_pipeline(
         if verbose {
             eprintln!();
             eprintln!("{}:", style.success("R1CS generated"));
-            eprintln!(
-                "    Constraints:    {}",
-                style.bold(&format_number(compiler.cs.num_constraints()))
-            );
+            let nc = compiler.cs.num_constraints();
+            eprintln!("    Constraints:    {}", style.bold(&format_number(nc)));
+            // Show Poseidon efficiency note if circuit uses Poseidon
+            let has_poseidon = program
+                .instructions
+                .iter()
+                .any(|i| matches!(i, ir::Instruction::PoseidonHash { .. }));
+            if has_poseidon {
+                eprintln!(
+                    "    {}",
+                    style.dim("Poseidon: 362 constraints (Circom: 517 — 30% more efficient)")
+                );
+            }
             eprintln!("    Public inputs:  {}", n_public);
             eprintln!("    Private inputs: {}", n_witness);
             eprintln!(

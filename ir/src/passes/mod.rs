@@ -16,6 +16,8 @@ pub struct OptimizeStats {
     pub dce_eliminated: usize,
     /// Total instructions after optimization.
     pub total_after: usize,
+    /// Bound inference results (comparisons optimized + those remaining unbounded).
+    pub bound_inference: bound_inference::BoundInferenceResult,
 }
 
 /// Run all optimization passes on the IR program.
@@ -48,7 +50,7 @@ pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
         .count();
 
     const_fold::constant_fold(program);
-    bound_inference::bound_inference(program);
+    let bi_result = bound_inference::bound_inference(program);
 
     // Count Const instructions after folding — difference = folded
     let consts_after = program
@@ -69,6 +71,7 @@ pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
         const_fold_converted,
         dce_eliminated,
         total_after,
+        bound_inference: bi_result,
     }
 }
 

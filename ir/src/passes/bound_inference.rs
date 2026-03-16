@@ -13,13 +13,20 @@ use std::collections::HashMap;
 
 use crate::types::{Instruction, IrProgram, SsaVar};
 
+/// Result of the bound inference pass.
+pub struct BoundInferenceResult {
+    /// Number of IsLt/IsLe rewritten to bounded variants.
+    pub rewritten: usize,
+    /// SSA variables of comparisons that remained unbounded (~761 constraints each).
+    /// Each entry is (result_var, lhs_var, rhs_var).
+    pub unbounded: Vec<(SsaVar, SsaVar, SsaVar)>,
+}
+
 /// Run bound inference on the IR program.
 ///
 /// Scans for RangeCheck instructions to build a bounds map, then rewrites
 /// IsLt → IsLtBounded and IsLe → IsLeBounded when both operands have bounds.
-///
-/// Returns the number of instructions rewritten.
-pub fn bound_inference(program: &mut IrProgram) -> usize {
+pub fn bound_inference(program: &mut IrProgram) -> BoundInferenceResult {
     // Phase 1: collect proven bounds from RangeCheck instructions.
     // RangeCheck { result, operand, bits } proves that `operand` fits in `bits` bits.
     // We track the tightest (smallest) bound per variable.
@@ -36,11 +43,25 @@ pub fn bound_inference(program: &mut IrProgram) -> usize {
     }
 
     if bounds.is_empty() {
-        return 0;
+        // No range_checks at all — collect all IsLt/IsLe as unbounded
+        let mut unbounded = Vec::new();
+        for inst in &program.instructions {
+            match inst {
+                Instruction::IsLt { result, lhs, rhs } | Instruction::IsLe { result, lhs, rhs } => {
+                    unbounded.push((*result, *lhs, *rhs));
+                }
+                _ => {}
+            }
+        }
+        return BoundInferenceResult {
+            rewritten: 0,
+            unbounded,
+        };
     }
 
     // Phase 2: rewrite IsLt/IsLe to bounded variants when both operands have bounds.
     let mut rewritten = 0;
+    let mut unbounded = Vec::new();
 
     for inst in &mut program.instructions {
         match inst {
@@ -54,6 +75,8 @@ pub fn bound_inference(program: &mut IrProgram) -> usize {
                         bitwidth,
                     };
                     rewritten += 1;
+                } else {
+                    unbounded.push((*result, *lhs, *rhs));
                 }
             }
             Instruction::IsLe { result, lhs, rhs } => {
@@ -66,13 +89,18 @@ pub fn bound_inference(program: &mut IrProgram) -> usize {
                         bitwidth,
                     };
                     rewritten += 1;
+                } else {
+                    unbounded.push((*result, *lhs, *rhs));
                 }
             }
             _ => {}
         }
     }
 
-    rewritten
+    BoundInferenceResult {
+        rewritten,
+        unbounded,
+    }
 }
 
 #[cfg(test)]
@@ -120,8 +148,8 @@ mod tests {
     #[test]
     fn rewrites_islt_when_both_bounded() {
         let mut p = make_program_with_rangecheck_and_islt();
-        let n = bound_inference(&mut p);
-        assert_eq!(n, 1);
+        let result = bound_inference(&mut p);
+        assert_eq!(result.rewritten, 1);
         match &p.instructions[4] {
             Instruction::IsLtBounded {
                 bitwidth, lhs, rhs, ..
@@ -164,8 +192,8 @@ mod tests {
             rhs: b,
         });
 
-        let n = bound_inference(&mut p);
-        assert_eq!(n, 0);
+        let result = bound_inference(&mut p);
+        assert_eq!(result.rewritten, 0);
         assert!(matches!(p.instructions[3], Instruction::IsLt { .. }));
     }
 
@@ -204,8 +232,8 @@ mod tests {
             rhs: b,
         });
 
-        let n = bound_inference(&mut p);
-        assert_eq!(n, 1);
+        let result = bound_inference(&mut p);
+        assert_eq!(result.rewritten, 1);
         match &p.instructions[4] {
             Instruction::IsLtBounded { bitwidth, .. } => {
                 assert_eq!(*bitwidth, 32); // max(8, 32) = 32
@@ -249,8 +277,8 @@ mod tests {
             rhs: b,
         });
 
-        let n = bound_inference(&mut p);
-        assert_eq!(n, 1);
+        let result = bound_inference(&mut p);
+        assert_eq!(result.rewritten, 1);
         match &p.instructions[4] {
             Instruction::IsLeBounded { bitwidth, .. } => {
                 assert_eq!(*bitwidth, 16);
@@ -282,7 +310,7 @@ mod tests {
             rhs: b,
         });
 
-        let n = bound_inference(&mut p);
-        assert_eq!(n, 0);
+        let result = bound_inference(&mut p);
+        assert_eq!(result.rewritten, 0);
     }
 }
