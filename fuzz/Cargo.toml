@@ -1,0 +1,34 @@
+[package]
+name = "achronyme-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+achronyme-parser = { path = "../achronyme-parser" }
+ir = { path = "../ir" }
+compiler = { path = "../compiler" }
+constraints = { path = "../constraints" }
+memory = { path = "../memory" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_parser"
+path = "fuzz_targets/fuzz_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ir_lower"
+path = "fuzz_targets/fuzz_ir_lower.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_r1cs_pipeline"
+path = "fuzz_targets/fuzz_r1cs_pipeline.rs"
+doc = false
