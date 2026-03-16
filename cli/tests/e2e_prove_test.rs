@@ -485,8 +485,8 @@ assert_eq(poseidon(a, b), h)
 #[test]
 fn e2e_plonkish_boolean_logic() {
     // Uses mux (boolean enforcement) and if/else — exercises bool_prop path.
-    // NOTE: range_check is excluded because halo2 PSE doesn't support
-    // simple selectors in lookup arguments during proof generation.
+    // NOTE (resolved in beta.9): range_check now works with halo2 PSE
+    // via lookup_any + fixed columns (no dynamic selector compression).
     let source = r#"
 witness flag
 witness a
@@ -508,5 +508,51 @@ assert_eq(mux(flag, a, b), r)
             assert_eq!(proof["protocol"], "plonk");
         }
         ProveResult::VerifiedOnly => panic!("expected Proof"),
+    }
+}
+
+#[test]
+fn e2e_plonkish_range_check() {
+    // Previously excluded — range_check now works with lookup_any + fixed columns.
+    let source = r#"
+witness x
+range_check(x, 8)
+public out
+assert_eq(x, out)
+"#;
+    let compiler = lower_and_compile_plonkish(source, &[("x", 42), ("out", 42)]);
+    let cache_dir = tempfile::tempdir().unwrap();
+    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+        .expect("range_check KZG proof generation failed");
+    match result {
+        ProveResult::Proof { proof_json, .. } => {
+            let proof: serde_json::Value = serde_json::from_str(&proof_json).unwrap();
+            assert_eq!(proof["protocol"], "plonk");
+        }
+        ProveResult::VerifiedOnly => panic!("expected Proof with range_check"),
+    }
+}
+
+#[test]
+fn e2e_plonkish_islt_bounded() {
+    // IsLtBounded depends on range_check — validates the full D7 optimization with KZG.
+    let source = r#"
+witness a
+witness b
+range_check(a, 8)
+range_check(b, 8)
+public out
+assert_eq(a < b, out)
+"#;
+    let compiler = lower_and_compile_plonkish(source, &[("a", 3), ("b", 5), ("out", 1)]);
+    let cache_dir = tempfile::tempdir().unwrap();
+    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+        .expect("IsLtBounded KZG proof generation failed");
+    match result {
+        ProveResult::Proof { proof_json, .. } => {
+            let proof: serde_json::Value = serde_json::from_str(&proof_json).unwrap();
+            assert_eq!(proof["protocol"], "plonk");
+        }
+        ProveResult::VerifiedOnly => panic!("expected Proof with IsLtBounded"),
     }
 }

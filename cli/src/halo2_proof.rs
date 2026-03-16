@@ -11,7 +11,7 @@ use halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine};
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::plonk::{
     self, create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column as H2Column,
-    ConstraintSystem, Fixed, Instance, Selector, TableColumn, VerifyingKey,
+    ConstraintSystem, Fixed, Instance, Selector, VerifyingKey,
 };
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::kzg::commitment::{KZGCommitmentScheme, ParamsKZG};
@@ -64,7 +64,12 @@ struct CircuitParams {
 #[derive(Clone, Debug)]
 struct AchronymeConfig {
     s_arith: Selector,
-    range_selectors: Vec<Selector>,
+    /// Fixed columns for range lookup selectors (not dynamic Selectors —
+    /// dynamic selectors are compressed by halo2 and break lookup arguments).
+    range_sel_fixed: Vec<H2Column<Fixed>>,
+    /// Fixed columns for range lookup tables (not TableColumn —
+    /// lookup_any requires Expression-based tables).
+    range_table_fixed: Vec<H2Column<Fixed>>,
     col_constant: H2Column<Fixed>,
     col_a: H2Column<Advice>,
     col_b: H2Column<Advice>,
@@ -72,7 +77,6 @@ struct AchronymeConfig {
     col_d: H2Column<Advice>,
     #[allow(dead_code)]
     col_instance: H2Column<Instance>,
-    range_table_cols: Vec<TableColumn>,
 }
 
 // ============================================================================
@@ -122,25 +126,8 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
         let sys = &self.compiler.system;
         let num_rows = self.num_circuit_rows;
 
-        // Assign range lookup tables
-        for (i, &bits) in self.params.range_table_bits.iter().enumerate() {
-            let table_col = config.range_table_cols[i];
-            layouter.assign_table(
-                || format!("range_{bits}"),
-                |mut table| {
-                    let table_size = 1usize << bits;
-                    for row in 0..table_size {
-                        table.assign_cell(
-                            || format!("range_{bits}[{row}]"),
-                            table_col,
-                            row,
-                            || Value::known(Fr::from(row as u64)),
-                        )?;
-                    }
-                    Ok(())
-                },
-            )?;
-        }
+        // Range lookup tables are assigned as fixed columns in the main region
+        // (not via assign_table, since we use lookup_any with fixed columns).
 
         // Single region for the main circuit
         layouter.assign_region(
@@ -164,13 +151,21 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                         config.s_arith.enable(&mut region, row)?;
                     }
 
-                    // Enable per-bit-width range selectors
+                    // Assign range selector fixed columns (1 = active, 0 = inactive)
                     for (i, &bits) in self.params.range_table_bits.iter().enumerate() {
-                        let sel_col = self.compiler.range_selectors[&bits];
-                        let sel_val = sys.assignments.get(sel_col, row);
-                        if !sel_val.is_zero() {
-                            config.range_selectors[i].enable(&mut region, row)?;
-                        }
+                        let sel_fr =
+                            if let Some(&sel_col) = self.compiler.range_selectors.get(&bits) {
+                                let sel_val = sys.assignments.get(sel_col, row);
+                                fe_to_halo2(&sel_val).map_err(|_| plonk::Error::Synthesis)?
+                            } else {
+                                Fr::zero() // empty circuit (keygen)
+                            };
+                        region.assign_fixed(
+                            || format!("range_sel_{bits}[{row}]"),
+                            config.range_sel_fixed[i],
+                            row,
+                            || Value::known(sel_fr),
+                        )?;
                     }
 
                     let const_val = sys.assignments.get(self.compiler.col_constant, row);
@@ -182,6 +177,27 @@ impl Circuit<Fr> for AchronymePlonkishCircuit {
                         || Value::known(const_fr),
                     )?;
                     assigned_constant[row] = Some(fixed_cell.cell());
+                }
+
+                // Assign range table fixed columns.
+                // Each table column contains 0..2^bits-1 at the first 2^bits rows,
+                // and 0 at all remaining rows. The lookup_any argument checks that
+                // (sel * input) is in the multiset of table values.
+                for (i, &bits) in self.params.range_table_bits.iter().enumerate() {
+                    let table_size = 1usize << bits;
+                    for row in 0..num_rows {
+                        let val = if row < table_size {
+                            Fr::from(row as u64)
+                        } else {
+                            Fr::zero()
+                        };
+                        region.assign_fixed(
+                            || format!("range_table_{bits}[{row}]"),
+                            config.range_table_fixed[i],
+                            row,
+                            || Value::known(val),
+                        )?;
+                    }
                 }
 
                 // Assign advice columns
@@ -265,31 +281,41 @@ fn configure_impl(meta: &mut ConstraintSystem<Fr>, params: &CircuitParams) -> Ac
         vec![s * (a * b + c - d)]
     });
 
-    // Range check lookups — one selector per bit-width
-    let mut range_table_cols = Vec::new();
-    let mut range_selectors = Vec::new();
+    // Range check lookups — one fixed selector + one fixed table per bit-width.
+    // Uses lookup_any() with fixed columns (NOT dynamic Selectors) to avoid
+    // the halo2 selector compression bug that breaks lookup arguments.
+    // Pattern from PSE zkEVM-circuits: bilateral multiplication (s*input, s*table).
+    let mut range_sel_fixed = Vec::new();
+    let mut range_table_fixed = Vec::new();
     for &bits in &params.range_table_bits {
-        let table_col = meta.lookup_table_column();
-        range_table_cols.push(table_col);
-        let s_range = meta.selector();
-        range_selectors.push(s_range);
-        meta.lookup(format!("range_{bits}"), |vc| {
-            let s = vc.query_selector(s_range);
-            let a = vc.query_advice(col_a, Rotation::cur());
-            vec![(s * a, table_col)]
+        let sel_col = meta.fixed_column();
+        let table_col = meta.fixed_column();
+        meta.enable_equality(sel_col);
+        meta.enable_equality(table_col);
+        range_sel_fixed.push(sel_col);
+        range_table_fixed.push(table_col);
+
+        meta.lookup_any(format!("range_{bits}"), |vc| {
+            let s = vc.query_fixed(sel_col, Rotation::cur());
+            let input = vc.query_advice(col_a, Rotation::cur());
+            let table = vc.query_fixed(table_col, Rotation::cur());
+            // Unilateral: s * input must be in the table multiset.
+            // When s=0: LHS=0, and 0 is in the table (range starts at 0).
+            // When s=1: LHS=input, must be in {0..2^bits-1}.
+            vec![(s * input, table)]
         });
     }
 
     AchronymeConfig {
         s_arith,
-        range_selectors,
+        range_sel_fixed,
+        range_table_fixed,
         col_constant,
         col_a,
         col_b,
         col_c,
         col_d,
         col_instance,
-        range_table_cols,
     }
 }
 
