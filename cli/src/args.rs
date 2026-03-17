@@ -5,8 +5,12 @@ use clap::{Parser, Subcommand};
 #[command(about = "Achronyme CLI", long_about = None)]
 pub struct Cli {
     /// Diagnostic output format: human (default), json, or short
-    #[arg(long, default_value = "human", global = true)]
-    pub error_format: String,
+    #[arg(long, global = true)]
+    pub error_format: Option<String>,
+
+    /// Do not load achronyme.toml project configuration
+    #[arg(long, global = true)]
+    pub no_config: bool,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -14,10 +18,18 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Initialize a new Achronyme project
+    Init {
+        /// Project name
+        name: String,
+        /// Template: "circuit" (default), "vm", or "prove"
+        #[arg(long, default_value = "circuit")]
+        template: String,
+    },
     /// Run a source file or binary
     Run {
-        /// Path to the file (.ach or .achb)
-        path: String,
+        /// Path to the file (.ach or .achb). If omitted, uses [project].entry from achronyme.toml
+        path: Option<String>,
         /// Force GC on every allocation (Stress Mode)
         #[arg(long)]
         stress_gc: bool,
@@ -25,8 +37,8 @@ pub enum Commands {
         #[arg(long, hide = true)]
         ptau: Option<String>,
         /// Backend for prove {} blocks: "r1cs" (default) or "plonkish"
-        #[arg(long, default_value = "r1cs")]
-        prove_backend: String,
+        #[arg(long)]
+        prove_backend: Option<String>,
         /// Maximum heap size (e.g., "256M", "1G", "512K", or raw bytes)
         #[arg(long)]
         max_heap: Option<String>,
@@ -36,27 +48,27 @@ pub enum Commands {
     },
     /// Disassemble a source file or binary
     Disassemble {
-        /// Path to the file
-        path: String,
+        /// Path to the file. If omitted, uses [project].entry from achronyme.toml
+        path: Option<String>,
     },
     /// Compile a source file to binary
     Compile {
-        /// Input source file
-        path: String,
+        /// Input source file. If omitted, uses [project].entry from achronyme.toml
+        path: Option<String>,
         /// Output binary file (optional)
         #[arg(short, long)]
         output: Option<String>,
     },
     /// Compile a circuit to .r1cs (and optionally generate .wtns)
     Circuit {
-        /// Path to the source file (.ach)
-        path: String,
+        /// Path to the source file (.ach). If omitted, uses [project].entry from achronyme.toml
+        path: Option<String>,
         /// Output .r1cs file path
-        #[arg(long, default_value = "circuit.r1cs")]
-        r1cs: String,
+        #[arg(long)]
+        r1cs: Option<String>,
         /// Output .wtns file path
-        #[arg(long, default_value = "witness.wtns")]
-        wtns: String,
+        #[arg(long)]
+        wtns: Option<String>,
         /// Public input variable names (comma-separated)
         #[arg(long, value_delimiter = ',')]
         public: Vec<String>,
@@ -68,10 +80,10 @@ pub enum Commands {
         inputs: Option<String>,
         /// Disable IR optimization passes
         #[arg(long)]
-        no_optimize: bool,
+        no_optimize: Option<bool>,
         /// Backend: "r1cs" (default) or "plonkish"
-        #[arg(long, default_value = "r1cs")]
-        backend: String,
+        #[arg(long)]
+        backend: Option<String>,
         /// Generate a cryptographic proof (requires --inputs)
         #[arg(long)]
         prove: bool,
