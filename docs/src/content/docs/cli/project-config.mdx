@@ -1,0 +1,157 @@
+---
+title: "Project Configuration"
+description: "achronyme.toml project manifest reference."
+---
+
+Every Achronyme project can have an `achronyme.toml` file at its root. This file configures defaults for CLI commands, eliminating the need to pass flags repeatedly.
+
+## Quick start
+
+```bash
+ach init my-circuit
+cd my-circuit
+ach run              # reads entry from achronyme.toml
+```
+
+## Config resolution
+
+The CLI searches for `achronyme.toml` by walking up from the input file's directory (or the current working directory if no file is specified). The first match is used.
+
+Values are resolved with this precedence:
+
+```
+CLI flags (explicit)  >  achronyme.toml  >  hardcoded defaults
+```
+
+Use `--no-config` to disable `achronyme.toml` loading entirely.
+
+## Full schema
+
+### `[project]` — Project metadata
+
+```toml
+[project]
+name = "my-circuit"           # Required. Must match [a-zA-Z_][a-zA-Z0-9_-]*
+version = "0.1.0"             # Required. Semantic versioning (MAJOR.MINOR.PATCH)
+description = "A ZK circuit"  # Optional
+license = "MIT"               # Optional. SPDX identifier
+authors = ["Alice <a@b.com>"] # Optional
+entry = "src/main.ach"        # Optional. Default entry file for run/compile/circuit/disassemble
+```
+
+When `entry` is set, you can omit the file path from CLI commands:
+
+```bash
+# Instead of:
+ach run src/main.ach
+
+# Just:
+ach run
+```
+
+### `[build]` — Compilation settings
+
+```toml
+[build]
+backend = "r1cs"          # "r1cs" (default) or "plonkish"
+optimize = true           # Enable IR optimization passes (default: true)
+error_format = "human"    # "human" (default), "json", or "short"
+```
+
+| Field | CLI equivalent | Default |
+|-------|----------------|---------|
+| `backend` | `--backend`, `--prove-backend` | `"r1cs"` |
+| `optimize` | `--no-optimize` (inverted) | `true` |
+| `error_format` | `--error-format` | `"human"` |
+
+### `[build.output]` — Output paths
+
+```toml
+[build.output]
+r1cs = "build/circuit.r1cs"      # Default .r1cs output path
+wtns = "build/witness.wtns"      # Default .wtns output path
+binary = "build/{name}.achb"     # Default .achb output path ({name} = project.name)
+solidity = ""                    # If non-empty, generate Solidity verifier
+plonkish_json = ""               # If non-empty, export Plonkish JSON
+```
+
+The `{name}` template variable is replaced with `project.name`.
+
+### `[vm]` — Virtual machine settings
+
+```toml
+[vm]
+max_heap = "256M"     # Maximum heap size (e.g., "256M", "1G", "512K"). Empty = unlimited
+stress_gc = false     # Force GC on every allocation (default: false)
+gc_stats = false      # Print GC statistics after execution (default: false)
+```
+
+| Field | CLI equivalent | Default |
+|-------|----------------|---------|
+| `max_heap` | `--max-heap` | unlimited |
+| `stress_gc` | `--stress-gc` | `false` |
+| `gc_stats` | `--gc-stats` | `false` |
+
+### `[circuit]` — Circuit input declarations
+
+```toml
+[circuit]
+public = ["x", "y"]      # Public input variable names
+witness = ["secret"]      # Witness input variable names
+```
+
+These are equivalent to `--public x,y --witness secret` on the command line. If `--public` or `--witness` are explicitly passed on the CLI, they override these values.
+
+If both the CLI flags and TOML fields are empty, the compiler uses in-source `public` and `witness` declarations.
+
+## Minimal example
+
+```toml
+[project]
+name = "multiply"
+version = "0.1.0"
+
+[build]
+backend = "r1cs"
+```
+
+## Full example
+
+```toml
+[project]
+name = "merkle-prover"
+version = "0.2.0"
+description = "Merkle tree membership proof circuit"
+license = "MIT"
+entry = "src/main.ach"
+
+[build]
+backend = "r1cs"
+optimize = true
+error_format = "human"
+
+[build.output]
+r1cs = "build/circuit.r1cs"
+wtns = "build/witness.wtns"
+solidity = "build/Verifier.sol"
+
+[vm]
+max_heap = "512M"
+
+[circuit]
+public = ["root"]
+witness = ["leaf", "path_elements", "path_indices"]
+```
+
+## Validation
+
+The CLI validates the TOML file on load:
+
+- `project.name` must match `[a-zA-Z_][a-zA-Z0-9_-]*`
+- `project.version` must be valid semver (`MAJOR.MINOR.PATCH`)
+- `build.backend` must be `"r1cs"` or `"plonkish"`
+- `build.error_format` must be `"human"`, `"json"`, or `"short"`
+- `vm.max_heap` must be a valid size string if non-empty
+- `circuit.public` / `circuit.witness` entries must be valid identifiers
+- `project.entry` must end in `.ach` or `.achb`
+- Unknown fields are rejected (forward compatibility via explicit sections)

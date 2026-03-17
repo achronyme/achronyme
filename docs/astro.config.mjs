@@ -84,6 +84,7 @@ export default defineConfig({
 					translations: { es: 'Referencia del CLI' },
 					items: [
 						{ label: 'Commands', slug: 'cli/commands', translations: { es: 'Comandos' } },
+						{ label: 'Project Configuration', slug: 'cli/project-config', translations: { es: 'Configuración del Proyecto' } },
 						{ label: 'Circuit Options', slug: 'cli/circuit-options', translations: { es: 'Opciones de Circuito' } },
 					],
 				},

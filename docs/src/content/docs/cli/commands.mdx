@@ -10,6 +10,48 @@ These flags apply to all subcommands:
 | Flag | Description |
 |------|-------------|
 | `--error-format <fmt>` | Diagnostic output format: `human` (default), `json`, or `short`. See [Diagnostics & Warnings](/language/diagnostics/#output-formats) |
+| `--no-config` | Disable `achronyme.toml` loading. All values come from CLI flags and defaults |
+
+---
+
+## `init` — Create a new project
+
+Scaffolds a new Achronyme project with `achronyme.toml`, source directory, and `.gitignore`.
+
+```bash
+ach init my-circuit
+ach init my-app --template vm
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Project name (must match `[a-zA-Z_][a-zA-Z0-9_-]*`) |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--template <tpl>` | Project template: `circuit` (default), `vm`, or `prove` |
+
+### Templates
+
+- **`circuit`** — A standalone circuit with `public`/`witness` declarations and `assert_eq`
+- **`vm`** — A general-purpose program with `print()`
+- **`prove`** — A mixed program with an inline `prove {}` block
+
+### Generated structure
+
+```
+my-circuit/
+├── achronyme.toml
+├── src/
+│   └── main.ach
+└── .gitignore
+```
+
+See [Project Configuration](/cli/project-config) for the `achronyme.toml` reference.
 
 ---
 
@@ -20,7 +62,10 @@ Runs an Achronyme source file (`.ach`) or compiled binary (`.achb`).
 ```bash
 ach run script.ach
 ach run script.achb
+ach run                # uses [project].entry from achronyme.toml
 ```
+
+If `<path>` is omitted, the CLI resolves the entry file from `[project].entry` in `achronyme.toml`.
 
 ### Flags
 
@@ -37,6 +82,7 @@ ach run script.achb
 ach run hello.ach
 ach run hello.ach --prove-backend plonkish
 ach run hello.ach --max-heap 256M --gc-stats
+ach run                              # from project with achronyme.toml
 ```
 
 ---
@@ -47,6 +93,7 @@ Compiles an Achronyme circuit source file into R1CS/Plonkish constraints and gen
 
 ```bash
 ach circuit circuit.ach --inputs "x=42,y=7"
+ach circuit --inputs "x=42,y=7"    # uses entry from achronyme.toml
 ```
 
 See [Circuit Options](/cli/circuit-options) for all available flags.
@@ -59,13 +106,14 @@ Compiles an Achronyme source file into a binary (`.achb`) that can be run with `
 
 ```bash
 ach compile script.ach --output script.achb
+ach compile --output script.achb   # uses entry from achronyme.toml
 ```
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
-| `--output <path>` | Output file path (required) |
+| `--output <path>` | Output file path (optional — can be set in `[build.output].binary` in `achronyme.toml`) |
 
 ---
 
@@ -75,6 +123,7 @@ Disassembles an Achronyme source file or binary, showing the bytecode instructio
 
 ```bash
 ach disassemble script.ach
+ach disassemble                    # uses entry from achronyme.toml
 ```
 
 ---
