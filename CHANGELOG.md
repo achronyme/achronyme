@@ -1,5 +1,18 @@
 # Achronyme Changelog
 
+## [0.1.0-beta.11] - 2026-03-16
+
+### Features
+
+- **`achronyme.toml` project manifest** — New project configuration file with walk-up directory search. Supports `[project]` (name, version, description, entry_point), `[circuit]` (backend, curve, solidity), and `[output]` (dir, format) sections. Resolution order: CLI flags > TOML > defaults.
+- **`ach init` command** — Interactive project scaffolding that creates `achronyme.toml`, `src/main.ach` with a starter template, and `src/` directory. Detects existing projects and warns before overwriting.
+- **Config resolution pipeline** — `resolve_config()` merges CLI arguments with TOML settings, allowing partial overrides. `find_project_root()` walks up from CWD to find the nearest `achronyme.toml`.
+
+### Documentation
+
+- **Project configuration reference** — New `project-config.mdx` page in docs covering all TOML fields, resolution order, and examples.
+- **CLI commands update** — Updated `commands.mdx` with `ach init` documentation.
+
 ## [0.1.0-beta.10] - 2026-03-16
 
 ### Bug Fix
