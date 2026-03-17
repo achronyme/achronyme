@@ -48,7 +48,7 @@ Source (.ach)
 | `ir` | `ir/` | SSA intermediate representation, lowering, optimization | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering` |
 | `compiler` | `compiler/` | Bytecode compiler + ZK backends | `R1CSCompiler`, `PlonkishCompiler`, `Compiler` |
 | `vm` | `vm/` | Virtual machine execution | `VM` |
-| `cli` | `cli/` | Command-line interface, prove handler | `DefaultProveHandler` |
+| `cli` | `cli/` | Command-line interface, prove handler, project config | `DefaultProveHandler`, `AchronymeToml`, `ProjectConfig` |
 
 ### Dependency Graph
 
@@ -382,3 +382,67 @@ nodes in the AST.
 3. Call it from `optimize()` in `ir/src/passes/mod.rs`
 4. The pass receives the full instruction list and can rewrite, remove, or
    reorder instructions (respecting SSA and side-effect constraints)
+
+## Project Configuration (`achronyme.toml`)
+
+Source: `cli/src/config.rs`, `cli/src/init.rs`
+
+### Schema
+
+```toml
+[project]
+name = "my-circuit"           # Required. [a-zA-Z_][a-zA-Z0-9_-]*
+version = "0.1.0"             # Required. SemVer
+description = ""              # Optional
+license = ""                  # Optional. SPDX identifier
+authors = []                  # Optional
+entry = "src/main.ach"        # Optional. Default entry file
+
+[build]
+backend = "r1cs"              # "r1cs" | "plonkish"
+optimize = true               # Inverse of --no-optimize
+error_format = "human"        # "human" | "json" | "short"
+
+[build.output]
+r1cs = "build/circuit.r1cs"
+wtns = "build/witness.wtns"
+binary = "build/{name}.achb"  # {name} resolved from project.name
+solidity = ""
+plonkish_json = ""
+
+[vm]
+max_heap = ""                 # "256M", "1G", etc.
+stress_gc = false
+gc_stats = false
+
+[circuit]
+public = []                   # ["x", "y"]
+witness = []                  # ["w"]
+```
+
+### Resolution Flow
+
+```
+CLI flags (explicit)  >  achronyme.toml values  >  hardcoded defaults
+```
+
+1. `find_project_toml()` walks up from the input file's directory (or CWD)
+2. `load_toml()` parses + validates (`deny_unknown_fields`)
+3. `resolve_config()` merges `CliOverrides` + `AchronymeToml` + defaults into `ProjectConfig`
+4. `main.rs` dispatches commands using the resolved config
+
+`--no-config` global flag disables toml loading entirely.
+
+### `ach init <name>`
+
+Creates a project scaffold:
+
+```
+<name>/
+├── achronyme.toml
+├── src/
+│   └── main.ach
+└── .gitignore
+```
+
+Templates: `--template circuit` (default), `--template vm`, `--template prove`
