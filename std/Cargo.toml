@@ -13,6 +13,7 @@ io = []
 [dependencies]
 memory = { path = "../memory" }
 vm = { path = "../vm" }
+ach-macros = { path = "../ach-macros" }
 
 [dev-dependencies]
 compiler = { path = "../compiler" }

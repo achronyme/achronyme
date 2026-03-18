@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "ach-macros"
+version = "0.1.0-beta.11"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "achronyme-parser"
 version = "0.1.0-beta.11"
 
@@ -10,6 +19,7 @@ version = "0.1.0-beta.11"
 name = "achronyme-std"
 version = "0.1.0-beta.11"
 dependencies = [
+ "ach-macros",
  "compiler",
  "memory",
  "vm",
@@ -1448,6 +1458,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vm"
 version = "0.1.0-beta.11"
 dependencies = [
+ "ach-macros",
  "byteorder",
  "compiler",
  "constraints",

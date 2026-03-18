@@ -17,3 +17,6 @@ pub mod loader;
 pub mod specs;
 pub mod stdlib;
 pub use loader::LoaderError;
+
+// Re-export proc-macros so downstream crates use `vm::ach_native` / `vm::ach_module`
+pub use ach_macros::{ach_module, ach_native};
