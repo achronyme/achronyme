@@ -1,9 +1,9 @@
 ---
 title: "Native Functions"
-description: "Reference for all 43 built-in native functions."
+description: "Reference for all 59 native functions (43 builtin + 16 standard library)."
 ---
 
-Achronyme provides 43 native functions built into the VM. Some are also available in circuit mode.
+Achronyme provides 59 native functions: 43 built into the VM core, plus 16 from the standard library (`achronyme-std`). All are available as globals — no imports needed. Some are also available in circuit mode.
 
 ## Core
 
@@ -447,6 +447,156 @@ Returns a list of `[a, b]` pairs, truncated to the length of the shorter list.
 zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
 ```
 
+## Standard Library — Type Conversion
+
+### `to_string(val)`
+
+Returns the string representation of any value.
+
+```ach
+to_string(42)        // "42"
+to_string(true)      // "true"
+to_string([1, 2])    // "[1, 2]"
+```
+
+### `parse_int(str)`
+
+Parses a string as an integer. Errors if the string is not a valid number.
+
+```ach
+parse_int("42")      // 42
+parse_int("-7")      // -7
+```
+
+### `to_field(val)`
+
+Converts an Int or hex/decimal String to a FieldElement.
+
+```ach
+to_field(42)                // Field(42)
+to_field("0x2a")            // Field(42)
+```
+
+### `to_int(val)`
+
+Converts a Field, String, or Int to an Int. Field values must fit in 64 bits.
+
+```ach
+to_int("99")         // 99
+```
+
+## Standard Library — Math
+
+### `abs(n)`
+
+Returns the absolute value of an integer.
+
+```ach
+abs(-42)             // 42
+abs(7)               // 7
+```
+
+### `min(a, b)`
+
+Returns the smaller of two integers.
+
+```ach
+min(3, 7)            // 3
+```
+
+### `max(a, b)`
+
+Returns the larger of two integers.
+
+```ach
+max(3, 7)            // 7
+```
+
+### `pow(base, exp)`
+
+Integer exponentiation. Exponent must be non-negative.
+
+```ach
+pow(2, 10)           // 1024
+pow(3, 0)            // 1
+```
+
+## Standard Library — Extended Strings
+
+### `starts_with(str, prefix)`
+
+Returns `true` if the string starts with the given prefix.
+
+```ach
+starts_with("hello", "hel")   // true
+starts_with("hello", "world") // false
+```
+
+### `ends_with(str, suffix)`
+
+Returns `true` if the string ends with the given suffix.
+
+```ach
+ends_with("hello", "llo")     // true
+```
+
+### `contains(str, substr)`
+
+Returns `true` if the string contains the substring.
+
+```ach
+contains("hello world", "world")  // true
+```
+
+### `join(list, separator)`
+
+Joins a list of strings with the given separator.
+
+```ach
+join(["a", "b", "c"], "-")   // "a-b-c"
+join(["hello"], " ")          // "hello"
+```
+
+### `repeat(str, n)`
+
+Repeats a string `n` times. Maximum result size is 10 MB.
+
+```ach
+repeat("ab", 3)      // "ababab"
+repeat("x", 5)       // "xxxxx"
+```
+
+## Standard Library — I/O
+
+:::note
+I/O functions are only available when the `io` feature is enabled (default).
+:::
+
+### `read_line()`
+
+Reads a line from standard input (trailing newline stripped).
+
+```ach
+let name = read_line()
+print("Hello", name)
+```
+
+### `read_file(path)`
+
+Reads the entire contents of a file as a string. Maximum file size is 100 MB.
+
+```ach
+let config = read_file("config.txt")
+```
+
+### `write_file(path, contents)`
+
+Writes a string to a file, creating or overwriting it.
+
+```ach
+write_file("output.txt", "Hello, world!")
+```
+
 ## Summary Table
 
 | # | Function | Arity | Mode | Returns |
@@ -494,3 +644,20 @@ zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
 | 40 | `sort(list, fn)` | 2 | VM | list |
 | 41 | `flat_map(list, fn)` | 2 | VM | list |
 | 42 | `zip(list1, list2)` | 2 | VM | list |
+| | **Standard Library** | | | |
+| 43 | `to_string(val)` | 1 | VM | string |
+| 44 | `parse_int(str)` | 1 | VM | int |
+| 45 | `to_field(val)` | 1 | VM | field |
+| 46 | `to_int(val)` | 1 | VM | int |
+| 47 | `abs(n)` | 1 | VM | int |
+| 48 | `min(a, b)` | 2 | VM | int |
+| 49 | `max(a, b)` | 2 | VM | int |
+| 50 | `pow(base, exp)` | 2 | VM | int |
+| 51 | `starts_with(s, prefix)` | 2 | VM | bool |
+| 52 | `ends_with(s, suffix)` | 2 | VM | bool |
+| 53 | `contains(s, substr)` | 2 | VM | bool |
+| 54 | `join(list, sep)` | 2 | VM | string |
+| 55 | `repeat(s, n)` | 2 | VM | string |
+| 56 | `read_line()` | 0 | VM | string |
+| 57 | `read_file(path)` | 1 | VM | string |
+| 58 | `write_file(path, data)` | 2 | VM | nil |

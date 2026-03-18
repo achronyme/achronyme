@@ -1,9 +1,9 @@
 ---
 title: "Funciones Nativas"
-description: "Referencia de las 43 funciones nativas integradas."
+description: "Referencia de las 59 funciones nativas (43 integradas + 16 biblioteca estándar)."
 ---
 
-Achronyme proporciona 43 funciones nativas integradas en la VM. Algunas también están disponibles en modo circuito.
+Achronyme proporciona 59 funciones nativas: 43 integradas en el núcleo de la VM, más 16 de la biblioteca estándar (`achronyme-std`). Todas están disponibles como globales — no necesitan importarse. Algunas también están disponibles en modo circuito.
 
 ## Núcleo
 
@@ -447,6 +447,156 @@ Devuelve una lista de pares `[a, b]`, truncada a la longitud de la lista más co
 zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
 ```
 
+## Biblioteca Estándar — Conversión de Tipos
+
+### `to_string(val)`
+
+Devuelve la representación en string de cualquier valor.
+
+```ach
+to_string(42)        // "42"
+to_string(true)      // "true"
+to_string([1, 2])    // "[1, 2]"
+```
+
+### `parse_int(str)`
+
+Parsea un string como entero. Error si el string no es un número válido.
+
+```ach
+parse_int("42")      // 42
+parse_int("-7")      // -7
+```
+
+### `to_field(val)`
+
+Convierte un Int o String hex/decimal a FieldElement.
+
+```ach
+to_field(42)                // Field(42)
+to_field("0x2a")            // Field(42)
+```
+
+### `to_int(val)`
+
+Convierte un Field, String o Int a Int. Los valores Field deben caber en 64 bits.
+
+```ach
+to_int("99")         // 99
+```
+
+## Biblioteca Estándar — Matemáticas
+
+### `abs(n)`
+
+Devuelve el valor absoluto de un entero.
+
+```ach
+abs(-42)             // 42
+abs(7)               // 7
+```
+
+### `min(a, b)`
+
+Devuelve el menor de dos enteros.
+
+```ach
+min(3, 7)            // 3
+```
+
+### `max(a, b)`
+
+Devuelve el mayor de dos enteros.
+
+```ach
+max(3, 7)            // 7
+```
+
+### `pow(base, exp)`
+
+Exponenciación entera. El exponente debe ser no negativo.
+
+```ach
+pow(2, 10)           // 1024
+pow(3, 0)            // 1
+```
+
+## Biblioteca Estándar — Strings Extendidos
+
+### `starts_with(str, prefijo)`
+
+Devuelve `true` si el string comienza con el prefijo dado.
+
+```ach
+starts_with("hola", "hol")    // true
+starts_with("hola", "mundo")  // false
+```
+
+### `ends_with(str, sufijo)`
+
+Devuelve `true` si el string termina con el sufijo dado.
+
+```ach
+ends_with("hola", "ola")      // true
+```
+
+### `contains(str, substr)`
+
+Devuelve `true` si el string contiene la subcadena.
+
+```ach
+contains("hola mundo", "mundo")  // true
+```
+
+### `join(lista, separador)`
+
+Une una lista de strings con el separador dado.
+
+```ach
+join(["a", "b", "c"], "-")   // "a-b-c"
+join(["hola"], " ")           // "hola"
+```
+
+### `repeat(str, n)`
+
+Repite un string `n` veces. Tamaño máximo del resultado: 10 MB.
+
+```ach
+repeat("ab", 3)      // "ababab"
+repeat("x", 5)       // "xxxxx"
+```
+
+## Biblioteca Estándar — E/S
+
+:::note
+Las funciones de E/S solo están disponibles cuando la feature `io` está habilitada (por defecto).
+:::
+
+### `read_line()`
+
+Lee una línea de la entrada estándar (sin salto de línea final).
+
+```ach
+let nombre = read_line()
+print("Hola", nombre)
+```
+
+### `read_file(ruta)`
+
+Lee el contenido completo de un archivo como string. Tamaño máximo: 100 MB.
+
+```ach
+let config = read_file("config.txt")
+```
+
+### `write_file(ruta, contenido)`
+
+Escribe un string a un archivo, creándolo o sobrescribiéndolo.
+
+```ach
+write_file("salida.txt", "¡Hola, mundo!")
+```
+
 ## Tabla Resumen
 
 | # | Función | Aridad | Modo | Devuelve |
@@ -494,3 +644,20 @@ zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
 | 40 | `sort(lista, fn)` | 2 | VM | lista |
 | 41 | `flat_map(lista, fn)` | 2 | VM | lista |
 | 42 | `zip(lista1, lista2)` | 2 | VM | lista |
+| | **Biblioteca Estándar** | | | |
+| 43 | `to_string(val)` | 1 | VM | string |
+| 44 | `parse_int(str)` | 1 | VM | int |
+| 45 | `to_field(val)` | 1 | VM | field |
+| 46 | `to_int(val)` | 1 | VM | int |
+| 47 | `abs(n)` | 1 | VM | int |
+| 48 | `min(a, b)` | 2 | VM | int |
+| 49 | `max(a, b)` | 2 | VM | int |
+| 50 | `pow(base, exp)` | 2 | VM | int |
+| 51 | `starts_with(s, prefijo)` | 2 | VM | bool |
+| 52 | `ends_with(s, sufijo)` | 2 | VM | bool |
+| 53 | `contains(s, substr)` | 2 | VM | bool |
+| 54 | `join(lista, sep)` | 2 | VM | string |
+| 55 | `repeat(s, n)` | 2 | VM | string |
+| 56 | `read_line()` | 0 | VM | string |
+| 57 | `read_file(ruta)` | 1 | VM | string |
+| 58 | `write_file(ruta, datos)` | 2 | VM | nil |
