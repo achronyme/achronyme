@@ -1,5 +1,44 @@
 # Achronyme Changelog
 
+## [0.1.0-beta.12] - 2026-03-18
+
+### Features
+
+- **NativeModule trait** — Modular native function registration system. Each stdlib group (core, string, bigint, collections) implements `NativeModule`, replacing the monolithic 43-arm match in `bootstrap_natives()`. External modules can implement the same trait.
+- **`achronyme-std` crate** — New standard library crate (9th workspace member) with 16 new native functions:
+  - **Type conversion:** `to_string`, `parse_int`, `to_field`, `to_int`
+  - **Math utilities:** `abs`, `min`, `max`, `pow`
+  - **Extended strings:** `starts_with`, `ends_with`, `contains`, `join`, `repeat`
+  - **I/O (feature-gated):** `read_line`, `read_file`, `write_file`
+- **`VM::register_module()`** — Register external NativeModule implementations after VM bootstrap.
+- **`Compiler::with_extra_natives()`** — Extend compiler's symbol table with additional native functions.
+- **`#[ach_native]` proc-macro** — Attribute macro that transforms regular Rust functions into `NativeFn` wrappers with automatic arity checks, `FromValue` argument extraction, and `IntoValue` return wrapping.
+- **`#[ach_module]` proc-macro** — Attribute macro that generates `NativeModule` trait implementations from annotated modules.
+- **`FromValue` / `IntoValue` traits** — Type-safe conversion between VM `Value` and Rust types (`i64`, `bool`, `Value`, `()`).
+
+### Hardening
+
+- `repeat()`: maximum result size capped at 10 MB
+- `pow()`: exponent validated ≤ u32::MAX before cast
+- `read_file()`: maximum file size capped at 100 MB
+- Compiler asserts no name collision between builtin and extra natives
+- VM bootstrap asserts module name uniqueness
+- `#[ach_module]` macro: proper negative arity parsing, `Debug`/`Clone`/`Copy` derives on generated structs
+
+### Refactoring
+
+- All 8 native modules (4 VM + 4 std) migrated to `#[ach_module]` + `#[ach_native]` macros — net reduction of 292 lines of registration boilerplate.
+- `NATIVE_TABLE` reordered to group by module (core → string → bigint → collections).
+
+### New Crates
+
+- `achronyme-std` — Standard library natives (16 functions, feature-gated I/O)
+- `ach-macros` — Proc-macros for native function registration
+
+### Documentation
+
+- Native functions reference updated from 43 to 59 entries (EN + ES)
+
 ## [0.1.0-beta.11] - 2026-03-16
 
 ### Features
