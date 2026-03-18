@@ -7,6 +7,15 @@ name = "achronyme-parser"
 version = "0.1.0-beta.11"
 
 [[package]]
+name = "achronyme-std"
+version = "0.1.0-beta.11"
+dependencies = [
+ "compiler",
+ "memory",
+ "vm",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -436,6 +445,7 @@ name = "cli"
 version = "0.1.0-beta.11"
 dependencies = [
  "achronyme-parser",
+ "achronyme-std",
  "anyhow",
  "ark-bn254",
  "ark-ec",

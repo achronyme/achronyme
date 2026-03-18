@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use compiler::Compiler;
 use std::fs;
 use vm::opcode::{instruction::*, OpCode};
 
@@ -218,7 +217,7 @@ fn disassemble_prove_blocks(prove_blocks: &[(String, usize)]) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn disassemble_vm(path: &str, source: &str, error_format: ErrorFormat) -> Result<()> {
-    let mut compiler = Compiler::new();
+    let mut compiler = super::new_compiler();
     let bytecode = compiler.compile(source).map_err(|e| {
         let rendered = super::render_compile_error(&e, source, error_format);
         anyhow::anyhow!("{rendered}")

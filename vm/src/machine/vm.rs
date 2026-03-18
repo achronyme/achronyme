@@ -95,6 +95,19 @@ impl VM {
         vm
     }
 
+    /// Register an external `NativeModule` after bootstrap.
+    ///
+    /// Used by the CLI to add stdlib modules (`achronyme-std`) whose
+    /// indices continue after the builtins. The compiler must have been
+    /// initialized with the same extra natives via `with_extra_natives()`
+    /// so that global indices align.
+    pub fn register_module(&mut self, module: &dyn crate::module::NativeModule) {
+        use crate::machine::native::NativeRegistry;
+        for def in module.natives() {
+            self.define_native(def.name, def.func, def.arity);
+        }
+    }
+
     /// Invoke a callable Value (Closure or Native) with the given arguments.
     ///
     /// Used by higher-order native functions (map, filter, reduce, etc.) to

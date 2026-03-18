@@ -5,6 +5,19 @@ pub mod run;
 
 use compiler::{ColorMode, Compiler, CompilerError, Diagnostic, DiagnosticRenderer};
 
+/// Create a compiler with std natives pre-registered.
+pub fn new_compiler() -> Compiler {
+    let std_table = achronyme_std::std_native_table();
+    Compiler::with_extra_natives(&std_table)
+}
+
+/// Register std modules on a VM (call after `VM::new()`).
+pub fn register_std_modules(vm: &mut vm::VM) {
+    for module in achronyme_std::std_modules() {
+        vm.register_module(&*module);
+    }
+}
+
 /// Output format for compiler diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorFormat {

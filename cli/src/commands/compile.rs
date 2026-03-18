@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use compiler::Compiler;
 use std::fs;
 use vm::specs::{SER_TAG_BIGINT, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
 
@@ -7,7 +6,7 @@ use super::ErrorFormat;
 
 pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
-    let mut compiler = Compiler::new();
+    let mut compiler = super::new_compiler();
     let bytecode = compiler.compile(&content).map_err(|e| {
         let rendered = super::render_compile_error(&e, &content, error_format);
         anyhow::anyhow!("{rendered}")

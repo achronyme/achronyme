@@ -7,6 +7,7 @@ members = [
     "achronyme-parser",
     "cli",
     "ir",
+    "std",
 ]
 resolver = "2"
 

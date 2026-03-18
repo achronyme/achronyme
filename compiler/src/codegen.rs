@@ -51,7 +51,7 @@ pub struct Compiler {
     pub warnings: Vec<Diagnostic>,
 }
 
-use vm::specs::{NATIVE_TABLE, USER_GLOBAL_START};
+use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
 
 impl Default for Compiler {
     fn default() -> Self {
@@ -61,14 +61,29 @@ impl Default for Compiler {
 
 impl Compiler {
     pub fn new() -> Self {
+        Self::with_extra_natives(&[])
+    }
+
+    /// Create a compiler with additional native functions beyond the builtins.
+    ///
+    /// `extra` entries are appended after `NATIVE_TABLE` — their indices
+    /// continue from `USER_GLOBAL_START`.  The VM must register the same
+    /// modules in the same order via `VM::register_module()`.
+    pub fn with_extra_natives(extra: &[NativeMeta]) -> Self {
         let mut global_symbols = HashMap::new();
 
-        // Pre-populate Natives from SSOT
+        // Pre-populate builtins from SSOT
         for (index, meta) in NATIVE_TABLE.iter().enumerate() {
             global_symbols.insert(meta.name.to_string(), index as u16);
         }
 
-        let next_global_idx = USER_GLOBAL_START;
+        // Append extra natives (stdlib, user modules, etc.)
+        for (i, meta) in extra.iter().enumerate() {
+            let index = NATIVE_TABLE.len() + i;
+            global_symbols.insert(meta.name.to_string(), index as u16);
+        }
+
+        let next_global_idx = (NATIVE_TABLE.len() + extra.len()) as u16;
 
         // Start with a "main" function compiler (arity=0 for top-level script)
         let main_compiler = FunctionCompiler::new("main".to_string(), 0);

@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use compiler::Compiler;
 use memory::Function;
 use std::fs;
 use vm::{CallFrame, ValueOps, VM};
@@ -31,6 +30,7 @@ pub fn run_file(
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
 
         let mut vm = VM::new();
+        super::register_std_modules(&mut vm);
         vm.stress_mode = stress_gc;
         if let Some(limit_str) = max_heap {
             let limit = parse_size(limit_str).ok_or_else(|| {
@@ -61,7 +61,7 @@ pub fn run_file(
         Ok(())
     } else {
         let content = fs::read_to_string(path).context("Failed to source file")?;
-        let mut compiler = Compiler::new();
+        let mut compiler = super::new_compiler();
         let source_path = std::path::Path::new(path);
         compiler.base_path = Some(
             source_path
@@ -81,6 +81,7 @@ pub fn run_file(
         super::print_warnings(&mut compiler, &content, error_format);
 
         let mut vm = VM::new();
+        super::register_std_modules(&mut vm);
         vm.stress_mode = stress_gc;
         if let Some(limit_str) = max_heap {
             let limit = parse_size(limit_str).ok_or_else(|| {

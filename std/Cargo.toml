@@ -1,0 +1,18 @@
+[package]
+name = "achronyme-std"
+description = "Standard library modules for the Achronyme VM"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["io"]
+io = []
+
+[dependencies]
+memory = { path = "../memory" }
+vm = { path = "../vm" }
+
+[dev-dependencies]
+compiler = { path = "../compiler" }
