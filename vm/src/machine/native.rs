@@ -1,4 +1,5 @@
 use crate::globals::GlobalEntry;
+use crate::module::builtin_modules;
 use crate::native::{NativeFn, NativeObj};
 use memory::Value;
 
@@ -44,60 +45,37 @@ impl NativeRegistry for super::vm::VM {
             panic!("VM must be empty before bootstrapping natives");
         }
 
-        for meta in NATIVE_TABLE {
-            // Match the name to the actual Rust function pointer
-            let func_ptr = match meta.name {
-                "print" => crate::stdlib::core::native_print,
-                "len" => crate::stdlib::core::native_len,
-                "typeof" => crate::stdlib::core::native_typeof,
-                "assert" => crate::stdlib::core::native_assert,
-                "time" => crate::stdlib::core::native_time,
-                "push" => crate::stdlib::core::native_push,
-                "pop" => crate::stdlib::core::native_pop,
-                "keys" => crate::stdlib::core::native_keys,
-                "proof_json" => crate::stdlib::core::native_proof_json,
-                "proof_public" => crate::stdlib::core::native_proof_public,
-                "proof_vkey" => crate::stdlib::core::native_proof_vkey,
-                "substring" => crate::stdlib::string::native_substring,
-                "index_of" => crate::stdlib::string::native_index_of,
-                "split" => crate::stdlib::string::native_split,
-                "trim" => crate::stdlib::string::native_trim,
-                "replace" => crate::stdlib::string::native_replace,
-                "to_upper" => crate::stdlib::string::native_to_upper,
-                "to_lower" => crate::stdlib::string::native_to_lower,
-                "chars" => crate::stdlib::string::native_chars,
-                "poseidon" => crate::stdlib::core::native_poseidon,
-                "poseidon_many" => crate::stdlib::core::native_poseidon_many,
-                "verify_proof" => crate::stdlib::core::native_verify_proof,
-                "bigint256" => crate::stdlib::bigint::native_bigint256,
-                "bigint512" => crate::stdlib::bigint::native_bigint512,
-                "to_bits" => crate::stdlib::bigint::native_to_bits,
-                "from_bits" => crate::stdlib::bigint::native_from_bits,
-                "bit_and" => crate::stdlib::bigint::native_bit_and,
-                "bit_or" => crate::stdlib::bigint::native_bit_or,
-                "bit_xor" => crate::stdlib::bigint::native_bit_xor,
-                "bit_not" => crate::stdlib::bigint::native_bit_not,
-                "bit_shl" => crate::stdlib::bigint::native_bit_shl,
-                "bit_shr" => crate::stdlib::bigint::native_bit_shr,
-                "gc_stats" => crate::stdlib::core::native_gc_stats,
-                // Higher-order collections
-                "map" => crate::stdlib::collections::native_map,
-                "filter" => crate::stdlib::collections::native_filter,
-                "reduce" => crate::stdlib::collections::native_reduce,
-                "for_each" => crate::stdlib::collections::native_for_each,
-                "find" => crate::stdlib::collections::native_find,
-                "any" => crate::stdlib::collections::native_any,
-                "all" => crate::stdlib::collections::native_all,
-                "sort" => crate::stdlib::collections::native_sort,
-                "flat_map" => crate::stdlib::collections::native_flat_map,
-                "zip" => crate::stdlib::collections::native_zip,
-                _ => panic!("VM Implementation missing for native: {}", meta.name),
-            };
+        // Collect all native definitions from modules
+        let modules = builtin_modules();
+        let mut all_defs = Vec::with_capacity(NATIVE_TABLE.len());
+        for module in &modules {
+            all_defs.extend(module.natives());
+        }
 
-            // Call internal define logic
-            // IMPORTANT: This creates the GlobalEntry.
-            // Since we iterate NATIVE_TABLE in order, 'print' will be pushed at index 0, matching the compiler.
-            self.define_native(meta.name, func_ptr, meta.arity);
+        // Validate alignment with NATIVE_TABLE (compiler SSOT)
+        assert_eq!(
+            all_defs.len(),
+            NATIVE_TABLE.len(),
+            "NativeModule definitions ({}) != NATIVE_TABLE length ({})",
+            all_defs.len(),
+            NATIVE_TABLE.len(),
+        );
+        for (i, (def, meta)) in all_defs.iter().zip(NATIVE_TABLE.iter()).enumerate() {
+            assert_eq!(
+                def.name, meta.name,
+                "Native index {i}: module says '{}' but NATIVE_TABLE says '{}'",
+                def.name, meta.name,
+            );
+            assert_eq!(
+                def.arity, meta.arity,
+                "Native '{}' arity mismatch: module={} vs table={}",
+                def.name, def.arity, meta.arity,
+            );
+        }
+
+        // Register all natives in order
+        for def in &all_defs {
+            self.define_native(def.name, def.func, def.arity);
         }
     }
 }
@@ -122,6 +100,45 @@ mod tests {
         // Check integrity of all natives
         for (i, _meta) in NATIVE_TABLE.iter().enumerate() {
             assert!(vm.globals[i].value.is_native());
+        }
+    }
+
+    #[test]
+    fn test_module_names_match_table() {
+        let modules = builtin_modules();
+        let mut all_names: Vec<&str> = Vec::new();
+        for module in &modules {
+            for def in module.natives() {
+                all_names.push(def.name);
+            }
+        }
+
+        assert_eq!(all_names.len(), NATIVE_TABLE.len());
+        for (i, (name, meta)) in all_names.iter().zip(NATIVE_TABLE.iter()).enumerate() {
+            assert_eq!(
+                *name, meta.name,
+                "Mismatch at index {i}: module='{}' vs table='{}'",
+                name, meta.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_each_module_has_natives() {
+        let modules = builtin_modules();
+        assert_eq!(modules.len(), 4);
+        assert_eq!(modules[0].name(), "core");
+        assert_eq!(modules[1].name(), "string");
+        assert_eq!(modules[2].name(), "bigint");
+        assert_eq!(modules[3].name(), "collections");
+
+        // Verify each module contributes at least one native
+        for module in &modules {
+            assert!(
+                !module.natives().is_empty(),
+                "Module '{}' has no natives",
+                module.name()
+            );
         }
     }
 }

@@ -1,6 +1,70 @@
 use crate::error::RuntimeError;
 use crate::machine::VM;
+use crate::module::{NativeDef, NativeModule};
 use memory::Value;
+
+pub struct CollectionsModule;
+
+impl NativeModule for CollectionsModule {
+    fn name(&self) -> &'static str {
+        "collections"
+    }
+
+    fn natives(&self) -> Vec<NativeDef> {
+        vec![
+            NativeDef {
+                name: "map",
+                func: native_map,
+                arity: 2,
+            },
+            NativeDef {
+                name: "filter",
+                func: native_filter,
+                arity: 2,
+            },
+            NativeDef {
+                name: "reduce",
+                func: native_reduce,
+                arity: 3,
+            },
+            NativeDef {
+                name: "for_each",
+                func: native_for_each,
+                arity: 2,
+            },
+            NativeDef {
+                name: "find",
+                func: native_find,
+                arity: 2,
+            },
+            NativeDef {
+                name: "any",
+                func: native_any,
+                arity: 2,
+            },
+            NativeDef {
+                name: "all",
+                func: native_all,
+                arity: 2,
+            },
+            NativeDef {
+                name: "sort",
+                func: native_sort,
+                arity: 2,
+            },
+            NativeDef {
+                name: "flat_map",
+                func: native_flat_map,
+                arity: 2,
+            },
+            NativeDef {
+                name: "zip",
+                func: native_zip,
+                arity: 2,
+            },
+        ]
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

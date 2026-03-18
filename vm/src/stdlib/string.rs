@@ -1,6 +1,60 @@
 use crate::error::RuntimeError;
 use crate::machine::VM;
+use crate::module::{NativeDef, NativeModule};
 use memory::Value;
+
+pub struct StringModule;
+
+impl NativeModule for StringModule {
+    fn name(&self) -> &'static str {
+        "string"
+    }
+
+    fn natives(&self) -> Vec<NativeDef> {
+        vec![
+            NativeDef {
+                name: "substring",
+                func: native_substring,
+                arity: 3,
+            },
+            NativeDef {
+                name: "index_of",
+                func: native_index_of,
+                arity: 2,
+            },
+            NativeDef {
+                name: "split",
+                func: native_split,
+                arity: 2,
+            },
+            NativeDef {
+                name: "trim",
+                func: native_trim,
+                arity: 1,
+            },
+            NativeDef {
+                name: "replace",
+                func: native_replace,
+                arity: 3,
+            },
+            NativeDef {
+                name: "to_upper",
+                func: native_to_upper,
+                arity: 1,
+            },
+            NativeDef {
+                name: "to_lower",
+                func: native_to_lower,
+                arity: 1,
+            },
+            NativeDef {
+                name: "chars",
+                func: native_chars,
+                arity: 1,
+            },
+        ]
+    }
+}
 
 pub fn native_substring(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {

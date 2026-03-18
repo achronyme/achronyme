@@ -1,8 +1,97 @@
 use crate::error::RuntimeError;
 use crate::machine::value_ops::ValueOps;
 use crate::machine::VM;
+use crate::module::{NativeDef, NativeModule};
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use memory::{FieldElement, Value};
+
+pub struct CoreModule;
+
+impl NativeModule for CoreModule {
+    fn name(&self) -> &'static str {
+        "core"
+    }
+
+    fn natives(&self) -> Vec<NativeDef> {
+        vec![
+            NativeDef {
+                name: "print",
+                func: native_print,
+                arity: -1,
+            },
+            NativeDef {
+                name: "len",
+                func: native_len,
+                arity: 1,
+            },
+            NativeDef {
+                name: "typeof",
+                func: native_typeof,
+                arity: 1,
+            },
+            NativeDef {
+                name: "assert",
+                func: native_assert,
+                arity: 1,
+            },
+            NativeDef {
+                name: "time",
+                func: native_time,
+                arity: 0,
+            },
+            NativeDef {
+                name: "push",
+                func: native_push,
+                arity: 2,
+            },
+            NativeDef {
+                name: "pop",
+                func: native_pop,
+                arity: 1,
+            },
+            NativeDef {
+                name: "keys",
+                func: native_keys,
+                arity: 1,
+            },
+            NativeDef {
+                name: "proof_json",
+                func: native_proof_json,
+                arity: 1,
+            },
+            NativeDef {
+                name: "proof_public",
+                func: native_proof_public,
+                arity: 1,
+            },
+            NativeDef {
+                name: "proof_vkey",
+                func: native_proof_vkey,
+                arity: 1,
+            },
+            NativeDef {
+                name: "poseidon",
+                func: native_poseidon,
+                arity: 2,
+            },
+            NativeDef {
+                name: "poseidon_many",
+                func: native_poseidon_many,
+                arity: -1,
+            },
+            NativeDef {
+                name: "verify_proof",
+                func: native_verify_proof,
+                arity: 1,
+            },
+            NativeDef {
+                name: "gc_stats",
+                func: native_gc_stats,
+                arity: 0,
+            },
+        ]
+    }
+}
 
 /// Extract a FieldElement from a VM Value (Int or Field).
 fn extract_fe(vm: &VM, val: &Value) -> Result<FieldElement, RuntimeError> {

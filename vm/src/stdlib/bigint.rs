@@ -1,6 +1,70 @@
 use crate::error::RuntimeError;
 use crate::machine::VM;
+use crate::module::{NativeDef, NativeModule};
 use memory::{BigInt, BigIntWidth, Value, TAG_BIGINT};
+
+pub struct BigIntModule;
+
+impl NativeModule for BigIntModule {
+    fn name(&self) -> &'static str {
+        "bigint"
+    }
+
+    fn natives(&self) -> Vec<NativeDef> {
+        vec![
+            NativeDef {
+                name: "bigint256",
+                func: native_bigint256,
+                arity: 1,
+            },
+            NativeDef {
+                name: "bigint512",
+                func: native_bigint512,
+                arity: 1,
+            },
+            NativeDef {
+                name: "to_bits",
+                func: native_to_bits,
+                arity: 1,
+            },
+            NativeDef {
+                name: "from_bits",
+                func: native_from_bits,
+                arity: 2,
+            },
+            NativeDef {
+                name: "bit_and",
+                func: native_bit_and,
+                arity: 2,
+            },
+            NativeDef {
+                name: "bit_or",
+                func: native_bit_or,
+                arity: 2,
+            },
+            NativeDef {
+                name: "bit_xor",
+                func: native_bit_xor,
+                arity: 2,
+            },
+            NativeDef {
+                name: "bit_not",
+                func: native_bit_not,
+                arity: 1,
+            },
+            NativeDef {
+                name: "bit_shl",
+                func: native_bit_shl,
+                arity: 2,
+            },
+            NativeDef {
+                name: "bit_shr",
+                func: native_bit_shr,
+                arity: 2,
+            },
+        ]
+    }
+}
 
 fn extract_bigint<'a>(vm: &'a VM, val: &Value) -> Result<&'a BigInt, RuntimeError> {
     if val.tag() != TAG_BIGINT {
