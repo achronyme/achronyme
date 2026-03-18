@@ -60,9 +60,15 @@ fn extract_native_attr(attrs: &[syn::Attribute]) -> Option<(String, i64)> {
                     }
                 } else if meta.path.is_ident("arity") {
                     let value = meta.value()?;
-                    let lit: Lit = value.parse()?;
-                    if let Lit::Int(n) = lit {
-                        arity = Some(n.base10_parse::<i64>().unwrap_or(0));
+                    // Handle negative arity (e.g., -1 for variadic)
+                    let lookahead = value.lookahead1();
+                    if lookahead.peek(syn::Token![-]) {
+                        let _: syn::Token![-] = value.parse()?;
+                        let lit: syn::LitInt = value.parse()?;
+                        arity = Some(-(lit.base10_parse::<i64>()?));
+                    } else {
+                        let lit: syn::LitInt = value.parse()?;
+                        arity = Some(lit.base10_parse::<i64>()?);
                     }
                 }
                 Ok(())
@@ -134,6 +140,7 @@ pub fn ach_module_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     Ok(quote! {
         #module
 
+        #[derive(Debug, Clone, Copy)]
         #mod_vis struct #struct_name;
 
         impl ::vm::module::NativeModule for #struct_name {

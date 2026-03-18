@@ -80,6 +80,11 @@ impl Compiler {
         // Append extra natives (stdlib, user modules, etc.)
         for (i, meta) in extra.iter().enumerate() {
             let index = NATIVE_TABLE.len() + i;
+            assert!(
+                !global_symbols.contains_key(meta.name),
+                "Native name collision: '{}' already defined as builtin",
+                meta.name,
+            );
             global_symbols.insert(meta.name.to_string(), index as u16);
         }
 

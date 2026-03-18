@@ -47,6 +47,19 @@ impl NativeRegistry for super::vm::VM {
 
         // Collect all native definitions from modules
         let modules = builtin_modules();
+
+        // Validate module name uniqueness
+        {
+            let mut seen = std::collections::HashSet::new();
+            for module in &modules {
+                assert!(
+                    seen.insert(module.name()),
+                    "Duplicate builtin module name: '{}'",
+                    module.name()
+                );
+            }
+        }
+
         let mut all_defs = Vec::with_capacity(NATIVE_TABLE.len());
         for module in &modules {
             all_defs.extend(module.natives());

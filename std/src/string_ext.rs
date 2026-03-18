@@ -118,12 +118,15 @@ pub fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         .ok_or(RuntimeError::SystemError("List missing".into()))?
         .clone();
 
-    let mut parts = Vec::with_capacity(list.len());
-    for val in &list {
+    let mut result = String::new();
+    for (i, val) in list.iter().enumerate() {
         if !val.is_string() {
             return Err(RuntimeError::TypeMismatch(
                 "join() list must contain only Strings".into(),
             ));
+        }
+        if i > 0 {
+            result.push_str(&sep);
         }
         let h = val
             .as_handle()
@@ -132,10 +135,8 @@ pub fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             .heap
             .get_string(h)
             .ok_or(RuntimeError::SystemError("String missing".into()))?;
-        parts.push(s.clone());
+        result.push_str(s);
     }
-
-    let result = parts.join(&sep);
     let handle = vm.heap.alloc_string(result);
     Ok(Value::string(handle))
 }
@@ -154,6 +155,12 @@ pub fn native_repeat(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     if n < 0 {
         return Err(RuntimeError::TypeMismatch(
             "repeat() count must be non-negative".into(),
+        ));
+    }
+    let total_len = s.len().saturating_mul(n as usize);
+    if total_len > 10_000_000 {
+        return Err(RuntimeError::SystemError(
+            "repeat() result exceeds 10MB limit".into(),
         ));
     }
     let result = s.repeat(n as usize);

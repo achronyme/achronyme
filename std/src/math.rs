@@ -33,6 +33,11 @@ pub mod math_impl {
                 "pow() exponent must be non-negative".into(),
             ));
         }
+        if exp > u32::MAX as i64 {
+            return Err(RuntimeError::TypeMismatch(
+                "pow() exponent too large".into(),
+            ));
+        }
         let result = (base as i128).pow(exp as u32);
         if result > i64::MAX as i128 || result < i64::MIN as i128 {
             return Err(RuntimeError::TypeMismatch(

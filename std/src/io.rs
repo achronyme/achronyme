@@ -66,6 +66,18 @@ pub fn native_read_file(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
         .ok_or(RuntimeError::SystemError("String missing".into()))?
         .clone();
 
+    // Guard against reading very large files into memory
+    const MAX_READ_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > MAX_READ_SIZE {
+            return Err(RuntimeError::SystemError(format!(
+                "read_file('{}') file too large ({} bytes, max {})",
+                path,
+                meta.len(),
+                MAX_READ_SIZE,
+            )));
+        }
+    }
     let contents = std::fs::read_to_string(&path)
         .map_err(|e| RuntimeError::SystemError(format!("read_file('{}') failed: {e}", path)))?;
     let h = vm.heap.alloc_string(contents);
