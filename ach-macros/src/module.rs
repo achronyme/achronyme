@@ -89,14 +89,20 @@ pub fn ach_module_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     let mod_ident = &module.ident;
     let mod_vis = &module.vis;
 
-    // Generate struct name: "math" → MathModule
+    // Generate struct name: "string_ext" → StringExtModule
     let struct_name = {
-        let mut chars = attrs.name.chars();
-        let capitalized: String = match chars.next() {
-            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-            None => String::new(),
-        };
-        format_ident!("{}Module", capitalized)
+        let pascal: String = attrs
+            .name
+            .split('_')
+            .map(|part| {
+                let mut c = part.chars();
+                match c.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect();
+        format_ident!("{}Module", pascal)
     };
 
     // Collect native function info from the module items

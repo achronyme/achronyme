@@ -1,97 +1,9 @@
 use crate::error::RuntimeError;
 use crate::machine::value_ops::ValueOps;
 use crate::machine::VM;
-use crate::module::{NativeDef, NativeModule};
+use ach_macros::{ach_module, ach_native};
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use memory::{FieldElement, Value};
-
-pub struct CoreModule;
-
-impl NativeModule for CoreModule {
-    fn name(&self) -> &'static str {
-        "core"
-    }
-
-    fn natives(&self) -> Vec<NativeDef> {
-        vec![
-            NativeDef {
-                name: "print",
-                func: native_print,
-                arity: -1,
-            },
-            NativeDef {
-                name: "len",
-                func: native_len,
-                arity: 1,
-            },
-            NativeDef {
-                name: "typeof",
-                func: native_typeof,
-                arity: 1,
-            },
-            NativeDef {
-                name: "assert",
-                func: native_assert,
-                arity: 1,
-            },
-            NativeDef {
-                name: "time",
-                func: native_time,
-                arity: 0,
-            },
-            NativeDef {
-                name: "push",
-                func: native_push,
-                arity: 2,
-            },
-            NativeDef {
-                name: "pop",
-                func: native_pop,
-                arity: 1,
-            },
-            NativeDef {
-                name: "keys",
-                func: native_keys,
-                arity: 1,
-            },
-            NativeDef {
-                name: "proof_json",
-                func: native_proof_json,
-                arity: 1,
-            },
-            NativeDef {
-                name: "proof_public",
-                func: native_proof_public,
-                arity: 1,
-            },
-            NativeDef {
-                name: "proof_vkey",
-                func: native_proof_vkey,
-                arity: 1,
-            },
-            NativeDef {
-                name: "poseidon",
-                func: native_poseidon,
-                arity: 2,
-            },
-            NativeDef {
-                name: "poseidon_many",
-                func: native_poseidon_many,
-                arity: -1,
-            },
-            NativeDef {
-                name: "verify_proof",
-                func: native_verify_proof,
-                arity: 1,
-            },
-            NativeDef {
-                name: "gc_stats",
-                func: native_gc_stats,
-                arity: 0,
-            },
-        ]
-    }
-}
 
 /// Extract a FieldElement from a VM Value (Int or Field).
 fn extract_fe(vm: &VM, val: &Value) -> Result<FieldElement, RuntimeError> {
@@ -116,384 +28,383 @@ fn extract_fe(vm: &VM, val: &Value) -> Result<FieldElement, RuntimeError> {
     }
 }
 
-pub fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    for (i, arg) in args.iter().enumerate() {
-        if i > 0 {
-            print!(" ");
+#[ach_module(name = "core")]
+pub mod core_impl {
+    use super::*;
+
+    #[ach_native(name = "print", arity = -1)]
+    pub fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                print!(" ");
+            }
+            print!("{}", vm.val_to_string(arg));
         }
-        print!("{}", vm.val_to_string(arg));
+        println!();
+        Ok(Value::nil())
     }
-    println!();
-    Ok(Value::nil())
-}
 
-pub fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "len() takes exactly 1 argument".into(),
-        ));
+    #[ach_native(name = "len", arity = 1)]
+    pub fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "len() takes exactly 1 argument".into(),
+            ));
+        }
+        let val = &args[0];
+        if val.is_string() {
+            let handle = val
+                .as_handle()
+                .ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
+            let s = vm
+                .heap
+                .get_string(handle)
+                .ok_or(RuntimeError::SystemError("Dangling string handle".into()))?;
+            Ok(Value::int(s.chars().count() as i64))
+        } else if val.is_list() {
+            let handle = val
+                .as_handle()
+                .ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
+            let l = vm
+                .heap
+                .get_list(handle)
+                .ok_or(RuntimeError::SystemError("Dangling list handle".into()))?;
+            Ok(Value::int(l.len() as i64))
+        } else if val.is_map() {
+            let handle = val
+                .as_handle()
+                .ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
+            let m = vm
+                .heap
+                .get_map(handle)
+                .ok_or(RuntimeError::SystemError("Dangling map handle".into()))?;
+            Ok(Value::int(m.len() as i64))
+        } else {
+            Err(RuntimeError::TypeMismatch(
+                "len() expects String, List, or Map".into(),
+            ))
+        }
     }
-    let val = &args[0];
 
-    if val.is_string() {
-        let handle = val
-            .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad string handle".into()))?;
-        let s = vm
-            .heap
-            .get_string(handle)
-            .ok_or(RuntimeError::SystemError("Dangling string handle".into()))?;
-        Ok(Value::int(s.chars().count() as i64))
-    } else if val.is_list() {
-        let handle = val
+    #[ach_native(name = "typeof", arity = 1)]
+    pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "typeof() takes exactly 1 argument".into(),
+            ));
+        }
+        let val = &args[0];
+        let type_name = if val.is_int() {
+            "Number"
+        } else if val.is_string() {
+            "String"
+        } else if val.is_bool() {
+            "Bool"
+        } else if val.is_nil() {
+            "Nil"
+        } else if val.is_list() {
+            "List"
+        } else if val.is_map() {
+            "Map"
+        } else if val.is_field() {
+            "Field"
+        } else if val.is_bigint() {
+            let handle = val.as_handle().unwrap();
+            let bi = vm.heap.get_bigint(handle);
+            match bi {
+                Some(b) => match b.width() {
+                    memory::BigIntWidth::W256 => "BigInt256",
+                    memory::BigIntWidth::W512 => "BigInt512",
+                },
+                None => "BigInt",
+            }
+        } else if val.is_proof() {
+            "Proof"
+        } else if val.is_function() || val.is_closure() {
+            "Function"
+        } else if val.is_native() {
+            "Native"
+        } else {
+            "Unknown"
+        };
+        let s = type_name.to_string();
+        let handle = vm.heap.alloc_string(s);
+        Ok(Value::string(handle))
+    }
+
+    #[ach_native(name = "assert", arity = 1)]
+    pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "assert() takes exactly 1 argument".into(),
+            ));
+        }
+        if !args[0].as_bool().unwrap_or(false) {
+            return Err(RuntimeError::AssertionFailed);
+        }
+        Ok(Value::nil())
+    }
+
+    #[ach_native(name = "time", arity = 0)]
+    pub fn native_time(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        let now = std::time::SystemTime::now();
+        let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
+        Ok(Value::int(duration.as_millis() as i64))
+    }
+
+    #[ach_native(name = "push", arity = 2)]
+    pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(RuntimeError::ArityMismatch(
+                "push(list, item) takes exactly 2 arguments".into(),
+            ));
+        }
+        let target = args[0];
+        let item = args[1];
+        if !target.is_list() {
+            return Err(RuntimeError::TypeMismatch(
+                "First argument to push must be a List".into(),
+            ));
+        }
+        let handle = target
             .as_handle()
             .ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
-        let l = vm
+        vm.heap
+            .list_push(handle, item)
+            .ok_or(RuntimeError::SystemError(
+                "List corrupted or missing".into(),
+            ))?;
+        Ok(Value::nil())
+    }
+
+    #[ach_native(name = "pop", arity = 1)]
+    pub fn native_pop(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "pop(list) takes exactly 1 argument".into(),
+            ));
+        }
+        let target = args[0];
+        if !target.is_list() {
+            return Err(RuntimeError::TypeMismatch(
+                "Argument to pop must be a List".into(),
+            ));
+        }
+        let handle = target
+            .as_handle()
+            .ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
+        let list = vm
             .heap
-            .get_list(handle)
-            .ok_or(RuntimeError::SystemError("Dangling list handle".into()))?;
-        Ok(Value::int(l.len() as i64))
-    } else if val.is_map() {
-        let handle = val
+            .get_list_mut(handle)
+            .ok_or(RuntimeError::SystemError(
+                "List corrupted or missing".into(),
+            ))?;
+        let val = list.pop().unwrap_or(Value::nil());
+        Ok(val)
+    }
+
+    #[ach_native(name = "keys", arity = 1)]
+    pub fn native_keys(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "keys(map) takes exactly 1 argument".into(),
+            ));
+        }
+        let target = args[0];
+        if !target.is_map() {
+            return Err(RuntimeError::TypeMismatch(
+                "Argument to keys must be a Map".into(),
+            ));
+        }
+        let map_handle = target
             .as_handle()
             .ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
-        let m = vm
-            .heap
-            .get_map(handle)
-            .ok_or(RuntimeError::SystemError("Dangling map handle".into()))?;
-        Ok(Value::int(m.len() as i64))
-    } else {
-        Err(RuntimeError::TypeMismatch(
-            "len() expects String, List, or Map".into(),
-        ))
-    }
-}
-
-pub fn native_push(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "push(list, item) takes exactly 2 arguments".into(),
-        ));
-    }
-
-    let target = args[0];
-    let item = args[1];
-
-    if !target.is_list() {
-        return Err(RuntimeError::TypeMismatch(
-            "First argument to push must be a List".into(),
-        ));
-    }
-
-    let handle = target
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
-    vm.heap
-        .list_push(handle, item)
-        .ok_or(RuntimeError::SystemError(
-            "List corrupted or missing".into(),
-        ))?;
-
-    Ok(Value::nil())
-}
-
-pub fn native_pop(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "pop(list) takes exactly 1 argument".into(),
-        ));
-    }
-
-    let target = args[0];
-    if !target.is_list() {
-        return Err(RuntimeError::TypeMismatch(
-            "Argument to pop must be a List".into(),
-        ));
-    }
-
-    let handle = target
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad list handle".into()))?;
-    let list = vm
-        .heap
-        .get_list_mut(handle)
-        .ok_or(RuntimeError::SystemError(
-            "List corrupted or missing".into(),
-        ))?;
-
-    let val = list.pop().unwrap_or(Value::nil());
-    Ok(val)
-}
-
-pub fn native_keys(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "keys(map) takes exactly 1 argument".into(),
-        ));
-    }
-
-    let target = args[0];
-    if !target.is_map() {
-        return Err(RuntimeError::TypeMismatch(
-            "Argument to keys must be a Map".into(),
-        ));
-    }
-
-    let map_handle = target
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad map handle".into()))?;
-
-    let keys_raw: Vec<String> = {
-        let map = vm
-            .heap
-            .get_map(map_handle)
-            .ok_or(RuntimeError::SystemError("Map corrupted".into()))?;
-        map.keys().cloned().collect()
-    };
-
-    vm.heap.lock_gc();
-    let mut key_values = Vec::with_capacity(keys_raw.len());
-    for k in keys_raw {
-        let handle = vm.heap.alloc_string(k);
-        key_values.push(Value::string(handle));
-    }
-    let list_handle = vm.heap.alloc_list(key_values);
-    vm.heap.unlock_gc();
-
-    Ok(Value::list(list_handle))
-}
-
-pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "typeof() takes exactly 1 argument".into(),
-        ));
-    }
-    let val = &args[0];
-    let type_name = if val.is_int() {
-        "Number"
-    } else if val.is_string() {
-        "String"
-    } else if val.is_bool() {
-        "Bool"
-    } else if val.is_nil() {
-        "Nil"
-    } else if val.is_list() {
-        "List"
-    } else if val.is_map() {
-        "Map"
-    } else if val.is_field() {
-        "Field"
-    } else if val.is_bigint() {
-        let handle = val.as_handle().unwrap();
-        let bi = vm.heap.get_bigint(handle);
-        match bi {
-            Some(b) => match b.width() {
-                memory::BigIntWidth::W256 => "BigInt256",
-                memory::BigIntWidth::W512 => "BigInt512",
-            },
-            None => "BigInt",
+        let keys_raw: Vec<String> = {
+            let map = vm
+                .heap
+                .get_map(map_handle)
+                .ok_or(RuntimeError::SystemError("Map corrupted".into()))?;
+            map.keys().cloned().collect()
+        };
+        vm.heap.lock_gc();
+        let mut key_values = Vec::with_capacity(keys_raw.len());
+        for k in keys_raw {
+            let handle = vm.heap.alloc_string(k);
+            key_values.push(Value::string(handle));
         }
-    } else if val.is_proof() {
-        "Proof"
-    } else if val.is_function() || val.is_closure() {
-        "Function"
-    } else if val.is_native() {
-        "Native"
-    } else {
-        "Unknown"
-    };
-
-    let s = type_name.to_string();
-    let handle = vm.heap.alloc_string(s);
-
-    Ok(Value::string(handle))
-}
-
-pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "assert() takes exactly 1 argument".into(),
-        ));
+        let list_handle = vm.heap.alloc_list(key_values);
+        vm.heap.unlock_gc();
+        Ok(Value::list(list_handle))
     }
-    if !args[0].as_bool().unwrap_or(false) {
-        return Err(RuntimeError::AssertionFailed);
-    }
-    Ok(Value::nil())
-}
 
-pub fn native_time(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    let now = std::time::SystemTime::now();
-    let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
-    Ok(Value::int(duration.as_millis() as i64))
-}
-
-pub fn native_proof_json(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "proof_json() takes exactly 1 argument".into(),
-        ));
+    #[ach_native(name = "proof_json", arity = 1)]
+    pub fn native_proof_json(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "proof_json() takes exactly 1 argument".into(),
+            ));
+        }
+        let val = args[0];
+        if !val.is_proof() {
+            return Err(RuntimeError::TypeMismatch(
+                "proof_json expects a Proof".into(),
+            ));
+        }
+        let handle = val
+            .as_handle()
+            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+        let json = vm
+            .heap
+            .get_proof(handle)
+            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .proof_json
+            .clone();
+        let s = vm.heap.alloc_string(json);
+        Ok(Value::string(s))
     }
-    let val = args[0];
-    if !val.is_proof() {
-        return Err(RuntimeError::TypeMismatch(
-            "proof_json expects a Proof".into(),
-        ));
-    }
-    let handle = val
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
-    let json = vm
-        .heap
-        .get_proof(handle)
-        .ok_or(RuntimeError::SystemError("proof not found".into()))?
-        .proof_json
-        .clone();
-    let s = vm.heap.alloc_string(json);
-    Ok(Value::string(s))
-}
 
-pub fn native_proof_public(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "proof_public() takes exactly 1 argument".into(),
-        ));
+    #[ach_native(name = "proof_public", arity = 1)]
+    pub fn native_proof_public(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "proof_public() takes exactly 1 argument".into(),
+            ));
+        }
+        let val = args[0];
+        if !val.is_proof() {
+            return Err(RuntimeError::TypeMismatch(
+                "proof_public expects a Proof".into(),
+            ));
+        }
+        let handle = val
+            .as_handle()
+            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+        let json = vm
+            .heap
+            .get_proof(handle)
+            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .public_json
+            .clone();
+        let s = vm.heap.alloc_string(json);
+        Ok(Value::string(s))
     }
-    let val = args[0];
-    if !val.is_proof() {
-        return Err(RuntimeError::TypeMismatch(
-            "proof_public expects a Proof".into(),
-        ));
+
+    #[ach_native(name = "proof_vkey", arity = 1)]
+    pub fn native_proof_vkey(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "proof_vkey() takes exactly 1 argument".into(),
+            ));
+        }
+        let val = args[0];
+        if !val.is_proof() {
+            return Err(RuntimeError::TypeMismatch(
+                "proof_vkey expects a Proof".into(),
+            ));
+        }
+        let handle = val
+            .as_handle()
+            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+        let json = vm
+            .heap
+            .get_proof(handle)
+            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .vkey_json
+            .clone();
+        let s = vm.heap.alloc_string(json);
+        Ok(Value::string(s))
     }
-    let handle = val
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
-    let json = vm
-        .heap
-        .get_proof(handle)
-        .ok_or(RuntimeError::SystemError("proof not found".into()))?
-        .public_json
-        .clone();
-    let s = vm.heap.alloc_string(json);
-    Ok(Value::string(s))
-}
 
-pub fn native_proof_vkey(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "proof_vkey() takes exactly 1 argument".into(),
-        ));
+    #[ach_native(name = "poseidon", arity = 2)]
+    pub fn native_poseidon(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(RuntimeError::ArityMismatch(
+                "poseidon(left, right) takes exactly 2 arguments".into(),
+            ));
+        }
+        let left = extract_fe(vm, &args[0])?;
+        let right = extract_fe(vm, &args[1])?;
+        let params = PoseidonParams::bn254_t3();
+        let result = poseidon_hash(&params, left, right);
+        let handle = vm.heap.alloc_field(result);
+        Ok(Value::field(handle))
     }
-    let val = args[0];
-    if !val.is_proof() {
-        return Err(RuntimeError::TypeMismatch(
-            "proof_vkey expects a Proof".into(),
-        ));
+
+    #[ach_native(name = "poseidon_many", arity = -1)]
+    pub fn native_poseidon_many(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() < 2 {
+            return Err(RuntimeError::ArityMismatch(
+                "poseidon_many() requires at least 2 arguments".into(),
+            ));
+        }
+        let params = PoseidonParams::bn254_t3();
+        let first = extract_fe(vm, &args[0])?;
+        let second = extract_fe(vm, &args[1])?;
+        let mut acc = poseidon_hash(&params, first, second);
+        for arg in &args[2..] {
+            let fe = extract_fe(vm, arg)?;
+            acc = poseidon_hash(&params, acc, fe);
+        }
+        let handle = vm.heap.alloc_field(acc);
+        Ok(Value::field(handle))
     }
-    let handle = val
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
-    let json = vm
-        .heap
-        .get_proof(handle)
-        .ok_or(RuntimeError::SystemError("proof not found".into()))?
-        .vkey_json
-        .clone();
-    let s = vm.heap.alloc_string(json);
-    Ok(Value::string(s))
-}
 
-// --- GC introspection ---
-
-pub fn native_gc_stats(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    let mut map = std::collections::HashMap::new();
-    map.insert(
-        "collections".into(),
-        Value::int(vm.heap.stats.collections as i64),
-    );
-    map.insert(
-        "bytes_freed".into(),
-        Value::int(vm.heap.stats.total_freed_bytes as i64),
-    );
-    map.insert(
-        "peak_bytes".into(),
-        Value::int(vm.heap.stats.peak_heap_bytes as i64),
-    );
-    map.insert(
-        "gc_time_ms".into(),
-        Value::int((vm.heap.stats.total_gc_time_ns / 1_000_000) as i64),
-    );
-    map.insert(
-        "bytes_allocated".into(),
-        Value::int(vm.heap.bytes_allocated as i64),
-    );
-    let handle = vm.heap.alloc_map(map);
-    Ok(Value::map(handle))
-}
-
-// --- Cryptographic natives ---
-
-pub fn native_poseidon(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "poseidon(left, right) takes exactly 2 arguments".into(),
-        ));
+    #[ach_native(name = "verify_proof", arity = 1)]
+    pub fn native_verify_proof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::ArityMismatch(
+                "verify_proof(proof) takes exactly 1 argument".into(),
+            ));
+        }
+        let val = args[0];
+        if !val.is_proof() {
+            return Err(RuntimeError::TypeMismatch(
+                "verify_proof expects a Proof".into(),
+            ));
+        }
+        let handle = val
+            .as_handle()
+            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+        let proof_obj = vm
+            .heap
+            .get_proof(handle)
+            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .clone();
+        let handler = vm.verify_handler.as_ref().ok_or(RuntimeError::SystemError(
+            "verify_proof: no verify handler configured".into(),
+        ))?;
+        match handler.verify_proof(&proof_obj) {
+            Ok(valid) => Ok(Value::bool(valid)),
+            Err(msg) => Err(RuntimeError::SystemError(format!(
+                "verify_proof failed: {msg}"
+            ))),
+        }
     }
-    let left = extract_fe(vm, &args[0])?;
-    let right = extract_fe(vm, &args[1])?;
-    let params = PoseidonParams::bn254_t3();
-    let result = poseidon_hash(&params, left, right);
-    let handle = vm.heap.alloc_field(result);
-    Ok(Value::field(handle))
-}
 
-pub fn native_poseidon_many(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() < 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "poseidon_many() requires at least 2 arguments".into(),
-        ));
-    }
-    let params = PoseidonParams::bn254_t3();
-    let first = extract_fe(vm, &args[0])?;
-    let second = extract_fe(vm, &args[1])?;
-    let mut acc = poseidon_hash(&params, first, second);
-    for arg in &args[2..] {
-        let fe = extract_fe(vm, arg)?;
-        acc = poseidon_hash(&params, acc, fe);
-    }
-    let handle = vm.heap.alloc_field(acc);
-    Ok(Value::field(handle))
-}
-
-pub fn native_verify_proof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "verify_proof(proof) takes exactly 1 argument".into(),
-        ));
-    }
-    let val = args[0];
-    if !val.is_proof() {
-        return Err(RuntimeError::TypeMismatch(
-            "verify_proof expects a Proof".into(),
-        ));
-    }
-    let handle = val
-        .as_handle()
-        .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
-    let proof_obj = vm
-        .heap
-        .get_proof(handle)
-        .ok_or(RuntimeError::SystemError("proof not found".into()))?
-        .clone();
-
-    let handler = vm.verify_handler.as_ref().ok_or(RuntimeError::SystemError(
-        "verify_proof: no verify handler configured".into(),
-    ))?;
-
-    match handler.verify_proof(&proof_obj) {
-        Ok(valid) => Ok(Value::bool(valid)),
-        Err(msg) => Err(RuntimeError::SystemError(format!(
-            "verify_proof failed: {msg}"
-        ))),
+    #[ach_native(name = "gc_stats", arity = 0)]
+    pub fn native_gc_stats(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "collections".into(),
+            Value::int(vm.heap.stats.collections as i64),
+        );
+        map.insert(
+            "bytes_freed".into(),
+            Value::int(vm.heap.stats.total_freed_bytes as i64),
+        );
+        map.insert(
+            "peak_bytes".into(),
+            Value::int(vm.heap.stats.peak_heap_bytes as i64),
+        );
+        map.insert(
+            "gc_time_ms".into(),
+            Value::int((vm.heap.stats.total_gc_time_ns / 1_000_000) as i64),
+        );
+        map.insert(
+            "bytes_allocated".into(),
+            Value::int(vm.heap.bytes_allocated as i64),
+        );
+        let handle = vm.heap.alloc_map(map);
+        Ok(Value::map(handle))
     }
 }

@@ -1,3 +1,5 @@
+extern crate self as vm;
+
 pub mod error;
 pub mod globals;
 pub mod machine;

@@ -35,14 +35,14 @@ pub trait NativeModule {
 /// compile-time-like assertion in `bootstrap_natives` verifies this.
 pub fn builtin_modules() -> Vec<Box<dyn NativeModule>> {
     use crate::stdlib::{
-        bigint::BigIntModule, collections::CollectionsModule, core::CoreModule,
+        bigint::BigintModule, collections::CollectionsModule, core::CoreModule,
         string::StringModule,
     };
 
     vec![
         Box::new(CoreModule),
         Box::new(StringModule),
-        Box::new(BigIntModule),
+        Box::new(BigintModule),
         Box::new(CollectionsModule),
     ]
 }
