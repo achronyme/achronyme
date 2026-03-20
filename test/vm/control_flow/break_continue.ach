@@ -32,9 +32,9 @@ mut idx = 0
 while idx < 10 {
     idx = idx + 1
     if idx % 2 != 0 { continue }
-    push(evens, idx)
+    evens.push(idx)
 }
-assert(len(evens) == 5)
+assert(evens.len() == 5)
 assert(evens[0] == 2)
 assert(evens[4] == 10)
 

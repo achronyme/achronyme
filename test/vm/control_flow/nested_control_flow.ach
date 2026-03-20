@@ -74,12 +74,12 @@ mut combos = []
 for a in [1, 2, 3] {
     for b in [10, 20, 30] {
         if a + b > 15 {
-            push(combos, a * 100 + b)
+            combos.push(a * 100 + b)
         }
     }
 }
 // Combos: 1+20=21>15 -> 120, 1+30=31>15 -> 130, 2+20=22>15 -> 220, 2+30=32>15 -> 230, 3+20=23>15 -> 320, 3+30=33>15 -> 330
-assert(len(combos) == 6)
+assert(combos.len() == 6)
 assert(combos[0] == 120)
 assert(combos[5] == 330)
 
@@ -123,14 +123,14 @@ mut groups = {even: [], odd: []}
 mut i = 1
 while i <= 10 {
     if i % 2 == 0 {
-        push(groups.even, i)
+        groups.even.push(i)
     } else {
-        push(groups.odd, i)
+        groups.odd.push(i)
     }
     i = i + 1
 }
-assert(len(groups.even) == 5)
-assert(len(groups.odd) == 5)
+assert(groups.even.len() == 5)
+assert(groups.odd.len() == 5)
 assert(groups.even[0] == 2)
 assert(groups.even[4] == 10)
 assert(groups.odd[0] == 1)

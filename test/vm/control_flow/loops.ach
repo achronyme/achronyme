@@ -58,7 +58,7 @@ assert(ran == false)
 // for..in with keys(map)
 let m = {a: 1, b: 2, c: 3}
 mut key_count = 0
-for k in keys(m) {
+for k in m.keys() {
     key_count = key_count + 1
 }
 assert(key_count == 3)
