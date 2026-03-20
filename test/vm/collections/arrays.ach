@@ -8,30 +8,30 @@ assert(arr[2] == 30)
 
 // Empty list
 let empty = []
-assert(len(empty) == 0)
+assert(empty.len() == 0)
 
 // len
-assert(len(arr) == 3)
-assert(len([1]) == 1)
+assert(arr.len() == 3)
+assert([1].len() == 1)
 
 // push + pop
 mut items = [1, 2]
-push(items, 3)
-assert(len(items) == 3)
+items.push(3)
+assert(items.len() == 3)
 assert(items[2] == 3)
 
-let last = pop(items)
+let last = items.pop()
 assert(last == 3)
-assert(len(items) == 2)
+assert(items.len() == 2)
 
 // Multiple push/pop
-push(items, 10)
-push(items, 20)
-push(items, 30)
-assert(len(items) == 5)
-assert(pop(items) == 30)
-assert(pop(items) == 20)
-assert(len(items) == 3)
+items.push(10)
+items.push(20)
+items.push(30)
+assert(items.len() == 5)
+assert(items.pop() == 30)
+assert(items.pop() == 20)
+assert(items.len() == 3)
 
 // Assignment via index
 mut nums = [0, 0, 0]
@@ -44,7 +44,7 @@ assert(nums[2] == 30)
 
 // Heterogeneous list
 let mixed = [1, "two", true, nil]
-assert(len(mixed) == 4)
+assert(mixed.len() == 4)
 assert(mixed[0] == 1)
 assert(mixed[1] == "two")
 assert(mixed[2] == true)
@@ -61,10 +61,10 @@ assert(matrix[1][1] == 4)
 mut squares = []
 mut i = 0
 while i < 5 {
-    push(squares, i * i)
+    squares.push(i * i)
     i = i + 1
 }
-assert(len(squares) == 5)
+assert(squares.len() == 5)
 assert(squares[0] == 0)
 assert(squares[1] == 1)
 assert(squares[4] == 16)

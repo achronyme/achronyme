@@ -3,9 +3,9 @@
 // --- Reverse ---
 fn reverse(arr) {
     mut result = []
-    mut i = len(arr) - 1
+    mut i = arr.len() - 1
     while i >= 0 {
-        push(result, arr[i])
+        result.push(arr[i])
         i = i - 1
     }
     return result
@@ -14,14 +14,14 @@ let rev = reverse([1, 2, 3, 4, 5])
 assert(rev[0] == 5)
 assert(rev[1] == 4)
 assert(rev[4] == 1)
-assert(len(rev) == 5)
+assert(rev.len() == 5)
 
 // Reverse empty
-assert(len(reverse([])) == 0)
+assert(reverse([]).len() == 0)
 
 // Reverse single
 let single = reverse([42])
-assert(len(single) == 1)
+assert(single.len() == 1)
 assert(single[0] == 42)
 
 // Double reverse = identity
@@ -34,32 +34,32 @@ assert(doubled_rev[2] == 30)
 // --- Concatenate arrays ---
 fn concat(a, b) {
     mut result = []
-    for x in a { push(result, x) }
-    for x in b { push(result, x) }
+    for x in a { result.push(x) }
+    for x in b { result.push(x) }
     return result
 }
 let c = concat([1, 2], [3, 4, 5])
-assert(len(c) == 5)
+assert(c.len() == 5)
 assert(c[0] == 1)
 assert(c[4] == 5)
 
 // Concat with empty
-assert(len(concat([], [1])) == 1)
-assert(len(concat([1], [])) == 1)
-assert(len(concat([], [])) == 0)
+assert(concat([], [1]).len() == 1)
+assert(concat([1], []).len() == 1)
+assert(concat([], []).len() == 0)
 
 // --- Slice ---
 fn slice(arr, start, stop) {
     mut result = []
     mut i = start
-    while i < stop && i < len(arr) {
-        push(result, arr[i])
+    while i < stop && i < arr.len() {
+        result.push(arr[i])
         i = i + 1
     }
     return result
 }
 let s = slice([10, 20, 30, 40, 50], 1, 4)
-assert(len(s) == 3)
+assert(s.len() == 3)
 assert(s[0] == 20)
 assert(s[2] == 40)
 
@@ -77,7 +77,7 @@ assert(!contains([], 1))
 // --- Index of ---
 fn index_of(arr, target) {
     mut i = 0
-    while i < len(arr) {
+    while i < arr.len() {
         if arr[i] == target { return i }
         i = i + 1
     }
@@ -106,12 +106,12 @@ fn unique(arr) {
         for y in result {
             if x == y { found = true }
         }
-        if !found { push(result, x) }
+        if !found { result.push(x) }
     }
     return result
 }
 let u = unique([1, 2, 3, 2, 1, 4, 3, 5])
-assert(len(u) == 5)
+assert(u.len() == 5)
 assert(u[0] == 1)
 assert(u[4] == 5)
 
@@ -127,36 +127,36 @@ assert(flat_sum == 21)
 
 // --- Stack via array (LIFO) ---
 mut stack = []
-push(stack, 10)
-push(stack, 20)
-push(stack, 30)
-assert(pop(stack) == 30)
-assert(pop(stack) == 20)
-push(stack, 40)
-assert(pop(stack) == 40)
-assert(pop(stack) == 10)
-assert(len(stack) == 0)
+stack.push(10)
+stack.push(20)
+stack.push(30)
+assert(stack.pop() == 30)
+assert(stack.pop() == 20)
+stack.push(40)
+assert(stack.pop() == 40)
+assert(stack.pop() == 10)
+assert(stack.len() == 0)
 
 // --- Queue simulation via two arrays ---
 fn make_queue() {
     mut data = []
-    let enqueue = fn(val) { push(data, val) }
+    let enqueue = fn(val) { data.push(val) }
     let dequeue = fn() {
-        if len(data) == 0 { return nil }
+        if data.len() == 0 { return nil }
         let front = data[0]
         // Rebuild without first element
         mut new_data = []
         mut i = 1
-        while i < len(data) {
-            push(new_data, data[i])
+        while i < data.len() {
+            new_data.push(data[i])
             i = i + 1
         }
         // Copy back
-        while len(data) > 0 { pop(data) }
-        for x in new_data { push(data, x) }
+        while data.len() > 0 { data.pop() }
+        for x in new_data { data.push(x) }
         return front
     }
-    let size = fn() { len(data) }
+    let size = fn() { data.len() }
     return {enqueue: enqueue, dequeue: dequeue, size: size}
 }
 let q = make_queue()
@@ -188,10 +188,10 @@ assert(bit_count == 4)
 mut large = []
 mut i = 0
 while i < 1000 {
-    push(large, i)
+    large.push(i)
     i = i + 1
 }
-assert(len(large) == 1000)
+assert(large.len() == 1000)
 assert(large[0] == 0)
 assert(large[999] == 999)
 mut large_sum = 0

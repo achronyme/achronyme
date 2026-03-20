@@ -15,10 +15,10 @@ assert(person[key] == "Alice")
 
 // Empty map
 let empty = {}
-assert(len(empty) == 0)
+assert(empty.len() == 0)
 
 // len
-assert(len(person) == 2)
+assert(person.len() == 2)
 
 // Assignment via dot and bracket
 mut m = {x: 1}
@@ -36,8 +36,8 @@ assert(m2["hello"] == 1)
 assert(m2["world"] == 2)
 
 // keys()
-let k = keys(person)
-assert(len(k) == 2)
+let k = person.keys()
+assert(k.len() == 2)
 
 // Nested maps
 let nested = {a: {b: {c: 42}}}
@@ -50,12 +50,12 @@ config.debug = true
 config.port = 8080
 assert(config.debug == true)
 assert(config.port == 8080)
-assert(len(config) == 2)
+assert(config.len() == 2)
 
 // Iterate over keys
 let scores = {math: 95, science: 88, english: 92}
 mut total = 0
-for k in keys(scores) {
+for k in scores.keys() {
     total = total + scores[k]
 }
 assert(total == 275)

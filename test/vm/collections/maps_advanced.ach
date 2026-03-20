@@ -12,7 +12,7 @@ for w in words {
 assert(counts.apple == 3)
 assert(counts.banana == 2)
 assert(counts.cherry == 1)
-assert(len(counts) == 3)
+assert(counts.len() == 3)
 
 // --- Map as dispatch table ---
 let ops = {
@@ -30,7 +30,7 @@ assert(ops.div(10, 3) == 3)
 let op_names = ["add", "sub", "mul"]
 mut results = []
 for name in op_names {
-    push(results, ops[name](6, 2))
+    results.push(ops[name](6, 2))
 }
 assert(results[0] == 8)
 assert(results[1] == 4)
@@ -39,26 +39,26 @@ assert(results[2] == 12)
 // --- Map merge ---
 fn merge(a, b) {
     mut result = {}
-    for k in keys(a) { result[k] = a[k] }
-    for k in keys(b) { result[k] = b[k] }
+    for k in a.keys() { result[k] = a[k] }
+    for k in b.keys() { result[k] = b[k] }
     return result
 }
 let merged = merge({x: 1, y: 2}, {y: 3, z: 4})
 assert(merged.x == 1)
 assert(merged.y == 3)
 assert(merged.z == 4)
-assert(len(merged) == 3)
+assert(merged.len() == 3)
 
 // --- Map values extraction ---
 fn values(m) {
     mut result = []
-    for k in keys(m) {
-        push(result, m[k])
+    for k in m.keys() {
+        result.push(m[k])
     }
     return result
 }
 let vals = values({a: 10, b: 20, c: 30})
-assert(len(vals) == 3)
+assert(vals.len() == 3)
 // Sum all values
 mut val_sum = 0
 for v in vals { val_sum = val_sum + v }
@@ -103,13 +103,13 @@ mut grade_sum = 0
 for s in students {
     grade_sum = grade_sum + s.grade
 }
-let avg = grade_sum / len(students)
+let avg = grade_sum / students.len()
 assert(avg == 86)
 
 // Find highest grade
 mut best = students[0]
 mut i = 1
-while i < len(students) {
+while i < students.len() {
     if students[i].grade > best.grade {
         best = students[i]
     }
@@ -132,7 +132,7 @@ for n in nodes { visited[n] = false }
 visited["A"] = true
 visited["C"] = true
 mut visited_count = 0
-for k in keys(visited) {
+for k in visited.keys() {
     if visited[k] { visited_count = visited_count + 1 }
 }
 assert(visited_count == 2)
@@ -140,7 +140,7 @@ assert(visited_count == 2)
 // --- Map copy ---
 fn copy_map(m) {
     mut result = {}
-    for k in keys(m) {
+    for k in m.keys() {
         result[k] = m[k]
     }
     return result
