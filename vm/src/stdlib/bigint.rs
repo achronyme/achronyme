@@ -1,30 +1,7 @@
 use crate::error::RuntimeError;
 use crate::machine::VM;
 use ach_macros::{ach_module, ach_native};
-use memory::{BigInt, BigIntWidth, Value, TAG_BIGINT};
-
-fn extract_bigint<'a>(vm: &'a VM, val: &Value) -> Result<&'a BigInt, RuntimeError> {
-    if val.tag() != TAG_BIGINT {
-        return Err(RuntimeError::TypeMismatch(
-            "Expected BigInt argument".into(),
-        ));
-    }
-    let handle = val
-        .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad bigint handle".into()))?;
-    vm.heap
-        .get_bigint(handle)
-        .ok_or(RuntimeError::SystemError("BigInt missing".into()))
-}
-
-fn map_bigint_err(e: memory::BigIntError) -> RuntimeError {
-    match e {
-        memory::BigIntError::Overflow => RuntimeError::BigIntOverflow,
-        memory::BigIntError::Underflow => RuntimeError::BigIntUnderflow,
-        memory::BigIntError::DivisionByZero => RuntimeError::DivisionByZero,
-        memory::BigIntError::WidthMismatch => RuntimeError::BigIntWidthMismatch,
-    }
-}
+use memory::{BigInt, BigIntWidth, Value};
 
 fn construct_bigint(
     vm: &mut VM,
@@ -91,20 +68,6 @@ pub mod bigint_impl {
         construct_bigint(vm, args, BigIntWidth::W512, "bigint512")
     }
 
-    #[ach_native(name = "to_bits", arity = 1)]
-    pub fn native_to_bits(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "to_bits() takes exactly 1 argument".into(),
-            ));
-        }
-        let bi = extract_bigint(vm, &args[0])?;
-        let bits = bi.to_bits(); // LSB-first Vec<u8>
-        let values: Vec<Value> = bits.iter().map(|&b| Value::int(b as i64)).collect();
-        let handle = vm.heap.alloc_list(values);
-        Ok(Value::list(handle))
-    }
-
     #[ach_native(name = "from_bits", arity = 2)]
     pub fn native_from_bits(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 2 {
@@ -159,103 +122,6 @@ pub mod bigint_impl {
             RuntimeError::TypeMismatch("Too many bits for the specified width".into())
         })?;
         let handle = vm.heap.alloc_bigint(bi);
-        Ok(Value::bigint(handle))
-    }
-
-    #[ach_native(name = "bit_and", arity = 2)]
-    pub fn native_bit_and(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "bit_and() takes exactly 2 arguments".into(),
-            ));
-        }
-        let a = extract_bigint(vm, &args[0])?.clone();
-        let b = extract_bigint(vm, &args[1])?.clone();
-        let result = a.bit_and(&b).map_err(map_bigint_err)?;
-        let handle = vm.heap.alloc_bigint(result);
-        Ok(Value::bigint(handle))
-    }
-
-    #[ach_native(name = "bit_or", arity = 2)]
-    pub fn native_bit_or(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "bit_or() takes exactly 2 arguments".into(),
-            ));
-        }
-        let a = extract_bigint(vm, &args[0])?.clone();
-        let b = extract_bigint(vm, &args[1])?.clone();
-        let result = a.bit_or(&b).map_err(map_bigint_err)?;
-        let handle = vm.heap.alloc_bigint(result);
-        Ok(Value::bigint(handle))
-    }
-
-    #[ach_native(name = "bit_xor", arity = 2)]
-    pub fn native_bit_xor(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "bit_xor() takes exactly 2 arguments".into(),
-            ));
-        }
-        let a = extract_bigint(vm, &args[0])?.clone();
-        let b = extract_bigint(vm, &args[1])?.clone();
-        let result = a.bit_xor(&b).map_err(map_bigint_err)?;
-        let handle = vm.heap.alloc_bigint(result);
-        Ok(Value::bigint(handle))
-    }
-
-    #[ach_native(name = "bit_not", arity = 1)]
-    pub fn native_bit_not(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "bit_not() takes exactly 1 argument".into(),
-            ));
-        }
-        let a = extract_bigint(vm, &args[0])?.clone();
-        let result = a.bit_not();
-        let handle = vm.heap.alloc_bigint(result);
-        Ok(Value::bigint(handle))
-    }
-
-    #[ach_native(name = "bit_shl", arity = 2)]
-    pub fn native_bit_shl(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "bit_shl() takes exactly 2 arguments".into(),
-            ));
-        }
-        let a = extract_bigint(vm, &args[0])?.clone();
-        let amount = args[1].as_int().ok_or(RuntimeError::TypeMismatch(
-            "Shift amount must be an integer".into(),
-        ))?;
-        if amount < 0 {
-            return Err(RuntimeError::TypeMismatch(
-                "Shift amount must be non-negative".into(),
-            ));
-        }
-        let result = a.shl(amount as u32).map_err(map_bigint_err)?;
-        let handle = vm.heap.alloc_bigint(result);
-        Ok(Value::bigint(handle))
-    }
-
-    #[ach_native(name = "bit_shr", arity = 2)]
-    pub fn native_bit_shr(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "bit_shr() takes exactly 2 arguments".into(),
-            ));
-        }
-        let a = extract_bigint(vm, &args[0])?.clone();
-        let amount = args[1].as_int().ok_or(RuntimeError::TypeMismatch(
-            "Shift amount must be an integer".into(),
-        ))?;
-        if amount < 0 {
-            return Err(RuntimeError::TypeMismatch(
-                "Shift amount must be non-negative".into(),
-            ));
-        }
-        let result = a.shr(amount as u32);
-        let handle = vm.heap.alloc_bigint(result);
         Ok(Value::bigint(handle))
     }
 }
