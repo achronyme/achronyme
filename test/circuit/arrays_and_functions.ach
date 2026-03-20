@@ -9,7 +9,7 @@ let acc = acc + vals[2]
 assert_eq(acc, expected_sum)
 
 // len() returns compile-time constant
-let n = len(vals)
+let n = vals.len()
 assert_eq(n, 3)
 
 // Function definition and inline expansion
