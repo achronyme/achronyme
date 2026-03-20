@@ -75,6 +75,7 @@ pub enum TokenKind {
     RBrace,
     Comma,
     Colon,
+    ColonColon,
     Semicolon,
 
     // End of file
