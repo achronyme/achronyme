@@ -34,15 +34,7 @@ pub trait NativeModule {
 /// The order here **must** match `NATIVE_TABLE` in `specs.rs` — a
 /// compile-time-like assertion in `bootstrap_natives` verifies this.
 pub fn builtin_modules() -> Vec<Box<dyn NativeModule>> {
-    use crate::stdlib::{
-        bigint::BigintModule, collections::CollectionsModule, core::CoreModule,
-        string::StringModule,
-    };
+    use crate::stdlib::{bigint::BigintModule, core::CoreModule};
 
-    vec![
-        Box::new(CoreModule),
-        Box::new(StringModule),
-        Box::new(BigintModule),
-        Box::new(CollectionsModule),
-    ]
+    vec![Box::new(CoreModule), Box::new(BigintModule)]
 }

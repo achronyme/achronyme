@@ -139,11 +139,9 @@ mod tests {
     #[test]
     fn test_each_module_has_natives() {
         let modules = builtin_modules();
-        assert_eq!(modules.len(), 4);
+        assert_eq!(modules.len(), 2);
         assert_eq!(modules[0].name(), "core");
-        assert_eq!(modules[1].name(), "string");
-        assert_eq!(modules[2].name(), "bigint");
-        assert_eq!(modules[3].name(), "collections");
+        assert_eq!(modules[1].name(), "bigint");
 
         // Verify each module contributes at least one native
         for module in &modules {
