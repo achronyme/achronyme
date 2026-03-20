@@ -5,22 +5,22 @@ let s = "hello"
 assert(s == "hello")
 
 // Length
-assert(len("hello") == 5)
-assert(len("") == 0)
-assert(len("a") == 1)
+assert("hello".len() == 5)
+assert("".len() == 0)
+assert("a".len() == 1)
 
 // Escapes
 let nl = "line1\nline2"
-assert(len(nl) == 11)
+assert(nl.len() == 11)
 
 let tab = "a\tb"
-assert(len(tab) == 3)
+assert(tab.len() == 3)
 
 let escaped_quote = "say \"hi\""
-assert(len(escaped_quote) == 8)
+assert(escaped_quote.len() == 8)
 
 let backslash = "a\\b"
-assert(len(backslash) == 3)
+assert(backslash.len() == 3)
 
 // typeof
 assert(typeof("x") == "String")

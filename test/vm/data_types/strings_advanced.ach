@@ -21,10 +21,10 @@ let msg = "x=" + 1 + ", y=" + 2 + ", z=" + 3
 assert(msg == "x=1, y=2, z=3")
 
 // --- String length ---
-assert(len("") == 0)
-assert(len("a") == 1)
-assert(len("hello") == 5)
-assert(len("hello world") == 11)
+assert("".len() == 0)
+assert("a".len() == 1)
+assert("hello".len() == 5)
+assert("hello world".len() == 11)
 
 // --- String equality ---
 assert("abc" == "abc")
@@ -47,7 +47,7 @@ assert(mp["world"] == 2)
 let words = ["the", "quick", "brown", "fox"]
 assert(words[0] == "the")
 assert(words[3] == "fox")
-assert(len(words) == 4)
+assert(words.len() == 4)
 
 // --- String building in loop ---
 fn repeat_str(s, n) {
@@ -62,14 +62,14 @@ fn repeat_str(s, n) {
 assert(repeat_str("ab", 3) == "ababab")
 assert(repeat_str("x", 5) == "xxxxx")
 assert(repeat_str("hi", 0) == "")
-assert(len(repeat_str(".", 100)) == 100)
+assert(repeat_str(".", 100).len() == 100)
 
 // --- Join array of strings ---
 fn join(arr, sep) {
-    if len(arr) == 0 { return "" }
+    if arr.len() == 0 { return "" }
     mut result = "" + arr[0]
     mut i = 1
-    while i < len(arr) {
+    while i < arr.len() {
         result = result + sep + arr[i]
         i = i + 1
     }
@@ -93,13 +93,13 @@ assert(typeof("" + 42) == "String")
 
 // --- Escape sequences ---
 let with_newline = "line1\nline2"
-assert(len(with_newline) == 11)
+assert(with_newline.len() == 11)
 let with_tab = "col1\tcol2"
-assert(len(with_tab) == 9)
+assert(with_tab.len() == 9)
 let with_quote = "say \"hello\""
-assert(len(with_quote) == 11)
+assert(with_quote.len() == 11)
 let with_backslash = "path\\to\\file"
-assert(len(with_backslash) == 12)
+assert(with_backslash.len() == 12)
 
 // --- String as key for lookup table ---
 fn lookup(table, key) {
@@ -118,7 +118,7 @@ assert(lookup(table, "yellow") == nil)
 fn make_builder() {
     mut parts = []
     return {
-        add: fn(s) { push(parts, s) },
+        add: fn(s) { parts.push(s) },
         build: fn() {
             mut result = ""
             for p in parts {
