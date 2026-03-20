@@ -17,18 +17,17 @@ let raw_records = [
 ]
 
 // Active engineers with score >= 70
-let qualified = filter(
-    filter(raw_records, fn(r) { r.active }),
+let qualified = raw_records.filter(fn(r) { r.active }).filter(
     fn(r) { r.dept == "eng" && r.score >= 70 }
 )
-assert(len(qualified) == 3)
+assert(qualified.len() == 3)
 
-let names = map(qualified, fn(r) { r.name })
+let names = qualified.map(fn(r) { r.name })
 assert(names[0] == "Alice")
 assert(names[1] == "Carol")
 assert(names[2] == "Dave")
 
-let avg_score = reduce(qualified, 0, fn(acc, r) { acc + r.score }) / len(qualified)
+let avg_score = qualified.reduce(0, fn(acc, r) { acc + r.score }) / qualified.len()
 assert(avg_score == 86)
 
 // =============================================================================
@@ -44,7 +43,7 @@ let products = [
 ]
 
 // Sort by price ascending, then by rating descending (higher rating first)
-let sorted_products = sort(products, fn(a, b) {
+let sorted_products = products.sort(fn(a, b) {
     if a.price != b.price {
         a.price - b.price
     } else {
@@ -65,21 +64,21 @@ let suits  = ["S", "H", "D", "C"]
 let ranks  = [1, 11, 12, 13]
 
 // Generate all face cards + aces
-let deck = flat_map(suits, fn(suit) {
-    map(ranks, fn(rank) {
+let deck = suits.flat_map(fn(suit) {
+    ranks.map(fn(rank) {
         {suit: suit, rank: rank}
     })
 })
-assert(len(deck) == 16)
+assert(deck.len() == 16)
 assert(deck[0].suit == "S")
 assert(deck[0].rank == 1)
 assert(deck[15].suit == "C")
 assert(deck[15].rank == 13)
 
 // Find all aces
-let aces = filter(deck, fn(card) { card.rank == 1 })
-assert(len(aces) == 4)
-assert(all(aces, fn(a) { a.rank == 1 }))
+let aces = deck.filter(fn(card) { card.rank == 1 })
+assert(aces.len() == 4)
+assert(aces.all(fn(a) { a.rank == 1 }))
 
 // =============================================================================
 // 4. zip + map — parallel data processing
@@ -88,8 +87,7 @@ assert(all(aces, fn(a) { a.rank == 1 }))
 let xs = [10, 20, 30, 40, 50]
 let ys = [1,  2,  3,  4,  5]
 
-let dot_product = reduce(
-    map(zip(xs, ys), fn(pair) { pair[0] * pair[1] }),
+let dot_product = xs.zip(ys).map(fn(pair) { pair[0] * pair[1] }).reduce(
     0,
     fn(acc, v) { acc + v }
 )
@@ -100,12 +98,11 @@ assert(dot_product == 550)
 let values  = [80, 90, 70, 100]
 let weights = [2,  3,  1,  4]
 
-let weighted_sum = reduce(
-    map(zip(values, weights), fn(p) { p[0] * p[1] }),
+let weighted_sum = values.zip(weights).map(fn(p) { p[0] * p[1] }).reduce(
     0,
     fn(acc, v) { acc + v }
 )
-let total_weight = reduce(weights, 0, fn(a, b) { a + b })
+let total_weight = weights.reduce(0, fn(a, b) { a + b })
 let weighted_avg = weighted_sum / total_weight
 // (160+270+70+400)/10 = 900/10 = 90
 assert(weighted_avg == 90)
@@ -121,26 +118,26 @@ let matrix = [
 ]
 
 // Flatten matrix
-let flat = flat_map(matrix, fn(row) { row })
-assert(len(flat) == 9)
+let flat = matrix.flat_map(fn(row) { row })
+assert(flat.len() == 9)
 assert(flat[0] == 1)
 assert(flat[8] == 9)
 
 // Sum all elements
-let matrix_sum = reduce(flat, 0, fn(a, b) { a + b })
+let matrix_sum = flat.reduce(0, fn(a, b) { a + b })
 assert(matrix_sum == 45)
 
 // Row sums
-let row_sums = map(matrix, fn(row) {
-    reduce(row, 0, fn(a, b) { a + b })
+let row_sums = matrix.map(fn(row) {
+    row.reduce(0, fn(a, b) { a + b })
 })
 assert(row_sums[0] == 6)
 assert(row_sums[1] == 15)
 assert(row_sums[2] == 24)
 
 // Column sums via reduce over rows
-let col_sums = reduce(matrix, [0, 0, 0], fn(acc, row) {
-    map(zip(acc, row), fn(p) { p[0] + p[1] })
+let col_sums = matrix.reduce([0, 0, 0], fn(acc, row) {
+    acc.zip(row).map(fn(p) { p[0] + p[1] })
 })
 assert(col_sums[0] == 12)
 assert(col_sums[1] == 15)
@@ -148,8 +145,8 @@ assert(col_sums[2] == 18)
 
 // Transpose via index mapping
 let indices = [0, 1, 2]
-let transposed = map(indices, fn(col) {
-    map(matrix, fn(row) { row[col] })
+let transposed = indices.map(fn(col) {
+    matrix.map(fn(row) { row[col] })
 })
 assert(transposed[0][0] == 1)
 assert(transposed[0][1] == 4)
@@ -164,7 +161,7 @@ assert(transposed[2][2] == 9)
 let words = ["apple", "banana", "apple", "cherry", "banana", "apple", "date", "cherry"]
 
 mut freq = {}
-for_each(words, fn(w) {
+words.for_each(fn(w) {
     if freq[w] == nil {
         freq[w] = 0
     }
@@ -176,8 +173,8 @@ assert(freq.cherry == 2)
 assert(freq.date == 1)
 
 // Most frequent word
-let word_list = keys(freq)
-let most_frequent = reduce(word_list, word_list[0], fn(best, w) {
+let word_list = freq.keys()
+let most_frequent = word_list.reduce(word_list[0], fn(best, w) {
     if freq[w] > freq[best] { w } else { best }
 })
 assert(most_frequent == "apple")
@@ -194,24 +191,24 @@ let users = [
 ]
 
 // Find first minor
-let minor = find(users, fn(u) { u.age < 18 })
+let minor = users.find(fn(u) { u.age < 18 })
 assert(minor != nil)
 assert(minor.name == "Bob")
 
 // Any admin?
-assert(any(users, fn(u) { u.role == "admin" }))
+assert(users.any(fn(u) { u.role == "admin" }))
 
 // All have names?
-assert(all(users, fn(u) { len(u.name) > 0 }))
+assert(users.all(fn(u) { u.name.len() > 0 }))
 
 // Not all have emails
-assert(!all(users, fn(u) { len(u.email) > 0 }))
+assert(!users.all(fn(u) { u.email.len() > 0 }))
 
 // No one over 100
-assert(!any(users, fn(u) { u.age > 100 }))
+assert(!users.any(fn(u) { u.age > 100 }))
 
 // Find first with empty email
-let missing_email = find(users, fn(u) { len(u.email) == 0 })
+let missing_email = users.find(fn(u) { u.email.len() == 0 })
 assert(missing_email.name == "Carol")
 
 // =============================================================================
@@ -227,13 +224,13 @@ let candidates = [
     {name: "F", skill: 5, exp: 9, culture: 5}
 ]
 
-// Score: 40% skill + 30% experience + 30% culture (×10 to stay integer)
-let scored = map(candidates, fn(c) {
+// Score: 40% skill + 30% experience + 30% culture (x10 to stay integer)
+let scored = candidates.map(fn(c) {
     {name: c.name, total: c.skill * 4 + c.exp * 3 + c.culture * 3}
 })
 
 // Sort descending by total score
-let ranked = sort(scored, fn(a, b) { b.total - a.total })
+let ranked = scored.sort(fn(a, b) { b.total - a.total })
 
 // B=72, D=70, E=70, A=68, C=66, F=62
 assert(ranked[0].name == "B")
@@ -243,7 +240,7 @@ assert(ranked[3].name == "A")
 assert(ranked[3].total == 68)
 
 // All top-3 scored at least 70?
-assert(all([ranked[0], ranked[1], ranked[2]], fn(r) { r.total >= 70 }))
+assert([ranked[0], ranked[1], ranked[2]].all(fn(r) { r.total >= 70 }))
 
 // =============================================================================
 // 9. Closure capture in HOFs — stateful transformations
@@ -253,9 +250,9 @@ assert(all([ranked[0], ranked[1], ranked[2]], fn(r) { r.total >= 70 }))
 let payments = [100, 250, 75, 300, 150]
 
 mut running = []
-reduce(payments, 0, fn(acc, p) {
+payments.reduce(0, fn(acc, p) {
     let new_acc = acc + p
-    push(running, new_acc)
+    running.push(new_acc)
     return new_acc
 })
 assert(running[0] == 100)
@@ -274,7 +271,7 @@ fn make_counter() {
 }
 
 let counter = make_counter()
-let generated = map([0, 0, 0, 0, 0], fn(_) { counter() })
+let generated = [0, 0, 0, 0, 0].map(fn(_) { counter() })
 assert(generated[0] == 1)
 assert(generated[1] == 2)
 assert(generated[2] == 3)
@@ -299,29 +296,29 @@ let graph = {
 fn bfs_reachable(graph, start) {
     let visited = []
     mut queue = [start]
-    while len(queue) > 0 {
+    while queue.len() > 0 {
         let current = queue[0]
         // Remove first element manually
         let new_queue = []
         mut i = 1
-        while i < len(queue) {
-            push(new_queue, queue[i])
+        while i < queue.len() {
+            new_queue.push(queue[i])
             i = i + 1
         }
         queue = new_queue
 
         // Skip if already visited
-        if any(visited, fn(v) { v == current }) {
+        if visited.any(fn(v) { v == current }) {
             // continue - skip this node
         } else {
-            push(visited, current)
+            visited.push(current)
             // Add unvisited neighbors
             let neighbors = graph[current]
             if neighbors != nil {
-                let unvisited = filter(neighbors, fn(n) {
-                    !any(visited, fn(v) { v == n })
+                let unvisited = neighbors.filter(fn(n) {
+                    !visited.any(fn(v) { v == n })
                 })
-                for_each(unvisited, fn(n) { push(queue, n) })
+                unvisited.for_each(fn(n) { queue.push(n) })
             }
         }
     }
@@ -329,21 +326,20 @@ fn bfs_reachable(graph, start) {
 }
 
 let reachable = bfs_reachable(graph, "A")
-assert(len(reachable) == 6)
+assert(reachable.len() == 6)
 assert(reachable[0] == "A")
 // All nodes should be reachable from A
-assert(any(reachable, fn(v) { v == "F" }))
-assert(any(reachable, fn(v) { v == "D" }))
-assert(any(reachable, fn(v) { v == "E" }))
+assert(reachable.any(fn(v) { v == "F" }))
+assert(reachable.any(fn(v) { v == "D" }))
+assert(reachable.any(fn(v) { v == "E" }))
 
 // =============================================================================
 // 11. String processing pipeline
 // =============================================================================
 
 let csv_line = "  Alice, 30 , eng ,  92  "
-let fields = map(
-    split(csv_line, ","),
-    fn(s) { trim(s) }
+let fields = csv_line.split(",").map(
+    fn(s) { s.trim() }
 )
 assert(fields[0] == "Alice")
 assert(fields[1] == "30")
@@ -358,17 +354,17 @@ let csv_data = [
     "Dave,88,ops"
 ]
 
-let parsed = map(csv_data, fn(line) {
-    let parts = split(line, ",")
+let parsed = csv_data.map(fn(line) {
+    let parts = line.split(",")
     return {name: parts[0], score: parts[1], dept: parts[2]}
 })
-assert(len(parsed) == 4)
+assert(parsed.len() == 4)
 assert(parsed[0].name == "Alice")
 assert(parsed[2].dept == "eng")
 
 // Find all eng entries via native filter on parsed data
-let eng_entries = filter(parsed, fn(p) { p.dept == "eng" })
-assert(len(eng_entries) == 2)
+let eng_entries = parsed.filter(fn(p) { p.dept == "eng" })
+assert(eng_entries.len() == 2)
 assert(eng_entries[0].name == "Alice")
 assert(eng_entries[1].name == "Carol")
 
@@ -379,27 +375,25 @@ assert(eng_entries[1].name == "Carol")
 let digits = [1, 2, 3]
 
 // All ordered pairs (i, j) where i != j
-let pairs = filter(
-    flat_map(digits, fn(i) {
-        map(digits, fn(j) { [i, j] })
-    }),
+let pairs = digits.flat_map(fn(i) {
+    digits.map(fn(j) { [i, j] })
+}).filter(
     fn(p) { p[0] != p[1] }
 )
-assert(len(pairs) == 6)
+assert(pairs.len() == 6)
 // Verify all pairs are distinct
-assert(all(pairs, fn(p) { p[0] != p[1] }))
+assert(pairs.all(fn(p) { p[0] != p[1] }))
 
 // All ordered triples (i, j, k) where all distinct
-let triples = filter(
-    flat_map(digits, fn(i) {
-        flat_map(digits, fn(j) {
-            map(digits, fn(k) { [i, j, k] })
-        })
-    }),
+let triples = digits.flat_map(fn(i) {
+    digits.flat_map(fn(j) {
+        digits.map(fn(k) { [i, j, k] })
+    })
+}).filter(
     fn(t) { t[0] != t[1] && t[1] != t[2] && t[0] != t[2] }
 )
 // 3! = 6 permutations
-assert(len(triples) == 6)
+assert(triples.len() == 6)
 
 // =============================================================================
 // 13. Statistical operations
@@ -407,13 +401,13 @@ assert(len(triples) == 6)
 
 let data = [4, 8, 15, 16, 23, 42]
 
-let n = len(data)
-let total = reduce(data, 0, fn(a, b) { a + b })
+let n = data.len()
+let total = data.reduce(0, fn(a, b) { a + b })
 let mean = total / n
 assert(mean == 18)
 
 // Variance (integer approximation): sum of (x - mean)^2 / n
-let variance = reduce(data, 0, fn(acc, x) {
+let variance = data.reduce(0, fn(acc, x) {
     let diff = x - mean
     acc + diff * diff
 }) / n
@@ -422,8 +416,8 @@ let variance = reduce(data, 0, fn(acc, x) {
 assert(variance == 151)
 
 // Min and max via reduce
-let min_val = reduce(data, data[0], fn(a, b) { if b < a { b } else { a } })
-let max_val = reduce(data, data[0], fn(a, b) { if b > a { b } else { a } })
+let min_val = data.reduce(data[0], fn(a, b) { if b < a { b } else { a } })
+let max_val = data.reduce(data[0], fn(a, b) { if b > a { b } else { a } })
 assert(min_val == 4)
 assert(max_val == 42)
 
@@ -431,7 +425,7 @@ assert(max_val == 42)
 assert(max_val - min_val == 38)
 
 // Median (on sorted data)
-let sorted_data = sort(data, fn(a, b) { a - b })
+let sorted_data = data.sort(fn(a, b) { a - b })
 let median = (sorted_data[n / 2 - 1] + sorted_data[n / 2]) / 2
 // sorted: [4, 8, 15, 16, 23, 42], median = (15+16)/2 = 15
 assert(median == 15)
@@ -451,7 +445,7 @@ let events = [
 ]
 
 // Replay to compute balance
-let balance = reduce(events, 0, fn(acc, e) {
+let balance = events.reduce(0, fn(acc, e) {
     if e.type == "deposit" {
         acc + e.amount
     } else {
@@ -461,21 +455,21 @@ let balance = reduce(events, 0, fn(acc, e) {
 assert(balance == 700)
 
 // Count by event type
-let deposits = filter(events, fn(e) { e.type == "deposit" })
-let withdrawals = filter(events, fn(e) { e.type == "withdraw" })
-assert(len(deposits) == 4)
-assert(len(withdrawals) == 3)
+let deposits = events.filter(fn(e) { e.type == "deposit" })
+let withdrawals = events.filter(fn(e) { e.type == "withdraw" })
+assert(deposits.len() == 4)
+assert(withdrawals.len() == 3)
 
 // Total deposited and withdrawn
-let total_deposited = reduce(deposits, 0, fn(acc, e) { acc + e.amount })
-let total_withdrawn = reduce(withdrawals, 0, fn(acc, e) { acc + e.amount })
+let total_deposited = deposits.reduce(0, fn(acc, e) { acc + e.amount })
+let total_withdrawn = withdrawals.reduce(0, fn(acc, e) { acc + e.amount })
 assert(total_deposited == 2050)
 assert(total_withdrawn == 1350)
 assert(total_deposited - total_withdrawn == balance)
 
 // Any overdraft attempt? (running balance goes negative)
 mut overdraft = false
-reduce(events, 0, fn(acc, e) {
+events.reduce(0, fn(acc, e) {
     let new_bal = if e.type == "deposit" { acc + e.amount } else { acc - e.amount }
     if new_bal < 0 { overdraft = true }
     return new_bal
@@ -498,42 +492,42 @@ fn is_prime(n) {
 }
 
 let range5 = [1, 2, 3, 4, 5]
-let mul_table = flat_map(range5, fn(i) {
-    map(range5, fn(j) { i * j })
+let mul_table = range5.flat_map(fn(i) {
+    range5.map(fn(j) { i * j })
 })
-assert(len(mul_table) == 25)
+assert(mul_table.len() == 25)
 
 // Unique primes from the multiplication table
-let primes_raw = filter(mul_table, fn(n) { is_prime(n) })
+let primes_raw = mul_table.filter(fn(n) { is_prime(n) })
 // Remove duplicates via reduce
-let primes_unique = reduce(primes_raw, [], fn(acc, p) {
-    if !any(acc, fn(x) { x == p }) {
-        push(acc, p)
+let primes_unique = primes_raw.reduce([], fn(acc, p) {
+    if !acc.any(fn(x) { x == p }) {
+        acc.push(p)
     }
     return acc
 })
-let primes_sorted = sort(primes_unique, fn(a, b) { a - b })
-// Products in 1..5 × 1..5 that are prime: 2, 3, 5
+let primes_sorted = primes_unique.sort(fn(a, b) { a - b })
+// Products in 1..5 x 1..5 that are prime: 2, 3, 5
 assert(primes_sorted[0] == 2)
 assert(primes_sorted[1] == 3)
 assert(primes_sorted[2] == 5)
-assert(len(primes_sorted) == 3)
+assert(primes_sorted.len() == 3)
 
 // =============================================================================
 // 16. zip + reduce — Levenshtein-like character comparison
 // =============================================================================
 
-let word_a = chars("kitten")
-let word_b = chars("sitting")
+let word_a = "kitten".chars()
+let word_b = "sitting".chars()
 
 // Count matching positions (min length comparison)
-let zipped_chars = zip(word_a, word_b)
-let matches = reduce(zipped_chars, 0, fn(acc, pair) {
+let zipped_chars = word_a.zip(word_b)
+let matches = zipped_chars.reduce(0, fn(acc, pair) {
     if pair[0] == pair[1] { acc + 1 } else { acc }
 })
-// k≠s, i=i, t=t, t=t, e≠i, n≠n... wait: "kitten" vs "sitting"
-// k/s, i/i, t/t, t/t, e/i, n/n → matches at pos 1,2,3,5 = 4?
-// Actually: k≠s, i=i, t=t, t=t, e≠i, n≠n → n=n so matches = 4
+// k!=s, i=i, t=t, t=t, e!=i, n!=n... wait: "kitten" vs "sitting"
+// k/s, i/i, t/t, t/t, e/i, n/n -> matches at pos 1,2,3,5 = 4?
+// Actually: k!=s, i=i, t=t, t=t, e!=i, n!=n -> n=n so matches = 4
 assert(matches == 4)
 
 // =============================================================================
@@ -547,18 +541,17 @@ let transforms = [
     fn(x) { x * 3 }
 ]
 
-// pipe(5) → (5+10=15) → (15*2=30) → (30-5=25) → (25*3=75)
-let pipe_result = reduce(transforms, 5, fn(val, f) { f(val) })
+// pipe(5) -> (5+10=15) -> (15*2=30) -> (30-5=25) -> (25*3=75)
+let pipe_result = transforms.reduce(5, fn(val, f) { f(val) })
 assert(pipe_result == 75)
 
 // Reverse pipeline
-let reverse_transforms = sort(
-    map(zip([0, 1, 2, 3], transforms), fn(p) { {idx: p[0], f: p[1]} }),
+let reverse_transforms = [0, 1, 2, 3].zip(transforms).map(fn(p) { {idx: p[0], f: p[1]} }).sort(
     fn(a, b) { b.idx - a.idx }
 )
-let rev_fns = map(reverse_transforms, fn(r) { r.f })
-// (5*3=15) → (15-5=10) → (10*2=20) → (20+10=30)
-let rev_result = reduce(rev_fns, 5, fn(val, f) { f(val) })
+let rev_fns = reverse_transforms.map(fn(r) { r.f })
+// (5*3=15) -> (15-5=10) -> (10*2=20) -> (20+10=30)
+let rev_result = rev_fns.reduce(5, fn(val, f) { f(val) })
 assert(rev_result == 30)
 
 // =============================================================================
@@ -577,13 +570,13 @@ let sales = [
 ]
 
 // Total revenue per region
-let north_sales = filter(sales, fn(s) { s.region == "north" })
-let south_sales = filter(sales, fn(s) { s.region == "south" })
-let east_sales  = filter(sales, fn(s) { s.region == "east" })
+let north_sales = sales.filter(fn(s) { s.region == "north" })
+let south_sales = sales.filter(fn(s) { s.region == "south" })
+let east_sales  = sales.filter(fn(s) { s.region == "east" })
 
-let north_rev = reduce(north_sales, 0, fn(acc, s) { acc + s.qty * s.price })
-let south_rev = reduce(south_sales, 0, fn(acc, s) { acc + s.qty * s.price })
-let east_rev  = reduce(east_sales,  0, fn(acc, s) { acc + s.qty * s.price })
+let north_rev = north_sales.reduce(0, fn(acc, s) { acc + s.qty * s.price })
+let south_rev = south_sales.reduce(0, fn(acc, s) { acc + s.qty * s.price })
+let east_rev  = east_sales.reduce(0, fn(acc, s) { acc + s.qty * s.price })
 
 // north: 100*10 + 150*20 + 120*10 = 1000+3000+1200 = 5200
 // south: 200*20 + 80*10 + 60*10 = 4000+800+600 = 5400
@@ -598,14 +591,13 @@ let regions = [
     {name: "south", rev: south_rev},
     {name: "east",  rev: east_rev}
 ]
-let best = reduce(regions, regions[0], fn(best, r) {
+let best = regions.reduce(regions[0], fn(best, r) {
     if r.rev > best.rev { r } else { best }
 })
 assert(best.name == "south")
 
 // Product A total quantity across all regions
-let product_a_qty = reduce(
-    filter(sales, fn(s) { s.product == "A" }),
+let product_a_qty = sales.filter(fn(s) { s.product == "A" }).reduce(
     0,
     fn(acc, s) { acc + s.qty }
 )
@@ -626,7 +618,7 @@ let items = [
 ]
 
 // Sort only by key — elements with same key should preserve original order
-let stable_sorted = sort(items, fn(a, b) { a.key - b.key })
+let stable_sorted = items.sort(fn(a, b) { a.key - b.key })
 assert(stable_sorted[0].key == 1)
 assert(stable_sorted[0].order == 2)
 assert(stable_sorted[1].key == 1)
@@ -645,16 +637,17 @@ assert(stable_sorted[5].order == 5)
 // =============================================================================
 
 let base = [5, 3, 8, 1, 9, 2, 7, 4, 6]
-let sorted_once = sort(base, fn(a, b) { a - b })
-let sorted_twice = sort(sorted_once, fn(a, b) { a - b })
-assert(len(sorted_once) == len(sorted_twice))
-assert(all(
-    map(zip(sorted_once, sorted_twice), fn(p) { p[0] == p[1] }),
-    fn(eq) { eq }
-))
+let sorted_once = base.sort(fn(a, b) { a - b })
+let sorted_twice = sorted_once.sort(fn(a, b) { a - b })
+assert(sorted_once.len() == sorted_twice.len())
+assert(
+    sorted_once.zip(sorted_twice).map(fn(p) { p[0] == p[1] }).all(
+        fn(eq) { eq }
+    )
+)
 
-let filtered_once = filter(base, fn(x) { x > 4 })
-let filtered_twice = filter(filtered_once, fn(x) { x > 4 })
-assert(len(filtered_once) == len(filtered_twice))
+let filtered_once = base.filter(fn(x) { x > 4 })
+let filtered_twice = filtered_once.filter(fn(x) { x > 4 })
+assert(filtered_once.len() == filtered_twice.len())
 
 print("PASS: integration/higher_order_natives")

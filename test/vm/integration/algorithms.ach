@@ -3,7 +3,7 @@
 // --- Binary search ---
 fn binary_search(arr, target) {
     mut lo = 0
-    mut hi = len(arr) - 1
+    mut hi = arr.len() - 1
     while lo <= hi {
         let mid = (lo + hi) / 2
         if arr[mid] == target { return mid }
@@ -26,9 +26,9 @@ assert(binary_search([], 1) == -1)
 // --- Insertion sort ---
 fn insertion_sort(arr) {
     mut result = []
-    for x in arr { push(result, x) }
+    for x in arr { result.push(x) }
     mut i = 1
-    while i < len(result) {
+    while i < result.len() {
         let key = result[i]
         mut j = i - 1
         while j >= 0 && result[j] > key {
@@ -81,7 +81,7 @@ assert(lcm(7, 7) == 7)
 fn lcm_arr(arr) {
     mut result = arr[0]
     mut i = 1
-    while i < len(arr) {
+    while i < arr.len() {
         result = lcm(result, arr[i])
         i = i + 1
     }
@@ -96,18 +96,18 @@ fn power_set(arr) {
         mut new_sets = []
         for s in result {
             mut copy = []
-            for x in s { push(copy, x) }
-            push(copy, elem)
-            push(new_sets, copy)
+            for x in s { copy.push(x) }
+            copy.push(elem)
+            new_sets.push(copy)
         }
         for s in new_sets {
-            push(result, s)
+            result.push(s)
         }
     }
     return result
 }
 let ps = power_set([1, 2, 3])
-assert(len(ps) == 8)
+assert(ps.len() == 8)
 
 // --- Pascal's triangle row ---
 fn pascal_row(n) {
@@ -116,22 +116,22 @@ fn pascal_row(n) {
     while i < n {
         mut new_row = [1]
         mut j = 0
-        while j < len(row) - 1 {
-            push(new_row, row[j] + row[j + 1])
+        while j < row.len() - 1 {
+            new_row.push(row[j] + row[j + 1])
             j = j + 1
         }
-        push(new_row, 1)
+        new_row.push(1)
         row = new_row
         i = i + 1
     }
     return row
 }
 let p0 = pascal_row(0)
-assert(len(p0) == 1)
+assert(p0.len() == 1)
 assert(p0[0] == 1)
 
 let p4 = pascal_row(4)
-assert(len(p4) == 5)
+assert(p4.len() == 5)
 assert(p4[0] == 1)
 assert(p4[1] == 4)
 assert(p4[2] == 6)
@@ -143,9 +143,9 @@ assert(p6[3] == 20)
 
 // --- Matrix multiplication ---
 fn mat_mul(a, b) {
-    let rows_a = len(a)
-    let cols_a = len(a[0])
-    let cols_b = len(b[0])
+    let rows_a = a.len()
+    let cols_a = a[0].len()
+    let cols_b = b[0].len()
     mut result = []
     mut r = 0
     while r < rows_a {
@@ -158,10 +158,10 @@ fn mat_mul(a, b) {
                 sum = sum + a[r][k] * b[k][c]
                 k = k + 1
             }
-            push(row, sum)
+            row.push(sum)
             c = c + 1
         }
-        push(result, row)
+        result.push(row)
         r = r + 1
     }
     return result
@@ -182,26 +182,26 @@ assert(ae[1][1] == 4)
 
 // --- Run-length encoding ---
 fn rle_encode(arr) {
-    if len(arr) == 0 { return [] }
+    if arr.len() == 0 { return [] }
     mut result = []
     mut current = arr[0]
     mut count = 1
     mut i = 1
-    while i < len(arr) {
+    while i < arr.len() {
         if arr[i] == current {
             count = count + 1
         } else {
-            push(result, [current, count])
+            result.push([current, count])
             current = arr[i]
             count = 1
         }
         i = i + 1
     }
-    push(result, [current, count])
+    result.push([current, count])
     return result
 }
 let encoded = rle_encode([1, 1, 1, 2, 2, 3, 3, 3, 3, 1])
-assert(len(encoded) == 4)
+assert(encoded.len() == 4)
 assert(encoded[0][0] == 1)
 assert(encoded[0][1] == 3)
 assert(encoded[1][0] == 2)
@@ -216,11 +216,11 @@ mut moves = []
 fn hanoi(n, from, to, aux) {
     if n == 0 { return nil }
     hanoi(n - 1, from, aux, to)
-    push(moves, from + "->" + to)
+    moves.push(from + "->" + to)
     hanoi(n - 1, aux, to, from)
 }
 hanoi(3, "A", "C", "B")
-assert(len(moves) == 7)
+assert(moves.len() == 7)
 assert(moves[0] == "A->C")
 assert(moves[1] == "A->B")
 assert(moves[2] == "C->B")
@@ -239,9 +239,9 @@ assert(factorial(10) == 3628800)
 // --- Two-sum problem ---
 fn two_sum(arr, target) {
     mut i = 0
-    while i < len(arr) {
+    while i < arr.len() {
         mut j = i + 1
-        while j < len(arr) {
+        while j < arr.len() {
             if arr[i] + arr[j] == target {
                 return [i, j]
             }

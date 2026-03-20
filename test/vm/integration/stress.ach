@@ -66,10 +66,10 @@ assert(cv == 5000)
 mut big = []
 mut bi = 0
 while bi < 2000 {
-    push(big, bi * bi)
+    big.push(bi * bi)
     bi = bi + 1
 }
-assert(len(big) == 2000)
+assert(big.len() == 2000)
 assert(big[0] == 0)
 assert(big[1] == 1)
 assert(big[10] == 100)
@@ -108,7 +108,7 @@ while si2 < 50 {
     s = s + "x"
     si2 = si2 + 1
 }
-assert(len(s) == 50)
+assert(s.len() == 50)
 
 // --- Map with many entries ---
 mut big_map = {}
@@ -117,7 +117,7 @@ while mi < 100 {
     big_map["k" + mi] = mi * mi
     mi = mi + 1
 }
-assert(len(big_map) == 100)
+assert(big_map.len() == 100)
 assert(big_map.k0 == 0)
 assert(big_map.k10 == 100)
 assert(big_map.k99 == 9801)
@@ -128,7 +128,7 @@ fn make_processors(n) {
     mut i = 0
     while i < n {
         let offset = i
-        push(procs, fn(x) { x + offset })
+        procs.push(fn(x) { x + offset })
         i = i + 1
     }
     return procs

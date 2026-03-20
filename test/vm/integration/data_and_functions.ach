@@ -4,14 +4,14 @@
 fn make_stack() {
     mut data = []
     return {
-        push: fn(val) { push(data, val) },
-        pop: fn() { pop(data) },
-        peek: fn() { if len(data) == 0 { nil } else { data[len(data) - 1] } },
-        size: fn() { len(data) },
-        empty: fn() { len(data) == 0 },
+        push: fn(val) { data.push(val) },
+        pop: fn() { data.pop() },
+        peek: fn() { if data.len() == 0 { nil } else { data[data.len() - 1] } },
+        size: fn() { data.len() },
+        empty: fn() { data.len() == 0 },
         to_array: fn() {
             mut copy = []
-            for x in data { push(copy, x) }
+            for x in data { copy.push(x) }
             return copy
         }
     }
@@ -107,7 +107,7 @@ fn group_by(arr, key_fn) {
         if groups[k] == nil {
             groups[k] = []
         }
-        push(groups[k], item)
+        groups[k].push(item)
     }
     return groups
 }
@@ -119,15 +119,15 @@ let people = [
     {name: "Eve", dept: "eng"}
 ]
 let by_dept = group_by(people, fn(p) { p.dept })
-assert(len(by_dept.eng) == 3)
-assert(len(by_dept.sales) == 2)
+assert(by_dept.eng.len() == 3)
+assert(by_dept.sales.len() == 2)
 assert(by_dept.eng[0].name == "Alice")
 assert(by_dept.sales[1].name == "Dave")
 
 // --- Map over map values ---
 fn map_values(m, f) {
     mut result = {}
-    for k in keys(m) {
+    for k in m.keys() {
         result[k] = f(m[k])
     }
     return result
@@ -150,27 +150,27 @@ let raw_data = [
 // Step 1: filter active only
 mut active = []
 for d in raw_data {
-    if d.active { push(active, d) }
+    if d.active { active.push(d) }
 }
-assert(len(active) == 4)
+assert(active.len() == 4)
 
 // Step 2: filter score >= 50
 mut qualified = []
 for d in active {
-    if d.score >= 50 { push(qualified, d) }
+    if d.score >= 50 { qualified.push(d) }
 }
-assert(len(qualified) == 2)
+assert(qualified.len() == 2)
 
 // Step 3: extract scores
 mut scores = []
-for d in qualified { push(scores, d.score) }
+for d in qualified { scores.push(d.score) }
 assert(scores[0] == 78)
 assert(scores[1] == 88)
 
 // Step 4: compute average
 mut score_sum = 0
 for s in scores { score_sum = score_sum + s }
-assert(score_sum / len(scores) == 83)
+assert(score_sum / scores.len() == 83)
 
 // --- Function table for type-based dispatch ---
 let formatters = {
@@ -184,16 +184,16 @@ assert(formatters.farewell("World") == "Goodbye, World.")
 mut graph = {}
 fn add_edge(g, from, to) {
     if g[from] == nil { g[from] = [] }
-    push(g[from], to)
+    g[from].push(to)
 }
 add_edge(graph, "A", "B")
 add_edge(graph, "A", "C")
 add_edge(graph, "B", "D")
 add_edge(graph, "C", "D")
-assert(len(graph.A) == 2)
+assert(graph.A.len() == 2)
 assert(graph.A[0] == "B")
 assert(graph.A[1] == "C")
-assert(len(graph.B) == 1)
+assert(graph.B.len() == 1)
 assert(graph.B[0] == "D")
 
 print("PASS: integration/data_and_functions")

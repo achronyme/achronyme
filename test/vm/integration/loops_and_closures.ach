@@ -5,7 +5,7 @@ fn make_multipliers(factors) {
     mut fns = []
     for f in factors {
         let factor = f
-        push(fns, fn(x) { x * factor })
+        fns.push(fn(x) { x * factor })
     }
     return fns
 }
@@ -46,9 +46,9 @@ mut values = []
 forever {
     let v = it()
     if v == nil { break }
-    push(values, v)
+    values.push(v)
 }
-assert(len(values) == 10)
+assert(values.len() == 10)
 assert(values[0] == 0)
 assert(values[9] == 45)
 
@@ -69,13 +69,13 @@ assert(summer([]) == 0)
 
 // --- Loop calling closure that modifies external state ---
 mut log = []
-let logger = fn(msg) { push(log, msg) }
+let logger = fn(msg) { log.push(msg) }
 mut j = 0
 while j < 5 {
     logger("step_" + j)
     j = j + 1
 }
-assert(len(log) == 5)
+assert(log.len() == 5)
 assert(log[0] == "step_0")
 assert(log[4] == "step_4")
 
@@ -110,7 +110,7 @@ mut toggle_log = []
 mut k = 0
 while k < 6 {
     toggle()
-    push(toggle_log, read())
+    toggle_log.push(read())
     k = k + 1
 }
 assert(toggle_log[0] == true)
@@ -126,7 +126,7 @@ fn make_range_summers(ranges) {
     for range_data in ranges {
         let start = range_data[0]
         let stop = range_data[1]
-        push(fns, fn() {
+        fns.push(fn() {
             mut sum = 0
             mut i = start
             while i < stop {
@@ -146,7 +146,7 @@ assert(summers[2]() == 303)
 // --- Callback chain: each closure calls the next ---
 fn make_chain() {
     mut steps = []
-    let chain = fn(f) { push(steps, f) }
+    let chain = fn(f) { steps.push(f) }
     let run = fn(init) {
         mut val = init
         for step in steps {
@@ -180,7 +180,7 @@ let fib = fib_gen()
 mut fibs = []
 mut fi = 0
 while fi < 10 {
-    push(fibs, fib())
+    fibs.push(fib())
     fi = fi + 1
 }
 assert(fibs[0] == 0)
