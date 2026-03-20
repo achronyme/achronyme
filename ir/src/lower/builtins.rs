@@ -18,6 +18,13 @@ impl IrLowering {
         let name = match callee {
             Expr::Ident { name, .. } => name.clone(),
             Expr::DotAccess { object, field, .. } => {
+                // Method call pattern: expr.len() → treat as len(expr)
+                if field == "len" {
+                    // Synthesize args: the object becomes the sole argument
+                    let mut method_args = vec![object.as_ref().clone()];
+                    method_args.extend_from_slice(args);
+                    return self.lower_len(&method_args, sp);
+                }
                 // module.func() → qualified name "module::func"
                 if let Expr::Ident { name: module, .. } = object.as_ref() {
                     format!("{module}::{field}")
