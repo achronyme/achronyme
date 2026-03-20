@@ -113,7 +113,7 @@ while pi < 20 {
 mut mod_vals = []
 mut mi = 0
 while mi < 12 {
-    push(mod_vals, mi % 4)
+    mod_vals.push(mi % 4)
     mi = mi + 1
 }
 assert(mod_vals[0] == 0)

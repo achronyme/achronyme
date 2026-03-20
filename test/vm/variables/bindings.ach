@@ -43,7 +43,7 @@ assert(s == "world")
 
 mut arr = [1, 2]
 arr = [3, 4, 5]
-assert(len(arr) == 3)
+assert(arr.len() == 3)
 
 mut flag = true
 flag = false

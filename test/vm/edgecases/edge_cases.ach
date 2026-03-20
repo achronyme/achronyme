@@ -3,7 +3,7 @@
 // Empty map literal {}
 let x = {}
 assert(typeof(x) == "Map")
-assert(len(x) == 0)
+assert(x.len() == 0)
 
 // Truncating integer division
 assert(7 / 2 == 3)
