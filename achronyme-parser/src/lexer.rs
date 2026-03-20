@@ -305,7 +305,14 @@ impl<'a> Lexer<'a> {
             b'{' => (TokenKind::LBrace, "{"),
             b'}' => (TokenKind::RBrace, "}"),
             b',' => (TokenKind::Comma, ","),
-            b':' => (TokenKind::Colon, ":"),
+            b':' => {
+                if self.peek() == Some(b':') {
+                    self.advance();
+                    (TokenKind::ColonColon, "::")
+                } else {
+                    (TokenKind::Colon, ":")
+                }
+            }
             b';' => (TokenKind::Semicolon, ";"),
             _ => {
                 return Err(ParseError::new(
