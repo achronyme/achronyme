@@ -85,28 +85,28 @@ fn result_bool(vm: &VM) -> bool {
 
 #[test]
 fn test_map_basic() {
-    let vm = run("let x = map([1, 2, 3], fn(n) { n * 2 })").unwrap();
+    let vm = run("let x = [1, 2, 3].map(fn(n) { n * 2 })").unwrap();
     assert_eq!(result_int_list(&vm), vec![2, 4, 6]);
 }
 
 #[test]
 fn test_map_empty_list() {
-    let vm = run("let x = map([], fn(n) { n * 2 })").unwrap();
+    let vm = run("let x = [].map(fn(n) { n * 2 })").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
 #[test]
 fn test_map_with_closure_capture() {
     let vm = run(r#"let factor = 10
-let x = map([1, 2, 3], fn(n) { n * factor })"#)
+let x = [1, 2, 3].map(fn(n) { n * factor })"#)
     .unwrap();
     assert_eq!(result_int_list(&vm), vec![10, 20, 30]);
 }
 
 #[test]
 fn test_map_chained() {
-    let vm = run(r#"let a = map([1, 2, 3], fn(n) { n + 1 })
-let x = map(a, fn(n) { n * 2 })"#)
+    let vm = run(r#"let a = [1, 2, 3].map(fn(n) { n + 1 })
+let x = a.map(fn(n) { n * 2 })"#)
     .unwrap();
     assert_eq!(result_int_list(&vm), vec![4, 6, 8]);
 }
@@ -117,25 +117,25 @@ let x = map(a, fn(n) { n * 2 })"#)
 
 #[test]
 fn test_filter_basic() {
-    let vm = run("let x = filter([1, 2, 3, 4, 5, 6], fn(n) { n % 2 == 0 })").unwrap();
+    let vm = run("let x = [1, 2, 3, 4, 5, 6].filter(fn(n) { n % 2 == 0 })").unwrap();
     assert_eq!(result_int_list(&vm), vec![2, 4, 6]);
 }
 
 #[test]
 fn test_filter_none_match() {
-    let vm = run("let x = filter([1, 2, 3], fn(n) { n > 100 })").unwrap();
+    let vm = run("let x = [1, 2, 3].filter(fn(n) { n > 100 })").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
 #[test]
 fn test_filter_all_match() {
-    let vm = run("let x = filter([1, 2, 3], fn(n) { n > 0 })").unwrap();
+    let vm = run("let x = [1, 2, 3].filter(fn(n) { n > 0 })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 2, 3]);
 }
 
 #[test]
 fn test_filter_empty_list() {
-    let vm = run("let x = filter([], fn(n) { true })").unwrap();
+    let vm = run("let x = [].filter(fn(n) { true })").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
@@ -145,25 +145,25 @@ fn test_filter_empty_list() {
 
 #[test]
 fn test_reduce_sum() {
-    let vm = run("let x = reduce([1, 2, 3, 4], 0, fn(acc, n) { acc + n })").unwrap();
+    let vm = run("let x = [1, 2, 3, 4].reduce(0, fn(acc, n) { acc + n })").unwrap();
     assert_eq!(result_int(&vm), 10);
 }
 
 #[test]
 fn test_reduce_product() {
-    let vm = run("let x = reduce([1, 2, 3, 4], 1, fn(acc, n) { acc * n })").unwrap();
+    let vm = run("let x = [1, 2, 3, 4].reduce(1, fn(acc, n) { acc * n })").unwrap();
     assert_eq!(result_int(&vm), 24);
 }
 
 #[test]
 fn test_reduce_empty_list() {
-    let vm = run("let x = reduce([], 42, fn(acc, n) { acc + n })").unwrap();
+    let vm = run("let x = [].reduce(42, fn(acc, n) { acc + n })").unwrap();
     assert_eq!(result_int(&vm), 42);
 }
 
 #[test]
 fn test_reduce_single_element() {
-    let vm = run("let x = reduce([5], 0, fn(acc, n) { acc + n })").unwrap();
+    let vm = run("let x = [5].reduce(0, fn(acc, n) { acc + n })").unwrap();
     assert_eq!(result_int(&vm), 5);
 }
 
@@ -173,8 +173,8 @@ fn test_reduce_single_element() {
 
 #[test]
 fn test_for_each_returns_nil() {
-    let vm = run(r#"mut total = 0
-for_each([1, 2, 3], fn(n) { total = total + n })
+    let vm = run(r#"mut total = 0;
+[1, 2, 3].for_each(fn(n) { total = total + n })
 let x = total"#)
     .unwrap();
     // for_each mutates via upvalue; check that total accumulated
@@ -183,8 +183,8 @@ let x = total"#)
 
 #[test]
 fn test_for_each_empty_list() {
-    let vm = run(r#"mut total = 0
-for_each([], fn(n) { total = total + n })
+    let vm = run(r#"mut total = 0;
+[].for_each(fn(n) { total = total + n })
 let x = total"#)
     .unwrap();
     assert_eq!(result_int(&vm), 0);
@@ -196,19 +196,19 @@ let x = total"#)
 
 #[test]
 fn test_find_found() {
-    let vm = run("let x = find([1, 2, 3, 4], fn(n) { n > 2 })").unwrap();
+    let vm = run("let x = [1, 2, 3, 4].find(fn(n) { n > 2 })").unwrap();
     assert_eq!(result_int(&vm), 3);
 }
 
 #[test]
 fn test_find_not_found() {
-    let vm = run("let x = find([1, 2, 3], fn(n) { n > 100 })").unwrap();
+    let vm = run("let x = [1, 2, 3].find(fn(n) { n > 100 })").unwrap();
     assert!(vm.stack[0].is_nil(), "expected nil when not found");
 }
 
 #[test]
 fn test_find_empty_list() {
-    let vm = run("let x = find([], fn(n) { true })").unwrap();
+    let vm = run("let x = [].find(fn(n) { true })").unwrap();
     assert!(vm.stack[0].is_nil());
 }
 
@@ -218,37 +218,37 @@ fn test_find_empty_list() {
 
 #[test]
 fn test_any_true() {
-    let vm = run("let x = any([1, 2, 3], fn(n) { n == 2 })").unwrap();
+    let vm = run("let x = [1, 2, 3].any(fn(n) { n == 2 })").unwrap();
     assert!(result_bool(&vm));
 }
 
 #[test]
 fn test_any_false() {
-    let vm = run("let x = any([1, 2, 3], fn(n) { n > 10 })").unwrap();
+    let vm = run("let x = [1, 2, 3].any(fn(n) { n > 10 })").unwrap();
     assert!(!result_bool(&vm));
 }
 
 #[test]
 fn test_any_empty_list() {
-    let vm = run("let x = any([], fn(n) { true })").unwrap();
+    let vm = run("let x = [].any(fn(n) { true })").unwrap();
     assert!(!result_bool(&vm));
 }
 
 #[test]
 fn test_all_true() {
-    let vm = run("let x = all([1, 2, 3], fn(n) { n > 0 })").unwrap();
+    let vm = run("let x = [1, 2, 3].all(fn(n) { n > 0 })").unwrap();
     assert!(result_bool(&vm));
 }
 
 #[test]
 fn test_all_false() {
-    let vm = run("let x = all([1, 2, 3], fn(n) { n > 1 })").unwrap();
+    let vm = run("let x = [1, 2, 3].all(fn(n) { n > 1 })").unwrap();
     assert!(!result_bool(&vm));
 }
 
 #[test]
 fn test_all_empty_list() {
-    let vm = run("let x = all([], fn(n) { false })").unwrap();
+    let vm = run("let x = [].all(fn(n) { false })").unwrap();
     // all([]) is vacuously true
     assert!(result_bool(&vm));
 }
@@ -259,31 +259,31 @@ fn test_all_empty_list() {
 
 #[test]
 fn test_sort_ascending() {
-    let vm = run("let x = sort([3, 1, 4, 1, 5, 9], fn(a, b) { a - b })").unwrap();
+    let vm = run("let x = [3, 1, 4, 1, 5, 9].sort(fn(a, b) { a - b })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 1, 3, 4, 5, 9]);
 }
 
 #[test]
 fn test_sort_descending() {
-    let vm = run("let x = sort([3, 1, 4], fn(a, b) { b - a })").unwrap();
+    let vm = run("let x = [3, 1, 4].sort(fn(a, b) { b - a })").unwrap();
     assert_eq!(result_int_list(&vm), vec![4, 3, 1]);
 }
 
 #[test]
 fn test_sort_empty_list() {
-    let vm = run("let x = sort([], fn(a, b) { a - b })").unwrap();
+    let vm = run("let x = [].sort(fn(a, b) { a - b })").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
 #[test]
 fn test_sort_single_element() {
-    let vm = run("let x = sort([42], fn(a, b) { a - b })").unwrap();
+    let vm = run("let x = [42].sort(fn(a, b) { a - b })").unwrap();
     assert_eq!(result_int_list(&vm), vec![42]);
 }
 
 #[test]
 fn test_sort_already_sorted() {
-    let vm = run("let x = sort([1, 2, 3], fn(a, b) { a - b })").unwrap();
+    let vm = run("let x = [1, 2, 3].sort(fn(a, b) { a - b })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 2, 3]);
 }
 
@@ -293,25 +293,25 @@ fn test_sort_already_sorted() {
 
 #[test]
 fn test_flat_map_basic() {
-    let vm = run("let x = flat_map([1, 2, 3], fn(n) { [n, n * 10] })").unwrap();
+    let vm = run("let x = [1, 2, 3].flat_map(fn(n) { [n, n * 10] })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 10, 2, 20, 3, 30]);
 }
 
 #[test]
 fn test_flat_map_identity() {
-    let vm = run("let x = flat_map([[1, 2], [3, 4]], fn(l) { l })").unwrap();
+    let vm = run("let x = [[1, 2], [3, 4]].flat_map(fn(l) { l })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 2, 3, 4]);
 }
 
 #[test]
 fn test_flat_map_non_list_passthrough() {
-    let vm = run("let x = flat_map([1, 2, 3], fn(n) { n * 2 })").unwrap();
+    let vm = run("let x = [1, 2, 3].flat_map(fn(n) { n * 2 })").unwrap();
     assert_eq!(result_int_list(&vm), vec![2, 4, 6]);
 }
 
 #[test]
 fn test_flat_map_empty_list() {
-    let vm = run("let x = flat_map([], fn(n) { [n] })").unwrap();
+    let vm = run("let x = [].flat_map(fn(n) { [n] })").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
@@ -321,8 +321,8 @@ fn test_flat_map_empty_list() {
 
 #[test]
 fn test_zip_equal_lengths() {
-    let vm = run(r#"let pairs = zip([1, 2, 3], [10, 20, 30])
-let x = reduce(pairs, 0, fn(acc, pair) { acc + pair[0] + pair[1] })"#)
+    let vm = run(r#"let pairs = [1, 2, 3].zip([10, 20, 30])
+let x = pairs.reduce(0, fn(acc, pair) { acc + pair[0] + pair[1] })"#)
     .unwrap();
     // (1+10) + (2+20) + (3+30) = 66
     assert_eq!(result_int(&vm), 66);
@@ -330,8 +330,8 @@ let x = reduce(pairs, 0, fn(acc, pair) { acc + pair[0] + pair[1] })"#)
 
 #[test]
 fn test_zip_different_lengths() {
-    let vm = run(r#"let pairs = zip([1, 2, 3], [10, 20])
-let x = len(pairs)"#)
+    let vm = run(r#"let pairs = [1, 2, 3].zip([10, 20])
+let x = pairs.len()"#)
     .unwrap();
     // Truncated to shorter: 2 pairs
     assert_eq!(result_int(&vm), 2);
@@ -339,7 +339,7 @@ let x = len(pairs)"#)
 
 #[test]
 fn test_zip_empty() {
-    let vm = run("let x = zip([], [1, 2, 3])").unwrap();
+    let vm = run("let x = [].zip([1, 2, 3])").unwrap();
     assert_eq!(result_int_list(&vm), Vec::<i64>::new());
 }
 
@@ -349,8 +349,8 @@ fn test_zip_empty() {
 
 #[test]
 fn test_map_then_filter() {
-    let vm = run(r#"let doubled = map([1, 2, 3, 4, 5], fn(n) { n * 2 })
-let x = filter(doubled, fn(n) { n > 4 })"#)
+    let vm = run(r#"let doubled = [1, 2, 3, 4, 5].map(fn(n) { n * 2 })
+let x = doubled.filter(fn(n) { n > 4 })"#)
     .unwrap();
     assert_eq!(result_int_list(&vm), vec![6, 8, 10]);
 }
@@ -358,8 +358,8 @@ let x = filter(doubled, fn(n) { n > 4 })"#)
 #[test]
 fn test_filter_then_reduce() {
     let vm = run(
-        r#"let evens = filter([1, 2, 3, 4, 5, 6], fn(n) { n % 2 == 0 })
-let x = reduce(evens, 0, fn(acc, n) { acc + n })"#,
+        r#"let evens = [1, 2, 3, 4, 5, 6].filter(fn(n) { n % 2 == 0 })
+let x = evens.reduce(0, fn(acc, n) { acc + n })"#,
     )
     .unwrap();
     assert_eq!(result_int(&vm), 12);
@@ -368,9 +368,9 @@ let x = reduce(evens, 0, fn(acc, n) { acc + n })"#,
 #[test]
 fn test_map_filter_reduce_pipeline() {
     let vm = run(r#"let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-let result = map(data, fn(n) { n * n })
-let big = filter(result, fn(n) { n > 20 })
-let x = reduce(big, 0, fn(acc, n) { acc + n })"#)
+let result = data.map(fn(n) { n * n })
+let big = result.filter(fn(n) { n > 20 })
+let x = big.reduce(0, fn(acc, n) { acc + n })"#)
     .unwrap();
     // Squares > 20: 25, 36, 49, 64, 81, 100 → sum = 355
     assert_eq!(result_int(&vm), 355);
@@ -389,32 +389,38 @@ fn expect_err(source: &str) -> String {
 
 #[test]
 fn test_map_non_list_error() {
-    let err = expect_err("let x = map(42, fn(n) { n })");
-    assert!(err.contains("must be a List"), "got: {err}");
+    let err = expect_err("let x = (42).map(fn(n) { n })");
+    assert!(
+        err.contains("must be a List") || err.contains("no method"),
+        "got: {err}"
+    );
 }
 
 #[test]
 fn test_map_non_function_error() {
-    let err = expect_err("let x = map([1, 2], 42)");
+    let err = expect_err("let x = [1, 2].map(42)");
     assert!(err.contains("must be a Function"), "got: {err}");
 }
 
 #[test]
 fn test_reduce_non_list_error() {
-    let err = expect_err("let x = reduce(42, 0, fn(a, n) { a })");
-    assert!(err.contains("must be a List"), "got: {err}");
+    let err = expect_err("let x = (42).reduce(0, fn(a, n) { a })");
+    assert!(
+        err.contains("must be a List") || err.contains("no method"),
+        "got: {err}"
+    );
 }
 
 #[test]
 fn test_sort_bad_comparator_return() {
-    let err = expect_err(r#"let x = sort([1, 2], fn(a, b) { "not a number" })"#);
+    let err = expect_err(r#"let x = [1, 2].sort(fn(a, b) { "not a number" })"#);
     assert!(err.contains("must return a Number"), "got: {err}");
 }
 
 #[test]
 fn test_closure_error_propagates() {
     let err = expect_err(
-        r#"let x = map([1, 2, 3], fn(n) {
+        r#"let x = [1, 2, 3].map(fn(n) {
     assert(n < 3)
     return n
 })"#,
@@ -430,7 +436,7 @@ fn test_closure_error_propagates() {
 fn test_stress_map() {
     let vm = run_stress(
         r#"let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-let x = map(data, fn(n) { n * 2 })"#,
+let x = data.map(fn(n) { n * 2 })"#,
     )
     .unwrap();
     assert_eq!(
@@ -443,7 +449,7 @@ let x = map(data, fn(n) { n * 2 })"#,
 fn test_stress_filter() {
     let vm = run_stress(
         r#"let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-let x = filter(data, fn(n) { n % 3 == 0 })"#,
+let x = data.filter(fn(n) { n % 3 == 0 })"#,
     )
     .unwrap();
     assert_eq!(result_int_list(&vm), vec![3, 6, 9]);
@@ -451,13 +457,13 @@ let x = filter(data, fn(n) { n % 3 == 0 })"#,
 
 #[test]
 fn test_stress_reduce() {
-    let vm = run_stress("let x = reduce([1, 2, 3, 4, 5], 0, fn(acc, n) { acc + n })").unwrap();
+    let vm = run_stress("let x = [1, 2, 3, 4, 5].reduce(0, fn(acc, n) { acc + n })").unwrap();
     assert_eq!(result_int(&vm), 15);
 }
 
 #[test]
 fn test_stress_sort() {
-    let vm = run_stress("let x = sort([5, 3, 8, 1, 2], fn(a, b) { a - b })").unwrap();
+    let vm = run_stress("let x = [5, 3, 8, 1, 2].sort(fn(a, b) { a - b })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 2, 3, 5, 8]);
 }
 
@@ -466,8 +472,8 @@ fn test_stress_map_with_string_alloc() {
     // Each closure call allocates a new string — maximum GC pressure.
     let vm = run_stress(
         r#"let data = [1, 2, 3, 4, 5]
-let strings = map(data, fn(n) { "item_" + n })
-let x = len(strings)"#,
+let strings = data.map(fn(n) { "item_" + n })
+let x = strings.len()"#,
     )
     .unwrap();
     assert_eq!(result_int(&vm), 5);
@@ -477,9 +483,9 @@ let x = len(strings)"#,
 fn test_stress_nested_hof() {
     let vm = run_stress(
         r#"let data = [1, 2, 3, 4, 5, 6]
-let evens = filter(data, fn(n) { n % 2 == 0 })
-let doubled = map(evens, fn(n) { n * 2 })
-let x = reduce(doubled, 0, fn(acc, n) { acc + n })"#,
+let evens = data.filter(fn(n) { n % 2 == 0 })
+let doubled = evens.map(fn(n) { n * 2 })
+let x = doubled.reduce(0, fn(acc, n) { acc + n })"#,
     )
     .unwrap();
     // evens: [2, 4, 6], doubled: [4, 8, 12], sum: 24
@@ -488,15 +494,15 @@ let x = reduce(doubled, 0, fn(acc, n) { acc + n })"#,
 
 #[test]
 fn test_stress_flat_map() {
-    let vm = run_stress("let x = flat_map([1, 2, 3], fn(n) { [n, n * 10] })").unwrap();
+    let vm = run_stress("let x = [1, 2, 3].flat_map(fn(n) { [n, n * 10] })").unwrap();
     assert_eq!(result_int_list(&vm), vec![1, 10, 2, 20, 3, 30]);
 }
 
 #[test]
 fn test_stress_zip() {
     let vm = run_stress(
-        r#"let pairs = zip([1, 2, 3], [10, 20, 30])
-let x = len(pairs)"#,
+        r#"let pairs = [1, 2, 3].zip([10, 20, 30])
+let x = pairs.len()"#,
     )
     .unwrap();
     assert_eq!(result_int(&vm), 3);
@@ -505,8 +511,8 @@ let x = len(pairs)"#,
 #[test]
 fn test_stress_for_each_with_upvalue() {
     let vm = run_stress(
-        r#"mut sum = 0
-for_each([10, 20, 30], fn(n) { sum = sum + n })
+        r#"mut sum = 0;
+[10, 20, 30].for_each(fn(n) { sum = sum + n })
 let x = sum"#,
     )
     .unwrap();
@@ -516,9 +522,9 @@ let x = sum"#,
 #[test]
 fn test_stress_find_any_all() {
     let vm = run_stress(
-        r#"let found = find([1, 2, 3, 4], fn(n) { n > 2 })
-let has = any([1, 2, 3], fn(n) { n == 2 })
-let ok = all([1, 2, 3], fn(n) { n > 0 })
+        r#"let found = [1, 2, 3, 4].find(fn(n) { n > 2 })
+let has = [1, 2, 3].any(fn(n) { n == 2 })
+let ok = [1, 2, 3].all(fn(n) { n > 0 })
 let x = found"#,
     )
     .unwrap();
