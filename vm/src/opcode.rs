@@ -108,6 +108,11 @@ pub enum OpCode {
     /// Prove: compile + verify ZK circuit. R[A] = capture map, K[Bx] = source string.
     Prove = 160,
 
+    // ===== Methods =====
+    /// Method call: R[A] = R[B].method(R[B+1]..R[B+C])
+    /// Method name is read from R[B-1] (LoadConst prior).
+    MethodCall = 161,
+
     // ===== Special =====
     /// No operation
     Nop = 255,
@@ -157,6 +162,7 @@ impl OpCode {
             152 => Some(OpCode::GetIndex),
             153 => Some(OpCode::SetIndex),
             160 => Some(OpCode::Prove),
+            161 => Some(OpCode::MethodCall),
             255 => Some(OpCode::Nop),
             _ => None,
         }
@@ -211,6 +217,7 @@ impl OpCode {
             OpCode::GetIndex => "GET_INDEX",
             OpCode::SetIndex => "SET_INDEX",
             OpCode::Prove => "PROVE",
+            OpCode::MethodCall => "METHOD_CALL",
             OpCode::Nop => "NOP",
         }
     }
