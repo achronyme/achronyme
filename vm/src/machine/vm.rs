@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use super::frame::CallFrame;
 use super::interpreter::InterpreterOps;
 use super::native::NativeRegistry;
+use super::prototype::PrototypeRegistry;
 use super::prove::{ProveHandler, VerifyHandler};
 use super::upvalue::UpvalueOps;
 
@@ -54,6 +55,9 @@ pub struct VM {
     /// locals that the GC cannot see. Pushing them here keeps them rooted
     /// across closure invocations that may trigger garbage collection.
     pub native_roots: Vec<Value>,
+
+    /// Per-tag method tables for method dispatch (`.method()` syntax).
+    pub prototype_registry: PrototypeRegistry,
 }
 
 pub const STACK_MAX: usize = 65_536;
@@ -87,10 +91,12 @@ impl VM {
             verify_handler: None,
             last_error_location: None,
             native_roots: Vec::new(),
+            prototype_registry: PrototypeRegistry::new(),
         };
 
-        // Bootstrap native functions
+        // Bootstrap native functions and prototype methods
         vm.bootstrap_natives();
+        vm.prototype_registry.bootstrap();
 
         vm
     }
