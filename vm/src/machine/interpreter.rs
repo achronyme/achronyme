@@ -391,6 +391,67 @@ impl super::vm::VM {
                     self.handle_prove(instruction, base, closure_idx)?;
                 }
 
+                MethodCall => {
+                    let a = decode_a(instruction) as usize;
+                    let b = decode_b(instruction) as usize;
+                    let c = decode_c(instruction) as usize;
+
+                    // Method name is in R[base + b - 1] (LoadConst prior)
+                    let name_val = self.get_reg(base, b.wrapping_sub(1))?;
+                    let name_handle = name_val.as_handle().ok_or_else(|| {
+                        RuntimeError::TypeMismatch(
+                            "MethodCall: method name register is not a string".into(),
+                        )
+                    })?;
+                    let method_name = self
+                        .heap
+                        .get_string(name_handle)
+                        .ok_or(RuntimeError::SystemError(
+                            "MethodCall: method name string missing".into(),
+                        ))?
+                        .clone();
+
+                    // Receiver is in R[base + b]
+                    let receiver = self.get_reg(base, b)?;
+                    let tag = receiver.tag();
+
+                    // Lookup method in prototype registry
+                    let method_fn = self
+                        .prototype_registry
+                        .lookup(tag, &method_name)
+                        .ok_or_else(|| {
+                            let type_name = match tag {
+                                0 => "Int",
+                                1 => "Nil",
+                                2 | 3 => "Bool",
+                                4 => "String",
+                                5 => "List",
+                                6 => "Map",
+                                7 => "Function",
+                                8 => "Field",
+                                9 => "Proof",
+                                10 => "Native",
+                                11 => "Function",
+                                12 => "Iterator",
+                                13 => "BigInt",
+                                _ => "Unknown",
+                            };
+                            RuntimeError::TypeMismatch(format!(
+                                "{type_name} has no method '{method_name}'"
+                            ))
+                        })?;
+
+                    // Collect arguments from R[base+b+1..base+b+c]
+                    let mut args = Vec::with_capacity(c);
+                    for i in 1..=c {
+                        args.push(self.get_reg(base, b + i)?);
+                    }
+
+                    // Call the method
+                    let result = method_fn(self, receiver, &args)?;
+                    self.set_reg(base, a, result)?;
+                }
+
                 BuildList | BuildMap | GetIndex | SetIndex => {
                     self.handle_data(op, instruction, base)?;
                 }
