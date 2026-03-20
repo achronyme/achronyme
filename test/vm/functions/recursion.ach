@@ -28,7 +28,7 @@ assert(factorial(10) == 3628800)
 
 // Recursive sum of list
 fn sum_list(arr, idx) {
-    if idx >= len(arr) { return 0 }
+    if idx >= arr.len() { return 0 }
     return arr[idx] + sum_list(arr, idx + 1)
 }
 assert(sum_list([1, 2, 3, 4, 5], 0) == 15)

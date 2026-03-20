@@ -4,12 +4,12 @@
 fn map_list(arr, f) {
     mut result = []
     for x in arr {
-        push(result, f(x))
+        result.push(f(x))
     }
     return result
 }
 let doubled = map_list([1, 2, 3, 4, 5], fn(x) { x * 2 })
-assert(len(doubled) == 5)
+assert(doubled.len() == 5)
 assert(doubled[0] == 2)
 assert(doubled[4] == 10)
 
@@ -24,37 +24,37 @@ assert(strings[1] == "2")
 
 // map on empty array
 let empty = map_list([], fn(x) { x })
-assert(len(empty) == 0)
+assert(empty.len() == 0)
 
 // --- filter ---
 fn filter(arr, pred) {
     mut result = []
     for x in arr {
         if pred(x) {
-            push(result, x)
+            result.push(x)
         }
     }
     return result
 }
 let evens = filter([1, 2, 3, 4, 5, 6, 7, 8], fn(x) { x % 2 == 0 })
-assert(len(evens) == 4)
+assert(evens.len() == 4)
 assert(evens[0] == 2)
 assert(evens[1] == 4)
 assert(evens[2] == 6)
 assert(evens[3] == 8)
 
 let positives = filter([-3, -1, 0, 1, 3], fn(x) { x > 0 })
-assert(len(positives) == 2)
+assert(positives.len() == 2)
 assert(positives[0] == 1)
 assert(positives[1] == 3)
 
 // filter everything
 let none = filter([1, 2, 3], fn(x) { false })
-assert(len(none) == 0)
+assert(none.len() == 0)
 
 // filter nothing
 let all = filter([1, 2, 3], fn(x) { true })
-assert(len(all) == 3)
+assert(all.len() == 3)
 
 // --- reduce (fold left) ---
 fn reduce(arr, init, f) {
@@ -106,15 +106,15 @@ assert(apply_n(fn(x) { x * 2 }, 1, 0) == 1)
 fn zip(a, b) {
     mut result = []
     mut i = 0
-    let length = if len(a) < len(b) { len(a) } else { len(b) }
+    let length = if a.len() < b.len() { a.len() } else { b.len() }
     while i < length {
-        push(result, [a[i], b[i]])
+        result.push([a[i], b[i]])
         i = i + 1
     }
     return result
 }
 let zipped = zip([1, 2, 3], ["a", "b", "c"])
-assert(len(zipped) == 3)
+assert(zipped.len() == 3)
 assert(zipped[0][0] == 1)
 assert(zipped[0][1] == "a")
 assert(zipped[2][0] == 3)
@@ -122,7 +122,7 @@ assert(zipped[2][1] == "c")
 
 // uneven zip
 let short = zip([1, 2], [10, 20, 30])
-assert(len(short) == 2)
+assert(short.len() == 2)
 
 // --- find ---
 fn find(arr, pred) {
@@ -161,13 +161,13 @@ fn flat_map(arr, f) {
     for x in arr {
         let inner = f(x)
         for y in inner {
-            push(result, y)
+            result.push(y)
         }
     }
     return result
 }
 let expanded = flat_map([1, 2, 3], fn(x) { [x, x * 10] })
-assert(len(expanded) == 6)
+assert(expanded.len() == 6)
 assert(expanded[0] == 1)
 assert(expanded[1] == 10)
 assert(expanded[2] == 2)
@@ -178,12 +178,12 @@ fn take_while(arr, pred) {
     mut result = []
     for x in arr {
         if !pred(x) { return result }
-        push(result, x)
+        result.push(x)
     }
     return result
 }
 let taken = take_while([1, 2, 3, 10, 4, 5], fn(x) { x < 5 })
-assert(len(taken) == 3)
+assert(taken.len() == 3)
 assert(taken[0] == 1)
 assert(taken[2] == 3)
 

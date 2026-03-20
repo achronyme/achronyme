@@ -24,7 +24,7 @@ fn make_fns_shared() {
     mut fns = []
     mut i = 0
     while i < 3 {
-        push(fns, fn() { i })
+        fns.push(fn() { i })
         i = i + 1
     }
     return fns
@@ -41,7 +41,7 @@ fn make_fns_snapshot() {
     mut i = 0
     while i < 5 {
         let snapshot = i
-        push(fns, fn() { snapshot })
+        fns.push(fn() { snapshot })
         i = i + 1
     }
     return fns
@@ -88,11 +88,11 @@ fn make_event_system() {
     mut handlers = []
     mut log = []
     let on = fn(handler) {
-        push(handlers, handler)
+        handlers.push(handler)
     }
     let emit = fn(value) {
         for h in handlers {
-            push(log, h(value))
+            log.push(h(value))
         }
     }
     let get_log = fn() { log }
@@ -103,12 +103,12 @@ events.on(fn(x) { x * 2 })
 events.on(fn(x) { x + 100 })
 events.emit(5)
 let log = events.log()
-assert(len(log) == 2)
+assert(log.len() == 2)
 assert(log[0] == 10)
 assert(log[1] == 105)
 events.emit(1)
 let log2 = events.log()
-assert(len(log2) == 4)
+assert(log2.len() == 4)
 
 // --- Memoization pattern ---
 fn make_memo(f) {
@@ -162,7 +162,7 @@ fn capture_types() {
     let flag = true
     let arr = [1, 2, 3]
     return fn() {
-        return [num, str, flag, len(arr)]
+        return [num, str, flag, arr.len()]
     }
 }
 let types = capture_types()()

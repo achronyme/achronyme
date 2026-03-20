@@ -42,8 +42,8 @@ assert(get() == 100)
 fn map_list(list, f) {
     mut result = []
     mut i = 0
-    while i < len(list) {
-        push(result, f(list[i]))
+    while i < list.len() {
+        result.push(f(list[i]))
         i = i + 1
     }
     return result
