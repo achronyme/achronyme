@@ -1,11 +1,11 @@
 #[test]
 fn std_modules_count() {
     let modules = achronyme_std::std_modules();
-    // conv(4) + math(4) + string_ext(5) + io(3) = 16 with io feature
+    // conv(1) + string_ext(1) + io(3) = 5 with io feature
     #[cfg(feature = "io")]
-    assert_eq!(modules.len(), 4);
-    #[cfg(not(feature = "io"))]
     assert_eq!(modules.len(), 3);
+    #[cfg(not(feature = "io"))]
+    assert_eq!(modules.len(), 2);
 }
 
 #[test]
@@ -30,17 +30,17 @@ fn std_native_table_matches_modules() {
 fn register_std_on_vm() {
     let mut vm = vm::VM::new();
     let builtin_count = vm.natives.len();
-    assert_eq!(builtin_count, 43); // builtins
+    assert_eq!(builtin_count, 14); // builtins (beta.13)
 
     for module in achronyme_std::std_modules() {
         vm.register_module(&*module);
     }
 
     let std_table = achronyme_std::std_native_table();
-    assert_eq!(vm.natives.len(), 43 + std_table.len());
+    assert_eq!(vm.natives.len(), 14 + std_table.len());
 
     // Verify each new native is accessible
-    for i in 43..vm.natives.len() {
+    for i in 14..vm.natives.len() {
         assert!(vm.globals[i].value.is_native());
     }
 }
@@ -51,11 +51,7 @@ fn compiler_with_std_natives() {
     let compiler = compiler::Compiler::with_extra_natives(&table);
 
     // Verify std natives are in global_symbols
-    assert!(compiler.global_symbols.contains_key("to_string"));
     assert!(compiler.global_symbols.contains_key("parse_int"));
-    assert!(compiler.global_symbols.contains_key("abs"));
-    assert!(compiler.global_symbols.contains_key("min"));
-    assert!(compiler.global_symbols.contains_key("starts_with"));
     assert!(compiler.global_symbols.contains_key("join"));
 
     #[cfg(feature = "io")]
@@ -64,9 +60,9 @@ fn compiler_with_std_natives() {
         assert!(compiler.global_symbols.contains_key("read_file"));
     }
 
-    // Std natives should have indices >= 43
-    let to_string_idx = compiler.global_symbols["to_string"];
-    assert!(to_string_idx >= 43);
+    // Std natives should have indices >= 14
+    let parse_int_idx = compiler.global_symbols["parse_int"];
+    assert!(parse_int_idx >= 14);
 }
 
 /// End-to-end: compile code using std natives and run it.
@@ -75,29 +71,29 @@ fn e2e_std_natives() {
     let table = achronyme_std::std_native_table();
     let mut compiler = compiler::Compiler::with_extra_natives(&table);
     let source = r#"
-        let x = abs(-42)
+        let x = (-42).abs()
         assert(x == 42)
 
-        let m = min(10, 20)
+        let m = (10).min(20)
         assert(m == 10)
 
-        let s = to_string(123)
+        let s = (123).to_string()
         assert(s == "123")
 
         let n = parse_int("99")
         assert(n == 99)
 
-        let p = pow(2, 10)
+        let p = (2).pow(10)
         assert(p == 1024)
 
-        assert(starts_with("hello", "hel"))
-        assert(ends_with("hello", "llo"))
-        assert(contains("hello world", "world"))
+        assert("hello".starts_with("hel"))
+        assert("hello".ends_with("llo"))
+        assert("hello world".contains("world"))
 
         let joined = join(["a", "b", "c"], "-")
         assert(joined == "a-b-c")
 
-        let rep = repeat("ab", 3)
+        let rep = "ab".repeat(3)
         assert(rep == "ababab")
     "#;
 

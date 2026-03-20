@@ -1072,7 +1072,7 @@ fn ir_array_dynamic_index_rejected() {
 
 #[test]
 fn ir_array_len_builtin() {
-    // len(arr) returns compile-time constant
+    // a.len() returns compile-time constant
     ir_only_verify_fe(
         &[("out", FieldElement::from_u64(3))],
         &[
@@ -1080,7 +1080,7 @@ fn ir_array_len_builtin() {
             ("y", FieldElement::from_u64(2)),
             ("z", FieldElement::from_u64(3)),
         ],
-        "let a = [x, y, z]\nassert_eq(len(a), out)",
+        "let a = [x, y, z]\nassert_eq(a.len(), out)",
     );
 }
 
