@@ -110,7 +110,7 @@ fn result_string_list(vm: &VM) -> Vec<String> {
 fn test_stress_gc_keys() {
     let vm = run_stress(
         r#"let m = { "a": 1, "b": 2, "c": 3 }
-let x = len(keys(m))"#,
+let x = m.keys().len()"#,
     )
     .unwrap();
     assert_eq!(result_int(&vm), 3);
@@ -118,13 +118,13 @@ let x = len(keys(m))"#,
 
 #[test]
 fn test_stress_gc_split() {
-    let vm = run_stress(r#"let x = split("a,b,c,d,e", ",")"#).unwrap();
+    let vm = run_stress(r#"let x = "a,b,c,d,e".split(",")"#).unwrap();
     assert_eq!(result_string_list(&vm), vec!["a", "b", "c", "d", "e"]);
 }
 
 #[test]
 fn test_stress_gc_chars() {
-    let vm = run_stress(r#"let x = chars("hello")"#).unwrap();
+    let vm = run_stress(r#"let x = "hello".chars()"#).unwrap();
     assert_eq!(result_string_list(&vm), vec!["h", "e", "l", "l", "o"]);
 }
 
@@ -163,10 +163,10 @@ let x = sum()"#,
 fn test_stress_gc_combined_natives() {
     // Chain multiple multi-alloc natives in one program
     let vm = run_stress(
-        r#"let parts = split("hello world foo", " ")
-let k = keys({ "a": 1, "b": 2 })
-let c = chars("abc")
-let x = len(parts) + len(k) + len(c)"#,
+        r#"let parts = "hello world foo".split(" ")
+let k = { "a": 1, "b": 2 }.keys()
+let c = "abc".chars()
+let x = parts.len() + k.len() + c.len()"#,
     )
     .unwrap();
     assert_eq!(result_int(&vm), 8); // 3 + 2 + 3
@@ -226,8 +226,8 @@ fn test_native_gc_stats_returns_map() {
     let vm = run_stress(
         r#"let s = gc_stats()
 assert(typeof(s) == "Map")
-let k = keys(s)
-assert(len(k) == 5)"#,
+let k = s.keys()
+assert(k.len() == 5)"#,
     )
     .unwrap();
     // If we get here without error, the native returned a valid Map with 5 keys
@@ -244,7 +244,7 @@ fn test_heap_limit_exceeded_error() {
 mut list = []
 mut i = 0
 while i < 10000 {
-    push(list, "x")
+    list.push("x")
     i = i + 1
 }
 "#;
