@@ -1,13 +1,12 @@
 //! `achronyme-std` — Standard library modules for the Achronyme VM.
 //!
-//! Provides additional native functions beyond the 43 VM builtins.
+//! Provides additional native functions beyond the VM builtins.
 //! Each module implements `vm::NativeModule` and is registered by the
 //! CLI via `VM::register_module()`.
 
 pub mod conv;
 #[cfg(feature = "io")]
 pub mod io;
-pub mod math;
 pub mod string_ext;
 
 use vm::module::NativeModule;
@@ -21,7 +20,6 @@ use vm::specs::NativeMeta;
 pub fn std_modules() -> Vec<Box<dyn NativeModule>> {
     let mut modules: Vec<Box<dyn NativeModule>> = vec![
         Box::new(conv::ConvModule),
-        Box::new(math::MathModule),
         Box::new(string_ext::StringExtModule),
     ];
 

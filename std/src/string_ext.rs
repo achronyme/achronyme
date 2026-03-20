@@ -1,68 +1,14 @@
-//! Extended string natives: starts_with, ends_with, contains, join, repeat.
+//! Extended string natives: join.
+//! (starts_with, ends_with, contains, repeat moved to String methods in beta.13)
 
 use ach_macros::{ach_module, ach_native};
 use memory::Value;
 use vm::error::RuntimeError;
 use vm::machine::VM;
 
-/// Helper: extract a String from a Value.
-fn extract_string<'a>(vm: &'a VM, val: &Value, fn_name: &str) -> Result<&'a str, RuntimeError> {
-    if !val.is_string() {
-        return Err(RuntimeError::TypeMismatch(format!(
-            "{fn_name}() expects a String argument"
-        )));
-    }
-    let handle = val
-        .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
-    vm.heap
-        .get_string(handle)
-        .map(|s| s.as_str())
-        .ok_or(RuntimeError::SystemError("String missing".into()))
-}
-
 #[ach_module(name = "string_ext")]
 pub mod string_ext_impl {
     use super::*;
-
-    /// `starts_with(str, prefix)` → Bool
-    #[ach_native(name = "starts_with", arity = 2)]
-    pub fn native_starts_with(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "starts_with() takes exactly 2 arguments".into(),
-            ));
-        }
-        let s = extract_string(vm, &args[0], "starts_with")?.to_string();
-        let prefix = extract_string(vm, &args[1], "starts_with")?;
-        Ok(Value::bool(s.starts_with(prefix)))
-    }
-
-    /// `ends_with(str, suffix)` → Bool
-    #[ach_native(name = "ends_with", arity = 2)]
-    pub fn native_ends_with(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "ends_with() takes exactly 2 arguments".into(),
-            ));
-        }
-        let s = extract_string(vm, &args[0], "ends_with")?.to_string();
-        let suffix = extract_string(vm, &args[1], "ends_with")?;
-        Ok(Value::bool(s.ends_with(suffix)))
-    }
-
-    /// `contains(str, substr)` → Bool
-    #[ach_native(name = "contains", arity = 2)]
-    pub fn native_contains(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "contains() takes exactly 2 arguments".into(),
-            ));
-        }
-        let s = extract_string(vm, &args[0], "contains")?.to_string();
-        let substr = extract_string(vm, &args[1], "contains")?;
-        Ok(Value::bool(s.contains(substr)))
-    }
 
     /// `join(list, separator)` → String — joins a list of strings.
     #[ach_native(name = "join", arity = 2)]
@@ -80,7 +26,20 @@ pub mod string_ext_impl {
         let list_handle = args[0]
             .as_handle()
             .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
-        let sep = extract_string(vm, &args[1], "join")?.to_string();
+
+        if !args[1].is_string() {
+            return Err(RuntimeError::TypeMismatch(
+                "join() second argument must be a String".into(),
+            ));
+        }
+        let sep_handle = args[1]
+            .as_handle()
+            .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+        let sep = vm
+            .heap
+            .get_string(sep_handle)
+            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .clone();
 
         let list = vm
             .heap
@@ -107,34 +66,6 @@ pub mod string_ext_impl {
                 .ok_or(RuntimeError::SystemError("String missing".into()))?;
             result.push_str(s);
         }
-        let handle = vm.heap.alloc_string(result);
-        Ok(Value::string(handle))
-    }
-
-    /// `repeat(str, n)` → String repeated n times.
-    #[ach_native(name = "repeat", arity = 2)]
-    pub fn native_repeat(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-        if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "repeat() takes exactly 2 arguments".into(),
-            ));
-        }
-        let s = extract_string(vm, &args[0], "repeat")?.to_string();
-        let n = args[1].as_int().ok_or_else(|| {
-            RuntimeError::TypeMismatch("repeat() second argument must be an Int".into())
-        })?;
-        if n < 0 {
-            return Err(RuntimeError::TypeMismatch(
-                "repeat() count must be non-negative".into(),
-            ));
-        }
-        let total_len = s.len().saturating_mul(n as usize);
-        if total_len > 10_000_000 {
-            return Err(RuntimeError::SystemError(
-                "repeat() result exceeds 10MB limit".into(),
-            ));
-        }
-        let result = s.repeat(n as usize);
         let handle = vm.heap.alloc_string(result);
         Ok(Value::string(handle))
     }
