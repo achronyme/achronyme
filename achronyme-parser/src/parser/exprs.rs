@@ -187,6 +187,16 @@ impl Parser {
             }
             TokenKind::Ident => {
                 let tok = self.advance().clone();
+                // Check for `Type::member` static access
+                if self.at(&TokenKind::ColonColon) {
+                    self.advance(); // eat `::`
+                    let member = self.expect_ident()?;
+                    return Ok(Expr::StaticAccess {
+                        type_name: tok.lexeme,
+                        member,
+                        span: self.span_to_prev(&sp),
+                    });
+                }
                 Ok(Expr::Ident {
                     name: tok.lexeme,
                     span: self.span_to_prev(&sp),

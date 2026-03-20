@@ -108,6 +108,7 @@ pub(super) fn kind_name(kind: &TokenKind) -> &'static str {
         TokenKind::RBrace => "}",
         TokenKind::Comma => ",",
         TokenKind::Colon => ":",
+        TokenKind::ColonColon => "::",
         TokenKind::Semicolon => ";",
         TokenKind::Eof => "end of file",
     }
