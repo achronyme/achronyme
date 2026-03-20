@@ -122,6 +122,10 @@ impl IrLowering {
                 "BigInt".into(),
                 to_ir_span(span),
             )),
+            Expr::StaticAccess { span, .. } => Err(IrError::UnsupportedOperation(
+                "static access (Type::MEMBER) is not supported in circuit mode".into(),
+                to_ir_span(span),
+            )),
             Expr::Error { span } => Err(IrError::UnsupportedOperation(
                 "cannot compile error placeholder (source has parse errors)".into(),
                 to_ir_span(span),
