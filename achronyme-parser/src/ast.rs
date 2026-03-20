@@ -241,6 +241,12 @@ pub enum Expr {
         pairs: Vec<(MapKey, Expr)>,
         span: Span,
     },
+    /// Static access: `Type::MEMBER` (e.g., `Int::MAX`, `Field::ORDER`).
+    StaticAccess {
+        type_name: String,
+        member: String,
+        span: Span,
+    },
     /// Placeholder for an expression that failed to parse (error recovery).
     Error {
         span: Span,
@@ -270,6 +276,7 @@ impl Expr {
             | Expr::Prove { span, .. }
             | Expr::Array { span, .. }
             | Expr::Map { span, .. }
+            | Expr::StaticAccess { span, .. }
             | Expr::Error { span } => span,
             Expr::Block(block) => &block.span,
         }
