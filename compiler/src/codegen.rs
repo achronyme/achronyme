@@ -49,6 +49,9 @@ pub struct Compiler {
 
     /// Warnings collected during compilation.
     pub warnings: Vec<Diagnostic>,
+
+    /// Set of known method names for detecting `expr.method(args)` patterns.
+    pub known_methods: HashSet<String>,
 }
 
 use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
@@ -93,6 +96,12 @@ impl Compiler {
         // Start with a "main" function compiler (arity=0 for top-level script)
         let main_compiler = FunctionCompiler::new("main".to_string(), 0);
 
+        // Populate known method names from the prototype registry.
+        let known_methods: HashSet<String> = vm::known_method_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
         Self {
             compilers: vec![main_compiler],
             prototypes: Vec::new(),
@@ -110,6 +119,7 @@ impl Compiler {
             used_imported_names: HashSet::new(),
             current_span: None,
             warnings: Vec::new(),
+            known_methods,
         }
     }
 
@@ -149,8 +159,68 @@ impl Compiler {
         names
     }
 
+    /// Table of functions migrated from globals to methods in beta.13.
+    const MIGRATED_TO_METHOD: &'static [(&'static str, &'static str)] = &[
+        ("abs", "value.abs()"),
+        ("len", "value.len()"),
+        ("push", "list.push(item)"),
+        ("pop", "list.pop()"),
+        ("keys", "map.keys()"),
+        ("map", "list.map(fn)"),
+        ("filter", "list.filter(fn)"),
+        ("reduce", "list.reduce(init, fn)"),
+        ("for_each", "list.for_each(fn)"),
+        ("find", "list.find(fn)"),
+        ("any", "list.any(fn)"),
+        ("all", "list.all(fn)"),
+        ("sort", "list.sort(fn)"),
+        ("flat_map", "list.flat_map(fn)"),
+        ("zip", "list.zip(other)"),
+        ("min", "a.min(b)"),
+        ("max", "a.max(b)"),
+        ("pow", "a.pow(b)"),
+        ("to_string", "value.to_string()"),
+        ("to_field", "value.to_field()"),
+        ("to_int", "value.to_int()"),
+        ("to_bits", "bigint.to_bits()"),
+        ("bit_and", "a.bit_and(b)"),
+        ("bit_or", "a.bit_or(b)"),
+        ("bit_xor", "a.bit_xor(b)"),
+        ("bit_not", "a.bit_not()"),
+        ("bit_shl", "a.bit_shl(n)"),
+        ("bit_shr", "a.bit_shr(n)"),
+        ("substring", "str.substring(start, end)"),
+        ("index_of", "str.index_of(substr)"),
+        ("split", "str.split(delim)"),
+        ("trim", "str.trim()"),
+        ("replace", "str.replace(search, repl)"),
+        ("to_upper", "str.to_upper()"),
+        ("to_lower", "str.to_lower()"),
+        ("chars", "str.chars()"),
+        ("starts_with", "str.starts_with(prefix)"),
+        ("ends_with", "str.ends_with(suffix)"),
+        ("contains", "str.contains(substr)"),
+        ("repeat", "str.repeat(n)"),
+    ];
+
     /// Build an "Undefined variable" error with a "did you mean?" suggestion if available.
     pub fn undefined_var_error(&self, name: &str) -> CompilerError {
+        // Check if this is a migrated function first
+        if let Some((_, method_form)) = Self::MIGRATED_TO_METHOD.iter().find(|(n, _)| *n == name) {
+            if let Some(span) = self.current_span.as_ref() {
+                let span_range: SpanRange = span.into();
+                let diag = Diagnostic::error(
+                    format!("`{name}` was moved to a method — use `{method_form}` instead"),
+                    span_range,
+                );
+                return CompilerError::DiagnosticError(Box::new(diag));
+            }
+            return CompilerError::CompileError(
+                format!("`{name}` was moved to a method — use `{method_form}` instead"),
+                None,
+            );
+        }
+
         let candidates = self.collect_in_scope_names();
         let suggestion = crate::suggest::find_similar(name, candidates.into_iter(), 2);
 

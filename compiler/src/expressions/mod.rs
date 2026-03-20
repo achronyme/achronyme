@@ -110,6 +110,11 @@ impl ExpressionCompiler for Compiler {
             // === ZK ===
             Expr::Prove { body, source, .. } => self.compile_prove(body, source),
 
+            // === Static access (Type::MEMBER) ===
+            Expr::StaticAccess {
+                type_name, member, ..
+            } => self.compile_static_access(type_name, member),
+
             // === Error recovery placeholder ===
             Expr::Error { .. } => {
                 let reg = self.alloc_reg()?;
@@ -323,6 +328,20 @@ impl Compiler {
     }
 
     fn compile_call(&mut self, callee: &Expr, args: &[Expr]) -> Result<u8, CompilerError> {
+        // Detect method call pattern: expr.method(args) where method is known
+        if let Expr::DotAccess { object, field, .. } = callee {
+            // Check: field is a known method AND object is NOT an imported module alias
+            let is_module_alias = if let Expr::Ident { name, .. } = object.as_ref() {
+                self.imported_aliases.contains_key(name)
+            } else {
+                false
+            };
+
+            if self.known_methods.contains(field.as_str()) && !is_module_alias {
+                return self.compile_method_call(object, field, args);
+            }
+        }
+
         let func_reg = self.compile_expr(callee)?;
 
         let arg_count = args.len();
@@ -347,6 +366,55 @@ impl Compiler {
         Ok(func_reg)
     }
 
+    fn compile_method_call(
+        &mut self,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<u8, CompilerError> {
+        // 1. Allocate register for method name (will become result register)
+        let name_reg = self.alloc_reg()?;
+
+        // 2. Compile receiver into next register
+        let recv_reg = self.compile_expr(object)?;
+        debug_assert_eq!(recv_reg, name_reg + 1);
+
+        // 3. Compile explicit arguments
+        let arg_count = args.len();
+        for arg in args {
+            let _arg_reg = self.compile_expr(arg)?;
+        }
+
+        if arg_count > 255 {
+            return Err(CompilerError::CompilerLimitation(
+                format!("method call has {arg_count} arguments (maximum is 255)"),
+                self.cur_span(),
+            ));
+        }
+
+        // 4. LoadConst method name into name_reg
+        let handle = self.intern_string(method);
+        let val = Value::string(handle);
+        let const_idx = self.add_constant(val)?;
+        if const_idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants(self.cur_span()));
+        }
+        self.emit_abx(OpCode::LoadConst, name_reg, const_idx as u16)?;
+
+        // 5. Emit MethodCall: A=name_reg (result), B=recv_reg, C=arg_count
+        self.emit_abc(OpCode::MethodCall, name_reg, recv_reg, arg_count as u8)?;
+
+        // 6. Free arg registers (LIFO) then receiver
+        for _ in 0..arg_count {
+            let top = self.current()?.reg_top - 1;
+            self.free_reg(top)?;
+        }
+        self.free_reg(recv_reg)?;
+
+        // name_reg now holds the result
+        Ok(name_reg)
+    }
+
     fn compile_index_expr(&mut self, object: &Expr, index: &Expr) -> Result<u8, CompilerError> {
         let obj_reg = self.compile_expr(object)?;
         let key_reg = self.compile_expr(index)?;
@@ -361,6 +429,96 @@ impl Compiler {
         self.emit_abc(OpCode::GetIndex, obj_reg, obj_reg, key_reg)?;
         self.free_reg(key_reg)?;
         Ok(obj_reg)
+    }
+
+    fn compile_static_access(
+        &mut self,
+        type_name: &str,
+        member: &str,
+    ) -> Result<u8, CompilerError> {
+        let reg = self.alloc_reg()?;
+        match (type_name, member) {
+            // Int::MAX, Int::MIN
+            ("Int", "MAX") => {
+                let val = Value::int(memory::I60_MAX);
+                let const_idx = self.add_constant(val)?;
+                if const_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
+                }
+                self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+            }
+            ("Int", "MIN") => {
+                let val = Value::int(memory::I60_MIN);
+                let const_idx = self.add_constant(val)?;
+                if const_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
+                }
+                self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+            }
+            // Field::ZERO, Field::ONE
+            ("Field", "ZERO") => {
+                let handle = self.intern_field(memory::FieldElement::ZERO);
+                let val = Value::field(handle);
+                let const_idx = self.add_constant(val)?;
+                if const_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
+                }
+                self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+            }
+            ("Field", "ONE") => {
+                let fe = memory::FieldElement::from_u64(1);
+                let handle = self.intern_field(fe);
+                let val = Value::field(handle);
+                let const_idx = self.add_constant(val)?;
+                if const_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
+                }
+                self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+            }
+            // Field::ORDER — the BN254 Fr modulus as a string
+            ("Field", "ORDER") => {
+                let order_str =
+                    "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+                let handle = self.intern_string(order_str);
+                let val = Value::string(handle);
+                let const_idx = self.add_constant(val)?;
+                if const_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants(self.cur_span()));
+                }
+                self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+            }
+            // BigInt::from_bits — resolve to a global (native function)
+            ("BigInt", "from_bits") => {
+                // Look up the global for from_bits (still a native global at this point)
+                let idx = self
+                    .global_symbols
+                    .get("from_bits")
+                    .copied()
+                    .ok_or_else(|| {
+                        CompilerError::CompileError(
+                            "BigInt::from_bits is not available (from_bits native not found)"
+                                .into(),
+                            self.cur_span(),
+                        )
+                    })?;
+                self.emit_abx(OpCode::GetGlobal, reg, idx)?;
+            }
+            _ => {
+                // Check if type is known but member isn't
+                let known_types = ["Int", "Field", "BigInt"];
+                if known_types.contains(&type_name) {
+                    return Err(CompilerError::CompileError(
+                        format!("unknown static member: '{type_name}::{member}'"),
+                        self.cur_span(),
+                    ));
+                }
+                return Err(CompilerError::CompileError(
+                    format!("unknown type: '{type_name}'"),
+                    self.cur_span(),
+                ));
+            }
+        }
+        Ok(reg)
     }
 
     pub fn compile_dot_key(&mut self, name: &str) -> Result<u8, CompilerError> {
