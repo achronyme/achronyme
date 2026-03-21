@@ -89,7 +89,12 @@ impl ProveIrCompiler {
             Expr::BinOp { op, lhs, rhs, span } => self.compile_binop(op, lhs, rhs, span),
             Expr::UnaryOp { op, operand, span } => self.compile_unary(op, operand, span),
 
-            // TODO(step 3): StaticAccess
+            Expr::StaticAccess {
+                type_name,
+                member,
+                span,
+            } => self.compile_static_access(type_name, member, span),
+
             // TODO(step 4): DotAccess (method dispatch)
             // TODO(step 5): Call (builtins + user functions)
             // TODO(step 8): If, For, Block
@@ -214,6 +219,40 @@ impl ProveIrCompiler {
                 name: name.into(),
                 span: to_span(span),
                 suggestion: None, // TODO: fuzzy match from env keys
+            }),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Static access (Type::MEMBER)
+    // -----------------------------------------------------------------------
+
+    fn compile_static_access(
+        &self,
+        type_name: &str,
+        member: &str,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        match (type_name, member) {
+            ("Field", "ZERO") => Ok(CircuitExpr::Const(FieldElement::ZERO)),
+            ("Field", "ONE") => Ok(CircuitExpr::Const(FieldElement::ONE)),
+            ("Field", "ORDER") => Err(ProveIrError::StaticAccessNotConstrainable {
+                type_name: "Field".into(),
+                member: "ORDER".into(),
+                reason: "Field::ORDER is a string (the BN254 modulus) \
+                         and strings cannot be used in circuits"
+                    .into(),
+                span: to_span(span),
+            }),
+            ("Int", "MAX") => Ok(CircuitExpr::Const(FieldElement::from_i64(memory::I60_MAX))),
+            ("Int", "MIN") => Ok(CircuitExpr::Const(FieldElement::from_i64(memory::I60_MIN))),
+            ("BigInt", _) => Err(ProveIrError::TypeNotConstrainable {
+                type_name: "BigInt".into(),
+                span: to_span(span),
+            }),
+            _ => Err(ProveIrError::UnsupportedOperation {
+                description: format!("unknown static access `{type_name}::{member}`"),
+                span: to_span(span),
             }),
         }
     }
@@ -706,6 +745,78 @@ mod tests {
     fn closure_rejected() {
         let err = compile_single_expr("fn(x) { x }").unwrap_err();
         assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    // --- Static access ---
+
+    #[test]
+    fn static_field_zero() {
+        let expr = compile_single_expr("Field::ZERO").unwrap();
+        assert_eq!(expr, CircuitExpr::Const(FieldElement::ZERO));
+    }
+
+    #[test]
+    fn static_field_one() {
+        let expr = compile_single_expr("Field::ONE").unwrap();
+        assert_eq!(expr, CircuitExpr::Const(FieldElement::ONE));
+    }
+
+    #[test]
+    fn static_int_max() {
+        let expr = compile_single_expr("Int::MAX").unwrap();
+        assert_eq!(
+            expr,
+            CircuitExpr::Const(FieldElement::from_i64(memory::I60_MAX))
+        );
+    }
+
+    #[test]
+    fn static_int_min() {
+        let expr = compile_single_expr("Int::MIN").unwrap();
+        assert_eq!(
+            expr,
+            CircuitExpr::Const(FieldElement::from_i64(memory::I60_MIN))
+        );
+    }
+
+    #[test]
+    fn static_field_order_rejected() {
+        let err = compile_single_expr("Field::ORDER").unwrap_err();
+        assert!(
+            matches!(err, ProveIrError::StaticAccessNotConstrainable { ref type_name, ref member, .. }
+                if type_name == "Field" && member == "ORDER"
+            ),
+            "expected StaticAccessNotConstrainable, got {err}"
+        );
+    }
+
+    #[test]
+    fn static_bigint_rejected() {
+        let err = compile_single_expr("BigInt::from_bits").unwrap_err();
+        assert!(matches!(
+            err,
+            ProveIrError::TypeNotConstrainable { type_name, .. } if type_name == "BigInt"
+        ));
+    }
+
+    #[test]
+    fn static_unknown_rejected() {
+        let err = compile_single_expr("Foo::BAR").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    #[test]
+    fn static_in_expression() {
+        // Field::ONE + Field::ZERO should work in arithmetic
+        let expr = compile_single_expr("Field::ONE + Field::ZERO").unwrap();
+        assert_eq!(
+            expr,
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(CircuitExpr::Const(FieldElement::ONE)),
+                rhs: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
+            }
+        );
     }
 
     // --- Nested expressions ---
