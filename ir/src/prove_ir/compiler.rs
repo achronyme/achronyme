@@ -1077,6 +1077,17 @@ impl ProveIrCompiler {
     ) -> Result<CircuitExpr, ProveIrError> {
         let cond = self.compile_expr(condition)?;
 
+        // Bind condition to a temporary to avoid duplicating it in both
+        // the CircuitNode::If and the Mux (which would double constraint cost).
+        let cond_var = format!("$cond{}", self.inline_counter);
+        self.inline_counter = self.inline_counter.wrapping_add(1);
+        self.body.push(CircuitNode::Let {
+            name: cond_var.clone(),
+            value: cond,
+            span: Some(SpanRange::from(span)),
+        });
+        let cond_ref = CircuitExpr::Var(cond_var);
+
         // Save body vec, compile then/else into separate buffers
         let saved_body = std::mem::take(&mut self.body);
 
@@ -1107,7 +1118,7 @@ impl ProveIrCompiler {
         // the Mux during instantiation (Phase B).
         if !then_nodes.is_empty() || !else_nodes.is_empty() {
             self.body.push(CircuitNode::If {
-                cond: cond.clone(),
+                cond: cond_ref.clone(),
                 then_body: then_nodes,
                 else_body: else_nodes,
                 span: Some(SpanRange::from(span)),
@@ -1116,7 +1127,7 @@ impl ProveIrCompiler {
 
         // The expression result is a Mux over the two branch results
         Ok(CircuitExpr::Mux {
-            cond: Box::new(cond),
+            cond: Box::new(cond_ref),
             if_true: Box::new(then_result),
             if_false: Box::new(else_result),
         })
@@ -2599,19 +2610,25 @@ mod tests {
 
     #[test]
     fn if_else_as_statement() {
-        // if/else at statement level produces a Mux expression and possibly an If node
+        // if/else at statement level produces a cond temp, then a Mux expression
         let ir = compile_circuit(
             "public x\npublic out\nlet result = if x { 1 } else { 0 }\nassert_eq(result, out)",
         )
         .unwrap();
-        // The let should have a Mux value
-        if let CircuitNode::Let { value, .. } = &ir.body[0] {
+        // body[0]: Let { $condN = <cond> } (temporary for condition)
+        assert!(
+            matches!(&ir.body[0], CircuitNode::Let { name, .. } if name.starts_with("$cond")),
+            "expected $cond temp, got {:?}",
+            ir.body[0]
+        );
+        // body[1]: Let { result = Mux(Var($condN), ...) }
+        if let CircuitNode::Let { value, .. } = &ir.body[1] {
             assert!(
                 matches!(value, CircuitExpr::Mux { .. }),
                 "expected Mux value, got {value:?}"
             );
         } else {
-            panic!("expected Let, got {:?}", ir.body[0]);
+            panic!("expected Let, got {:?}", ir.body[1]);
         }
     }
 
@@ -2934,12 +2951,19 @@ mod tests {
             let result = if cond { x * 2 } else { x + 1 }\n\
             assert_eq(result, out)";
         let ir = compile_circuit(source).unwrap();
-        // result should be a Mux
-        if let CircuitNode::Let { value, .. } = &ir.body[0] {
+        // body[0]: $condN temp, body[1]: result = Mux(...)
+        assert!(
+            matches!(&ir.body[0], CircuitNode::Let { name, .. } if name.starts_with("$cond")),
+            "expected $cond temp, got {:?}",
+            ir.body[0]
+        );
+        if let CircuitNode::Let { value, .. } = &ir.body[1] {
             assert!(
                 matches!(value, CircuitExpr::Mux { .. }),
                 "expected Mux, got {value:?}"
             );
+        } else {
+            panic!("expected Let, got {:?}", ir.body[1]);
         }
     }
 
