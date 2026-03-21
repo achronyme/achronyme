@@ -15,13 +15,13 @@ assert(arr[0] == 10)
 assert(arr[2] == 30)
 
 let mixed = [1, "two", true, nil]
-assert(len(mixed) == 4)
+assert(mixed.len() == 4)
 
 let nested = [[1, 2], [3, 4]]
 assert(nested[0][1] == 2)
 ```
 
-Modifica arrays con asignación por índice, `push()` y `pop()`:
+Modifica arrays con asignación por índice, `.push()` y `.pop()`:
 
 ```ach
 mut nums = [0, 0, 0]
@@ -29,21 +29,33 @@ nums[0] = 10
 assert(nums[0] == 10)
 
 mut items = [1, 2]
-push(items, 3)
-assert(len(items) == 3)
+items.push(3)
+assert(items.len() == 3)
 
-let last = pop(items)
+let last = items.pop()
 assert(last == 3)
-assert(len(items) == 2)
+assert(items.len() == 2)
 ```
 
-## Funciones Integradas de Arrays
+## Métodos de Arrays
 
-| Función | Descripción |
-|----------|-------------|
-| `len(arr)` | Número de elementos |
-| `push(arr, val)` | Agregar al final |
-| `pop(arr)` | Eliminar y devolver el último elemento |
+| Método | Descripción |
+|--------|-------------|
+| `.len()` | Número de elementos |
+| `.push(val)` | Agregar al final |
+| `.pop()` | Eliminar y devolver el último elemento |
+| `.map(fn)` | Transformar cada elemento |
+| `.filter(fn)` | Seleccionar elementos que cumplan el predicado |
+| `.reduce(init, fn)` | Plegar en un solo valor |
+| `.find(fn)` | Primer elemento que cumpla el predicado |
+| `.any(fn)` | Verdadero si algún elemento cumple |
+| `.all(fn)` | Verdadero si todos los elementos cumplen |
+| `.sort(fn)` | Devolver copia ordenada |
+| `.flat_map(fn)` | Mapear y aplanar un nivel |
+| `.zip(otra)` | Emparejar elementos con otra lista |
+| `.for_each(fn)` | Iterar para efectos secundarios |
+
+Consulta [Métodos y Namespaces Estáticos](/es/language/methods/#list) para la referencia completa.
 
 ## Mapas
 
@@ -68,25 +80,34 @@ let nested = {a: {b: {c: 42}}}
 assert(nested.a.b.c == 42)
 ```
 
-Agrega o actualiza campos por asignación:
+Agrega o actualiza campos por asignación o con `.set()`:
 
 ```ach
 mut config = {}
 config.debug = true
 config["port"] = 8080
-assert(len(config) == 2)
+config.set("host", "localhost")
+assert(config.len() == 3)
 ```
 
-## Funciones Integradas de Mapas
+## Métodos de Mapas
 
-| Función | Descripción |
-|----------|-------------|
-| `len(map)` | Número de pares clave-valor |
-| `keys(map)` | Array de todas las claves |
+| Método | Descripción |
+|--------|-------------|
+| `.len()` | Número de pares clave-valor |
+| `.keys()` | Lista de todas las claves |
+| `.values()` | Lista de todos los valores |
+| `.entries()` | Lista de pares `[clave, valor]` |
+| `.contains_key(clave)` | Verificar si la clave existe |
+| `.get(clave, default)` | Obtener valor con fallback |
+| `.set(clave, valor)` | Agregar o actualizar entrada |
+| `.remove(clave)` | Eliminar y devolver valor |
+
+Consulta [Métodos y Namespaces Estáticos](/es/language/methods/#map) para la referencia completa.
 
 ## Iteración
 
-Usa `for..in` para iterar sobre arrays directamente o sobre claves de mapas con `keys()`.
+Usa `for..in` para iterar sobre arrays directamente o sobre claves de mapas con `.keys()`.
 
 ```ach
 mut total = 0
@@ -97,7 +118,7 @@ assert(total == 60)
 
 let scores = {math: 95, science: 88, english: 92}
 mut sum = 0
-for k in keys(scores) {
+for k in scores.keys() {
     sum = sum + scores[k]
 }
 assert(sum == 275)
@@ -142,6 +163,15 @@ assert(counts.apple == 3)
 assert(counts.banana == 2)
 ```
 
+**Pipelines funcionales** — encadena métodos para transformar datos:
+
+```ach
+let result = [1, 2, 3, 4, 5, 6]
+    .filter(fn(n) { n % 2 == 0 })
+    .map(fn(n) { n * 10 })
+assert(result == [20, 40, 60])
+```
+
 **Estructuras anidadas** — arrays de mapas, mapas de arrays:
 
 ```ach
@@ -152,7 +182,7 @@ let people = [
 assert(people[0].name == "Alice")
 
 mut bag = {items: []}
-push(bag.items, "sword")
-push(bag.items, "shield")
-assert(len(bag.items) == 2)
+bag.items.push("sword")
+bag.items.push("shield")
+assert(bag.items.len() == 2)
 ```
