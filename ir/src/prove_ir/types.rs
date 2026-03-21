@@ -11,6 +11,7 @@
 
 use achronyme_parser::diagnostic::SpanRange;
 use memory::FieldElement;
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 use crate::types::IrType;
@@ -33,15 +34,53 @@ pub struct ProveIR {
     pub body: Vec<CircuitNode>,
 }
 
+/// Magic header bytes for serialized ProveIR.
+const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
+
+/// Format version (increment when enum variants change or fields are added).
+const PROVE_IR_FORMAT_VERSION: u8 = 1;
+
+/// Maximum allowed size for deserialized ProveIR data (64 MB).
+/// Prevents allocation bombs from crafted length prefixes.
+const PROVE_IR_MAX_SIZE: u64 = 64 * 1024 * 1024;
+
 impl ProveIR {
-    /// Serialize to bincode bytes (for embedding in .achb bytecode files).
+    /// Serialize to bytes with magic header and version (for .achb bytecode files).
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
-        bincode::serialize(self).map_err(|e| format!("ProveIR serialization failed: {e}"))
+        let payload =
+            bincode::serialize(self).map_err(|e| format!("ProveIR serialization failed: {e}"))?;
+        let mut out = Vec::with_capacity(5 + payload.len());
+        out.extend_from_slice(PROVE_IR_MAGIC);
+        out.push(PROVE_IR_FORMAT_VERSION);
+        out.extend_from_slice(&payload);
+        Ok(out)
     }
 
-    /// Deserialize from bincode bytes.
+    /// Deserialize from bytes, validating magic header and version.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(bytes).map_err(|e| format!("ProveIR deserialization failed: {e}"))
+        if bytes.len() < 5 {
+            return Err("ProveIR data too short (missing header)".into());
+        }
+        if &bytes[..4] != PROVE_IR_MAGIC {
+            return Err(format!(
+                "invalid ProveIR magic: expected {:?}, got {:?}",
+                PROVE_IR_MAGIC,
+                &bytes[..4]
+            ));
+        }
+        if bytes[4] != PROVE_IR_FORMAT_VERSION {
+            return Err(format!(
+                "unsupported ProveIR format version: expected {}, got {}",
+                PROVE_IR_FORMAT_VERSION, bytes[4]
+            ));
+        }
+        let payload = &bytes[5..];
+        bincode::options()
+            .with_limit(PROVE_IR_MAX_SIZE)
+            .with_fixint_encoding()
+            .allow_trailing_bytes() // payload may be embedded in a larger buffer
+            .deserialize(payload)
+            .map_err(|e| format!("ProveIR deserialization failed: {e}"))
     }
 }
 
@@ -316,7 +355,8 @@ mod tests {
             body: vec![],
         };
         assert_round_trip(&ir);
-        assert_eq!(ir.to_bytes().unwrap().len(), 32); // 4 empty vecs
+        // 5 bytes header (ACHP + version) + 32 bytes payload (4 empty vecs)
+        assert_eq!(ir.to_bytes().unwrap().len(), 37);
     }
 
     #[test]
