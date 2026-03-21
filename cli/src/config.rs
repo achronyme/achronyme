@@ -50,6 +50,7 @@ pub struct OutputSection {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VmSection {
+    pub prove_backend: Option<String>,
     pub max_heap: Option<String>,
     pub stress_gc: Option<bool>,
     pub gc_stats: Option<bool>,
@@ -73,6 +74,7 @@ pub struct ProjectConfig {
     pub project_name: Option<String>,
     pub entry: Option<String>,
     pub backend: String,
+    pub prove_backend: String,
     pub optimize: bool,
     pub error_format: String,
     pub r1cs_path: String,
@@ -145,6 +147,13 @@ fn validate(toml: &AchronymeToml) -> Result<()> {
     }
 
     if let Some(ref vm) = toml.vm {
+        if let Some(ref pb) = vm.prove_backend {
+            if !matches!(pb.as_str(), "r1cs" | "plonkish") {
+                anyhow::bail!(
+                    "achronyme.toml: invalid vm.prove_backend `{pb}` (expected \"r1cs\" or \"plonkish\")"
+                );
+            }
+        }
         if let Some(ref mh) = vm.max_heap {
             if !mh.is_empty() && parse_size(mh).is_none() {
                 anyhow::bail!(
@@ -254,6 +263,7 @@ pub struct CliOverrides {
     pub path: Option<String>,
     pub error_format: Option<String>,
     pub backend: Option<String>,
+    pub prove_backend: Option<String>,
     pub optimize: Option<bool>,
     pub r1cs_path: Option<String>,
     pub wtns_path: Option<String>,
@@ -292,6 +302,13 @@ pub fn resolve_config(
         .backend
         .clone()
         .or_else(|| toml.and_then(|t| t.build.as_ref()?.backend.clone()))
+        .unwrap_or_else(|| "r1cs".to_string());
+
+    // Prove backend: CLI > toml vm.prove_backend > default "r1cs"
+    let prove_backend = cli
+        .prove_backend
+        .clone()
+        .or_else(|| toml.and_then(|t| t.vm.as_ref()?.prove_backend.clone()))
         .unwrap_or_else(|| "r1cs".to_string());
 
     // Optimize: CLI > toml > default (true)
@@ -396,6 +413,7 @@ pub fn resolve_config(
         project_name,
         entry,
         backend,
+        prove_backend,
         optimize,
         error_format,
         r1cs_path,
@@ -551,6 +569,7 @@ witness = ["w"]
             path: None,
             error_format: None,
             backend: Some("r1cs".to_string()),
+            prove_backend: None,
             optimize: None,
             r1cs_path: None,
             wtns_path: None,
@@ -573,6 +592,7 @@ witness = ["w"]
             path: None,
             error_format: None,
             backend: None,
+            prove_backend: None,
             optimize: None,
             r1cs_path: None,
             wtns_path: None,
@@ -608,6 +628,7 @@ witness = ["w"]
             path: None,
             error_format: None,
             backend: None,
+            prove_backend: None,
             optimize: None,
             r1cs_path: None,
             wtns_path: None,
@@ -644,6 +665,7 @@ witness = ["w"]
             path: None,
             error_format: None,
             backend: None,
+            prove_backend: None,
             optimize: None,
             r1cs_path: None,
             wtns_path: None,
