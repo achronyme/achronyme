@@ -95,9 +95,15 @@ impl ProveIrCompiler {
                 span,
             } => self.compile_static_access(type_name, member, span),
 
-            // TODO(step 4): DotAccess (method dispatch)
-            // TODO(step 5): Call (builtins + user functions)
-            // TODO(step 8): If, For, Block
+            Expr::Call { callee, args, span } => self.compile_call(callee, args, span),
+
+            Expr::DotAccess {
+                object,
+                field,
+                span,
+            } => self.compile_dot_access(object, field, span),
+
+            // TODO(step 8): If, For, Block, Index
 
             // --- Rejections (same as IrLowering, with better messages) ---
             Expr::While { span, .. } | Expr::Forever { span, .. } => {
@@ -255,6 +261,386 @@ impl ProveIrCompiler {
                 span: to_span(span),
             }),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Call dispatch
+    // -----------------------------------------------------------------------
+
+    fn compile_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        match callee {
+            // Method call: expr.method(args)
+            Expr::DotAccess {
+                object,
+                field,
+                span: dot_span,
+            } => {
+                // Check for module.func() first
+                if let Expr::Ident { name: module, .. } = object.as_ref() {
+                    let qualified = format!("{module}::{field}");
+                    if self.env.contains_key(&qualified) || self.has_function(&qualified) {
+                        // Module function call — will be handled in step 7 (function inlining)
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "module function call `{module}.{field}()` \
+                                 not yet implemented in ProveIR"
+                            ),
+                            span: to_span(span),
+                        });
+                    }
+                }
+                self.compile_method_call(object, field, args, dot_span)
+            }
+
+            // Named function/builtin call: name(args)
+            Expr::Ident { name, .. } => self.compile_named_call(name, args, span),
+
+            // Dynamic dispatch not supported
+            _ => Err(ProveIrError::UnsupportedOperation {
+                description: "only named function calls are supported in circuits \
+                              (dynamic dispatch cannot be compiled to constraints)"
+                    .into(),
+                span: to_span(span),
+            }),
+        }
+    }
+
+    /// Compile a named function or builtin call.
+    fn compile_named_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        match name {
+            // Builtins that produce CircuitExpr directly
+            "poseidon" => {
+                self.check_arity("poseidon", 2, args.len(), span)?;
+                let left = self.compile_expr(&args[0])?;
+                let right = self.compile_expr(&args[1])?;
+                Ok(CircuitExpr::PoseidonHash {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                })
+            }
+            "poseidon_many" => {
+                if args.len() < 2 {
+                    return Err(ProveIrError::WrongArgumentCount {
+                        name: "poseidon_many".into(),
+                        expected: 2,
+                        got: args.len(),
+                        span: to_span(span),
+                    });
+                }
+                let compiled: Result<Vec<_>, _> =
+                    args.iter().map(|a| self.compile_expr(a)).collect();
+                Ok(CircuitExpr::PoseidonMany(compiled?))
+            }
+            "mux" => {
+                self.check_arity("mux", 3, args.len(), span)?;
+                let cond = self.compile_expr(&args[0])?;
+                let if_true = self.compile_expr(&args[1])?;
+                let if_false = self.compile_expr(&args[2])?;
+                Ok(CircuitExpr::Mux {
+                    cond: Box::new(cond),
+                    if_true: Box::new(if_true),
+                    if_false: Box::new(if_false),
+                })
+            }
+            "range_check" => {
+                self.check_arity("range_check", 2, args.len(), span)?;
+                let value = self.compile_expr(&args[0])?;
+                let bits = self.extract_const_u64(&args[1], span)? as u32;
+                Ok(CircuitExpr::RangeCheck {
+                    value: Box::new(value),
+                    bits,
+                })
+            }
+            "len" => {
+                self.check_arity("len", 1, args.len(), span)?;
+                self.compile_len_call(&args[0], span)
+            }
+
+            // Builtins that produce CircuitNode (handled at statement level)
+            // assert_eq and assert are expression-level in the AST but produce
+            // nodes — we return a dummy Const(0) since they're constraints, not values.
+            "assert_eq" => {
+                self.check_arity("assert_eq", 2, args.len(), span)?;
+                let _lhs = self.compile_expr(&args[0])?;
+                let _rhs = self.compile_expr(&args[1])?;
+                // Note: actual AssertEq node emission happens at statement level (step 5)
+                // At expression level, we just validate the arguments compile
+                Ok(CircuitExpr::Const(FieldElement::ZERO))
+            }
+            "assert" => {
+                self.check_arity("assert", 1, args.len(), span)?;
+                let _cond = self.compile_expr(&args[0])?;
+                Ok(CircuitExpr::Const(FieldElement::ZERO))
+            }
+
+            // TODO(step 7): user function calls (inlining)
+            _ => Err(ProveIrError::UnsupportedOperation {
+                description: format!("function `{name}` not yet implemented in ProveIR"),
+                span: to_span(span),
+            }),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Dot access (non-call)
+    // -----------------------------------------------------------------------
+
+    fn compile_dot_access(
+        &mut self,
+        object: &Expr,
+        field: &str,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        // module.constant access
+        if let Expr::Ident { name: module, .. } = object {
+            let qualified = format!("{module}::{field}");
+            if let Some(CompEnvValue::Scalar(resolved)) = self.env.get(&qualified) {
+                return Ok(CircuitExpr::Var(resolved.clone()));
+            }
+        }
+        Err(ProveIrError::UnsupportedOperation {
+            description: "dot access is not supported in circuits \
+                          (use methods like .len(), .abs(), etc. or arrays with indexing)"
+                .into(),
+            span: to_span(span),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Method desugaring
+    // -----------------------------------------------------------------------
+
+    fn compile_method_call(
+        &mut self,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        match method {
+            // --- Universally supported ---
+            "len" => {
+                if !args.is_empty() {
+                    return Err(ProveIrError::WrongArgumentCount {
+                        name: "len".into(),
+                        expected: 0,
+                        got: args.len(),
+                        span: to_span(span),
+                    });
+                }
+                self.compile_len_call(object, span)
+            }
+
+            // --- Identity in circuit context ---
+            "to_field" => {
+                if !args.is_empty() {
+                    return Err(ProveIrError::WrongArgumentCount {
+                        name: "to_field".into(),
+                        expected: 0,
+                        got: args.len(),
+                        span: to_span(span),
+                    });
+                }
+                // All circuit values are field elements — identity
+                self.compile_expr(object)
+            }
+
+            // --- Int methods desugared to circuit primitives ---
+            "abs" => {
+                if !args.is_empty() {
+                    return Err(ProveIrError::WrongArgumentCount {
+                        name: "abs".into(),
+                        expected: 0,
+                        got: args.len(),
+                        span: to_span(span),
+                    });
+                }
+                let x = self.compile_expr(object)?;
+                let zero = CircuitExpr::Const(FieldElement::ZERO);
+                Ok(CircuitExpr::Mux {
+                    cond: Box::new(CircuitExpr::Comparison {
+                        op: CircuitCmpOp::Lt,
+                        lhs: Box::new(x.clone()),
+                        rhs: Box::new(zero),
+                    }),
+                    if_true: Box::new(CircuitExpr::UnaryOp {
+                        op: CircuitUnaryOp::Neg,
+                        operand: Box::new(x.clone()),
+                    }),
+                    if_false: Box::new(x),
+                })
+            }
+            "min" => {
+                self.check_method_arity("min", 1, args.len(), span)?;
+                let n = self.compile_expr(object)?;
+                let m = self.compile_expr(&args[0])?;
+                Ok(CircuitExpr::Mux {
+                    cond: Box::new(CircuitExpr::Comparison {
+                        op: CircuitCmpOp::Lt,
+                        lhs: Box::new(n.clone()),
+                        rhs: Box::new(m.clone()),
+                    }),
+                    if_true: Box::new(n),
+                    if_false: Box::new(m),
+                })
+            }
+            "max" => {
+                self.check_method_arity("max", 1, args.len(), span)?;
+                let n = self.compile_expr(object)?;
+                let m = self.compile_expr(&args[0])?;
+                Ok(CircuitExpr::Mux {
+                    cond: Box::new(CircuitExpr::Comparison {
+                        op: CircuitCmpOp::Lt,
+                        lhs: Box::new(n.clone()),
+                        rhs: Box::new(m.clone()),
+                    }),
+                    if_true: Box::new(m),
+                    if_false: Box::new(n),
+                })
+            }
+            "pow" => {
+                self.check_method_arity("pow", 1, args.len(), span)?;
+                let base = self.compile_expr(object)?;
+                let exp = self.extract_const_u64(&args[0], span)?;
+                Ok(CircuitExpr::Pow {
+                    base: Box::new(base),
+                    exp,
+                })
+            }
+
+            // --- Methods that cannot be compiled to constraints ---
+            "to_string" => Err(self.method_not_constrainable(
+                "to_string",
+                "produces a string, which cannot be represented in circuits",
+                span,
+            )),
+            "to_int" => Err(self.method_not_constrainable(
+                "to_int",
+                "type narrowing is not needed in circuits (all values are field elements)",
+                span,
+            )),
+            "push" | "pop" => Err(self.method_not_constrainable(
+                method,
+                "mutation is not supported in circuits (arrays have fixed size)",
+                span,
+            )),
+            "map" | "filter" | "reduce" | "for_each" | "find" | "any" | "all" | "sort"
+            | "flat_map" | "zip" => Err(self.method_not_constrainable(
+                method,
+                "higher-order collection methods are not yet supported in circuits \
+                 (use a for loop instead)",
+                span,
+            )),
+            "keys" | "values" | "entries" | "contains_key" | "get" | "set" | "remove" => Err(self
+                .method_not_constrainable(
+                    method,
+                    "map operations are not supported in circuits \
+                     (maps cannot be represented as constraints)",
+                    span,
+                )),
+            "split" | "trim" | "replace" | "to_upper" | "to_lower" | "chars" | "index_of"
+            | "substring" | "repeat" | "starts_with" | "ends_with" | "contains" => Err(self
+                .method_not_constrainable(
+                    method,
+                    "string operations are not supported in circuits",
+                    span,
+                )),
+            "bit_and" | "bit_or" | "bit_xor" | "bit_not" | "bit_shl" | "bit_shr" | "to_bits" => {
+                Err(self.method_not_constrainable(
+                    method,
+                    "BigInt operations are not supported in circuits",
+                    span,
+                ))
+            }
+
+            _ => Err(ProveIrError::UnsupportedOperation {
+                description: format!("method `.{method}()` is not supported in circuits"),
+                span: to_span(span),
+            }),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers for call/method compilation
+    // -----------------------------------------------------------------------
+
+    /// Compile `len(expr)` or `expr.len()` — resolve to ArrayLen.
+    fn compile_len_call(
+        &mut self,
+        object: &Expr,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        if let Expr::Ident { name, .. } = object {
+            if matches!(
+                self.env.get(name.as_str()),
+                Some(CompEnvValue::Array(_)) | Some(CompEnvValue::Capture(_))
+            ) {
+                return Ok(CircuitExpr::ArrayLen(name.clone()));
+            }
+        }
+        Err(ProveIrError::UnsupportedOperation {
+            description: "len() requires an array variable in circuits".into(),
+            span: to_span(span),
+        })
+    }
+
+    fn check_arity(
+        &self,
+        name: &str,
+        expected: usize,
+        got: usize,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        if got != expected {
+            return Err(ProveIrError::WrongArgumentCount {
+                name: name.into(),
+                expected,
+                got,
+                span: to_span(span),
+            });
+        }
+        Ok(())
+    }
+
+    fn check_method_arity(
+        &self,
+        name: &str,
+        expected: usize,
+        got: usize,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        if got != expected {
+            return Err(ProveIrError::WrongArgumentCount {
+                name: format!(".{name}()"),
+                expected,
+                got,
+                span: to_span(span),
+            });
+        }
+        Ok(())
+    }
+
+    fn method_not_constrainable(&self, method: &str, reason: &str, span: &Span) -> ProveIrError {
+        ProveIrError::MethodNotConstrainable {
+            method: method.into(),
+            reason: reason.into(),
+            span: to_span(span),
+        }
+    }
+
+    /// Check if a function name exists in the fn_table (placeholder for step 7).
+    fn has_function(&self, _name: &str) -> bool {
+        false // TODO(step 7): check fn_table
     }
 
     // -----------------------------------------------------------------------
@@ -817,6 +1203,191 @@ mod tests {
                 rhs: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
             }
         );
+    }
+
+    // --- Method desugaring ---
+
+    #[test]
+    fn method_to_field_is_identity() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let expr = compile_expr_with_scope("x.to_field()", &scope).unwrap();
+        assert_eq!(expr, CircuitExpr::Var("x".into()));
+    }
+
+    #[test]
+    fn method_abs_desugars_to_mux() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let expr = compile_expr_with_scope("x.abs()", &scope).unwrap();
+        assert!(
+            matches!(expr, CircuitExpr::Mux { .. }),
+            "abs should desugar to Mux, got {expr:?}"
+        );
+    }
+
+    #[test]
+    fn method_min_desugars_to_mux() {
+        let scope = [
+            ("a", CompEnvValue::Scalar("a".into())),
+            ("b", CompEnvValue::Scalar("b".into())),
+        ];
+        let expr = compile_expr_with_scope("a.min(b)", &scope).unwrap();
+        // min(a, b) = mux(a < b, a, b)
+        if let CircuitExpr::Mux {
+            if_true, if_false, ..
+        } = &expr
+        {
+            assert_eq!(**if_true, CircuitExpr::Var("a".into()));
+            assert_eq!(**if_false, CircuitExpr::Var("b".into()));
+        } else {
+            panic!("expected Mux, got {expr:?}");
+        }
+    }
+
+    #[test]
+    fn method_max_desugars_to_mux() {
+        let scope = [
+            ("a", CompEnvValue::Scalar("a".into())),
+            ("b", CompEnvValue::Scalar("b".into())),
+        ];
+        let expr = compile_expr_with_scope("a.max(b)", &scope).unwrap();
+        // max(a, b) = mux(a < b, b, a)
+        if let CircuitExpr::Mux {
+            if_true, if_false, ..
+        } = &expr
+        {
+            assert_eq!(**if_true, CircuitExpr::Var("b".into()));
+            assert_eq!(**if_false, CircuitExpr::Var("a".into()));
+        } else {
+            panic!("expected Mux, got {expr:?}");
+        }
+    }
+
+    #[test]
+    fn method_pow_desugars() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let expr = compile_expr_with_scope("x.pow(3)", &scope).unwrap();
+        assert_eq!(
+            expr,
+            CircuitExpr::Pow {
+                base: Box::new(CircuitExpr::Var("x".into())),
+                exp: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn method_len_on_array() {
+        let scope = [(
+            "arr",
+            CompEnvValue::Array(vec!["arr_0".into(), "arr_1".into()]),
+        )];
+        let expr = compile_expr_with_scope("arr.len()", &scope).unwrap();
+        assert_eq!(expr, CircuitExpr::ArrayLen("arr".into()));
+    }
+
+    #[test]
+    fn method_to_string_rejected() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let err = compile_expr_with_scope("x.to_string()", &scope).unwrap_err();
+        assert!(matches!(
+            err,
+            ProveIrError::MethodNotConstrainable { ref method, .. } if method == "to_string"
+        ));
+    }
+
+    #[test]
+    fn method_push_rejected() {
+        let scope = [("arr", CompEnvValue::Array(vec!["arr_0".into()]))];
+        let err = compile_expr_with_scope("arr.push(1)", &scope).unwrap_err();
+        assert!(matches!(
+            err,
+            ProveIrError::MethodNotConstrainable { ref method, .. } if method == "push"
+        ));
+    }
+
+    #[test]
+    fn method_filter_rejected() {
+        let scope = [("arr", CompEnvValue::Array(vec!["arr_0".into()]))];
+        let err = compile_expr_with_scope("arr.filter(fn(x) { x })", &scope).unwrap_err();
+        assert!(matches!(
+            err,
+            ProveIrError::MethodNotConstrainable { ref method, .. } if method == "filter"
+        ));
+    }
+
+    #[test]
+    fn method_keys_rejected() {
+        let scope = [("m", CompEnvValue::Scalar("m".into()))];
+        let err = compile_expr_with_scope("m.keys()", &scope).unwrap_err();
+        assert!(matches!(
+            err,
+            ProveIrError::MethodNotConstrainable { ref method, .. } if method == "keys"
+        ));
+    }
+
+    #[test]
+    fn method_unknown_rejected() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let err = compile_expr_with_scope("x.foobar()", &scope).unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    // --- Builtin calls ---
+
+    #[test]
+    fn builtin_poseidon() {
+        let scope = [
+            ("a", CompEnvValue::Scalar("a".into())),
+            ("b", CompEnvValue::Scalar("b".into())),
+        ];
+        let expr = compile_expr_with_scope("poseidon(a, b)", &scope).unwrap();
+        assert!(matches!(expr, CircuitExpr::PoseidonHash { .. }));
+    }
+
+    #[test]
+    fn builtin_poseidon_many() {
+        let scope = [
+            ("a", CompEnvValue::Scalar("a".into())),
+            ("b", CompEnvValue::Scalar("b".into())),
+            ("c", CompEnvValue::Scalar("c".into())),
+        ];
+        let expr = compile_expr_with_scope("poseidon_many(a, b, c)", &scope).unwrap();
+        if let CircuitExpr::PoseidonMany(args) = &expr {
+            assert_eq!(args.len(), 3);
+        } else {
+            panic!("expected PoseidonMany, got {expr:?}");
+        }
+    }
+
+    #[test]
+    fn builtin_mux() {
+        let scope = [
+            ("c", CompEnvValue::Scalar("c".into())),
+            ("a", CompEnvValue::Scalar("a".into())),
+            ("b", CompEnvValue::Scalar("b".into())),
+        ];
+        let expr = compile_expr_with_scope("mux(c, a, b)", &scope).unwrap();
+        assert!(matches!(expr, CircuitExpr::Mux { .. }));
+    }
+
+    #[test]
+    fn builtin_range_check() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let expr = compile_expr_with_scope("range_check(x, 8)", &scope).unwrap();
+        assert_eq!(
+            expr,
+            CircuitExpr::RangeCheck {
+                value: Box::new(CircuitExpr::Var("x".into())),
+                bits: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn builtin_poseidon_wrong_arity() {
+        let scope = [("a", CompEnvValue::Scalar("a".into()))];
+        let err = compile_expr_with_scope("poseidon(a)", &scope).unwrap_err();
+        assert!(matches!(err, ProveIrError::WrongArgumentCount { .. }));
     }
 
     // --- Nested expressions ---
