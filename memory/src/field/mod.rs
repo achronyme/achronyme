@@ -17,6 +17,21 @@ pub struct FieldElement {
     pub(crate) limbs: [u64; 4],
 }
 
+// Custom serde: serialize the raw Montgomery-form limbs as [u64; 4].
+// This is deterministic and round-trips exactly.
+impl serde::Serialize for FieldElement {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.limbs.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FieldElement {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let limbs = <[u64; 4]>::deserialize(deserializer)?;
+        Ok(Self { limbs })
+    }
+}
+
 // ============================================================================
 // FieldElement public API
 // ============================================================================

@@ -11,6 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 num-bigint = "0.4"
