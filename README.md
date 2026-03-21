@@ -178,8 +178,8 @@ Fixed-width unsigned integers (256-bit and 512-bit) for cryptographic operations
 ```achronyme
 let a = 0i256xFF
 let b = bigint256(42)
-let bits = to_bits(a)
-let masked = bit_and(a, b)
+let bits = a.to_bits()
+let masked = a.bit_and(b)
 ```
 
 ---
@@ -336,72 +336,77 @@ achronyme/
 ├── achronyme-parser/   Hand-written Pratt lexer + recursive descent parser
 ├── ir/                 SSA intermediate representation, optimization passes
 ├── compiler/           Bytecode compiler, R1CS backend, Plonkish backend
-├── vm/                 Register-based VM (40+ opcodes, tagged values)
+├── vm/                 Register-based VM (37 opcodes, prototype method dispatch)
 ├── memory/             Heap, GC, FieldElement (BN254 Montgomery), BigInt
 ├── constraints/        R1CS/Plonkish systems, Poseidon hash, binary export
 ├── cli/                CLI, native Groth16 (ark-groth16) & PlonK (halo2-KZG)
+├── std/                Standard library (NativeModule: parse_int, join, I/O)
+├── ach-macros/         Proc-macros: #[ach_native], #[ach_module]
+├── docs/               Documentation site (Astro + Starlight, 83 pages, EN/ES)
 └── test/
     ├── vm/             VM/interpreter integration tests
     ├── circuit/        Circuit compilation tests
     ├── prove/          Prove block tests
-    └── run_tests.sh    Integration test runner
+    └── run_tests.sh    Integration test runner (158 tests)
 ```
 
 ---
 
-## Native Functions
+## Global Functions
+
+16 global functions are available without imports. Most operations now use [method syntax](#methods).
 
 | Function | Arity | Description |
 |----------|-------|-------------|
 | `print(...)` | variadic | Print values to stdout |
-| `len(x)` | 1 | Length of String, List, or Map |
 | `typeof(x)` | 1 | Type name as String |
 | `assert(x)` | 1 | Runtime assertion |
 | `time()` | 0 | Unix timestamp (ms) |
-| `push(list, item)` | 2 | Append to list |
-| `pop(list)` | 1 | Remove last from list |
-| `keys(map)` | 1 | Map keys as list |
-| `proof_json(p)` | 1 | Extract proof JSON |
-| `proof_public(p)` | 1 | Extract public inputs JSON |
-| `proof_vkey(p)` | 1 | Extract verifying key JSON |
-| `substring(s, start, end)` | 3 | Substring extraction |
-| `index_of(s, sub)` | 2 | Find substring index (-1 if not found) |
-| `split(s, delim)` | 2 | Split string into list |
-| `trim(s)` | 1 | Trim whitespace |
-| `replace(s, search, repl)` | 3 | Replace all occurrences |
-| `to_upper(s)` | 1 | Uppercase |
-| `to_lower(s)` | 1 | Lowercase |
-| `chars(s)` | 1 | String to list of characters |
+| `gc_stats()` | 0 | GC statistics as map |
 | `poseidon(a, b)` | 2 | Poseidon 2-to-1 hash (BN254) |
 | `poseidon_many(a, b, ...)` | variadic | Left-fold Poseidon hash |
 | `verify_proof(p)` | 1 | Verify a Groth16 proof |
+| `proof_json(p)` | 1 | Extract proof JSON |
+| `proof_public(p)` | 1 | Extract public inputs JSON |
+| `proof_vkey(p)` | 1 | Extract verifying key JSON |
 | `bigint256(x)` | 1 | Construct 256-bit unsigned integer |
 | `bigint512(x)` | 1 | Construct 512-bit unsigned integer |
-| `to_bits(x)` | 1 | BigInt to bit list (LSB-first) |
 | `from_bits(bits, width)` | 2 | Bit list to BigInt |
-| `bit_and(a, b)` | 2 | Bitwise AND |
-| `bit_or(a, b)` | 2 | Bitwise OR |
-| `bit_xor(a, b)` | 2 | Bitwise XOR |
-| `bit_not(x)` | 1 | Bitwise NOT |
-| `bit_shl(x, n)` | 2 | Shift left |
-| `bit_shr(x, n)` | 2 | Shift right |
-| `gc_stats()` | 0 | GC statistics as map |
-| `map(list, fn)` | 2 | Apply fn to each element |
-| `filter(list, fn)` | 2 | Keep elements where fn is truthy |
-| `reduce(list, init, fn)` | 3 | Fold list into single value |
-| `for_each(list, fn)` | 2 | Call fn for side effects |
-| `find(list, fn)` | 2 | First element where fn is truthy |
-| `any(list, fn)` | 2 | True if any element matches |
-| `all(list, fn)` | 2 | True if all elements match |
-| `sort(list, fn)` | 2 | Stable sort with comparator |
-| `flat_map(list, fn)` | 2 | Map + flatten one level |
-| `zip(list1, list2)` | 2 | Pair elements into [a, b] lists |
+| `parse_int(str)` | 1 | Parse string to integer |
+| `join(list, sep)` | 2 | Join strings with separator |
+
+## Methods
+
+Values have type-specific methods called with dot syntax: `value.method(args)`.
+
+```achronyme
+// String methods
+let upper = "hello".to_upper()          // "HELLO"
+let words = "a,b,c".split(",")          // ["a", "b", "c"]
+
+// List methods
+let doubled = [1, 2, 3].map(fn(n) { n * 2 })  // [2, 4, 6]
+let evens = [1, 2, 3, 4].filter(fn(n) { n % 2 == 0 })  // [2, 4]
+
+// Map methods
+let m = {name: "Alice", age: 30}
+assert(m.contains_key("name"))
+m.set("city", "NYC")
+
+// Int methods
+assert((-42).abs() == 42)
+assert(2.pow(10) == 1024)
+```
+
+**50 methods** across 6 types: Int (6), String (14), List (13), Map (8), Field (2), BigInt (7).
+
+**Static namespaces** provide type-level constants: `Int::MAX`, `Int::MIN`, `Field::ZERO`, `Field::ONE`, `Field::ORDER`, `BigInt::from_bits`.
 
 ---
 
 ## Status
 
-- 2,000+ unit tests + 150+ integration tests
+- 2,125+ unit tests + 158 integration tests
 - Cross-validated against snarkjs (independent constraint verification)
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
