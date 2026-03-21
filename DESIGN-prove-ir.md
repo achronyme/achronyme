@@ -1,4 +1,4 @@
-# RFC: ProveIR — Pre-compiled Circuit Templates for `prove {}` Blocks
+# RFC: ProveIR — Unified Pre-compiled Circuit Representation
 
 **Status:** Draft
 **Date:** 2026-03-20
@@ -8,11 +8,11 @@
 
 ## Summary
 
-Replace the current raw-source-string pipeline in `prove {}` blocks with a
-pre-compiled intermediate representation (**ProveIR**) that sits between the
-AST and the SSA IR. This enables compile-time validation, eliminates double
-parsing, allows standard Achronyme syntax inside prove blocks, and opens the
-door to witness auto-inference.
+Unify the circuit compilation pipeline for both `ach circuit` and `prove {}`
+blocks under a single pre-compiled intermediate representation (**ProveIR**)
+that sits between the AST and the SSA IR. This eliminates double parsing,
+enables compile-time validation, allows standard Achronyme syntax in circuits,
+and opens the door to witness auto-inference.
 
 ---
 
@@ -60,7 +60,49 @@ parse_prove()         compile_prove()             handle_prove()          execut
 
 ## Design
 
-### New pipeline
+### Unified pipeline: `ach circuit` and `prove {}`
+
+Today there are three entry points to IR lowering that all re-parse source:
+
+| Entry point | Used by | Declares inputs | Source |
+|---|---|---|---|
+| `lower_circuit()` | `ach circuit` CLI | External (CLI flags) | Re-parses from string |
+| `lower_self_contained()` | `prove {}` handler | Internal (from source) | RE-PARSES at runtime |
+| `lower()` | Internal/generic | Pre-declared by caller | Re-parses from string |
+
+With ProveIR, both converge to the same pipeline. The only difference is
+**where values come from**:
+
+```
+ach circuit file.ach                 ach run file.ach (with prove {})
+────────────────────                 ─────────────────────────────────
+Parser → AST                         Parser → AST → Bytecode → VM
+       ↓                                    ↓                   ↓
+ProveIR Compiler ◄── SAME CODE ──► ProveIR Compiler             │
+       ↓                                    ↓                   │
+   ProveIR                             ProveIR (in bytecode)    │
+       ↓                                    ↓ (at runtime)      │
+instantiate(--inputs)               instantiate(scope captures)  │
+       ↓                                    ↓                   │
+    IR SSA  ◄──────── SAME CODE ──►      IR SSA                 │
+       ↓                                    ↓                   │
+R1CS/Plonkish → proof               R1CS/Plonkish → proof
+```
+
+For `ach circuit`, the ProveIR is compiled and immediately instantiated (no
+serialization needed). For `prove {}`, the ProveIR is serialized into the
+bytecode constant pool and instantiated at runtime when the VM executes the
+Prove opcode.
+
+This unification means:
+- **Same desugaring rules** for both modes (mut, return, methods, statics)
+- **Same validation** at compile time for both modes
+- **Same error messages** with the same quality
+- `IrLowering::lower_circuit()`, `lower_self_contained()`, and `lower()`
+  are all **replaced** by `ProveIrCompiler::compile(ast) → ProveIR` followed
+  by `ProveIR::instantiate(values) → IrProgram`
+
+### New pipeline (both modes)
 
 ```
 Parser → AST → ProveIR Compiler → ProveIR (serialized in bytecode)
@@ -368,7 +410,17 @@ Phase 3: Constraint Generation (existing pipeline, unchanged)
 2. Implement serialize/deserialize with bincode
 3. Tests: roundtrip serialization
 
-### Phase D: Bytecode compiler integration
+### Phase D: `ach circuit` migration
+
+**Crate:** `cli`
+
+1. Change `ach circuit` command to: parse AST → ProveIR → instantiate(inputs) → IR SSA
+2. Remove direct call to `IrLowering::lower_circuit()` / `lower_circuit_with_base()`
+3. `--public` and `--witness` CLI flags inject into ProveIR's input declarations
+4. In-source `public`/`witness` declarations handled by ProveIR compiler (not IrLowering)
+5. Tests: all 26 `test/circuit/*.ach` tests must pass unchanged
+
+### Phase E: Bytecode compiler integration (`prove {}`)
 
 **Crate:** `compiler`
 
@@ -377,7 +429,7 @@ Phase 3: Constraint Generation (existing pipeline, unchanged)
 3. Update `prescan_prove_block()` to use ProveIR's input/capture declarations
 4. Update capture map building to include auto-inferred witnesses
 
-### Phase E: Runtime integration
+### Phase F: Runtime integration (`prove {}`)
 
 **Crate:** `vm` + `cli`
 
@@ -385,8 +437,9 @@ Phase 3: Constraint Generation (existing pipeline, unchanged)
 2. Update `ProveHandler::execute_prove()` signature to accept `ProveIR` instead of `&str`
 3. Update `DefaultProveHandler` to call `instantiate()` then existing IR→R1CS pipeline
 4. Remove `IrLowering::lower_self_contained()` (no longer needed)
+5. Remove `IrLowering::lower_circuit()` and `lower()` (replaced by ProveIR)
 
-### Phase F: New prove syntax
+### Phase G: New prove syntax
 
 **Crate:** `achronyme-parser`
 
@@ -395,7 +448,7 @@ Phase 3: Constraint Generation (existing pipeline, unchanged)
 3. AST: `Expr::Prove` gains optional `public_list: Vec<String>` field
 4. Remove `source: String` field from `Expr::Prove` (no longer needed)
 
-### Phase G: Documentation and migration
+### Phase H: Documentation and migration
 
 1. Update docs site (methods.mdx, native-functions.mdx)
 2. Add migration guide for explicit → inferred witness syntax
@@ -408,7 +461,7 @@ Phase 3: Constraint Generation (existing pipeline, unchanged)
 
 | Risk | Mitigation |
 |---|---|
-| Large refactor touches many crates | Phase-by-phase rollout. Each phase is independently testable. |
+| Large refactor touches many crates | Phase-by-phase rollout. Each phase is independently testable. Phase D (ach circuit) can ship before Phase E-F (prove blocks). |
 | Desugaring incorrectness | Extensive test suite comparing ProveIR output with current IR lowering output for all existing test circuits. |
 | Capture classification errors | Conservative default: if unsure, treat as `Both` (circuit input). User can override. |
 | Performance regression | ProveIR compilation is O(AST size) — negligible vs proof generation. Instantiation replaces re-parsing which is slower. |
@@ -430,8 +483,10 @@ Phase 3: Constraint Generation (existing pipeline, unchanged)
 
 1. All 12 existing `test/prove/*.ach` tests pass unchanged
 2. All 26 existing `test/circuit/*.ach` tests pass unchanged
-3. `prove {}` blocks with `mut`, `return`, methods, and static namespaces compile and generate valid proofs
-4. `prove(public: [x])` syntax works with auto-inferred witnesses
-5. Prove block errors are reported at compile time, not runtime
-6. `.achb` files contain serialized ProveIR (no raw source strings)
-7. LSP can report diagnostics inside prove blocks
+3. `ach circuit` and `prove {}` use the same ProveIR pipeline (no code duplication)
+4. Both modes support `mut`, `return`, methods, and static namespaces
+5. `prove(public: [x])` syntax works with auto-inferred witnesses
+6. Circuit/prove errors are reported at compile time, not runtime
+7. `.achb` files contain serialized ProveIR (no raw source strings)
+8. `IrLowering::lower_circuit()`, `lower_self_contained()`, and `lower()` are removed
+9. LSP can report diagnostics inside prove blocks and circuit files
