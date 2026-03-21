@@ -183,7 +183,14 @@ fn walk_expr(
             walk_expr(base, in_structural, structural, constraint);
         }
         CircuitExpr::ArrayIndex { index, .. } => {
-            // The index may be structural (determines which wire to read)
+            // The index is classified as structural because it determines which
+            // wire to select. This is correct only if Phase B resolves it to a
+            // compile-time constant (selecting a specific element). If the index
+            // remains dynamic, Phase B must generate a MUX tree over all possible
+            // elements, and the index itself becomes a constraint wire — but the
+            // capture classification still holds because a structural capture is
+            // resolved before circuit construction, making the MUX generation
+            // deterministic.
             walk_expr(index, true, structural, constraint);
         }
         CircuitExpr::ArrayLen(_) => {
