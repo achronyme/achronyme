@@ -1,9 +1,17 @@
 ---
 title: "Native Functions"
-description: "Reference for all 59 native functions (43 builtin + 16 standard library)."
+description: "Reference for all 16 global functions available without imports."
 ---
 
-Achronyme provides 59 native functions: 43 built into the VM core, plus 16 from the standard library (`achronyme-std`). All are available as globals — no imports needed. Some are also available in circuit mode.
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="tip" title="beta.13 — Methods replace most globals">
+In beta.13, most collection, string, math, and conversion functions moved to **type methods**.
+For example, `push(list, x)` is now `list.push(x)`, and `abs(n)` is now `n.abs()`.
+See [Methods & Static Namespaces](/language/methods/) for the full reference.
+</Aside>
+
+Achronyme provides 16 global functions: 14 built into the VM core, plus 2 from the standard library (`achronyme-std`). All are available as globals — no imports needed. Some are also available in circuit mode.
 
 ## Core
 
@@ -16,18 +24,6 @@ print("hello", 42, true)  // hello 42 true
 ```
 
 **Mode:** VM only
-
-### `len(x)`
-
-Returns the length of a string (character count), list (element count), or map (entry count).
-
-```ach
-len("abc")     // 3
-len([1, 2, 3]) // 3
-len({a: 1})    // 1
-```
-
-**Mode:** Both (in circuits, resolves array length at compile time)
 
 ### `typeof(x)`
 
@@ -78,44 +74,6 @@ print(stats["bytes_allocated"]) // current live heap size
 
 **Mode:** VM only
 
-## Collections
-
-### `push(list, item)`
-
-Appends an item to the end of a list. Mutates the list in-place. Returns `nil`.
-
-```ach
-let a = [1, 2]
-push(a, 3)
-print(a)  // [1, 2, 3]
-```
-
-**Mode:** VM only
-
-### `pop(list)`
-
-Removes and returns the last element of a list. Returns `nil` if the list is empty.
-
-```ach
-let a = [1, 2, 3]
-let x = pop(a)
-print(x)  // 3
-print(a)  // [1, 2]
-```
-
-**Mode:** VM only
-
-### `keys(map)`
-
-Returns a list of all keys in a map.
-
-```ach
-let m = {name: "alice", age: 30}
-print(keys(m))  // ["name", "age"]
-```
-
-**Mode:** VM only
-
 ## Proof Inspection
 
 These functions extract components from a `ProofObject` returned by `prove {}`.
@@ -150,75 +108,6 @@ print(proof_vkey(p))  // {"protocol": "groth16", "curve": "bn128", ...}
 ```
 
 **Mode:** VM only
-
-## String Utilities
-
-### `substring(s, start, end)`
-
-Extracts a substring from character position `start` to `end` (exclusive). Indices are clamped to string bounds.
-
-```ach
-substring("hello", 1, 4)  // "ell"
-```
-
-### `index_of(s, sub)`
-
-Returns the character index of the first occurrence of `sub` in `s`. Returns `-1` if not found.
-
-```ach
-index_of("hello world", "world")  // 6
-index_of("hello", "xyz")          // -1
-```
-
-### `split(s, delimiter)`
-
-Splits a string by the given delimiter. Returns a list of strings.
-
-```ach
-split("a,b,c", ",")  // ["a", "b", "c"]
-```
-
-### `trim(s)`
-
-Removes leading and trailing whitespace.
-
-```ach
-trim("  hello  ")  // "hello"
-```
-
-### `replace(s, search, replacement)`
-
-Replaces all occurrences of `search` with `replacement`.
-
-```ach
-replace("aabbcc", "bb", "XX")  // "aaXXcc"
-```
-
-### `to_upper(s)`
-
-Converts all characters to uppercase.
-
-```ach
-to_upper("hello")  // "HELLO"
-```
-
-### `to_lower(s)`
-
-Converts all characters to lowercase.
-
-```ach
-to_lower("HELLO")  // "hello"
-```
-
-### `chars(s)`
-
-Splits a string into a list of individual characters.
-
-```ach
-chars("abc")  // ["a", "b", "c"]
-```
-
-All string functions are **VM only**.
 
 ## Cryptographic
 
@@ -256,7 +145,7 @@ print(ok)  // true
 
 **Mode:** VM only
 
-## BigInt
+## BigInt Constructors
 
 ### `bigint256(x)`
 
@@ -281,183 +170,18 @@ let b = bigint512("0xFF")
 
 **Mode:** VM only
 
-### `to_bits(bigint)`
-
-Converts a BigInt to a list of 0/1 integers in LSB-first order. Length is 256 or 512 depending on width.
-
-```ach
-let bits = to_bits(bigint256(42))
-// bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1, bits[4] = 0, bits[5] = 1
-```
-
-**Mode:** VM only
-
 ### `from_bits(bits, width)`
 
 Constructs a BigInt from a list of 0/1 integers (LSB-first). Width must be 256 or 512.
 
 ```ach
-let val = from_bits(to_bits(bigint256(42)), 256)
+let val = from_bits(bigint256(42).to_bits(), 256)
 assert(val == bigint256(42))
 ```
 
 **Mode:** VM only
 
-### `bit_and(a, b)`
-
-Bitwise AND of two BigInts (must be same width).
-
-```ach
-bit_and(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0x0F")
-```
-
-**Mode:** VM only
-
-### `bit_or(a, b)`
-
-Bitwise OR of two BigInts (must be same width).
-
-```ach
-bit_or(bigint256("0xF0"), bigint256("0x0F"))  // bigint256("0xFF")
-```
-
-**Mode:** VM only
-
-### `bit_xor(a, b)`
-
-Bitwise XOR of two BigInts (must be same width).
-
-```ach
-bit_xor(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0xF0")
-```
-
-**Mode:** VM only
-
-### `bit_not(x)`
-
-Bitwise NOT of a BigInt (flips all bits).
-
-```ach
-let x = bit_not(bigint256(0))  // all bits set
-```
-
-**Mode:** VM only
-
-### `bit_shl(x, n)`
-
-Shifts a BigInt left by `n` bits. Errors if any set bits are shifted out (overflow).
-
-```ach
-bit_shl(bigint256(1), 8)  // bigint256(256)
-```
-
-**Mode:** VM only
-
-### `bit_shr(x, n)`
-
-Shifts a BigInt right by `n` bits. Bits shifted out are discarded.
-
-```ach
-bit_shr(bigint256(256), 8)  // bigint256(1)
-```
-
-**Mode:** VM only
-
-## Higher-Order Collections
-
-These functions accept closures as callbacks and re-enter the interpreter loop to execute them. All are **VM only**.
-
-### `map(list, fn)`
-
-Returns a new list with `fn(elem)` applied to each element.
-
-```ach
-map([1, 2, 3], fn(n) { n * 2 })  // [2, 4, 6]
-```
-
-### `filter(list, fn)`
-
-Returns a new list containing only elements where `fn(elem)` is truthy.
-
-```ach
-filter([1, 2, 3, 4], fn(n) { n % 2 == 0 })  // [2, 4]
-```
-
-### `reduce(list, initial, fn)`
-
-Folds the list into a single value: `acc = fn(acc, elem)` for each element.
-
-```ach
-reduce([1, 2, 3], 0, fn(acc, n) { acc + n })  // 6
-```
-
-### `for_each(list, fn)`
-
-Calls `fn(elem)` for each element (for side effects). Returns `nil`.
-
-```ach
-for_each([1, 2, 3], fn(n) { print(n) })
-```
-
-### `find(list, fn)`
-
-Returns the first element where `fn(elem)` is truthy, or `nil` if none match.
-
-```ach
-find([1, 2, 3, 4], fn(n) { n > 2 })  // 3
-```
-
-### `any(list, fn)`
-
-Returns `true` if `fn(elem)` is truthy for any element. Short-circuits on first match.
-
-```ach
-any([1, 2, 3], fn(n) { n == 2 })  // true
-```
-
-### `all(list, fn)`
-
-Returns `true` if `fn(elem)` is truthy for all elements. Short-circuits on first failure.
-
-```ach
-all([1, 2, 3], fn(n) { n > 0 })  // true
-```
-
-### `sort(list, fn)`
-
-Returns a new sorted list. The comparator `fn(a, b)` must return a negative number if `a < b`, zero if equal, positive if `a > b`.
-
-```ach
-sort([3, 1, 2], fn(a, b) { a - b })  // [1, 2, 3]
-```
-
-### `flat_map(list, fn)`
-
-Like `map`, but flattens one level of nested lists. Non-list return values are kept as-is.
-
-```ach
-flat_map([1, 2, 3], fn(n) { [n, n * 10] })  // [1, 10, 2, 20, 3, 30]
-```
-
-### `zip(list1, list2)`
-
-Returns a list of `[a, b]` pairs, truncated to the length of the shorter list.
-
-```ach
-zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
-```
-
-## Standard Library — Type Conversion
-
-### `to_string(val)`
-
-Returns the string representation of any value.
-
-```ach
-to_string(42)        // "42"
-to_string(true)      // "true"
-to_string([1, 2])    // "[1, 2]"
-```
+## Standard Library
 
 ### `parse_int(str)`
 
@@ -466,86 +190,6 @@ Parses a string as an integer. Errors if the string is not a valid number.
 ```ach
 parse_int("42")      // 42
 parse_int("-7")      // -7
-```
-
-### `to_field(val)`
-
-Converts an Int or hex/decimal String to a FieldElement.
-
-```ach
-to_field(42)                // Field(42)
-to_field("0x2a")            // Field(42)
-```
-
-### `to_int(val)`
-
-Converts a Field, String, or Int to an Int. Field values must fit in 64 bits.
-
-```ach
-to_int("99")         // 99
-```
-
-## Standard Library — Math
-
-### `abs(n)`
-
-Returns the absolute value of an integer.
-
-```ach
-abs(-42)             // 42
-abs(7)               // 7
-```
-
-### `min(a, b)`
-
-Returns the smaller of two integers.
-
-```ach
-min(3, 7)            // 3
-```
-
-### `max(a, b)`
-
-Returns the larger of two integers.
-
-```ach
-max(3, 7)            // 7
-```
-
-### `pow(base, exp)`
-
-Integer exponentiation. Exponent must be non-negative.
-
-```ach
-pow(2, 10)           // 1024
-pow(3, 0)            // 1
-```
-
-## Standard Library — Extended Strings
-
-### `starts_with(str, prefix)`
-
-Returns `true` if the string starts with the given prefix.
-
-```ach
-starts_with("hello", "hel")   // true
-starts_with("hello", "world") // false
-```
-
-### `ends_with(str, suffix)`
-
-Returns `true` if the string ends with the given suffix.
-
-```ach
-ends_with("hello", "llo")     // true
-```
-
-### `contains(str, substr)`
-
-Returns `true` if the string contains the substring.
-
-```ach
-contains("hello world", "world")  // true
 ```
 
 ### `join(list, separator)`
@@ -557,107 +201,24 @@ join(["a", "b", "c"], "-")   // "a-b-c"
 join(["hello"], " ")          // "hello"
 ```
 
-### `repeat(str, n)`
-
-Repeats a string `n` times. Maximum result size is 10 MB.
-
-```ach
-repeat("ab", 3)      // "ababab"
-repeat("x", 5)       // "xxxxx"
-```
-
-## Standard Library — I/O
-
-:::note
-I/O functions are only available when the `io` feature is enabled (default).
-:::
-
-### `read_line()`
-
-Reads a line from standard input (trailing newline stripped).
-
-```ach
-let name = read_line()
-print("Hello", name)
-```
-
-### `read_file(path)`
-
-Reads the entire contents of a file as a string. Maximum file size is 100 MB.
-
-```ach
-let config = read_file("config.txt")
-```
-
-### `write_file(path, contents)`
-
-Writes a string to a file, creating or overwriting it.
-
-```ach
-write_file("output.txt", "Hello, world!")
-```
-
 ## Summary Table
 
 | # | Function | Arity | Mode | Returns |
 |---|----------|-------|------|---------|
 | 0 | `print(...)` | variadic | VM | nil |
-| 1 | `len(x)` | 1 | Both | int |
-| 2 | `typeof(x)` | 1 | VM | string |
-| 3 | `assert(x)` | 1 | Both | nil |
-| 4 | `time()` | 0 | VM | int |
-| 5 | `push(list, item)` | 2 | VM | nil |
-| 6 | `pop(list)` | 1 | VM | value |
-| 7 | `keys(map)` | 1 | VM | list |
-| 8 | `proof_json(p)` | 1 | VM | string |
-| 9 | `proof_public(p)` | 1 | VM | string |
-| 10 | `proof_vkey(p)` | 1 | VM | string |
-| 11 | `substring(s, start, end)` | 3 | VM | string |
-| 12 | `index_of(s, sub)` | 2 | VM | int |
-| 13 | `split(s, delim)` | 2 | VM | list |
-| 14 | `trim(s)` | 1 | VM | string |
-| 15 | `replace(s, search, repl)` | 3 | VM | string |
-| 16 | `to_upper(s)` | 1 | VM | string |
-| 17 | `to_lower(s)` | 1 | VM | string |
-| 18 | `chars(s)` | 1 | VM | list |
-| 19 | `poseidon(a, b)` | 2 | Both | field |
-| 20 | `poseidon_many(...)` | variadic | Both | field |
-| 21 | `verify_proof(p)` | 1 | VM | bool |
-| 22 | `bigint256(x)` | 1 | VM | BigInt256 |
-| 23 | `bigint512(x)` | 1 | VM | BigInt512 |
-| 24 | `to_bits(x)` | 1 | VM | list |
-| 25 | `from_bits(bits, width)` | 2 | VM | BigInt |
-| 26 | `bit_and(a, b)` | 2 | VM | BigInt |
-| 27 | `bit_or(a, b)` | 2 | VM | BigInt |
-| 28 | `bit_xor(a, b)` | 2 | VM | BigInt |
-| 29 | `bit_not(x)` | 1 | VM | BigInt |
-| 30 | `bit_shl(x, n)` | 2 | VM | BigInt |
-| 31 | `bit_shr(x, n)` | 2 | VM | BigInt |
-| 32 | `gc_stats()` | 0 | VM | map |
-| 33 | `map(list, fn)` | 2 | VM | list |
-| 34 | `filter(list, fn)` | 2 | VM | list |
-| 35 | `reduce(list, init, fn)` | 3 | VM | value |
-| 36 | `for_each(list, fn)` | 2 | VM | nil |
-| 37 | `find(list, fn)` | 2 | VM | value |
-| 38 | `any(list, fn)` | 2 | VM | bool |
-| 39 | `all(list, fn)` | 2 | VM | bool |
-| 40 | `sort(list, fn)` | 2 | VM | list |
-| 41 | `flat_map(list, fn)` | 2 | VM | list |
-| 42 | `zip(list1, list2)` | 2 | VM | list |
+| 1 | `typeof(x)` | 1 | VM | string |
+| 2 | `assert(x)` | 1 | Both | nil |
+| 3 | `time()` | 0 | VM | int |
+| 4 | `gc_stats()` | 0 | VM | map |
+| 5 | `proof_json(p)` | 1 | VM | string |
+| 6 | `proof_public(p)` | 1 | VM | string |
+| 7 | `proof_vkey(p)` | 1 | VM | string |
+| 8 | `poseidon(a, b)` | 2 | Both | field |
+| 9 | `poseidon_many(...)` | variadic | Both | field |
+| 10 | `verify_proof(p)` | 1 | VM | bool |
+| 11 | `bigint256(x)` | 1 | VM | BigInt256 |
+| 12 | `bigint512(x)` | 1 | VM | BigInt512 |
+| 13 | `from_bits(bits, width)` | 2 | VM | BigInt |
 | | **Standard Library** | | | |
-| 43 | `to_string(val)` | 1 | VM | string |
-| 44 | `parse_int(str)` | 1 | VM | int |
-| 45 | `to_field(val)` | 1 | VM | field |
-| 46 | `to_int(val)` | 1 | VM | int |
-| 47 | `abs(n)` | 1 | VM | int |
-| 48 | `min(a, b)` | 2 | VM | int |
-| 49 | `max(a, b)` | 2 | VM | int |
-| 50 | `pow(base, exp)` | 2 | VM | int |
-| 51 | `starts_with(s, prefix)` | 2 | VM | bool |
-| 52 | `ends_with(s, suffix)` | 2 | VM | bool |
-| 53 | `contains(s, substr)` | 2 | VM | bool |
-| 54 | `join(list, sep)` | 2 | VM | string |
-| 55 | `repeat(s, n)` | 2 | VM | string |
-| 56 | `read_line()` | 0 | VM | string |
-| 57 | `read_file(path)` | 1 | VM | string |
-| 58 | `write_file(path, data)` | 2 | VM | nil |
+| 14 | `parse_int(str)` | 1 | VM | int |
+| 15 | `join(list, sep)` | 2 | VM | string |

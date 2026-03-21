@@ -1,9 +1,17 @@
 ---
 title: "Funciones Nativas"
-description: "Referencia de las 59 funciones nativas (43 integradas + 16 biblioteca estándar)."
+description: "Referencia de las 16 funciones globales disponibles sin importar."
 ---
 
-Achronyme proporciona 59 funciones nativas: 43 integradas en el núcleo de la VM, más 16 de la biblioteca estándar (`achronyme-std`). Todas están disponibles como globales — no necesitan importarse. Algunas también están disponibles en modo circuito.
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="tip" title="beta.13 — Los métodos reemplazan la mayoría de globales">
+En beta.13, la mayoría de funciones de colecciones, strings, matemáticas y conversión se movieron a **métodos de tipo**.
+Por ejemplo, `push(lista, x)` ahora es `lista.push(x)`, y `abs(n)` ahora es `n.abs()`.
+Consulta [Métodos y Namespaces Estáticos](/es/language/methods/) para la referencia completa.
+</Aside>
+
+Achronyme proporciona 16 funciones globales: 14 integradas en el núcleo de la VM, más 2 de la biblioteca estándar (`achronyme-std`). Todas están disponibles como globales — no necesitan importarse. Algunas también están disponibles en modo circuito.
 
 ## Núcleo
 
@@ -17,18 +25,6 @@ print("hello", 42, true)  // hello 42 true
 
 **Modo:** Solo VM
 
-### `len(x)`
-
-Devuelve la longitud de una cadena (número de caracteres), lista (número de elementos) o mapa (número de entradas).
-
-```ach
-len("abc")     // 3
-len([1, 2, 3]) // 3
-len({a: 1})    // 1
-```
-
-**Modo:** Ambos (en circuitos, resuelve la longitud del array en tiempo de compilación)
-
 ### `typeof(x)`
 
 Devuelve una cadena que describe el tipo del valor: `"Number"`, `"String"`, `"Bool"`, `"Nil"`, `"List"`, `"Map"`, `"Field"`, `"BigInt256"`, `"BigInt512"`, `"Proof"`, `"Function"`, `"Native"`.
@@ -41,7 +37,7 @@ typeof(true)    // "Bool"
 
 **Modo:** Solo VM
 
-### `assert(condición)`
+### `assert(condicion)`
 
 Afirma que la condición es verdadera. Devuelve `nil` en caso de éxito, genera `AssertionFailed` en caso de fallo.
 
@@ -74,44 +70,6 @@ print(stats["bytes_freed"])     // bytes recuperados acumulados
 print(stats["peak_bytes"])      // tamaño máximo del heap alcanzado
 print(stats["gc_time_ms"])      // ms acumulados en GC
 print(stats["bytes_allocated"]) // tamaño actual del heap
-```
-
-**Modo:** Solo VM
-
-## Colecciones
-
-### `push(lista, elemento)`
-
-Agrega un elemento al final de una lista. Modifica la lista en su lugar. Devuelve `nil`.
-
-```ach
-let a = [1, 2]
-push(a, 3)
-print(a)  // [1, 2, 3]
-```
-
-**Modo:** Solo VM
-
-### `pop(lista)`
-
-Elimina y devuelve el último elemento de una lista. Devuelve `nil` si la lista está vacía.
-
-```ach
-let a = [1, 2, 3]
-let x = pop(a)
-print(x)  // 3
-print(a)  // [1, 2]
-```
-
-**Modo:** Solo VM
-
-### `keys(mapa)`
-
-Devuelve una lista de todas las claves en un mapa.
-
-```ach
-let m = {name: "alice", age: 30}
-print(keys(m))  // ["name", "age"]
 ```
 
 **Modo:** Solo VM
@@ -151,75 +109,6 @@ print(proof_vkey(p))  // {"protocol": "groth16", "curve": "bn128", ...}
 
 **Modo:** Solo VM
 
-## Utilidades de Cadenas
-
-### `substring(s, inicio, fin)`
-
-Extrae una subcadena desde la posición de carácter `inicio` hasta `fin` (exclusivo). Los índices se ajustan a los límites de la cadena.
-
-```ach
-substring("hello", 1, 4)  // "ell"
-```
-
-### `index_of(s, sub)`
-
-Devuelve el índice de carácter de la primera aparición de `sub` en `s`. Devuelve `-1` si no se encuentra.
-
-```ach
-index_of("hello world", "world")  // 6
-index_of("hello", "xyz")          // -1
-```
-
-### `split(s, delimitador)`
-
-Divide una cadena por el delimitador dado. Devuelve una lista de cadenas.
-
-```ach
-split("a,b,c", ",")  // ["a", "b", "c"]
-```
-
-### `trim(s)`
-
-Elimina espacios en blanco al inicio y al final.
-
-```ach
-trim("  hello  ")  // "hello"
-```
-
-### `replace(s, buscar, reemplazo)`
-
-Reemplaza todas las apariciones de `buscar` con `reemplazo`.
-
-```ach
-replace("aabbcc", "bb", "XX")  // "aaXXcc"
-```
-
-### `to_upper(s)`
-
-Convierte todos los caracteres a mayúsculas.
-
-```ach
-to_upper("hello")  // "HELLO"
-```
-
-### `to_lower(s)`
-
-Convierte todos los caracteres a minúsculas.
-
-```ach
-to_lower("HELLO")  // "hello"
-```
-
-### `chars(s)`
-
-Divide una cadena en una lista de caracteres individuales.
-
-```ach
-chars("abc")  // ["a", "b", "c"]
-```
-
-Todas las funciones de cadenas son **solo VM**.
-
 ## Criptográficas
 
 ### `poseidon(izquierda, derecha)`
@@ -256,7 +145,7 @@ print(ok)  // true
 
 **Modo:** Solo VM
 
-## BigInt
+## Constructores BigInt
 
 ### `bigint256(x)`
 
@@ -281,183 +170,18 @@ let b = bigint512("0xFF")
 
 **Modo:** Solo VM
 
-### `to_bits(bigint)`
-
-Convierte un BigInt a una lista de enteros 0/1 en orden LSB primero. La longitud es 256 o 512 dependiendo del ancho.
-
-```ach
-let bits = to_bits(bigint256(42))
-// bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1, bits[4] = 0, bits[5] = 1
-```
-
-**Modo:** Solo VM
-
 ### `from_bits(bits, ancho)`
 
 Construye un BigInt desde una lista de enteros 0/1 (LSB primero). El ancho debe ser 256 o 512.
 
 ```ach
-let val = from_bits(to_bits(bigint256(42)), 256)
+let val = from_bits(bigint256(42).to_bits(), 256)
 assert(val == bigint256(42))
 ```
 
 **Modo:** Solo VM
 
-### `bit_and(a, b)`
-
-AND a nivel de bits de dos BigInts (deben tener el mismo ancho).
-
-```ach
-bit_and(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0x0F")
-```
-
-**Modo:** Solo VM
-
-### `bit_or(a, b)`
-
-OR a nivel de bits de dos BigInts (deben tener el mismo ancho).
-
-```ach
-bit_or(bigint256("0xF0"), bigint256("0x0F"))  // bigint256("0xFF")
-```
-
-**Modo:** Solo VM
-
-### `bit_xor(a, b)`
-
-XOR a nivel de bits de dos BigInts (deben tener el mismo ancho).
-
-```ach
-bit_xor(bigint256("0xFF"), bigint256("0x0F"))  // bigint256("0xF0")
-```
-
-**Modo:** Solo VM
-
-### `bit_not(x)`
-
-NOT a nivel de bits de un BigInt (invierte todos los bits).
-
-```ach
-let x = bit_not(bigint256(0))  // todos los bits activados
-```
-
-**Modo:** Solo VM
-
-### `bit_shl(x, n)`
-
-Desplaza un BigInt a la izquierda `n` bits. Error si algún bit activado es desplazado fuera (desbordamiento).
-
-```ach
-bit_shl(bigint256(1), 8)  // bigint256(256)
-```
-
-**Modo:** Solo VM
-
-### `bit_shr(x, n)`
-
-Desplaza un BigInt a la derecha `n` bits. Los bits desplazados fuera se descartan.
-
-```ach
-bit_shr(bigint256(256), 8)  // bigint256(1)
-```
-
-**Modo:** Solo VM
-
-## Colecciones de Orden Superior
-
-Estas funciones aceptan closures como callbacks y re-entran al loop del intérprete para ejecutarlas. Todas son **solo VM**.
-
-### `map(lista, fn)`
-
-Devuelve una nueva lista con `fn(elem)` aplicado a cada elemento.
-
-```ach
-map([1, 2, 3], fn(n) { n * 2 })  // [2, 4, 6]
-```
-
-### `filter(lista, fn)`
-
-Devuelve una nueva lista con solo los elementos donde `fn(elem)` es verdadero.
-
-```ach
-filter([1, 2, 3, 4], fn(n) { n % 2 == 0 })  // [2, 4]
-```
-
-### `reduce(lista, inicial, fn)`
-
-Pliega la lista en un solo valor: `acc = fn(acc, elem)` para cada elemento.
-
-```ach
-reduce([1, 2, 3], 0, fn(acc, n) { acc + n })  // 6
-```
-
-### `for_each(lista, fn)`
-
-Llama `fn(elem)` para cada elemento (para efectos secundarios). Devuelve `nil`.
-
-```ach
-for_each([1, 2, 3], fn(n) { print(n) })
-```
-
-### `find(lista, fn)`
-
-Devuelve el primer elemento donde `fn(elem)` es verdadero, o `nil` si ninguno coincide.
-
-```ach
-find([1, 2, 3, 4], fn(n) { n > 2 })  // 3
-```
-
-### `any(lista, fn)`
-
-Devuelve `true` si `fn(elem)` es verdadero para algún elemento. Cortocircuita en la primera coincidencia.
-
-```ach
-any([1, 2, 3], fn(n) { n == 2 })  // true
-```
-
-### `all(lista, fn)`
-
-Devuelve `true` si `fn(elem)` es verdadero para todos los elementos. Cortocircuita en el primer fallo.
-
-```ach
-all([1, 2, 3], fn(n) { n > 0 })  // true
-```
-
-### `sort(lista, fn)`
-
-Devuelve una nueva lista ordenada. El comparador `fn(a, b)` debe devolver un número negativo si `a < b`, cero si son iguales, positivo si `a > b`.
-
-```ach
-sort([3, 1, 2], fn(a, b) { a - b })  // [1, 2, 3]
-```
-
-### `flat_map(lista, fn)`
-
-Como `map`, pero aplana un nivel de listas anidadas. Los valores que no son listas se mantienen tal cual.
-
-```ach
-flat_map([1, 2, 3], fn(n) { [n, n * 10] })  // [1, 10, 2, 20, 3, 30]
-```
-
-### `zip(lista1, lista2)`
-
-Devuelve una lista de pares `[a, b]`, truncada a la longitud de la lista más corta.
-
-```ach
-zip([1, 2, 3], [10, 20, 30])  // [[1, 10], [2, 20], [3, 30]]
-```
-
-## Biblioteca Estándar — Conversión de Tipos
-
-### `to_string(val)`
-
-Devuelve la representación en string de cualquier valor.
-
-```ach
-to_string(42)        // "42"
-to_string(true)      // "true"
-to_string([1, 2])    // "[1, 2]"
-```
+## Biblioteca Estándar
 
 ### `parse_int(str)`
 
@@ -466,86 +190,6 @@ Parsea un string como entero. Error si el string no es un número válido.
 ```ach
 parse_int("42")      // 42
 parse_int("-7")      // -7
-```
-
-### `to_field(val)`
-
-Convierte un Int o String hex/decimal a FieldElement.
-
-```ach
-to_field(42)                // Field(42)
-to_field("0x2a")            // Field(42)
-```
-
-### `to_int(val)`
-
-Convierte un Field, String o Int a Int. Los valores Field deben caber en 64 bits.
-
-```ach
-to_int("99")         // 99
-```
-
-## Biblioteca Estándar — Matemáticas
-
-### `abs(n)`
-
-Devuelve el valor absoluto de un entero.
-
-```ach
-abs(-42)             // 42
-abs(7)               // 7
-```
-
-### `min(a, b)`
-
-Devuelve el menor de dos enteros.
-
-```ach
-min(3, 7)            // 3
-```
-
-### `max(a, b)`
-
-Devuelve el mayor de dos enteros.
-
-```ach
-max(3, 7)            // 7
-```
-
-### `pow(base, exp)`
-
-Exponenciación entera. El exponente debe ser no negativo.
-
-```ach
-pow(2, 10)           // 1024
-pow(3, 0)            // 1
-```
-
-## Biblioteca Estándar — Strings Extendidos
-
-### `starts_with(str, prefijo)`
-
-Devuelve `true` si el string comienza con el prefijo dado.
-
-```ach
-starts_with("hola", "hol")    // true
-starts_with("hola", "mundo")  // false
-```
-
-### `ends_with(str, sufijo)`
-
-Devuelve `true` si el string termina con el sufijo dado.
-
-```ach
-ends_with("hola", "ola")      // true
-```
-
-### `contains(str, substr)`
-
-Devuelve `true` si el string contiene la subcadena.
-
-```ach
-contains("hola mundo", "mundo")  // true
 ```
 
 ### `join(lista, separador)`
@@ -557,107 +201,24 @@ join(["a", "b", "c"], "-")   // "a-b-c"
 join(["hola"], " ")           // "hola"
 ```
 
-### `repeat(str, n)`
-
-Repite un string `n` veces. Tamaño máximo del resultado: 10 MB.
-
-```ach
-repeat("ab", 3)      // "ababab"
-repeat("x", 5)       // "xxxxx"
-```
-
-## Biblioteca Estándar — E/S
-
-:::note
-Las funciones de E/S solo están disponibles cuando la feature `io` está habilitada (por defecto).
-:::
-
-### `read_line()`
-
-Lee una línea de la entrada estándar (sin salto de línea final).
-
-```ach
-let nombre = read_line()
-print("Hola", nombre)
-```
-
-### `read_file(ruta)`
-
-Lee el contenido completo de un archivo como string. Tamaño máximo: 100 MB.
-
-```ach
-let config = read_file("config.txt")
-```
-
-### `write_file(ruta, contenido)`
-
-Escribe un string a un archivo, creándolo o sobrescribiéndolo.
-
-```ach
-write_file("salida.txt", "¡Hola, mundo!")
-```
-
 ## Tabla Resumen
 
 | # | Función | Aridad | Modo | Devuelve |
 |---|----------|-------|------|---------|
 | 0 | `print(...)` | variádica | VM | nil |
-| 1 | `len(x)` | 1 | Ambos | int |
-| 2 | `typeof(x)` | 1 | VM | string |
-| 3 | `assert(x)` | 1 | Ambos | nil |
-| 4 | `time()` | 0 | VM | int |
-| 5 | `push(lista, elem)` | 2 | VM | nil |
-| 6 | `pop(lista)` | 1 | VM | valor |
-| 7 | `keys(mapa)` | 1 | VM | lista |
-| 8 | `proof_json(p)` | 1 | VM | string |
-| 9 | `proof_public(p)` | 1 | VM | string |
-| 10 | `proof_vkey(p)` | 1 | VM | string |
-| 11 | `substring(s, inicio, fin)` | 3 | VM | string |
-| 12 | `index_of(s, sub)` | 2 | VM | int |
-| 13 | `split(s, delim)` | 2 | VM | lista |
-| 14 | `trim(s)` | 1 | VM | string |
-| 15 | `replace(s, buscar, reempl)` | 3 | VM | string |
-| 16 | `to_upper(s)` | 1 | VM | string |
-| 17 | `to_lower(s)` | 1 | VM | string |
-| 18 | `chars(s)` | 1 | VM | lista |
-| 19 | `poseidon(a, b)` | 2 | Ambos | field |
-| 20 | `poseidon_many(...)` | variádica | Ambos | field |
-| 21 | `verify_proof(p)` | 1 | VM | bool |
-| 22 | `bigint256(x)` | 1 | VM | BigInt256 |
-| 23 | `bigint512(x)` | 1 | VM | BigInt512 |
-| 24 | `to_bits(x)` | 1 | VM | lista |
-| 25 | `from_bits(bits, ancho)` | 2 | VM | BigInt |
-| 26 | `bit_and(a, b)` | 2 | VM | BigInt |
-| 27 | `bit_or(a, b)` | 2 | VM | BigInt |
-| 28 | `bit_xor(a, b)` | 2 | VM | BigInt |
-| 29 | `bit_not(x)` | 1 | VM | BigInt |
-| 30 | `bit_shl(x, n)` | 2 | VM | BigInt |
-| 31 | `bit_shr(x, n)` | 2 | VM | BigInt |
-| 32 | `gc_stats()` | 0 | VM | mapa |
-| 33 | `map(lista, fn)` | 2 | VM | lista |
-| 34 | `filter(lista, fn)` | 2 | VM | lista |
-| 35 | `reduce(lista, init, fn)` | 3 | VM | valor |
-| 36 | `for_each(lista, fn)` | 2 | VM | nil |
-| 37 | `find(lista, fn)` | 2 | VM | valor |
-| 38 | `any(lista, fn)` | 2 | VM | bool |
-| 39 | `all(lista, fn)` | 2 | VM | bool |
-| 40 | `sort(lista, fn)` | 2 | VM | lista |
-| 41 | `flat_map(lista, fn)` | 2 | VM | lista |
-| 42 | `zip(lista1, lista2)` | 2 | VM | lista |
+| 1 | `typeof(x)` | 1 | VM | string |
+| 2 | `assert(x)` | 1 | Ambos | nil |
+| 3 | `time()` | 0 | VM | int |
+| 4 | `gc_stats()` | 0 | VM | mapa |
+| 5 | `proof_json(p)` | 1 | VM | string |
+| 6 | `proof_public(p)` | 1 | VM | string |
+| 7 | `proof_vkey(p)` | 1 | VM | string |
+| 8 | `poseidon(a, b)` | 2 | Ambos | field |
+| 9 | `poseidon_many(...)` | variádica | Ambos | field |
+| 10 | `verify_proof(p)` | 1 | VM | bool |
+| 11 | `bigint256(x)` | 1 | VM | BigInt256 |
+| 12 | `bigint512(x)` | 1 | VM | BigInt512 |
+| 13 | `from_bits(bits, ancho)` | 2 | VM | BigInt |
 | | **Biblioteca Estándar** | | | |
-| 43 | `to_string(val)` | 1 | VM | string |
-| 44 | `parse_int(str)` | 1 | VM | int |
-| 45 | `to_field(val)` | 1 | VM | field |
-| 46 | `to_int(val)` | 1 | VM | int |
-| 47 | `abs(n)` | 1 | VM | int |
-| 48 | `min(a, b)` | 2 | VM | int |
-| 49 | `max(a, b)` | 2 | VM | int |
-| 50 | `pow(base, exp)` | 2 | VM | int |
-| 51 | `starts_with(s, prefijo)` | 2 | VM | bool |
-| 52 | `ends_with(s, sufijo)` | 2 | VM | bool |
-| 53 | `contains(s, substr)` | 2 | VM | bool |
-| 54 | `join(lista, sep)` | 2 | VM | string |
-| 55 | `repeat(s, n)` | 2 | VM | string |
-| 56 | `read_line()` | 0 | VM | string |
-| 57 | `read_file(ruta)` | 1 | VM | string |
-| 58 | `write_file(ruta, datos)` | 2 | VM | nil |
+| 14 | `parse_int(str)` | 1 | VM | int |
+| 15 | `join(lista, sep)` | 2 | VM | string |
