@@ -122,14 +122,7 @@ impl Instantiator {
                 let mut elem_vars = Vec::with_capacity(size);
                 for i in 0..size {
                     let elem_name = format!("{}_{i}", decl.name);
-                    let v = self.program.fresh_var();
-                    self.program.push(Instruction::Input {
-                        result: v,
-                        name: elem_name.clone(),
-                        visibility,
-                    });
-                    self.program.set_name(v, elem_name.clone());
-                    self.program.set_type(v, ir_type);
+                    let v = self.emit_input(&elem_name, visibility, ir_type);
                     self.env.insert(elem_name, InstEnvValue::Scalar(v));
                     elem_vars.push(v);
                 }
@@ -137,18 +130,40 @@ impl Instantiator {
                     .insert(decl.name.clone(), InstEnvValue::Array(elem_vars));
             }
             None => {
-                let v = self.program.fresh_var();
-                self.program.push(Instruction::Input {
-                    result: v,
-                    name: decl.name.clone(),
-                    visibility,
-                });
-                self.program.set_name(v, decl.name.clone());
-                self.program.set_type(v, ir_type);
+                let v = self.emit_input(&decl.name, visibility, ir_type);
                 self.env.insert(decl.name.clone(), InstEnvValue::Scalar(v));
             }
         }
         Ok(())
+    }
+
+    /// Emit an Input instruction, enforce Bool type with RangeCheck if needed,
+    /// and return the final SsaVar (the RangeCheck result if Bool, else the Input result).
+    fn emit_input(&mut self, name: &str, visibility: Visibility, ir_type: IrType) -> SsaVar {
+        let v = self.program.fresh_var();
+        self.program.push(Instruction::Input {
+            result: v,
+            name: name.to_string(),
+            visibility,
+        });
+        self.program.set_name(v, name.to_string());
+        self.program.set_type(v, ir_type);
+
+        // Bool inputs must be constrained to {0, 1} via RangeCheck(1 bit).
+        // Without this, a malicious prover could assign arbitrary field elements
+        // to Bool inputs, breaking downstream boolean logic (And, Or, Not, Mux).
+        if ir_type == IrType::Bool {
+            let enforced = self.program.fresh_var();
+            self.program.push(Instruction::RangeCheck {
+                result: enforced,
+                operand: v,
+                bits: 1,
+            });
+            self.program.set_type(enforced, IrType::Bool);
+            enforced
+        } else {
+            v
+        }
     }
 
     fn declare_capture(&mut self, cap: &CaptureDef) -> Result<(), ProveIrError> {
