@@ -28,8 +28,30 @@ impl serde::Serialize for FieldElement {
 impl<'de> serde::Deserialize<'de> for FieldElement {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let limbs = <[u64; 4]>::deserialize(deserializer)?;
+        // Validate limbs < MODULUS to prevent crafted bytes from producing
+        // non-canonical field elements that break equality and arithmetic.
+        if !limbs_less_than_modulus(&limbs) {
+            return Err(serde::de::Error::custom(
+                "invalid FieldElement: limbs >= BN254 modulus",
+            ));
+        }
         Ok(Self { limbs })
     }
+}
+
+/// Check if limbs represent a value strictly less than the BN254 modulus.
+fn limbs_less_than_modulus(limbs: &[u64; 4]) -> bool {
+    // Compare from most significant limb downward.
+    for i in (0..4).rev() {
+        if limbs[i] < MODULUS[i] {
+            return true;
+        }
+        if limbs[i] > MODULUS[i] {
+            return false;
+        }
+    }
+    // limbs == MODULUS → not less than
+    false
 }
 
 // ============================================================================
