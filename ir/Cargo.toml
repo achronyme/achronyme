@@ -14,3 +14,5 @@ categories.workspace = true
 memory = { path = "../memory" }
 constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
+serde = { version = "1", features = ["derive"] }
+bincode = "1"

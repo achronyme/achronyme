@@ -4,9 +4,14 @@
 //! inlined, but loops and conditionals are preserved (not unrolled/mux'd).
 //! It is parametric on "captures" — values from the outer scope that are
 //! resolved at instantiation time (Phase B).
+//!
+//! All types are serializable via serde (Phase C) for embedding in `.achb`
+//! bytecode files. Spans are skipped during serialization since they are
+//! only useful at compile time.
 
 use achronyme_parser::diagnostic::SpanRange;
 use memory::FieldElement;
+use serde::{Deserialize, Serialize};
 
 use crate::types::IrType;
 
@@ -15,7 +20,7 @@ use crate::types::IrType;
 // ---------------------------------------------------------------------------
 
 /// A pre-compiled circuit template, ready for instantiation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProveIR {
     /// Variables the verifier knows (explicitly declared by user).
     pub public_inputs: Vec<ProveInputDecl>,
@@ -29,7 +34,7 @@ pub struct ProveIR {
 }
 
 /// An input declaration (public or witness).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProveInputDecl {
     pub name: String,
     pub array_size: Option<ArraySize>,
@@ -37,21 +42,21 @@ pub struct ProveInputDecl {
 }
 
 /// Array size: either a compile-time literal or a captured value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ArraySize {
     Literal(usize),
     Capture(String),
 }
 
 /// A captured variable from the outer scope.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CaptureDef {
     pub name: String,
     pub usage: CaptureUsage,
 }
 
 /// How a captured variable is used in the circuit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaptureUsage {
     /// Only affects structure (loop bounds, array sizes, exponents).
     /// Inlined as a constant during instantiation — NOT a circuit input.
@@ -67,29 +72,36 @@ pub enum CaptureUsage {
 // ---------------------------------------------------------------------------
 
 /// A node in the circuit body.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Spans are skipped during serialization — they are compile-time metadata
+/// for error reporting and are not needed at runtime.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CircuitNode {
     /// Immutable scalar binding: `let name = value`
     Let {
         name: String,
         value: CircuitExpr,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
     /// Array binding: `let name = [e0, e1, ...]`
     LetArray {
         name: String,
         elements: Vec<CircuitExpr>,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
     /// Equality constraint: `assert_eq(lhs, rhs)`
     AssertEq {
         lhs: CircuitExpr,
         rhs: CircuitExpr,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
     /// Boolean constraint: `assert(expr)` — expr must be 1
     Assert {
         expr: CircuitExpr,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
     /// For loop (preserved, unrolled during instantiation)
@@ -97,6 +109,7 @@ pub enum CircuitNode {
         var: String,
         range: ForRange,
         body: Vec<CircuitNode>,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
     /// Conditional (preserved, converted to Mux during instantiation)
@@ -104,11 +117,13 @@ pub enum CircuitNode {
         cond: CircuitExpr,
         then_body: Vec<CircuitNode>,
         else_body: Vec<CircuitNode>,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
     /// Bare expression (e.g., a builtin call with side effects)
     Expr {
         expr: CircuitExpr,
+        #[serde(skip)]
         span: Option<SpanRange>,
     },
 }
@@ -118,7 +133,7 @@ pub enum CircuitNode {
 // ---------------------------------------------------------------------------
 
 /// Range of a for loop in ProveIR.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ForRange {
     /// Both bounds are compile-time literals: `0..5`
     Literal { start: u64, end: u64 },
@@ -133,7 +148,7 @@ pub enum ForRange {
 // ---------------------------------------------------------------------------
 
 /// An expression in the circuit template.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CircuitExpr {
     /// Compile-time constant field element.
     Const(FieldElement),
@@ -209,7 +224,7 @@ pub enum CircuitExpr {
 // ---------------------------------------------------------------------------
 
 /// Arithmetic binary operators available in circuits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CircuitBinOp {
     Add,
     Sub,
@@ -218,7 +233,7 @@ pub enum CircuitBinOp {
 }
 
 /// Unary operators available in circuits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CircuitUnaryOp {
     Neg,
     Not,
@@ -240,7 +255,7 @@ pub enum CircuitUnaryOp {
 ///
 /// Without this gadget, ordering comparisons produce incorrect results
 /// (e.g., `abs()` would never negate because all field elements ≥ 0).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CircuitCmpOp {
     Eq,
     Neq,
@@ -251,7 +266,7 @@ pub enum CircuitCmpOp {
 }
 
 /// Boolean operators available in circuits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CircuitBoolOp {
     And,
     Or,

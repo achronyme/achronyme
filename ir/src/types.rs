@@ -317,7 +317,7 @@ impl std::fmt::Display for Instruction {
 /// assert_eq!(t, IrType::Field);
 /// assert_ne!(t, IrType::Bool);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IrType {
     Field,
     Bool,
