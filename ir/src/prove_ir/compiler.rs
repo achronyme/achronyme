@@ -91,12 +91,13 @@ impl ProveIrCompiler {
         // Compile all statements in the block
         compiler.compile_block_stmts(block)?;
 
-        // TODO(step 9): classify captures
+        // Classify captures
+        let captures = super::capture::classify_captures(&compiler.captured_names, &compiler.body);
 
         Ok(ProveIR {
             public_inputs: compiler.public_inputs,
             witness_inputs: compiler.witness_inputs,
-            captures: Vec::new(), // TODO(step 9)
+            captures,
             body: compiler.body,
         })
     }
@@ -2680,5 +2681,53 @@ mod tests {
             .body
             .iter()
             .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    // =====================================================================
+    // Capture classification (end-to-end via compile())
+    // =====================================================================
+
+    /// Helper: compile a prove block body with outer scope captures.
+    fn compile_prove_block(source: &str, outer_vars: &[&str]) -> Result<ProveIR, ProveIrError> {
+        let (program, errors) = parse_program(source);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let outer: HashSet<String> = outer_vars.iter().map(|s| s.to_string()).collect();
+        let block = Block {
+            stmts: program.stmts,
+            span: Span {
+                byte_start: 0,
+                byte_end: source.len(),
+                line_start: 1,
+                col_start: 1,
+                line_end: 1,
+                col_end: 1,
+            },
+        };
+        ProveIrCompiler::compile(&block, &outer)
+    }
+
+    #[test]
+    fn capture_classification_end_to_end() {
+        // secret is used in constraint (poseidon), hash is declared public
+        let ir = compile_prove_block(
+            "public hash\nassert_eq(poseidon(secret, 0), hash)",
+            &["secret", "hash"],
+        )
+        .unwrap();
+        // hash is declared as public input, so not a capture
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.public_inputs[0].name, "hash");
+        // secret is captured and used in constraint
+        assert_eq!(ir.captures.len(), 1);
+        assert_eq!(ir.captures[0].name, "secret");
+        assert_eq!(ir.captures[0].usage, CaptureUsage::CircuitInput);
+    }
+
+    #[test]
+    fn no_captures_in_self_contained_circuit() {
+        // ach circuit mode: no outer scope, no captures
+        let ir =
+            compile_circuit("public out\nwitness a\nwitness b\nassert_eq(a * b, out)").unwrap();
+        assert!(ir.captures.is_empty());
     }
 }
