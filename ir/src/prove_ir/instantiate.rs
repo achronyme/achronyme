@@ -621,6 +621,14 @@ impl Instantiator {
                     }
                 };
 
+                if path_elems.len() != idx_elems.len() {
+                    return Err(ProveIrError::ArrayLengthMismatch {
+                        expected: path_elems.len(),
+                        got: idx_elems.len(),
+                        span: None,
+                    });
+                }
+
                 // Walk up the tree: for each level, hash(current, sibling) based on index
                 let mut current = leaf_var;
                 for (sibling, idx) in path_elems.iter().zip(idx_elems.iter()) {
