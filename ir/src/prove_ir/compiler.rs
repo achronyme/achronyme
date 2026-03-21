@@ -759,15 +759,26 @@ impl ProveIrCompiler {
             // nodes — we return a dummy Const(0) since they're constraints, not values.
             "assert_eq" => {
                 self.check_arity("assert_eq", 2, args.len(), span)?;
-                let _lhs = self.compile_expr(&args[0])?;
-                let _rhs = self.compile_expr(&args[1])?;
-                // Note: actual AssertEq node emission happens at statement level (step 5)
-                // At expression level, we just validate the arguments compile
+                let lhs = self.compile_expr(&args[0])?;
+                let rhs = self.compile_expr(&args[1])?;
+                // Always emit the constraint node — even at expression level.
+                // This ensures the constraint is enforced regardless of whether
+                // assert_eq is used as a statement or inside a let binding.
+                self.body.push(CircuitNode::AssertEq {
+                    lhs,
+                    rhs,
+                    span: Some(SpanRange::from(span)),
+                });
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
             }
             "assert" => {
                 self.check_arity("assert", 1, args.len(), span)?;
-                let _cond = self.compile_expr(&args[0])?;
+                let cond = self.compile_expr(&args[0])?;
+                // Always emit the constraint node — same rationale as assert_eq.
+                self.body.push(CircuitNode::Assert {
+                    expr: cond,
+                    span: Some(SpanRange::from(span)),
+                });
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
             }
 
