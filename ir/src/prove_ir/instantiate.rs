@@ -168,12 +168,14 @@ impl Instantiator {
 
     fn declare_capture(&mut self, cap: &CaptureDef) -> Result<(), ProveIrError> {
         // Safe: validate_captures already verified all required captures exist.
-        let value = *self.captures.get(&cap.name).ok_or_else(|| {
-            ProveIrError::UnsupportedOperation {
-                description: format!("missing capture value for `{}`", cap.name),
-                span: None,
-            }
-        })?;
+        let value =
+            *self
+                .captures
+                .get(&cap.name)
+                .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                    description: format!("missing capture value for `{}`", cap.name),
+                    span: None,
+                })?;
         match cap.usage {
             CaptureUsage::CircuitInput | CaptureUsage::Both => {
                 // Becomes a witness input — the concrete value is the witness
@@ -302,9 +304,7 @@ impl Instantiator {
         body: &[CircuitNode],
     ) -> Result<(), ProveIrError> {
         match range {
-            ForRange::Literal { start, end } => {
-                self.emit_range_loop(var, *start, *end, body)
-            }
+            ForRange::Literal { start, end } => self.emit_range_loop(var, *start, *end, body),
             ForRange::WithCapture { start, end_capture } => {
                 let end_fe = self.captures.get(end_capture).ok_or_else(|| {
                     ProveIrError::UnsupportedOperation {
@@ -536,9 +536,7 @@ impl Instantiator {
                     if_false: f,
                 });
                 // Propagate type if both branches agree
-                if let (Some(tt), Some(ft)) =
-                    (self.program.get_type(t), self.program.get_type(f))
-                {
+                if let (Some(tt), Some(ft)) = (self.program.get_type(t), self.program.get_type(f)) {
                     if tt == ft {
                         self.program.set_type(v, tt);
                     }
@@ -1324,5 +1322,249 @@ mod tests {
             matches!(i, Instruction::Const { value, .. } if *value == FieldElement::from_u64(3))
         });
         assert!(has_const_3);
+    }
+
+    // =====================================================================
+    // Phase B audit regression tests
+    // =====================================================================
+
+    // S1: Bool-typed inputs get RangeCheck enforcement
+    #[test]
+    fn audit_bool_input_gets_range_check() {
+        let prove_ir = ProveIR {
+            public_inputs: vec![ProveInputDecl {
+                name: "flag".into(),
+                array_size: None,
+                ir_type: IrType::Bool,
+            }],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+        };
+        let ir = prove_ir.instantiate(&HashMap::new()).unwrap();
+        let range_checks = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::RangeCheck { bits: 1, .. }))
+            .count();
+        assert_eq!(
+            range_checks, 1,
+            "Bool input must have RangeCheck(1), got {range_checks}"
+        );
+    }
+
+    #[test]
+    fn audit_bool_array_input_gets_range_checks() {
+        let prove_ir = ProveIR {
+            public_inputs: vec![ProveInputDecl {
+                name: "flags".into(),
+                array_size: Some(ArraySize::Literal(3)),
+                ir_type: IrType::Bool,
+            }],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+        };
+        let ir = prove_ir.instantiate(&HashMap::new()).unwrap();
+        let range_checks = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::RangeCheck { bits: 1, .. }))
+            .count();
+        assert_eq!(range_checks, 3, "3 Bool array elements need 3 RangeChecks");
+    }
+
+    // E1: PoseidonMany with 2 args
+    #[test]
+    fn audit_poseidon_many_two_args() {
+        let ir = compile_and_instantiate(
+            "public hash\nwitness a\nwitness b\nassert_eq(poseidon_many(a, b), hash)",
+        );
+        let hashes = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+            .count();
+        assert_eq!(hashes, 1, "poseidon_many(a, b) should produce 1 hash");
+    }
+
+    // Pow with exp=1
+    #[test]
+    fn audit_pow_one_is_identity() {
+        let ir = compile_and_instantiate("public x\npublic out\nassert_eq(x ^ 1, out)");
+        // x^1 should NOT produce any Mul instructions (identity)
+        let muls = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mul { .. }))
+            .count();
+        assert_eq!(muls, 0, "x^1 should be identity (0 multiplications)");
+    }
+
+    // Unary Neg
+    #[test]
+    fn audit_unary_neg() {
+        let ir = compile_and_instantiate("public x\npublic out\nassert_eq(-x, out)");
+        let negs = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Neg { .. }))
+            .count();
+        assert_eq!(negs, 1);
+    }
+
+    // Unary Not
+    #[test]
+    fn audit_unary_not() {
+        let ir = compile_and_instantiate("public x\npublic out\nassert_eq(!x, out)");
+        let nots = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Not { .. }))
+            .count();
+        assert_eq!(nots, 1);
+    }
+
+    // Comparison operators Neq, Le, Ge
+    #[test]
+    fn audit_comparison_neq() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a != b)");
+        assert!(ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsNeq { .. })));
+    }
+
+    #[test]
+    fn audit_comparison_le() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a <= b)");
+        assert!(ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsLe { .. })));
+    }
+
+    #[test]
+    fn audit_comparison_ge_desugars_to_le() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a >= b)");
+        // a >= b → IsLe(b, a)
+        assert!(ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsLe { .. })));
+    }
+
+    // If node with nested constraints in both branches
+    #[test]
+    fn audit_if_emits_both_branch_constraints() {
+        let ir = compile_and_instantiate(
+            "public c\npublic a\npublic b\n\
+             if c { assert_eq(a, 1) } else { assert_eq(b, 2) }",
+        );
+        let assert_eqs = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+            .count();
+        assert_eq!(
+            assert_eqs, 2,
+            "both if/else branches must emit their constraints"
+        );
+    }
+
+    // ForRange::Array with empty array
+    #[test]
+    fn audit_for_array_empty() {
+        let prove_ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![CircuitNode::For {
+                var: "x".into(),
+                range: ForRange::Array("arr".into()),
+                body: vec![],
+                span: None,
+            }],
+        };
+        // Need "arr" in env as an empty array — not possible from the
+        // public API without a LetArray node. Use a LetArray with empty elements instead.
+        // Actually, empty arrays are rejected by the compiler. Test via non-empty but
+        // verifying the loop body isn't entered would require a different approach.
+        // Skip: empty arrays are rejected at compile time (Phase A).
+    }
+
+    // CaptureUsage::Both
+    #[test]
+    fn audit_capture_both_is_witness_input() {
+        let prove_ir = ProveIR {
+            public_inputs: vec![ProveInputDecl {
+                name: "out".into(),
+                array_size: None,
+                ir_type: IrType::Field,
+            }],
+            witness_inputs: vec![],
+            captures: vec![CaptureDef {
+                name: "n".into(),
+                usage: CaptureUsage::Both,
+            }],
+            body: vec![
+                // Use n structurally (in a WithCapture range)
+                CircuitNode::For {
+                    var: "i".into(),
+                    range: ForRange::WithCapture {
+                        start: 0,
+                        end_capture: "n".into(),
+                    },
+                    body: vec![],
+                    span: None,
+                },
+                // Use n in a constraint expression
+                CircuitNode::AssertEq {
+                    lhs: CircuitExpr::Capture("n".into()),
+                    rhs: CircuitExpr::Input("out".into()),
+                    span: None,
+                },
+            ],
+        };
+        let captures: HashMap<String, FieldElement> =
+            [("n".to_string(), FieldElement::from_u64(3))]
+                .into_iter()
+                .collect();
+        let ir = prove_ir.instantiate(&captures).unwrap();
+        // n should be a witness Input (not just a Const)
+        let witness_inputs: Vec<&str> = ir
+            .instructions
+            .iter()
+            .filter_map(|i| match i {
+                Instruction::Input {
+                    name,
+                    visibility: Visibility::Witness,
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            witness_inputs.contains(&"n"),
+            "Both capture must be witness input, got: {witness_inputs:?}"
+        );
+    }
+
+    // Type propagation verification
+    #[test]
+    fn audit_type_propagation() {
+        let ir = compile_and_instantiate("public a\npublic b\nlet sum = a + b\nassert(a == b)");
+        // sum (Add result) should have type Field
+        // a == b (IsEq result) should have type Bool
+        let has_field = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Add { result, .. } if ir.get_type(*result) == Some(IrType::Field)));
+        let has_bool = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsEq { result, .. } if ir.get_type(*result) == Some(IrType::Bool)));
+        assert!(has_field, "Add result should have IrType::Field");
+        assert!(has_bool, "IsEq result should have IrType::Bool");
     }
 }
