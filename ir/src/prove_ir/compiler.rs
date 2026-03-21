@@ -801,6 +801,20 @@ impl ProveIrCompiler {
                     bits,
                 })
             }
+            "merkle_verify" => {
+                self.check_arity("merkle_verify", 4, args.len(), span)?;
+                let root = self.compile_expr(&args[0])?;
+                let leaf = self.compile_expr(&args[1])?;
+                // path and indices must be array identifiers (referenced by name)
+                let path = self.extract_array_ident(&args[2], span)?;
+                let indices = self.extract_array_ident(&args[3], span)?;
+                Ok(CircuitExpr::MerkleVerify {
+                    root: Box::new(root),
+                    leaf: Box::new(leaf),
+                    path,
+                    indices,
+                })
+            }
             "len" => {
                 self.check_arity("len", 1, args.len(), span)?;
                 self.compile_len_call(&args[0], span)
@@ -1023,6 +1037,22 @@ impl ProveIrCompiler {
     // -----------------------------------------------------------------------
     // Helpers for call/method compilation
     // -----------------------------------------------------------------------
+
+    /// Extract an array identifier name from an expression (for merkle_verify args).
+    fn extract_array_ident(&self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
+        if let Expr::Ident { name, .. } = expr {
+            if matches!(
+                self.env.get(name.as_str()),
+                Some(CompEnvValue::Array(_)) | Some(CompEnvValue::Capture(_))
+            ) {
+                return Ok(name.clone());
+            }
+        }
+        Err(ProveIrError::UnsupportedOperation {
+            description: "merkle_verify requires array identifiers for path and indices".into(),
+            span: to_span(span),
+        })
+    }
 
     /// Compile `len(expr)` or `expr.len()` — resolve to ArrayLen.
     fn compile_len_call(

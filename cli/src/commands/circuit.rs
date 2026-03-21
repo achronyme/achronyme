@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use constraints::{write_r1cs, write_wtns};
-use ir::IrLowering;
+use ir::prove_ir::ProveIrCompiler;
 use memory::FieldElement;
 
 use super::ErrorFormat;
@@ -84,9 +84,10 @@ pub fn circuit_command(
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
-    let base_path = source_dir.clone();
+    // TODO: pass base_path to ProveIR compiler once import support is added
+    let _base_path = source_dir.clone();
 
-    let render_ir_error = |e: ir::error::IrError| -> anyhow::Error {
+    let render_prove_ir_error = |e: ir::ProveIrError| -> anyhow::Error {
         let diag = e.to_diagnostic();
         let rendered = super::render_diagnostic(&diag, &source, error_format);
         anyhow::anyhow!("{rendered}")
@@ -105,17 +106,29 @@ pub fn circuit_command(
         );
     }
 
-    // 1. Lower to IR — self-contained or CLI-provided declarations
-    let mut program = if public.is_empty() && witness.is_empty() {
-        let (_, _, prog) = IrLowering::lower_self_contained_with_base(&source, base_path)
-            .map_err(render_ir_error)?;
-        prog
+    // 1. Compile to ProveIR and instantiate to IR SSA.
+    //    Two paths: self-contained (in-source declarations) or CLI-provided.
+    let compile_source = if public.is_empty() && witness.is_empty() {
+        // Self-contained: source already has public/witness declarations
+        source.clone()
     } else {
-        let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
-        let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
-        IrLowering::lower_circuit_with_base(&source, &pub_refs, &wit_refs, base_path)
-            .map_err(render_ir_error)?
+        // CLI-declared: prepend public/witness declarations to source
+        let mut header = String::new();
+        for spec in public {
+            header.push_str(&format!("public {spec}\n"));
+        }
+        for spec in witness {
+            header.push_str(&format!("witness {spec}\n"));
+        }
+        header.push_str(&source);
+        header
     };
+
+    let prove_ir =
+        ProveIrCompiler::compile_circuit(&compile_source).map_err(render_prove_ir_error)?;
+    let mut program = prove_ir
+        .instantiate(&std::collections::HashMap::new())
+        .map_err(render_prove_ir_error)?;
 
     if verbose {
         eprintln!(
