@@ -25,6 +25,7 @@ pub fn init_project(name: &str, template: &str, base_dir: &Path) -> Result<()> {
         r#"[project]
 name = "{name}"
 version = "0.1.0"
+entry = "src/main.ach"
 
 [build]
 backend = "r1cs"
@@ -89,6 +90,7 @@ mod tests {
 
         let toml = fs::read_to_string(tmp.path().join("test-proj/achronyme.toml")).unwrap();
         assert!(toml.contains("name = \"test-proj\""));
+        assert!(toml.contains("entry = \"src/main.ach\""));
 
         let main = fs::read_to_string(tmp.path().join("test-proj/src/main.ach")).unwrap();
         assert!(main.contains("public out"));
