@@ -735,10 +735,11 @@ impl ProveIrCompiler {
             }
             "poseidon_many" => {
                 if args.len() < 2 {
-                    return Err(ProveIrError::WrongArgumentCount {
-                        name: "poseidon_many".into(),
-                        expected: 2,
-                        got: args.len(),
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "`poseidon_many` requires at least 2 arguments, got {}",
+                            args.len()
+                        ),
                         span: to_span(span),
                     });
                 }
