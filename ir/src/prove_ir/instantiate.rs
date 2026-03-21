@@ -393,6 +393,7 @@ impl Instantiator {
                     result: v,
                     value: *fe,
                 });
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             CircuitExpr::Input(name) => self.resolve_scalar(name),
@@ -429,6 +430,7 @@ impl Instantiator {
                     },
                 };
                 self.program.push(inst);
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             CircuitExpr::UnaryOp { op, operand } => {
@@ -445,6 +447,11 @@ impl Instantiator {
                     },
                 };
                 self.program.push(inst);
+                let ty = match op {
+                    CircuitUnaryOp::Neg => IrType::Field,
+                    CircuitUnaryOp::Not => IrType::Bool,
+                };
+                self.program.set_type(v, ty);
                 Ok(v)
             }
             CircuitExpr::Comparison { op, lhs, rhs } => {
@@ -523,6 +530,14 @@ impl Instantiator {
                     if_true: t,
                     if_false: f,
                 });
+                // Propagate type if both branches agree
+                if let (Some(tt), Some(ft)) =
+                    (self.program.get_type(t), self.program.get_type(f))
+                {
+                    if tt == ft {
+                        self.program.set_type(v, tt);
+                    }
+                }
                 Ok(v)
             }
             CircuitExpr::PoseidonHash { left, right } => {
@@ -534,6 +549,7 @@ impl Instantiator {
                     left: l,
                     right: r,
                 });
+                self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
             CircuitExpr::PoseidonMany(args) => {
