@@ -281,6 +281,9 @@ impl ProveIrCompiler {
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
+        // Type annotations are intentionally ignored: all circuit values are
+        // field elements. The annotation is preserved in the AST for future
+        // validation (AnnotationMismatch error variant exists for this).
         // Array literal → LetArray
         if let Expr::Array {
             elements,
@@ -339,6 +342,7 @@ impl ProveIrCompiler {
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
+        // Type annotations intentionally ignored (see compile_let).
         // Compile value and emit Let node (same as immutable let for v0)
         let compiled = self.compile_expr(value)?;
         self.body.push(CircuitNode::Let {
