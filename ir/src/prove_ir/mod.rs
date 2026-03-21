@@ -11,8 +11,10 @@
 //! - **Loops preserved**: not unrolled (deferred to instantiation with concrete values)
 //! - **Parametric**: captures from outer scope are "holes" filled at instantiation
 
+pub mod compiler;
 pub mod error;
 pub mod types;
 
+pub use compiler::ProveIrCompiler;
 pub use error::ProveIrError;
 pub use types::*;
