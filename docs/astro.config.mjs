@@ -51,6 +51,7 @@ export default defineConfig({
 						{ label: 'Functions & Closures', slug: 'language/functions-and-closures', translations: { es: 'Funciones y Closures' } },
 						{ label: 'Arrays & Collections', slug: 'language/arrays-and-collections', translations: { es: 'Arrays y Colecciones' } },
 						{ label: 'Native Functions', slug: 'language/native-functions', translations: { es: 'Funciones Nativas' } },
+						{ label: 'Methods & Static Namespaces', slug: 'language/methods', translations: { es: 'Métodos y Namespaces Estáticos' } },
 						{ label: 'Error Handling', slug: 'language/error-handling', translations: { es: 'Manejo de Errores' } },
 						{ label: 'Diagnostics & Warnings', slug: 'language/diagnostics', translations: { es: 'Diagnósticos y Advertencias' } },
 						{ label: 'Modules', slug: 'language/modules', translations: { es: 'Módulos' } },

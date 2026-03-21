@@ -1,0 +1,601 @@
+---
+title: "Methods & Static Namespaces"
+description: "Reference for all 50 type methods and static namespace members."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Since beta.13, most operations on values use **method syntax**: `value.method(args)`. Methods are resolved at runtime based on the value's type tag. Each type has its own set of methods.
+
+Achronyme also provides **static namespaces** using `Type::MEMBER` syntax for type-level constants and constructors.
+
+## Method Syntax
+
+```ach
+// Method call
+let items = [3, 1, 2]
+let sorted = items.sort(fn(a, b) { a - b })
+
+// Chaining
+let result = [1, 2, 3, 4, 5]
+    .filter(fn(n) { n > 2 })
+    .map(fn(n) { n * 10 })
+// result: [30, 40, 50]
+```
+
+<Aside type="note">
+Maps can store closures as fields. If a map field has the same name as a built-in method, the **prototype method takes priority**. The closure is used as fallback only when no built-in method exists for that name.
+</Aside>
+
+---
+
+## Int
+
+6 methods on integer values.
+
+### `.abs()`
+
+Returns the absolute value.
+
+```ach
+let x = -42
+assert(x.abs() == 42)
+```
+
+### `.min(other)`
+
+Returns the smaller of two integers.
+
+```ach
+assert(3.min(7) == 3)
+```
+
+### `.max(other)`
+
+Returns the larger of two integers.
+
+```ach
+assert(3.max(7) == 7)
+```
+
+### `.pow(exp)`
+
+Integer exponentiation. Exponent must be non-negative.
+
+```ach
+assert(2.pow(10) == 1024)
+```
+
+### `.to_field()`
+
+Converts the integer to a BN254 field element.
+
+```ach
+let f = 42.to_field()
+assert(typeof(f) == "Field")
+```
+
+### `.to_string()`
+
+Returns the string representation.
+
+```ach
+assert(42.to_string() == "42")
+```
+
+### Static: `Int::MAX`, `Int::MIN`
+
+60-bit signed integer bounds.
+
+```ach
+print(Int::MAX)  // 576460752303423487 (2^59 - 1)
+print(Int::MIN)  // -576460752303423488 (-2^59)
+```
+
+---
+
+## String
+
+14 methods on string values.
+
+### `.len()`
+
+Returns the character count.
+
+```ach
+assert("hello".len() == 5)
+```
+
+### `.starts_with(prefix)`
+
+Returns `true` if the string starts with the given prefix.
+
+```ach
+assert("hello".starts_with("hel"))
+```
+
+### `.ends_with(suffix)`
+
+Returns `true` if the string ends with the given suffix.
+
+```ach
+assert("hello".ends_with("llo"))
+```
+
+### `.contains(substr)`
+
+Returns `true` if the string contains the substring.
+
+```ach
+assert("hello world".contains("world"))
+```
+
+### `.split(delimiter)`
+
+Splits the string by the given delimiter. Returns a list of strings.
+
+```ach
+assert("a,b,c".split(",") == ["a", "b", "c"])
+```
+
+### `.trim()`
+
+Removes leading and trailing whitespace.
+
+```ach
+assert("  hello  ".trim() == "hello")
+```
+
+### `.replace(search, replacement)`
+
+Replaces all occurrences of `search` with `replacement`.
+
+```ach
+assert("aabbcc".replace("bb", "XX") == "aaXXcc")
+```
+
+### `.to_upper()`
+
+Converts all characters to uppercase.
+
+```ach
+assert("hello".to_upper() == "HELLO")
+```
+
+### `.to_lower()`
+
+Converts all characters to lowercase.
+
+```ach
+assert("HELLO".to_lower() == "hello")
+```
+
+### `.chars()`
+
+Splits into a list of individual characters.
+
+```ach
+assert("abc".chars() == ["a", "b", "c"])
+```
+
+### `.index_of(substr)`
+
+Returns the character index of the first occurrence. Returns `-1` if not found.
+
+```ach
+assert("hello world".index_of("world") == 6)
+assert("hello".index_of("xyz") == -1)
+```
+
+### `.substring(start, end)`
+
+Extracts a substring from position `start` to `end` (exclusive). Indices are clamped to string bounds.
+
+```ach
+assert("hello".substring(1, 4) == "ell")
+```
+
+### `.repeat(n)`
+
+Repeats the string `n` times. Maximum result size is 10 MB.
+
+```ach
+assert("ab".repeat(3) == "ababab")
+```
+
+### `.to_string()`
+
+Returns the string itself (identity).
+
+```ach
+assert("hi".to_string() == "hi")
+```
+
+---
+
+## List
+
+13 methods on list values.
+
+### `.len()`
+
+Returns the element count.
+
+```ach
+assert([1, 2, 3].len() == 3)
+```
+
+### `.push(item)`
+
+Appends an item to the end. Mutates the list in-place. Returns `nil`.
+
+```ach
+mut items = [1, 2]
+items.push(3)
+assert(items.len() == 3)
+```
+
+### `.pop()`
+
+Removes and returns the last element. Returns `nil` if empty.
+
+```ach
+mut items = [1, 2, 3]
+assert(items.pop() == 3)
+assert(items.len() == 2)
+```
+
+### `.map(fn)`
+
+Returns a new list with `fn(elem)` applied to each element.
+
+```ach
+let doubled = [1, 2, 3].map(fn(n) { n * 2 })
+assert(doubled == [2, 4, 6])
+```
+
+### `.filter(fn)`
+
+Returns a new list containing only elements where `fn(elem)` is truthy.
+
+```ach
+let evens = [1, 2, 3, 4].filter(fn(n) { n % 2 == 0 })
+assert(evens == [2, 4])
+```
+
+### `.reduce(initial, fn)`
+
+Folds the list into a single value: `acc = fn(acc, elem)` for each element.
+
+```ach
+let sum = [1, 2, 3].reduce(0, fn(acc, n) { acc + n })
+assert(sum == 6)
+```
+
+### `.for_each(fn)`
+
+Calls `fn(elem)` for each element (for side effects). Returns `nil`.
+
+```ach
+[1, 2, 3].for_each(fn(n) { print(n) })
+```
+
+### `.find(fn)`
+
+Returns the first element where `fn(elem)` is truthy, or `nil` if none match.
+
+```ach
+let found = [1, 2, 3, 4].find(fn(n) { n > 2 })
+assert(found == 3)
+```
+
+### `.any(fn)`
+
+Returns `true` if `fn(elem)` is truthy for any element. Short-circuits.
+
+```ach
+assert([1, 2, 3].any(fn(n) { n == 2 }))
+```
+
+### `.all(fn)`
+
+Returns `true` if `fn(elem)` is truthy for all elements. Short-circuits.
+
+```ach
+assert([1, 2, 3].all(fn(n) { n > 0 }))
+```
+
+### `.sort(fn)`
+
+Returns a new sorted list. The comparator `fn(a, b)` must return negative if `a < b`, zero if equal, positive if `a > b`.
+
+```ach
+let sorted = [3, 1, 2].sort(fn(a, b) { a - b })
+assert(sorted == [1, 2, 3])
+```
+
+### `.flat_map(fn)`
+
+Like `.map()`, but flattens one level of nested lists.
+
+```ach
+let result = [1, 2, 3].flat_map(fn(n) { [n, n * 10] })
+assert(result == [1, 10, 2, 20, 3, 30])
+```
+
+### `.zip(other)`
+
+Returns a list of `[a, b]` pairs, truncated to the shorter list.
+
+```ach
+let pairs = [1, 2, 3].zip([10, 20, 30])
+assert(pairs == [[1, 10], [2, 20], [3, 30]])
+```
+
+---
+
+## Map
+
+8 methods on map values.
+
+### `.len()`
+
+Returns the number of key-value pairs.
+
+```ach
+let m = {name: "Alice", age: 30}
+assert(m.len() == 2)
+```
+
+### `.keys()`
+
+Returns a list of all keys.
+
+```ach
+let m = {name: "Alice", age: 30}
+let k = m.keys()
+assert(k.len() == 2)
+```
+
+### `.values()`
+
+Returns a list of all values.
+
+```ach
+let m = {a: 1, b: 2, c: 3}
+let v = m.values()
+assert(v.len() == 3)
+```
+
+### `.entries()`
+
+Returns a list of `[key, value]` pairs.
+
+```ach
+let m = {x: 10, y: 20}
+let e = m.entries()
+// e contains [["x", 10], ["y", 20]]
+assert(e.len() == 2)
+```
+
+### `.contains_key(key)`
+
+Returns `true` if the map contains the given key.
+
+```ach
+let m = {name: "Alice"}
+assert(m.contains_key("name"))
+assert(!m.contains_key("age"))
+```
+
+### `.get(key, default)`
+
+Returns the value for `key`, or `default` if the key doesn't exist.
+
+```ach
+let m = {name: "Alice"}
+assert(m.get("name", "?") == "Alice")
+assert(m.get("age", 0) == 0)
+```
+
+### `.set(key, value)`
+
+Sets or updates a key-value pair. Mutates the map in-place. Returns `nil`.
+
+```ach
+mut m = {}
+m.set("name", "Alice")
+m.set("age", 30)
+assert(m.len() == 2)
+assert(m.name == "Alice")
+```
+
+### `.remove(key)`
+
+Removes a key and returns its value. Returns `nil` if the key doesn't exist.
+
+```ach
+mut m = {name: "Alice", age: 30}
+let removed = m.remove("age")
+assert(removed == 30)
+assert(m.len() == 1)
+```
+
+---
+
+## Field
+
+2 methods on BN254 field elements.
+
+### `.to_int()`
+
+Converts the field element to an integer. The value must fit in 64 bits.
+
+```ach
+let f = 0p42
+assert(f.to_int() == 42)
+```
+
+### `.to_string()`
+
+Returns the decimal string representation.
+
+```ach
+let f = 0p42
+assert(f.to_string() == "42")
+```
+
+### Static: `Field::ZERO`, `Field::ONE`, `Field::ORDER`
+
+Field constants for BN254 Fr.
+
+```ach
+let z = Field::ZERO   // 0p0
+let o = Field::ONE     // 0p1
+let q = Field::ORDER   // "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+```
+
+---
+
+## BigInt
+
+7 methods on BigInt256 and BigInt512 values.
+
+### `.to_bits()`
+
+Converts to a list of 0/1 integers in LSB-first order. Length is 256 or 512 depending on width.
+
+```ach
+let bits = bigint256(42).to_bits()
+// bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1, bits[4] = 0, bits[5] = 1
+```
+
+### `.bit_and(other)`
+
+Bitwise AND. Both operands must have the same width.
+
+```ach
+let result = bigint256("0xFF").bit_and(bigint256("0x0F"))
+assert(result == bigint256("0x0F"))
+```
+
+### `.bit_or(other)`
+
+Bitwise OR. Both operands must have the same width.
+
+```ach
+let result = bigint256("0xF0").bit_or(bigint256("0x0F"))
+assert(result == bigint256("0xFF"))
+```
+
+### `.bit_xor(other)`
+
+Bitwise XOR. Both operands must have the same width.
+
+```ach
+let result = bigint256("0xFF").bit_xor(bigint256("0x0F"))
+assert(result == bigint256("0xF0"))
+```
+
+### `.bit_not()`
+
+Bitwise NOT (flips all bits).
+
+```ach
+let x = bigint256(0).bit_not()  // all bits set
+```
+
+### `.bit_shl(n)`
+
+Shifts left by `n` bits. Errors if any set bits are shifted out (overflow).
+
+```ach
+assert(bigint256(1).bit_shl(8) == bigint256(256))
+```
+
+### `.bit_shr(n)`
+
+Shifts right by `n` bits. Bits shifted out are discarded.
+
+```ach
+assert(bigint256(256).bit_shr(8) == bigint256(1))
+```
+
+### Static: `BigInt::from_bits`
+
+Alias for the global `from_bits` function.
+
+```ach
+let val = BigInt::from_bits(bigint256(42).to_bits(), 256)
+assert(val == bigint256(42))
+```
+
+---
+
+## Summary Table
+
+### Methods by Type
+
+| Type | Method | Args | Returns |
+|------|--------|------|---------|
+| **Int** | `.abs()` | 0 | Int |
+| | `.min(other)` | 1 | Int |
+| | `.max(other)` | 1 | Int |
+| | `.pow(exp)` | 1 | Int |
+| | `.to_field()` | 0 | Field |
+| | `.to_string()` | 0 | String |
+| **String** | `.len()` | 0 | Int |
+| | `.starts_with(prefix)` | 1 | Bool |
+| | `.ends_with(suffix)` | 1 | Bool |
+| | `.contains(substr)` | 1 | Bool |
+| | `.split(delim)` | 1 | List |
+| | `.trim()` | 0 | String |
+| | `.replace(search, repl)` | 2 | String |
+| | `.to_upper()` | 0 | String |
+| | `.to_lower()` | 0 | String |
+| | `.chars()` | 0 | List |
+| | `.index_of(substr)` | 1 | Int |
+| | `.substring(start, end)` | 2 | String |
+| | `.repeat(n)` | 1 | String |
+| | `.to_string()` | 0 | String |
+| **List** | `.len()` | 0 | Int |
+| | `.push(item)` | 1 | nil |
+| | `.pop()` | 0 | value |
+| | `.map(fn)` | 1 | List |
+| | `.filter(fn)` | 1 | List |
+| | `.reduce(init, fn)` | 2 | value |
+| | `.for_each(fn)` | 1 | nil |
+| | `.find(fn)` | 1 | value |
+| | `.any(fn)` | 1 | Bool |
+| | `.all(fn)` | 1 | Bool |
+| | `.sort(fn)` | 1 | List |
+| | `.flat_map(fn)` | 1 | List |
+| | `.zip(other)` | 1 | List |
+| **Map** | `.len()` | 0 | Int |
+| | `.keys()` | 0 | List |
+| | `.values()` | 0 | List |
+| | `.entries()` | 0 | List |
+| | `.contains_key(key)` | 1 | Bool |
+| | `.get(key, default)` | 2 | value |
+| | `.set(key, value)` | 2 | nil |
+| | `.remove(key)` | 1 | value |
+| **Field** | `.to_int()` | 0 | Int |
+| | `.to_string()` | 0 | String |
+| **BigInt** | `.to_bits()` | 0 | List |
+| | `.bit_and(other)` | 1 | BigInt |
+| | `.bit_or(other)` | 1 | BigInt |
+| | `.bit_xor(other)` | 1 | BigInt |
+| | `.bit_not()` | 0 | BigInt |
+| | `.bit_shl(n)` | 1 | BigInt |
+| | `.bit_shr(n)` | 1 | BigInt |
+
+### Static Namespaces
+
+| Namespace | Member | Value |
+|-----------|--------|-------|
+| `Int::MAX` | | 576460752303423487 (2^59 - 1) |
+| `Int::MIN` | | -576460752303423488 (-2^59) |
+| `Field::ZERO` | | Field element 0 |
+| `Field::ONE` | | Field element 1 |
+| `Field::ORDER` | | BN254 Fr modulus (string) |
+| `BigInt::from_bits` | | `from_bits(bits, width)` constructor |
