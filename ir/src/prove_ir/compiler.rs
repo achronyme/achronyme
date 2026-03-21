@@ -50,6 +50,8 @@ pub struct ProveIrCompiler {
     captured_names: HashSet<String>,
     /// Functions available for inlining.
     fn_table: HashMap<String, FnDef>,
+    /// Recursion guard: functions currently being inlined.
+    call_stack: HashSet<String>,
     /// Accumulated circuit body nodes.
     body: Vec<CircuitNode>,
     /// Public input declarations.
@@ -65,6 +67,7 @@ impl ProveIrCompiler {
             ssa_versions: HashMap::new(),
             captured_names: HashSet::new(),
             fn_table: HashMap::new(),
+            call_stack: HashSet::new(),
             body: Vec::new(),
             public_inputs: Vec::new(),
             witness_inputs: Vec::new(),
@@ -753,11 +756,8 @@ impl ProveIrCompiler {
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
             }
 
-            // TODO(step 7): user function calls (inlining)
-            _ => Err(ProveIrError::UnsupportedOperation {
-                description: format!("function `{name}` not yet implemented in ProveIR"),
-                span: to_span(span),
-            }),
+            // User function call (inlined)
+            _ => self.compile_user_fn_call(name, args, span),
         }
     }
 
@@ -1008,9 +1008,126 @@ impl ProveIrCompiler {
         }
     }
 
-    /// Check if a function name exists in the fn_table (placeholder for step 7).
-    fn has_function(&self, _name: &str) -> bool {
-        false // TODO(step 7): check fn_table
+    /// Check if a function name exists in the fn_table.
+    fn has_function(&self, name: &str) -> bool {
+        self.fn_table.contains_key(name)
+    }
+
+    // -----------------------------------------------------------------------
+    // User function inlining
+    // -----------------------------------------------------------------------
+
+    fn compile_user_fn_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        let fn_def =
+            self.fn_table
+                .get(name)
+                .cloned()
+                .ok_or_else(|| ProveIrError::UndeclaredVariable {
+                    name: name.into(),
+                    span: to_span(span),
+                    suggestion: None,
+                })?;
+
+        // Arity check
+        if args.len() != fn_def.params.len() {
+            return Err(ProveIrError::WrongArgumentCount {
+                name: name.into(),
+                expected: fn_def.params.len(),
+                got: args.len(),
+                span: to_span(span),
+            });
+        }
+
+        // Recursion guard
+        if self.call_stack.contains(name) {
+            return Err(ProveIrError::RecursiveFunction { name: name.into() });
+        }
+        self.call_stack.insert(name.to_string());
+
+        // Compile arguments
+        let compiled_args: Vec<CircuitExpr> = args
+            .iter()
+            .map(|a| self.compile_expr(a))
+            .collect::<Result<_, _>>()?;
+
+        // Save env for param names and bind args
+        let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
+        let saved: Vec<(String, Option<CompEnvValue>)> = param_names
+            .iter()
+            .map(|p| (p.clone(), self.env.get(p).cloned()))
+            .collect();
+
+        // Emit Let nodes for each parameter binding and register in env
+        for (param, arg_expr) in param_names.iter().zip(compiled_args) {
+            let param_ssa = format!("__{name}_{param}");
+            self.body.push(CircuitNode::Let {
+                name: param_ssa.clone(),
+                value: arg_expr,
+                span: Some(SpanRange::from(span)),
+            });
+            self.env
+                .insert(param.clone(), CompEnvValue::Scalar(param_ssa));
+        }
+
+        // Compile the function body, collecting the result
+        let result = self.compile_block_as_expr(&fn_def.body)?;
+
+        // Restore env
+        for (param, old_val) in saved {
+            match old_val {
+                Some(v) => {
+                    self.env.insert(param, v);
+                }
+                None => {
+                    self.env.remove(&param);
+                }
+            }
+        }
+
+        self.call_stack.remove(name);
+        Ok(result)
+    }
+
+    /// Compile a block of statements and return the result of the last expression.
+    /// Intermediate statements (Let, AssertEq, etc.) are appended to self.body.
+    /// The last expression statement becomes the return value.
+    /// If the block has no expression result, returns Const(ZERO).
+    fn compile_block_as_expr(&mut self, block: &Block) -> Result<CircuitExpr, ProveIrError> {
+        let stmts = &block.stmts;
+        if stmts.is_empty() {
+            return Ok(CircuitExpr::Const(FieldElement::ZERO));
+        }
+
+        // Compile all but the last statement normally
+        for stmt in &stmts[..stmts.len() - 1] {
+            // Handle Return inside function body
+            if let Stmt::Return { value, .. } = stmt {
+                return match value {
+                    Some(expr) => self.compile_expr(expr),
+                    None => Ok(CircuitExpr::Const(FieldElement::ZERO)),
+                };
+            }
+            self.compile_stmt(stmt)?;
+        }
+
+        // The last statement: if it's an Expr, return its value; otherwise compile and return ZERO
+        let last = &stmts[stmts.len() - 1];
+        match last {
+            Stmt::Expr(expr) => self.compile_expr(expr),
+            Stmt::Return { value, .. } => match value {
+                Some(expr) => self.compile_expr(expr),
+                None => Ok(CircuitExpr::Const(FieldElement::ZERO)),
+            },
+            other => {
+                self.compile_stmt(other)?;
+                Ok(CircuitExpr::Const(FieldElement::ZERO))
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -2084,5 +2201,123 @@ mod tests {
         } else {
             panic!("expected AssertEq");
         }
+    }
+
+    // =====================================================================
+    // Function inlining tests
+    // =====================================================================
+
+    #[test]
+    fn fn_simple_inline() {
+        let ir = compile_circuit(
+            "public x\npublic out\nfn double(a) { a * 2 }\nassert_eq(double(x), out)",
+        )
+        .unwrap();
+        // double(x) should produce: Let(__double_a = Var(x)) then the inline result
+        // The AssertEq should have the inlined expression
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    #[test]
+    fn fn_inline_with_let() {
+        let ir = compile_circuit(
+            "public out\nwitness x\n\
+             fn square(n) { let r = n * n; r }\n\
+             assert_eq(square(x), out)",
+        )
+        .unwrap();
+        // The inlined body should have emitted a Let for r
+        assert!(ir.body.iter().any(
+            |n| matches!(n, CircuitNode::Let { name, .. } if name.contains("__square_n")
+                                                                  || name == "r")
+        ));
+    }
+
+    #[test]
+    fn fn_inline_nested_calls() {
+        let ir = compile_circuit(
+            "public out\nwitness x\n\
+             fn square(n) { n * n }\n\
+             fn sum_of_squares(a, b) { square(a) + square(b) }\n\
+             assert_eq(sum_of_squares(x, x), out)",
+        )
+        .unwrap();
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    #[test]
+    fn fn_with_return() {
+        let ir = compile_circuit(
+            "public out\nwitness x\n\
+             fn check(n) { return n * 2 }\n\
+             assert_eq(check(x), out)",
+        )
+        .unwrap();
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    #[test]
+    fn fn_wrong_arity_errors() {
+        let err =
+            compile_circuit("public x\nfn f(a, b) { a + b }\nassert_eq(f(x), x)").unwrap_err();
+        assert!(matches!(err, ProveIrError::WrongArgumentCount { .. }));
+    }
+
+    #[test]
+    fn fn_recursive_errors() {
+        let err = compile_circuit("public x\nfn f(n) { f(n) }\nassert_eq(f(x), x)").unwrap_err();
+        assert!(matches!(
+            err,
+            ProveIrError::RecursiveFunction { ref name } if name == "f"
+        ));
+    }
+
+    #[test]
+    fn fn_undefined_errors() {
+        let err = compile_circuit("public x\nassert_eq(unknown_fn(x), x)").unwrap_err();
+        assert!(matches!(err, ProveIrError::UndeclaredVariable { .. }));
+    }
+
+    #[test]
+    fn fn_env_restored_after_inline() {
+        // After inlining f(x), a reference to 'x' should still resolve to the outer x
+        let ir = compile_circuit(
+            "public x\npublic out\n\
+             fn f(a) { a + 1 }\n\
+             let y = f(x)\n\
+             assert_eq(x + y, out)",
+        )
+        .unwrap();
+        // The final assert_eq should reference outer x (not the param)
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    #[test]
+    fn fn_hash_pair_circuit() {
+        // Realistic circuit: fn hash_pair(a, b) { poseidon(a, b) }
+        let ir = compile_circuit(
+            "public out\nwitness a\nwitness b\n\
+             fn hash_pair(x, y) { poseidon(x, y) }\n\
+             assert_eq(hash_pair(a, b), out)",
+        )
+        .unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs.len(), 2);
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
     }
 }
