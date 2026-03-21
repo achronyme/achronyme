@@ -43,6 +43,9 @@ struct FnDef {
 pub struct ProveIrCompiler {
     /// Maps variable names → what they resolve to.
     env: HashMap<String, CompEnvValue>,
+    /// Mutable variable SSA versioning: original_name → current version number.
+    /// A name in this map means it was declared with `mut`.
+    ssa_versions: HashMap<String, u32>,
     /// Tracks which names are captured from the outer scope.
     captured_names: HashSet<String>,
     /// Functions available for inlining.
@@ -59,6 +62,7 @@ impl ProveIrCompiler {
     fn new() -> Self {
         Self {
             env: HashMap::new(),
+            ssa_versions: HashMap::new(),
             captured_names: HashSet::new(),
             fn_table: HashMap::new(),
             body: Vec::new(),
@@ -139,19 +143,18 @@ impl ProveIrCompiler {
             Stmt::Export { inner, .. } => self.compile_stmt(inner),
             Stmt::ExportList { .. } | Stmt::Error { .. } => Ok(()),
 
-            // MutDecl and Assignment handled in step 6
-            Stmt::MutDecl { span, .. } => Err(ProveIrError::UnsupportedOperation {
-                description: "mutable variables not yet supported in ProveIR \
-                              (coming in step 6: mut→SSA desugaring)"
-                    .into(),
-                span: to_span(span),
-            }),
-            Stmt::Assignment { span, .. } => Err(ProveIrError::UnsupportedOperation {
-                description: "assignment not yet supported in ProveIR \
-                              (coming in step 6: mut→SSA desugaring)"
-                    .into(),
-                span: to_span(span),
-            }),
+            Stmt::MutDecl {
+                name,
+                type_ann,
+                value,
+                span,
+                ..
+            } => self.compile_mut_decl(name, type_ann.as_ref(), value, span),
+            Stmt::Assignment {
+                target,
+                value,
+                span,
+            } => self.compile_assignment(target, value, span),
             Stmt::Print { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "print is not supported in circuits".into(),
                 span: to_span(span),
@@ -308,6 +311,90 @@ impl ProveIrCompiler {
         });
         self.env
             .insert(name.to_string(), CompEnvValue::Scalar(name.to_string()));
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Expression statement (handles assert_eq / assert as nodes)
+    // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Mut declaration (desugared to SSA)
+    // -----------------------------------------------------------------------
+
+    fn compile_mut_decl(
+        &mut self,
+        name: &str,
+        _type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        // Compile value and emit Let node (same as immutable let for v0)
+        let compiled = self.compile_expr(value)?;
+        self.body.push(CircuitNode::Let {
+            name: name.to_string(),
+            value: compiled,
+            span: Some(SpanRange::from(span)),
+        });
+        // Register in env as the current name (v0 uses the original name)
+        self.env
+            .insert(name.to_string(), CompEnvValue::Scalar(name.to_string()));
+        // Mark as mutable with version 0
+        self.ssa_versions.insert(name.to_string(), 0);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Assignment (desugared to SSA rebinding)
+    // -----------------------------------------------------------------------
+
+    fn compile_assignment(
+        &mut self,
+        target: &Expr,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        // Only support simple ident assignment: x = expr
+        let name = match target {
+            Expr::Ident { name, .. } => name.clone(),
+            _ => {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: "only simple variable assignment is supported in circuits \
+                         (no array element or field assignment)"
+                        .into(),
+                    span: to_span(span),
+                });
+            }
+        };
+
+        // Check that the variable was declared with mut
+        let version = self.ssa_versions.get(&name).copied().ok_or_else(|| {
+            ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "cannot assign to `{name}` — it was not declared with `mut` \
+                     (use `mut {name} = ...` to declare a mutable variable)"
+                ),
+                span: to_span(span),
+            }
+        })?;
+
+        // Increment version
+        let new_version = version + 1;
+        self.ssa_versions.insert(name.clone(), new_version);
+
+        // Generate SSA name: x__v1, x__v2, etc.
+        let ssa_name = format!("{name}__v{new_version}");
+
+        // Compile the new value
+        let compiled = self.compile_expr(value)?;
+        self.body.push(CircuitNode::Let {
+            name: ssa_name.clone(),
+            value: compiled,
+            span: Some(SpanRange::from(span)),
+        });
+
+        // Update env to point to the new SSA name
+        self.env.insert(name, CompEnvValue::Scalar(ssa_name));
         Ok(())
     }
 
@@ -1864,6 +1951,138 @@ mod tests {
             assert_eq!(*value, CircuitExpr::Const(FieldElement::ZERO));
         } else {
             panic!("expected Let node");
+        }
+    }
+
+    // =====================================================================
+    // Mut-to-SSA desugaring tests
+    // =====================================================================
+
+    #[test]
+    fn mut_decl_basic() {
+        let ir = compile_circuit("public x\nmut acc = x\nassert_eq(acc, x)").unwrap();
+        // mut acc = x → Let { name: "acc", value: Var("x") }
+        assert!(matches!(
+            &ir.body[0],
+            CircuitNode::Let { name, .. } if name == "acc"
+        ));
+    }
+
+    #[test]
+    fn mut_reassignment_creates_ssa_version() {
+        let ir =
+            compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
+        // body[0]: Let { name: "acc", value: Var("x") }
+        // body[1]: Let { name: "acc__v1", value: BinOp(Add, Var("acc"), Const(1)) }
+        // body[2]: AssertEq { Var("acc__v1"), Var("x") }
+        assert!(matches!(
+            &ir.body[0],
+            CircuitNode::Let { name, .. } if name == "acc"
+        ));
+        assert!(matches!(
+            &ir.body[1],
+            CircuitNode::Let { name, .. } if name == "acc__v1"
+        ));
+        // AssertEq should reference the latest SSA name
+        if let CircuitNode::AssertEq { lhs, .. } = &ir.body[2] {
+            assert_eq!(*lhs, CircuitExpr::Var("acc__v1".into()));
+        } else {
+            panic!("expected AssertEq, got {:?}", ir.body[2]);
+        }
+    }
+
+    #[test]
+    fn mut_multiple_reassignments() {
+        let ir = compile_circuit(
+            "public x\nmut a = 0\na = a + 1\na = a + 2\na = a + 3\nassert_eq(a, x)",
+        )
+        .unwrap();
+        // Let("a"), Let("a__v1"), Let("a__v2"), Let("a__v3"), AssertEq(Var("a__v3"), ...)
+        assert!(matches!(
+            &ir.body[0],
+            CircuitNode::Let { name, .. } if name == "a"
+        ));
+        assert!(matches!(
+            &ir.body[1],
+            CircuitNode::Let { name, .. } if name == "a__v1"
+        ));
+        assert!(matches!(
+            &ir.body[2],
+            CircuitNode::Let { name, .. } if name == "a__v2"
+        ));
+        assert!(matches!(
+            &ir.body[3],
+            CircuitNode::Let { name, .. } if name == "a__v3"
+        ));
+        // The final assert_eq should use a__v3
+        if let CircuitNode::AssertEq { lhs, .. } = &ir.body[4] {
+            assert_eq!(*lhs, CircuitExpr::Var("a__v3".into()));
+        } else {
+            panic!("expected AssertEq");
+        }
+    }
+
+    #[test]
+    fn mut_reassignment_uses_previous_version() {
+        // acc = acc + 1 should reference the PREVIOUS version of acc in the RHS
+        let ir =
+            compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
+        // body[1]: Let { name: "acc__v1", value: BinOp(Add, Var("acc"), Const(1)) }
+        if let CircuitNode::Let { value, .. } = &ir.body[1] {
+            // The RHS should reference "acc" (v0), not "acc__v1"
+            assert_eq!(
+                *value,
+                CircuitExpr::BinOp {
+                    op: CircuitBinOp::Add,
+                    lhs: Box::new(CircuitExpr::Var("acc".into())),
+                    rhs: Box::new(CircuitExpr::Const(FieldElement::ONE)),
+                }
+            );
+        } else {
+            panic!("expected Let node");
+        }
+    }
+
+    #[test]
+    fn assign_to_immutable_errors() {
+        let err = compile_circuit("public x\nlet a = x\na = 42\nassert_eq(a, x)").unwrap_err();
+        assert!(
+            matches!(err, ProveIrError::UnsupportedOperation { ref description, .. }
+                if description.contains("not declared with `mut`")),
+            "expected mut error, got {err}"
+        );
+    }
+
+    #[test]
+    fn assign_to_undeclared_errors() {
+        let err = compile_circuit("public x\nfoo = 42\nassert_eq(foo, x)").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    #[test]
+    fn mut_in_accumulator_pattern() {
+        // Common pattern: accumulate in a loop (simulated without for, just sequential)
+        let ir = compile_circuit(
+            "public total\n\
+             witness a\n\
+             witness b\n\
+             witness c\n\
+             mut acc = Field::ZERO\n\
+             acc = acc + a\n\
+             acc = acc + b\n\
+             acc = acc + c\n\
+             assert_eq(acc, total)",
+        )
+        .unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs.len(), 3);
+        // acc, acc__v1, acc__v2, acc__v3, assert_eq
+        assert_eq!(ir.body.len(), 5);
+        // Last AssertEq should use acc__v3
+        if let CircuitNode::AssertEq { lhs, .. } = &ir.body[4] {
+            assert_eq!(*lhs, CircuitExpr::Var("acc__v3".into()));
+        } else {
+            panic!("expected AssertEq");
         }
     }
 }
