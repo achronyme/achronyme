@@ -167,11 +167,25 @@ impl Instantiator {
     }
 
     fn declare_capture(&mut self, cap: &CaptureDef) -> Result<(), ProveIrError> {
-        let value = self.captures[&cap.name];
+        // Safe: validate_captures already verified all required captures exist.
+        let value = *self.captures.get(&cap.name).ok_or_else(|| {
+            ProveIrError::UnsupportedOperation {
+                description: format!("missing capture value for `{}`", cap.name),
+                span: None,
+            }
+        })?;
         match cap.usage {
             CaptureUsage::CircuitInput | CaptureUsage::Both => {
-                // Becomes a witness input — the concrete value is used as
-                // witness assignment by the prover.
+                // Becomes a witness input — the concrete value is the witness
+                // assignment provided by the prover.
+                //
+                // For `Both` captures: the concrete value is ALSO used for
+                // structural resolution (loop bounds, array sizes) via
+                // self.captures, independently from the circuit wire. The
+                // prover must provide the same value as witness that was used
+                // for structural decisions. There is no in-circuit constraint
+                // enforcing this consistency — it is an inherent limitation of
+                // arithmetic circuits where structure is fixed at compile time.
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Input {
                     result: v,
