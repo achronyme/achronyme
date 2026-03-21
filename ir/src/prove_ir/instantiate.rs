@@ -537,14 +537,38 @@ impl Instantiator {
                 Ok(v)
             }
             CircuitExpr::PoseidonMany(args) => {
-                // Left-fold: poseidon(poseidon(a0, a1), a2), ...
-                let mut compiled: Vec<SsaVar> = args
+                if args.is_empty() {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: "poseidon_many requires at least 2 arguments".into(),
+                        span: None,
+                    });
+                }
+
+                let compiled: Vec<SsaVar> = args
                     .iter()
                     .map(|a| self.emit_expr(a))
                     .collect::<Result<_, _>>()?;
 
-                let mut acc = compiled.remove(0);
-                for next in compiled {
+                if compiled.len() == 1 {
+                    // Match IrLowering semantics: single arg → poseidon(arg, ZERO)
+                    let zero = self.program.fresh_var();
+                    self.program.push(Instruction::Const {
+                        result: zero,
+                        value: FieldElement::ZERO,
+                    });
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::PoseidonHash {
+                        result: v,
+                        left: compiled[0],
+                        right: zero,
+                    });
+                    return Ok(v);
+                }
+
+                // Left-fold: poseidon(poseidon(a0, a1), a2), ...
+                let mut iter = compiled.into_iter();
+                let mut acc = iter.next().expect("checked non-empty above");
+                for next in iter {
                     let v = self.program.fresh_var();
                     self.program.push(Instruction::PoseidonHash {
                         result: v,
