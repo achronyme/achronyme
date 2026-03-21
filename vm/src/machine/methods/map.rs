@@ -23,9 +23,9 @@ fn get_map_handle(receiver: Value) -> Result<u32, RuntimeError> {
 }
 
 fn resolve_string_arg(vm: &VM, val: Value, method: &str) -> Result<String, RuntimeError> {
-    let handle = val.as_handle().ok_or_else(|| {
-        RuntimeError::TypeMismatch(format!("{method}: key must be a String"))
-    })?;
+    let handle = val
+        .as_handle()
+        .ok_or_else(|| RuntimeError::TypeMismatch(format!("{method}: key must be a String")))?;
     vm.heap
         .get_string(handle)
         .cloned()

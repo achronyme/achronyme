@@ -422,17 +422,15 @@ impl super::vm::VM {
                     }
 
                     // Lookup method in prototype registry
-                    if let Some(method_fn) =
-                        self.prototype_registry.lookup(tag, &method_name)
-                    {
+                    if let Some(method_fn) = self.prototype_registry.lookup(tag, &method_name) {
                         let result = method_fn(self, receiver, &args)?;
                         self.set_reg(base, a, result)?;
                     } else if receiver.is_map() {
                         // Fallback: map-as-object pattern — look up the key
                         // in the map and call it if it's a function/closure.
-                        let map_handle = receiver.as_handle().ok_or_else(|| {
-                            RuntimeError::TypeMismatch("bad map handle".into())
-                        })?;
+                        let map_handle = receiver
+                            .as_handle()
+                            .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))?;
                         let callee = self
                             .heap
                             .get_map(map_handle)
