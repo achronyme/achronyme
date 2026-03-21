@@ -399,8 +399,8 @@ impl ProveIrCompiler {
         })?;
         self.ssa_versions.insert(name.clone(), new_version);
 
-        // Generate SSA name: x__v1, x__v2, etc.
-        let ssa_name = format!("{name}__v{new_version}");
+        // Generate SSA name using $ separator (not valid in user identifiers).
+        let ssa_name = format!("{name}$v{new_version}");
 
         // Compile the new value
         let compiled = self.compile_expr(value)?;
@@ -2334,19 +2334,19 @@ mod tests {
         let ir =
             compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
         // body[0]: Let { name: "acc", value: Var("x") }
-        // body[1]: Let { name: "acc__v1", value: BinOp(Add, Var("acc"), Const(1)) }
-        // body[2]: AssertEq { Var("acc__v1"), Var("x") }
+        // body[1]: Let { name: "acc$v1", value: BinOp(Add, Var("acc"), Const(1)) }
+        // body[2]: AssertEq { Var("acc$v1"), Var("x") }
         assert!(matches!(
             &ir.body[0],
             CircuitNode::Let { name, .. } if name == "acc"
         ));
         assert!(matches!(
             &ir.body[1],
-            CircuitNode::Let { name, .. } if name == "acc__v1"
+            CircuitNode::Let { name, .. } if name == "acc$v1"
         ));
         // AssertEq should reference the latest SSA name
         if let CircuitNode::AssertEq { lhs, .. } = &ir.body[2] {
-            assert_eq!(*lhs, CircuitExpr::Var("acc__v1".into()));
+            assert_eq!(*lhs, CircuitExpr::Var("acc$v1".into()));
         } else {
             panic!("expected AssertEq, got {:?}", ir.body[2]);
         }
@@ -2358,26 +2358,26 @@ mod tests {
             "public x\nmut a = 0\na = a + 1\na = a + 2\na = a + 3\nassert_eq(a, x)",
         )
         .unwrap();
-        // Let("a"), Let("a__v1"), Let("a__v2"), Let("a__v3"), AssertEq(Var("a__v3"), ...)
+        // Let("a"), Let("a$v1"), Let("a$v2"), Let("a$v3"), AssertEq(Var("a$v3"), ...)
         assert!(matches!(
             &ir.body[0],
             CircuitNode::Let { name, .. } if name == "a"
         ));
         assert!(matches!(
             &ir.body[1],
-            CircuitNode::Let { name, .. } if name == "a__v1"
+            CircuitNode::Let { name, .. } if name == "a$v1"
         ));
         assert!(matches!(
             &ir.body[2],
-            CircuitNode::Let { name, .. } if name == "a__v2"
+            CircuitNode::Let { name, .. } if name == "a$v2"
         ));
         assert!(matches!(
             &ir.body[3],
-            CircuitNode::Let { name, .. } if name == "a__v3"
+            CircuitNode::Let { name, .. } if name == "a$v3"
         ));
-        // The final assert_eq should use a__v3
+        // The final assert_eq should use a$v3
         if let CircuitNode::AssertEq { lhs, .. } = &ir.body[4] {
-            assert_eq!(*lhs, CircuitExpr::Var("a__v3".into()));
+            assert_eq!(*lhs, CircuitExpr::Var("a$v3".into()));
         } else {
             panic!("expected AssertEq");
         }
@@ -2388,9 +2388,9 @@ mod tests {
         // acc = acc + 1 should reference the PREVIOUS version of acc in the RHS
         let ir =
             compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
-        // body[1]: Let { name: "acc__v1", value: BinOp(Add, Var("acc"), Const(1)) }
+        // body[1]: Let { name: "acc$v1", value: BinOp(Add, Var("acc"), Const(1)) }
         if let CircuitNode::Let { value, .. } = &ir.body[1] {
-            // The RHS should reference "acc" (v0), not "acc__v1"
+            // The RHS should reference "acc" (v0), not "acc$v1"
             assert_eq!(
                 *value,
                 CircuitExpr::BinOp {
@@ -2437,11 +2437,11 @@ mod tests {
         .unwrap();
         assert_eq!(ir.public_inputs.len(), 1);
         assert_eq!(ir.witness_inputs.len(), 3);
-        // acc, acc__v1, acc__v2, acc__v3, assert_eq
+        // acc, acc$v1, acc$v2, acc$v3, assert_eq
         assert_eq!(ir.body.len(), 5);
-        // Last AssertEq should use acc__v3
+        // Last AssertEq should use acc$v3
         if let CircuitNode::AssertEq { lhs, .. } = &ir.body[4] {
-            assert_eq!(*lhs, CircuitExpr::Var("acc__v3".into()));
+            assert_eq!(*lhs, CircuitExpr::Var("acc$v3".into()));
         } else {
             panic!("expected AssertEq");
         }
@@ -2958,7 +2958,7 @@ mod tests {
         let ir = compile_circuit(source).unwrap();
         assert_eq!(ir.public_inputs.len(), 1);
         assert_eq!(ir.witness_inputs.len(), 1);
-        // sum, sum__v1, sum__v2, sum__v3, sum__v4, assert_eq = 6 nodes
+        // sum, sum$v1, sum$v2, sum$v3, sum$v4, assert_eq = 6 nodes
         let lets = ir
             .body
             .iter()
