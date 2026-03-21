@@ -76,7 +76,7 @@ pub enum ProveIrError {
         span: OptSpan,
     },
     /// Duplicate input declaration.
-    DuplicateInput(String),
+    DuplicateInput { name: String, span: OptSpan },
     /// Module not found.
     ModuleNotFound(String),
     /// Circular import detected.
@@ -163,7 +163,9 @@ impl fmt::Display for ProveIrError {
                 f,
                 "for loop has {iterations} iterations, exceeding maximum of {max}"
             ),
-            Self::DuplicateInput(name) => write!(f, "duplicate input declaration: `{name}`"),
+            Self::DuplicateInput { name, .. } => {
+                write!(f, "duplicate input declaration: `{name}`")
+            }
             Self::ModuleNotFound(path) => write!(f, "module not found: `{path}`"),
             Self::CircularImport(path) => write!(f, "circular import detected: `{path}`"),
             Self::ModuleLoadError(msg) => write!(f, "module load error: {msg}"),
@@ -190,8 +192,15 @@ impl ProveIrError {
             | Self::StaticAccessNotConstrainable { span, .. }
             | Self::MethodNotConstrainable { span, .. }
             | Self::RangeTooLarge { span, .. } => span.as_ref().map(|s| (**s).clone()),
+            Self::DuplicateInput { span, .. } => span.as_ref().map(|s| (**s).clone()),
             Self::ParseError(diag) => return (**diag).clone(),
-            _ => None,
+            // Variants without span information — listed explicitly so new
+            // variants with spans produce a compile error instead of silently
+            // falling through.
+            Self::RecursiveFunction { .. }
+            | Self::ModuleNotFound(_)
+            | Self::CircularImport(_)
+            | Self::ModuleLoadError(_) => None,
         };
 
         let span = span.unwrap_or(SpanRange::new(0, 0, 0, 0, 0, 0));
