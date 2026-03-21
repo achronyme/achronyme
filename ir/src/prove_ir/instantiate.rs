@@ -289,30 +289,7 @@ impl Instantiator {
     ) -> Result<(), ProveIrError> {
         match range {
             ForRange::Literal { start, end } => {
-                let saved = self.env.get(var).cloned();
-                for i in *start..*end {
-                    // Bind loop var as constant
-                    let v = self.program.fresh_var();
-                    self.program.push(Instruction::Const {
-                        result: v,
-                        value: FieldElement::from_u64(i),
-                    });
-                    self.program.set_name(v, var.to_string());
-                    self.env.insert(var.to_string(), InstEnvValue::Scalar(v));
-
-                    for node in body {
-                        self.emit_node(node)?;
-                    }
-                }
-                // Restore
-                match saved {
-                    Some(v) => {
-                        self.env.insert(var.to_string(), v);
-                    }
-                    None => {
-                        self.env.remove(var);
-                    }
-                }
+                self.emit_range_loop(var, *start, *end, body)
             }
             ForRange::WithCapture { start, end_capture } => {
                 let end_fe = self.captures.get(end_capture).ok_or_else(|| {
@@ -324,32 +301,9 @@ impl Instantiator {
                     }
                 })?;
                 let end = fe_to_u64(end_fe, end_capture)?;
-
-                let saved = self.env.get(var).cloned();
-                for i in *start..end {
-                    let v = self.program.fresh_var();
-                    self.program.push(Instruction::Const {
-                        result: v,
-                        value: FieldElement::from_u64(i),
-                    });
-                    self.program.set_name(v, var.to_string());
-                    self.env.insert(var.to_string(), InstEnvValue::Scalar(v));
-
-                    for node in body {
-                        self.emit_node(node)?;
-                    }
-                }
-                match saved {
-                    Some(v) => {
-                        self.env.insert(var.to_string(), v);
-                    }
-                    None => {
-                        self.env.remove(var);
-                    }
-                }
+                self.emit_range_loop(var, *start, end, body)
             }
             ForRange::Array(arr_name) => {
-                // Iterate over array elements
                 let elems = match self.env.get(arr_name) {
                     Some(InstEnvValue::Array(elems)) => elems.clone(),
                     _ => {
@@ -360,25 +314,62 @@ impl Instantiator {
                     }
                 };
 
-                let saved = self.env.get(var).cloned();
-                for elem_var in &elems {
-                    self.env
-                        .insert(var.to_string(), InstEnvValue::Scalar(*elem_var));
-                    for node in body {
-                        self.emit_node(node)?;
+                self.with_saved_var(var, |this| {
+                    for elem_var in &elems {
+                        this.env
+                            .insert(var.to_string(), InstEnvValue::Scalar(*elem_var));
+                        for node in body {
+                            this.emit_node(node)?;
+                        }
                     }
-                }
-                match saved {
-                    Some(v) => {
-                        self.env.insert(var.to_string(), v);
-                    }
-                    None => {
-                        self.env.remove(var);
-                    }
-                }
+                    Ok(())
+                })
             }
         }
-        Ok(())
+    }
+
+    /// Unroll a numeric range loop: for var in start..end { body }
+    fn emit_range_loop(
+        &mut self,
+        var: &str,
+        start: u64,
+        end: u64,
+        body: &[CircuitNode],
+    ) -> Result<(), ProveIrError> {
+        self.with_saved_var(var, |this| {
+            for i in start..end {
+                let v = this.program.fresh_var();
+                this.program.push(Instruction::Const {
+                    result: v,
+                    value: FieldElement::from_u64(i),
+                });
+                this.program.set_name(v, var.to_string());
+                this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
+
+                for node in body {
+                    this.emit_node(node)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Save a variable's env binding, run a closure, then restore it.
+    fn with_saved_var<F>(&mut self, var: &str, f: F) -> Result<(), ProveIrError>
+    where
+        F: FnOnce(&mut Self) -> Result<(), ProveIrError>,
+    {
+        let saved = self.env.get(var).cloned();
+        let result = f(self);
+        match saved {
+            Some(v) => {
+                self.env.insert(var.to_string(), v);
+            }
+            None => {
+                self.env.remove(var);
+            }
+        }
+        result
     }
 
     // -------------------------------------------------------------------
