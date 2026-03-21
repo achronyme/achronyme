@@ -14,6 +14,7 @@
 pub mod capture;
 pub mod compiler;
 pub mod error;
+pub mod instantiate;
 pub mod types;
 
 pub use compiler::ProveIrCompiler;

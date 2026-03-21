@@ -105,6 +105,29 @@ impl ProveIrCompiler {
         })
     }
 
+    /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
+    pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
+        let (program, errors) = achronyme_parser::parse_program(source);
+        if !errors.is_empty() {
+            return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
+        }
+        let block = program_to_block(source, program);
+        Self::compile(&block, &HashSet::new())
+    }
+
+    /// Convenience: parse source and compile as a prove block with an outer scope.
+    pub fn compile_prove_block(
+        source: &str,
+        outer_scope: &HashSet<String>,
+    ) -> Result<ProveIR, ProveIrError> {
+        let (program, errors) = achronyme_parser::parse_program(source);
+        if !errors.is_empty() {
+            return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
+        }
+        let block = program_to_block(source, program);
+        Self::compile(&block, outer_scope)
+    }
+
     // -----------------------------------------------------------------------
     // Statement compilation
     // -----------------------------------------------------------------------
@@ -1567,6 +1590,21 @@ impl ProveIrCompiler {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Convert a parsed Program into a Block (Programs don't carry their own span).
+fn program_to_block(source: &str, program: achronyme_parser::ast::Program) -> Block {
+    Block {
+        stmts: program.stmts,
+        span: Span {
+            byte_start: 0,
+            byte_end: source.len(),
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        },
+    }
+}
+
 /// Convert an AST Span to an OptSpan for error reporting.
 fn to_span(span: &Span) -> OptSpan {
     span_box(Some(SpanRange::from(span)))
@@ -2185,20 +2223,7 @@ mod tests {
 
     /// Helper: compile a full circuit source (with public/witness declarations).
     fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
-        let (program, errors) = parse_program(source);
-        assert!(errors.is_empty(), "parse errors: {errors:?}");
-        let block = Block {
-            stmts: program.stmts,
-            span: Span {
-                byte_start: 0,
-                byte_end: source.len(),
-                line_start: 1,
-                col_start: 1,
-                line_end: 1,
-                col_end: 1,
-            },
-        };
-        ProveIrCompiler::compile(&block, &HashSet::new())
+        ProveIrCompiler::compile_circuit(source)
     }
 
     #[test]
@@ -2760,21 +2785,8 @@ mod tests {
 
     /// Helper: compile a prove block body with outer scope captures.
     fn compile_prove_block(source: &str, outer_vars: &[&str]) -> Result<ProveIR, ProveIrError> {
-        let (program, errors) = parse_program(source);
-        assert!(errors.is_empty(), "parse errors: {errors:?}");
         let outer: HashSet<String> = outer_vars.iter().map(|s| s.to_string()).collect();
-        let block = Block {
-            stmts: program.stmts,
-            span: Span {
-                byte_start: 0,
-                byte_end: source.len(),
-                line_start: 1,
-                col_start: 1,
-                line_end: 1,
-                col_end: 1,
-            },
-        };
-        ProveIrCompiler::compile(&block, &outer)
+        ProveIrCompiler::compile_prove_block(source, &outer)
     }
 
     #[test]

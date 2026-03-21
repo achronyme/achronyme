@@ -1,0 +1,1260 @@
+//! ProveIR instantiation: ProveIR template + capture values → IrProgram (flat IR SSA).
+//!
+//! This is Phase B of the ProveIR pipeline. Given a pre-compiled circuit template
+//! and concrete values for all captured variables, it produces an `IrProgram`
+//! compatible with the existing optimize → R1CS/Plonkish pipeline.
+//!
+//! Key operations:
+//! - Resolve captures to constants or witness inputs
+//! - Unroll for loops (bounds are now concrete)
+//! - Expand array declarations (sizes are now concrete)
+//! - Flatten the CircuitNode/CircuitExpr tree into a flat `Vec<Instruction>`
+
+use std::collections::HashMap;
+
+use memory::FieldElement;
+
+use super::error::ProveIrError;
+use super::types::*;
+use crate::types::{Instruction, IrProgram, IrType, SsaVar, Visibility};
+
+// ---------------------------------------------------------------------------
+// Environment
+// ---------------------------------------------------------------------------
+
+/// A resolved value in the instantiation environment.
+#[derive(Clone, Debug)]
+enum InstEnvValue {
+    /// A scalar SSA variable.
+    Scalar(SsaVar),
+    /// An array of SSA variables (one per element).
+    Array(Vec<SsaVar>),
+}
+
+// ---------------------------------------------------------------------------
+// Instantiator
+// ---------------------------------------------------------------------------
+
+/// Converts a ProveIR template into a flat IrProgram given concrete capture values.
+struct Instantiator {
+    program: IrProgram,
+    env: HashMap<String, InstEnvValue>,
+    /// Concrete capture values (provided by caller).
+    captures: HashMap<String, FieldElement>,
+}
+
+impl ProveIR {
+    /// Instantiate this template with concrete capture values, producing a flat IrProgram.
+    ///
+    /// The resulting IrProgram is compatible with the existing optimize → R1CS/Plonkish
+    /// pipeline (same format as `IrLowering::lower_circuit()`).
+    pub fn instantiate(
+        &self,
+        captures: &HashMap<String, FieldElement>,
+    ) -> Result<IrProgram, ProveIrError> {
+        let mut inst = Instantiator {
+            program: IrProgram::new(),
+            env: HashMap::new(),
+            captures: captures.clone(),
+        };
+
+        // 1. Validate all required captures are provided
+        inst.validate_captures(self)?;
+
+        // 2. Declare public inputs
+        for input in &self.public_inputs {
+            inst.declare_input(input, Visibility::Public)?;
+        }
+
+        // 3. Declare witness inputs
+        for input in &self.witness_inputs {
+            inst.declare_input(input, Visibility::Witness)?;
+        }
+
+        // 4. Declare captures as circuit inputs or inline constants
+        for cap in &self.captures {
+            inst.declare_capture(cap)?;
+        }
+
+        // 5. Emit all body nodes
+        for node in &self.body {
+            inst.emit_node(node)?;
+        }
+
+        Ok(inst.program)
+    }
+}
+
+impl Instantiator {
+    // -------------------------------------------------------------------
+    // Validation
+    // -------------------------------------------------------------------
+
+    fn validate_captures(&self, prove_ir: &ProveIR) -> Result<(), ProveIrError> {
+        for cap in &prove_ir.captures {
+            if !self.captures.contains_key(&cap.name) {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "missing capture value for `{}` — required by the circuit template",
+                        cap.name
+                    ),
+                    span: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------
+    // Input declarations
+    // -------------------------------------------------------------------
+
+    fn declare_input(
+        &mut self,
+        decl: &ProveInputDecl,
+        visibility: Visibility,
+    ) -> Result<(), ProveIrError> {
+        let ir_type = decl.ir_type;
+
+        match &decl.array_size {
+            Some(array_size) => {
+                let size = self.resolve_array_size(array_size)?;
+                let mut elem_vars = Vec::with_capacity(size);
+                for i in 0..size {
+                    let elem_name = format!("{}_{i}", decl.name);
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::Input {
+                        result: v,
+                        name: elem_name.clone(),
+                        visibility,
+                    });
+                    self.program.set_name(v, elem_name.clone());
+                    self.program.set_type(v, ir_type);
+                    self.env.insert(elem_name, InstEnvValue::Scalar(v));
+                    elem_vars.push(v);
+                }
+                self.env
+                    .insert(decl.name.clone(), InstEnvValue::Array(elem_vars));
+            }
+            None => {
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Input {
+                    result: v,
+                    name: decl.name.clone(),
+                    visibility,
+                });
+                self.program.set_name(v, decl.name.clone());
+                self.program.set_type(v, ir_type);
+                self.env.insert(decl.name.clone(), InstEnvValue::Scalar(v));
+            }
+        }
+        Ok(())
+    }
+
+    fn declare_capture(&mut self, cap: &CaptureDef) -> Result<(), ProveIrError> {
+        let value = self.captures[&cap.name];
+        match cap.usage {
+            CaptureUsage::CircuitInput | CaptureUsage::Both => {
+                // Becomes a witness input — the concrete value is used as
+                // witness assignment by the prover.
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Input {
+                    result: v,
+                    name: cap.name.clone(),
+                    visibility: Visibility::Witness,
+                });
+                self.program.set_name(v, cap.name.clone());
+                self.program.set_type(v, IrType::Field);
+                self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
+            }
+            CaptureUsage::StructureOnly => {
+                // Inlined as a constant — not a circuit wire.
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Const { result: v, value });
+                self.program.set_name(v, cap.name.clone());
+                self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve an ArraySize to a concrete usize.
+    fn resolve_array_size(&self, size: &ArraySize) -> Result<usize, ProveIrError> {
+        match size {
+            ArraySize::Literal(n) => Ok(*n),
+            ArraySize::Capture(name) => {
+                let fe =
+                    self.captures
+                        .get(name)
+                        .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                            description: format!("missing capture value for array size `{name}`"),
+                            span: None,
+                        })?;
+                fe_to_usize(fe, name)
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Node emission (CircuitNode → Instructions)
+    // -------------------------------------------------------------------
+
+    fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
+        match node {
+            CircuitNode::Let { name, value, .. } => {
+                let v = self.emit_expr(value)?;
+                self.program.set_name(v, name.clone());
+                self.env.insert(name.clone(), InstEnvValue::Scalar(v));
+            }
+            CircuitNode::LetArray { name, elements, .. } => {
+                let mut elem_vars = Vec::with_capacity(elements.len());
+                for (i, elem) in elements.iter().enumerate() {
+                    let v = self.emit_expr(elem)?;
+                    let elem_name = format!("{name}_{i}");
+                    self.program.set_name(v, elem_name.clone());
+                    self.env.insert(elem_name, InstEnvValue::Scalar(v));
+                    elem_vars.push(v);
+                }
+                self.env
+                    .insert(name.clone(), InstEnvValue::Array(elem_vars));
+            }
+            CircuitNode::AssertEq { lhs, rhs, .. } => {
+                let l = self.emit_expr(lhs)?;
+                let r = self.emit_expr(rhs)?;
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::AssertEq {
+                    result: v,
+                    lhs: l,
+                    rhs: r,
+                });
+            }
+            CircuitNode::Assert { expr, .. } => {
+                let operand = self.emit_expr(expr)?;
+                let v = self.program.fresh_var();
+                self.program
+                    .push(Instruction::Assert { result: v, operand });
+            }
+            CircuitNode::For {
+                var, range, body, ..
+            } => {
+                self.emit_for(var, range, body)?;
+            }
+            CircuitNode::If {
+                cond: _,
+                then_body,
+                else_body,
+                ..
+            } => {
+                // In arithmetic circuits, both branches are always emitted
+                // (no conditional execution). The Mux selection is handled
+                // at the expression level (CircuitExpr::Mux).
+                for n in then_body {
+                    self.emit_node(n)?;
+                }
+                for n in else_body {
+                    self.emit_node(n)?;
+                }
+            }
+            CircuitNode::Expr { expr, .. } => {
+                self.emit_expr(expr)?;
+            }
+        }
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------
+    // For loop unrolling
+    // -------------------------------------------------------------------
+
+    fn emit_for(
+        &mut self,
+        var: &str,
+        range: &ForRange,
+        body: &[CircuitNode],
+    ) -> Result<(), ProveIrError> {
+        match range {
+            ForRange::Literal { start, end } => {
+                let saved = self.env.get(var).cloned();
+                for i in *start..*end {
+                    // Bind loop var as constant
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::Const {
+                        result: v,
+                        value: FieldElement::from_u64(i),
+                    });
+                    self.program.set_name(v, var.to_string());
+                    self.env.insert(var.to_string(), InstEnvValue::Scalar(v));
+
+                    for node in body {
+                        self.emit_node(node)?;
+                    }
+                }
+                // Restore
+                match saved {
+                    Some(v) => {
+                        self.env.insert(var.to_string(), v);
+                    }
+                    None => {
+                        self.env.remove(var);
+                    }
+                }
+            }
+            ForRange::WithCapture { start, end_capture } => {
+                let end_fe = self.captures.get(end_capture).ok_or_else(|| {
+                    ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "missing capture value for loop bound `{end_capture}`"
+                        ),
+                        span: None,
+                    }
+                })?;
+                let end = fe_to_u64(end_fe, end_capture)?;
+
+                let saved = self.env.get(var).cloned();
+                for i in *start..end {
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::Const {
+                        result: v,
+                        value: FieldElement::from_u64(i),
+                    });
+                    self.program.set_name(v, var.to_string());
+                    self.env.insert(var.to_string(), InstEnvValue::Scalar(v));
+
+                    for node in body {
+                        self.emit_node(node)?;
+                    }
+                }
+                match saved {
+                    Some(v) => {
+                        self.env.insert(var.to_string(), v);
+                    }
+                    None => {
+                        self.env.remove(var);
+                    }
+                }
+            }
+            ForRange::Array(arr_name) => {
+                // Iterate over array elements
+                let elems = match self.env.get(arr_name) {
+                    Some(InstEnvValue::Array(elems)) => elems.clone(),
+                    _ => {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!("for loop iterable `{arr_name}` is not an array"),
+                            span: None,
+                        });
+                    }
+                };
+
+                let saved = self.env.get(var).cloned();
+                for elem_var in &elems {
+                    self.env
+                        .insert(var.to_string(), InstEnvValue::Scalar(*elem_var));
+                    for node in body {
+                        self.emit_node(node)?;
+                    }
+                }
+                match saved {
+                    Some(v) => {
+                        self.env.insert(var.to_string(), v);
+                    }
+                    None => {
+                        self.env.remove(var);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------
+    // Expression emission (CircuitExpr → SsaVar)
+    // -------------------------------------------------------------------
+
+    fn emit_expr(&mut self, expr: &CircuitExpr) -> Result<SsaVar, ProveIrError> {
+        match expr {
+            CircuitExpr::Const(fe) => {
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Const {
+                    result: v,
+                    value: *fe,
+                });
+                Ok(v)
+            }
+            CircuitExpr::Input(name) => self.resolve_scalar(name),
+            CircuitExpr::Var(name) => self.resolve_scalar(name),
+            CircuitExpr::Capture(name) => {
+                // Captures should already be in env (declared in step 4).
+                // If not, it means the capture classification missed it.
+                self.resolve_scalar(name)
+            }
+            CircuitExpr::BinOp { op, lhs, rhs } => {
+                let l = self.emit_expr(lhs)?;
+                let r = self.emit_expr(rhs)?;
+                let v = self.program.fresh_var();
+                let inst = match op {
+                    CircuitBinOp::Add => Instruction::Add {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitBinOp::Sub => Instruction::Sub {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitBinOp::Mul => Instruction::Mul {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitBinOp::Div => Instruction::Div {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                };
+                self.program.push(inst);
+                Ok(v)
+            }
+            CircuitExpr::UnaryOp { op, operand } => {
+                let inner = self.emit_expr(operand)?;
+                let v = self.program.fresh_var();
+                let inst = match op {
+                    CircuitUnaryOp::Neg => Instruction::Neg {
+                        result: v,
+                        operand: inner,
+                    },
+                    CircuitUnaryOp::Not => Instruction::Not {
+                        result: v,
+                        operand: inner,
+                    },
+                };
+                self.program.push(inst);
+                Ok(v)
+            }
+            CircuitExpr::Comparison { op, lhs, rhs } => {
+                let l = self.emit_expr(lhs)?;
+                let r = self.emit_expr(rhs)?;
+                let v = self.program.fresh_var();
+                // Gt and Ge are desugared by swapping operands.
+                let inst = match op {
+                    CircuitCmpOp::Eq => Instruction::IsEq {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitCmpOp::Neq => Instruction::IsNeq {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitCmpOp::Lt => Instruction::IsLt {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitCmpOp::Le => Instruction::IsLe {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitCmpOp::Gt => Instruction::IsLt {
+                        result: v,
+                        lhs: r,
+                        rhs: l,
+                    },
+                    CircuitCmpOp::Ge => Instruction::IsLe {
+                        result: v,
+                        lhs: r,
+                        rhs: l,
+                    },
+                };
+                self.program.push(inst);
+                self.program.set_type(v, IrType::Bool);
+                Ok(v)
+            }
+            CircuitExpr::BoolOp { op, lhs, rhs } => {
+                let l = self.emit_expr(lhs)?;
+                let r = self.emit_expr(rhs)?;
+                let v = self.program.fresh_var();
+                let inst = match op {
+                    CircuitBoolOp::And => Instruction::And {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                    CircuitBoolOp::Or => Instruction::Or {
+                        result: v,
+                        lhs: l,
+                        rhs: r,
+                    },
+                };
+                self.program.push(inst);
+                self.program.set_type(v, IrType::Bool);
+                Ok(v)
+            }
+            CircuitExpr::Mux {
+                cond,
+                if_true,
+                if_false,
+            } => {
+                let c = self.emit_expr(cond)?;
+                let t = self.emit_expr(if_true)?;
+                let f = self.emit_expr(if_false)?;
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Mux {
+                    result: v,
+                    cond: c,
+                    if_true: t,
+                    if_false: f,
+                });
+                Ok(v)
+            }
+            CircuitExpr::PoseidonHash { left, right } => {
+                let l = self.emit_expr(left)?;
+                let r = self.emit_expr(right)?;
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::PoseidonHash {
+                    result: v,
+                    left: l,
+                    right: r,
+                });
+                Ok(v)
+            }
+            CircuitExpr::PoseidonMany(args) => {
+                // Left-fold: poseidon(poseidon(a0, a1), a2), ...
+                let mut compiled: Vec<SsaVar> = args
+                    .iter()
+                    .map(|a| self.emit_expr(a))
+                    .collect::<Result<_, _>>()?;
+
+                let mut acc = compiled.remove(0);
+                for next in compiled {
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::PoseidonHash {
+                        result: v,
+                        left: acc,
+                        right: next,
+                    });
+                    acc = v;
+                }
+                Ok(acc)
+            }
+            CircuitExpr::RangeCheck { value, bits } => {
+                let operand = self.emit_expr(value)?;
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::RangeCheck {
+                    result: v,
+                    operand,
+                    bits: *bits,
+                });
+                Ok(v)
+            }
+            CircuitExpr::MerkleVerify {
+                root,
+                leaf,
+                path,
+                indices,
+            } => {
+                // Merkle verification: hash leaf up the tree using path and indices.
+                // path and indices are arrays in env.
+                let root_var = self.emit_expr(root)?;
+                let leaf_var = self.emit_expr(leaf)?;
+
+                let path_elems = match self.env.get(path) {
+                    Some(InstEnvValue::Array(elems)) => elems.clone(),
+                    _ => {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!("merkle_verify path `{path}` is not an array"),
+                            span: None,
+                        });
+                    }
+                };
+                let idx_elems = match self.env.get(indices) {
+                    Some(InstEnvValue::Array(elems)) => elems.clone(),
+                    _ => {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "merkle_verify indices `{indices}` is not an array"
+                            ),
+                            span: None,
+                        });
+                    }
+                };
+
+                // Walk up the tree: for each level, hash(current, sibling) based on index
+                let mut current = leaf_var;
+                for (sibling, idx) in path_elems.iter().zip(idx_elems.iter()) {
+                    // mux(idx, hash(sibling, current), hash(current, sibling))
+                    let hash_lr = {
+                        let v = self.program.fresh_var();
+                        self.program.push(Instruction::PoseidonHash {
+                            result: v,
+                            left: current,
+                            right: *sibling,
+                        });
+                        v
+                    };
+                    let hash_rl = {
+                        let v = self.program.fresh_var();
+                        self.program.push(Instruction::PoseidonHash {
+                            result: v,
+                            left: *sibling,
+                            right: current,
+                        });
+                        v
+                    };
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::Mux {
+                        result: v,
+                        cond: *idx,
+                        if_true: hash_rl,
+                        if_false: hash_lr,
+                    });
+                    current = v;
+                }
+
+                // Assert computed root == expected root
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::AssertEq {
+                    result: v,
+                    lhs: current,
+                    rhs: root_var,
+                });
+                Ok(v)
+            }
+            CircuitExpr::ArrayIndex { array, index } => {
+                // The index must resolve to a constant (structural captures are
+                // already resolved). For dynamic indices, we'd need a MUX tree,
+                // but the current ProveIR compiler only emits ArrayIndex for
+                // cases that can be statically resolved.
+                let idx_var = self.emit_expr(index)?;
+
+                // Try to extract the constant value from the instruction we just emitted
+                let idx = self.extract_const_index(idx_var).ok_or_else(|| {
+                    ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "array index into `{array}` must be a compile-time constant"
+                        ),
+                        span: None,
+                    }
+                })?;
+
+                match self.env.get(array) {
+                    Some(InstEnvValue::Array(elems)) => {
+                        if idx >= elems.len() {
+                            return Err(ProveIrError::IndexOutOfBounds {
+                                name: array.clone(),
+                                index: idx,
+                                length: elems.len(),
+                                span: None,
+                            });
+                        }
+                        Ok(elems[idx])
+                    }
+                    _ => Err(ProveIrError::UnsupportedOperation {
+                        description: format!("`{array}` is not an array"),
+                        span: None,
+                    }),
+                }
+            }
+            CircuitExpr::ArrayLen(name) => {
+                let len = match self.env.get(name) {
+                    Some(InstEnvValue::Array(elems)) => elems.len(),
+                    _ => {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!("`{name}` is not an array"),
+                            span: None,
+                        });
+                    }
+                };
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Const {
+                    result: v,
+                    value: FieldElement::from_u64(len as u64),
+                });
+                Ok(v)
+            }
+            CircuitExpr::Pow { base, exp } => {
+                let base_var = self.emit_expr(base)?;
+                self.emit_pow(base_var, *exp)
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------
+
+    /// Resolve a name to a scalar SsaVar from the environment.
+    fn resolve_scalar(&self, name: &str) -> Result<SsaVar, ProveIrError> {
+        match self.env.get(name) {
+            Some(InstEnvValue::Scalar(v)) => Ok(*v),
+            Some(InstEnvValue::Array(_)) => Err(ProveIrError::TypeMismatch {
+                expected: "scalar".into(),
+                got: "array".into(),
+                span: None,
+            }),
+            None => Err(ProveIrError::UndeclaredVariable {
+                name: name.into(),
+                span: None,
+                suggestion: None,
+            }),
+        }
+    }
+
+    /// Emit a power chain: base^exp as repeated multiplication.
+    fn emit_pow(&mut self, base: SsaVar, exp: u64) -> Result<SsaVar, ProveIrError> {
+        if exp == 0 {
+            let v = self.program.fresh_var();
+            self.program.push(Instruction::Const {
+                result: v,
+                value: FieldElement::ONE,
+            });
+            return Ok(v);
+        }
+
+        // Square-and-multiply for efficiency
+        let mut result = None;
+        let mut current = base;
+        let mut e = exp;
+
+        while e > 0 {
+            if e & 1 == 1 {
+                result = Some(match result {
+                    None => current,
+                    Some(acc) => {
+                        let v = self.program.fresh_var();
+                        self.program.push(Instruction::Mul {
+                            result: v,
+                            lhs: acc,
+                            rhs: current,
+                        });
+                        v
+                    }
+                });
+            }
+            e >>= 1;
+            if e > 0 {
+                let v = self.program.fresh_var();
+                self.program.push(Instruction::Mul {
+                    result: v,
+                    lhs: current,
+                    rhs: current,
+                });
+                current = v;
+            }
+        }
+
+        Ok(result.unwrap_or(base))
+    }
+
+    /// Try to extract a constant usize from the last emitted instruction
+    /// (the one that defined `var`).
+    fn extract_const_index(&self, var: SsaVar) -> Option<usize> {
+        // Walk backwards to find the instruction that defines this variable
+        for inst in self.program.instructions.iter().rev() {
+            if inst.result_var() == var {
+                if let Instruction::Const { value, .. } = inst {
+                    let limbs = value.to_canonical();
+                    if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+                        return usize::try_from(limbs[0]).ok();
+                    }
+                }
+                return None;
+            }
+        }
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
+
+/// Convert a FieldElement to u64, with error on overflow.
+/// Only valid for "small" values that fit in a single limb.
+fn fe_to_u64(fe: &FieldElement, context: &str) -> Result<u64, ProveIrError> {
+    let limbs = fe.to_canonical(); // [u64; 4]
+                                   // Value fits in u64 only if upper limbs are zero
+    if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
+        return Err(ProveIrError::UnsupportedOperation {
+            description: format!(
+                "capture `{context}` value is too large for a loop bound or array size"
+            ),
+            span: None,
+        });
+    }
+    Ok(limbs[0])
+}
+
+/// Convert a FieldElement to usize, with error on overflow.
+fn fe_to_usize(fe: &FieldElement, context: &str) -> Result<usize, ProveIrError> {
+    let v = fe_to_u64(fe, context)?;
+    usize::try_from(v).map_err(|_| ProveIrError::UnsupportedOperation {
+        description: format!(
+            "capture `{context}` value {v} is too large for an array size on this platform"
+        ),
+        span: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use crate::prove_ir::compiler::ProveIrCompiler;
+
+    /// Helper: compile source as a circuit and instantiate (no captures).
+    fn compile_and_instantiate(source: &str) -> IrProgram {
+        let program = ProveIrCompiler::compile_circuit(source).unwrap();
+        program.instantiate(&HashMap::new()).unwrap()
+    }
+
+    /// Helper: compile source as a prove block with captures and instantiate.
+    fn compile_and_instantiate_with_captures(
+        source: &str,
+        outer_scope: &[&str],
+        captures: &[(&str, u64)],
+    ) -> IrProgram {
+        let scope: HashSet<String> = outer_scope.iter().map(|s| s.to_string()).collect();
+        let prove_ir = ProveIrCompiler::compile_prove_block(source, &scope).unwrap();
+        let cap_map: HashMap<String, FieldElement> = captures
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::from_u64(*v)))
+            .collect();
+        prove_ir.instantiate(&cap_map).unwrap()
+    }
+
+    // --- Basic circuits ---
+
+    #[test]
+    fn instantiate_empty_circuit() {
+        let ir = compile_and_instantiate("");
+        assert!(ir.instructions.is_empty());
+    }
+
+    #[test]
+    fn instantiate_public_input() {
+        let ir = compile_and_instantiate("public x");
+        assert_eq!(ir.instructions.len(), 1);
+        assert!(matches!(
+            &ir.instructions[0],
+            Instruction::Input {
+                name,
+                visibility: Visibility::Public,
+                ..
+            } if name == "x"
+        ));
+    }
+
+    #[test]
+    fn instantiate_witness_input() {
+        let ir = compile_and_instantiate("witness s");
+        assert_eq!(ir.instructions.len(), 1);
+        assert!(matches!(
+            &ir.instructions[0],
+            Instruction::Input {
+                name,
+                visibility: Visibility::Witness,
+                ..
+            } if name == "s"
+        ));
+    }
+
+    #[test]
+    fn instantiate_array_input() {
+        let ir = compile_and_instantiate("public arr[3]");
+        // 3 Input instructions for arr_0, arr_1, arr_2
+        assert_eq!(ir.instructions.len(), 3);
+        for (i, inst) in ir.instructions.iter().enumerate() {
+            assert!(matches!(
+                inst,
+                Instruction::Input { name, visibility: Visibility::Public, .. }
+                    if name == &format!("arr_{i}")
+            ));
+        }
+    }
+
+    #[test]
+    fn instantiate_basic_arithmetic() {
+        let ir = compile_and_instantiate("public x\npublic y\npublic out\nassert_eq(x + y, out)");
+        // Inputs: x, y, out (3)
+        // Add: x + y (1)
+        // AssertEq: (x+y) == out (1)
+        let inputs = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Input { .. }))
+            .count();
+        let adds = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Add { .. }))
+            .count();
+        let asserts = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+            .count();
+        assert_eq!(inputs, 3);
+        assert_eq!(adds, 1);
+        assert_eq!(asserts, 1);
+    }
+
+    #[test]
+    fn instantiate_let_binding() {
+        let ir = compile_and_instantiate("public x\npublic out\nlet y = x * 2\nassert_eq(y, out)");
+        // Should have: Input(x), Input(out), Const(2), Mul(x,2), AssertEq
+        let muls = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mul { .. }))
+            .count();
+        assert_eq!(muls, 1);
+    }
+
+    #[test]
+    fn instantiate_poseidon() {
+        let ir = compile_and_instantiate(
+            "public hash\nwitness a\nwitness b\nassert_eq(poseidon(a, b), hash)",
+        );
+        let hashes = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+            .count();
+        assert_eq!(hashes, 1);
+    }
+
+    #[test]
+    fn instantiate_poseidon_many() {
+        let ir = compile_and_instantiate(
+            "public hash\nwitness a\nwitness b\nwitness c\nassert_eq(poseidon_many(a, b, c), hash)",
+        );
+        // poseidon_many(a, b, c) → poseidon(poseidon(a, b), c) — 2 hashes
+        let hashes = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+            .count();
+        assert_eq!(hashes, 2);
+    }
+
+    #[test]
+    fn instantiate_range_check() {
+        let ir = compile_and_instantiate("witness x\nrange_check(x, 8)");
+        let checks = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::RangeCheck { bits: 8, .. }))
+            .count();
+        assert_eq!(checks, 1);
+    }
+
+    #[test]
+    fn instantiate_mux() {
+        let ir = compile_and_instantiate("public c\nwitness a\nwitness b\nlet r = mux(c, a, b)");
+        let muxes = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mux { .. }))
+            .count();
+        assert_eq!(muxes, 1);
+    }
+
+    #[test]
+    fn instantiate_if_else() {
+        let ir = compile_and_instantiate(
+            "public c\npublic out\nlet r = if c { 1 } else { 0 }\nassert_eq(r, out)",
+        );
+        // Should produce a Mux
+        let muxes = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mux { .. }))
+            .count();
+        assert!(muxes >= 1);
+    }
+
+    #[test]
+    fn instantiate_pow() {
+        let ir = compile_and_instantiate("public x\npublic out\nassert_eq(x ^ 3, out)");
+        // x^3 via square-and-multiply: x*x=x², x²*x=x³ → 2 Mul
+        let muls = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mul { .. }))
+            .count();
+        assert_eq!(muls, 2, "x^3 should use 2 multiplications");
+    }
+
+    #[test]
+    fn instantiate_pow_zero() {
+        let ir = compile_and_instantiate("public x\npublic out\nassert_eq(x ^ 0, out)");
+        // x^0 = 1
+        let has_const_one = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Const { value, .. } if *value == FieldElement::ONE));
+        assert!(has_const_one, "x^0 should produce Const(1)");
+    }
+
+    // --- For loop unrolling ---
+
+    #[test]
+    fn instantiate_for_loop() {
+        let ir = compile_and_instantiate(
+            "public out\nmut acc = 0\nfor i in 0..3 { acc = acc + 1 }\nassert_eq(acc, out)",
+        );
+        // Unrolled: 3 iterations, each adds 1
+        let adds = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Add { .. }))
+            .count();
+        assert_eq!(adds, 3, "3 iterations of acc + 1");
+    }
+
+    #[test]
+    fn instantiate_for_empty_range() {
+        let ir = compile_and_instantiate("public out\nfor i in 5..3 { }\nassert_eq(0, out)");
+        // 5..3 = empty range, no loop body emitted
+        // Should just have: Input(out), Const(0), AssertEq
+        let consts = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Const { .. }))
+            .count();
+        assert!(consts >= 1);
+    }
+
+    // --- Captures ---
+
+    #[test]
+    fn instantiate_with_capture_as_witness() {
+        let ir = compile_and_instantiate_with_captures(
+            "public hash\nassert_eq(poseidon(secret, 0), hash)",
+            &["secret", "hash"],
+            &[("secret", 42)],
+        );
+        // secret is a capture classified as CircuitInput → witness Input
+        let witness_inputs: Vec<&str> = ir
+            .instructions
+            .iter()
+            .filter_map(|i| match i {
+                Instruction::Input {
+                    name,
+                    visibility: Visibility::Witness,
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            witness_inputs.contains(&"secret"),
+            "secret should be a witness input, got: {witness_inputs:?}"
+        );
+    }
+
+    #[test]
+    fn instantiate_with_capture_as_loop_bound() {
+        // WithCapture is tested by constructing ProveIR directly since the
+        // parser doesn't support `for i in 0..n` with dynamic n yet.
+        let prove_ir = ProveIR {
+            public_inputs: vec![ProveInputDecl {
+                name: "out".into(),
+                array_size: None,
+                ir_type: IrType::Field,
+            }],
+            witness_inputs: vec![],
+            captures: vec![CaptureDef {
+                name: "n".into(),
+                usage: CaptureUsage::StructureOnly,
+            }],
+            body: vec![CircuitNode::For {
+                var: "i".into(),
+                range: ForRange::WithCapture {
+                    start: 0,
+                    end_capture: "n".into(),
+                },
+                body: vec![CircuitNode::Expr {
+                    expr: CircuitExpr::Var("i".into()),
+                    span: None,
+                }],
+                span: None,
+            }],
+        };
+        let captures: HashMap<String, FieldElement> =
+            [("n".to_string(), FieldElement::from_u64(4))]
+                .into_iter()
+                .collect();
+        let ir = prove_ir.instantiate(&captures).unwrap();
+        // n=4 means 4 iterations → 4 Const instructions for i=0,1,2,3
+        let consts: Vec<_> = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Const { .. }))
+            .collect();
+        // 1 const for structural capture "n" + 4 consts for loop var i
+        assert_eq!(
+            consts.len(),
+            5,
+            "expected 1 + 4 Const instructions, got {}",
+            consts.len()
+        );
+    }
+
+    #[test]
+    fn instantiate_missing_capture_error() {
+        // Construct a ProveIR that requires a capture "secret" but don't provide it
+        let prove_ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![CaptureDef {
+                name: "secret".into(),
+                usage: CaptureUsage::CircuitInput,
+            }],
+            body: vec![],
+        };
+        let result = prove_ir.instantiate(&HashMap::new());
+        assert!(result.is_err(), "should fail with missing capture");
+    }
+
+    // --- Comparison operators ---
+
+    #[test]
+    fn instantiate_comparison_eq() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a == b)");
+        let has_is_eq = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsEq { .. }));
+        assert!(has_is_eq);
+    }
+
+    #[test]
+    fn instantiate_comparison_lt() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a < b)");
+        let has_is_lt = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsLt { .. }));
+        assert!(has_is_lt);
+    }
+
+    #[test]
+    fn instantiate_comparison_gt_desugars_to_lt() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a > b)");
+        // a > b → IsLt(b, a) (operands swapped)
+        let has_is_lt = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsLt { .. }));
+        assert!(has_is_lt, "a > b should desugar to IsLt(b, a)");
+    }
+
+    // --- Boolean ops ---
+
+    #[test]
+    fn instantiate_bool_and() {
+        let ir = compile_and_instantiate("public a\npublic b\nassert(a == 1 && b == 1)");
+        let has_and = ir
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::And { .. }));
+        assert!(has_and);
+    }
+
+    // --- Function inlining ---
+
+    #[test]
+    fn instantiate_user_fn() {
+        let ir = compile_and_instantiate(
+            "public out\nfn double(x) { x * 2 }\nassert_eq(double(5), out)",
+        );
+        let muls = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mul { .. }))
+            .count();
+        assert_eq!(muls, 1);
+    }
+
+    // --- SSA naming ---
+
+    #[test]
+    fn instantiate_ssa_vars_unique() {
+        let ir = compile_and_instantiate(
+            "public x\npublic out\nmut a = x\na = a + 1\na = a * 2\nassert_eq(a, out)",
+        );
+        // All result vars should be unique
+        let vars: Vec<SsaVar> = ir.instructions.iter().map(|i| i.result_var()).collect();
+        let unique: HashSet<SsaVar> = vars.iter().copied().collect();
+        assert_eq!(vars.len(), unique.len(), "SSA vars must be unique");
+    }
+
+    // --- Integration: full circuit patterns ---
+
+    #[test]
+    fn integration_poseidon_preimage() {
+        let ir = compile_and_instantiate(
+            "public hash\n\
+             witness secret\n\
+             assert_eq(poseidon(secret, Field::ZERO), hash)",
+        );
+        let inputs = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Input { .. }))
+            .count();
+        let hashes = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+            .count();
+        let asserts = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+            .count();
+        assert_eq!(inputs, 2);
+        assert_eq!(hashes, 1);
+        assert_eq!(asserts, 1);
+    }
+
+    #[test]
+    fn integration_accumulator_with_for() {
+        let ir = compile_and_instantiate(
+            "public total\n\
+             witness vals[4]\n\
+             mut sum = Field::ZERO\n\
+             for i in 0..4 { sum = sum + vals_0 }\n\
+             assert_eq(sum, total)",
+        );
+        // 4 iterations of sum + vals_0
+        let adds = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Add { .. }))
+            .count();
+        assert_eq!(adds, 4);
+    }
+
+    #[test]
+    fn integration_array_len() {
+        let ir = compile_and_instantiate(
+            "let arr = [1, 2, 3]\nlet n = len(arr)\npublic out\nassert_eq(n, out)",
+        );
+        // len(arr) → Const(3)
+        let has_const_3 = ir.instructions.iter().any(|i| {
+            matches!(i, Instruction::Const { value, .. } if *value == FieldElement::from_u64(3))
+        });
+        assert!(has_const_3);
+    }
+}
