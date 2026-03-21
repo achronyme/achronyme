@@ -415,41 +415,61 @@ impl super::vm::VM {
                     let receiver = self.get_reg(base, b)?;
                     let tag = receiver.tag();
 
-                    // Lookup method in prototype registry
-                    let method_fn = self
-                        .prototype_registry
-                        .lookup(tag, &method_name)
-                        .ok_or_else(|| {
-                            let type_name = match tag {
-                                0 => "Int",
-                                1 => "Nil",
-                                2 | 3 => "Bool",
-                                4 => "String",
-                                5 => "List",
-                                6 => "Map",
-                                7 => "Function",
-                                8 => "Field",
-                                9 => "Proof",
-                                10 => "Native",
-                                11 => "Function",
-                                12 => "Iterator",
-                                13 => "BigInt",
-                                _ => "Unknown",
-                            };
-                            RuntimeError::TypeMismatch(format!(
-                                "{type_name} has no method '{method_name}'"
-                            ))
-                        })?;
-
                     // Collect arguments from R[base+b+1..base+b+c]
                     let mut args = Vec::with_capacity(c);
                     for i in 1..=c {
                         args.push(self.get_reg(base, b + i)?);
                     }
 
-                    // Call the method
-                    let result = method_fn(self, receiver, &args)?;
-                    self.set_reg(base, a, result)?;
+                    // Lookup method in prototype registry
+                    if let Some(method_fn) =
+                        self.prototype_registry.lookup(tag, &method_name)
+                    {
+                        let result = method_fn(self, receiver, &args)?;
+                        self.set_reg(base, a, result)?;
+                    } else if receiver.is_map() {
+                        // Fallback: map-as-object pattern — look up the key
+                        // in the map and call it if it's a function/closure.
+                        let map_handle = receiver.as_handle().ok_or_else(|| {
+                            RuntimeError::TypeMismatch("bad map handle".into())
+                        })?;
+                        let callee = self
+                            .heap
+                            .get_map(map_handle)
+                            .and_then(|m| m.get(&method_name).copied())
+                            .ok_or_else(|| {
+                                RuntimeError::TypeMismatch(format!(
+                                    "Map has no method or key '{method_name}'"
+                                ))
+                            })?;
+                        if !callee.is_closure() && !callee.is_native() {
+                            return Err(RuntimeError::TypeMismatch(format!(
+                                "Map key '{method_name}' is not callable"
+                            )));
+                        }
+                        let result = self.call_value(callee, &args)?;
+                        self.set_reg(base, a, result)?;
+                    } else {
+                        let type_name = match tag {
+                            0 => "Int",
+                            1 => "Nil",
+                            2 | 3 => "Bool",
+                            4 => "String",
+                            5 => "List",
+                            6 => "Map",
+                            7 => "Function",
+                            8 => "Field",
+                            9 => "Proof",
+                            10 => "Native",
+                            11 => "Function",
+                            12 => "Iterator",
+                            13 => "BigInt",
+                            _ => "Unknown",
+                        };
+                        return Err(RuntimeError::TypeMismatch(format!(
+                            "{type_name} has no method '{method_name}'"
+                        )));
+                    }
                 }
 
                 BuildList | BuildMap | GetIndex | SetIndex => {
