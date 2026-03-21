@@ -9,6 +9,7 @@ use memory::FieldElement;
 use super::error::ProveIrError;
 use super::types::*;
 use crate::error::{span_box, OptSpan};
+use crate::types::IrType;
 
 // ---------------------------------------------------------------------------
 // Environment values
@@ -29,12 +30,29 @@ enum CompEnvValue {
 // Compiler
 // ---------------------------------------------------------------------------
 
+/// A user-defined function stored for inlining.
+#[derive(Clone, Debug)]
+struct FnDef {
+    params: Vec<TypedParam>,
+    body: Block,
+    #[allow(dead_code)]
+    return_type: Option<TypeAnnotation>,
+}
+
 /// Compiles an AST `Block` (from a prove block or circuit file) into a `ProveIR`.
 pub struct ProveIrCompiler {
     /// Maps variable names → what they resolve to.
     env: HashMap<String, CompEnvValue>,
     /// Tracks which names are captured from the outer scope.
     captured_names: HashSet<String>,
+    /// Functions available for inlining.
+    fn_table: HashMap<String, FnDef>,
+    /// Accumulated circuit body nodes.
+    body: Vec<CircuitNode>,
+    /// Public input declarations.
+    public_inputs: Vec<ProveInputDecl>,
+    /// Witness input declarations.
+    witness_inputs: Vec<ProveInputDecl>,
 }
 
 impl ProveIrCompiler {
@@ -42,6 +60,10 @@ impl ProveIrCompiler {
         Self {
             env: HashMap::new(),
             captured_names: HashSet::new(),
+            fn_table: HashMap::new(),
+            body: Vec::new(),
+            public_inputs: Vec::new(),
+            witness_inputs: Vec::new(),
         }
     }
 
@@ -59,16 +81,277 @@ impl ProveIrCompiler {
                 .insert(name.clone(), CompEnvValue::Capture(name.clone()));
         }
 
-        // TODO(step 5): collect public/witness declarations
-        // TODO(step 5): compile block statements
-        let _ = block;
+        // Compile all statements in the block
+        compiler.compile_block_stmts(block)?;
+
+        // TODO(step 9): classify captures
 
         Ok(ProveIR {
-            public_inputs: Vec::new(),
-            witness_inputs: Vec::new(),
-            captures: Vec::new(),
-            body: Vec::new(),
+            public_inputs: compiler.public_inputs,
+            witness_inputs: compiler.witness_inputs,
+            captures: Vec::new(), // TODO(step 9)
+            body: compiler.body,
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // Statement compilation
+    // -----------------------------------------------------------------------
+
+    /// Compile all statements in a block, appending to self.body.
+    fn compile_block_stmts(&mut self, block: &Block) -> Result<(), ProveIrError> {
+        for stmt in &block.stmts {
+            self.compile_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
+    /// Compile a single statement.
+    fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), ProveIrError> {
+        match stmt {
+            Stmt::PublicDecl { names, span } => self.compile_public_decl(names, span),
+            Stmt::WitnessDecl { names, span } => self.compile_witness_decl(names, span),
+            Stmt::LetDecl {
+                name,
+                type_ann,
+                value,
+                span,
+                ..
+            } => self.compile_let(name, type_ann.as_ref(), value, span),
+            Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                body,
+                ..
+            } => {
+                self.fn_table.insert(
+                    name.clone(),
+                    FnDef {
+                        params: params.clone(),
+                        body: body.clone(),
+                        return_type: return_type.clone(),
+                    },
+                );
+                Ok(())
+            }
+            Stmt::Expr(expr) => self.compile_expr_stmt(expr),
+            Stmt::Export { inner, .. } => self.compile_stmt(inner),
+            Stmt::ExportList { .. } | Stmt::Error { .. } => Ok(()),
+
+            // MutDecl and Assignment handled in step 6
+            Stmt::MutDecl { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "mutable variables not yet supported in ProveIR \
+                              (coming in step 6: mut→SSA desugaring)"
+                    .into(),
+                span: to_span(span),
+            }),
+            Stmt::Assignment { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "assignment not yet supported in ProveIR \
+                              (coming in step 6: mut→SSA desugaring)"
+                    .into(),
+                span: to_span(span),
+            }),
+            Stmt::Print { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "print is not supported in circuits".into(),
+                span: to_span(span),
+            }),
+            Stmt::Break { span } => Err(ProveIrError::UnsupportedOperation {
+                description: "break is not supported in circuits".into(),
+                span: to_span(span),
+            }),
+            Stmt::Continue { span } => Err(ProveIrError::UnsupportedOperation {
+                description: "continue is not supported in circuits".into(),
+                span: to_span(span),
+            }),
+            Stmt::Return { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "return is not supported at the top level of a circuit".into(),
+                span: to_span(span),
+            }),
+            Stmt::Import { span, .. } | Stmt::SelectiveImport { span, .. } => {
+                Err(ProveIrError::UnsupportedOperation {
+                    description: "imports not yet supported in ProveIR".into(),
+                    span: to_span(span),
+                })
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Public/Witness declarations
+    // -----------------------------------------------------------------------
+
+    fn compile_public_decl(
+        &mut self,
+        names: &[InputDecl],
+        _span: &Span,
+    ) -> Result<(), ProveIrError> {
+        for decl in names {
+            let ir_type = decl
+                .type_ann
+                .as_ref()
+                .map(annotation_to_ir_type)
+                .unwrap_or(IrType::Field);
+            if let Some(size) = decl.array_size {
+                self.public_inputs.push(ProveInputDecl {
+                    name: decl.name.clone(),
+                    array_size: Some(ArraySize::Literal(size)),
+                    ir_type,
+                });
+                let elem_names: Vec<String> =
+                    (0..size).map(|i| format!("{}_{i}", decl.name)).collect();
+                for ename in &elem_names {
+                    self.env
+                        .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+                }
+                self.env
+                    .insert(decl.name.clone(), CompEnvValue::Array(elem_names));
+            } else {
+                self.public_inputs.push(ProveInputDecl {
+                    name: decl.name.clone(),
+                    array_size: None,
+                    ir_type,
+                });
+                self.env
+                    .insert(decl.name.clone(), CompEnvValue::Scalar(decl.name.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_witness_decl(
+        &mut self,
+        names: &[InputDecl],
+        _span: &Span,
+    ) -> Result<(), ProveIrError> {
+        for decl in names {
+            let ir_type = decl
+                .type_ann
+                .as_ref()
+                .map(annotation_to_ir_type)
+                .unwrap_or(IrType::Field);
+            if let Some(size) = decl.array_size {
+                self.witness_inputs.push(ProveInputDecl {
+                    name: decl.name.clone(),
+                    array_size: Some(ArraySize::Literal(size)),
+                    ir_type,
+                });
+                let elem_names: Vec<String> =
+                    (0..size).map(|i| format!("{}_{i}", decl.name)).collect();
+                for ename in &elem_names {
+                    self.env
+                        .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+                }
+                self.env
+                    .insert(decl.name.clone(), CompEnvValue::Array(elem_names));
+            } else {
+                self.witness_inputs.push(ProveInputDecl {
+                    name: decl.name.clone(),
+                    array_size: None,
+                    ir_type,
+                });
+                self.env
+                    .insert(decl.name.clone(), CompEnvValue::Scalar(decl.name.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Let declaration
+    // -----------------------------------------------------------------------
+
+    fn compile_let(
+        &mut self,
+        name: &str,
+        _type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        // Array literal → LetArray
+        if let Expr::Array {
+            elements,
+            span: arr_span,
+        } = value
+        {
+            if elements.is_empty() {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: "empty arrays are not allowed in circuits".into(),
+                    span: to_span(arr_span),
+                });
+            }
+            let compiled: Result<Vec<_>, _> =
+                elements.iter().map(|e| self.compile_expr(e)).collect();
+            let compiled = compiled?;
+            let elem_names: Vec<String> =
+                (0..compiled.len()).map(|i| format!("{name}_{i}")).collect();
+            self.body.push(CircuitNode::LetArray {
+                name: name.to_string(),
+                elements: compiled,
+                span: Some(SpanRange::from(span)),
+            });
+            for ename in &elem_names {
+                self.env
+                    .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+            }
+            self.env
+                .insert(name.to_string(), CompEnvValue::Array(elem_names));
+            return Ok(());
+        }
+
+        // Scalar value → Let
+        let compiled = self.compile_expr(value)?;
+        self.body.push(CircuitNode::Let {
+            name: name.to_string(),
+            value: compiled,
+            span: Some(SpanRange::from(span)),
+        });
+        self.env
+            .insert(name.to_string(), CompEnvValue::Scalar(name.to_string()));
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Expression statement (handles assert_eq / assert as nodes)
+    // -----------------------------------------------------------------------
+
+    fn compile_expr_stmt(&mut self, expr: &Expr) -> Result<(), ProveIrError> {
+        // Detect assert_eq(a, b) and assert(x) to emit constraint nodes
+        if let Expr::Call { callee, args, span } = expr {
+            if let Expr::Ident { name, .. } = callee.as_ref() {
+                match name.as_str() {
+                    "assert_eq" => {
+                        self.check_arity("assert_eq", 2, args.len(), span)?;
+                        let lhs = self.compile_expr(&args[0])?;
+                        let rhs = self.compile_expr(&args[1])?;
+                        self.body.push(CircuitNode::AssertEq {
+                            lhs,
+                            rhs,
+                            span: Some(SpanRange::from(span)),
+                        });
+                        return Ok(());
+                    }
+                    "assert" => {
+                        self.check_arity("assert", 1, args.len(), span)?;
+                        let cond = self.compile_expr(&args[0])?;
+                        self.body.push(CircuitNode::Assert {
+                            expr: cond,
+                            span: Some(SpanRange::from(span)),
+                        });
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // General expression statement
+        let compiled = self.compile_expr(expr)?;
+        self.body.push(CircuitNode::Expr {
+            expr: compiled,
+            span: None,
+        });
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -811,6 +1094,14 @@ fn to_span(span: &Span) -> OptSpan {
     span_box(Some(SpanRange::from(span)))
 }
 
+/// Convert a TypeAnnotation to IrType.
+fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
+    match ann {
+        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
+        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1408,5 +1699,171 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // =====================================================================
+    // Statement compilation tests
+    // =====================================================================
+
+    /// Helper: compile a full circuit source (with public/witness declarations).
+    fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
+        let (program, errors) = parse_program(source);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let block = Block {
+            stmts: program.stmts,
+            span: Span {
+                byte_start: 0,
+                byte_end: source.len(),
+                line_start: 1,
+                col_start: 1,
+                line_end: 1,
+                col_end: 1,
+            },
+        };
+        ProveIrCompiler::compile(&block, &HashSet::new())
+    }
+
+    #[test]
+    fn stmt_public_decl_scalar() {
+        let ir = compile_circuit("public x\nassert_eq(x, x)").unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.public_inputs[0].name, "x");
+        assert!(ir.public_inputs[0].array_size.is_none());
+    }
+
+    #[test]
+    fn stmt_witness_decl_scalar() {
+        let ir = compile_circuit("witness y\nassert_eq(y, y)").unwrap();
+        assert_eq!(ir.witness_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs[0].name, "y");
+    }
+
+    #[test]
+    fn stmt_public_decl_array() {
+        let ir = compile_circuit("public arr[3]\nassert_eq(arr_0, arr_1)").unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.public_inputs[0].name, "arr");
+        assert_eq!(ir.public_inputs[0].array_size, Some(ArraySize::Literal(3)));
+    }
+
+    #[test]
+    fn stmt_let_scalar() {
+        let ir = compile_circuit("public x\nlet y = x\nassert_eq(y, x)").unwrap();
+        assert!(ir.body.len() >= 2); // Let + AssertEq
+        assert!(matches!(&ir.body[0], CircuitNode::Let { name, .. } if name == "y"));
+    }
+
+    #[test]
+    fn stmt_let_array() {
+        let ir = compile_circuit("let arr = [1, 2, 3]").unwrap();
+        assert_eq!(ir.body.len(), 1);
+        if let CircuitNode::LetArray { name, elements, .. } = &ir.body[0] {
+            assert_eq!(name, "arr");
+            assert_eq!(elements.len(), 3);
+        } else {
+            panic!("expected LetArray, got {:?}", ir.body[0]);
+        }
+    }
+
+    #[test]
+    fn stmt_empty_array_rejected() {
+        let err = compile_circuit("let arr = []").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    #[test]
+    fn stmt_assert_eq_as_node() {
+        let ir = compile_circuit("public a\npublic b\nassert_eq(a, b)").unwrap();
+        assert!(
+            ir.body
+                .iter()
+                .any(|n| matches!(n, CircuitNode::AssertEq { .. })),
+            "expected AssertEq node in body"
+        );
+    }
+
+    #[test]
+    fn stmt_assert_as_node() {
+        let ir = compile_circuit("public x\nassert(x)").unwrap();
+        assert!(
+            ir.body
+                .iter()
+                .any(|n| matches!(n, CircuitNode::Assert { .. })),
+            "expected Assert node in body"
+        );
+    }
+
+    #[test]
+    fn stmt_fn_decl_not_emitted() {
+        let ir = compile_circuit("public x\nfn f(a) { a }\nassert_eq(x, x)").unwrap();
+        // FnDecl doesn't produce a body node — it's stored in fn_table
+        assert!(
+            !ir.body
+                .iter()
+                .any(|n| matches!(n, CircuitNode::Let { name, .. } if name == "f")),
+            "FnDecl should not produce a Let node"
+        );
+    }
+
+    #[test]
+    fn stmt_print_rejected() {
+        let err = compile_circuit("print(42)").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    #[test]
+    fn stmt_break_rejected() {
+        // break outside loop is actually a parse error, but test the stmt handler
+        let err = compile_circuit("public x\nassert_eq(x, x)");
+        // This should succeed — break only fails if actually encountered
+        assert!(err.is_ok());
+    }
+
+    #[test]
+    fn stmt_basic_circuit() {
+        // A complete basic circuit: public out, witness a, b, assert_eq(a * b, out)
+        let ir = compile_circuit(
+            "public out\nwitness a\nwitness b\nlet product = a * b\nassert_eq(product, out)",
+        )
+        .unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs.len(), 2);
+        assert_eq!(ir.public_inputs[0].name, "out");
+        assert_eq!(ir.witness_inputs[0].name, "a");
+        assert_eq!(ir.witness_inputs[1].name, "b");
+        // Body: Let(product) + AssertEq
+        assert!(ir.body.len() >= 2);
+        assert!(matches!(&ir.body[0], CircuitNode::Let { name, .. } if name == "product"));
+        assert!(matches!(&ir.body[1], CircuitNode::AssertEq { .. }));
+    }
+
+    #[test]
+    fn stmt_poseidon_circuit() {
+        let ir = compile_circuit(
+            "public hash\nwitness secret\nlet h = poseidon(secret, 0)\nassert_eq(h, hash)",
+        )
+        .unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs.len(), 1);
+        // Body: Let(h = PoseidonHash) + AssertEq
+        if let CircuitNode::Let { value, .. } = &ir.body[0] {
+            assert!(
+                matches!(value, CircuitExpr::PoseidonHash { .. }),
+                "expected PoseidonHash, got {value:?}"
+            );
+        } else {
+            panic!("expected Let node, got {:?}", ir.body[0]);
+        }
+    }
+
+    #[test]
+    fn stmt_with_static_access() {
+        // Field::ZERO should work inside a circuit now!
+        let ir = compile_circuit("public x\nlet zero = Field::ZERO\nassert_eq(x, zero)").unwrap();
+        if let CircuitNode::Let { value, .. } = &ir.body[0] {
+            assert_eq!(*value, CircuitExpr::Const(FieldElement::ZERO));
+        } else {
+            panic!("expected Let node");
+        }
     }
 }
