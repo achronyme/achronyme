@@ -1144,11 +1144,24 @@ impl ProveIrCompiler {
         body: &Block,
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
+        /// Maximum number of iterations allowed for literal ranges.
+        const MAX_LOOP_ITERATIONS: u64 = 1_000_000;
+
         let range = match iterable {
-            ForIterable::Range { start, end } => ForRange::Literal {
-                start: *start,
-                end: *end,
-            },
+            ForIterable::Range { start, end } => {
+                let iterations = end.saturating_sub(*start);
+                if iterations > MAX_LOOP_ITERATIONS {
+                    return Err(ProveIrError::RangeTooLarge {
+                        iterations,
+                        max: MAX_LOOP_ITERATIONS,
+                        span: to_span(span),
+                    });
+                }
+                ForRange::Literal {
+                    start: *start,
+                    end: *end,
+                }
+            }
             ForIterable::Expr(expr) => {
                 // Must be an array identifier
                 if let Expr::Ident { name, .. } = expr.as_ref() {
