@@ -476,7 +476,27 @@ impl ProveIrCompiler {
                 span,
             } => self.compile_dot_access(object, field, span),
 
-            // TODO(step 8): If, For, Block, Index
+            Expr::If {
+                condition,
+                then_block,
+                else_branch,
+                span,
+            } => self.compile_if_expr(condition, then_block, else_branch.as_ref(), span),
+
+            Expr::For {
+                var,
+                iterable,
+                body,
+                span,
+            } => self.compile_for_expr(var, iterable, body, span),
+
+            Expr::Block(block) => self.compile_block_as_expr(block),
+
+            Expr::Index {
+                object,
+                index,
+                span,
+            } => self.compile_index(object, index, span),
 
             // --- Rejections (same as IrLowering, with better messages) ---
             Expr::While { span, .. } | Expr::Forever { span, .. } => {
@@ -1011,6 +1031,194 @@ impl ProveIrCompiler {
     /// Check if a function name exists in the fn_table.
     fn has_function(&self, name: &str) -> bool {
         self.fn_table.contains_key(name)
+    }
+
+    // -----------------------------------------------------------------------
+    // Control flow
+    // -----------------------------------------------------------------------
+
+    fn compile_if_expr(
+        &mut self,
+        condition: &Expr,
+        then_block: &Block,
+        else_branch: Option<&ElseBranch>,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        let cond = self.compile_expr(condition)?;
+
+        // Save body vec, compile then/else into separate buffers
+        let saved_body = std::mem::take(&mut self.body);
+
+        // Then branch
+        self.body = Vec::new();
+        let then_result = self.compile_block_as_expr(then_block)?;
+        let then_nodes = std::mem::take(&mut self.body);
+
+        // Else branch
+        self.body = Vec::new();
+        let (else_result, else_nodes) = match else_branch {
+            Some(ElseBranch::Block(block)) => {
+                let r = self.compile_block_as_expr(block)?;
+                (r, std::mem::take(&mut self.body))
+            }
+            Some(ElseBranch::If(if_expr)) => {
+                let r = self.compile_expr(if_expr)?;
+                (r, std::mem::take(&mut self.body))
+            }
+            None => (CircuitExpr::Const(FieldElement::ZERO), Vec::new()),
+        };
+
+        // Restore body and emit the If node
+        self.body = saved_body;
+
+        // If both branches have side-effect nodes (Let, Assert, etc.),
+        // emit them as a CircuitNode::If. The result values become
+        // the Mux during instantiation (Phase B).
+        if !then_nodes.is_empty() || !else_nodes.is_empty() {
+            self.body.push(CircuitNode::If {
+                cond: cond.clone(),
+                then_body: then_nodes,
+                else_body: else_nodes,
+                span: Some(SpanRange::from(span)),
+            });
+        }
+
+        // The expression result is a Mux over the two branch results
+        Ok(CircuitExpr::Mux {
+            cond: Box::new(cond),
+            if_true: Box::new(then_result),
+            if_false: Box::new(else_result),
+        })
+    }
+
+    fn compile_for_expr(
+        &mut self,
+        var: &str,
+        iterable: &ForIterable,
+        body: &Block,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        let range = match iterable {
+            ForIterable::Range { start, end } => ForRange::Literal {
+                start: *start,
+                end: *end,
+            },
+            ForIterable::Expr(expr) => {
+                // Must be an array identifier
+                if let Expr::Ident { name, .. } = expr.as_ref() {
+                    if matches!(self.env.get(name.as_str()), Some(CompEnvValue::Array(_))) {
+                        ForRange::Array(name.clone())
+                    } else if matches!(self.env.get(name.as_str()), Some(CompEnvValue::Capture(_)))
+                    {
+                        // Capture used as iterable — could be an array, defer to instantiation
+                        ForRange::Array(name.clone())
+                    } else {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "for loop iterable `{name}` must be an array or range \
+                                 in circuits"
+                            ),
+                            span: to_span(span),
+                        });
+                    }
+                } else {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: "for loops in circuits require a literal range \
+                                      (e.g., 0..5) or an array identifier"
+                            .into(),
+                        span: to_span(span),
+                    });
+                }
+            }
+        };
+
+        // Save body, compile loop body into a separate buffer
+        let saved_body = std::mem::take(&mut self.body);
+
+        // Register loop var in env
+        let saved_var = self.env.get(var).cloned();
+        self.env
+            .insert(var.to_string(), CompEnvValue::Scalar(var.to_string()));
+
+        self.body = Vec::new();
+        let _body_result = self.compile_block_as_expr(body)?;
+        let loop_body = std::mem::take(&mut self.body);
+
+        // Restore
+        match saved_var {
+            Some(v) => {
+                self.env.insert(var.to_string(), v);
+            }
+            None => {
+                self.env.remove(var);
+            }
+        }
+        self.body = saved_body;
+
+        // Emit the For node (preserved, unrolled during Phase B instantiation)
+        self.body.push(CircuitNode::For {
+            var: var.to_string(),
+            range,
+            body: loop_body,
+            span: Some(SpanRange::from(span)),
+        });
+
+        // For loops don't produce a useful expression value in circuit context
+        Ok(CircuitExpr::Const(FieldElement::ZERO))
+    }
+
+    fn compile_index(
+        &mut self,
+        object: &Expr,
+        index: &Expr,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        let name = match object {
+            Expr::Ident { name, .. } => name.clone(),
+            _ => {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: "indexing is only supported on array identifiers in circuits"
+                        .into(),
+                    span: to_span(span),
+                });
+            }
+        };
+
+        // Check the array exists
+        if !matches!(
+            self.env.get(name.as_str()),
+            Some(CompEnvValue::Array(_)) | Some(CompEnvValue::Capture(_))
+        ) {
+            return Err(ProveIrError::TypeMismatch {
+                expected: "array".into(),
+                got: "scalar".into(),
+                span: to_span(span),
+            });
+        }
+
+        // Try to resolve as a constant index → direct element access
+        if let Expr::Number { value, .. } = index {
+            if let Ok(idx) = value.parse::<usize>() {
+                if let Some(CompEnvValue::Array(elems)) = self.env.get(name.as_str()) {
+                    if idx >= elems.len() {
+                        return Err(ProveIrError::IndexOutOfBounds {
+                            name: name.clone(),
+                            index: idx,
+                            length: elems.len(),
+                            span: to_span(span),
+                        });
+                    }
+                    return Ok(CircuitExpr::Var(elems[idx].clone()));
+                }
+            }
+        }
+
+        // Dynamic or capture-based index → ArrayIndex node
+        let idx_expr = self.compile_expr(index)?;
+        Ok(CircuitExpr::ArrayIndex {
+            array: name,
+            index: Box::new(idx_expr),
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -2315,6 +2523,159 @@ mod tests {
         .unwrap();
         assert_eq!(ir.public_inputs.len(), 1);
         assert_eq!(ir.witness_inputs.len(), 2);
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    // =====================================================================
+    // Control flow tests
+    // =====================================================================
+
+    #[test]
+    fn if_expr_produces_mux() {
+        let scope = [
+            ("c", CompEnvValue::Scalar("c".into())),
+            ("a", CompEnvValue::Scalar("a".into())),
+            ("b", CompEnvValue::Scalar("b".into())),
+        ];
+        let expr = compile_expr_with_scope("if c { a } else { b }", &scope).unwrap();
+        assert!(
+            matches!(expr, CircuitExpr::Mux { .. }),
+            "if/else should produce Mux, got {expr:?}"
+        );
+    }
+
+    #[test]
+    fn if_without_else_mux_zero() {
+        let scope = [
+            ("c", CompEnvValue::Scalar("c".into())),
+            ("a", CompEnvValue::Scalar("a".into())),
+        ];
+        let expr = compile_expr_with_scope("if c { a }", &scope).unwrap();
+        if let CircuitExpr::Mux { if_false, .. } = &expr {
+            assert_eq!(**if_false, CircuitExpr::Const(FieldElement::ZERO));
+        } else {
+            panic!("expected Mux, got {expr:?}");
+        }
+    }
+
+    #[test]
+    fn if_else_as_statement() {
+        // if/else at statement level produces a Mux expression and possibly an If node
+        let ir = compile_circuit(
+            "public x\npublic out\nlet result = if x { 1 } else { 0 }\nassert_eq(result, out)",
+        )
+        .unwrap();
+        // The let should have a Mux value
+        if let CircuitNode::Let { value, .. } = &ir.body[0] {
+            assert!(
+                matches!(value, CircuitExpr::Mux { .. }),
+                "expected Mux value, got {value:?}"
+            );
+        } else {
+            panic!("expected Let, got {:?}", ir.body[0]);
+        }
+    }
+
+    #[test]
+    fn for_range_literal() {
+        let ir = compile_circuit(
+            "public out\n\
+             mut acc = 0\n\
+             for i in 0..3 {\n\
+                 acc = acc + i\n\
+             }\n\
+             assert_eq(acc, out)",
+        )
+        .unwrap();
+        assert!(
+            ir.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::For {
+                    range: ForRange::Literal { start: 0, end: 3 },
+                    ..
+                }
+            )),
+            "expected For node with Literal range, body: {:#?}",
+            ir.body
+        );
+    }
+
+    #[test]
+    fn for_over_array() {
+        let ir = compile_circuit(
+            "public out\n\
+             let arr = [1, 2, 3]\n\
+             mut acc = 0\n\
+             for x in arr {\n\
+                 acc = acc + x\n\
+             }\n\
+             assert_eq(acc, out)",
+        )
+        .unwrap();
+        assert!(
+            ir.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::For {
+                    range: ForRange::Array(ref name),
+                    ..
+                } if name == "arr"
+            )),
+            "expected For node with Array range"
+        );
+    }
+
+    #[test]
+    fn for_expr_not_array_errors() {
+        let err = compile_circuit("public x\nfor i in x {\nassert_eq(i, i)\n}").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
+    }
+
+    #[test]
+    fn index_constant_resolves() {
+        let ir =
+            compile_circuit("public out\nlet arr = [10, 20, 30]\nassert_eq(arr[1], out)").unwrap();
+        // arr[1] with constant index should resolve to Var("arr_1")
+        if let CircuitNode::AssertEq { lhs, .. } = &ir.body[1] {
+            assert_eq!(*lhs, CircuitExpr::Var("arr_1".into()));
+        } else {
+            panic!("expected AssertEq, got {:?}", ir.body[1]);
+        }
+    }
+
+    #[test]
+    fn index_out_of_bounds_errors() {
+        let err = compile_circuit("let arr = [1, 2]\nassert_eq(arr[5], arr[0])").unwrap_err();
+        assert!(matches!(err, ProveIrError::IndexOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn block_expr() {
+        let scope = [("x", CompEnvValue::Scalar("x".into()))];
+        let expr = compile_expr_with_scope("{ x }", &scope).unwrap();
+        assert_eq!(expr, CircuitExpr::Var("x".into()));
+    }
+
+    #[test]
+    fn for_with_accumulator_circuit() {
+        // Realistic pattern: accumulate witness array values
+        let ir = compile_circuit(
+            "public total\n\
+             witness vals[4]\n\
+             mut sum = Field::ZERO\n\
+             for i in 0..4 {\n\
+                 sum = sum + vals[i]\n\
+             }\n\
+             assert_eq(sum, total)",
+        )
+        .unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs.len(), 1);
+        assert_eq!(ir.witness_inputs[0].name, "vals");
+        // Should have: LetArray(arr), Let(sum=ZERO), For{...}, AssertEq
+        assert!(ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })));
         assert!(ir
             .body
             .iter()
