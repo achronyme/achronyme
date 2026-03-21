@@ -858,6 +858,8 @@ impl ProveIrCompiler {
             }
 
             // --- Int methods desugared to circuit primitives ---
+            // NOTE: abs/min/max use CircuitCmpOp::Lt which requires a signed-range
+            // comparison gadget at instantiation time (Phase B). See CircuitCmpOp doc.
             "abs" => {
                 if !args.is_empty() {
                     return Err(ProveIrError::WrongArgumentCount {

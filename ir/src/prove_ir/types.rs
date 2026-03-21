@@ -225,6 +225,21 @@ pub enum CircuitUnaryOp {
 }
 
 /// Comparison operators available in circuits.
+///
+/// **Ordering semantics contract (Phase B):**
+/// `Eq` and `Neq` are well-defined over field elements. However, `Lt`, `Le`,
+/// `Gt`, and `Ge` have no standard ordering on a finite field (all elements
+/// are in `[0, p-1]`). These operators are emitted by method desugarings
+/// (`abs()`, `min()`, `max()`) and user-written comparisons.
+///
+/// Phase B (instantiation) MUST interpret ordering operators using a
+/// **signed-range comparison gadget**: the field element is treated as a
+/// two's-complement signed integer in `[-(p-1)/2, (p-1)/2]`, matching the
+/// VM's signed integer semantics. This requires range decomposition
+/// constraints (typically ~254 binary constraints for BN254).
+///
+/// Without this gadget, ordering comparisons produce incorrect results
+/// (e.g., `abs()` would never negate because all field elements ≥ 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CircuitCmpOp {
     Eq,
