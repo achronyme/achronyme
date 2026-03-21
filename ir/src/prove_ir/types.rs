@@ -56,7 +56,16 @@ impl ProveIR {
         Ok(out)
     }
 
-    /// Deserialize from bytes, validating magic header and version.
+    /// Validate structural invariants that the compiler guarantees but
+    /// could be violated by crafted bytes.
+    pub fn validate(&self) -> Result<(), String> {
+        for node in &self.body {
+            validate_node(node)?;
+        }
+        Ok(())
+    }
+
+    /// Deserialize from bytes, validating magic header, version, and invariants.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < 5 {
             return Err("ProveIR data too short (missing header)".into());
@@ -75,12 +84,112 @@ impl ProveIR {
             ));
         }
         let payload = &bytes[5..];
-        bincode::options()
+        let prove_ir: Self = bincode::options()
             .with_limit(PROVE_IR_MAX_SIZE)
             .with_fixint_encoding()
             .allow_trailing_bytes() // payload may be embedded in a larger buffer
             .deserialize(payload)
-            .map_err(|e| format!("ProveIR deserialization failed: {e}"))
+            .map_err(|e| format!("ProveIR deserialization failed: {e}"))?;
+        prove_ir.validate()?;
+        Ok(prove_ir)
+    }
+}
+
+/// Maximum allowed bits for RangeCheck (BN254 field is ~254 bits).
+const MAX_RANGE_CHECK_BITS: u32 = 253;
+
+fn validate_node(node: &CircuitNode) -> Result<(), String> {
+    match node {
+        CircuitNode::Let { value, .. } => validate_expr(value),
+        CircuitNode::LetArray { elements, .. } => {
+            for e in elements {
+                validate_expr(e)?;
+            }
+            Ok(())
+        }
+        CircuitNode::AssertEq { lhs, rhs, .. } => {
+            validate_expr(lhs)?;
+            validate_expr(rhs)
+        }
+        CircuitNode::Assert { expr, .. } => validate_expr(expr),
+        CircuitNode::For { body, .. } => {
+            for n in body {
+                validate_node(n)?;
+            }
+            Ok(())
+        }
+        CircuitNode::If {
+            cond,
+            then_body,
+            else_body,
+            ..
+        } => {
+            validate_expr(cond)?;
+            for n in then_body {
+                validate_node(n)?;
+            }
+            for n in else_body {
+                validate_node(n)?;
+            }
+            Ok(())
+        }
+        CircuitNode::Expr { expr, .. } => validate_expr(expr),
+    }
+}
+
+fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
+    match expr {
+        CircuitExpr::PoseidonMany(args) if args.len() < 2 => {
+            Err(format!(
+                "invalid ProveIR: poseidon_many has {} args (need >= 2)",
+                args.len()
+            ))
+        }
+        CircuitExpr::RangeCheck { bits, .. } if *bits == 0 || *bits > MAX_RANGE_CHECK_BITS => {
+            Err(format!(
+                "invalid ProveIR: range_check bits={bits} (must be 1..={MAX_RANGE_CHECK_BITS})"
+            ))
+        }
+        // Recurse into sub-expressions
+        CircuitExpr::BinOp { lhs, rhs, .. }
+        | CircuitExpr::Comparison { lhs, rhs, .. }
+        | CircuitExpr::BoolOp { lhs, rhs, .. } => {
+            validate_expr(lhs)?;
+            validate_expr(rhs)
+        }
+        CircuitExpr::UnaryOp { operand, .. } => validate_expr(operand),
+        CircuitExpr::Mux {
+            cond,
+            if_true,
+            if_false,
+        } => {
+            validate_expr(cond)?;
+            validate_expr(if_true)?;
+            validate_expr(if_false)
+        }
+        CircuitExpr::PoseidonHash { left, right } => {
+            validate_expr(left)?;
+            validate_expr(right)
+        }
+        CircuitExpr::PoseidonMany(args) => {
+            for a in args {
+                validate_expr(a)?;
+            }
+            Ok(())
+        }
+        CircuitExpr::RangeCheck { value, .. } => validate_expr(value),
+        CircuitExpr::MerkleVerify { root, leaf, .. } => {
+            validate_expr(root)?;
+            validate_expr(leaf)
+        }
+        CircuitExpr::ArrayIndex { index, .. } => validate_expr(index),
+        CircuitExpr::Pow { base, .. } => validate_expr(base),
+        // Leaf nodes — no sub-expressions
+        CircuitExpr::Const(_)
+        | CircuitExpr::Input(_)
+        | CircuitExpr::Capture(_)
+        | CircuitExpr::Var(_)
+        | CircuitExpr::ArrayLen(_) => Ok(()),
     }
 }
 
