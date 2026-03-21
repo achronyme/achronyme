@@ -157,6 +157,26 @@ let nothing = nil
 
 `nil` represents the absence of a value. Functions without a `return` statement return `nil`.
 
+## Static Namespaces
+
+Use `Type::MEMBER` syntax to access type-level constants:
+
+```ach
+// Integer bounds
+print(Int::MAX)      // 576460752303423487 (2^59 - 1)
+print(Int::MIN)      // -576460752303423488 (-2^59)
+
+// Field constants
+let zero = Field::ZERO
+let one = Field::ONE
+let order = Field::ORDER   // BN254 Fr modulus as string
+
+// BigInt constructor
+let val = BigInt::from_bits(bits, 256)
+```
+
+See [Methods & Static Namespaces](/language/methods/) for the full reference.
+
 ## Variable Bindings
 
 ```ach

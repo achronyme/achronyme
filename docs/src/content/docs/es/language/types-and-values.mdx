@@ -157,6 +157,26 @@ let nothing = nil
 
 `nil` representa la ausencia de un valor. Las funciones sin una sentencia `return` devuelven `nil`.
 
+## Namespaces Estáticos
+
+Usa la sintaxis `Tipo::MIEMBRO` para acceder a constantes a nivel de tipo:
+
+```ach
+// Límites de enteros
+print(Int::MAX)      // 576460752303423487 (2^59 - 1)
+print(Int::MIN)      // -576460752303423488 (-2^59)
+
+// Constantes de campo
+let zero = Field::ZERO
+let one = Field::ONE
+let order = Field::ORDER   // Módulo BN254 Fr como string
+
+// Constructor BigInt
+let val = BigInt::from_bits(bits, 256)
+```
+
+Consulta [Métodos y Namespaces Estáticos](/es/language/methods/) para la referencia completa.
+
 ## Vinculaciones de Variables
 
 ```ach
