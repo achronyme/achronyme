@@ -52,6 +52,8 @@ pub struct ProveIrCompiler {
     fn_table: HashMap<String, FnDef>,
     /// Recursion guard: functions currently being inlined.
     call_stack: HashSet<String>,
+    /// Monotonic counter for unique function inlining names.
+    inline_counter: u32,
     /// Accumulated circuit body nodes.
     body: Vec<CircuitNode>,
     /// Public input declarations.
@@ -68,6 +70,7 @@ impl ProveIrCompiler {
             captured_names: HashSet::new(),
             fn_table: HashMap::new(),
             call_stack: HashSet::new(),
+            inline_counter: 0,
             body: Vec::new(),
             public_inputs: Vec::new(),
             witness_inputs: Vec::new(),
@@ -1279,9 +1282,14 @@ impl ProveIrCompiler {
             .map(|p| (p.clone(), self.env.get(p).cloned()))
             .collect();
 
+        // Use a unique invocation counter to avoid name collisions when the
+        // same function is inlined multiple times.
+        let invoke_id = self.inline_counter;
+        self.inline_counter = self.inline_counter.wrapping_add(1);
+
         // Emit Let nodes for each parameter binding and register in env
         for (param, arg_expr) in param_names.iter().zip(compiled_args) {
-            let param_ssa = format!("__{name}_{param}");
+            let param_ssa = format!("__{name}${invoke_id}_{param}");
             self.body.push(CircuitNode::Let {
                 name: param_ssa.clone(),
                 value: arg_expr,
