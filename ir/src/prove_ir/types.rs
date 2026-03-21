@@ -10,8 +10,8 @@
 //! only useful at compile time.
 
 use achronyme_parser::diagnostic::SpanRange;
-use memory::FieldElement;
 use bincode::Options;
+use memory::FieldElement;
 use serde::{Deserialize, Serialize};
 
 use crate::types::IrType;
@@ -139,12 +139,10 @@ fn validate_node(node: &CircuitNode) -> Result<(), String> {
 
 fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
     match expr {
-        CircuitExpr::PoseidonMany(args) if args.len() < 2 => {
-            Err(format!(
-                "invalid ProveIR: poseidon_many has {} args (need >= 2)",
-                args.len()
-            ))
-        }
+        CircuitExpr::PoseidonMany(args) if args.len() < 2 => Err(format!(
+            "invalid ProveIR: poseidon_many has {} args (need >= 2)",
+            args.len()
+        )),
         CircuitExpr::RangeCheck { bits, .. } if *bits == 0 || *bits > MAX_RANGE_CHECK_BITS => {
             Err(format!(
                 "invalid ProveIR: range_check bits={bits} (must be 1..={MAX_RANGE_CHECK_BITS})"
@@ -625,6 +623,188 @@ mod tests {
             bytes.len() < 1024,
             "serialized size {} bytes seems too large",
             bytes.len()
+        );
+    }
+
+    // =====================================================================
+    // Adversarial deserialization tests
+    // =====================================================================
+
+    #[test]
+    fn adversarial_empty_bytes() {
+        assert!(ProveIR::from_bytes(&[]).is_err());
+    }
+
+    #[test]
+    fn adversarial_too_short() {
+        assert!(ProveIR::from_bytes(b"ACH").is_err());
+    }
+
+    #[test]
+    fn adversarial_wrong_magic() {
+        assert!(ProveIR::from_bytes(b"EVIL\x01").is_err());
+    }
+
+    #[test]
+    fn adversarial_wrong_version() {
+        let mut bytes = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+        }
+        .to_bytes()
+        .unwrap();
+        bytes[4] = 99; // corrupt version byte
+        let err = ProveIR::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.contains("version"),
+            "error should mention version: {err}"
+        );
+    }
+
+    #[test]
+    fn adversarial_truncated_payload() {
+        let bytes = ProveIR {
+            public_inputs: vec![ProveInputDecl {
+                name: "x".into(),
+                array_size: None,
+                ir_type: IrType::Field,
+            }],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+        }
+        .to_bytes()
+        .unwrap();
+        // Truncate the payload
+        let truncated = &bytes[..bytes.len() / 2];
+        assert!(ProveIR::from_bytes(truncated).is_err());
+    }
+
+    #[test]
+    fn adversarial_random_bytes() {
+        let garbage = b"ACHP\x01\xff\xff\xff\xff\xff\xff\xff\xff";
+        assert!(ProveIR::from_bytes(garbage).is_err());
+    }
+
+    #[test]
+    fn adversarial_invalid_field_element() {
+        // Craft bytes with FieldElement limbs >= MODULUS
+        use memory::field::MODULUS;
+
+        let ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![CircuitNode::Let {
+                name: "x".into(),
+                value: CircuitExpr::Const(FieldElement::ONE),
+                span: None,
+            }],
+        };
+        let mut bytes = ir.to_bytes().unwrap();
+
+        // Find the FieldElement in the serialized bytes and corrupt it.
+        // The ONE constant has specific limbs — replace them with MODULUS.
+        // The FieldElement is serialized as [u64;4] = 32 bytes.
+        // Search for the ONE limbs and replace with MODULUS.
+        let one_bytes = bincode::serialize(&FieldElement::ONE).unwrap();
+
+        let modulus_bytes: Vec<u8> = MODULUS.iter().flat_map(|l| l.to_le_bytes()).collect();
+        let one_bytes_len = one_bytes.len();
+
+        // Find the ONE pattern in serialized bytes
+        if let Some(pos) = bytes
+            .windows(one_bytes_len)
+            .position(|w| w == one_bytes.as_slice())
+        {
+            bytes[pos..pos + one_bytes_len].copy_from_slice(&modulus_bytes);
+            let err = ProveIR::from_bytes(&bytes).unwrap_err();
+            assert!(
+                err.contains("modulus") || err.contains("FieldElement"),
+                "error should mention modulus/FieldElement: {err}"
+            );
+        } else {
+            panic!("could not find ONE limbs in serialized bytes");
+        }
+    }
+
+    // F4: PoseidonMany with < 2 args rejected after deserialization
+    #[test]
+    fn adversarial_poseidon_many_empty_rejected() {
+        let ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![CircuitNode::Expr {
+                expr: CircuitExpr::PoseidonMany(vec![]),
+                span: None,
+            }],
+        };
+        // Serialize directly with bincode (bypass to_bytes header)
+        let payload = bincode::serialize(&ir).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ACHP");
+        bytes.push(1);
+        bytes.extend_from_slice(&payload);
+        let err = ProveIR::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.contains("poseidon_many"),
+            "should reject poseidon_many with 0 args: {err}"
+        );
+    }
+
+    // F5: RangeCheck with invalid bits rejected
+    #[test]
+    fn adversarial_range_check_zero_bits_rejected() {
+        let ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![CircuitNode::Expr {
+                expr: CircuitExpr::RangeCheck {
+                    value: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
+                    bits: 0,
+                },
+                span: None,
+            }],
+        };
+        let payload = bincode::serialize(&ir).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ACHP");
+        bytes.push(1);
+        bytes.extend_from_slice(&payload);
+        let err = ProveIR::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.contains("range_check"),
+            "should reject range_check bits=0: {err}"
+        );
+    }
+
+    #[test]
+    fn adversarial_range_check_oversized_bits_rejected() {
+        let ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![CircuitNode::Expr {
+                expr: CircuitExpr::RangeCheck {
+                    value: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
+                    bits: 300,
+                },
+                span: None,
+            }],
+        };
+        let payload = bincode::serialize(&ir).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ACHP");
+        bytes.push(1);
+        bytes.extend_from_slice(&payload);
+        let err = ProveIR::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.contains("range_check"),
+            "should reject range_check bits=300: {err}"
         );
     }
 }
