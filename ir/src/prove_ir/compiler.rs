@@ -749,7 +749,17 @@ impl ProveIrCompiler {
             "range_check" => {
                 self.check_arity("range_check", 2, args.len(), span)?;
                 let value = self.compile_expr(&args[0])?;
-                let bits = self.extract_const_u64(&args[1], span)? as u32;
+                let bits_u64 = self.extract_const_u64(&args[1], span)?;
+                if bits_u64 > u32::MAX as u64 {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "range_check bit count {bits_u64} exceeds maximum ({})",
+                            u32::MAX
+                        ),
+                        span: to_span(span),
+                    });
+                }
+                let bits = bits_u64 as u32;
                 Ok(CircuitExpr::RangeCheck {
                     value: Box::new(value),
                     bits,
