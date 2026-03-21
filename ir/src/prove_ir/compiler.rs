@@ -388,8 +388,15 @@ impl ProveIrCompiler {
             }
         })?;
 
-        // Increment version
-        let new_version = version + 1;
+        // Increment version (checked to avoid panic on theoretical overflow)
+        let new_version = version.checked_add(1).ok_or_else(|| {
+            ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "SSA version overflow for `{name}` — too many reassignments"
+                ),
+                span: to_span(span),
+            }
+        })?;
         self.ssa_versions.insert(name.clone(), new_version);
 
         // Generate SSA name: x__v1, x__v2, etc.
