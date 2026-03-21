@@ -393,14 +393,15 @@ impl ProveIrCompiler {
         })?;
 
         // Increment version (checked to avoid panic on theoretical overflow)
-        let new_version = version.checked_add(1).ok_or_else(|| {
-            ProveIrError::UnsupportedOperation {
-                description: format!(
-                    "SSA version overflow for `{name}` — too many reassignments"
-                ),
-                span: to_span(span),
-            }
-        })?;
+        let new_version =
+            version
+                .checked_add(1)
+                .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "SSA version overflow for `{name}` — too many reassignments"
+                    ),
+                    span: to_span(span),
+                })?;
         self.ssa_versions.insert(name.clone(), new_version);
 
         // Generate SSA name using $ separator (not valid in user identifiers).
@@ -3146,11 +3147,7 @@ mod tests {
             .collect();
         // All names should be unique
         let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
-        assert_eq!(
-            names.len(),
-            unique.len(),
-            "duplicate Let names: {names:?}"
-        );
+        assert_eq!(names.len(), unique.len(), "duplicate Let names: {names:?}");
     }
 
     // G5: range_check with very large bit count
@@ -3171,9 +3168,7 @@ mod tests {
         let source = "public out\nfor i in 5..3 { }\nassert_eq(0, out)";
         let ir = compile_circuit(source).unwrap();
         assert!(
-            ir.body
-                .iter()
-                .any(|n| matches!(n, CircuitNode::For { .. })),
+            ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })),
             "expected For node"
         );
     }
