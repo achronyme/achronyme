@@ -102,11 +102,39 @@ pub enum Stmt {
         names: Vec<String>,
         span: Span,
     },
+    /// Reusable circuit definition: `circuit name(public x, witness y) { body }`
+    CircuitDecl {
+        name: String,
+        params: Vec<CircuitParam>,
+        body: Block,
+        span: Span,
+    },
+    /// Circuit import: `import circuit "path" as name`
+    ImportCircuit {
+        path: String,
+        alias: String,
+        span: Span,
+    },
     Expr(Expr),
     /// Placeholder for a statement that failed to parse (error recovery).
     Error {
         span: Span,
     },
+}
+
+/// A parameter in a circuit declaration with visibility.
+#[derive(Clone, Debug)]
+pub struct CircuitParam {
+    pub name: String,
+    pub visibility: CircuitVisibility,
+    pub array_size: Option<usize>,
+}
+
+/// Visibility of a circuit parameter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CircuitVisibility {
+    Public,
+    Witness,
 }
 
 /// A public/witness input declaration with optional array size.
@@ -237,6 +265,12 @@ pub enum Expr {
         public_list: Option<Vec<String>>,
         span: Span,
     },
+    /// Circuit call with keyword arguments: `name(key: val, ...)`
+    CircuitCall {
+        name: String,
+        args: Vec<(String, Expr)>,
+        span: Span,
+    },
     Array {
         elements: Vec<Expr>,
         span: Span,
@@ -278,6 +312,7 @@ impl Expr {
             | Expr::Forever { span, .. }
             | Expr::FnExpr { span, .. }
             | Expr::Prove { span, .. }
+            | Expr::CircuitCall { span, .. }
             | Expr::Array { span, .. }
             | Expr::Map { span, .. }
             | Expr::StaticAccess { span, .. }

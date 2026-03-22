@@ -48,6 +48,7 @@ impl Parser {
                     span: self.span_to_prev(&sp),
                 })
             }
+            TokenKind::Circuit => self.parse_circuit_decl(),
             TokenKind::Prove => {
                 // prove name(...) { ... } → desugar to let name = prove name(...) { ... }
                 // prove(...) { ... } or prove { ... } → expression statement
@@ -208,6 +209,104 @@ impl Parser {
         })
     }
 
+    /// Parse `circuit name(public x, witness y[3]) { body }`
+    fn parse_circuit_decl(&mut self) -> Result<Stmt, ParseError> {
+        use crate::ast::{CircuitParam, CircuitVisibility};
+
+        let sp = self.span();
+        self.advance(); // eat `circuit`
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::LParen)?;
+
+        let mut params = Vec::new();
+        while !self.at(&TokenKind::RParen) {
+            // Each param: `public name` or `witness name` with optional `[N]`
+            let visibility = if self.at(&TokenKind::Public) {
+                self.advance();
+                CircuitVisibility::Public
+            } else if self.at(&TokenKind::Witness) {
+                self.advance();
+                CircuitVisibility::Witness
+            } else {
+                let tok = self.peek();
+                return Err(ParseError::new(
+                    format!(
+                        "expected `public` or `witness` before parameter name, found `{}`",
+                        tok_display(tok)
+                    ),
+                    tok.span.line_start,
+                    tok.span.col_start,
+                ));
+            };
+
+            let param_name = self.expect_ident()?;
+
+            let array_size = if self.at(&TokenKind::LBracket) {
+                self.advance();
+                let tok = self.peek().clone();
+                let size = tok.lexeme.parse::<usize>().map_err(|_| {
+                    ParseError::new(
+                        format!("expected array size, found `{}`", tok_display(&tok)),
+                        tok.span.line_start,
+                        tok.span.col_start,
+                    )
+                })?;
+                self.advance();
+                self.expect(&TokenKind::RBracket)?;
+                Some(size)
+            } else {
+                None
+            };
+
+            params.push(CircuitParam {
+                name: param_name,
+                visibility,
+                array_size,
+            });
+
+            if self.at(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        let body = self.parse_block_inner()?;
+
+        Ok(Stmt::CircuitDecl {
+            name,
+            params,
+            body,
+            span: self.span_to_prev(&sp),
+        })
+    }
+
+    /// Parse `import circuit "path" as name`
+    fn parse_import_circuit(&mut self, sp: Span) -> Result<Stmt, ParseError> {
+        self.advance(); // eat `circuit`
+
+        let tok = self.peek().clone();
+        if tok.kind != TokenKind::StringLit {
+            return Err(ParseError::new(
+                format!(
+                    "expected string literal for circuit path, found `{}`",
+                    tok_display(&tok)
+                ),
+                tok.span.line_start,
+                tok.span.col_start,
+            ));
+        }
+        let path = tok.lexeme.clone();
+        self.advance();
+        self.expect(&TokenKind::As)?;
+        let alias = self.expect_ident()?;
+
+        Ok(Stmt::ImportCircuit {
+            path,
+            alias,
+            span: self.span_to_prev(&sp),
+        })
+    }
+
     fn parse_import(&mut self) -> Result<Stmt, ParseError> {
         let sp = self.span();
         if self.block_depth > 0 {
@@ -218,6 +317,11 @@ impl Parser {
             ));
         }
         self.advance(); // eat `import`
+
+        // Branch: circuit import `import circuit "path" as name`
+        if self.at(&TokenKind::Circuit) {
+            return self.parse_import_circuit(sp);
+        }
 
         // Branch: selective import `import { x, y } from "path"`
         if self.at(&TokenKind::LBrace) {

@@ -566,6 +566,7 @@ impl<'a> Lexer<'a> {
             "public" => TokenKind::Public,
             "witness" => TokenKind::Witness,
             "prove" => TokenKind::Prove,
+            "circuit" => TokenKind::Circuit,
             "forever" => TokenKind::Forever,
             "import" => TokenKind::Import,
             "export" => TokenKind::Export,

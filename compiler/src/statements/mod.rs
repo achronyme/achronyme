@@ -46,6 +46,8 @@ pub(crate) fn stmt_span(stmt: &Stmt) -> Option<&Span> {
         | Stmt::Export { span, .. }
         | Stmt::SelectiveImport { span, .. }
         | Stmt::ExportList { span, .. }
+        | Stmt::CircuitDecl { span, .. }
+        | Stmt::ImportCircuit { span, .. }
         | Stmt::Error { span } => Some(span),
         Stmt::Expr(expr) => Some(expr.span()),
     }
@@ -115,6 +117,14 @@ impl StatementCompiler for Compiler {
                 // Export lists are metadata — handled by collect_exports, no bytecode to emit
                 Ok(())
             }
+            Stmt::CircuitDecl { span, .. } => Err(CompilerError::CompileError(
+                "circuit declarations are not yet implemented".into(),
+                span_box(span),
+            )),
+            Stmt::ImportCircuit { span, .. } => Err(CompilerError::CompileError(
+                "circuit imports are not yet implemented".into(),
+                span_box(span),
+            )),
             Stmt::Error { .. } => Ok(()),
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;

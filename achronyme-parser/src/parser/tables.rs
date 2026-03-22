@@ -76,6 +76,7 @@ pub(super) fn kind_name(kind: &TokenKind) -> &'static str {
         TokenKind::Public => "public",
         TokenKind::Witness => "witness",
         TokenKind::Prove => "prove",
+        TokenKind::Circuit => "circuit",
         TokenKind::Forever => "forever",
         TokenKind::Import => "import",
         TokenKind::Export => "export",

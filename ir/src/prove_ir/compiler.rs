@@ -207,6 +207,14 @@ impl ProveIrCompiler {
                     span: to_span(span),
                 })
             }
+            Stmt::CircuitDecl { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "circuit declarations are not supported inside circuits".into(),
+                span: to_span(span),
+            }),
+            Stmt::ImportCircuit { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "circuit imports are not supported inside circuits".into(),
+                span: to_span(span),
+            }),
         }
     }
 
@@ -548,6 +556,10 @@ impl ProveIrCompiler {
             }
             Expr::Prove { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "prove blocks cannot be nested inside circuits".into(),
+                span: to_span(span),
+            }),
+            Expr::CircuitCall { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "circuit calls are not yet supported in circuits".into(),
                 span: to_span(span),
             }),
             Expr::FnExpr { span, .. } => Err(ProveIrError::UnsupportedOperation {

@@ -37,6 +37,7 @@ pub enum TokenKind {
     Public,
     Witness,
     Prove,
+    Circuit,
     Forever,
     Import,
     Export,

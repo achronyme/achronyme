@@ -75,6 +75,10 @@ impl IrLowering {
                 "prove blocks cannot be nested inside circuits (a circuit is already generating constraints)".into(),
                 to_ir_span(span),
             )),
+            Expr::CircuitCall { span, .. } => Err(IrError::UnsupportedOperation(
+                "circuit calls are not yet supported in circuits".into(),
+                to_ir_span(span),
+            )),
             Expr::FnExpr { span, .. } => Err(IrError::UnsupportedOperation(
                 "closures are not supported in circuits (captured variables cannot be tracked as circuit wires — use 'fn' declarations instead)".into(),
                 to_ir_span(span),

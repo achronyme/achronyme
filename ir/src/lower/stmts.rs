@@ -95,6 +95,14 @@ impl IrLowering {
                 // Export lists are metadata — handled by collect_exports, no IR to emit
                 Ok(None)
             }
+            Stmt::CircuitDecl { span, .. } => Err(IrError::UnsupportedOperation(
+                "circuit declarations are not supported inside circuits".into(),
+                to_ir_span(span),
+            )),
+            Stmt::ImportCircuit { span, .. } => Err(IrError::UnsupportedOperation(
+                "circuit imports are not supported inside circuits".into(),
+                to_ir_span(span),
+            )),
             Stmt::Error { .. } => Ok(None),
         }
     }
