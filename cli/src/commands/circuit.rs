@@ -54,8 +54,10 @@ pub fn circuit_command(
     solidity_path: Option<&str>,
     plonkish_json_path: Option<&str>,
     dump_ir: bool,
+    circuit_stats: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
+    let _ = circuit_stats; // TODO: will be used in next commit
     // 0. Validate flag combinations early (before expensive IR lowering)
     if solidity_path.is_some() && backend != "r1cs" {
         return Err(anyhow::anyhow!(

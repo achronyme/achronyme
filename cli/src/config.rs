@@ -85,6 +85,7 @@ pub struct ProjectConfig {
     pub max_heap: Option<String>,
     pub stress_gc: bool,
     pub gc_stats: bool,
+    pub circuit_stats: bool,
     pub public: Vec<String>,
     pub witness: Vec<String>,
 }
@@ -272,6 +273,7 @@ pub struct CliOverrides {
     pub max_heap: Option<String>,
     pub stress_gc: bool,
     pub gc_stats: bool,
+    pub circuit_stats: bool,
     pub public: Vec<String>,
     pub witness: Vec<String>,
 }
@@ -393,6 +395,8 @@ pub fn resolve_config(
         toml.and_then(|t| t.vm.as_ref()?.gc_stats).unwrap_or(false)
     };
 
+    let circuit_stats = cli.circuit_stats;
+
     // Circuit declarations: CLI > toml (non-empty CLI wins)
     let public = if !cli.public.is_empty() {
         cli.public.clone()
@@ -424,6 +428,7 @@ pub fn resolve_config(
         max_heap,
         stress_gc,
         gc_stats,
+        circuit_stats,
         public,
         witness,
     }
@@ -578,6 +583,7 @@ witness = ["w"]
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: false,
             public: vec![],
             witness: vec![],
         };
@@ -601,6 +607,7 @@ witness = ["w"]
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: false,
             public: vec![],
             witness: vec![],
         };
@@ -637,6 +644,7 @@ witness = ["w"]
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: false,
             public: vec![],
             witness: vec![],
         };
@@ -674,6 +682,7 @@ witness = ["w"]
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: false,
             public: vec![],
             witness: vec![],
         };

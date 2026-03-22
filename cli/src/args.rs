@@ -45,6 +45,9 @@ pub enum Commands {
         /// Print GC statistics to stderr after execution
         #[arg(long)]
         gc_stats: bool,
+        /// Print circuit constraint stats for each prove block
+        #[arg(long)]
+        circuit_stats: bool,
     },
     /// Disassemble a source file or binary
     Disassemble {
@@ -96,5 +99,8 @@ pub enum Commands {
         /// Dump the SSA IR (after optimization) and exit without compiling to constraints
         #[arg(long)]
         dump_ir: bool,
+        /// Print circuit constraint stats breakdown
+        #[arg(long)]
+        circuit_stats: bool,
     },
 }

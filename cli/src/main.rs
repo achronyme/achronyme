@@ -68,6 +68,7 @@ fn main() -> Result<()> {
                 &cfg.prove_backend,
                 cfg.max_heap.as_deref(),
                 cfg.gc_stats,
+                cfg.circuit_stats,
                 ef,
             )
         }
@@ -109,6 +110,7 @@ fn main() -> Result<()> {
                 cfg.solidity_path.as_deref(),
                 cfg.plonkish_json_path.as_deref(),
                 *dump_ir,
+                cfg.circuit_stats,
                 ef,
             )
         }
@@ -146,6 +148,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             prove_backend,
             max_heap,
             gc_stats,
+            circuit_stats,
             ..
         } => CliOverrides {
             path: path.clone(),
@@ -160,6 +163,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             max_heap: max_heap.clone(),
             stress_gc: *stress_gc,
             gc_stats: *gc_stats,
+            circuit_stats: *circuit_stats,
             public: vec![],
             witness: vec![],
         },
@@ -177,6 +181,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: false,
             public: vec![],
             witness: vec![],
         },
@@ -194,6 +199,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: false,
             public: vec![],
             witness: vec![],
         },
@@ -208,6 +214,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             no_optimize,
             solidity,
             plonkish_json,
+            circuit_stats,
             ..
         } => CliOverrides {
             path: path.clone(),
@@ -222,6 +229,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
+            circuit_stats: *circuit_stats,
             public: public.clone(),
             witness: witness.clone(),
         },

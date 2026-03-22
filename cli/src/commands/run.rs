@@ -13,6 +13,7 @@ pub fn run_file(
     prove_backend: &str,
     max_heap: Option<&str>,
     gc_stats: bool,
+    _circuit_stats: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
     if ptau.is_some() {
