@@ -454,9 +454,9 @@ impl ControlFlowCompiler for Compiler {
         if let Ok(func) = self.current_ref() {
             for local in &func.locals {
                 let entry = match &local.type_ann {
-                    Some(
-                        TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n),
-                    ) => ir::prove_ir::OuterScopeEntry::Array(*n),
+                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => {
+                        ir::prove_ir::OuterScopeEntry::Array(*n)
+                    }
                     _ => ir::prove_ir::OuterScopeEntry::Scalar,
                 };
                 outer_scope.insert(local.name.clone(), entry);
@@ -465,9 +465,9 @@ impl ControlFlowCompiler for Compiler {
         for compiler in &self.compilers[..self.compilers.len().saturating_sub(1)] {
             for local in &compiler.locals {
                 let entry = match &local.type_ann {
-                    Some(
-                        TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n),
-                    ) => ir::prove_ir::OuterScopeEntry::Array(*n),
+                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => {
+                        ir::prove_ir::OuterScopeEntry::Array(*n)
+                    }
                     _ => ir::prove_ir::OuterScopeEntry::Scalar,
                 };
                 outer_scope.entry(local.name.clone()).or_insert(entry);
@@ -536,9 +536,7 @@ impl ControlFlowCompiler for Compiler {
             std::collections::HashSet::new();
 
         for cap in &prove_ir.captures {
-            if let Some(parent) =
-                find_array_parent(&cap.name, &outer_scope)
-            {
+            if let Some(parent) = find_array_parent(&cap.name, &outer_scope) {
                 // Array element capture — load the parent array once
                 if emitted_arrays.insert(parent.clone()) {
                     capture_names.push(parent);
