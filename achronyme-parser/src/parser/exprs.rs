@@ -479,18 +479,35 @@ impl Parser {
 
     fn parse_prove(&mut self) -> Result<Expr, ParseError> {
         let sp = self.span();
-        let start = self.peek().span.byte_start;
         self.advance(); // eat `prove`
+
+        // Optional: parse `(public: [name1, name2, ...])`
+        let public_list = if self.at(&TokenKind::LParen) {
+            self.advance(); // eat `(`
+            self.expect(&TokenKind::Public)?;
+            self.expect(&TokenKind::Colon)?;
+            self.expect(&TokenKind::LBracket)?;
+
+            let mut names = Vec::new();
+            while !self.at(&TokenKind::RBracket) {
+                let name = self.expect_ident()?;
+                names.push(name);
+                if self.at(&TokenKind::Comma) {
+                    self.advance();
+                }
+            }
+            self.expect(&TokenKind::RBracket)?;
+            self.expect(&TokenKind::RParen)?;
+            Some(names)
+        } else {
+            None
+        };
 
         let body = self.parse_block_inner()?;
 
-        // The closing `}` was the token just before current position
-        let end = self.tokens[self.pos - 1].span.byte_end;
-        let source_text = self.source[start..end].to_string();
-
         Ok(Expr::Prove {
             body,
-            source: source_text,
+            public_list,
             span: self.span_to_prev(&sp),
         })
     }

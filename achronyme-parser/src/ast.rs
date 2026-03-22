@@ -230,7 +230,9 @@ pub enum Expr {
     },
     Prove {
         body: Block,
-        source: String,
+        /// Optional `prove(public: [x, y]) { ... }` syntax.
+        /// When Some, witnesses are auto-inferred from outer scope.
+        public_list: Option<Vec<String>>,
         span: Span,
     },
     Array {

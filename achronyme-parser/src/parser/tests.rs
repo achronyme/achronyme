@@ -176,8 +176,14 @@ fn parse_public_witness_decl() {
 fn parse_prove_block() {
     let prog = parse_ok("prove { 1 + 2 }");
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::Prove { source, .. }) => {
-            assert!(source.contains("1 + 2"));
+        Stmt::Expr(Expr::Prove {
+            public_list, body, ..
+        }) => {
+            assert!(
+                public_list.is_none(),
+                "old syntax should have no public_list"
+            );
+            assert!(!body.stmts.is_empty(), "body should have statements");
         }
         other => panic!("expected Prove, got {other:?}"),
     }

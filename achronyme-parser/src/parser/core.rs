@@ -11,7 +11,6 @@ const MAX_ERRORS: usize = 20;
 pub(super) struct Parser {
     pub(super) tokens: Vec<Token>,
     pub(super) pos: usize,
-    pub(super) source: String,
     /// Nesting depth: 0 = top-level, >0 = inside block/function.
     pub(super) block_depth: usize,
     /// Collected diagnostics from error recovery.
@@ -19,11 +18,10 @@ pub(super) struct Parser {
 }
 
 impl Parser {
-    pub(super) fn new(tokens: Vec<Token>, source: String) -> Self {
+    pub(super) fn new(tokens: Vec<Token>, _source: String) -> Self {
         Self {
             tokens,
             pos: 0,
-            source,
             block_depth: 0,
             errors: Vec::new(),
         }
