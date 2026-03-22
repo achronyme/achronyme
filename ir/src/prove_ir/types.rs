@@ -59,8 +59,23 @@ impl ProveIR {
     /// Validate structural invariants that the compiler guarantees but
     /// could be violated by crafted bytes.
     pub fn validate(&self) -> Result<(), String> {
+        // Collect known capture names for cross-reference validation.
+        let capture_names: std::collections::HashSet<&str> =
+            self.captures.iter().map(|c| c.name.as_str()).collect();
+
+        // Validate capture references in input array sizes.
+        for input in self.public_inputs.iter().chain(self.witness_inputs.iter()) {
+            if let Some(ArraySize::Capture(ref name)) = input.array_size {
+                if !capture_names.contains(name.as_str()) {
+                    return Err(format!(
+                        "invalid ProveIR: array size references unknown capture `{name}`"
+                    ));
+                }
+            }
+        }
+
         for node in &self.body {
-            validate_node(node)?;
+            validate_node(node, &capture_names)?;
         }
         Ok(())
     }
@@ -98,7 +113,10 @@ impl ProveIR {
 /// Maximum allowed bits for RangeCheck (BN254 field is ~254 bits).
 const MAX_RANGE_CHECK_BITS: u32 = 253;
 
-fn validate_node(node: &CircuitNode) -> Result<(), String> {
+fn validate_node(
+    node: &CircuitNode,
+    capture_names: &std::collections::HashSet<&str>,
+) -> Result<(), String> {
     match node {
         CircuitNode::Let { value, .. } => validate_expr(value),
         CircuitNode::LetArray { elements, .. } => {
@@ -112,9 +130,17 @@ fn validate_node(node: &CircuitNode) -> Result<(), String> {
             validate_expr(rhs)
         }
         CircuitNode::Assert { expr, .. } => validate_expr(expr),
-        CircuitNode::For { body, .. } => {
+        CircuitNode::For { range, body, .. } => {
+            // Validate ForRange::WithCapture references a known capture.
+            if let ForRange::WithCapture { end_capture, .. } = range {
+                if !capture_names.contains(end_capture.as_str()) {
+                    return Err(format!(
+                        "invalid ProveIR: loop bound references unknown capture `{end_capture}`"
+                    ));
+                }
+            }
             for n in body {
-                validate_node(n)?;
+                validate_node(n, capture_names)?;
             }
             Ok(())
         }
@@ -126,10 +152,10 @@ fn validate_node(node: &CircuitNode) -> Result<(), String> {
         } => {
             validate_expr(cond)?;
             for n in then_body {
-                validate_node(n)?;
+                validate_node(n, capture_names)?;
             }
             for n in else_body {
-                validate_node(n)?;
+                validate_node(n, capture_names)?;
             }
             Ok(())
         }
@@ -805,6 +831,50 @@ mod tests {
         assert!(
             err.contains("range_check"),
             "should reject range_check bits=300: {err}"
+        );
+    }
+
+    // D4: ArraySize::Capture referencing unknown capture is rejected
+    #[test]
+    fn adversarial_array_size_unknown_capture_rejected() {
+        let ir = ProveIR {
+            public_inputs: vec![ProveInputDecl {
+                name: "arr".into(),
+                array_size: Some(ArraySize::Capture("ghost".into())),
+                ir_type: IrType::Field,
+            }],
+            witness_inputs: vec![],
+            captures: vec![], // no capture named "ghost"
+            body: vec![],
+        };
+        let err = ir.validate().unwrap_err();
+        assert!(
+            err.contains("ghost"),
+            "should mention unknown capture: {err}"
+        );
+    }
+
+    // D5: ForRange::WithCapture referencing unknown capture is rejected
+    #[test]
+    fn adversarial_for_range_unknown_capture_rejected() {
+        let ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![], // no capture named "missing"
+            body: vec![CircuitNode::For {
+                var: "i".into(),
+                range: ForRange::WithCapture {
+                    start: 0,
+                    end_capture: "missing".into(),
+                },
+                body: vec![],
+                span: None,
+            }],
+        };
+        let err = ir.validate().unwrap_err();
+        assert!(
+            err.contains("missing"),
+            "should mention unknown capture: {err}"
         );
     }
 }
