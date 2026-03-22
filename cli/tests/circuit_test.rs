@@ -42,6 +42,7 @@ fn circuit_r1cs_basic_compilation() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "circuit r1cs failed: {:?}", result.err());
@@ -69,6 +70,7 @@ fn circuit_plonkish_basic_compilation() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(
@@ -94,6 +96,7 @@ fn circuit_nonexistent_file_error() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_err(), "nonexistent file should error");
@@ -116,6 +119,7 @@ fn circuit_invalid_source_error() {
         false,
         None,
         None,
+        false,
         false,
         EF,
     );
@@ -144,6 +148,7 @@ fn circuit_r1cs_with_witness() {
         false,
         None,
         None,
+        false,
         false,
         EF,
     );
@@ -181,6 +186,7 @@ fn circuit_plonkish_with_witness() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(
@@ -209,6 +215,7 @@ fn circuit_r1cs_wrong_witness_rejected() {
         false,
         None,
         None,
+        false,
         false,
         EF,
     );
@@ -249,6 +256,7 @@ fn circuit_r1cs_poseidon() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(
@@ -276,6 +284,7 @@ fn circuit_r1cs_range_check() {
         false,
         None,
         None,
+        false,
         false,
         EF,
     );
@@ -306,6 +315,7 @@ fn circuit_r1cs_mux() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "mux circuit failed: {:?}", result.err());
@@ -334,6 +344,7 @@ fn circuit_no_optimize_flag() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(
@@ -360,6 +371,7 @@ fn circuit_unknown_backend_error() {
         None,
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_err(), "unknown backend should error");
@@ -385,6 +397,7 @@ fn circuit_solidity_with_plonkish_rejected() {
         false,
         Some("verifier.sol"),
         None,
+        false,
         false,
         EF,
     );
@@ -414,6 +427,7 @@ fn circuit_prove_without_inputs_rejected() {
         true, // --prove
         None,
         None,
+        false,
         false,
         EF,
     );
@@ -446,6 +460,7 @@ fn circuit_plonkish_json_with_inputs() {
         false,
         None,
         Some(json_path.to_str().unwrap()),
+        false,
         false,
         EF,
     );
@@ -480,6 +495,7 @@ fn circuit_plonkish_json_without_inputs() {
         None,
         Some(json_path.to_str().unwrap()),
         false,
+        false,
         EF,
     );
     assert!(
@@ -511,6 +527,7 @@ fn circuit_plonkish_json_with_r1cs_rejected() {
         false,
         None,
         Some(json_path.to_str().unwrap()),
+        false,
         false,
         EF,
     );
@@ -547,6 +564,7 @@ fn circuit_json_error_format() {
         None,
         None,
         false,
+        false,
         ErrorFormat::Json,
     );
     assert!(result.is_err());
@@ -569,6 +587,7 @@ fn circuit_short_error_format() {
         false,
         None,
         None,
+        false,
         false,
         ErrorFormat::Short,
     );
@@ -599,6 +618,7 @@ fn circuit_cli_public_witness_declarations() {
         false,
         None,
         None,
+        false,
         false,
         EF,
     );

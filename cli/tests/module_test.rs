@@ -29,6 +29,7 @@ fn import_basic_function_call() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
@@ -42,6 +43,7 @@ fn import_constants_access() {
         None,
         "r1cs",
         None,
+        false,
         false,
         EF,
     );
@@ -58,6 +60,7 @@ fn import_internal_helper_function() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
@@ -73,6 +76,7 @@ fn import_transitive() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
@@ -86,6 +90,7 @@ fn import_circular_detected() {
         None,
         "r1cs",
         None,
+        false,
         false,
         EF,
     );
@@ -105,6 +110,7 @@ fn import_module_not_found() {
         None,
         "r1cs",
         None,
+        false,
         false,
         EF,
     );
@@ -126,6 +132,7 @@ fn import_no_exports_module() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
@@ -144,6 +151,7 @@ fn selective_import_basic() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
@@ -157,6 +165,7 @@ fn export_list_via_namespace() {
         None,
         "r1cs",
         None,
+        false,
         false,
         EF,
     );
@@ -172,6 +181,7 @@ fn mixed_selective_and_namespace_import() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
@@ -185,6 +195,7 @@ fn selective_import_nonexistent_name() {
         None,
         "r1cs",
         None,
+        false,
         false,
         EF,
     );
@@ -205,6 +216,7 @@ fn duplicate_export_detected() {
         "r1cs",
         None,
         false,
+        false,
         EF,
     );
     assert!(result.is_err());
@@ -223,6 +235,7 @@ fn export_list_undefined_name() {
         None,
         "r1cs",
         None,
+        false,
         false,
         EF,
     );
@@ -316,6 +329,7 @@ fn circuit_import_with_poseidon() {
         false,
         None,
         None,
+        false,
         false,
         EF,
     );
