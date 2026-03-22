@@ -29,6 +29,12 @@ pub trait StatementCompiler {
         body: &Block,
         span: &Span,
     ) -> Result<(), CompilerError>;
+    fn compile_import_circuit(
+        &mut self,
+        path: &str,
+        alias: &str,
+        span: &Span,
+    ) -> Result<(), CompilerError>;
 }
 
 /// Extract the source line number from a statement (1-based), or 0 if unavailable.
@@ -130,10 +136,9 @@ impl StatementCompiler for Compiler {
                 body,
                 span,
             } => self.compile_circuit_decl(name, params, body, span),
-            Stmt::ImportCircuit { span, .. } => Err(CompilerError::CompileError(
-                "circuit imports are not yet implemented".into(),
-                span_box(span),
-            )),
+            Stmt::ImportCircuit {
+                path, alias, span, ..
+            } => self.compile_import_circuit(path, alias, span),
             Stmt::Error { .. } => Ok(()),
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr)?;
@@ -205,6 +210,67 @@ impl StatementCompiler for Compiler {
         self.global_symbols.insert(name.to_string(), global_idx);
 
         // Emit: load the bytes constant into a register, then define as global
+        let reg = self.alloc_reg()?;
+        self.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
+        self.emit_abx(vm::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
+        self.free_reg(reg)?;
+
+        Ok(())
+    }
+
+    fn compile_import_circuit(
+        &mut self,
+        path: &str,
+        alias: &str,
+        span: &Span,
+    ) -> Result<(), CompilerError> {
+        // 1. Resolve path relative to base_path
+        let base = self
+            .base_path
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let full_path = base.join(path);
+
+        if !full_path.exists() {
+            return Err(CompilerError::CompileError(
+                format!("circuit file not found: {}", full_path.display()),
+                span_box(span),
+            ));
+        }
+
+        // 2. Read circuit source
+        let source = std::fs::read_to_string(&full_path).map_err(|e| {
+            CompilerError::CompileError(
+                format!("cannot read circuit file {}: {e}", full_path.display()),
+                span_box(span),
+            )
+        })?;
+
+        // 3. Compile to ProveIR via compile_circuit (self-contained)
+        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile_circuit(&source)
+            .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+        prove_ir.name = Some(alias.to_string());
+
+        // 4. Serialize to bytes
+        let ir_bytes = prove_ir.to_bytes().map_err(|e| {
+            CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
+        })?;
+
+        // 5. Store bytes in constant pool and bind alias as global
+        let handle = self.intern_bytes(ir_bytes);
+        let val = Value::bytes(handle);
+        let idx = self.add_constant(val)?;
+        if idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants(span_box(span)));
+        }
+
+        if self.next_global_idx == u16::MAX {
+            return Err(CompilerError::TooManyConstants(span_box(span)));
+        }
+        let global_idx = self.next_global_idx;
+        self.next_global_idx += 1;
+        self.global_symbols.insert(alias.to_string(), global_idx);
+
         let reg = self.alloc_reg()?;
         self.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
         self.emit_abx(vm::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
