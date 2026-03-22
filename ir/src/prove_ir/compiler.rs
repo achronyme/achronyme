@@ -126,13 +126,28 @@ impl ProveIrCompiler {
         // Classify captures
         let captures = super::capture::classify_captures(&compiler.captured_names, &compiler.body);
 
+        // Build capture_arrays: arrays from outer scope whose elements were captured
+        let mut capture_arrays = Vec::new();
+        for (name, entry) in outer_scope {
+            if let OuterScopeEntry::Array(n) = entry {
+                let has_captured =
+                    (0..*n).any(|i| compiler.captured_names.contains(&format!("{name}_{i}")));
+                if has_captured {
+                    capture_arrays.push(CaptureArrayDef {
+                        name: name.clone(),
+                        size: *n,
+                    });
+                }
+            }
+        }
+
         Ok(ProveIR {
             name: None,
             public_inputs: compiler.public_inputs,
             witness_inputs: compiler.witness_inputs,
             captures,
             body: compiler.body,
-            capture_arrays: Vec::new(), // populated in Paso 4
+            capture_arrays,
         })
     }
 
