@@ -9,14 +9,31 @@ use memory::Value;
 use vm::opcode::OpCode;
 
 pub trait DeclarationCompiler {
-    fn compile_let_decl(&mut self, name: &str, value: &Expr) -> Result<(), CompilerError>;
-    fn compile_mut_decl(&mut self, name: &str, value: &Expr) -> Result<(), CompilerError>;
+    fn compile_let_decl(
+        &mut self,
+        name: &str,
+        type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+    ) -> Result<(), CompilerError>;
+    fn compile_mut_decl(
+        &mut self,
+        name: &str,
+        type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+    ) -> Result<(), CompilerError>;
     fn compile_assignment(&mut self, target: &Expr, value: &Expr) -> Result<(), CompilerError>;
 }
 
 impl DeclarationCompiler for Compiler {
-    fn compile_let_decl(&mut self, name: &str, value: &Expr) -> Result<(), CompilerError> {
+    fn compile_let_decl(
+        &mut self,
+        name: &str,
+        type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+    ) -> Result<(), CompilerError> {
         let reg = self.compile_expr(value)?;
+
+        check_type_annotation(self, name, type_ann, value);
 
         if self.current()?.scope_depth > 0 {
             let depth = self.current()?.scope_depth;
@@ -34,6 +51,7 @@ impl DeclarationCompiler for Compiler {
                 is_mutated: false,
                 reg,
                 span,
+                type_ann: type_ann.cloned(),
             });
         } else {
             if self.next_global_idx == u16::MAX {
@@ -53,8 +71,15 @@ impl DeclarationCompiler for Compiler {
         Ok(())
     }
 
-    fn compile_mut_decl(&mut self, name: &str, value: &Expr) -> Result<(), CompilerError> {
+    fn compile_mut_decl(
+        &mut self,
+        name: &str,
+        type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+    ) -> Result<(), CompilerError> {
         let reg = self.compile_expr(value)?;
+
+        check_type_annotation(self, name, type_ann, value);
 
         if self.current()?.scope_depth > 0 {
             let depth = self.current()?.scope_depth;
@@ -72,6 +97,7 @@ impl DeclarationCompiler for Compiler {
                 is_mutated: false,
                 reg,
                 span,
+                type_ann: type_ann.cloned(),
             });
         } else {
             if self.next_global_idx == u16::MAX {
@@ -153,6 +179,116 @@ impl DeclarationCompiler for Compiler {
                 self.cur_span(),
             )),
         }
+    }
+}
+
+// --- Type annotation checking (W006 / W007) ---
+
+/// Statically inferred type from an AST literal expression.
+enum InferredType {
+    Field,
+    Bool,
+    Int,
+    String,
+    Nil,
+    Array(usize),
+}
+
+impl std::fmt::Display for InferredType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InferredType::Field => write!(f, "Field"),
+            InferredType::Bool => write!(f, "Bool"),
+            InferredType::Int => write!(f, "Int"),
+            InferredType::String => write!(f, "String"),
+            InferredType::Nil => write!(f, "Nil"),
+            InferredType::Array(n) => write!(f, "Array[{n}]"),
+        }
+    }
+}
+
+/// Try to infer the type of a literal expression at compile time.
+/// Returns `None` for dynamic expressions (calls, idents, binary ops, etc.).
+fn infer_literal_type(expr: &Expr) -> Option<InferredType> {
+    match expr {
+        Expr::FieldLit { .. } => Some(InferredType::Field),
+        Expr::Bool { .. } => Some(InferredType::Bool),
+        Expr::Number { .. } => Some(InferredType::Int),
+        Expr::StringLit { .. } => Some(InferredType::String),
+        Expr::Nil { .. } => Some(InferredType::Nil),
+        Expr::Array { elements, .. } => Some(InferredType::Array(elements.len())),
+        _ => None,
+    }
+}
+
+/// Check whether a type annotation is compatible with an inferred literal type.
+fn is_ann_compatible(ann: &TypeAnnotation, inferred: &InferredType) -> bool {
+    match (ann, inferred) {
+        // Field accepts field literals and integers (int→field coercion)
+        (TypeAnnotation::Field, InferredType::Field | InferredType::Int) => true,
+        // Bool only accepts bool literals
+        (TypeAnnotation::Bool, InferredType::Bool) => true,
+        // Array annotations accept arrays (element types not checked at compile time)
+        (TypeAnnotation::FieldArray(_) | TypeAnnotation::BoolArray(_), InferredType::Array(_)) => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Extract expected array size from a type annotation, if it's an array type.
+fn ann_array_size(ann: &TypeAnnotation) -> Option<usize> {
+    match ann {
+        TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// Emit W006 (type mismatch) or W007 (array size mismatch) warnings when a type
+/// annotation is present and the value's type can be statically inferred.
+fn check_type_annotation(
+    compiler: &mut Compiler,
+    name: &str,
+    type_ann: Option<&TypeAnnotation>,
+    value: &Expr,
+) {
+    let (ann, inferred) = match (type_ann, infer_literal_type(value)) {
+        (Some(a), Some(i)) => (a, i),
+        _ => return,
+    };
+
+    let span = match &compiler.current_span {
+        Some(s) => s.into(),
+        None => return,
+    };
+
+    // W007: Array size mismatch (more specific, check first)
+    if let (Some(expected), InferredType::Array(actual)) = (ann_array_size(ann), &inferred) {
+        if expected != *actual {
+            compiler.emit_warning(
+                Diagnostic::warning(
+                    format!("type `{ann}` expects {expected} elements, but array has {actual}",),
+                    span,
+                )
+                .with_code("W007")
+                .with_note("type annotations are checked at compile time in VM mode".to_string()),
+            );
+            return;
+        }
+    }
+
+    // W006: Type mismatch
+    if !is_ann_compatible(ann, &inferred) {
+        compiler.emit_warning(
+            Diagnostic::warning(
+                format!(
+                    "type annotation `{ann}` on `{name}` does not match value type `{inferred}`",
+                ),
+                span,
+            )
+            .with_code("W006")
+            .with_note("type annotations are checked at compile time in VM mode".to_string()),
+        );
     }
 }
 

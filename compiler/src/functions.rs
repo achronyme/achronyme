@@ -68,6 +68,7 @@ impl FunctionDefinitionCompiler for Compiler {
                 is_mutated: false,
                 reg: i as u8,
                 span: fn_span.clone(),
+                type_ann: param.type_ann.clone(),
             });
         }
 

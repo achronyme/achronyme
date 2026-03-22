@@ -74,8 +74,18 @@ impl StatementCompiler for Compiler {
         self.current_span = stmt_span(stmt).cloned();
 
         match stmt {
-            Stmt::LetDecl { name, value, .. } => self.compile_let_decl(name, value),
-            Stmt::MutDecl { name, value, .. } => self.compile_mut_decl(name, value),
+            Stmt::LetDecl {
+                name,
+                type_ann,
+                value,
+                ..
+            } => self.compile_let_decl(name, type_ann.as_ref(), value),
+            Stmt::MutDecl {
+                name,
+                type_ann,
+                value,
+                ..
+            } => self.compile_mut_decl(name, type_ann.as_ref(), value),
             Stmt::Assignment { target, value, .. } => self.compile_assignment(target, value),
             Stmt::Print { value, .. } => {
                 // 1. Prepare Call Frame: Func Reg, Arg Reg

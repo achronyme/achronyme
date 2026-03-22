@@ -1,4 +1,4 @@
-use achronyme_parser::ast::Span;
+use achronyme_parser::ast::{Span, TypeAnnotation};
 
 pub struct Local {
     pub name: String,
@@ -9,6 +9,7 @@ pub struct Local {
     pub is_mutated: bool,
     pub reg: u8,
     pub span: Option<Span>,
+    pub type_ann: Option<TypeAnnotation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
