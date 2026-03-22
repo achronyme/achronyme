@@ -97,6 +97,8 @@ pub fn run_file(
 
         // Transfer strings from compiler to VM
         vm.import_strings(compiler.interner.strings);
+        // Transfer byte blobs (serialized ProveIR) from compiler to VM
+        vm.heap.import_bytes(compiler.bytes_interner.blobs);
 
         // Transfer field literals from compiler to VM
         let field_map = vm.heap.import_fields(compiler.field_interner.fields);

@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
-use ir::IrLowering;
 use memory::FieldElement;
 use vm::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 
@@ -42,32 +41,54 @@ impl DefaultProveHandler {
 }
 
 impl ProveHandler for DefaultProveHandler {
-    fn execute_prove(
+    fn execute_prove_ir(
         &self,
-        source: &str,
+        prove_ir_bytes: &[u8],
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
-        // 1. Strip braces: source comes as "{ witness s\npublic h\n... }"
-        let inner = source
-            .trim()
-            .strip_prefix('{')
-            .and_then(|s| s.strip_suffix('}'))
-            .unwrap_or(source);
+        // 1. Deserialize ProveIR from bytes
+        let prove_ir = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
+            .map_err(|e| ProveError::IrLowering(format!("ProveIR deserialization: {e}")))?;
 
-        // 2. Lower IR (self-contained: extracts public/witness from source)
-        let (pub_names, wit_names, mut program) = IrLowering::lower_self_contained(inner)
+        // 2. Instantiate with scope values (captures resolved here)
+        let mut program = prove_ir
+            .instantiate(scope_values)
             .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         // 3. Optimize
         ir::passes::optimize(&mut program);
 
-        // 4. Build input map from scope_values
+        // 4. Build input map from scope_values (public + witness + capture names)
         let mut inputs = HashMap::new();
-        for name in pub_names.iter().chain(wit_names.iter()) {
-            let val = scope_values.get(name).ok_or_else(|| {
-                ProveError::IrLowering(format!("variable `{name}` not found in scope"))
-            })?;
-            inputs.insert(name.clone(), *val);
+        for input in prove_ir
+            .public_inputs
+            .iter()
+            .chain(prove_ir.witness_inputs.iter())
+        {
+            match &input.array_size {
+                Some(ir::prove_ir::ArraySize::Literal(n)) => {
+                    for i in 0..*n {
+                        let elem_name = format!("{}_{i}", input.name);
+                        if let Some(fe) = scope_values.get(&elem_name) {
+                            inputs.insert(elem_name, *fe);
+                        }
+                    }
+                }
+                None => {
+                    if let Some(fe) = scope_values.get(&input.name) {
+                        inputs.insert(input.name.clone(), *fe);
+                    }
+                }
+                Some(ir::prove_ir::ArraySize::Capture(_)) => {
+                    // Capture-sized arrays: elements were expanded during instantiation.
+                    // The individual element names are already in scope_values.
+                }
+            }
+        }
+        for cap in &prove_ir.captures {
+            if let Some(fe) = scope_values.get(&cap.name) {
+                inputs.insert(cap.name.clone(), *fe);
+            }
         }
 
         match self.backend {
