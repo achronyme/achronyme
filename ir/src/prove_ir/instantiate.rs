@@ -920,10 +920,8 @@ fn fe_to_usize(fe: &FieldElement, context: &str) -> Result<usize, ProveIrError> 
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
-    use crate::prove_ir::compiler::ProveIrCompiler;
+    use crate::prove_ir::compiler::{OuterScopeEntry, ProveIrCompiler};
 
     /// Helper: compile source as a circuit and instantiate (no captures).
     fn compile_and_instantiate(source: &str) -> IrProgram {
@@ -937,7 +935,10 @@ mod tests {
         outer_scope: &[&str],
         captures: &[(&str, u64)],
     ) -> IrProgram {
-        let scope: HashSet<String> = outer_scope.iter().map(|s| s.to_string()).collect();
+        let scope: HashMap<String, OuterScopeEntry> = outer_scope
+            .iter()
+            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+            .collect();
         let prove_ir = ProveIrCompiler::compile_prove_block(source, &scope).unwrap();
         let cap_map: HashMap<String, FieldElement> = captures
             .iter()
@@ -1314,7 +1315,7 @@ mod tests {
         );
         // All result vars should be unique
         let vars: Vec<SsaVar> = ir.instructions.iter().map(|i| i.result_var()).collect();
-        let unique: HashSet<SsaVar> = vars.iter().copied().collect();
+        let unique: std::collections::HashSet<SsaVar> = vars.iter().copied().collect();
         assert_eq!(vars.len(), unique.len(), "SSA vars must be unique");
     }
 

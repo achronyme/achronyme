@@ -482,7 +482,7 @@ pub enum CircuitBoolOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prove_ir::compiler::ProveIrCompiler;
+    use crate::prove_ir::compiler::{OuterScopeEntry, ProveIrCompiler};
 
     /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
     fn assert_round_trip(prove_ir: &ProveIR) {
@@ -561,8 +561,11 @@ mod tests {
 
     #[test]
     fn round_trip_with_captures() {
-        use std::collections::HashSet;
-        let scope: HashSet<String> = ["secret", "hash"].iter().map(|s| s.to_string()).collect();
+        use std::collections::HashMap;
+        let scope: HashMap<String, OuterScopeEntry> = ["secret", "hash"]
+            .iter()
+            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+            .collect();
         let ir = ProveIrCompiler::compile_prove_block(
             "public hash\nassert_eq(poseidon(secret, 0), hash)",
             &scope,
@@ -799,7 +802,7 @@ mod tests {
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
-        bytes.push(1);
+        bytes.push(2);
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
@@ -828,7 +831,7 @@ mod tests {
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
-        bytes.push(1);
+        bytes.push(2);
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
@@ -856,7 +859,7 @@ mod tests {
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
-        bytes.push(1);
+        bytes.push(2);
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
