@@ -3,7 +3,7 @@ title: "Inline Proofs"
 description: "Using prove blocks for inline proof generation."
 ---
 
-The `prove {}` block lets you generate zero-knowledge proofs inline, without leaving the VM. It compiles its body as a circuit, generates a witness from captured variables, and returns a cryptographic proof.
+The `prove {}` block lets you generate zero-knowledge proofs inline, without leaving the VM. It compiles its body as a circuit at compile time via ProveIR, generates a witness from captured variables, and returns a cryptographic proof.
 
 ## Basic Example
 
@@ -12,10 +12,7 @@ let x = 0p6
 let y = 0p7
 let product = 0p42
 
-let p = prove {
-    witness x
-    witness y
-    public product
+let p = prove(public: [product]) {
     assert_eq(x * y, product)
 }
 
@@ -23,15 +20,33 @@ print(proof_json(p))
 ```
 
 The prove block:
-1. Captures `x`, `y`, and `product` from the outer scope
-2. Compiles `assert_eq(x * y, product)` as an R1CS circuit
-3. Uses the captured values as witness/public inputs
-4. Generates a Groth16 proof
+1. Compiles `assert_eq(x * y, product)` as a circuit at compile time
+2. Captures `x` and `y` from the outer scope as **witness** inputs (auto-inferred)
+3. Marks `product` as a **public** input (declared in `public: [...]`)
+4. Generates a Groth16 proof at runtime
 5. Returns a `ProofObject`
 
-## Variable Declarations
+## Witness Auto-Inference
 
-Inside a prove block, declare which captured variables are public (visible to the verifier) and which are witness (private):
+With the `prove(public: [...])` syntax, you only declare which variables are public — everything else is automatically inferred as a witness:
+
+```ach
+let secret = 0p42
+let hash = 0p17159...
+
+let p = prove(public: [hash]) {
+    assert_eq(poseidon(secret, 0), hash)
+}
+```
+
+- `hash` is in `public: [...]` → **public input** (visible to the verifier)
+- `secret` is referenced in the body but not in the public list → **witness** (private, auto-inferred)
+
+The verifier learns only that *some* value hashes to `hash`, without learning `secret`.
+
+## Explicit Declarations (Classic Syntax)
+
+The explicit `witness`/`public` declaration syntax is also supported:
 
 ```ach
 let secret = 0p42
@@ -44,7 +59,7 @@ let p = prove {
 }
 ```
 
-The verifier learns only that *some* value hashes to `hash`, without learning `secret`.
+Both syntaxes produce identical circuits. The `prove(public: [...])` form is more concise; the explicit form gives full control. You cannot mix both in the same block.
 
 ## Integer Auto-Conversion
 
@@ -55,10 +70,7 @@ let a = 10
 let b = 20
 let sum = 30
 
-prove {
-    witness a     // 10 becomes 0p10
-    witness b     // 20 becomes 0p20
-    public sum    // 30 becomes 0p30
+prove(public: [sum]) {
     assert_eq(a + b, sum)
 }
 ```
@@ -70,9 +82,7 @@ Outside prove blocks, mixing Int and Field raises a `TypeMismatch` error. Use `0
 A `ProofObject` contains three JSON components:
 
 ```ach
-let p = prove {
-    witness x
-    public y
+let p = prove(public: [y]) {
     assert_eq(x, y)
 }
 
@@ -95,9 +105,7 @@ print(vkey)
 Use `verify_proof()` to verify a proof within the VM:
 
 ```ach
-let p = prove {
-    witness secret
-    public hash
+let p = prove(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
 }
 
@@ -115,12 +123,7 @@ let v1 = 0p20
 let v2 = 0p30
 let total = 0p60
 
-prove {
-    witness v0
-    witness v1
-    witness v2
-    public total
-
+prove(public: [total]) {
     let vals = [v0, v1, v2]
     let acc = vals[0] + vals[1] + vals[2]
     assert_eq(acc, total)
@@ -137,10 +140,7 @@ let a = 0p1
 let b = 0p2
 let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
-prove {
-    witness a
-    witness b
-    public h
+prove(public: [h]) {
     assert_eq(poseidon(a, b), h)
 }
 ```
@@ -152,8 +152,7 @@ Enforce that a value fits within a certain number of bits:
 ```ach
 let val = 0p200
 
-prove {
-    witness val
+prove(public: []) {
     range_check(val, 8)   // 0 ≤ val < 256
 }
 ```
@@ -168,17 +167,11 @@ let b = 0p4
 let sum = 0p7
 let product = 0p12
 
-prove {
-    witness a
-    witness b
-    public sum
+prove(public: [sum]) {
     assert_eq(a + b, sum)
 }
 
-prove {
-    witness a
-    witness b
-    public product
+prove(public: [product]) {
     assert_eq(a * b, product)
 }
 ```

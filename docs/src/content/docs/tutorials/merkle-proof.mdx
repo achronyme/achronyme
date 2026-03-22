@@ -138,12 +138,7 @@ You can also generate proofs inline without the CLI:
 ```ach
 // ... compute tree values as above ...
 
-let p = prove {
-    witness leaf
-    witness path[3]
-    witness indices[3]
-    public root
-
+let p = prove(public: [root]) {
     merkle_verify(root, leaf, path, indices)
 }
 

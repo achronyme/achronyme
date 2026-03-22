@@ -63,9 +63,8 @@ En modo circuito (bloques `prove {}` y CLI `circuit`), **todos los valores son e
 
 ```ach
 let x = 42
-prove {
+prove(public: [x]) {
     // x se convierte automáticamente a 0p42 dentro del circuito
-    public x
     assert_eq(x, 42)
 }
 ```

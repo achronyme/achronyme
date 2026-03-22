@@ -75,10 +75,7 @@ let a = 0p6
 let b = 0p7
 let product = 0p42
 
-let p = prove {
-    witness a
-    witness b
-    public product
+let p = prove(public: [product]) {
     assert_eq(a * b, product)
 }
 ```

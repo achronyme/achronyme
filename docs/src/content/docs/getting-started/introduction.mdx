@@ -43,9 +43,7 @@ ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=.
 let secret = 0p42
 let hash = 0p17159...  // poseidon(42, 0)
 
-let p = prove {
-    witness secret
-    public hash
+let p = prove(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
 }
 
@@ -60,7 +58,7 @@ Achronyme has two execution modes from the same source:
 
 **Circuit mode** (`ach circuit`) — Compiles to arithmetic constraints over BN254. No loops at runtime, no I/O — everything is unrolled and flattened into a constraint system for zero-knowledge proofs.
 
-The `prove {}` block bridges both: it runs inside the VM, compiles its body as a circuit, generates a witness from captured variables, and produces a cryptographic proof — all in one expression.
+The `prove` block bridges both: it compiles its body as a circuit via ProveIR at compile time, captures variables from scope, and produces a cryptographic proof at runtime — all in one expression. Witnesses are auto-inferred; only public inputs need to be declared.
 
 ```ach
 Source (.ach)

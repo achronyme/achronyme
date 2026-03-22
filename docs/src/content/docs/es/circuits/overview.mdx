@@ -28,20 +28,18 @@ Compila con el CLI:
 ach circuit hash.ach --inputs "output=17159...,secret=42"
 ```
 
-### 2. Bloque `prove {}` en línea
+### 2. Bloque `prove` en línea
 
 ```ach
 let secret = 0p42
 let hash = 0p17159...
 
-let p = prove {
-    witness secret
-    public hash
+let p = prove(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
 
-El bloque `prove {}` se ejecuta dentro de la VM, captura variables del ámbito, compila el cuerpo como un circuito y genera una prueba.
+El bloque `prove` captura variables del ámbito, compila el cuerpo como un circuito vía ProveIR en tiempo de compilación, y genera una prueba en tiempo de ejecución. Las variables en `public: [...]` son entradas públicas; las demás variables del ámbito externo se infieren automáticamente como testigos privados.
 
 ## Qué Funciona en Circuitos
 

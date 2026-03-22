@@ -34,14 +34,12 @@ ach circuit hash.ach --inputs "output=17159...,secret=42"
 let secret = 0p42
 let hash = 0p17159...
 
-let p = prove {
-    witness secret
-    public hash
+let p = prove(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
 
-The `prove {}` block runs inside the VM, captures variables from scope, compiles the body as a circuit, and generates a proof.
+The `prove` block captures variables from scope, compiles the body as a circuit via ProveIR at compile time, and generates a proof at runtime. Variables in `public: [...]` are public inputs; all other outer-scope variables are auto-inferred as private witnesses.
 
 ## What Works in Circuits
 

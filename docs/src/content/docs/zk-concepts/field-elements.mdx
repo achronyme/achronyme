@@ -63,9 +63,8 @@ In circuit mode (`prove {}` blocks and `circuit` CLI), **all values are field el
 
 ```ach
 let x = 42
-prove {
+prove(public: [x]) {
     // x is automatically converted to 0p42 inside the circuit
-    public x
     assert_eq(x, 42)
 }
 ```
