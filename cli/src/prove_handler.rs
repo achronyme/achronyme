@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
@@ -24,10 +26,12 @@ pub struct DefaultProveHandler {
     backend: ProveBackend,
     style: Styler,
     verbose: bool,
+    circuit_stats: bool,
+    collected_stats: RefCell<Vec<ir::stats::CircuitStats>>,
 }
 
 impl DefaultProveHandler {
-    pub fn new(backend: ProveBackend, error_format: ErrorFormat) -> Self {
+    pub fn new(backend: ProveBackend, error_format: ErrorFormat, circuit_stats: bool) -> Self {
         let cache_dir = crate::cache_dir();
         let style = Styler::from_env(&error_format);
         let verbose = style.is_verbose(&error_format);
@@ -36,6 +40,27 @@ impl DefaultProveHandler {
             backend,
             style,
             verbose,
+            circuit_stats,
+            collected_stats: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Print all collected circuit stats to stderr.
+    pub fn print_circuit_stats(&self) {
+        let stats = self.collected_stats.borrow();
+        if stats.is_empty() {
+            return;
+        }
+        for s in stats.iter() {
+            eprintln!("{s}");
+        }
+        if stats.len() > 1 {
+            let total: usize = stats.iter().map(|s| s.total_constraints).sum();
+            eprintln!(
+                "  Total across {} circuits: {} constraints",
+                stats.len(),
+                total
+            );
         }
     }
 }
@@ -57,6 +82,14 @@ impl ProveHandler for DefaultProveHandler {
 
         // 3. Optimize
         ir::passes::optimize(&mut program);
+
+        // 3b. Collect circuit stats if enabled
+        if self.circuit_stats {
+            let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+            let name = prove_ir.name.as_deref();
+            let stats = ir::stats::CircuitStats::from_program(&program, &proven, name);
+            self.collected_stats.borrow_mut().push(stats);
+        }
 
         // 4. Build input map from scope_values (public + witness + capture names).
         //    Validate that all required values are present.
@@ -107,6 +140,20 @@ impl ProveHandler for DefaultProveHandler {
     }
 }
 
+/// Wrapper to share a `DefaultProveHandler` via `Arc` while satisfying
+/// the orphan rule (cannot impl foreign trait for `Arc<LocalType>`).
+pub struct SharedProveHandler(pub Arc<DefaultProveHandler>);
+
+impl ProveHandler for SharedProveHandler {
+    fn execute_prove_ir(
+        &self,
+        prove_ir_bytes: &[u8],
+        scope_values: &HashMap<String, FieldElement>,
+    ) -> Result<ProveResult, ProveError> {
+        self.0.execute_prove_ir(prove_ir_bytes, scope_values)
+    }
+}
+
 impl VerifyHandler for DefaultProveHandler {
     fn verify_proof(&self, proof: &memory::ProofObject) -> Result<bool, String> {
         crate::groth16::verify_proof_from_json(
@@ -114,6 +161,12 @@ impl VerifyHandler for DefaultProveHandler {
             &proof.public_json,
             &proof.vkey_json,
         )
+    }
+}
+
+impl VerifyHandler for SharedProveHandler {
+    fn verify_proof(&self, proof: &memory::ProofObject) -> Result<bool, String> {
+        self.0.verify_proof(proof)
     }
 }
 

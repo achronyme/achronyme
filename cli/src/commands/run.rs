@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use memory::Function;
 use std::fs;
 use vm::{CallFrame, ValueOps, VM};
 
 use super::ErrorFormat;
-use crate::prove_handler::{DefaultProveHandler, ProveBackend};
+use crate::prove_handler::{DefaultProveHandler, ProveBackend, SharedProveHandler};
 
 pub fn run_file(
     path: &str,
@@ -13,7 +15,7 @@ pub fn run_file(
     prove_backend: &str,
     max_heap: Option<&str>,
     gc_stats: bool,
-    _circuit_stats: bool,
+    circuit_stats: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
     if ptau.is_some() {
@@ -41,9 +43,9 @@ pub fn run_file(
             })?;
             vm.heap.max_heap_bytes = limit;
         }
-        let handler = DefaultProveHandler::new(backend, error_format);
-        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend, error_format)));
-        vm.prove_handler = Some(Box::new(handler));
+        let handler = Arc::new(DefaultProveHandler::new(backend, error_format, circuit_stats));
+        vm.verify_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
+        vm.prove_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -51,6 +53,7 @@ pub fn run_file(
 
         let result = vm.interpret();
         print_gc_stats(gc_stats, &vm);
+        handler.print_circuit_stats();
         if let Err(e) = result {
             let msg = format_runtime_error(&vm, &e);
             return Err(anyhow::anyhow!("{}", msg));
@@ -92,9 +95,9 @@ pub fn run_file(
             })?;
             vm.heap.max_heap_bytes = limit;
         }
-        let handler = DefaultProveHandler::new(backend, error_format);
-        vm.verify_handler = Some(Box::new(DefaultProveHandler::new(backend, error_format)));
-        vm.prove_handler = Some(Box::new(handler));
+        let handler = Arc::new(DefaultProveHandler::new(backend, error_format, circuit_stats));
+        vm.verify_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
+        vm.prove_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
 
         // Transfer strings from compiler to VM
         vm.import_strings(compiler.interner.strings);
@@ -158,6 +161,7 @@ pub fn run_file(
 
         let result = vm.interpret();
         print_gc_stats(gc_stats, &vm);
+        handler.print_circuit_stats();
         if let Err(e) = result {
             let msg = format_runtime_error(&vm, &e);
             return Err(anyhow::anyhow!("{}", msg));
