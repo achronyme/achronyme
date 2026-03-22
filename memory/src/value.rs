@@ -22,7 +22,8 @@ pub const TAG_NATIVE: u64 = 10;
 pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
 pub const TAG_BIGINT: u64 = 13;
-// 14-15 reserved
+pub const TAG_BYTES: u64 = 14;
+// 15 reserved
 
 // i60 range constants
 pub const I60_MIN: i64 = -(1i64 << 59);
@@ -43,6 +44,7 @@ const _: () = assert!(TAG_NATIVE < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_CLOSURE < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_ITER < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_BIGINT < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_BYTES < 16, "tag must fit in 4 bits");
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -137,6 +139,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn bytes(handle: u32) -> Self {
+        Value::make_obj(TAG_BYTES, handle)
+    }
+
+    #[inline]
     fn make_obj(tag: u64, handle: u32) -> Self {
         Value((tag << TAG_SHIFT) | (handle as u64))
     }
@@ -217,6 +224,11 @@ impl Value {
     #[inline]
     pub fn is_bigint(&self) -> bool {
         self.tag() == TAG_BIGINT
+    }
+
+    #[inline]
+    pub fn is_bytes(&self) -> bool {
+        self.tag() == TAG_BYTES
     }
 
     // --- Accessors ---
@@ -300,6 +312,8 @@ impl fmt::Debug for Value {
             write!(f, "Proof({})", self.as_handle().unwrap())
         } else if self.is_bigint() {
             write!(f, "BigInt({})", self.as_handle().unwrap())
+        } else if self.is_bytes() {
+            write!(f, "Bytes({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }

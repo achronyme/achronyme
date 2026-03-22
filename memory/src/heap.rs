@@ -89,6 +89,7 @@ pub struct Heap {
     pub(crate) fields: Arena<FieldElement>,
     pub(crate) proofs: Arena<ProofObject>,
     pub(crate) bigints: Arena<BigInt>,
+    pub(crate) bytes: Arena<Vec<u8>>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -119,6 +120,7 @@ impl Heap {
             fields: Arena::new(),
             proofs: Arena::new(),
             bigints: Arena::new(),
+            bytes: Arena::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -362,6 +364,9 @@ impl Heap {
                 crate::value::TAG_BIGINT => {
                     bitmap_set(&mut self.bigints.mark_bits, handle);
                 }
+                crate::value::TAG_BYTES => {
+                    bitmap_set(&mut self.bytes.mark_bits, handle);
+                }
                 _ => {}
             }
         }
@@ -501,6 +506,17 @@ impl Heap {
         }
         self.bigints.clear_marks();
 
+        // Bytes (binary blobs, e.g. serialized ProveIR)
+        for i in 0..self.bytes.data.len() {
+            let idx = i as u32;
+            if !self.bytes.is_marked(idx) && !self.bytes.is_free(idx) {
+                self.bytes.mark_free(idx);
+                freed_bytes += self.bytes.data[i].capacity();
+                self.bytes.data[i] = Vec::new();
+            }
+        }
+        self.bytes.clear_marks();
+
         self.stats.total_freed_bytes += freed_bytes as u64;
 
         // Recompute bytes_allocated from surviving objects (self-correcting).
@@ -571,6 +587,11 @@ impl Heap {
         for (i, m) in self.maps.data.iter().enumerate() {
             if !self.maps.is_free(i as u32) {
                 total += m.capacity() * Self::map_entry_size();
+            }
+        }
+        for (i, b) in self.bytes.data.iter().enumerate() {
+            if !self.bytes.is_free(i as u32) {
+                total += b.capacity();
             }
         }
         total
@@ -689,5 +710,28 @@ impl Heap {
             .into_iter()
             .map(|bi| self.alloc_bigint(bi))
             .collect()
+    }
+
+    pub fn alloc_bytes(&mut self, data: Vec<u8>) -> u32 {
+        self.bytes_allocated += data.capacity();
+        self.check_gc();
+        self.bytes.alloc(data)
+    }
+
+    pub fn get_bytes(&self, index: u32) -> Option<&Vec<u8>> {
+        self.bytes.get(index)
+    }
+
+    /// Bulk-import byte blobs from the compiler (same pattern as import_strings).
+    pub fn import_bytes(&mut self, blobs: Vec<Vec<u8>>) {
+        assert!(
+            self.bytes.free_indices.is_empty(),
+            "import_bytes called after execution started (bytes arena has freed slots)"
+        );
+        let cost: usize = blobs.iter().map(|b| b.capacity()).sum();
+        self.bytes.data = blobs;
+        self.bytes.clear_free();
+        self.bytes_allocated += cost;
+        self.check_gc();
     }
 }
