@@ -91,6 +91,11 @@ impl ProveIrCompiler {
                 .insert(name.clone(), CompEnvValue::Capture(name.clone()));
         }
 
+        // Reconstruct captured arrays: if outer scope has `name_0`, `name_1`, ...
+        // synthesize a `CompEnvValue::Array` entry for `name` so that functions
+        // like merkle_verify can reference the array by base name.
+        compiler.reconstruct_captured_arrays(outer_scope);
+
         // Compile all statements in the block
         compiler.compile_block_stmts(block)?;
 
@@ -127,6 +132,40 @@ impl ProveIrCompiler {
         }
         let block = program_to_block(source, program);
         Self::compile(&block, outer_scope)
+    }
+
+    /// Detect captured scalars that form array patterns (`name_0`, `name_1`, ...)
+    /// and register them as `CompEnvValue::Array` under the base name.
+    ///
+    /// This allows prove blocks to use `merkle_verify(root, leaf, path, indices)`
+    /// when the outer VM scope has `path_0`, `path_1`, `indices_0`, `indices_1`.
+    fn reconstruct_captured_arrays(&mut self, outer_scope: &HashSet<String>) {
+        // Collect candidate base names from `name_N` patterns
+        let mut candidates: HashMap<String, Vec<(usize, String)>> = HashMap::new();
+        for name in outer_scope {
+            if let Some((base, idx_str)) = name.rsplit_once('_') {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    // Don't shadow existing env entries (explicit declarations win)
+                    if !base.is_empty() && !outer_scope.contains(base) {
+                        candidates
+                            .entry(base.to_string())
+                            .or_default()
+                            .push((idx, name.clone()));
+                    }
+                }
+            }
+        }
+
+        // Register arrays that form complete sequences starting at 0
+        for (base, mut elements) in candidates {
+            elements.sort_by_key(|(idx, _)| *idx);
+            // Verify contiguous: 0, 1, 2, ...
+            let contiguous = elements.iter().enumerate().all(|(i, (idx, _))| *idx == i);
+            if contiguous && !elements.is_empty() {
+                let elem_names: Vec<String> = elements.into_iter().map(|(_, name)| name).collect();
+                self.env.insert(base, CompEnvValue::Array(elem_names));
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1051,13 +1090,21 @@ impl ProveIrCompiler {
     // -----------------------------------------------------------------------
 
     /// Extract an array identifier name from an expression (for merkle_verify args).
-    fn extract_array_ident(&self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
+    fn extract_array_ident(&mut self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
         if let Expr::Ident { name, .. } = expr {
-            if matches!(
-                self.env.get(name.as_str()),
-                Some(CompEnvValue::Array(_)) | Some(CompEnvValue::Capture(_))
-            ) {
-                return Ok(name.clone());
+            match self.env.get(name.as_str()) {
+                Some(CompEnvValue::Array(elements)) => {
+                    // Register individual elements as captured names so that
+                    // capture classification and instantiation can find them.
+                    for elem in elements.clone() {
+                        self.captured_names.insert(elem);
+                    }
+                    return Ok(name.clone());
+                }
+                Some(CompEnvValue::Capture(_)) => {
+                    return Ok(name.clone());
+                }
+                _ => {}
             }
         }
         Err(ProveIrError::UnsupportedOperation {

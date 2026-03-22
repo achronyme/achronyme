@@ -81,6 +81,10 @@ impl ProveIR {
             inst.declare_capture(cap)?;
         }
 
+        // 4b. Reconstruct arrays from captured element scalars (name_0, name_1, ...)
+        //     so that merkle_verify can reference them by base name.
+        inst.reconstruct_captured_arrays();
+
         // 5. Emit all body nodes
         for node in &self.body {
             inst.emit_node(node)?;
@@ -224,6 +228,37 @@ impl Instantiator {
             }
         }
         Ok(())
+    }
+
+    /// Detect scalar captures that form array patterns (`name_0`, `name_1`, ...)
+    /// and register an `InstEnvValue::Array` entry for the base name.
+    fn reconstruct_captured_arrays(&mut self) {
+        // Collect candidates: base_name → [(index, SsaVar)]
+        let mut candidates: HashMap<String, Vec<(usize, SsaVar)>> = HashMap::new();
+        let existing_keys: Vec<String> = self.env.keys().cloned().collect();
+        for key in &existing_keys {
+            if let Some((base, idx_str)) = key.rsplit_once('_') {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if !base.is_empty() && !self.env.contains_key(base) {
+                        if let Some(InstEnvValue::Scalar(var)) = self.env.get(key) {
+                            candidates
+                                .entry(base.to_string())
+                                .or_default()
+                                .push((idx, *var));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (base, mut elements) in candidates {
+            elements.sort_by_key(|(idx, _)| *idx);
+            let contiguous = elements.iter().enumerate().all(|(i, (idx, _))| *idx == i);
+            if contiguous && !elements.is_empty() {
+                let vars: Vec<SsaVar> = elements.into_iter().map(|(_, var)| var).collect();
+                self.env.insert(base, InstEnvValue::Array(vars));
+            }
+        }
     }
 
     /// Resolve an ArraySize to a concrete usize.
