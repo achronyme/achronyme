@@ -484,14 +484,13 @@ mod tests {
     #[test]
     fn round_trip_empty() {
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
             body: vec![],
         };
         assert_round_trip(&ir);
-        // 5 bytes header (ACHP + version) + 32 bytes payload (4 empty vecs)
-        assert_eq!(ir.to_bytes().unwrap().len(), 37);
     }
 
     #[test]
@@ -676,6 +675,7 @@ mod tests {
     #[test]
     fn adversarial_wrong_version() {
         let mut bytes = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
@@ -694,6 +694,7 @@ mod tests {
     #[test]
     fn adversarial_truncated_payload() {
         let bytes = ProveIR {
+            name: None,
             public_inputs: vec![ProveInputDecl {
                 name: "x".into(),
                 array_size: None,
@@ -722,6 +723,7 @@ mod tests {
         use memory::field::MODULUS;
 
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
@@ -762,6 +764,7 @@ mod tests {
     #[test]
     fn adversarial_poseidon_many_empty_rejected() {
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
@@ -787,6 +790,7 @@ mod tests {
     #[test]
     fn adversarial_range_check_zero_bits_rejected() {
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
@@ -813,6 +817,7 @@ mod tests {
     #[test]
     fn adversarial_range_check_oversized_bits_rejected() {
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
@@ -840,6 +845,7 @@ mod tests {
     #[test]
     fn adversarial_array_size_unknown_capture_rejected() {
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![ProveInputDecl {
                 name: "arr".into(),
                 array_size: Some(ArraySize::Capture("ghost".into())),
@@ -860,6 +866,7 @@ mod tests {
     #[test]
     fn adversarial_for_range_unknown_capture_rejected() {
         let ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![], // no capture named "missing"

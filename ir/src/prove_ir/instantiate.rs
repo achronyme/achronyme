@@ -1158,6 +1158,7 @@ mod tests {
         // WithCapture is tested by constructing ProveIR directly since the
         // parser doesn't support `for i in 0..n` with dynamic n yet.
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![ProveInputDecl {
                 name: "out".into(),
                 array_size: None,
@@ -1205,6 +1206,7 @@ mod tests {
     fn instantiate_missing_capture_error() {
         // Construct a ProveIR that requires a capture "secret" but don't provide it
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![CaptureDef {
@@ -1357,6 +1359,7 @@ mod tests {
     #[test]
     fn audit_bool_input_gets_range_check() {
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![ProveInputDecl {
                 name: "flag".into(),
                 array_size: None,
@@ -1381,6 +1384,7 @@ mod tests {
     #[test]
     fn audit_bool_array_input_gets_range_checks() {
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![ProveInputDecl {
                 name: "flags".into(),
                 array_size: Some(ArraySize::Literal(3)),
@@ -1501,6 +1505,7 @@ mod tests {
     #[test]
     fn audit_for_array_empty() {
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![],
@@ -1522,6 +1527,7 @@ mod tests {
     #[test]
     fn audit_capture_both_is_witness_input() {
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![ProveInputDecl {
                 name: "out".into(),
                 array_size: None,
@@ -1602,6 +1608,7 @@ mod tests {
     fn audit_instantiate_rejects_huge_capture_loop() {
         // Construct ProveIR directly (parser doesn't support dynamic for bounds)
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![CaptureDef {
@@ -1633,6 +1640,7 @@ mod tests {
     #[test]
     fn audit_both_capture_emits_assert_eq() {
         let prove_ir = ProveIR {
+            name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
             captures: vec![CaptureDef {

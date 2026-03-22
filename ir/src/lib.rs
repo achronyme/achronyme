@@ -3,6 +3,7 @@ pub mod eval;
 pub mod lower;
 pub mod passes;
 pub mod prove_ir;
+pub mod stats;
 pub(crate) mod suggest;
 pub mod types;
 
