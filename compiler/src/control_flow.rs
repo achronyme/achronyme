@@ -37,7 +37,11 @@ pub trait ControlFlowCompiler {
     fn compile_continue(&mut self) -> Result<(), CompilerError>;
 
     // ZK
-    fn compile_prove(&mut self, body: &Block, source: &str) -> Result<u8, CompilerError>;
+    fn compile_prove(
+        &mut self,
+        body: &Block,
+        public_list: Option<&[String]>,
+    ) -> Result<u8, CompilerError>;
 }
 
 impl ControlFlowCompiler for Compiler {
@@ -374,7 +378,11 @@ impl ControlFlowCompiler for Compiler {
         Ok(target_reg)
     }
 
-    fn compile_prove(&mut self, body: &Block, _source: &str) -> Result<u8, CompilerError> {
+    fn compile_prove(
+        &mut self,
+        body: &Block,
+        public_list: Option<&[String]>,
+    ) -> Result<u8, CompilerError> {
         // 1. Collect outer scope names for ProveIR capture detection.
         let outer_scope: std::collections::HashSet<String> = self
             .collect_in_scope_names()
@@ -382,8 +390,45 @@ impl ControlFlowCompiler for Compiler {
             .map(|s| s.to_string())
             .collect();
 
-        // 2. Compile AST Block → ProveIR template.
-        let prove_ir = ir::prove_ir::ProveIrCompiler::compile(body, &outer_scope)
+        // 2. If public_list is provided (new syntax), validate no old-style
+        //    declarations in the body and synthesize PublicDecl stmts.
+        let compile_body;
+        if let Some(pub_names) = public_list {
+            // Validate: no old-style public/witness declarations in body
+            for stmt in &body.stmts {
+                if matches!(stmt, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }) {
+                    return Err(CompilerError::CompileError(
+                        "cannot mix prove(public: [...]) syntax with explicit \
+                         public/witness declarations inside the block"
+                            .into(),
+                        self.cur_span(),
+                    ));
+                }
+            }
+
+            // Synthesize PublicDecl stmts and prepend to body
+            let mut stmts = Vec::new();
+            for name in pub_names {
+                stmts.push(Stmt::PublicDecl {
+                    names: vec![InputDecl {
+                        name: name.clone(),
+                        array_size: None,
+                        type_ann: None,
+                    }],
+                    span: body.span.clone(),
+                });
+            }
+            stmts.extend(body.stmts.clone());
+            compile_body = Block {
+                stmts,
+                span: body.span.clone(),
+            };
+        } else {
+            compile_body = body.clone();
+        }
+
+        // 3. Compile AST Block → ProveIR template.
+        let prove_ir = ir::prove_ir::ProveIrCompiler::compile(&compile_body, &outer_scope)
             .map_err(|e| CompilerError::CompileError(format!("{e}"), self.cur_span()))?;
 
         // 3. Build capture name list: captures + public inputs + witness inputs.

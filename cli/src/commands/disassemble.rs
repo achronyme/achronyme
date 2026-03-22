@@ -69,8 +69,8 @@ fn collect_proves_stmt(stmt: &Stmt, out: &mut Vec<(String, usize)>) {
 
 fn collect_proves_expr(expr: &Expr, out: &mut Vec<(String, usize)>) {
     match expr {
-        Expr::Prove { source, span, .. } => {
-            out.push((source.clone(), span.line_start));
+        Expr::Prove { span, .. } => {
+            out.push(("prove { ... }".to_string(), span.line_start));
         }
         Expr::BinOp { lhs, rhs, .. } => {
             collect_proves_expr(lhs, out);
