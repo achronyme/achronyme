@@ -77,6 +77,8 @@ pub enum ProveIrError {
     },
     /// Duplicate input declaration.
     DuplicateInput { name: String, span: OptSpan },
+    /// Import statements are not yet supported in ProveIR.
+    ImportsNotSupported { span: OptSpan },
     /// Module not found.
     ModuleNotFound(String),
     /// Circular import detected.
@@ -166,6 +168,9 @@ impl fmt::Display for ProveIrError {
             Self::DuplicateInput { name, .. } => {
                 write!(f, "duplicate input declaration: `{name}`")
             }
+            Self::ImportsNotSupported { .. } => {
+                write!(f, "imports not yet supported in ProveIR")
+            }
             Self::ModuleNotFound(path) => write!(f, "module not found: `{path}`"),
             Self::CircularImport(path) => write!(f, "circular import detected: `{path}`"),
             Self::ModuleLoadError(msg) => write!(f, "module load error: {msg}"),
@@ -192,7 +197,9 @@ impl ProveIrError {
             | Self::StaticAccessNotConstrainable { span, .. }
             | Self::MethodNotConstrainable { span, .. }
             | Self::RangeTooLarge { span, .. } => span.as_ref().map(|s| (**s).clone()),
-            Self::DuplicateInput { span, .. } => span.as_ref().map(|s| (**s).clone()),
+            Self::DuplicateInput { span, .. } | Self::ImportsNotSupported { span } => {
+                span.as_ref().map(|s| (**s).clone())
+            }
             Self::ParseError(diag) => return (**diag).clone(),
             // Variants without span information — listed explicitly so new
             // variants with spans produce a compile error instead of silently

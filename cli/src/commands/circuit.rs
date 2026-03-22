@@ -7,7 +7,7 @@ use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use constraints::{write_r1cs, write_wtns};
 use ir::prove_ir::ProveIrCompiler;
-use ir::IrLowering;
+use ir::{IrLowering, ProveIrError};
 use memory::FieldElement;
 
 use super::ErrorFormat;
@@ -85,8 +85,6 @@ pub fn circuit_command(
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
-    // TODO: pass base_path to ProveIR compiler once import support is added
-    let _base_path = source_dir.clone();
 
     let render_ir_error = |e: ir::error::IrError| -> anyhow::Error {
         let diag = e.to_diagnostic();
@@ -136,16 +134,12 @@ pub fn circuit_command(
         Ok(prove_ir) => prove_ir
             .instantiate(&std::collections::HashMap::new())
             .map_err(render_prove_ir_error)?,
-        Err(e) => {
-            // Fallback to IrLowering for unsupported features (imports).
+        Err(ProveIrError::ImportsNotSupported { .. }) => {
+            // Fallback to IrLowering for imports (not yet supported in ProveIR).
             // TODO: remove this fallback once ProveIR supports imports.
-            let is_import_error = e.to_string().contains("imports not yet supported");
-            if !is_import_error {
-                return Err(render_prove_ir_error(e));
-            }
             if public.is_empty() && witness.is_empty() {
                 let (_, _, prog) =
-                    IrLowering::lower_self_contained_with_base(&source, _base_path.clone())
+                    IrLowering::lower_self_contained_with_base(&source, source_dir.clone())
                         .map_err(render_ir_error)?;
                 prog
             } else {
@@ -155,11 +149,12 @@ pub fn circuit_command(
                     &source,
                     &pub_refs,
                     &wit_refs,
-                    _base_path.clone(),
+                    source_dir.clone(),
                 )
                 .map_err(render_ir_error)?
             }
         }
+        Err(e) => return Err(render_prove_ir_error(e)),
     };
 
     if verbose {

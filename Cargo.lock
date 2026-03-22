@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ach-macros"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13,11 +13,11 @@ dependencies = [
 
 [[package]]
 name = "achronyme-parser"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 
 [[package]]
 name = "achronyme-std"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "ach-macros",
  "compiler",
@@ -321,6 +321,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -452,7 +461,7 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "cli"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "achronyme-parser",
  "achronyme-std",
@@ -490,7 +499,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "compiler"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "achronyme-parser",
  "constraints",
@@ -509,7 +518,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "constraints"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "compiler",
  "ir",
@@ -815,11 +824,13 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "achronyme-parser",
+ "bincode",
  "constraints",
  "memory",
+ "serde",
 ]
 
 [[package]]
@@ -893,11 +904,12 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "memory"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -1456,7 +1468,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vm"
-version = "0.1.0-beta.12"
+version = "0.1.0-beta.13"
 dependencies = [
  "ach-macros",
  "byteorder",

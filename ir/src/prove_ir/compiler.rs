@@ -202,8 +202,7 @@ impl ProveIrCompiler {
                 span: to_span(span),
             }),
             Stmt::Import { span, .. } | Stmt::SelectiveImport { span, .. } => {
-                Err(ProveIrError::UnsupportedOperation {
-                    description: "imports not yet supported in ProveIR".into(),
+                Err(ProveIrError::ImportsNotSupported {
                     span: to_span(span),
                 })
             }
