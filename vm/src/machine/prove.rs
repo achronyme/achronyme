@@ -142,12 +142,39 @@ impl VM {
 
             let mut field_map = HashMap::new();
             for (key, val) in map.iter() {
-                let fe = value_to_field_element(&self.heap, *val).ok_or_else(|| {
-                    RuntimeError::TypeMismatch(format!(
-                        "prove: variable `{key}` is not a numeric/field type"
-                    ))
-                })?;
-                field_map.insert(key.clone(), fe);
+                if val.is_list() {
+                    // Expand list elements into individual scalar captures:
+                    // "path" → [a, b] becomes "path_0" → a, "path_1" → b
+                    let list_handle = val.as_handle().ok_or_else(|| {
+                        RuntimeError::TypeMismatch(format!(
+                            "prove: `{key}` is a list but has no valid handle"
+                        ))
+                    })?;
+                    let elements: Vec<Value> = self
+                        .heap
+                        .get_list(list_handle)
+                        .ok_or_else(|| {
+                            RuntimeError::TypeMismatch(format!(
+                                "prove: `{key}` list data missing from heap"
+                            ))
+                        })?
+                        .to_vec();
+                    for (i, elem) in elements.iter().enumerate() {
+                        let fe = value_to_field_element(&self.heap, *elem).ok_or_else(|| {
+                            RuntimeError::TypeMismatch(format!(
+                                "prove: element `{key}[{i}]` is not a numeric/field type"
+                            ))
+                        })?;
+                        field_map.insert(format!("{key}_{i}"), fe);
+                    }
+                } else {
+                    let fe = value_to_field_element(&self.heap, *val).ok_or_else(|| {
+                        RuntimeError::TypeMismatch(format!(
+                            "prove: variable `{key}` is not a numeric/field type"
+                        ))
+                    })?;
+                    field_map.insert(key.clone(), fe);
+                }
             }
             field_map
         };
