@@ -57,7 +57,6 @@ pub fn circuit_command(
     circuit_stats: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
-    let _ = circuit_stats; // TODO: will be used in next commit
     // 0. Validate flag combinations early (before expensive IR lowering)
     if solidity_path.is_some() && backend != "r1cs" {
         return Err(anyhow::anyhow!(
@@ -255,6 +254,16 @@ pub fn circuit_command(
             style.cyan("Boolean propagation"),
             proven.len()
         );
+    }
+
+    // Circuit stats profiler
+    if circuit_stats {
+        let name = std::path::Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned());
+        let stats =
+            ir::stats::CircuitStats::from_program(&program, &proven, name.as_deref());
+        eprintln!("{stats}");
     }
 
     match backend {
