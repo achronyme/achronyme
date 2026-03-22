@@ -64,6 +64,30 @@ impl BigIntInterner {
     }
 }
 
+/// Append-only storage for binary blobs (e.g. serialized ProveIR).
+/// No deduplication cache — each blob is typically unique.
+pub struct BytesInterner {
+    pub blobs: Vec<Vec<u8>>,
+}
+
+impl Default for BytesInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BytesInterner {
+    pub fn new() -> Self {
+        Self { blobs: Vec::new() }
+    }
+
+    pub fn intern(&mut self, data: Vec<u8>) -> u32 {
+        let handle = self.blobs.len() as u32;
+        self.blobs.push(data);
+        handle
+    }
+}
+
 pub struct StringInterner {
     pub strings: Vec<String>,
     pub cache: HashMap<String, u32>,

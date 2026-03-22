@@ -1,6 +1,6 @@
 use crate::error::{CompilerError, OptSpan};
 use crate::function_compiler::FunctionCompiler;
-use crate::interner::{BigIntInterner, FieldInterner, StringInterner};
+use crate::interner::{BigIntInterner, BytesInterner, FieldInterner, StringInterner};
 use crate::module_loader::ModuleLoader;
 use crate::statements::{stmt_span, StatementCompiler};
 use achronyme_parser::ast::{Span, Stmt};
@@ -30,6 +30,9 @@ pub struct Compiler {
 
     // BigInt Interner (shared across all functions)
     pub bigint_interner: BigIntInterner,
+
+    // Bytes Interner (binary blobs, e.g. serialized ProveIR)
+    pub bytes_interner: BytesInterner,
 
     // Module system
     pub base_path: Option<PathBuf>,
@@ -110,6 +113,7 @@ impl Compiler {
             interner: StringInterner::new(),
             field_interner: FieldInterner::new(),
             bigint_interner: BigIntInterner::new(),
+            bytes_interner: BytesInterner::new(),
             base_path: None,
             module_loader: ModuleLoader::new(),
             module_prefix: None,
@@ -282,6 +286,10 @@ impl Compiler {
 
     pub fn intern_bigint(&mut self, bi: memory::BigInt) -> u32 {
         self.bigint_interner.intern(bi)
+    }
+
+    pub fn intern_bytes(&mut self, data: Vec<u8>) -> u32 {
+        self.bytes_interner.intern(data)
     }
 
     /// Returns a mutable reference to the current (top) function compiler
