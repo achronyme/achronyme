@@ -58,7 +58,8 @@ impl ProveHandler for DefaultProveHandler {
         // 3. Optimize
         ir::passes::optimize(&mut program);
 
-        // 4. Build input map from scope_values (public + witness + capture names)
+        // 4. Build input map from scope_values (public + witness + capture names).
+        //    Validate that all required values are present.
         let mut inputs = HashMap::new();
         for input in prove_ir
             .public_inputs
@@ -69,15 +70,22 @@ impl ProveHandler for DefaultProveHandler {
                 Some(ir::prove_ir::ArraySize::Literal(n)) => {
                     for i in 0..*n {
                         let elem_name = format!("{}_{i}", input.name);
-                        if let Some(fe) = scope_values.get(&elem_name) {
-                            inputs.insert(elem_name, *fe);
-                        }
+                        let fe = scope_values.get(&elem_name).ok_or_else(|| {
+                            ProveError::IrLowering(format!(
+                                "variable `{elem_name}` not found in scope"
+                            ))
+                        })?;
+                        inputs.insert(elem_name, *fe);
                     }
                 }
                 None => {
-                    if let Some(fe) = scope_values.get(&input.name) {
-                        inputs.insert(input.name.clone(), *fe);
-                    }
+                    let fe = scope_values.get(&input.name).ok_or_else(|| {
+                        ProveError::IrLowering(format!(
+                            "variable `{}` not found in scope",
+                            input.name
+                        ))
+                    })?;
+                    inputs.insert(input.name.clone(), *fe);
                 }
                 Some(ir::prove_ir::ArraySize::Capture(_)) => {
                     // Capture-sized arrays: elements were expanded during instantiation.
@@ -86,9 +94,10 @@ impl ProveHandler for DefaultProveHandler {
             }
         }
         for cap in &prove_ir.captures {
-            if let Some(fe) = scope_values.get(&cap.name) {
-                inputs.insert(cap.name.clone(), *fe);
-            }
+            let fe = scope_values.get(&cap.name).ok_or_else(|| {
+                ProveError::IrLowering(format!("capture `{}` not found in scope", cap.name))
+            })?;
+            inputs.insert(cap.name.clone(), *fe);
         }
 
         match self.backend {

@@ -384,11 +384,18 @@ impl ControlFlowCompiler for Compiler {
         public_list: Option<&[String]>,
     ) -> Result<u8, CompilerError> {
         // 1. Collect outer scope names for ProveIR capture detection.
-        let outer_scope: std::collections::HashSet<String> = self
+        //    Include locals from ALL enclosing function scopes (not just current),
+        //    so that upvalue-accessible variables are visible to ProveIR.
+        let mut outer_scope: std::collections::HashSet<String> = self
             .collect_in_scope_names()
             .into_iter()
             .map(|s| s.to_string())
             .collect();
+        for compiler in &self.compilers[..self.compilers.len().saturating_sub(1)] {
+            for local in &compiler.locals {
+                outer_scope.insert(local.name.clone());
+            }
+        }
 
         // 2. If public_list is provided (new syntax), validate no old-style
         //    declarations in the body and synthesize PublicDecl stmts.
