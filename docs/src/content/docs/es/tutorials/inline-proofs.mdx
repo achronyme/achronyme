@@ -8,9 +8,9 @@ El bloque `prove` te permite generar pruebas de conocimiento cero en línea, sin
 ## Ejemplo Básico
 
 ```ach
-let x = 0p6
-let y = 0p7
-let product = 0p42
+let x: Field = 0p6
+let y: Field = 0p7
+let product: Field = 0p42
 
 let p = prove(public: [product]) {
     assert_eq(x * y, product)
@@ -31,8 +31,8 @@ El bloque prove:
 Con la sintaxis `prove(public: [...])`, solo declaras qué variables son públicas — todo lo demás se infiere automáticamente como testigo:
 
 ```ach
-let secret = 0p42
-let hash = 0p17159...
+let secret: Field = 0p42
+let hash: Field = 0p17159...
 
 let p = prove(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
@@ -49,8 +49,8 @@ El verificador aprende solo que *algún* valor hashea a `hash`, sin conocer `sec
 La sintaxis explícita `witness`/`public` también está soportada:
 
 ```ach
-let secret = 0p42
-let hash = 0p17159...
+let secret: Field = 0p42
+let hash: Field = 0p17159...
 
 let p = prove {
     witness secret    // privado — el probador lo conoce
@@ -118,14 +118,14 @@ print(ok)  // true
 Los bloques prove soportan arrays, funciones y todas las características del modo circuito:
 
 ```ach
-let v0 = 0p10
-let v1 = 0p20
-let v2 = 0p30
-let total = 0p60
+let v0: Field = 0p10
+let v1: Field = 0p20
+let v2: Field = 0p30
+let total: Field = 0p60
 
 prove(public: [total]) {
-    let vals = [v0, v1, v2]
-    let acc = vals[0] + vals[1] + vals[2]
+    let vals: Field[3] = [v0, v1, v2]
+    let acc: Field = vals[0] + vals[1] + vals[2]
     assert_eq(acc, total)
     assert_eq(len(vals), 3)
 }
@@ -136,9 +136,9 @@ prove(public: [total]) {
 Las funciones criptográficas integradas funcionan dentro de bloques prove:
 
 ```ach
-let a = 0p1
-let b = 0p2
-let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
+let a: Field = 0p1
+let b: Field = 0p2
+let h: Field = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
 prove(public: [h]) {
     assert_eq(poseidon(a, b), h)
@@ -150,7 +150,7 @@ prove(public: [h]) {
 Fuerza que un valor quepa dentro de cierto número de bits:
 
 ```ach
-let val = 0p200
+let val: Field = 0p200
 
 prove(public: []) {
     range_check(val, 8)   // 0 ≤ val < 256
@@ -162,10 +162,10 @@ prove(public: []) {
 Puedes usar múltiples bloques prove en secuencia:
 
 ```ach
-let a = 0p3
-let b = 0p4
-let sum = 0p7
-let product = 0p12
+let a: Field = 0p3
+let b: Field = 0p4
+let sum: Field = 0p7
+let product: Field = 0p12
 
 prove(public: [sum]) {
     assert_eq(a + b, sum)

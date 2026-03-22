@@ -10,7 +10,7 @@ Poseidon is an arithmetic-friendly hash function designed for zero-knowledge cir
 Compute a 2-to-1 Poseidon hash:
 
 ```ach
-let h = poseidon(1, 2)
+let h: Field = poseidon(1, 2)
 print(h)
 // 7853200120776062878684798364095072458815029376092732009249414926327459813530
 ```
@@ -155,9 +155,9 @@ print(root)
 Poseidon works inside `prove {}` for inline proof generation:
 
 ```ach
-let a = 0p1
-let b = 0p2
-let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
+let a: Field = 0p1
+let b: Field = 0p2
+let h: Field = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
 let p = prove(public: [h]) {
     assert_eq(poseidon(a, b), h)
