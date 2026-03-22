@@ -535,6 +535,96 @@ mod warning_tests {
         let ws = compile_warnings("fn test(x) { let y = x; print(y) }");
         assert!(ws.is_empty(), "expected no warnings, got: {:?}", ws);
     }
+
+    // === W006: Type annotation mismatch ===
+
+    #[test]
+    fn w006_bool_annotation_on_field_literal() {
+        let ws = compile_warnings("fn test() { let x: Bool = 0p42; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_field_annotation_on_string() {
+        let ws = compile_warnings("fn test() { let x: Field = \"hello\"; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_field_annotation_on_bool() {
+        let ws = compile_warnings("fn test() { let x: Field = true; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_bool_annotation_on_nil() {
+        let ws = compile_warnings("fn test() { let x: Bool = nil; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_no_warning_field_on_field_lit() {
+        let ws = compile_warnings("fn test() { let x: Field = 0p42; print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_no_warning_field_on_int() {
+        let ws = compile_warnings("fn test() { let x: Field = 42; print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_no_warning_bool_on_bool() {
+        let ws = compile_warnings("fn test() { let x: Bool = true; print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_no_warning_dynamic_expression() {
+        let ws = compile_warnings("fn f() { true }\nfn test() { let x: Bool = f(); print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_mut_decl_also_warns() {
+        let ws = compile_warnings("fn test() { mut x: Bool = 0p1; x = true; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    #[test]
+    fn w006_scalar_annotation_on_array() {
+        let ws = compile_warnings("fn test() { let x: Field = [1, 2, 3]; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    // === W007: Array size mismatch ===
+
+    #[test]
+    fn w007_array_size_mismatch() {
+        let ws = compile_warnings("fn test() { let x: Field[3] = [1, 2]; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W007")));
+    }
+
+    #[test]
+    fn w007_bool_array_size_mismatch() {
+        let ws = compile_warnings("fn test() { let x: Bool[2] = [true, false, true]; print(x) }");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W007")));
+    }
+
+    #[test]
+    fn w007_no_warning_matching_size() {
+        let ws = compile_warnings("fn test() { let x: Field[3] = [1, 2, 3]; print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W007")));
+    }
+
+    #[test]
+    fn w007_no_warning_on_non_array_value() {
+        // Field[3] on a non-array value → W006, not W007
+        let ws = compile_warnings("fn test() { let x: Field[3] = 42; print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W007")));
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
 }
 
 #[cfg(test)]
