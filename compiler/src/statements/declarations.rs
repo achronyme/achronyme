@@ -35,6 +35,15 @@ impl DeclarationCompiler for Compiler {
 
         check_type_annotation(self, name, type_ann, value);
 
+        // Infer array type for let-bound array literals when no annotation is given.
+        // Only for `let` (immutable) — `mut` arrays could be reassigned to different sizes.
+        let effective_ann = match (type_ann, value) {
+            (None, Expr::Array { elements, .. }) if !elements.is_empty() => {
+                Some(TypeAnnotation::FieldArray(elements.len()))
+            }
+            _ => type_ann.cloned(),
+        };
+
         if self.current()?.scope_depth > 0 {
             let depth = self.current()?.scope_depth;
             let span = self.current_span.clone();
@@ -51,7 +60,7 @@ impl DeclarationCompiler for Compiler {
                 is_mutated: false,
                 reg,
                 span,
-                type_ann: type_ann.cloned(),
+                type_ann: effective_ann,
             });
         } else {
             if self.next_global_idx == u16::MAX {
