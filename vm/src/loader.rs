@@ -1,4 +1,6 @@
-use crate::specs::{SER_TAG_BIGINT, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
+use crate::specs::{
+    SER_TAG_BIGINT, SER_TAG_BYTES, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING,
+};
 use crate::{CallFrame, VM};
 use byteorder::{LittleEndian, ReadBytesExt};
 use memory::{Closure, Function, Value};
@@ -137,6 +139,31 @@ impl VM {
             Vec::new()
         };
 
+        // --- Bytes Table (binary blobs, e.g. serialized ProveIR) ---
+        if version >= 0x0A {
+            let blob_count = reader.read_u32::<LittleEndian>()?;
+            if blob_count > 100_000 {
+                return Err(LoaderError::Security(format!(
+                    "Bytes blob count too large: {}",
+                    blob_count
+                )));
+            }
+            let mut blobs = Vec::with_capacity(blob_count as usize);
+            for _ in 0..blob_count {
+                let len = reader.read_u32::<LittleEndian>()? as usize;
+                if len > 64 * 1024 * 1024 {
+                    return Err(LoaderError::Security(format!(
+                        "Bytes blob length exceeds 64 MB limit: {}",
+                        len
+                    )));
+                }
+                let mut data = vec![0u8; len];
+                reader.read_exact(&mut data)?;
+                blobs.push(data);
+            }
+            self.heap.import_bytes(blobs);
+        }
+
         // --- Constants ---
         let const_count = reader.read_u32::<LittleEndian>()?;
         if const_count > 1_000_000 {
@@ -188,6 +215,10 @@ impl VM {
                         LoaderError::Format(format!("BigInt handle out of range: {}", handle_idx))
                     })?;
                     constants.push(Value::bigint(heap_handle));
+                }
+                SER_TAG_BYTES => {
+                    let handle = reader.read_u32::<LittleEndian>()?;
+                    constants.push(Value::bytes(handle));
                 }
                 SER_TAG_NIL => {
                     constants.push(Value::nil());
@@ -279,6 +310,10 @@ impl VM {
                             ))
                         })?;
                         proto_constants.push(Value::bigint(heap_handle));
+                    }
+                    SER_TAG_BYTES => {
+                        let handle = reader.read_u32::<LittleEndian>()?;
+                        proto_constants.push(Value::bytes(handle));
                     }
                     SER_TAG_NIL => {
                         proto_constants.push(Value::nil());

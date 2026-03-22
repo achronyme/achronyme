@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use std::fs;
-use vm::specs::{SER_TAG_BIGINT, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING};
+use vm::specs::{
+    SER_TAG_BIGINT, SER_TAG_BYTES, SER_TAG_FIELD, SER_TAG_INT, SER_TAG_NIL, SER_TAG_STRING,
+};
 
 use super::ErrorFormat;
 
@@ -65,6 +67,14 @@ pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat)
             }
         }
 
+        // --- Bytes Table (binary blobs, e.g. serialized ProveIR) ---
+        let blobs = &compiler.bytes_interner.blobs;
+        file.write_u32::<LittleEndian>(blobs.len() as u32)?;
+        for blob in blobs {
+            file.write_u32::<LittleEndian>(blob.len() as u32)?;
+            file.write_all(blob)?;
+        }
+
         // --- Constants ---
         let main_func = compiler
             .compilers
@@ -86,6 +96,10 @@ pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat)
             } else if c.is_bigint() {
                 file.write_u8(SER_TAG_BIGINT)?;
                 let handle = c.as_handle().expect("BigInt value must have handle");
+                file.write_u32::<LittleEndian>(handle)?;
+            } else if c.is_bytes() {
+                file.write_u8(SER_TAG_BYTES)?;
+                let handle = c.as_handle().expect("Bytes value must have handle");
                 file.write_u32::<LittleEndian>(handle)?;
             } else if c.is_nil() {
                 file.write_u8(SER_TAG_NIL)?;
@@ -126,6 +140,10 @@ pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat)
                 } else if c.is_bigint() {
                     file.write_u8(SER_TAG_BIGINT)?;
                     let handle = c.as_handle().expect("BigInt value must have handle");
+                    file.write_u32::<LittleEndian>(handle)?;
+                } else if c.is_bytes() {
+                    file.write_u8(SER_TAG_BYTES)?;
+                    let handle = c.as_handle().expect("Bytes value must have handle");
                     file.write_u32::<LittleEndian>(handle)?;
                 } else {
                     file.write_u8(SER_TAG_NIL)?;
