@@ -39,7 +39,7 @@ impl DeclarationCompiler for Compiler {
         // Only for `let` (immutable) — `mut` arrays could be reassigned to different sizes.
         let effective_ann = match (type_ann, value) {
             (None, Expr::Array { elements, .. }) if !elements.is_empty() => {
-                Some(TypeAnnotation::FieldArray(elements.len()))
+                Some(TypeAnnotation::array(BaseType::Field, elements.len()))
             }
             _ => type_ann.cloned(),
         };
@@ -232,25 +232,20 @@ fn infer_literal_type(expr: &Expr) -> Option<InferredType> {
 
 /// Check whether a type annotation is compatible with an inferred literal type.
 fn is_ann_compatible(ann: &TypeAnnotation, inferred: &InferredType) -> bool {
-    match (ann, inferred) {
+    match (&ann.base, ann.is_array(), inferred) {
         // Field accepts field literals and integers (int→field coercion)
-        (TypeAnnotation::Field, InferredType::Field | InferredType::Int) => true,
+        (BaseType::Field, false, InferredType::Field | InferredType::Int) => true,
         // Bool only accepts bool literals
-        (TypeAnnotation::Bool, InferredType::Bool) => true,
+        (BaseType::Bool, false, InferredType::Bool) => true,
         // Array annotations accept arrays (element types not checked at compile time)
-        (TypeAnnotation::FieldArray(_) | TypeAnnotation::BoolArray(_), InferredType::Array(_)) => {
-            true
-        }
+        (_, true, InferredType::Array(_)) => true,
         _ => false,
     }
 }
 
 /// Extract expected array size from a type annotation, if it's an array type.
 fn ann_array_size(ann: &TypeAnnotation) -> Option<usize> {
-    match ann {
-        TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n) => Some(*n),
-        _ => None,
-    }
+    ann.array_size
 }
 
 /// Emit W006 (type mismatch) or W007 (array size mismatch) warnings when a type

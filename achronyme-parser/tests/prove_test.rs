@@ -1,14 +1,18 @@
-use achronyme_parser::ast::{CircuitVisibility, Expr, Stmt};
-use achronyme_parser::parse_program;
+use achronyme_parser::ast::{Expr, Stmt, Visibility};
+use achronyme_parser::{parse_program, Severity};
 
 fn parse_ok(source: &str) {
     let (_, errors) = parse_program(source);
-    assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+    let real_errors: Vec<_> = errors
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(real_errors.is_empty(), "unexpected parse errors: {real_errors:?}");
 }
 
 fn has_errors(source: &str) -> bool {
     let (_, errors) = parse_program(source);
-    !errors.is_empty()
+    errors.iter().any(|d| d.severity == Severity::Error)
 }
 
 #[test]
@@ -219,6 +223,7 @@ fn prove_anonymous_still_works() {
 
 #[test]
 fn circuit_decl_parses() {
+    // Old syntax — emits W008 deprecation but still parses
     let input =
         r#"circuit hash_check(public output, witness secret) { assert_eq(output, secret) }"#;
     parse_ok(input);
@@ -230,9 +235,15 @@ fn circuit_decl_parses() {
             assert_eq!(name, "hash_check");
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].name, "output");
-            assert_eq!(params[0].visibility, CircuitVisibility::Public);
+            assert_eq!(
+                params[0].type_ann.as_ref().unwrap().visibility,
+                Some(Visibility::Public)
+            );
             assert_eq!(params[1].name, "secret");
-            assert_eq!(params[1].visibility, CircuitVisibility::Witness);
+            assert_eq!(
+                params[1].type_ann.as_ref().unwrap().visibility,
+                Some(Visibility::Witness)
+            );
             assert!(!body.stmts.is_empty());
         }
         other => panic!("expected CircuitDecl, got {other:?}"),
@@ -241,15 +252,16 @@ fn circuit_decl_parses() {
 
 #[test]
 fn circuit_decl_with_array_params() {
+    // Old syntax — emits W008 deprecation but still parses
     let input = r#"circuit merkle(public root, witness path[3], witness indices[3]) { assert(root == root) }"#;
     parse_ok(input);
     let (prog, _) = parse_program(input);
     match &prog.stmts[0] {
         Stmt::CircuitDecl { params, .. } => {
             assert_eq!(params.len(), 3);
-            assert!(params[0].array_size.is_none());
-            assert_eq!(params[1].array_size, Some(3));
-            assert_eq!(params[2].array_size, Some(3));
+            assert!(params[0].type_ann.as_ref().unwrap().array_size.is_none());
+            assert_eq!(params[1].type_ann.as_ref().unwrap().array_size, Some(3));
+            assert_eq!(params[2].type_ann.as_ref().unwrap().array_size, Some(3));
         }
         other => panic!("expected CircuitDecl, got {other:?}"),
     }

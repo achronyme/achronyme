@@ -102,10 +102,10 @@ pub enum Stmt {
         names: Vec<String>,
         span: Span,
     },
-    /// Reusable circuit definition: `circuit name(public x, witness y) { body }`
+    /// Reusable circuit definition: `circuit name(x: Public, y: Witness) { body }`
     CircuitDecl {
         name: String,
-        params: Vec<CircuitParam>,
+        params: Vec<TypedParam>,
         body: Block,
         span: Span,
     },
@@ -122,27 +122,20 @@ pub enum Stmt {
     },
 }
 
-/// A parameter in a circuit declaration with visibility.
-#[derive(Clone, Debug)]
-pub struct CircuitParam {
-    pub name: String,
-    pub visibility: CircuitVisibility,
-    pub array_size: Option<usize>,
-}
-
-/// Visibility of a circuit parameter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CircuitVisibility {
-    Public,
-    Witness,
-}
-
-/// A public/witness input declaration with optional array size.
+/// A public/witness input declaration with optional type annotation.
+///
+/// Array size now lives inside `TypeAnnotation.array_size`.
 #[derive(Clone, Debug)]
 pub struct InputDecl {
     pub name: String,
-    pub array_size: Option<usize>,
     pub type_ann: Option<TypeAnnotation>,
+}
+
+impl InputDecl {
+    /// Get the array size from the type annotation, if any.
+    pub fn array_size(&self) -> Option<usize> {
+        self.type_ann.as_ref().and_then(|ann| ann.array_size)
+    }
 }
 
 /// A block of statements (e.g., `{ ... }`).
@@ -369,33 +362,99 @@ pub enum UnaryOp {
     Not,
 }
 
+/// Visibility of a ZK input (circuit/prove parameter).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    Public,
+    Witness,
+}
+
+impl std::fmt::Display for Visibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Visibility::Public => write!(f, "Public"),
+            Visibility::Witness => write!(f, "Witness"),
+        }
+    }
+}
+
+/// Base type in a type annotation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BaseType {
+    Field,
+    Bool,
+}
+
+impl std::fmt::Display for BaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaseType::Field => write!(f, "Field"),
+            BaseType::Bool => write!(f, "Bool"),
+        }
+    }
+}
+
 /// A type annotation for circuit variables and function parameters.
 ///
-/// ```
-/// use achronyme_parser::ast::TypeAnnotation;
+/// Carries optional visibility (for circuit/prove params), a base type,
+/// and an optional array size.
 ///
-/// let t = TypeAnnotation::Field;
+/// ```
+/// use achronyme_parser::ast::{TypeAnnotation, BaseType};
+///
+/// let t = TypeAnnotation::scalar(BaseType::Field);
 /// assert_eq!(format!("{t}"), "Field");
 ///
-/// let arr = TypeAnnotation::BoolArray(4);
+/// let arr = TypeAnnotation::array(BaseType::Bool, 4);
 /// assert_eq!(format!("{arr}"), "Bool[4]");
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TypeAnnotation {
-    Field,
-    Bool,
-    FieldArray(usize),
-    BoolArray(usize),
+pub struct TypeAnnotation {
+    pub visibility: Option<Visibility>,
+    pub base: BaseType,
+    pub array_size: Option<usize>,
+}
+
+impl TypeAnnotation {
+    /// Scalar type without visibility: `Field` or `Bool`.
+    pub fn scalar(base: BaseType) -> Self {
+        Self {
+            visibility: None,
+            base,
+            array_size: None,
+        }
+    }
+
+    /// Array type without visibility: `Field[N]` or `Bool[N]`.
+    pub fn array(base: BaseType, size: usize) -> Self {
+        Self {
+            visibility: None,
+            base,
+            array_size: Some(size),
+        }
+    }
+
+    /// Whether this annotation is an array type.
+    pub fn is_array(&self) -> bool {
+        self.array_size.is_some()
+    }
+
+    /// Whether this annotation is a `Bool` or `Bool[N]`.
+    pub fn is_bool(&self) -> bool {
+        self.base == BaseType::Bool
+    }
 }
 
 impl std::fmt::Display for TypeAnnotation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeAnnotation::Field => write!(f, "Field"),
-            TypeAnnotation::Bool => write!(f, "Bool"),
-            TypeAnnotation::FieldArray(n) => write!(f, "Field[{n}]"),
-            TypeAnnotation::BoolArray(n) => write!(f, "Bool[{n}]"),
+        if let Some(vis) = &self.visibility {
+            write!(f, "{vis} ")?;
         }
+        write!(f, "{}", self.base)?;
+        if let Some(n) = self.array_size {
+            write!(f, "[{n}]")?;
+        }
+        Ok(())
     }
 }
 

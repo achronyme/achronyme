@@ -25,7 +25,7 @@ pub trait StatementCompiler {
     fn compile_circuit_decl(
         &mut self,
         name: &str,
-        params: &[CircuitParam],
+        params: &[TypedParam],
         body: &Block,
         span: &Span,
     ) -> Result<(), CompilerError>;
@@ -161,24 +161,28 @@ impl StatementCompiler for Compiler {
     fn compile_circuit_decl(
         &mut self,
         name: &str,
-        params: &[CircuitParam],
+        params: &[TypedParam],
         body: &Block,
         span: &Span,
     ) -> Result<(), CompilerError> {
         // 1. Synthesize public/witness declarations from circuit params
         let mut stmts = Vec::new();
         for param in params {
+            let visibility = param
+                .type_ann
+                .as_ref()
+                .and_then(|ann| ann.visibility)
+                .unwrap_or(Visibility::Witness);
             let decl = InputDecl {
                 name: param.name.clone(),
-                array_size: param.array_size,
-                type_ann: None,
+                type_ann: param.type_ann.clone(),
             };
-            match param.visibility {
-                CircuitVisibility::Public => stmts.push(Stmt::PublicDecl {
+            match visibility {
+                Visibility::Public => stmts.push(Stmt::PublicDecl {
                     names: vec![decl],
                     span: span.clone(),
                 }),
-                CircuitVisibility::Witness => stmts.push(Stmt::WitnessDecl {
+                Visibility::Witness => stmts.push(Stmt::WitnessDecl {
                     names: vec![decl],
                     span: span.clone(),
                 }),

@@ -110,7 +110,7 @@ impl IrLowering {
     fn lower_public_decl(&mut self, names: &[InputDecl], span: &Span) -> Result<(), IrError> {
         for decl in names {
             self.record_input_span(&decl.name, span);
-            if let Some(size) = decl.array_size {
+            if let Some(size) = decl.array_size() {
                 let vars = self.declare_public_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
                     self.enforce_input_type_ann(ann, &vars);
@@ -128,7 +128,7 @@ impl IrLowering {
     fn lower_witness_decl(&mut self, names: &[InputDecl], span: &Span) -> Result<(), IrError> {
         for decl in names {
             self.record_input_span(&decl.name, span);
-            if let Some(size) = decl.array_size {
+            if let Some(size) = decl.array_size() {
                 let vars = self.declare_witness_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
                     self.enforce_input_type_ann(ann, &vars);
@@ -194,7 +194,7 @@ impl IrLowering {
             // Validate and enforce types from annotation if provided
             if let Some(ann) = type_ann {
                 // Reject scalar annotations on array values
-                if matches!(ann, TypeAnnotation::Field | TypeAnnotation::Bool) {
+                if !ann.is_array() {
                     return Err(IrError::TypeMismatch {
                         expected: format!("{}[{}]", ann, vars.len()),
                         got: format!("{ann}"),
@@ -202,10 +202,7 @@ impl IrLowering {
                     });
                 }
                 // Validate array size matches annotation
-                let expected_size = match ann {
-                    TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n) => Some(*n),
-                    _ => None,
-                };
+                let expected_size = ann.array_size;
                 if let Some(expected) = expected_size {
                     if vars.len() != expected {
                         return Err(IrError::ArrayLengthMismatch {
@@ -260,10 +257,7 @@ impl IrLowering {
         // Validate type annotation if present
         let bound_var = if let Some(ann) = type_ann {
             // Reject array annotations on scalar values
-            if matches!(
-                ann,
-                TypeAnnotation::FieldArray(_) | TypeAnnotation::BoolArray(_)
-            ) {
+            if ann.is_array() {
                 return Err(IrError::TypeMismatch {
                     expected: "scalar".into(),
                     got: format!("{ann}"),

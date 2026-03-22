@@ -16,10 +16,7 @@ fn find_local_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
     if let Ok(func) = compiler.current_ref() {
         for local in func.locals.iter().rev() {
             if local.name == name {
-                return match &local.type_ann {
-                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => Some(*n),
-                    _ => None,
-                };
+                return local.type_ann.as_ref().and_then(|ann| ann.array_size);
             }
         }
     }
@@ -27,10 +24,7 @@ fn find_local_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
     for fc in compiler.compilers.iter().rev().skip(1) {
         for local in fc.locals.iter().rev() {
             if local.name == name {
-                return match &local.type_ann {
-                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => Some(*n),
-                    _ => None,
-                };
+                return local.type_ann.as_ref().and_then(|ann| ann.array_size);
             }
         }
     }
@@ -453,22 +447,18 @@ impl ControlFlowCompiler for Compiler {
             std::collections::HashMap::new();
         if let Ok(func) = self.current_ref() {
             for local in &func.locals {
-                let entry = match &local.type_ann {
-                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => {
-                        ir::prove_ir::OuterScopeEntry::Array(*n)
-                    }
-                    _ => ir::prove_ir::OuterScopeEntry::Scalar,
+                let entry = match local.type_ann.as_ref().and_then(|ann| ann.array_size) {
+                    Some(n) => ir::prove_ir::OuterScopeEntry::Array(n),
+                    None => ir::prove_ir::OuterScopeEntry::Scalar,
                 };
                 outer_scope.insert(local.name.clone(), entry);
             }
         }
         for compiler in &self.compilers[..self.compilers.len().saturating_sub(1)] {
             for local in &compiler.locals {
-                let entry = match &local.type_ann {
-                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => {
-                        ir::prove_ir::OuterScopeEntry::Array(*n)
-                    }
-                    _ => ir::prove_ir::OuterScopeEntry::Scalar,
+                let entry = match local.type_ann.as_ref().and_then(|ann| ann.array_size) {
+                    Some(n) => ir::prove_ir::OuterScopeEntry::Array(n),
+                    None => ir::prove_ir::OuterScopeEntry::Scalar,
                 };
                 outer_scope.entry(local.name.clone()).or_insert(entry);
             }
@@ -502,11 +492,11 @@ impl ControlFlowCompiler for Compiler {
             let mut stmts = Vec::new();
             for name in pub_names {
                 let array_size = find_local_array_size(self, name);
+                let type_ann = array_size.map(|n| TypeAnnotation::array(BaseType::Field, n));
                 stmts.push(Stmt::PublicDecl {
                     names: vec![InputDecl {
                         name: name.clone(),
-                        array_size,
-                        type_ann: None,
+                        type_ann,
                     }],
                     span: body.span.clone(),
                 });

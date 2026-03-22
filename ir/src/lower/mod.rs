@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use achronyme_parser::ast::*;
+use achronyme_parser::ast::{BaseType, Block, Span, Stmt, TypeAnnotation, TypedParam};
 use achronyme_parser::parse_program as ast_parse_program;
 use memory::FieldElement;
 
@@ -49,9 +49,9 @@ pub(super) struct FnDef {
 /// assert!(!prog.instructions.is_empty());
 /// ```
 pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann {
-        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
-        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
+    match ann.base {
+        BaseType::Field => IrType::Field,
+        BaseType::Bool => IrType::Bool,
     }
 }
 
@@ -326,7 +326,7 @@ impl IrLowering {
                     for decl in names {
                         pub_decls.push((
                             decl.name.clone(),
-                            decl.array_size,
+                            decl.array_size(),
                             decl.type_ann.clone(),
                             span.clone(),
                         ));
@@ -336,7 +336,7 @@ impl IrLowering {
                     for decl in names {
                         wit_decls.push((
                             decl.name.clone(),
-                            decl.array_size,
+                            decl.array_size(),
                             decl.type_ann.clone(),
                             span.clone(),
                         ));

@@ -106,8 +106,7 @@ impl ProveIrCompiler {
                         .insert(name.clone(), CompEnvValue::Capture(name.clone()));
                 }
                 OuterScopeEntry::Array(n) => {
-                    let elem_names: Vec<String> =
-                        (0..*n).map(|i| format!("{name}_{i}")).collect();
+                    let elem_names: Vec<String> = (0..*n).map(|i| format!("{name}_{i}")).collect();
                     for ename in &elem_names {
                         compiler
                             .env
@@ -319,7 +318,7 @@ impl ProveIrCompiler {
                 &mut self.witness_inputs
             };
 
-            if let Some(size) = decl.array_size {
+            if let Some(size) = decl.array_size() {
                 inputs.push(ProveInputDecl {
                     name: decl.name.clone(),
                     array_size: Some(ArraySize::Literal(size)),
@@ -1699,9 +1698,9 @@ fn to_span(span: &Span) -> OptSpan {
 
 /// Convert a TypeAnnotation to IrType.
 fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann {
-        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
-        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
+    match ann.base {
+        BaseType::Field => IrType::Field,
+        BaseType::Bool => IrType::Bool,
     }
 }
 
