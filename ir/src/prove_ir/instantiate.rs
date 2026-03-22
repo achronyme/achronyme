@@ -18,6 +18,11 @@ use super::error::ProveIrError;
 use super::types::*;
 use crate::types::{Instruction, IrProgram, IrType, SsaVar, Visibility};
 
+/// Maximum iterations allowed during instantiation (loop unrolling).
+/// This mirrors `MAX_UNROLL_ITERATIONS` in IrLowering but applies to capture-bound
+/// loops that are only resolved at instantiation time.
+const MAX_INSTANTIATE_ITERATIONS: u64 = 1_000_000;
+
 // ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
@@ -180,14 +185,6 @@ impl Instantiator {
             CaptureUsage::CircuitInput | CaptureUsage::Both => {
                 // Becomes a witness input — the concrete value is the witness
                 // assignment provided by the prover.
-                //
-                // For `Both` captures: the concrete value is ALSO used for
-                // structural resolution (loop bounds, array sizes) via
-                // self.captures, independently from the circuit wire. The
-                // prover must provide the same value as witness that was used
-                // for structural decisions. There is no in-circuit constraint
-                // enforcing this consistency — it is an inherent limitation of
-                // arithmetic circuits where structure is fixed at compile time.
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Input {
                     result: v,
@@ -197,6 +194,26 @@ impl Instantiator {
                 self.program.set_name(v, cap.name.clone());
                 self.program.set_type(v, IrType::Field);
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
+
+                // For `Both` captures: the value is used structurally (loop bounds,
+                // array sizes) AND in constraints. We emit an AssertEq to enforce
+                // that the witness value matches the structural constant. Without
+                // this, a malicious prover could provide a different witness value
+                // than the one used for structural decisions (e.g., loop count),
+                // producing an unsound proof.
+                if cap.usage == CaptureUsage::Both {
+                    let const_var = self.program.fresh_var();
+                    self.program.push(Instruction::Const {
+                        result: const_var,
+                        value,
+                    });
+                    let eq_var = self.program.fresh_var();
+                    self.program.push(Instruction::AssertEq {
+                        result: eq_var,
+                        lhs: v,
+                        rhs: const_var,
+                    });
+                }
             }
             CaptureUsage::StructureOnly => {
                 // Inlined as a constant — not a circuit wire.
@@ -350,6 +367,14 @@ impl Instantiator {
         end: u64,
         body: &[CircuitNode],
     ) -> Result<(), ProveIrError> {
+        let iterations = end.saturating_sub(start);
+        if iterations > MAX_INSTANTIATE_ITERATIONS {
+            return Err(ProveIrError::RangeTooLarge {
+                iterations,
+                max: MAX_INSTANTIATE_ITERATIONS,
+                span: None,
+            });
+        }
         self.with_saved_var(var, |this| {
             for i in start..end {
                 let v = this.program.fresh_var();
@@ -1566,5 +1591,89 @@ mod tests {
             .any(|i| matches!(i, Instruction::IsEq { result, .. } if ir.get_type(*result) == Some(IrType::Bool)));
         assert!(has_field, "Add result should have IrType::Field");
         assert!(has_bool, "IsEq result should have IrType::Bool");
+    }
+
+    // ===================================================================
+    // Phase D audit: hardening tests
+    // ===================================================================
+
+    // D1: Capture-bound loop exceeding MAX_INSTANTIATE_ITERATIONS is rejected
+    #[test]
+    fn audit_instantiate_rejects_huge_capture_loop() {
+        // Construct ProveIR directly (parser doesn't support dynamic for bounds)
+        let prove_ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![CaptureDef {
+                name: "n".into(),
+                usage: CaptureUsage::StructureOnly,
+            }],
+            body: vec![CircuitNode::For {
+                var: "i".into(),
+                range: ForRange::WithCapture {
+                    start: 0,
+                    end_capture: "n".into(),
+                },
+                body: vec![],
+                span: None,
+            }],
+        };
+        let captures: HashMap<String, FieldElement> =
+            [("n".to_string(), FieldElement::from_u64(2_000_000))]
+                .into_iter()
+                .collect();
+        let err = prove_ir.instantiate(&captures).unwrap_err();
+        assert!(
+            matches!(err, ProveIrError::RangeTooLarge { .. }),
+            "expected RangeTooLarge, got: {err}"
+        );
+    }
+
+    // D2: Both captures emit AssertEq to enforce structural-constraint consistency
+    #[test]
+    fn audit_both_capture_emits_assert_eq() {
+        let prove_ir = ProveIR {
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![CaptureDef {
+                name: "n".into(),
+                usage: CaptureUsage::Both,
+            }],
+            body: vec![CircuitNode::For {
+                var: "i".into(),
+                range: ForRange::WithCapture {
+                    start: 0,
+                    end_capture: "n".into(),
+                },
+                body: vec![],
+                span: None,
+            }],
+        };
+        let captures: HashMap<String, FieldElement> =
+            [("n".to_string(), FieldElement::from_u64(3))]
+                .into_iter()
+                .collect();
+        let ir = prove_ir.instantiate(&captures).unwrap();
+        // Should have at least one AssertEq constraining capture n to its constant
+        let assert_eqs = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+            .count();
+        assert!(
+            assert_eqs >= 1,
+            "Both capture must emit AssertEq for consistency, found {assert_eqs}"
+        );
+    }
+
+    // D3: Import rejection uses ImportsNotSupported variant
+    #[test]
+    fn audit_import_returns_imports_not_supported() {
+        let err =
+            ProveIrCompiler::compile_circuit("import \"./foo.ach\" as foo\npublic x").unwrap_err();
+        assert!(
+            matches!(err, ProveIrError::ImportsNotSupported { .. }),
+            "expected ImportsNotSupported, got: {err}"
+        );
     }
 }
