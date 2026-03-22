@@ -293,3 +293,43 @@ assert_eq(result, expected)
 | `AnnotationMismatch` | Tipo declarado no coincide con el tipo inferido (ej., `let x: Bool = a + b` donde `+` retorna `Field`) |
 | `ArrayLengthMismatch` | Tamaño del literal de array no coincide con el tamaño declarado (ej., `let a: Field[2] = [x, y, z]`) |
 | Error de parseo | Nombre de tipo inválido (solo se reconocen `Field` y `Bool`) |
+
+## Modo VM
+
+Las anotaciones de tipo funcionan en **ambos** modos: circuito y VM. En modo circuito generan restricciones (como se describe arriba). En modo VM producen **advertencias en tiempo de compilación** cuando la anotación no coincide con el valor:
+
+### W006: Tipo Incompatible
+
+Se emite cuando el tipo de un valor literal no coincide con la anotación:
+
+```ach
+let x: Bool = 0p42    // W006: type annotation `Bool` on `x` does not match value type `Field`
+let y: Field = "hello" // W006: type annotation `Field` on `y` does not match value type `String`
+```
+
+El código sigue ejecutándose — la VM es dinámicamente tipada y las anotaciones son informativas. Pero la advertencia detecta errores potenciales temprano.
+
+### W007: Tamaño de Array Incompatible
+
+Se emite cuando un literal de array tiene una longitud diferente a la anotación:
+
+```ach
+let a: Field[3] = [1, 2]  // W007: type `Field[3]` expects 3 elements, but array has 2
+```
+
+### Lo Que No Se Verifica
+
+Las advertencias solo se emiten para **valores literales** que pueden analizarse estáticamente. Las expresiones dinámicas (llamadas a funciones, referencias a variables, operaciones binarias) no se verifican:
+
+```ach
+let x: Bool = f()   // Sin advertencia — el tipo de retorno de f() es desconocido en tiempo de compilación
+let y: Field = a + b // Sin advertencia — el tipo de la expresión depende de valores en tiempo de ejecución
+```
+
+### Recomendación
+
+Usa anotaciones de tipo en código VM para:
+- **Documentar intención** — deja claro que una variable contiene un elemento de campo vs un booleano
+- **Detectar errores** — asignar un string a un binding `: Field` se señala inmediatamente
+- **Preparar para circuitos** — el código VM anotado transiciona a modo circuito sin cambios
+- **Ayudar a bloques prove** — las anotaciones de array como `Field[N]` habilitan la captura automática de arrays en bloques `prove(public: [...])`

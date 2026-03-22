@@ -293,3 +293,43 @@ assert_eq(result, expected)
 | `AnnotationMismatch` | Declared type doesn't match the inferred type (e.g., `let x: Bool = a + b` where `+` returns `Field`) |
 | `ArrayLengthMismatch` | Array literal size doesn't match declared size (e.g., `let a: Field[2] = [x, y, z]`) |
 | Parse error | Invalid type name (only `Field` and `Bool` are recognized) |
+
+## VM Mode
+
+Type annotations work in **both** circuit and VM modes. In circuit mode they generate constraints (as described above). In VM mode they produce **compile-time warnings** when the annotation doesn't match the value:
+
+### W006: Type Mismatch
+
+Emitted when a literal value's type doesn't match the annotation:
+
+```ach
+let x: Bool = 0p42    // W006: type annotation `Bool` on `x` does not match value type `Field`
+let y: Field = "hello" // W006: type annotation `Field` on `y` does not match value type `String`
+```
+
+The code still runs — the VM is dynamically typed and annotations are advisory. But the warning catches potential bugs early.
+
+### W007: Array Size Mismatch
+
+Emitted when an array literal has a different length than the annotation:
+
+```ach
+let a: Field[3] = [1, 2]  // W007: type `Field[3]` expects 3 elements, but array has 2
+```
+
+### What Is Not Checked
+
+Warnings are only emitted for **literal values** that can be statically analyzed. Dynamic expressions (function calls, variable references, binary operations) are not checked:
+
+```ach
+let x: Bool = f()   // No warning — return type of f() is unknown at compile time
+let y: Field = a + b // No warning — expression type depends on runtime values
+```
+
+### Recommendation
+
+Use type annotations in VM code to:
+- **Document intent** — make it clear that a variable holds a field element vs a boolean
+- **Catch typos** — assigning a string to a `: Field` binding is immediately flagged
+- **Prepare for circuits** — annotated VM code transitions to circuit mode with zero changes
+- **Help prove blocks** — array annotations like `Field[N]` enable automatic array capture in `prove(public: [...])` blocks
