@@ -124,6 +124,12 @@ pub enum Instruction {
     },
     /// Less-than check: result = 1 if lhs < rhs, 0 otherwise.
     /// Unbounded: full 252-bit decomposition (~761 constraints). Safe by default.
+    ///
+    /// **Signed-range comparison contract:** field elements are interpreted as
+    /// signed integers in `[-(p-1)/2, (p-1)/2]`, matching the VM's signed
+    /// semantics. This is required for correct behaviour of `abs()`, `min()`,
+    /// `max()`, and user-written comparisons compiled through ProveIR.
+    /// Backends (R1CS, Plonkish) MUST implement this contract.
     IsLt {
         result: SsaVar,
         lhs: SsaVar,
@@ -131,6 +137,8 @@ pub enum Instruction {
     },
     /// Less-or-equal check: result = 1 if lhs <= rhs, 0 otherwise.
     /// Unbounded: full 252-bit decomposition. Safe by default.
+    ///
+    /// **Signed-range comparison contract:** same semantics as `IsLt` — see above.
     IsLe {
         result: SsaVar,
         lhs: SsaVar,
