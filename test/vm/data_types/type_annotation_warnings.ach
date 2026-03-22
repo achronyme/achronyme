@@ -1,0 +1,27 @@
+// Type annotation warning scenarios (W006/W007)
+// These demonstrate compile-time warnings but do not prevent execution.
+// The VM is dynamically typed — annotations are advisory.
+
+// W006: Type mismatch (field literal assigned to Bool annotation)
+let a: Bool = 0p42
+assert(a == 0p42)
+
+// W006: String assigned to Field annotation
+let b: Field = "hello"
+assert(b == "hello")
+
+// W007: Array size mismatch (expects 3, got 2)
+let c: Field[3] = [1, 2]
+assert(c.len() == 2)
+
+// No warning: matching types
+let d: Field = 0p1
+assert(d == 0p1)
+
+let e: Bool = true
+assert(e == true)
+
+let f: Field[2] = [0p1, 0p2]
+assert(f.len() == 2)
+
+print("PASS: data_types/type_annotation_warnings")

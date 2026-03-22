@@ -37,4 +37,16 @@ fn is_positive(x: Field) -> Bool {
 assert(is_positive(5) == true)
 assert(is_positive(0) == false)
 
+// Closure capturing typed variables
+let base: Field = 0p10
+let adder = fn(x: Field) -> Field { x + base }
+assert(adder(0p5) == 0p15)
+
+// Recursive function with annotations
+fn factorial(n: Field) -> Field {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+assert(factorial(5) == 120)
+
 print("PASS: functions/typed_functions")

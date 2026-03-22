@@ -1,11 +1,21 @@
 // Prove block with type annotations
-let x = 0p6
-let y = 0p7
-let product = 0p42
+let x: Field = 0p6
+let y: Field = 0p7
+let product: Field = 0p42
 
 prove(public: [product]) {
     let result: Field = x * y
     assert_eq(result, product)
+}
+
+// Multiple typed bindings inside prove body
+let a: Field = 0p3
+let b: Field = 0p4
+let sum: Field = 0p7
+
+prove(public: [sum]) {
+    let s: Field = a + b
+    assert_eq(s, sum)
 }
 
 print("PASS: typed_prove")

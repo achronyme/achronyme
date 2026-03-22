@@ -1,6 +1,6 @@
 // Type annotations on let/mut bindings (VM mode)
-// Annotations are parsed but VM execution is untyped — this verifies
-// that typed syntax is accepted without errors.
+// Annotations are checked at compile time (W006/W007) and stored,
+// but VM execution is dynamically typed.
 
 // Typed let bindings
 let x: Field = 0p42
@@ -18,6 +18,15 @@ mut ok: Bool = false
 ok = true
 assert(ok == true)
 
+// Array type annotations
+let arr: Field[3] = [0p1, 0p2, 0p3]
+assert(arr.len() == 3)
+assert(arr[0] == 0p1)
+
+let flags: Bool[2] = [true, false]
+assert(flags.len() == 2)
+assert(flags[0] == true)
+
 // Untyped bindings still work (gradual typing)
 let y = 100
 assert(y == 100)
@@ -25,5 +34,13 @@ assert(y == 100)
 mut z = "hello"
 z = "world"
 assert(z == "world")
+
+// Mixed annotated/unannotated in same scope
+let a: Field = 0p5
+let b = 10
+let c: Bool = false
+assert(a == 0p5)
+assert(b == 10)
+assert(c == false)
 
 print("PASS: data_types/typed_bindings")
