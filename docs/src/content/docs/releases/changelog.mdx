@@ -48,6 +48,38 @@ prove vote(public: [hash]) {
 - Name stored as metadata in ProveIR for profiler/inspector
 - Anonymous `prove(public: [...])` syntax unchanged
 
+### `--circuit-stats` — circuit constraint profiler
+
+Analyze constraint costs for any circuit:
+
+```bash
+ach circuit merkle.ach --circuit-stats
+ach run program.ach --circuit-stats
+```
+
+Outputs a per-category breakdown showing which operations dominate constraint cost:
+
+```
+── Circuit Stats (R1CS) ───────────────────────────────
+  Circuit: "merkle"
+  Inputs:  1 public, 3 witness
+  ───────────────────────────────────────────────────────
+  Category             Instrs  Constraints      %
+  ───────────────────────────────────────────────────────
+  Hashes                    2          722  99.6%
+  Selections                1            2   0.3%
+  Assertions                1            1   0.1%
+  ───────────────────────────────────────────────────────
+  TOTAL                     4          725
+  Bottleneck: Hashes (99.6%)
+───────────────────────────────────────────────────────
+```
+
+- Categories: Arithmetic, Assertions, Range checks, Hashes, Comparisons, Boolean ops, Selections
+- `ach run --circuit-stats` collects stats from all prove blocks executed at runtime
+- Identifies bottleneck category automatically
+- Static cost model matches actual R1CS constraint counts exactly
+
 ---
 
 ## 0.1.0-beta.14 — 2026-03-21
