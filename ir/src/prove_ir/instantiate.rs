@@ -81,6 +81,30 @@ impl ProveIR {
             inst.declare_capture(cap)?;
         }
 
+        // 4b. Reconstruct array env entries from capture_arrays.
+        //     Individual element captures (path_0, path_1) were declared above;
+        //     now assemble them into InstEnvValue::Array so array-consuming
+        //     constructs (e.g. merkle_verify) can resolve the array by name.
+        for arr in &self.capture_arrays {
+            let elem_vars: Vec<SsaVar> = (0..arr.size)
+                .map(|i| {
+                    let elem_name = format!("{}_{i}", arr.name);
+                    match inst.env.get(&elem_name) {
+                        Some(InstEnvValue::Scalar(v)) => Ok(*v),
+                        _ => Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "missing array element capture `{elem_name}` for array `{}`",
+                                arr.name
+                            ),
+                            span: None,
+                        }),
+                    }
+                })
+                .collect::<Result<_, _>>()?;
+            inst.env
+                .insert(arr.name.clone(), InstEnvValue::Array(elem_vars));
+        }
+
         // 5. Emit all body nodes
         for node in &self.body {
             inst.emit_node(node)?;
