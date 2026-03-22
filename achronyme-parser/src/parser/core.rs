@@ -18,7 +18,7 @@ pub(super) struct Parser {
 }
 
 impl Parser {
-    pub(super) fn new(tokens: Vec<Token>, _source: String) -> Self {
+    pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             pos: 0,

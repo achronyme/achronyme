@@ -28,7 +28,7 @@ use core::Parser;
 pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>) {
     match Lexer::tokenize(source) {
         Ok(tokens) => {
-            let mut parser = Parser::new(tokens, source.to_string());
+            let mut parser = Parser::new(tokens);
             let program = parser
                 .do_parse_program()
                 .unwrap_or_else(|_| Program { stmts: Vec::new() });
@@ -56,6 +56,6 @@ pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>) {
 /// ```
 pub fn parse_block(source: &str) -> Result<Block, String> {
     let tokens = Lexer::tokenize(source).map_err(|e| e.to_string())?;
-    let mut parser = Parser::new(tokens, source.to_string());
+    let mut parser = Parser::new(tokens);
     parser.do_parse_block().map_err(|e| e.to_string())
 }
