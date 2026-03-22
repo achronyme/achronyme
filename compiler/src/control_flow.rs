@@ -374,9 +374,57 @@ impl ControlFlowCompiler for Compiler {
         Ok(target_reg)
     }
 
-    fn compile_prove(&mut self, body: &Block, source: &str) -> Result<u8, CompilerError> {
-        // Walk body stmts directly to find public/witness declarations
-        let capture_names = prescan_prove_block(body)?;
+    fn compile_prove(&mut self, body: &Block, _source: &str) -> Result<u8, CompilerError> {
+        // 1. Collect outer scope names for ProveIR capture detection.
+        let outer_scope: std::collections::HashSet<String> = self
+            .collect_in_scope_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // 2. Compile AST Block → ProveIR template.
+        let prove_ir = ir::prove_ir::ProveIrCompiler::compile(body, &outer_scope)
+            .map_err(|e| CompilerError::CompileError(format!("{e}"), self.cur_span()))?;
+
+        // 3. Build capture name list: captures + public inputs + witness inputs.
+        //    All values come from the outer scope at runtime.
+        let mut capture_names: Vec<String> = Vec::new();
+
+        for cap in &prove_ir.captures {
+            capture_names.push(cap.name.clone());
+        }
+        for input in &prove_ir.public_inputs {
+            match &input.array_size {
+                Some(ir::prove_ir::ArraySize::Literal(n)) => {
+                    for i in 0..*n {
+                        capture_names.push(format!("{}_{i}", input.name));
+                    }
+                }
+                None => capture_names.push(input.name.clone()),
+                Some(ir::prove_ir::ArraySize::Capture(_)) => {
+                    return Err(CompilerError::CompileError(
+                        "capture-sized arrays in prove blocks are not yet supported".into(),
+                        self.cur_span(),
+                    ));
+                }
+            }
+        }
+        for input in &prove_ir.witness_inputs {
+            match &input.array_size {
+                Some(ir::prove_ir::ArraySize::Literal(n)) => {
+                    for i in 0..*n {
+                        capture_names.push(format!("{}_{i}", input.name));
+                    }
+                }
+                None => capture_names.push(input.name.clone()),
+                Some(ir::prove_ir::ArraySize::Capture(_)) => {
+                    return Err(CompilerError::CompileError(
+                        "capture-sized arrays in prove blocks are not yet supported".into(),
+                        self.cur_span(),
+                    ));
+                }
+            }
+        }
 
         let count = capture_names.len();
         if count > 127 {
@@ -386,6 +434,7 @@ impl ControlFlowCompiler for Compiler {
             ));
         }
 
+        // 4. Build capture map from scope values (same codegen as before).
         let map_reg = self.alloc_reg()?;
 
         if count > 0 {
@@ -395,7 +444,6 @@ impl ControlFlowCompiler for Compiler {
                 let key_reg = start_reg + (i as u8 * 2);
                 let val_reg = key_reg + 1;
 
-                // Key: string constant
                 let key_handle = self.intern_string(name);
                 let key_val = Value::string(key_handle);
                 let key_idx = self.add_constant(key_val)?;
@@ -404,7 +452,6 @@ impl ControlFlowCompiler for Compiler {
                 }
                 self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16)?;
 
-                // Value: resolve from current scope
                 if let Some((idx, local_reg)) = self.resolve_local(name) {
                     self.current()?.locals[idx].is_read = true;
                     self.emit_abc(OpCode::Move, val_reg, local_reg, 0)?;
@@ -431,57 +478,24 @@ impl ControlFlowCompiler for Compiler {
                 self.free_reg(top)?;
             }
         } else {
-            // Empty capture map
             let start = self.current()?.reg_top;
             self.emit_abc(OpCode::BuildMap, map_reg, start, 0)?;
         }
 
-        // Store block source as string constant.
-        // The source includes the `prove` keyword; strip it so the handler
-        // receives source starting with `{`.
-        let block_source = &source[source.find('{').unwrap_or(0)..];
-        let src_handle = self.intern_string(block_source);
-        let src_val = Value::string(src_handle);
-        let src_idx = self.add_constant(src_val)?;
-        if src_idx > 0xFFFF {
+        // 5. Serialize ProveIR and store as bytes constant.
+        let ir_bytes = prove_ir.to_bytes().map_err(|e| {
+            CompilerError::CompileError(format!("ProveIR serialization: {e}"), self.cur_span())
+        })?;
+        let ir_handle = self.intern_bytes(ir_bytes);
+        let ir_val = Value::bytes(ir_handle);
+        let ir_idx = self.add_constant(ir_val)?;
+        if ir_idx > 0xFFFF {
             return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
 
-        // Emit Prove R[map_reg], K[src_idx]
-        self.emit_abx(OpCode::Prove, map_reg, src_idx as u16)?;
+        // 6. Emit Prove R[map_reg], K[ir_idx]
+        self.emit_abx(OpCode::Prove, map_reg, ir_idx as u16)?;
 
         Ok(map_reg)
     }
-}
-
-/// Walk prove block AST to extract public/witness declaration names.
-///
-/// Supports array syntax `x[N]` which expands to `x_0, x_1, ..., x_{N-1}`.
-fn prescan_prove_block(block: &Block) -> Result<Vec<String>, CompilerError> {
-    let mut names = Vec::new();
-
-    for stmt in &block.stmts {
-        match stmt {
-            Stmt::PublicDecl { names: decls, .. } | Stmt::WitnessDecl { names: decls, .. } => {
-                for decl in decls {
-                    if let Some(n) = decl.array_size {
-                        if n > 10_000 {
-                            return Err(CompilerError::CompilerLimitation(
-                                format!("array size {n} exceeds maximum of 10,000"),
-                                None,
-                            ));
-                        }
-                        for i in 0..n {
-                            names.push(format!("{}_{i}", decl.name));
-                        }
-                    } else {
-                        names.push(decl.name.clone());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(names)
 }
