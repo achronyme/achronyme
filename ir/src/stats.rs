@@ -187,7 +187,11 @@ impl CircuitStats {
                     (ConstraintCategory::Comparison, (*bitwidth as usize) + 2)
                 }
 
-                Instruction::PoseidonHash { .. } => (ConstraintCategory::Hash, 362),
+                // S-box: full=8*3*3=72, partial=57*1*3=171, subtotal=243
+                // Materializations: partial=57*2=114, final=3
+                // Capacity: 1
+                // Total: 243 + 114 + 3 + 1 = 361
+                Instruction::PoseidonHash { .. } => (ConstraintCategory::Hash, 361),
             };
 
             n_instructions += 1;
@@ -505,13 +509,13 @@ mod tests {
         });
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
-        assert_eq!(stats.total_constraints, 362);
+        assert_eq!(stats.total_constraints, 361);
         let hash = stats
             .categories
             .iter()
             .find(|c| c.category == ConstraintCategory::Hash)
             .unwrap();
-        assert_eq!(hash.constraints, 362);
+        assert_eq!(hash.constraints, 361);
     }
 
     #[test]
@@ -764,8 +768,8 @@ mod tests {
         });
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
-        // Mul=1, PoseidonHash=362, AssertEq=1 → total=364
-        assert_eq!(stats.total_constraints, 364);
+        // Mul=1, PoseidonHash=361, AssertEq=1 → total=363
+        assert_eq!(stats.total_constraints, 363);
         assert_eq!(stats.n_public, 1);
         assert_eq!(stats.n_witness, 1);
         assert_eq!(stats.n_instructions, 3);
@@ -842,7 +846,7 @@ mod tests {
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
         let bottleneck = stats.bottleneck().unwrap();
         assert_eq!(bottleneck.category, ConstraintCategory::Hash);
-        assert_eq!(bottleneck.constraints, 362);
+        assert_eq!(bottleneck.constraints, 361);
     }
 
     #[test]
