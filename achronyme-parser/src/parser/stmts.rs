@@ -48,6 +48,18 @@ impl Parser {
                     span: self.span_to_prev(&sp),
                 })
             }
+            TokenKind::Prove => {
+                // prove name(...) { ... } → desugar to let name = prove name(...) { ... }
+                // prove(...) { ... } or prove { ... } → expression statement
+                if matches!(self.lookahead(1), TokenKind::Ident)
+                    && matches!(self.lookahead(2), TokenKind::LParen | TokenKind::LBrace)
+                {
+                    self.parse_prove_decl()
+                } else {
+                    let expr = self.parse_expr()?;
+                    self.try_parse_assignment(expr)
+                }
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 self.try_parse_assignment(expr)
@@ -170,6 +182,29 @@ impl Parser {
             return_type,
             body,
             span: self.span_to_prev(&sp),
+        })
+    }
+
+    /// Parse `prove name(public: [...]) { ... }` at statement level.
+    /// Desugars to `let name = prove name(public: [...]) { ... }`.
+    fn parse_prove_decl(&mut self) -> Result<Stmt, ParseError> {
+        let sp = self.span();
+        self.advance(); // eat `prove`
+        let name = self.expect_ident()?;
+        let public_list = self.parse_prove_public_list()?;
+        let body = self.parse_block_inner()?;
+        let span = self.span_to_prev(&sp);
+
+        Ok(Stmt::LetDecl {
+            name: name.clone(),
+            type_ann: None,
+            value: Expr::Prove {
+                name: Some(name),
+                body,
+                public_list,
+                span: span.clone(),
+            },
+            span,
         })
     }
 

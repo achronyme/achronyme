@@ -481,8 +481,29 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `prove`
 
-        // Optional: parse `(public: [name1, name2, ...])`
-        let public_list = if self.at(&TokenKind::LParen) {
+        // Optional name: `prove eligibility(public: [...]) { ... }`
+        let name = if self.at(&TokenKind::Ident)
+            && (matches!(self.lookahead(1), TokenKind::LParen | TokenKind::LBrace))
+        {
+            Some(self.expect_ident()?)
+        } else {
+            None
+        };
+
+        let public_list = self.parse_prove_public_list()?;
+        let body = self.parse_block_inner()?;
+
+        Ok(Expr::Prove {
+            name,
+            body,
+            public_list,
+            span: self.span_to_prev(&sp),
+        })
+    }
+
+    /// Parse optional `(public: [name1, name2, ...])` parameter list for prove blocks.
+    pub(super) fn parse_prove_public_list(&mut self) -> Result<Option<Vec<String>>, ParseError> {
+        if self.at(&TokenKind::LParen) {
             self.advance(); // eat `(`
             self.expect(&TokenKind::Public)?;
             self.expect(&TokenKind::Colon)?;
@@ -498,17 +519,9 @@ impl Parser {
             }
             self.expect(&TokenKind::RBracket)?;
             self.expect(&TokenKind::RParen)?;
-            Some(names)
+            Ok(Some(names))
         } else {
-            None
-        };
-
-        let body = self.parse_block_inner()?;
-
-        Ok(Expr::Prove {
-            body,
-            public_list,
-            span: self.span_to_prev(&sp),
-        })
+            Ok(None)
+        }
     }
 }

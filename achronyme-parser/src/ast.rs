@@ -229,6 +229,8 @@ pub enum Expr {
         span: Span,
     },
     Prove {
+        /// Optional name: `prove eligibility(public: [...]) { ... }`
+        name: Option<String>,
         body: Block,
         /// Optional `prove(public: [x, y]) { ... }` syntax.
         /// When Some, witnesses are auto-inferred from outer scope.

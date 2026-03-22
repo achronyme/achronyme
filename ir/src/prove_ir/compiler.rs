@@ -98,6 +98,7 @@ impl ProveIrCompiler {
         let captures = super::capture::classify_captures(&compiler.captured_names, &compiler.body);
 
         Ok(ProveIR {
+            name: None,
             public_inputs: compiler.public_inputs,
             witness_inputs: compiler.witness_inputs,
             captures,

@@ -23,6 +23,8 @@ use crate::types::IrType;
 /// A pre-compiled circuit template, ready for instantiation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProveIR {
+    /// Optional name for profiler/inspector identification.
+    pub name: Option<String>,
     /// Variables the verifier knows (explicitly declared by user).
     pub public_inputs: Vec<ProveInputDecl>,
     /// Variables only the prover knows (auto-inferred or explicit).

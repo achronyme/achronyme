@@ -126,3 +126,89 @@ fn prove_public_list_trailing_comma() {
         other => panic!("expected Prove, got {other:?}"),
     }
 }
+
+// ===================================================================
+// Named prove blocks
+// ===================================================================
+
+#[test]
+fn prove_named_statement() {
+    let input = r#"prove vote(public: [root]) { assert_eq(root, root) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::LetDecl {
+            name,
+            value:
+                Expr::Prove {
+                    name: prove_name,
+                    public_list,
+                    ..
+                },
+            ..
+        } => {
+            assert_eq!(name, "vote");
+            assert_eq!(prove_name.as_deref(), Some("vote"));
+            let pubs = public_list.as_ref().expect("should have public_list");
+            assert_eq!(pubs, &["root"]);
+        }
+        other => panic!("expected LetDecl with named Prove, got {other:?}"),
+    }
+}
+
+#[test]
+fn prove_named_expression() {
+    let input = r#"let p = prove eligibility(public: [root]) { assert_eq(root, root) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::LetDecl {
+            name,
+            value: Expr::Prove {
+                name: prove_name, ..
+            },
+            ..
+        } => {
+            assert_eq!(name, "p");
+            assert_eq!(prove_name.as_deref(), Some("eligibility"));
+        }
+        other => panic!("expected LetDecl with named Prove, got {other:?}"),
+    }
+}
+
+#[test]
+fn prove_named_no_public_list() {
+    let input = r#"prove vote { witness x; public y; assert_eq(x, y) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::LetDecl {
+            name,
+            value:
+                Expr::Prove {
+                    name: prove_name,
+                    public_list,
+                    ..
+                },
+            ..
+        } => {
+            assert_eq!(name, "vote");
+            assert_eq!(prove_name.as_deref(), Some("vote"));
+            assert!(public_list.is_none());
+        }
+        other => panic!("expected LetDecl with named Prove, got {other:?}"),
+    }
+}
+
+#[test]
+fn prove_anonymous_still_works() {
+    let input = r#"prove(public: [h]) { assert_eq(h, h) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::Expr(Expr::Prove { name, .. }) => {
+            assert!(name.is_none());
+        }
+        other => panic!("expected anonymous Prove, got {other:?}"),
+    }
+}

@@ -41,6 +41,7 @@ pub trait ControlFlowCompiler {
         &mut self,
         body: &Block,
         public_list: Option<&[String]>,
+        name: Option<&str>,
     ) -> Result<u8, CompilerError>;
 }
 
@@ -382,6 +383,7 @@ impl ControlFlowCompiler for Compiler {
         &mut self,
         body: &Block,
         public_list: Option<&[String]>,
+        name: Option<&str>,
     ) -> Result<u8, CompilerError> {
         // 1. Collect outer scope names for ProveIR capture detection.
         //    Include locals from ALL enclosing function scopes (not just current),
@@ -435,10 +437,11 @@ impl ControlFlowCompiler for Compiler {
         }
 
         // 3. Compile AST Block → ProveIR template.
-        let prove_ir = ir::prove_ir::ProveIrCompiler::compile(&compile_body, &outer_scope)
+        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(&compile_body, &outer_scope)
             .map_err(|e| CompilerError::CompileError(format!("{e}"), self.cur_span()))?;
+        prove_ir.name = name.map(|n| n.to_string());
 
-        // 3. Build capture name list: captures + public inputs + witness inputs.
+        // 4. Build capture name list: captures + public inputs + witness inputs.
         //    All values come from the outer scope at runtime.
         let mut capture_names: Vec<String> = Vec::new();
 
