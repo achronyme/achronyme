@@ -9,6 +9,34 @@ use achronyme_parser::Diagnostic;
 use memory::Value;
 use vm::opcode::{instruction::encode_abx, OpCode};
 
+/// Search all compiler scopes for a local with the given name that has an
+/// array type annotation. Returns the array size if found.
+fn find_local_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
+    // Search current function scope first
+    if let Ok(func) = compiler.current_ref() {
+        for local in func.locals.iter().rev() {
+            if local.name == name {
+                return match &local.type_ann {
+                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => Some(*n),
+                    _ => None,
+                };
+            }
+        }
+    }
+    // Search enclosing scopes (upvalue chain)
+    for fc in compiler.compilers.iter().rev().skip(1) {
+        for local in fc.locals.iter().rev() {
+            if local.name == name {
+                return match &local.type_ann {
+                    Some(TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n)) => Some(*n),
+                    _ => None,
+                };
+            }
+        }
+    }
+    None
+}
+
 pub trait ControlFlowCompiler {
     fn compile_block(&mut self, block: &Block, target_reg: u8) -> Result<(), CompilerError>;
     fn compile_if(
@@ -320,6 +348,7 @@ impl ControlFlowCompiler for Compiler {
             is_mutated: false,
             reg: val_reg,
             span: var_span,
+            type_ann: None,
         });
 
         let body_target = self.alloc_reg()?;
@@ -422,13 +451,16 @@ impl ControlFlowCompiler for Compiler {
                 }
             }
 
-            // Synthesize PublicDecl stmts and prepend to body
+            // Synthesize PublicDecl stmts and prepend to body.
+            // If a public name has a type annotation with array size in the outer scope,
+            // propagate it so ProveIR can decompose it into element captures.
             let mut stmts = Vec::new();
             for name in pub_names {
+                let array_size = find_local_array_size(self, name);
                 stmts.push(Stmt::PublicDecl {
                     names: vec![InputDecl {
                         name: name.clone(),
-                        array_size: None,
+                        array_size,
                         type_ann: None,
                     }],
                     span: body.span.clone(),
