@@ -80,6 +80,41 @@ Outputs a per-category breakdown showing which operations dominate constraint co
 - Identifies bottleneck category automatically
 - Static cost model matches actual R1CS constraint counts exactly
 
+### Type annotations — warnings and prove block integration
+
+Type annotations are now preserved through the compiler pipeline and used for diagnostics and prove block array inference:
+
+```ach
+let x: Bool = 0p42          // W006: type mismatch (Bool vs Field literal)
+let a: Field[3] = [1, 2]    // W007: array size mismatch (expected 3, got 2)
+```
+
+- **W006** — Warns when a literal value's type doesn't match its annotation. Only literal expressions are checked to avoid false positives.
+- **W007** — Warns on array size mismatches between annotation and initializer.
+- Type annotations stored in `Local` struct and threaded through `let`/`mut`/parameter declarations.
+- Array annotations (`Field[N]`, `Bool[N]`) propagated to `prove(public: [...])` captures — enables ProveIR to decompose array captures into individual elements.
+
+### Prove block array captures
+
+Array variables from VM scope are now automatically captured by `prove(public: [...])` blocks — no type annotations required:
+
+```ach
+let path = [voter1, n1]
+let indices = [0p0, 0p0]
+
+prove(public: [merkle_root, nullifier]) {
+    merkle_verify(merkle_root, commitment, path, indices)
+}
+```
+
+Previously this required explicit `witness path[2]` declarations or `: Field[2]` type annotations. Now the compiler infers array sizes from `let`-bound array literals and propagates them through the pipeline.
+
+- **Array type inference** — `let x = [a, b, c]` automatically infers `FieldArray(3)` on immutable bindings. `mut` arrays are excluded (reassignment could change length).
+- **Enriched `OuterScopeEntry`** — ProveIR compiler receives `Scalar | Array(usize)` per outer-scope variable, enabling correct `CompEnvValue::Array` registration for array captures.
+- **`CaptureArrayDef` metadata** — serialized with ProveIR (format version 2). Records which outer-scope arrays have captured elements, so the instantiator can reconstruct array env entries from individual scalar captures.
+- **Type-directed capture loading** — `find_array_parent()` uses the enriched outer scope as ground truth (not a naming-convention heuristic) to load whole arrays into the capture map. The VM handler's existing `TAG_LIST` expansion creates individual entries at runtime.
+- VM prove handler auto-expands `TAG_LIST` captures into scalar entries (`path` → `path_0`, `path_1`).
+
 ---
 
 ## 0.1.0-beta.14 — 2026-03-21
