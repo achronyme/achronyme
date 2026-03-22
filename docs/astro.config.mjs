@@ -114,6 +114,13 @@ export default defineConfig({
 					{ label: 'Secret Voting', slug: 'tutorials/secret-voting', translations: { es: 'Votación Secreta' } },
 					],
 				},
+				{
+					label: 'Releases',
+					translations: { es: 'Releases' },
+					items: [
+						{ label: 'Changelog', slug: 'releases/changelog' },
+					],
+				},
 			],
 		}),
 	],
