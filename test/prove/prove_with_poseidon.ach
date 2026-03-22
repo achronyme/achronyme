@@ -4,10 +4,7 @@ let a = 0p1
 let b = 0p2
 let h = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
-prove {
-    witness a
-    witness b
-    public h
+prove(public: [h]) {
     assert_eq(poseidon(a, b), h)
 }
 

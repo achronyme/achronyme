@@ -2,7 +2,6 @@
 let val = 0p200
 
 prove {
-    witness val
     range_check(val, 8)
 }
 
@@ -10,7 +9,6 @@ prove {
 let big = 0p65000
 
 prove {
-    witness big
     range_check(big, 16)
 }
 

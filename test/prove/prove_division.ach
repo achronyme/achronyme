@@ -5,11 +5,7 @@ let a = 0p42
 let b = 0p7
 let q = 0p6
 
-prove {
-    witness a
-    witness b
-    public q
-
+prove(public: [q]) {
     assert_eq(a / b, q)
 }
 

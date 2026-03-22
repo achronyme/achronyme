@@ -3,11 +3,7 @@ let base = 0p3
 let sq = 0p9
 let cube = 0p27
 
-prove {
-    witness base
-    public sq
-    public cube
-
+prove(public: [sq, cube]) {
     assert_eq(base ^ 2, sq)
     assert_eq(base ^ 3, cube)
 }

@@ -4,12 +4,7 @@ let a = 0p10
 let b = 0p20
 let expected = 0p10
 
-prove {
-    witness flag
-    witness a
-    witness b
-    public expected
-
+prove(public: [expected]) {
     range_check(flag, 1)
     let selected = mux(flag, a, b)
     assert_eq(selected, expected)
