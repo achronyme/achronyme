@@ -37,6 +37,30 @@ fn find_local_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
     None
 }
 
+/// Check if `name` is an element of a known outer-scope array (type-directed).
+///
+/// Returns the parent array name if `name` matches `{parent}_{index}` where
+/// `parent` is an `OuterScopeEntry::Array(n)` with `index < n`.
+/// This is NOT a naming-convention heuristic — it uses the enriched outer_scope
+/// as ground truth, so `player_1` won't be falsely matched.
+fn find_array_parent(
+    name: &str,
+    outer_scope: &std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry>,
+) -> Option<String> {
+    if let Some(pos) = name.rfind('_') {
+        let parent = &name[..pos];
+        let suffix = &name[pos + 1..];
+        if let Ok(idx) = suffix.parse::<usize>() {
+            if let Some(ir::prove_ir::OuterScopeEntry::Array(n)) = outer_scope.get(parent) {
+                if idx < *n {
+                    return Some(parent.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 pub trait ControlFlowCompiler {
     fn compile_block(&mut self, block: &Block, target_reg: u8) -> Result<(), CompilerError>;
     fn compile_if(
@@ -503,16 +527,32 @@ impl ControlFlowCompiler for Compiler {
 
         // 4. Build capture name list: captures + public inputs + witness inputs.
         //    All values come from the outer scope at runtime.
+        //
+        //    For array captures/inputs, push the ORIGINAL array name (not
+        //    expanded element names) — the VM handler expands TAG_LIST values
+        //    into individual scalar entries at runtime.
         let mut capture_names: Vec<String> = Vec::new();
+        let mut emitted_arrays: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for cap in &prove_ir.captures {
-            capture_names.push(cap.name.clone());
+            if let Some(parent) =
+                find_array_parent(&cap.name, &outer_scope)
+            {
+                // Array element capture — load the parent array once
+                if emitted_arrays.insert(parent.clone()) {
+                    capture_names.push(parent);
+                }
+            } else {
+                capture_names.push(cap.name.clone());
+            }
         }
         for input in &prove_ir.public_inputs {
             match &input.array_size {
-                Some(ir::prove_ir::ArraySize::Literal(n)) => {
-                    for i in 0..*n {
-                        capture_names.push(format!("{}_{i}", input.name));
+                Some(ir::prove_ir::ArraySize::Literal(_)) => {
+                    // Array input from outer scope — load the whole list
+                    if emitted_arrays.insert(input.name.clone()) {
+                        capture_names.push(input.name.clone());
                     }
                 }
                 None => capture_names.push(input.name.clone()),
@@ -526,9 +566,9 @@ impl ControlFlowCompiler for Compiler {
         }
         for input in &prove_ir.witness_inputs {
             match &input.array_size {
-                Some(ir::prove_ir::ArraySize::Literal(n)) => {
-                    for i in 0..*n {
-                        capture_names.push(format!("{}_{i}", input.name));
+                Some(ir::prove_ir::ArraySize::Literal(_)) => {
+                    if emitted_arrays.insert(input.name.clone()) {
+                        capture_names.push(input.name.clone());
                     }
                 }
                 None => capture_names.push(input.name.clone()),
