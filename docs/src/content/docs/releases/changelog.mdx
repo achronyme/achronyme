@@ -7,22 +7,45 @@ All notable changes to Achronyme are documented here. Each release bumps all 9 w
 
 ## Unreleased
 
+### `circuit` keyword — reusable circuit definitions
+
+Define circuits inline and call them multiple times with different values:
+
+```ach
+circuit eligibility(public root, witness secret, witness path[3], witness indices[3]) {
+    let commitment = poseidon(secret, 0)
+    merkle_verify(root, commitment, path, indices)
+}
+
+let p1 = eligibility(root: root1, secret: s1, path_0: p0, ...)
+let p2 = eligibility(root: root2, secret: s2, path_0: p0, ...)
+```
+
+- Circuit calls use keyword arguments: `name(key: val, ...)`
+- Parameters declare visibility: `public name` or `witness name[N]`
+- Each call instantiates the pre-compiled ProveIR and generates a proof
+
+### `import circuit` — circuit imports from files
+
+```ach
+import circuit "./eligibility.ach" as eligibility
+let p = eligibility(root: root_val, secret: my_secret)
+```
+
+Standalone `.ach` circuit files work as-is — no syntax changes needed.
+
 ### Named prove blocks
 
 Prove blocks can now be named, following the same dual pattern as functions:
 
 ```ach
-prove eligibility(public: [root]) {
-    merkle_verify(root, commitment, path, indices)
-}
-
-let p = prove vote(public: [hash]) {
+prove vote(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
 
 - `prove name(...)` at statement level desugars to `let name = prove name(...)`
-- Name stored as metadata in ProveIR for future profiler/inspector
+- Name stored as metadata in ProveIR for profiler/inspector
 - Anonymous `prove(public: [...])` syntax unchanged
 
 ---

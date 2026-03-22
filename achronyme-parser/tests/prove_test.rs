@@ -1,4 +1,4 @@
-use achronyme_parser::ast::{Expr, Stmt};
+use achronyme_parser::ast::{CircuitVisibility, Expr, Stmt};
 use achronyme_parser::parse_program;
 
 fn parse_ok(source: &str) {
@@ -210,5 +210,90 @@ fn prove_anonymous_still_works() {
             assert!(name.is_none());
         }
         other => panic!("expected anonymous Prove, got {other:?}"),
+    }
+}
+
+// ===================================================================
+// Circuit keyword
+// ===================================================================
+
+#[test]
+fn circuit_decl_parses() {
+    let input =
+        r#"circuit hash_check(public output, witness secret) { assert_eq(output, secret) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::CircuitDecl {
+            name, params, body, ..
+        } => {
+            assert_eq!(name, "hash_check");
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].name, "output");
+            assert_eq!(params[0].visibility, CircuitVisibility::Public);
+            assert_eq!(params[1].name, "secret");
+            assert_eq!(params[1].visibility, CircuitVisibility::Witness);
+            assert!(!body.stmts.is_empty());
+        }
+        other => panic!("expected CircuitDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn circuit_decl_with_array_params() {
+    let input = r#"circuit merkle(public root, witness path[3], witness indices[3]) { assert(root == root) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::CircuitDecl { params, .. } => {
+            assert_eq!(params.len(), 3);
+            assert!(params[0].array_size.is_none());
+            assert_eq!(params[1].array_size, Some(3));
+            assert_eq!(params[2].array_size, Some(3));
+        }
+        other => panic!("expected CircuitDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn circuit_call_with_keyword_args() {
+    let input = r#"hash_check(output: x, secret: y)"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::Expr(Expr::CircuitCall { name, args, .. }) => {
+            assert_eq!(name, "hash_check");
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[0].0, "output");
+            assert_eq!(args[1].0, "secret");
+        }
+        other => panic!("expected CircuitCall, got {other:?}"),
+    }
+}
+
+#[test]
+fn import_circuit_parses() {
+    let input = r#"import circuit "./hash.ach" as hash_check"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::ImportCircuit { path, alias, .. } => {
+            assert_eq!(path, "./hash.ach");
+            assert_eq!(alias, "hash_check");
+        }
+        other => panic!("expected ImportCircuit, got {other:?}"),
+    }
+}
+
+#[test]
+fn regular_call_still_positional() {
+    let input = r#"add(1, 2)"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::Expr(Expr::Call { args, .. }) => {
+            assert_eq!(args.len(), 2);
+        }
+        other => panic!("expected regular Call, got {other:?}"),
     }
 }
