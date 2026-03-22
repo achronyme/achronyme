@@ -124,7 +124,8 @@ fn run_compiled_binary() {
     cli::commands::compile::compile_file(src.path().to_str().unwrap(), Some(&out_path), EF)
         .expect("compile should succeed");
 
-    let result = cli::commands::run::run_file(&out_path, false, None, "r1cs", None, false, false, EF);
+    let result =
+        cli::commands::run::run_file(&out_path, false, None, "r1cs", None, false, false, EF);
     assert!(
         result.is_ok(),
         "run compiled binary failed: {:?}",
