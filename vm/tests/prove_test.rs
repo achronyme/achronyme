@@ -13,6 +13,7 @@ fn run_source(source: &str) -> Result<VM, String> {
 
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
+    vm.heap.import_bytes(compiler.bytes_interner.blobs);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -58,6 +59,7 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
 
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
+    vm.heap.import_bytes(compiler.bytes_interner.blobs);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -98,35 +100,40 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
     Ok(vm)
 }
 
-/// Real prove handler that uses the full IR→R1CS pipeline.
+/// Real prove handler that uses the ProveIR → instantiate → R1CS pipeline.
 struct RealProveHandler;
 
 impl ProveHandler for RealProveHandler {
-    fn execute_prove(
+    fn execute_prove_ir(
         &self,
-        source: &str,
+        prove_ir_bytes: &[u8],
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
         use compiler::r1cs_backend::R1CSCompiler;
-        use ir::IrLowering;
 
-        let inner = source
-            .trim()
-            .strip_prefix('{')
-            .and_then(|s| s.strip_suffix('}'))
-            .unwrap_or(source);
+        let prove_ir = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
+            .map_err(|e| ProveError::IrLowering(format!("ProveIR: {e}")))?;
 
-        let (pub_names, wit_names, mut program) = IrLowering::lower_self_contained(inner)
+        let mut program = prove_ir
+            .instantiate(scope_values)
             .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         ir::passes::optimize(&mut program);
 
         let mut inputs = HashMap::new();
-        for name in pub_names.iter().chain(wit_names.iter()) {
-            let val = scope_values.get(name).ok_or_else(|| {
-                ProveError::IrLowering(format!("variable `{name}` not found in scope"))
-            })?;
-            inputs.insert(name.clone(), *val);
+        for input in prove_ir
+            .public_inputs
+            .iter()
+            .chain(prove_ir.witness_inputs.iter())
+        {
+            if let Some(fe) = scope_values.get(&input.name) {
+                inputs.insert(input.name.clone(), *fe);
+            }
+        }
+        for cap in &prove_ir.captures {
+            if let Some(fe) = scope_values.get(&cap.name) {
+                inputs.insert(cap.name.clone(), *fe);
+            }
         }
 
         let mut r1cs = R1CSCompiler::new();
@@ -469,9 +476,9 @@ fn prove_power_circuit() {
 struct MockProofHandler;
 
 impl ProveHandler for MockProofHandler {
-    fn execute_prove(
+    fn execute_prove_ir(
         &self,
-        _source: &str,
+        _prove_ir_bytes: &[u8],
         _scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
         Ok(ProveResult::Proof {
@@ -490,6 +497,7 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
 
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
+    vm.heap.import_bytes(compiler.bytes_interner.blobs);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -659,6 +667,7 @@ fn proof_object_gc_survives_when_rooted() {
     let main_func = compiler.compilers.last().expect("No main compiler");
 
     vm.import_strings(compiler.interner.strings);
+    vm.heap.import_bytes(compiler.bytes_interner.blobs);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {
@@ -749,6 +758,7 @@ fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> 
 
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
+    vm.heap.import_bytes(compiler.bytes_interner.blobs);
     let field_map = vm.heap.import_fields(compiler.field_interner.fields);
 
     for proto in &mut compiler.prototypes {

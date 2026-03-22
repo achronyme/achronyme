@@ -50,12 +50,12 @@ impl std::error::Error for ProveError {}
 /// Trait for handling `prove { }` blocks at runtime.
 ///
 /// The VM calls this when it encounters a `Prove` opcode.
-/// The implementation is responsible for compiling the circuit source,
-/// generating constraints, computing the witness, and verifying.
+/// The implementation receives serialized ProveIR bytes (compiled at
+/// compile time) and scope values for captures and inputs.
 pub trait ProveHandler {
-    fn execute_prove(
+    fn execute_prove_ir(
         &self,
-        source: &str,
+        prove_ir_bytes: &[u8],
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError>;
 }
@@ -88,7 +88,7 @@ pub fn value_to_field_element(heap: &Heap, val: Value) -> Option<FieldElement> {
 }
 
 impl VM {
-    /// Handle the `Prove` opcode: extract capture map + source, delegate to handler.
+    /// Handle the `Prove` opcode: extract capture map + ProveIR bytes, delegate to handler.
     pub fn handle_prove(
         &mut self,
         instruction: u32,
@@ -103,8 +103,8 @@ impl VM {
         let a = decode_a(instruction) as usize;
         let bx = decode_bx(instruction) as usize;
 
-        // 1. Get the source string from the constant pool
-        let source = {
+        // 1. Get the ProveIR bytes from the constant pool
+        let prove_ir_bytes = {
             let closure = self
                 .heap
                 .get_closure(closure_idx)
@@ -116,16 +116,14 @@ impl VM {
             let val = func
                 .constants
                 .get(bx)
-                .ok_or(RuntimeError::OutOfBounds("prove source constant".into()))?;
+                .ok_or(RuntimeError::OutOfBounds("prove ir constant".into()))?;
             let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch(
-                "prove source not a string".into(),
+                "prove constant not a bytes handle".into(),
             ))?;
             self.heap
-                .get_string(handle)
+                .get_bytes(handle)
                 .cloned()
-                .ok_or(RuntimeError::SystemError(
-                    "prove source string missing".into(),
-                ))?
+                .ok_or(RuntimeError::SystemError("prove ir bytes missing".into()))?
         };
 
         // 2. Read the capture map from R[A]
@@ -158,7 +156,7 @@ impl VM {
         let handler = self.prove_handler.as_ref().unwrap();
 
         let result = handler
-            .execute_prove(&source, &scope_values)
+            .execute_prove_ir(&prove_ir_bytes, &scope_values)
             .map_err(RuntimeError::ProveBlockFailed)?;
 
         // 4. Set result based on handler response
