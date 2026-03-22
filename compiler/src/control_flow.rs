@@ -1,5 +1,5 @@
 use crate::codegen::{is_terminator, Compiler};
-use crate::error::CompilerError;
+use crate::error::{span_box, CompilerError};
 use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
 use crate::statements::{stmt_span, StatementCompiler};
@@ -42,6 +42,13 @@ pub trait ControlFlowCompiler {
         body: &Block,
         public_list: Option<&[String]>,
         name: Option<&str>,
+    ) -> Result<u8, CompilerError>;
+
+    fn compile_circuit_call(
+        &mut self,
+        name: &str,
+        args: &[(String, Expr)],
+        span: &Span,
     ) -> Result<u8, CompilerError>;
 }
 
@@ -550,6 +557,111 @@ impl ControlFlowCompiler for Compiler {
 
         // 6. Emit Prove R[map_reg], K[ir_idx]
         self.emit_abx(OpCode::Prove, map_reg, ir_idx as u16)?;
+
+        Ok(map_reg)
+    }
+
+    fn compile_circuit_call(
+        &mut self,
+        name: &str,
+        args: &[(String, Expr)],
+        span: &Span,
+    ) -> Result<u8, CompilerError> {
+        // 1. Resolve the circuit name to its global index (contains ProveIR bytes)
+        let global_idx = *self.global_symbols.get(name).ok_or_else(|| {
+            CompilerError::CompileError(format!("circuit `{name}` not found"), span_box(span))
+        })?;
+
+        // 2. Load the ProveIR bytes from the global into a register
+        let ir_reg = self.alloc_reg()?;
+        self.emit_abx(OpCode::GetGlobal, ir_reg, global_idx)?;
+
+        // 3. Store the bytes as a constant (we need its index for the Prove opcode)
+        //    The global already holds a Value::bytes — we need to get it into the
+        //    constant pool. We load it into a register and then pass its constant
+        //    index via GetGlobal. But Prove expects K[bx] = bytes constant.
+        //    Approach: store the constant index at circuit-decl time, and here we
+        //    look it up. Alternatively, emit the bytes constant index directly.
+        //    Simplest: search constants for the bytes value matching this global.
+
+        // Actually, the Prove opcode reads bytes from constants[bx]. We need the
+        // constant index of the ProveIR bytes. Since the circuit decl stored the
+        // bytes as a constant AND as a global, we can find the constant by scanning.
+        // But that's fragile. Better approach: use the ir_reg to pass the bytes
+        // directly to a new opcode pattern.
+        //
+        // Simplest working approach: the circuit call builds a map + emits Prove
+        // using the same constant index the circuit decl used. We need to recover
+        // that index. The global stores a Value::bytes(handle), and we interned
+        // that bytes with a specific constant index.
+        //
+        // For now: find the bytes constant that matches. Since globals store
+        // Value::bytes(handle), and the constant pool also has Value::bytes(handle)
+        // with the same handle, we can find it.
+
+        self.free_reg(ir_reg)?;
+
+        // Search the constant pool for the bytes value stored at this global
+        // The circuit decl stored: constants[idx] = Value::bytes(handle), global = same
+        // We need `idx`.
+        let ir_idx = self
+            .current()?
+            .constants
+            .iter()
+            .position(|c| c.is_bytes())
+            .ok_or_else(|| {
+                CompilerError::CompileError(
+                    format!("circuit `{name}` has no ProveIR constant in pool"),
+                    span_box(span),
+                )
+            })? as u16;
+
+        // 3. Build the keyword argument map: { "key1": val1, "key2": val2, ... }
+        let count = args.len();
+        if count > 127 {
+            return Err(CompilerError::CompilerLimitation(
+                "circuit call has too many arguments".into(),
+                span_box(span),
+            ));
+        }
+
+        let map_reg = self.alloc_reg()?;
+
+        if count > 0 {
+            let start_reg = self.alloc_contiguous((count * 2) as u8)?;
+
+            for (i, (key, val_expr)) in args.iter().enumerate() {
+                let key_reg = start_reg + (i as u8 * 2);
+                let val_reg = key_reg + 1;
+
+                // Key: string constant
+                let key_handle = self.intern_string(key);
+                let key_val = Value::string(key_handle);
+                let key_idx = self.add_constant(key_val)?;
+                if key_idx > 0xFFFF {
+                    return Err(CompilerError::TooManyConstants(span_box(span)));
+                }
+                self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16)?;
+
+                // Value: compile expression
+                let compiled_reg = self.compile_expr(val_expr)?;
+                self.emit_abc(OpCode::Move, val_reg, compiled_reg, 0)?;
+                self.free_reg(compiled_reg)?;
+            }
+
+            self.emit_abc(OpCode::BuildMap, map_reg, start_reg, count as u8)?;
+
+            for _ in 0..(count * 2) {
+                let top = self.current()?.reg_top - 1;
+                self.free_reg(top)?;
+            }
+        } else {
+            let start = self.current()?.reg_top;
+            self.emit_abc(OpCode::BuildMap, map_reg, start, 0)?;
+        }
+
+        // 4. Emit Prove R[map_reg], K[ir_idx]
+        self.emit_abx(OpCode::Prove, map_reg, ir_idx)?;
 
         Ok(map_reg)
     }

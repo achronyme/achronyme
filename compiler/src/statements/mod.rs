@@ -22,6 +22,13 @@ pub trait StatementCompiler {
         path: &str,
         span: &Span,
     ) -> Result<(), CompilerError>;
+    fn compile_circuit_decl(
+        &mut self,
+        name: &str,
+        params: &[CircuitParam],
+        body: &Block,
+        span: &Span,
+    ) -> Result<(), CompilerError>;
 }
 
 /// Extract the source line number from a statement (1-based), or 0 if unavailable.
@@ -117,10 +124,12 @@ impl StatementCompiler for Compiler {
                 // Export lists are metadata — handled by collect_exports, no bytecode to emit
                 Ok(())
             }
-            Stmt::CircuitDecl { span, .. } => Err(CompilerError::CompileError(
-                "circuit declarations are not yet implemented".into(),
-                span_box(span),
-            )),
+            Stmt::CircuitDecl {
+                name,
+                params,
+                body,
+                span,
+            } => self.compile_circuit_decl(name, params, body, span),
             Stmt::ImportCircuit { span, .. } => Err(CompilerError::CompileError(
                 "circuit imports are not yet implemented".into(),
                 span_box(span),
@@ -132,6 +141,76 @@ impl StatementCompiler for Compiler {
                 Ok(())
             }
         }
+    }
+
+    fn compile_circuit_decl(
+        &mut self,
+        name: &str,
+        params: &[CircuitParam],
+        body: &Block,
+        span: &Span,
+    ) -> Result<(), CompilerError> {
+        // 1. Synthesize public/witness declarations from circuit params
+        let mut stmts = Vec::new();
+        for param in params {
+            let decl = InputDecl {
+                name: param.name.clone(),
+                array_size: param.array_size,
+                type_ann: None,
+            };
+            match param.visibility {
+                CircuitVisibility::Public => stmts.push(Stmt::PublicDecl {
+                    names: vec![decl],
+                    span: span.clone(),
+                }),
+                CircuitVisibility::Witness => stmts.push(Stmt::WitnessDecl {
+                    names: vec![decl],
+                    span: span.clone(),
+                }),
+            }
+        }
+        stmts.extend(body.stmts.clone());
+        let circuit_body = Block {
+            stmts,
+            span: body.span.clone(),
+        };
+
+        // 2. Compile to ProveIR (no outer scope — circuit is self-contained)
+        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(
+            &circuit_body,
+            &std::collections::HashSet::new(),
+        )
+        .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+        prove_ir.name = Some(name.to_string());
+
+        // 3. Serialize to bytes
+        let ir_bytes = prove_ir.to_bytes().map_err(|e| {
+            CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
+        })?;
+
+        // 4. Store bytes in constant pool and bind as global
+        let handle = self.intern_bytes(ir_bytes);
+        let val = Value::bytes(handle);
+        let idx = self.add_constant(val)?;
+        if idx > 0xFFFF {
+            return Err(CompilerError::TooManyConstants(span_box(span)));
+        }
+
+        // Bind the circuit name as a global pointing to the bytes constant
+        if self.next_global_idx == u16::MAX {
+            return Err(CompilerError::TooManyConstants(span_box(span)));
+        }
+        let global_idx = self.next_global_idx;
+        self.next_global_idx += 1;
+        self.global_symbols.insert(name.to_string(), global_idx);
+
+        // Emit: load the bytes constant into a register, then define as global
+        let reg = self.alloc_reg()?;
+        self.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
+        self.emit_abx(vm::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
+        self.free_reg(reg)?;
+
+        Ok(())
     }
 
     fn compile_import(

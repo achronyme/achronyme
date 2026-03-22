@@ -1,6 +1,6 @@
 use crate::codegen::Compiler;
 use crate::control_flow::ControlFlowCompiler;
-use crate::error::{span_box, CompilerError};
+use crate::error::CompilerError;
 use crate::functions::FunctionDefinitionCompiler;
 use crate::scopes::ScopeCompiler;
 use achronyme_parser::ast::*;
@@ -120,11 +120,10 @@ impl ExpressionCompiler for Compiler {
                 type_name, member, ..
             } => self.compile_static_access(type_name, member),
 
-            // === Circuit calls (Phase 2 placeholder) ===
-            Expr::CircuitCall { span, .. } => Err(CompilerError::CompileError(
-                "circuit calls are not yet implemented".into(),
-                span_box(span),
-            )),
+            // === Circuit calls: name(key: val, ...) ===
+            Expr::CircuitCall {
+                name, args, span, ..
+            } => self.compile_circuit_call(name, args, span),
 
             // === Error recovery placeholder ===
             Expr::Error { .. } => {
