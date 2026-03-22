@@ -5,6 +5,28 @@ description: Release history for Achronyme.
 
 All notable changes to Achronyme are documented here. Each release bumps all 9 workspace crates to the same version.
 
+## Unreleased
+
+### Named prove blocks
+
+Prove blocks can now be named, following the same dual pattern as functions:
+
+```ach
+prove eligibility(public: [root]) {
+    merkle_verify(root, commitment, path, indices)
+}
+
+let p = prove vote(public: [hash]) {
+    assert_eq(poseidon(secret, 0), hash)
+}
+```
+
+- `prove name(...)` at statement level desugars to `let name = prove name(...)`
+- Name stored as metadata in ProveIR for future profiler/inspector
+- Anonymous `prove(public: [...])` syntax unchanged
+
+---
+
 ## 0.1.0-beta.14 — 2026-03-21
 
 **ProveIR pipeline complete (Phases A-H).** Prove blocks are now compiled at compile time and serialized into bytecode, eliminating runtime re-parsing.
