@@ -26,6 +26,16 @@ enum CompEnvValue {
     Capture(String),
 }
 
+/// Type information for a variable in the outer (VM) scope.
+///
+/// Used by the bytecode compiler to tell the ProveIR compiler which
+/// outer-scope names are arrays and their sizes. Not serialized.
+#[derive(Clone, Debug)]
+pub enum OuterScopeEntry {
+    Scalar,
+    Array(usize),
+}
+
 // ---------------------------------------------------------------------------
 // Compiler
 // ---------------------------------------------------------------------------
@@ -79,16 +89,35 @@ impl ProveIrCompiler {
 
     /// Compile an AST Block into a ProveIR template.
     ///
-    /// `outer_scope`: names available in the enclosing scope (for prove blocks).
-    /// Pass an empty set for `ach circuit` mode.
-    pub fn compile(block: &Block, outer_scope: &HashSet<String>) -> Result<ProveIR, ProveIrError> {
+    /// `outer_scope`: names and type info from the enclosing scope (for prove blocks).
+    /// Pass an empty map for `ach circuit` mode.
+    pub fn compile(
+        block: &Block,
+        outer_scope: &HashMap<String, OuterScopeEntry>,
+    ) -> Result<ProveIR, ProveIrError> {
         let mut compiler = Self::new();
 
         // Register outer scope names as potential captures
-        for name in outer_scope {
-            compiler
-                .env
-                .insert(name.clone(), CompEnvValue::Capture(name.clone()));
+        for (name, entry) in outer_scope {
+            match entry {
+                OuterScopeEntry::Scalar => {
+                    compiler
+                        .env
+                        .insert(name.clone(), CompEnvValue::Capture(name.clone()));
+                }
+                OuterScopeEntry::Array(n) => {
+                    let elem_names: Vec<String> =
+                        (0..*n).map(|i| format!("{name}_{i}")).collect();
+                    for ename in &elem_names {
+                        compiler
+                            .env
+                            .insert(ename.clone(), CompEnvValue::Capture(ename.clone()));
+                    }
+                    compiler
+                        .env
+                        .insert(name.clone(), CompEnvValue::Array(elem_names));
+                }
+            }
         }
 
         // Compile all statements in the block
@@ -113,13 +142,13 @@ impl ProveIrCompiler {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
         let block = program_to_block(source, program);
-        Self::compile(&block, &HashSet::new())
+        Self::compile(&block, &HashMap::new())
     }
 
-    /// Convenience: parse source and compile as a prove block with an outer scope.
+    /// Convenience: parse source and compile as a prove block with scalar outer scope names.
     pub fn compile_prove_block(
         source: &str,
-        outer_scope: &HashSet<String>,
+        outer_scope: &HashMap<String, OuterScopeEntry>,
     ) -> Result<ProveIR, ProveIrError> {
         let (program, errors) = achronyme_parser::parse_program(source);
         if !errors.is_empty() {
@@ -2825,9 +2854,12 @@ mod tests {
     // Capture classification (end-to-end via compile())
     // =====================================================================
 
-    /// Helper: compile a prove block body with outer scope captures.
+    /// Helper: compile a prove block body with outer scope captures (all scalar).
     fn compile_prove_block(source: &str, outer_vars: &[&str]) -> Result<ProveIR, ProveIrError> {
-        let outer: HashSet<String> = outer_vars.iter().map(|s| s.to_string()).collect();
+        let outer: HashMap<String, OuterScopeEntry> = outer_vars
+            .iter()
+            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+            .collect();
         ProveIrCompiler::compile_prove_block(source, &outer)
     }
 

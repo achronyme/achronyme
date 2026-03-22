@@ -193,7 +193,7 @@ impl StatementCompiler for Compiler {
         // 2. Compile to ProveIR (no outer scope — circuit is self-contained)
         let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(
             &circuit_body,
-            &std::collections::HashSet::new(),
+            &std::collections::HashMap::new(),
         )
         .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
         prove_ir.name = Some(name.to_string());

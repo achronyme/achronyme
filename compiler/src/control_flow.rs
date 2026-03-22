@@ -424,15 +424,36 @@ impl ControlFlowCompiler for Compiler {
         // 1. Collect outer scope names for ProveIR capture detection.
         //    Include locals from ALL enclosing function scopes (not just current),
         //    so that upvalue-accessible variables are visible to ProveIR.
-        let mut outer_scope: std::collections::HashSet<String> = self
-            .collect_in_scope_names()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
+        //    Type annotations are propagated so ProveIR knows about arrays.
+        let mut outer_scope: std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry> =
+            std::collections::HashMap::new();
+        if let Ok(func) = self.current_ref() {
+            for local in &func.locals {
+                let entry = match &local.type_ann {
+                    Some(
+                        TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n),
+                    ) => ir::prove_ir::OuterScopeEntry::Array(*n),
+                    _ => ir::prove_ir::OuterScopeEntry::Scalar,
+                };
+                outer_scope.insert(local.name.clone(), entry);
+            }
+        }
         for compiler in &self.compilers[..self.compilers.len().saturating_sub(1)] {
             for local in &compiler.locals {
-                outer_scope.insert(local.name.clone());
+                let entry = match &local.type_ann {
+                    Some(
+                        TypeAnnotation::FieldArray(n) | TypeAnnotation::BoolArray(n),
+                    ) => ir::prove_ir::OuterScopeEntry::Array(*n),
+                    _ => ir::prove_ir::OuterScopeEntry::Scalar,
+                };
+                outer_scope.entry(local.name.clone()).or_insert(entry);
             }
+        }
+        // Global symbols (no type annotation info available — treated as scalar)
+        for name in self.collect_in_scope_names() {
+            outer_scope
+                .entry(name.to_string())
+                .or_insert(ir::prove_ir::OuterScopeEntry::Scalar);
         }
 
         // 2. If public_list is provided (new syntax), validate no old-style
