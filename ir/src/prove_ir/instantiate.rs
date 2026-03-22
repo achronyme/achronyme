@@ -1181,6 +1181,7 @@ mod tests {
                 }],
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let captures: HashMap<String, FieldElement> =
             [("n".to_string(), FieldElement::from_u64(4))]
@@ -1214,6 +1215,7 @@ mod tests {
                 usage: CaptureUsage::CircuitInput,
             }],
             body: vec![],
+            capture_arrays: vec![],
         };
         let result = prove_ir.instantiate(&HashMap::new());
         assert!(result.is_err(), "should fail with missing capture");
@@ -1368,6 +1370,7 @@ mod tests {
             witness_inputs: vec![],
             captures: vec![],
             body: vec![],
+            capture_arrays: vec![],
         };
         let ir = prove_ir.instantiate(&HashMap::new()).unwrap();
         let range_checks = ir
@@ -1393,6 +1396,7 @@ mod tests {
             witness_inputs: vec![],
             captures: vec![],
             body: vec![],
+            capture_arrays: vec![],
         };
         let ir = prove_ir.instantiate(&HashMap::new()).unwrap();
         let range_checks = ir
@@ -1515,6 +1519,7 @@ mod tests {
                 body: vec![],
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         // Need "arr" in env as an empty array — not possible from the
         // public API without a LetArray node. Use a LetArray with empty elements instead.
@@ -1556,6 +1561,7 @@ mod tests {
                     span: None,
                 },
             ],
+            capture_arrays: vec![],
         };
         let captures: HashMap<String, FieldElement> =
             [("n".to_string(), FieldElement::from_u64(3))]
@@ -1624,6 +1630,7 @@ mod tests {
                 body: vec![],
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let captures: HashMap<String, FieldElement> =
             [("n".to_string(), FieldElement::from_u64(2_000_000))]
@@ -1656,6 +1663,7 @@ mod tests {
                 body: vec![],
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let captures: HashMap<String, FieldElement> =
             [("n".to_string(), FieldElement::from_u64(3))]

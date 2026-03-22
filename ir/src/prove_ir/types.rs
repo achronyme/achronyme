@@ -34,13 +34,17 @@ pub struct ProveIR {
     pub captures: Vec<CaptureDef>,
     /// The circuit body — validated, desugared, functions inlined.
     pub body: Vec<CircuitNode>,
+    /// Array captures from the outer scope. Used at instantiation to
+    /// reconstruct `InstEnvValue::Array` entries from individual element captures.
+    pub capture_arrays: Vec<CaptureArrayDef>,
 }
 
 /// Magic header bytes for serialized ProveIR.
 const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
 
 /// Format version (increment when enum variants change or fields are added).
-const PROVE_IR_FORMAT_VERSION: u8 = 1;
+/// v2: added `capture_arrays` field to ProveIR.
+const PROVE_IR_FORMAT_VERSION: u8 = 2;
 
 /// Maximum allowed size for deserialized ProveIR data (64 MB).
 /// Prevents allocation bombs from crafted length prefixes.
@@ -239,6 +243,19 @@ pub enum ArraySize {
 pub struct CaptureDef {
     pub name: String,
     pub usage: CaptureUsage,
+}
+
+/// An array variable captured from the outer scope.
+///
+/// At instantiation, the individual element captures (`name_0`, `name_1`, …)
+/// are reassembled into an `InstEnvValue::Array` so that array-consuming
+/// constructs like `merkle_verify` can resolve the array by name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaptureArrayDef {
+    /// The original array variable name in the outer scope (e.g., `"path"`).
+    pub name: String,
+    /// Number of elements in the array.
+    pub size: usize,
 }
 
 /// How a captured variable is used in the circuit.
@@ -489,6 +506,7 @@ mod tests {
             witness_inputs: vec![],
             captures: vec![],
             body: vec![],
+            capture_arrays: vec![],
         };
         assert_round_trip(&ir);
     }
@@ -680,6 +698,7 @@ mod tests {
             witness_inputs: vec![],
             captures: vec![],
             body: vec![],
+            capture_arrays: vec![],
         }
         .to_bytes()
         .unwrap();
@@ -703,6 +722,7 @@ mod tests {
             witness_inputs: vec![],
             captures: vec![],
             body: vec![],
+            capture_arrays: vec![],
         }
         .to_bytes()
         .unwrap();
@@ -732,6 +752,7 @@ mod tests {
                 value: CircuitExpr::Const(FieldElement::ONE),
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let mut bytes = ir.to_bytes().unwrap();
 
@@ -772,6 +793,7 @@ mod tests {
                 expr: CircuitExpr::PoseidonMany(vec![]),
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         // Serialize directly with bincode (bypass to_bytes header)
         let payload = bincode::serialize(&ir).unwrap();
@@ -801,6 +823,7 @@ mod tests {
                 },
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
@@ -828,6 +851,7 @@ mod tests {
                 },
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
@@ -854,6 +878,7 @@ mod tests {
             witness_inputs: vec![],
             captures: vec![], // no capture named "ghost"
             body: vec![],
+            capture_arrays: vec![],
         };
         let err = ir.validate().unwrap_err();
         assert!(
@@ -879,6 +904,7 @@ mod tests {
                 body: vec![],
                 span: None,
             }],
+            capture_arrays: vec![],
         };
         let err = ir.validate().unwrap_err();
         assert!(

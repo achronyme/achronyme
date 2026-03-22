@@ -132,6 +132,7 @@ impl ProveIrCompiler {
             witness_inputs: compiler.witness_inputs,
             captures,
             body: compiler.body,
+            capture_arrays: Vec::new(), // populated in Paso 4
         })
     }
 
