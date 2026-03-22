@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use anyhow::{Context, Result};
 use memory::Function;
@@ -8,6 +8,7 @@ use vm::{CallFrame, ValueOps, VM};
 use super::ErrorFormat;
 use crate::prove_handler::{DefaultProveHandler, ProveBackend, SharedProveHandler};
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_file(
     path: &str,
     stress_gc: bool,
@@ -43,9 +44,13 @@ pub fn run_file(
             })?;
             vm.heap.max_heap_bytes = limit;
         }
-        let handler = Arc::new(DefaultProveHandler::new(backend, error_format, circuit_stats));
-        vm.verify_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
-        vm.prove_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
+        let handler = Rc::new(DefaultProveHandler::new(
+            backend,
+            error_format,
+            circuit_stats,
+        ));
+        vm.verify_handler = Some(Box::new(SharedProveHandler(Rc::clone(&handler))));
+        vm.prove_handler = Some(Box::new(SharedProveHandler(Rc::clone(&handler))));
 
         // Use the new secure loader
         vm.load_executable(&mut file)
@@ -95,9 +100,13 @@ pub fn run_file(
             })?;
             vm.heap.max_heap_bytes = limit;
         }
-        let handler = Arc::new(DefaultProveHandler::new(backend, error_format, circuit_stats));
-        vm.verify_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
-        vm.prove_handler = Some(Box::new(SharedProveHandler(Arc::clone(&handler))));
+        let handler = Rc::new(DefaultProveHandler::new(
+            backend,
+            error_format,
+            circuit_stats,
+        ));
+        vm.verify_handler = Some(Box::new(SharedProveHandler(Rc::clone(&handler))));
+        vm.prove_handler = Some(Box::new(SharedProveHandler(Rc::clone(&handler))));
 
         // Transfer strings from compiler to VM
         vm.import_strings(compiler.interner.strings);

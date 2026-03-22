@@ -121,9 +121,7 @@ impl CircuitStats {
                     (ConstraintCategory::Assertion, 1 + bool_cost)
                 }
 
-                Instruction::RangeCheck {
-                    operand, bits, ..
-                } => {
+                Instruction::RangeCheck { operand, bits, .. } => {
                     range_bounds.insert(*operand, *bits);
                     (ConstraintCategory::RangeCheck, (*bits as usize) + 1)
                 }
@@ -309,13 +307,8 @@ impl fmt::Display for CircuitStats {
 
         if let Some(top) = self.bottleneck() {
             if self.total_constraints > 0 {
-                let pct =
-                    (top.constraints as f64 / self.total_constraints as f64) * 100.0;
-                writeln!(
-                    f,
-                    "  Bottleneck: {} ({:.1}%)",
-                    top.category, pct
-                )?;
+                let pct = (top.constraints as f64 / self.total_constraints as f64) * 100.0;
+                writeln!(f, "  Bottleneck: {} ({:.1}%)", top.category, pct)?;
             }
         }
 
@@ -871,8 +864,7 @@ mod tests {
             rhs: v1,
         });
 
-        let stats =
-            CircuitStats::from_program(&prog, &empty_proven(), Some("test_circuit"));
+        let stats = CircuitStats::from_program(&prog, &empty_proven(), Some("test_circuit"));
         let output = format!("{stats}");
         assert!(output.contains("test_circuit"));
         assert!(output.contains("1 public"));

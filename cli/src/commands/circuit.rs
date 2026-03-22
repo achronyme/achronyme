@@ -261,8 +261,7 @@ pub fn circuit_command(
         let name = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned());
-        let stats =
-            ir::stats::CircuitStats::from_program(&program, &proven, name.as_deref());
+        let stats = ir::stats::CircuitStats::from_program(&program, &proven, name.as_deref());
         eprintln!("{stats}");
     }
 

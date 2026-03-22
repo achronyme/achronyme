@@ -145,8 +145,7 @@ fn stats_matches_actual_r1cs_count_for_merkle() {
     use ir::prove_ir::ProveIrCompiler;
     use ir::stats::CircuitStats;
 
-    let source =
-        std::fs::read_to_string(fixture("merkle.ach")).unwrap();
+    let source = std::fs::read_to_string(fixture("merkle.ach")).unwrap();
     let prove_ir = ProveIrCompiler::compile_circuit(&source).unwrap();
     let mut program = prove_ir
         .instantiate(&std::collections::HashMap::new())

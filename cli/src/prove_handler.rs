@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
@@ -142,7 +142,7 @@ impl ProveHandler for DefaultProveHandler {
 
 /// Wrapper to share a `DefaultProveHandler` via `Arc` while satisfying
 /// the orphan rule (cannot impl foreign trait for `Arc<LocalType>`).
-pub struct SharedProveHandler(pub Arc<DefaultProveHandler>);
+pub struct SharedProveHandler(pub Rc<DefaultProveHandler>);
 
 impl ProveHandler for SharedProveHandler {
     fn execute_prove_ir(
