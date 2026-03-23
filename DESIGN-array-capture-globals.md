@@ -1,7 +1,10 @@
 # Design: Array Auto-Capture in Prove Blocks for Top-Level Globals
 
 ## Status
-**Open** — 2026-03-22. Pre-existing bug, discovered during syntax unification.
+**Fixed** — 2026-03-22. Root cause: `global_symbols` stored only `name → u16` index,
+discarding `TypeAnnotation`. Fix: introduced `GlobalEntry { index, type_ann, is_mutable }`
+so globals carry the same type metadata as locals. Sub-problem B (local-in-function)
+was already handled correctly by the existing ProveIR pipeline.
 
 ## Problem
 

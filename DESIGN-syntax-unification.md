@@ -1,7 +1,7 @@
 # Design: Syntax Unification — Type Annotations, Visibility, and Keyword Arguments
 
 ## Status
-**Implemented** — 2026-03-22. Shipped in 0.1.0-beta.15.
+**Draft** — 2026-03-22. Designing for 0.1.0-beta.15.
 
 ## Problem
 
