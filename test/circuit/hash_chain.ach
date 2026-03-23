@@ -1,10 +1,9 @@
 // Circuit: 5-iteration Poseidon hash chain
-public expected
-witness seed
-
-let h = poseidon(seed, 0)
-let h = poseidon(h, 1)
-let h = poseidon(h, 2)
-let h = poseidon(h, 3)
-let h = poseidon(h, 4)
-assert_eq(h, expected)
+circuit hash_chain(expected: Public, seed: Witness) {
+    let h = poseidon(seed, 0)
+    let h = poseidon(h, 1)
+    let h = poseidon(h, 2)
+    let h = poseidon(h, 3)
+    let h = poseidon(h, 4)
+    assert_eq(h, expected)
+}

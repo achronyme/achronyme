@@ -1,8 +1,5 @@
 // Circuit: mux with type annotations
-public out: Field
-witness cond: Bool
-witness a: Field
-witness b: Field
-
-let selected: Field = mux(cond, a, b)
-assert_eq(selected, out)
+circuit typed_mux(out: Public Field, cond: Witness Bool, a: Witness Field, b: Witness Field) {
+    let selected: Field = mux(cond, a, b)
+    assert_eq(selected, out)
+}

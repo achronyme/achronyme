@@ -1,7 +1,5 @@
 // Circuit: Pedersen-style commitment — poseidon(value, blinding)
-public commitment
-witness value
-witness blinding
-
-let cm = poseidon(value, blinding)
-assert_eq(cm, commitment)
+circuit commitment(commitment: Public, value: Witness, blinding: Witness) {
+    let cm = poseidon(value, blinding)
+    assert_eq(cm, commitment)
+}

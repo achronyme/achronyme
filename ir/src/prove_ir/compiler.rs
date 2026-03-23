@@ -151,13 +151,73 @@ impl ProveIrCompiler {
     }
 
     /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
+    ///
+    /// Supports both formats:
+    /// - **Declaration format:** `circuit name(x: Public, y: Witness) { body }`
+    ///   → extracts params and synthesizes public/witness declarations
+    /// - **Flat format:** `public x\nwitness y\nbody` (deprecated, emits W011)
+    ///   → compiles directly
     pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
-        let (program, errors) = achronyme_parser::parse_program(source);
-        if !errors.is_empty() {
-            return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
+        let (program, parse_errors) = achronyme_parser::parse_program(source);
+        // Only reject actual errors, not warnings (W008, W010, etc.)
+        let real_errors: Vec<_> = parse_errors
+            .iter()
+            .filter(|d| d.severity == achronyme_parser::Severity::Error)
+            .collect();
+        if !real_errors.is_empty() {
+            return Err(ProveIrError::ParseError(Box::new(
+                real_errors[0].clone().clone(),
+            )));
         }
-        let block = program_to_block(source, program);
-        Self::compile(&block, &HashMap::new())
+
+        // Check if the program contains a CircuitDecl — if so, use it
+        let circuit_decl = program.stmts.iter().find_map(|s| match s {
+            Stmt::CircuitDecl {
+                name,
+                params,
+                body,
+                span,
+            } => Some((name, params, body, span)),
+            _ => None,
+        });
+
+        if let Some((name, params, body, span)) = circuit_decl {
+            // Declaration format: synthesize public/witness from params
+            let mut stmts = Vec::new();
+            for param in params {
+                let visibility = param
+                    .type_ann
+                    .as_ref()
+                    .and_then(|ann| ann.visibility)
+                    .unwrap_or(Visibility::Witness);
+                let decl = InputDecl {
+                    name: param.name.clone(),
+                    type_ann: param.type_ann.clone(),
+                };
+                match visibility {
+                    Visibility::Public => stmts.push(Stmt::PublicDecl {
+                        names: vec![decl],
+                        span: span.clone(),
+                    }),
+                    Visibility::Witness => stmts.push(Stmt::WitnessDecl {
+                        names: vec![decl],
+                        span: span.clone(),
+                    }),
+                }
+            }
+            stmts.extend(body.stmts.clone());
+            let block = Block {
+                stmts,
+                span: body.span.clone(),
+            };
+            let mut ir = Self::compile(&block, &HashMap::new())?;
+            ir.name = Some(name.clone());
+            Ok(ir)
+        } else {
+            // Flat format: compile the whole program as a block
+            let block = program_to_block(source, program);
+            Self::compile(&block, &HashMap::new())
+        }
     }
 
     /// Convenience: parse source and compile as a prove block with scalar outer scope names.

@@ -1,31 +1,30 @@
 // Circuit: boolean operations with type annotations
-witness x: Field
-witness y: Field
+circuit typed_boolean_ops(x: Witness Field, y: Witness Field) {
+    // Comparisons produce Bool
+    let lt: Bool = x < y
+    assert(lt)
 
-// Comparisons produce Bool
-let lt: Bool = x < y
-assert(lt)
+    let le: Bool = x <= y
+    assert(le)
 
-let le: Bool = x <= y
-assert(le)
+    let gt: Bool = y > x
+    assert(gt)
 
-let gt: Bool = y > x
-assert(gt)
+    let ge: Bool = y >= x
+    assert(ge)
 
-let ge: Bool = y >= x
-assert(ge)
+    // Logical operators on Bool
+    let both: Bool = lt && gt
+    assert(both)
 
-// Logical operators on Bool
-let both: Bool = lt && gt
-assert(both)
+    let either: Bool = (x == y) || (x < y)
+    assert(either)
 
-let either: Bool = (x == y) || (x < y)
-assert(either)
+    // Logical NOT
+    let not_eq: Bool = !(x == y)
+    assert(not_eq)
 
-// Logical NOT
-let not_eq: Bool = !(x == y)
-assert(not_eq)
-
-// Bool used in field context (subtyping: Bool -> Field)
-let eq: Bool = x == x
-let as_field: Field = eq + eq
+    // Bool used in field context (subtyping: Bool -> Field)
+    let eq: Bool = x == x
+    let as_field: Field = eq + eq
+}

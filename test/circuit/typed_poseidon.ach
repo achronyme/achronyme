@@ -1,14 +1,11 @@
 // Circuit: Poseidon hash with type annotations
-public expected: Field
-witness a: Field
-witness b: Field
-witness c: Field
+circuit typed_poseidon(expected: Public Field, a: Witness Field, b: Witness Field, c: Witness Field) {
+    // poseidon returns Field
+    let h: Field = poseidon(a, b)
+    assert_eq(h, expected)
 
-// poseidon returns Field
-let h: Field = poseidon(a, b)
-assert_eq(h, expected)
-
-// poseidon_many also returns Field
-let folded: Field = poseidon(h, c)
-let many: Field = poseidon_many(a, b, c)
-assert_eq(many, folded)
+    // poseidon_many also returns Field
+    let folded: Field = poseidon(h, c)
+    let many: Field = poseidon_many(a, b, c)
+    assert_eq(many, folded)
+}
