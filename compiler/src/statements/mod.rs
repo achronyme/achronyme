@@ -260,6 +260,31 @@ impl StatementCompiler for Compiler {
             )
         })?;
 
+        // W011: warn if imported circuit file uses flat syntax
+        {
+            let (ast, _) = achronyme_parser::parse_program(&source);
+            let has_flat_decls = ast
+                .stmts
+                .iter()
+                .any(|s| matches!(s, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }));
+            let has_circuit_decl = ast
+                .stmts
+                .iter()
+                .any(|s| matches!(s, Stmt::CircuitDecl { .. }));
+            if has_flat_decls && !has_circuit_decl {
+                self.warnings.push(
+                    achronyme_parser::Diagnostic::warning(
+                        format!(
+                            "imported circuit `{path}` uses deprecated flat syntax — \
+                             wrap in `circuit {alias}(...) {{ ... }}`"
+                        ),
+                        achronyme_parser::SpanRange::from(span),
+                    )
+                    .with_code("W011"),
+                );
+            }
+        }
+
         // 3. Compile to ProveIR via compile_circuit (self-contained)
         let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile_circuit(&source)
             .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;

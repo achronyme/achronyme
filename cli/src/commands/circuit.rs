@@ -116,6 +116,33 @@ pub fn circuit_command(
     //    ProveIR pipeline handles all circuit constructs except imports.
     //    Falls back to IrLowering for circuits that use imports (until ProveIR
     //    adds import support).
+    // W011: warn if file uses flat circuit syntax (top-level public/witness declarations)
+    // instead of wrapping in a `circuit name(...) { ... }` declaration.
+    if public.is_empty() && witness.is_empty() {
+        let (ast, _) = achronyme_parser::parse_program(&source);
+        let has_flat_decls = ast.stmts.iter().any(|s| {
+            matches!(
+                s,
+                achronyme_parser::ast::Stmt::PublicDecl { .. }
+                    | achronyme_parser::ast::Stmt::WitnessDecl { .. }
+            )
+        });
+        let has_circuit_decl = ast
+            .stmts
+            .iter()
+            .any(|s| matches!(s, achronyme_parser::ast::Stmt::CircuitDecl { .. }));
+        if has_flat_decls && !has_circuit_decl {
+            eprintln!(
+                "{}: flat circuit syntax (`public x` / `witness y` at top level) is deprecated",
+                style.warning("warning[W011]"),
+            );
+            eprintln!(
+                "  {} wrap in `circuit name(x: Public, y: Witness) {{ ... }}`",
+                style.cyan("help:"),
+            );
+        }
+    }
+
     let compile_source = if public.is_empty() && witness.is_empty() {
         source.clone()
     } else {
