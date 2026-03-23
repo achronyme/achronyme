@@ -5,38 +5,49 @@ description: Release history for Achronyme.
 
 All notable changes to Achronyme are documented here. Each release bumps all 9 workspace crates to the same version.
 
-## Unreleased
+## 0.1.0-beta.15 — 2026-03-23
+
+**Syntax unification, global type metadata, Tornado Cash example.**
+
+### Breaking: Unified syntax
+
+Six inconsistent syntax patterns consolidated into one coherent design:
+
+```ach
+// Circuit definitions — params with visibility types
+circuit eligibility(root: Public, secret: Witness, path: Witness Field[3]) {
+    merkle_verify(root, poseidon(secret, 0), path, indices)
+}
+
+// Prove blocks — only public params, witnesses auto-captured
+prove withdrawal(root: Public, nullifier_hash: Public) {
+    merkle_verify(root, commitment, path, indices)
+}
+
+// Keyword arguments for all callables
+eligibility(root: root_val, secret: my_secret, path: my_path)
+```
+
+- **`TypeAnnotation`** refactored from enum to struct with `visibility`, `base`, `array_size` fields.
+- **`Public`/`Witness`** are contextual type keywords: `root: Public`, `path: Witness Field[3]`.
+- **`Call`/`CircuitCall` unified** — single `Call` node with `Vec<CallArg>` supports keyword args for all callables.
+- **`CircuitParam`, `CircuitVisibility` removed** from AST.
+- **Old syntax removed** — `prove(public: [...])`, `circuit(public x, witness y)` no longer parse.
 
 ### `circuit` keyword — reusable circuit definitions
-
-Define circuits inline and call them multiple times with different values:
 
 ```ach
 circuit eligibility(root: Public, secret: Witness, path: Witness Field[3], indices: Witness Field[3]) {
     let commitment = poseidon(secret, 0)
     merkle_verify(root, commitment, path, indices)
 }
-
-let p1 = eligibility(root: root1, secret: s1, path_0: p0, ...)
-let p2 = eligibility(root: root2, secret: s2, path_0: p0, ...)
 ```
 
-- Circuit calls use keyword arguments: `name(key: val, ...)`
-- Parameters declare visibility: `name: Public` or `name: Witness Field[N]`
-- Each call instantiates the pre-compiled ProveIR and generates a proof
-
-### `import circuit` — circuit imports from files
-
-```ach
-import circuit "./eligibility.ach" as eligibility
-let p = eligibility(root: root_val, secret: my_secret)
-```
-
-Standalone `.ach` circuit files work as-is — no syntax changes needed.
+- `ach circuit file.ach` now supports both `circuit name(...)` declarations and legacy flat format.
+- `import circuit "./path.ach" as name` imports standalone circuit files.
+- Circuit calls with keyword arguments: `eligibility(root: val, secret: s)`.
 
 ### Named prove blocks
-
-Prove blocks can now be named, following the same dual pattern as functions:
 
 ```ach
 prove vote(hash: Public) {
@@ -45,75 +56,71 @@ prove vote(hash: Public) {
 ```
 
 - `prove name(...)` at statement level desugars to `let name = prove name(...)`
-- Name stored as metadata in ProveIR for profiler/inspector
-- Anonymous `prove(name: Public)` syntax unchanged
+- Proofs are first-class values (`TAG_PROOF`)
 
 ### `--circuit-stats` — circuit constraint profiler
-
-Analyze constraint costs for any circuit:
 
 ```bash
 ach circuit merkle.ach --circuit-stats
 ach run program.ach --circuit-stats
 ```
 
-Outputs a per-category breakdown showing which operations dominate constraint cost:
-
-```
-── Circuit Stats (R1CS) ───────────────────────────────
-  Circuit: "merkle"
-  Inputs:  1 public, 3 witness
-  ───────────────────────────────────────────────────────
-  Category             Instrs  Constraints      %
-  ───────────────────────────────────────────────────────
-  Hashes                    2          722  99.6%
-  Selections                1            2   0.3%
-  Assertions                1            1   0.1%
-  ───────────────────────────────────────────────────────
-  TOTAL                     4          725
-  Bottleneck: Hashes (99.6%)
-───────────────────────────────────────────────────────
-```
-
-- Categories: Arithmetic, Assertions, Range checks, Hashes, Comparisons, Boolean ops, Selections
-- `ach run --circuit-stats` collects stats from all prove blocks executed at runtime
-- Identifies bottleneck category automatically
+- 7 categories: Arithmetic, Assertions, Range checks, Hashes, Comparisons, Boolean ops, Selections
+- `ach run --circuit-stats` collects stats across all prove blocks at runtime
 - Static cost model matches actual R1CS constraint counts exactly
 
-### Type annotations — warnings and prove block integration
+### Global type metadata (`GlobalEntry`)
 
-Type annotations are now preserved through the compiler pipeline and used for diagnostics and prove block array inference:
+Global variables now carry type annotations through the compiler pipeline:
 
 ```ach
-let x: Bool = 0p42          // W006: type mismatch (Bool vs Field literal)
-let a: Field[3] = [1, 2]    // W007: array size mismatch (expected 3, got 2)
+let path: Field[2] = [voter1, n1]   // type_ann preserved in GlobalEntry
+prove(root: Public) {
+    merkle_verify(root, leaf, path, idx)  // path correctly captured as array
+}
 ```
 
-- **W006** — Warns when a literal value's type doesn't match its annotation. Only literal expressions are checked to avoid false positives.
-- **W007** — Warns on array size mismatches between annotation and initializer.
-- Type annotations stored in `Local` struct and threaded through `let`/`mut`/parameter declarations.
-- Array annotations (`Field[N]`, `Bool[N]`) propagated to `prove(name: Public)` captures — enables ProveIR to decompose array captures into individual elements.
+- `global_symbols` upgraded from `HashMap<String, u16>` to `HashMap<String, GlobalEntry>` with `index`, `type_ann`, `is_mutable` fields.
+- `compile_prove` reads `GlobalEntry.type_ann` to build enriched `OuterScopeEntry` for globals.
+- `find_array_size` searches locals, upvalues, AND globals.
+- Selective imports propagate `type_ann` from source module.
 
 ### Prove block array captures
 
-Array variables from VM scope are now automatically captured by `prove(name: Public)` blocks — no type annotations required:
+Array variables from VM scope are automatically captured by prove blocks:
 
 ```ach
-let path = [voter1, n1]
-let indices = [0p0, 0p0]
-
-prove(merkle_root: Public, nullifier: Public) {
+let path = [voter1, n1]           // inferred as Field[2]
+prove(merkle_root: Public) {
     merkle_verify(merkle_root, commitment, path, indices)
 }
 ```
 
-Previously this required explicit `witness path[2]` declarations or `: Field[2]` type annotations. Now the compiler infers array sizes from `let`-bound array literals and propagates them through the pipeline.
+- **Array type inference** — `let x = [a, b, c]` infers `Field[3]` on immutable bindings.
+- **`extract_array_ident` capture tracking** — merkle_verify and array-consuming constructs now correctly mark array element captures for instantiation.
+- VM prove handler auto-expands `TAG_LIST` captures into scalar entries.
 
-- **Array type inference** — `let x = [a, b, c]` automatically infers `FieldArray(3)` on immutable bindings. `mut` arrays are excluded (reassignment could change length).
-- **Enriched `OuterScopeEntry`** — ProveIR compiler receives `Scalar | Array(usize)` per outer-scope variable, enabling correct `CompEnvValue::Array` registration for array captures.
-- **`CaptureArrayDef` metadata** — serialized with ProveIR (format version 2). Records which outer-scope arrays have captured elements, so the instantiator can reconstruct array env entries from individual scalar captures.
-- **Type-directed capture loading** — `find_array_parent()` uses the enriched outer scope as ground truth (not a naming-convention heuristic) to load whole arrays into the capture map. The VM handler's existing `TAG_LIST` expansion creates individual entries at runtime.
-- VM prove handler auto-expands `TAG_LIST` captures into scalar entries (`path` → `path_0`, `path_1`).
+### Type annotation warnings
+
+```ach
+let x: Bool = 0p42          // W006: type mismatch
+let a: Field[3] = [1, 2]    // W007: array size mismatch
+```
+
+### Examples
+
+- **`tornado_mixer.ach`** — Full Tornado Cash–style private mixer: 4-user deposit tree, Merkle membership proofs, nullifier-based double-spend prevention, recipient binding. 3 Groth16 proofs generated end-to-end.
+- **`credential_proof.ach`** — Updated to use real arrays instead of `_N` convention.
+- **`prove_secret_vote.ach`** — Modernized to new `prove(x: Public)` syntax.
+
+### Editor
+
+- TextMate grammar updated: `Public`/`Witness` as visibility modifiers, `Field`/`Bool` as types, `circuit`/`prove` named definitions, `import circuit`, ZK builtins separated.
+- Grammar synced to docs site for Shiki highlighting.
+
+### Documentation
+
+- 21 pages updated (EN + ES) to new syntax across tutorials, getting-started, circuits, and zk-concepts.
 
 ---
 
@@ -123,18 +130,16 @@ Previously this required explicit `witness path[2]` declarations or `: Field[2]`
 
 ### New syntax
 
-- **`prove(name: Public)`** — Concise prove block syntax with witness auto-inference. Only public inputs need to be declared; all other outer-scope variables are automatically captured as private witnesses.
+- **`prove(public: [...])`** — Prove block syntax with witness auto-inference (superseded by `prove(name: Public)` in beta.15).
 
 ```ach
 let secret = 0p42
 let hash = poseidon(secret, 0)
 
-let p = prove(hash: Public) {
+let p = prove(public: [hash]) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
-
-The explicit `prove { witness x; public y; ... }` syntax remains supported.
 
 ### ProveIR pipeline
 
