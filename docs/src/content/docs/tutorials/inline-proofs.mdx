@@ -46,7 +46,7 @@ The verifier learns only that *some* value hashes to `hash`, without learning `s
 
 ## Explicit Declarations (Classic Syntax)
 
-The explicit `witness`/`public` declaration syntax inside the block body is also supported:
+The explicit `witness`/`public` declaration syntax is also supported:
 
 ```ach
 let secret: Field = 0p42
@@ -59,7 +59,7 @@ let p = prove {
 }
 ```
 
-Both syntaxes produce identical circuits. The param-style `prove(hash: Public)` form is preferred and more concise; the explicit form gives full control. You cannot mix both in the same block.
+Both syntaxes produce identical circuits. The `prove(name: Public)` form is more concise; the explicit form gives full control. You cannot mix both in the same block.
 
 ## Integer Auto-Conversion
 

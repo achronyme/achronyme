@@ -19,11 +19,14 @@ Every operation in a circuit compiles to zero or more constraints. Understanding
 | `-` (negation) | `-a` | 0 | Negate LC coefficients |
 
 ```ach
-circuit powers(x2: Public, x3: Public, x4: Public, x: Witness) {
-    assert_eq(x ^ 2, x2)
-    assert_eq(x ^ 3, x3)
-    assert_eq(x ^ 4, x4)
-}
+public x2
+public x3
+public x4
+witness x
+
+assert_eq(x ^ 2, x2)
+assert_eq(x ^ 3, x3)
+assert_eq(x ^ 4, x4)
 ```
 
 ## Comparison Operators
@@ -40,11 +43,12 @@ circuit powers(x2: Public, x3: Public, x4: Public, x: Witness) {
 Equality checks are cheap (2 constraints). Ordering comparisons are expensive (~760 constraints each) because they require bit decomposition over the BN254 field. Use them sparingly.
 
 ```ach
-circuit compare(x: Witness, y: Witness) {
-    let eq = x == y
-    let lt = x < y
-    assert(lt)
-}
+witness x
+witness y
+
+let eq = x == y
+let lt = x < y
+assert(lt)
 ```
 
 ## Logical Operators
@@ -56,16 +60,17 @@ circuit compare(x: Witness, y: Witness) {
 | `!` | `!a` | 0–1 | Free if operand is already proven boolean |
 
 ```ach
-circuit logic(x: Witness, y: Witness) {
-    let both = (x < y) && (y > x)
-    assert(both)
+witness x
+witness y
 
-    let either = (x == y) || (x < y)
-    assert(either)
+let both = (x < y) && (y > x)
+assert(both)
 
-    let not_eq = !(x == y)
-    assert(not_eq)
-}
+let either = (x == y) || (x < y)
+assert(either)
+
+let not_eq = !(x == y)
+assert(not_eq)
 ```
 
 ## Why Some Operations Are Free
@@ -89,4 +94,4 @@ The pass recognizes these sources as proven-boolean:
 - Variables with `Bool` type annotation (from declarations)
 - `Not`/`And`/`Or`/`Mux` of proven-boolean operands
 
-[Type annotations](/circuits/type-annotations/) extend this optimization: declaring `flag: Witness Bool` marks the variable as proven boolean, saving 1 constraint every time it's used in a boolean context (e.g., as a `mux` condition). Annotating `: Bool` on an untyped value (via `let`, function params, or return types) emits a one-time `RangeCheck` enforcement (+1 constraint), after which the value is also tracked as proven-boolean for downstream savings.
+[Type annotations](/circuits/type-annotations/) extend this optimization: declaring `witness flag: Bool` marks the variable as proven boolean, saving 1 constraint every time it's used in a boolean context (e.g., as a `mux` condition). Annotating `: Bool` on an untyped value (via `let`, function params, or return types) emits a one-time `RangeCheck` enforcement (+1 constraint), after which the value is also tracked as proven-boolean for downstream savings.

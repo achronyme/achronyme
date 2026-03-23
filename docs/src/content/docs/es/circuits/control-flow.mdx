@@ -12,24 +12,27 @@ Los bucles `for` se desenrollan estáticamente — el compilador expande cada it
 **Forma de rango** — iterar sobre `start..end`:
 
 ```ach
-circuit example(out: Public, a: Witness, b: Witness) {
-    let product = a * b
-    assert_eq(product, out)
+public out
+witness a
+witness b
 
-    let sum = a + b
-    assert_eq(sum, a + b)
-}
+let product = a * b
+assert_eq(product, out)
+
+let sum = a + b
+assert_eq(sum, a + b)
 ```
 
 **Forma de array** — iterar sobre un array declarado:
 
 ```ach
-circuit sum_check(expected_sum: Public, vals: Witness Field[3]) {
-    let acc = vals[0]
-    let acc = acc + vals[1]
-    let acc = acc + vals[2]
-    assert_eq(acc, expected_sum)
-}
+public expected_sum
+witness vals[3]
+
+let acc = vals[0]
+let acc = acc + vals[1]
+let acc = acc + vals[2]
+assert_eq(acc, expected_sum)
 ```
 
 El costo de restricciones de un bucle es igual al número de iteraciones multiplicado por el costo del cuerpo.
@@ -39,11 +42,11 @@ El costo de restricciones de un bucle es igual al número de iteraciones multipl
 Se soportan bucles `for` anidados. El conteo total de iteraciones es el producto de todos los límites de los bucles:
 
 ```ach
-circuit matrix_check(matrix: Witness Field[9]) {
-    for i in 0..3 {
-        for j in 0..3 {
-            range_check(matrix[i * 3 + j], 8)
-        }
+witness matrix[9]
+
+for i in 0..3 {
+    for j in 0..3 {
+        range_check(matrix[i * 3 + j], 8)
     }
 }
 ```
@@ -55,9 +58,11 @@ Esto se desenrolla a 9 iteraciones, cada una con un `range_check` (9 restriccion
 En circuitos, `if/else` se compila a un **mux** (multiplexor) — ambas ramas siempre se evalúan, y la condición selecciona qué resultado usar. Esto cuesta 2 restricciones (una verificación booleana para la condición, una restricción de selección).
 
 ```ach
-circuit select(cond: Witness, a: Witness, b: Witness) {
-    let result = if cond { a } else { b }
-}
+witness cond
+witness a
+witness b
+
+let result = if cond { a } else { b }
 ```
 
 Esto es equivalente a `mux(cond, a, b)`. No hay evaluación de cortocircuito — tanto `a` como `b` se calculan independientemente de `cond`.
@@ -69,10 +74,11 @@ Un `if` sin `else` no está soportado en circuitos porque ambas ramas deben prod
 Las vinculaciones `let` crean alias — no emiten restricciones. Un `let` simplemente da un nombre a una combinación lineal existente.
 
 ```ach
-circuit example(a: Witness, b: Witness) {
-    let sum = a + b        // 0 restricciones — solo un alias
-    let doubled = sum + sum // 0 restricciones — sigue siendo una combinación lineal
-}
+witness a
+witness b
+
+let sum = a + b        // 0 restricciones — solo un alias
+let doubled = sum + sum // 0 restricciones — sigue siendo una combinación lineal
 ```
 
 Las vinculaciones solo cuestan restricciones cuando involucran operaciones que requieren puertas de multiplicación (ej., `let product = a * b` cuesta 1 restricción por la multiplicación, no por el `let`).

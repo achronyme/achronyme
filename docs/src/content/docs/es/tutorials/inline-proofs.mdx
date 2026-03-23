@@ -22,13 +22,13 @@ print(proof_json(p))
 El bloque prove:
 1. Compila `assert_eq(x * y, product)` como un circuito en tiempo de compilación
 2. Captura `x` e `y` del ámbito externo como entradas **testigo** (inferidas automáticamente)
-3. Marca `product` como entrada **pública** (declarada como `Public`)
+3. Marca `product` como entrada **pública** (declarada como `product: Public`)
 4. Genera una prueba Groth16 en tiempo de ejecución
 5. Devuelve un `ProofObject`
 
 ## Auto-Inferencia de Testigos
 
-Con la sintaxis `prove(...)`, solo declaras qué variables son públicas — todo lo demás se infiere automáticamente como testigo:
+Con la sintaxis `prove(name: Public)`, solo declaras qué variables son públicas — todo lo demás se infiere automáticamente como testigo:
 
 ```ach
 let secret: Field = 0p42
@@ -39,14 +39,14 @@ let p = prove(hash: Public) {
 }
 ```
 
-- `hash` está declarado como `Public` → **entrada pública** (visible para el verificador)
+- `hash` se declara como `hash: Public` → **entrada pública** (visible para el verificador)
 - `secret` se referencia en el cuerpo pero no está en la lista pública → **testigo** (privado, inferido automáticamente)
 
 El verificador aprende solo que *algún* valor hashea a `hash`, sin conocer `secret`.
 
 ## Declaraciones Explícitas (Sintaxis Clásica)
 
-La sintaxis explícita `witness`/`public` dentro del bloque también está soportada:
+La sintaxis explícita `witness`/`public` también está soportada:
 
 ```ach
 let secret: Field = 0p42
@@ -59,7 +59,7 @@ let p = prove {
 }
 ```
 
-Ambas sintaxis producen circuitos idénticos. La forma `prove(hash: Public)` es más concisa; la forma explícita da control total. No se pueden mezclar ambas en el mismo bloque.
+Ambas sintaxis producen circuitos idénticos. La forma `prove(name: Public)` es más concisa; la forma explícita da control total. No se pueden mezclar ambas en el mismo bloque.
 
 ## Auto-Conversión de Enteros
 
@@ -152,7 +152,7 @@ Fuerza que un valor quepa dentro de cierto número de bits:
 ```ach
 let val: Field = 0p200
 
-prove {
+prove() {
     range_check(val, 8)   // 0 ≤ val < 256
 }
 ```

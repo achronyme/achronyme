@@ -91,7 +91,7 @@ Los bloques prove te permiten generar pruebas en línea dentro de programas regu
 let secret = 42
 let hash = 0p18569430475105882...
 
-let p = prove(public: [hash]) {
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 

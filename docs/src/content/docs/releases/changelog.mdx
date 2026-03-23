@@ -12,7 +12,7 @@ All notable changes to Achronyme are documented here. Each release bumps all 9 w
 Define circuits inline and call them multiple times with different values:
 
 ```ach
-circuit eligibility(public root, witness secret, witness path[3], witness indices[3]) {
+circuit eligibility(root: Public, secret: Witness, path: Witness Field[3], indices: Witness Field[3]) {
     let commitment = poseidon(secret, 0)
     merkle_verify(root, commitment, path, indices)
 }
@@ -22,7 +22,7 @@ let p2 = eligibility(root: root2, secret: s2, path_0: p0, ...)
 ```
 
 - Circuit calls use keyword arguments: `name(key: val, ...)`
-- Parameters declare visibility: `public name` or `witness name[N]`
+- Parameters declare visibility: `name: Public` or `name: Witness Field[N]`
 - Each call instantiates the pre-compiled ProveIR and generates a proof
 
 ### `import circuit` — circuit imports from files
@@ -39,14 +39,14 @@ Standalone `.ach` circuit files work as-is — no syntax changes needed.
 Prove blocks can now be named, following the same dual pattern as functions:
 
 ```ach
-prove vote(public: [hash]) {
+prove vote(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
 
 - `prove name(...)` at statement level desugars to `let name = prove name(...)`
 - Name stored as metadata in ProveIR for profiler/inspector
-- Anonymous `prove(public: [...])` syntax unchanged
+- Anonymous `prove(name: Public)` syntax unchanged
 
 ### `--circuit-stats` — circuit constraint profiler
 
@@ -92,17 +92,17 @@ let a: Field[3] = [1, 2]    // W007: array size mismatch (expected 3, got 2)
 - **W006** — Warns when a literal value's type doesn't match its annotation. Only literal expressions are checked to avoid false positives.
 - **W007** — Warns on array size mismatches between annotation and initializer.
 - Type annotations stored in `Local` struct and threaded through `let`/`mut`/parameter declarations.
-- Array annotations (`Field[N]`, `Bool[N]`) propagated to `prove(public: [...])` captures — enables ProveIR to decompose array captures into individual elements.
+- Array annotations (`Field[N]`, `Bool[N]`) propagated to `prove(name: Public)` captures — enables ProveIR to decompose array captures into individual elements.
 
 ### Prove block array captures
 
-Array variables from VM scope are now automatically captured by `prove(public: [...])` blocks — no type annotations required:
+Array variables from VM scope are now automatically captured by `prove(name: Public)` blocks — no type annotations required:
 
 ```ach
 let path = [voter1, n1]
 let indices = [0p0, 0p0]
 
-prove(public: [merkle_root, nullifier]) {
+prove(merkle_root: Public, nullifier: Public) {
     merkle_verify(merkle_root, commitment, path, indices)
 }
 ```
@@ -123,13 +123,13 @@ Previously this required explicit `witness path[2]` declarations or `: Field[2]`
 
 ### New syntax
 
-- **`prove(public: [...])`** — Concise prove block syntax with witness auto-inference. Only public inputs need to be declared; all other outer-scope variables are automatically captured as private witnesses.
+- **`prove(name: Public)`** — Concise prove block syntax with witness auto-inference. Only public inputs need to be declared; all other outer-scope variables are automatically captured as private witnesses.
 
 ```ach
 let secret = 0p42
 let hash = poseidon(secret, 0)
 
-let p = prove(public: [hash]) {
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
@@ -144,7 +144,7 @@ The explicit `prove { witness x; public y; ... }` syntax remains supported.
 - **Phase D:** `ach circuit` uses ProveIR instead of IrLowering (IrLowering fallback retained for circuits with imports).
 - **Phase E:** `compile_prove()` compiles prove blocks to ProveIR at compile time and stores serialized bytes in the bytecode constant pool via `TAG_BYTES`.
 - **Phase F:** VM `handle_prove()` reads ProveIR bytes from the constant pool, the handler deserializes and instantiates with captured scope values.
-- **Phase G:** Parser supports `prove(public: [...])` syntax. Compiler synthesizes `PublicDecl` statements and validates no mixed syntax.
+- **Phase G:** Parser supports `prove(name: Public)` syntax. Compiler synthesizes `PublicDecl` statements and validates no mixed syntax.
 - **Phase H:** Documentation updated (18 pages, EN + ES).
 
 ### Hardening
@@ -171,7 +171,7 @@ Three new examples in `examples/`:
 
 ### Editor
 
-- TextMate grammar: `prove-block` rule for `prove(public: [...])` syntax highlighting.
+- TextMate grammar: `prove-block` rule for `prove(name: Public)` syntax highlighting.
 - LSP: `provep` completion snippet, updated hover docs.
 
 ---

@@ -16,9 +16,10 @@ In Achronyme, you write circuits using the same syntax as regular programs, with
 ### 1. Standalone circuit file
 
 ```ach
-circuit hash_check(output: Public, secret: Witness) {
-    assert_eq(poseidon(secret, 0), output)
-}
+public output
+witness secret
+
+assert_eq(poseidon(secret, 0), output)
 ```
 
 Compile with the CLI:
@@ -38,7 +39,7 @@ let p = prove(hash: Public) {
 }
 ```
 
-The `prove` block captures variables from scope, compiles the body as a circuit via ProveIR at compile time, and generates a proof at runtime. Variables declared with `Public` are public inputs; all other outer-scope variables are auto-inferred as private witnesses.
+The `prove` block captures variables from scope, compiles the body as a circuit via ProveIR at compile time, and generates a proof at runtime. Variables declared as `name: Public` are public inputs; all other outer-scope variables are auto-inferred as private witnesses.
 
 ## What Works in Circuits
 

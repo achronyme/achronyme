@@ -20,9 +20,12 @@ The verifier recomputes the root from these values and checks it matches the exp
 Create `merkle.ach`:
 
 ```ach
-circuit merkle(root: Public, leaf: Witness, path: Witness Field[3], indices: Witness Field[3]) {
-    merkle_verify(root, leaf, path, indices)
-}
+public root
+witness leaf
+witness path[3]
+witness indices[3]
+
+merkle_verify(root, leaf, path, indices)
 ```
 
 This verifies membership in a tree of depth 3 (8 leaves). The `merkle_verify` builtin:
@@ -148,25 +151,31 @@ Change the array size to match your tree depth:
 
 ```ach
 // Depth 1 (2 leaves)
-circuit merkle_d1(root: Public, leaf: Witness, path: Witness Field[1], indices: Witness Field[1]) { ... }
+witness path[1]
+witness indices[1]
 
 // Depth 5 (32 leaves)
-circuit merkle_d5(root: Public, leaf: Witness, path: Witness Field[5], indices: Witness Field[5]) { ... }
+witness path[5]
+witness indices[5]
 
 // Depth 20 (~1M leaves)
-circuit merkle_d20(root: Public, leaf: Witness, path: Witness Field[20], indices: Witness Field[20]) { ... }
+witness path[20]
+witness indices[20]
 ```
 
 The `path` and `indices` arrays must have the same length.
 
 ## Type Annotations
 
-For explicit type safety, add type annotations to the circuit parameters:
+For explicit type safety, add annotations:
 
 ```ach
-circuit merkle_typed(root: Public Field, leaf: Witness Field, path: Witness Field[3], indices: Witness Bool[3]) {
-    merkle_verify(root, leaf, path, indices)
-}
+public root: Field
+witness leaf: Field
+witness path[3]: Field
+witness indices[3]: Bool
+
+merkle_verify(root, leaf, path, indices)
 ```
 
 The `Bool` annotation on `indices` ensures they are constrained to 0 or 1, which the `bool_prop` optimization pass can use to skip redundant boolean enforcement.

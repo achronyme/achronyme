@@ -19,11 +19,14 @@ Cada operación en un circuito se compila a cero o más restricciones. Entender 
 | `-` (negación) | `-a` | 0 | Negar coeficientes de CL |
 
 ```ach
-circuit powers(x2: Public, x3: Public, x4: Public, x: Witness) {
-    assert_eq(x ^ 2, x2)
-    assert_eq(x ^ 3, x3)
-    assert_eq(x ^ 4, x4)
-}
+public x2
+public x3
+public x4
+witness x
+
+assert_eq(x ^ 2, x2)
+assert_eq(x ^ 3, x3)
+assert_eq(x ^ 4, x4)
 ```
 
 ## Operadores de Comparación
@@ -40,11 +43,12 @@ circuit powers(x2: Public, x3: Public, x4: Public, x: Witness) {
 Las verificaciones de igualdad son baratas (2 restricciones). Las comparaciones de orden son costosas (~760 restricciones cada una) porque requieren descomposición de bits sobre el campo BN254. Úsalas con moderación.
 
 ```ach
-circuit compare(x: Witness, y: Witness) {
-    let eq = x == y
-    let lt = x < y
-    assert(lt)
-}
+witness x
+witness y
+
+let eq = x == y
+let lt = x < y
+assert(lt)
 ```
 
 ## Operadores Lógicos
@@ -56,16 +60,17 @@ circuit compare(x: Witness, y: Witness) {
 | `!` | `!a` | 0–1 | Gratis si el operando ya es booleano probado |
 
 ```ach
-circuit logic(x: Witness, y: Witness) {
-    let both = (x < y) && (y > x)
-    assert(both)
+witness x
+witness y
 
-    let either = (x == y) || (x < y)
-    assert(either)
+let both = (x < y) && (y > x)
+assert(both)
 
-    let not_eq = !(x == y)
-    assert(not_eq)
-}
+let either = (x == y) || (x < y)
+assert(either)
+
+let not_eq = !(x == y)
+assert(not_eq)
 ```
 
 ## Por Qué Algunas Operaciones Son Gratis
@@ -89,4 +94,4 @@ El pase reconoce estas fuentes como booleanas probadas:
 - Variables con anotación de tipo `Bool` (de declaraciones)
 - `Not`/`And`/`Or`/`Mux` de operandos booleanos probados
 
-Las [anotaciones de tipo](/es/circuits/type-annotations/) extienden esta optimización: declarar `flag: Witness Bool` marca la variable como booleana probada, ahorrando 1 restricción cada vez que se usa en contexto booleano (ej., como condición de `mux`). Anotar `: Bool` en un valor no tipado (vía `let`, parámetros de función o tipos de retorno) emite una verificación `RangeCheck` única (+1 restricción), después de lo cual el valor también se rastrea como booleano probado para ahorros posteriores.
+Las [anotaciones de tipo](/es/circuits/type-annotations/) extienden esta optimización: declarar `witness flag: Bool` marca la variable como booleana probada, ahorrando 1 restricción cada vez que se usa en contexto booleano (ej., como condición de `mux`). Anotar `: Bool` en un valor no tipado (vía `let`, parámetros de función o tipos de retorno) emite una verificación `RangeCheck` única (+1 restricción), después de lo cual el valor también se rastrea como booleano probado para ahorros posteriores.
