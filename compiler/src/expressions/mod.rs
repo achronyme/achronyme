@@ -109,11 +109,8 @@ impl ExpressionCompiler for Compiler {
 
             // === ZK ===
             Expr::Prove {
-                name,
-                body,
-                public_list,
-                ..
-            } => self.compile_prove(body, public_list.as_deref(), name.as_deref()),
+                name, body, params, ..
+            } => self.compile_prove(body, params, name.as_deref()),
 
             // === Static access (Type::MEMBER) ===
             Expr::StaticAccess {

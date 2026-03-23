@@ -201,13 +201,13 @@ impl Parser {
         })
     }
 
-    /// Parse `prove name(public: [...]) { ... }` at statement level.
-    /// Desugars to `let name = prove name(public: [...]) { ... }`.
+    /// Parse `prove name(hash: Public) { ... }` at statement level.
+    /// Desugars to `let name = prove name(hash: Public) { ... }`.
     fn parse_prove_decl(&mut self) -> Result<Stmt, ParseError> {
         let sp = self.span();
         self.advance(); // eat `prove`
         let name = self.expect_ident()?;
-        let public_list = self.parse_prove_public_list()?;
+        let params = self.parse_prove_params()?;
         let body = self.parse_block_inner()?;
         let span = self.span_to_prev(&sp);
 
@@ -217,7 +217,7 @@ impl Parser {
             value: Expr::Prove {
                 name: Some(name),
                 body,
-                public_list,
+                params,
                 span: span.clone(),
             },
             span,

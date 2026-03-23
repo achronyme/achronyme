@@ -250,12 +250,13 @@ pub enum Expr {
         span: Span,
     },
     Prove {
-        /// Optional name: `prove eligibility(public: [...]) { ... }`
+        /// Optional name: `prove vote(hash: Public) { ... }`
         name: Option<String>,
         body: Block,
-        /// Optional `prove(public: [x, y]) { ... }` syntax.
-        /// When Some, witnesses are auto-inferred from outer scope.
-        public_list: Option<Vec<String>>,
+        /// Public params with visibility types: `prove(hash: Public, flag: Public Bool) { ... }`
+        /// Empty vec means no params (old-style or all-witness).
+        /// Witnesses are auto-inferred from outer scope.
+        params: Vec<TypedParam>,
         span: Span,
     },
     /// Circuit call with keyword arguments: `name(key: val, ...)`

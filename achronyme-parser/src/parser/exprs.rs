@@ -522,7 +522,7 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `prove`
 
-        // Optional name: `prove eligibility(public: [...]) { ... }`
+        // Optional name: `prove eligibility(hash: Public) { ... }`
         let name = if self.at(&TokenKind::Ident)
             && (matches!(self.lookahead(1), TokenKind::LParen | TokenKind::LBrace))
         {
@@ -531,22 +531,32 @@ impl Parser {
             None
         };
 
-        let public_list = self.parse_prove_public_list()?;
+        let params = self.parse_prove_params()?;
         let body = self.parse_block_inner()?;
 
         Ok(Expr::Prove {
             name,
             body,
-            public_list,
+            params,
             span: self.span_to_prev(&sp),
         })
     }
 
-    /// Parse optional `(public: [name1, name2, ...])` parameter list for prove blocks.
-    pub(super) fn parse_prove_public_list(&mut self) -> Result<Option<Vec<String>>, ParseError> {
-        if self.at(&TokenKind::LParen) {
-            self.advance(); // eat `(`
-            self.expect(&TokenKind::Public)?;
+    /// Parse optional prove parameter list.
+    ///
+    /// New syntax: `(hash: Public, flag: Public Bool)` → typed params with visibility.
+    /// Old syntax: `(public: [x, y])` → emits W010 deprecation, converts to typed params.
+    /// No parens → empty params vec.
+    pub(super) fn parse_prove_params(&mut self) -> Result<Vec<TypedParam>, ParseError> {
+        if !self.at(&TokenKind::LParen) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // eat `(`
+
+        // Detect old syntax: `(public: [...])`
+        if self.at(&TokenKind::Public) && matches!(self.lookahead(1), TokenKind::Colon) {
+            let dep_span = self.span();
+            self.advance(); // eat `public`
             self.expect(&TokenKind::Colon)?;
             self.expect(&TokenKind::LBracket)?;
 
@@ -560,9 +570,50 @@ impl Parser {
             }
             self.expect(&TokenKind::RBracket)?;
             self.expect(&TokenKind::RParen)?;
-            Ok(Some(names))
-        } else {
-            Ok(None)
+
+            // Emit W010 deprecation
+            let new_syntax = names
+                .iter()
+                .map(|n| format!("{n}: Public"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.errors.push(
+                crate::Diagnostic::warning(
+                    format!(
+                        "deprecated prove syntax: use `prove({new_syntax})` instead of `prove(public: [{}])`",
+                        names.join(", ")
+                    ),
+                    crate::diagnostic::SpanRange::from(&dep_span),
+                )
+                .with_code("W010"),
+            );
+
+            // Convert to typed params with Public visibility
+            let params = names
+                .into_iter()
+                .map(|name| TypedParam {
+                    name,
+                    type_ann: Some(TypeAnnotation {
+                        visibility: Some(Visibility::Public),
+                        base: BaseType::Field,
+                        array_size: None,
+                    }),
+                })
+                .collect();
+            return Ok(params);
         }
+
+        // New syntax: `(name: Type, ...)`
+        let mut params = Vec::new();
+        while !self.at(&TokenKind::RParen) {
+            let name = self.expect_ident()?;
+            let type_ann = self.try_parse_type_annotation()?;
+            params.push(TypedParam { name, type_ann });
+            if self.at(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+        Ok(params)
     }
 }

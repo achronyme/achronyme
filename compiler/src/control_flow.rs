@@ -86,7 +86,7 @@ pub trait ControlFlowCompiler {
     fn compile_prove(
         &mut self,
         body: &Block,
-        public_list: Option<&[String]>,
+        params: &[TypedParam],
         name: Option<&str>,
     ) -> Result<u8, CompilerError>;
 
@@ -436,7 +436,7 @@ impl ControlFlowCompiler for Compiler {
     fn compile_prove(
         &mut self,
         body: &Block,
-        public_list: Option<&[String]>,
+        params: &[TypedParam],
         name: Option<&str>,
     ) -> Result<u8, CompilerError> {
         // 1. Collect outer scope names for ProveIR capture detection.
@@ -470,15 +470,14 @@ impl ControlFlowCompiler for Compiler {
                 .or_insert(ir::prove_ir::OuterScopeEntry::Scalar);
         }
 
-        // 2. If public_list is provided (new syntax), validate no old-style
-        //    declarations in the body and synthesize PublicDecl stmts.
-        let compile_body;
-        if let Some(pub_names) = public_list {
+        // 2. If params are provided, validate no old-style declarations in the
+        //    body and synthesize PublicDecl stmts from the typed params.
+        let compile_body = if !params.is_empty() {
             // Validate: no old-style public/witness declarations in body
             for stmt in &body.stmts {
                 if matches!(stmt, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }) {
                     return Err(CompilerError::CompileError(
-                        "cannot mix prove(public: [...]) syntax with explicit \
+                        "cannot mix prove(...) param syntax with explicit \
                          public/witness declarations inside the block"
                             .into(),
                         self.cur_span(),
@@ -486,29 +485,35 @@ impl ControlFlowCompiler for Compiler {
                 }
             }
 
-            // Synthesize PublicDecl stmts and prepend to body.
-            // If a public name has a type annotation with array size in the outer scope,
-            // propagate it so ProveIR can decompose it into element captures.
+            // Synthesize PublicDecl stmts from params.
+            // If a param has array size in its type annotation, use it.
+            // Otherwise, check the outer scope for array size propagation.
             let mut stmts = Vec::new();
-            for name in pub_names {
-                let array_size = find_local_array_size(self, name);
-                let type_ann = array_size.map(|n| TypeAnnotation::array(BaseType::Field, n));
+            for param in params {
+                let param_array_size = param.type_ann.as_ref().and_then(|ann| ann.array_size);
+                let array_size =
+                    param_array_size.or_else(|| find_local_array_size(self, &param.name));
+                let type_ann = match (param.type_ann.as_ref(), array_size) {
+                    (Some(ann), _) => Some(ann.clone()),
+                    (None, Some(n)) => Some(TypeAnnotation::array(BaseType::Field, n)),
+                    (None, None) => None,
+                };
                 stmts.push(Stmt::PublicDecl {
                     names: vec![InputDecl {
-                        name: name.clone(),
+                        name: param.name.clone(),
                         type_ann,
                     }],
                     span: body.span.clone(),
                 });
             }
             stmts.extend(body.stmts.clone());
-            compile_body = Block {
+            Block {
                 stmts,
                 span: body.span.clone(),
-            };
+            }
         } else {
-            compile_body = body.clone();
-        }
+            body.clone()
+        };
 
         // 3. Compile AST Block → ProveIR template.
         let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(&compile_body, &outer_scope)

@@ -1,4 +1,4 @@
-use achronyme_parser::ast::{Expr, Stmt, Visibility};
+use achronyme_parser::ast::{BaseType, Expr, Stmt, TypeAnnotation, Visibility};
 use achronyme_parser::{parse_program, Severity};
 
 fn parse_ok(source: &str) {
@@ -7,7 +7,10 @@ fn parse_ok(source: &str) {
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
-    assert!(real_errors.is_empty(), "unexpected parse errors: {real_errors:?}");
+    assert!(
+        real_errors.is_empty(),
+        "unexpected parse errors: {real_errors:?}"
+    );
 }
 
 fn has_errors(source: &str) -> bool {
@@ -57,18 +60,24 @@ fn prove_after_let() {
 }
 
 // ===================================================================
-// Phase G: prove(public: [...]) syntax tests
+// Phase G: prove(public: [...]) syntax — now emits W010 deprecation
 // ===================================================================
 
 #[test]
 fn prove_public_list_basic() {
     let input = r#"prove(public: [hash]) { assert_eq(poseidon(secret, 0), hash) }"#;
     parse_ok(input);
-    let (prog, _) = parse_program(input);
+    let (prog, errors) = parse_program(input);
+    // Should emit W010 deprecation warning
+    assert!(errors.iter().any(|d| d.code.as_deref() == Some("W010")));
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::Prove { public_list, .. }) => {
-            let names = public_list.as_ref().expect("should have public_list");
-            assert_eq!(names, &["hash"]);
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "hash");
+            assert_eq!(
+                params[0].type_ann.as_ref().unwrap().visibility,
+                Some(Visibility::Public)
+            );
         }
         other => panic!("expected Prove, got {other:?}"),
     }
@@ -80,9 +89,11 @@ fn prove_public_list_multiple() {
     parse_ok(input);
     let (prog, _) = parse_program(input);
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::Prove { public_list, .. }) => {
-            let names = public_list.as_ref().expect("should have public_list");
-            assert_eq!(names, &["a", "b", "c"]);
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert_eq!(params.len(), 3);
+            assert_eq!(params[0].name, "a");
+            assert_eq!(params[1].name, "b");
+            assert_eq!(params[2].name, "c");
         }
         other => panic!("expected Prove, got {other:?}"),
     }
@@ -94,24 +105,20 @@ fn prove_public_list_empty() {
     parse_ok(input);
     let (prog, _) = parse_program(input);
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::Prove { public_list, .. }) => {
-            let names = public_list.as_ref().expect("should have public_list");
-            assert!(names.is_empty());
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert!(params.is_empty());
         }
         other => panic!("expected Prove, got {other:?}"),
     }
 }
 
 #[test]
-fn prove_old_syntax_no_public_list() {
+fn prove_old_syntax_no_params() {
     let input = r#"prove { witness s; public h; assert_eq(s, h) }"#;
     let (prog, _) = parse_program(input);
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::Prove { public_list, .. }) => {
-            assert!(
-                public_list.is_none(),
-                "old syntax should have no public_list"
-            );
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert!(params.is_empty(), "old syntax should have no params");
         }
         other => panic!("expected Prove, got {other:?}"),
     }
@@ -123,9 +130,10 @@ fn prove_public_list_trailing_comma() {
     parse_ok(input);
     let (prog, _) = parse_program(input);
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::Prove { public_list, .. }) => {
-            let names = public_list.as_ref().expect("should have public_list");
-            assert_eq!(names, &["x", "y"]);
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].name, "x");
+            assert_eq!(params[1].name, "y");
         }
         other => panic!("expected Prove, got {other:?}"),
     }
@@ -146,15 +154,15 @@ fn prove_named_statement() {
             value:
                 Expr::Prove {
                     name: prove_name,
-                    public_list,
+                    params,
                     ..
                 },
             ..
         } => {
             assert_eq!(name, "vote");
             assert_eq!(prove_name.as_deref(), Some("vote"));
-            let pubs = public_list.as_ref().expect("should have public_list");
-            assert_eq!(pubs, &["root"]);
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "root");
         }
         other => panic!("expected LetDecl with named Prove, got {other:?}"),
     }
@@ -181,7 +189,7 @@ fn prove_named_expression() {
 }
 
 #[test]
-fn prove_named_no_public_list() {
+fn prove_named_no_params() {
     let input = r#"prove vote { witness x; public y; assert_eq(x, y) }"#;
     parse_ok(input);
     let (prog, _) = parse_program(input);
@@ -191,14 +199,14 @@ fn prove_named_no_public_list() {
             value:
                 Expr::Prove {
                     name: prove_name,
-                    public_list,
+                    params,
                     ..
                 },
             ..
         } => {
             assert_eq!(name, "vote");
             assert_eq!(prove_name.as_deref(), Some("vote"));
-            assert!(public_list.is_none());
+            assert!(params.is_empty());
         }
         other => panic!("expected LetDecl with named Prove, got {other:?}"),
     }
@@ -214,6 +222,71 @@ fn prove_anonymous_still_works() {
             assert!(name.is_none());
         }
         other => panic!("expected anonymous Prove, got {other:?}"),
+    }
+}
+
+// ===================================================================
+// New param-style prove syntax
+// ===================================================================
+
+#[test]
+fn prove_param_style_basic() {
+    let input = r#"prove(hash: Public) { assert_eq(poseidon(secret, 0), hash) }"#;
+    parse_ok(input);
+    let (prog, errors) = parse_program(input);
+    // New syntax should NOT emit W010
+    assert!(!errors.iter().any(|d| d.code.as_deref() == Some("W010")));
+    match &prog.stmts[0] {
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "hash");
+            let ann = params[0].type_ann.as_ref().unwrap();
+            assert_eq!(ann.visibility, Some(Visibility::Public));
+            assert_eq!(ann.base, BaseType::Field);
+        }
+        other => panic!("expected Prove, got {other:?}"),
+    }
+}
+
+#[test]
+fn prove_param_style_multiple() {
+    let input = r#"prove(root: Public, flag: Public Bool) { assert(flag) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::Expr(Expr::Prove { params, .. }) => {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].name, "root");
+            assert_eq!(params[0].type_ann.as_ref().unwrap().base, BaseType::Field);
+            assert_eq!(params[1].name, "flag");
+            assert_eq!(params[1].type_ann.as_ref().unwrap().base, BaseType::Bool);
+        }
+        other => panic!("expected Prove, got {other:?}"),
+    }
+}
+
+#[test]
+fn prove_param_style_named() {
+    let input = r#"prove vote(hash: Public) { assert_eq(hash, hash) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::LetDecl {
+            name,
+            value:
+                Expr::Prove {
+                    name: prove_name,
+                    params,
+                    ..
+                },
+            ..
+        } => {
+            assert_eq!(name, "vote");
+            assert_eq!(prove_name.as_deref(), Some("vote"));
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "hash");
+        }
+        other => panic!("expected LetDecl with named Prove, got {other:?}"),
     }
 }
 
@@ -307,5 +380,61 @@ fn regular_call_still_positional() {
             assert_eq!(args.len(), 2);
         }
         other => panic!("expected regular Call, got {other:?}"),
+    }
+}
+
+// ===================================================================
+// New circuit param syntax
+// ===================================================================
+
+#[test]
+fn circuit_decl_new_syntax() {
+    let input =
+        r#"circuit hash_check(output: Public, secret: Witness) { assert_eq(output, secret) }"#;
+    parse_ok(input);
+    let (prog, errors) = parse_program(input);
+    // New syntax should NOT emit W008
+    assert!(!errors.iter().any(|d| d.code.as_deref() == Some("W008")));
+    match &prog.stmts[0] {
+        Stmt::CircuitDecl {
+            name, params, body, ..
+        } => {
+            assert_eq!(name, "hash_check");
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].name, "output");
+            assert_eq!(
+                params[0].type_ann.as_ref().unwrap().visibility,
+                Some(Visibility::Public)
+            );
+            assert_eq!(params[1].name, "secret");
+            assert_eq!(
+                params[1].type_ann.as_ref().unwrap().visibility,
+                Some(Visibility::Witness)
+            );
+            assert!(!body.stmts.is_empty());
+        }
+        other => panic!("expected CircuitDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn circuit_decl_new_syntax_with_types() {
+    let input = r#"circuit merkle(root: Public, path: Witness Field[3]) { assert(root == root) }"#;
+    parse_ok(input);
+    let (prog, _) = parse_program(input);
+    match &prog.stmts[0] {
+        Stmt::CircuitDecl { params, .. } => {
+            assert_eq!(params.len(), 2);
+            let root_ann = params[0].type_ann.as_ref().unwrap();
+            assert_eq!(root_ann.visibility, Some(Visibility::Public));
+            assert_eq!(root_ann.base, BaseType::Field);
+            assert!(root_ann.array_size.is_none());
+
+            let path_ann = params[1].type_ann.as_ref().unwrap();
+            assert_eq!(path_ann.visibility, Some(Visibility::Witness));
+            assert_eq!(path_ann.base, BaseType::Field);
+            assert_eq!(path_ann.array_size, Some(3));
+        }
+        other => panic!("expected CircuitDecl, got {other:?}"),
     }
 }
