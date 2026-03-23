@@ -61,7 +61,7 @@ fn compiler_with_std_natives() {
     }
 
     // Std natives should have indices >= 14
-    let parse_int_idx = compiler.global_symbols["parse_int"];
+    let parse_int_idx = compiler.global_symbols["parse_int"].index;
     assert!(parse_int_idx >= 14);
 }
 
