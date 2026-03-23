@@ -152,10 +152,78 @@ impl ProveIrCompiler {
 
     /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
     pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
+        use achronyme_parser::ast::{InputDecl, Stmt, Visibility};
+
         let (program, errors) = achronyme_parser::parse_program(source);
         if !errors.is_empty() {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
+
+        // Detect `circuit name(...) { body }` declaration format.
+        // If found, extract params as public/witness declarations and use the body.
+        // Otherwise, treat the whole program as a flat circuit (legacy format).
+        if let Some(Stmt::CircuitDecl {
+            params,
+            body,
+            name,
+            span,
+            ..
+        }) = program.stmts.first()
+        {
+            // Synthesize public/witness declarations from typed params
+            let mut stmts = Vec::new();
+            for param in params {
+                let ta =
+                    param
+                        .type_ann
+                        .as_ref()
+                        .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "circuit parameter `{}` has no type annotation",
+                                param.name
+                            ),
+                            span: crate::error::span_box(Some(
+                                achronyme_parser::diagnostic::SpanRange::from(span),
+                            )),
+                        })?;
+                let vis = ta
+                    .visibility
+                    .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "circuit parameter `{}` requires Public or Witness",
+                            param.name
+                        ),
+                        span: crate::error::span_box(Some(
+                            achronyme_parser::diagnostic::SpanRange::from(span),
+                        )),
+                    })?;
+                let decl = InputDecl {
+                    name: param.name.clone(),
+                    array_size: ta.array_size,
+                    type_ann: Some(ta.clone()),
+                };
+                match vis {
+                    Visibility::Public => stmts.push(Stmt::PublicDecl {
+                        names: vec![decl],
+                        span: span.clone(),
+                    }),
+                    Visibility::Witness => stmts.push(Stmt::WitnessDecl {
+                        names: vec![decl],
+                        span: span.clone(),
+                    }),
+                }
+            }
+            stmts.extend(body.stmts.clone());
+            let circuit_block = Block {
+                stmts,
+                span: body.span.clone(),
+            };
+            let mut prove_ir = Self::compile(&circuit_block, &HashMap::new())?;
+            prove_ir.name = Some(name.clone());
+            return Ok(prove_ir);
+        }
+
+        // Legacy flat format: entire program is the circuit body
         let block = program_to_block(source, program);
         Self::compile(&block, &HashMap::new())
     }
