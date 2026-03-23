@@ -328,8 +328,18 @@ impl Compiler {
 
     pub fn compile(&mut self, source: &str) -> Result<Vec<u32>, CompilerError> {
         let (program, parse_errors) = achronyme_parser::parse_program(source);
-        if let Some(err) = parse_errors.into_iter().next() {
-            return Err(CompilerError::DiagnosticError(Box::new(err)));
+        // Only reject actual errors, not warnings (W008, W010, W011, etc.)
+        if let Some(err) = parse_errors
+            .iter()
+            .find(|d| d.severity == achronyme_parser::Severity::Error)
+        {
+            return Err(CompilerError::DiagnosticError(Box::new(err.clone())));
+        }
+        // Collect parser warnings into our warning list
+        for diag in parse_errors {
+            if diag.severity == achronyme_parser::Severity::Warning {
+                self.warnings.push(diag);
+            }
         }
 
         let mut terminated = false;

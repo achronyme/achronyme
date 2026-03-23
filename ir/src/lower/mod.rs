@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use achronyme_parser::ast::{BaseType, Block, Span, Stmt, TypeAnnotation, TypedParam};
+use achronyme_parser::ast::*;
 use achronyme_parser::parse_program as ast_parse_program;
 use memory::FieldElement;
 
@@ -49,9 +49,9 @@ pub(super) struct FnDef {
 /// assert!(!prog.instructions.is_empty());
 /// ```
 pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann.base {
-        BaseType::Field => IrType::Field,
-        BaseType::Bool => IrType::Bool,
+    match ann {
+        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
+        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
     }
 }
 
@@ -218,8 +218,11 @@ impl IrLowering {
     /// Public/witness inputs must be declared before calling this.
     pub fn lower(mut self, source: &str) -> Result<IrProgram, IrError> {
         let (program, parse_errors) = ast_parse_program(source);
-        if let Some(err) = parse_errors.into_iter().next() {
-            return Err(IrError::ParseError(Box::new(err)));
+        if let Some(err) = parse_errors
+            .iter()
+            .find(|d| d.severity == achronyme_parser::Severity::Error)
+        {
+            return Err(IrError::ParseError(Box::new(err.clone())));
         }
         self.lower_program(&program)?;
         Ok(self.program)
@@ -314,8 +317,11 @@ impl IrLowering {
         base_path: PathBuf,
     ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
         let (ast_program, parse_errors) = ast_parse_program(source);
-        if let Some(err) = parse_errors.into_iter().next() {
-            return Err(IrError::ParseError(Box::new(err)));
+        if let Some(err) = parse_errors
+            .iter()
+            .find(|d| d.severity == achronyme_parser::Severity::Error)
+        {
+            return Err(IrError::ParseError(Box::new(err.clone())));
         }
 
         let mut pub_decls: Vec<(String, Option<usize>, Option<TypeAnnotation>, Span)> = Vec::new();
@@ -326,7 +332,7 @@ impl IrLowering {
                     for decl in names {
                         pub_decls.push((
                             decl.name.clone(),
-                            decl.array_size(),
+                            decl.array_size,
                             decl.type_ann.clone(),
                             span.clone(),
                         ));
@@ -336,7 +342,7 @@ impl IrLowering {
                     for decl in names {
                         wit_decls.push((
                             decl.name.clone(),
-                            decl.array_size(),
+                            decl.array_size,
                             decl.type_ann.clone(),
                             span.clone(),
                         ));

@@ -152,7 +152,11 @@ impl IrLowering {
             .map_err(|e| IrError::ModuleLoadError(format!("{}: {}", canonical.display(), e)))?;
 
         let (program, parse_errors) = ast_parse_program(&source);
-        if let Some(mut err) = parse_errors.into_iter().next() {
+        if let Some(err) = parse_errors
+            .iter()
+            .find(|d| d.severity == achronyme_parser::Severity::Error)
+        {
+            let mut err = err.clone();
             err.message = format!("in {}: {}", canonical.display(), err.message);
             return Err(IrError::ParseError(Box::new(err)));
         }

@@ -46,7 +46,10 @@ impl ModuleLoader {
         })?;
 
         let (program, parse_errors) = achronyme_parser::parse_program(&source);
-        if let Some(err) = parse_errors.into_iter().next() {
+        if let Some(err) = parse_errors
+            .iter()
+            .find(|d| d.severity == achronyme_parser::Severity::Error)
+        {
             return Err(CompilerError::ModuleLoadError(format!(
                 "parse error in {}: {}",
                 canonical_path.display(),

@@ -106,7 +106,8 @@ impl ProveIrCompiler {
                         .insert(name.clone(), CompEnvValue::Capture(name.clone()));
                 }
                 OuterScopeEntry::Array(n) => {
-                    let elem_names: Vec<String> = (0..*n).map(|i| format!("{name}_{i}")).collect();
+                    let elem_names: Vec<String> =
+                        (0..*n).map(|i| format!("{name}_{i}")).collect();
                     for ename in &elem_names {
                         compiler
                             .env
@@ -151,73 +152,13 @@ impl ProveIrCompiler {
     }
 
     /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
-    ///
-    /// Supports both formats:
-    /// - **Declaration format:** `circuit name(x: Public, y: Witness) { body }`
-    ///   → extracts params and synthesizes public/witness declarations
-    /// - **Flat format:** `public x\nwitness y\nbody` (deprecated, emits W011)
-    ///   → compiles directly
     pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
-        let (program, parse_errors) = achronyme_parser::parse_program(source);
-        // Only reject actual errors, not warnings (W008, W010, etc.)
-        let real_errors: Vec<_> = parse_errors
-            .iter()
-            .filter(|d| d.severity == achronyme_parser::Severity::Error)
-            .collect();
-        if !real_errors.is_empty() {
-            return Err(ProveIrError::ParseError(Box::new(
-                real_errors[0].clone().clone(),
-            )));
+        let (program, errors) = achronyme_parser::parse_program(source);
+        if !errors.is_empty() {
+            return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
-
-        // Check if the program contains a CircuitDecl — if so, use it
-        let circuit_decl = program.stmts.iter().find_map(|s| match s {
-            Stmt::CircuitDecl {
-                name,
-                params,
-                body,
-                span,
-            } => Some((name, params, body, span)),
-            _ => None,
-        });
-
-        if let Some((name, params, body, span)) = circuit_decl {
-            // Declaration format: synthesize public/witness from params
-            let mut stmts = Vec::new();
-            for param in params {
-                let visibility = param
-                    .type_ann
-                    .as_ref()
-                    .and_then(|ann| ann.visibility)
-                    .unwrap_or(Visibility::Witness);
-                let decl = InputDecl {
-                    name: param.name.clone(),
-                    type_ann: param.type_ann.clone(),
-                };
-                match visibility {
-                    Visibility::Public => stmts.push(Stmt::PublicDecl {
-                        names: vec![decl],
-                        span: span.clone(),
-                    }),
-                    Visibility::Witness => stmts.push(Stmt::WitnessDecl {
-                        names: vec![decl],
-                        span: span.clone(),
-                    }),
-                }
-            }
-            stmts.extend(body.stmts.clone());
-            let block = Block {
-                stmts,
-                span: body.span.clone(),
-            };
-            let mut ir = Self::compile(&block, &HashMap::new())?;
-            ir.name = Some(name.clone());
-            Ok(ir)
-        } else {
-            // Flat format: compile the whole program as a block
-            let block = program_to_block(source, program);
-            Self::compile(&block, &HashMap::new())
-        }
+        let block = program_to_block(source, program);
+        Self::compile(&block, &HashMap::new())
     }
 
     /// Convenience: parse source and compile as a prove block with scalar outer scope names.
@@ -226,8 +167,11 @@ impl ProveIrCompiler {
         outer_scope: &HashMap<String, OuterScopeEntry>,
     ) -> Result<ProveIR, ProveIrError> {
         let (program, errors) = achronyme_parser::parse_program(source);
-        if !errors.is_empty() {
-            return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
+        if let Some(err) = errors
+            .iter()
+            .find(|d| d.severity == achronyme_parser::Severity::Error)
+        {
+            return Err(ProveIrError::ParseError(Box::new(err.clone())));
         }
         let block = program_to_block(source, program);
         Self::compile(&block, outer_scope)
@@ -378,7 +322,7 @@ impl ProveIrCompiler {
                 &mut self.witness_inputs
             };
 
-            if let Some(size) = decl.array_size() {
+            if let Some(size) = decl.array_size {
                 inputs.push(ProveInputDecl {
                     name: decl.name.clone(),
                     array_size: Some(ArraySize::Literal(size)),
@@ -566,8 +510,8 @@ impl ProveIrCompiler {
                 match name.as_str() {
                     "assert_eq" => {
                         self.check_arity("assert_eq", 2, args.len(), span)?;
-                        let lhs = self.compile_expr(&args[0].value)?;
-                        let rhs = self.compile_expr(&args[1].value)?;
+                        let lhs = self.compile_expr(&args[0])?;
+                        let rhs = self.compile_expr(&args[1])?;
                         self.body.push(CircuitNode::AssertEq {
                             lhs,
                             rhs,
@@ -577,7 +521,7 @@ impl ProveIrCompiler {
                     }
                     "assert" => {
                         self.check_arity("assert", 1, args.len(), span)?;
-                        let cond = self.compile_expr(&args[0].value)?;
+                        let cond = self.compile_expr(&args[0])?;
                         self.body.push(CircuitNode::Assert {
                             expr: cond,
                             span: Some(SpanRange::from(span)),
@@ -660,6 +604,10 @@ impl ProveIrCompiler {
             }
             Expr::Prove { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "prove blocks cannot be nested inside circuits".into(),
+                span: to_span(span),
+            }),
+            Expr::CircuitCall { span, .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "circuit calls are not yet supported in circuits".into(),
                 span: to_span(span),
             }),
             Expr::FnExpr { span, .. } => Err(ProveIrError::UnsupportedOperation {
@@ -811,12 +759,9 @@ impl ProveIrCompiler {
     fn compile_call(
         &mut self,
         callee: &Expr,
-        args: &[CallArg],
+        args: &[Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
-        // Extract values from CallArgs (keyword names ignored in ProveIR)
-        let arg_values: Vec<Expr> = args.iter().map(|a| a.value.clone()).collect();
-        let args = &arg_values;
         match callee {
             // Method call: expr.method(args)
             Expr::DotAccess {
@@ -1757,9 +1702,9 @@ fn to_span(span: &Span) -> OptSpan {
 
 /// Convert a TypeAnnotation to IrType.
 fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann.base {
-        BaseType::Field => IrType::Field,
-        BaseType::Bool => IrType::Bool,
+    match ann {
+        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
+        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
     }
 }
 
