@@ -2,7 +2,7 @@
 // Private Sealed-Bid Auction
 // ============================================================================
 //
-// Demonstrates: prove(public: [...]) syntax, Poseidon commitments,
+// Demonstrates: prove(x: Public) syntax, Poseidon commitments,
 // range checks, comparison gadgets, Merkle eligibility, and multi-proof
 // composition — all in a single hybrid VM + ZK program.
 //
@@ -46,7 +46,7 @@ let winning_nonce = nonce_bob
 let winning_commit = commit_bob
 
 // Prove: winning bid is valid, committed, and highest
-prove(public: [winning_commit, commit_alice, commit_charlie]) {
+prove(winning_commit: Public, commit_alice: Public, commit_charlie: Public) {
     // 1. Commitment integrity: hash(bid, nonce) == published commitment
     assert_eq(poseidon(winning_bid, winning_nonce), winning_commit)
 
@@ -74,7 +74,7 @@ print("Auction verified: winner's bid is valid, committed, and highest")
 // without revealing the amount
 
 fn prove_bid_valid(bid, nonce, commitment) {
-    prove(public: [commitment]) {
+    prove(commitment: Public) {
         assert_eq(poseidon(bid, nonce), commitment)
         range_check(bid, 32)
     }

@@ -3,7 +3,7 @@ let a = 10
 let b = 20
 let sum = 30
 
-prove(public: [sum]) {
+prove(sum: Public) {
     assert_eq(a + b, sum)
 }
 
@@ -12,7 +12,7 @@ let m = 3
 let n = 5
 let product = 15
 
-prove(public: [product]) {
+prove(product: Public) {
     assert_eq(m * n, product)
 }
 

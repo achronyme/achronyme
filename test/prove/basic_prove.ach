@@ -3,7 +3,7 @@ let x = 0p6
 let y = 0p7
 let product = 0p42
 
-prove(public: [product]) {
+prove(product: Public) {
     assert_eq(x * y, product)
 }
 

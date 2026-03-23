@@ -24,7 +24,7 @@ print("Hash chain result after " + rounds.to_string() + " rounds:")
 print("  " + final_hash.to_string())
 
 // Prove knowledge of the preimage
-prove(public: [final_hash]) {
+prove(final_hash: Public) {
     fn hash_chain(seed, n) {
         mut acc = seed
         for i in 0..n {
@@ -43,7 +43,7 @@ print("Hash chain proof verified")
 // hash is a valid Poseidon output — implicitly guaranteed by the circuit)
 let mid_point = poseidon(poseidon(preimage, 0), 0)  // after 2 rounds
 
-prove(public: [final_hash, mid_point]) {
+prove(final_hash: Public, mid_point: Public) {
     // Prove: preimage → 2 rounds → mid_point → 3 more rounds → final_hash
     let after_2 = poseidon(poseidon(preimage, 0), 0)
     assert_eq(after_2, mid_point)
