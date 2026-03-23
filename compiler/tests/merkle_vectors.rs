@@ -693,6 +693,7 @@ fn merkle_depth15_wrong_leaf() {
 // ============================================================================
 
 #[test]
+#[ignore] // ~2 min: 2^20 leaves, run with `cargo test -- --ignored`
 fn merkle_depth20_leaf0() {
     let p = params();
     let leaves = make_leaves(20, 2000);
@@ -708,6 +709,7 @@ fn merkle_depth20_leaf0() {
 }
 
 #[test]
+#[ignore] // ~2 min: 2^20 leaves, run with `cargo test -- --ignored`
 fn merkle_depth20_wrong_leaf() {
     let p = params();
     let leaves = make_leaves(20, 2000);
