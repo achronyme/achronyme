@@ -346,13 +346,17 @@ fn circuit_call_with_keyword_args() {
     parse_ok(input);
     let (prog, _) = parse_program(input);
     match &prog.stmts[0] {
-        Stmt::Expr(Expr::CircuitCall { name, args, .. }) => {
-            assert_eq!(name, "hash_check");
+        Stmt::Expr(Expr::Call { callee, args, .. }) => {
+            if let Expr::Ident { name, .. } = callee.as_ref() {
+                assert_eq!(name, "hash_check");
+            } else {
+                panic!("expected Ident callee");
+            }
             assert_eq!(args.len(), 2);
-            assert_eq!(args[0].0, "output");
-            assert_eq!(args[1].0, "secret");
+            assert_eq!(args[0].name.as_deref(), Some("output"));
+            assert_eq!(args[1].name.as_deref(), Some("secret"));
         }
-        other => panic!("expected CircuitCall, got {other:?}"),
+        other => panic!("expected Call with keyword args, got {other:?}"),
     }
 }
 

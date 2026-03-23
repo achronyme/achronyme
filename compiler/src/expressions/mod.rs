@@ -75,7 +75,16 @@ impl ExpressionCompiler for Compiler {
             }
 
             // === Postfix (Call, Index, DotAccess) ===
-            Expr::Call { callee, args, .. } => self.compile_call(callee, args),
+            Expr::Call {
+                callee, args, span, ..
+            } => {
+                // If any arg has a keyword name, this is a keyword call (circuit invocation)
+                if args.iter().any(|a| a.name.is_some()) {
+                    self.compile_keyword_call(callee, args, span)
+                } else {
+                    self.compile_call(callee, args)
+                }
+            }
             Expr::Index { object, index, .. } => self.compile_index_expr(object, index),
             Expr::DotAccess { object, field, .. } => self.compile_dot_access(object, field),
 
@@ -116,11 +125,6 @@ impl ExpressionCompiler for Compiler {
             Expr::StaticAccess {
                 type_name, member, ..
             } => self.compile_static_access(type_name, member),
-
-            // === Circuit calls: name(key: val, ...) ===
-            Expr::CircuitCall {
-                name, args, span, ..
-            } => self.compile_circuit_call(name, args, span),
 
             // === Error recovery placeholder ===
             Expr::Error { .. } => {
@@ -334,7 +338,7 @@ impl Compiler {
         Ok(target_reg)
     }
 
-    fn compile_call(&mut self, callee: &Expr, args: &[Expr]) -> Result<u8, CompilerError> {
+    fn compile_call(&mut self, callee: &Expr, args: &[CallArg]) -> Result<u8, CompilerError> {
         // Detect method call pattern: expr.method(args) where method is known
         if let Expr::DotAccess { object, field, .. } = callee {
             // Check: field is a known method AND object is NOT an imported module alias
@@ -353,7 +357,7 @@ impl Compiler {
 
         let arg_count = args.len();
         for arg in args {
-            let _arg_reg = self.compile_expr(arg)?;
+            let _arg_reg = self.compile_expr(&arg.value)?;
         }
 
         if arg_count > 255 {
@@ -377,7 +381,7 @@ impl Compiler {
         &mut self,
         object: &Expr,
         method: &str,
-        args: &[Expr],
+        args: &[CallArg],
     ) -> Result<u8, CompilerError> {
         // 1. Allocate register for method name (will become result register)
         let name_reg = self.alloc_reg()?;
@@ -389,7 +393,7 @@ impl Compiler {
         // 3. Compile explicit arguments
         let arg_count = args.len();
         for arg in args {
-            let _arg_reg = self.compile_expr(arg)?;
+            let _arg_reg = self.compile_expr(&arg.value)?;
         }
 
         if arg_count > 255 {

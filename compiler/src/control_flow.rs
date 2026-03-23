@@ -90,10 +90,10 @@ pub trait ControlFlowCompiler {
         name: Option<&str>,
     ) -> Result<u8, CompilerError>;
 
-    fn compile_circuit_call(
+    fn compile_keyword_call(
         &mut self,
-        name: &str,
-        args: &[(String, Expr)],
+        callee: &Expr,
+        args: &[CallArg],
         span: &Span,
     ) -> Result<u8, CompilerError>;
 }
@@ -647,12 +647,23 @@ impl ControlFlowCompiler for Compiler {
         Ok(map_reg)
     }
 
-    fn compile_circuit_call(
+    fn compile_keyword_call(
         &mut self,
-        name: &str,
-        args: &[(String, Expr)],
+        callee: &Expr,
+        args: &[CallArg],
         span: &Span,
     ) -> Result<u8, CompilerError> {
+        // Extract circuit name from callee
+        let name = match callee {
+            Expr::Ident { name, .. } => name.as_str(),
+            _ => {
+                return Err(CompilerError::CompileError(
+                    "keyword argument calls require a simple name".into(),
+                    span_box(span),
+                ));
+            }
+        };
+
         // 1. Resolve the circuit name to its global index (contains ProveIR bytes)
         let global_idx = *self.global_symbols.get(name).ok_or_else(|| {
             CompilerError::CompileError(format!("circuit `{name}` not found"), span_box(span))
@@ -716,12 +727,18 @@ impl ControlFlowCompiler for Compiler {
         if count > 0 {
             let start_reg = self.alloc_contiguous((count * 2) as u8)?;
 
-            for (i, (key, val_expr)) in args.iter().enumerate() {
+            for (i, arg) in args.iter().enumerate() {
                 let key_reg = start_reg + (i as u8 * 2);
                 let val_reg = key_reg + 1;
 
-                // Key: string constant
-                let key_handle = self.intern_string(key);
+                // Key: string constant from keyword name
+                let key_name = arg.name.as_ref().ok_or_else(|| {
+                    CompilerError::CompileError(
+                        "positional arguments not allowed in circuit calls".into(),
+                        span_box(span),
+                    )
+                })?;
+                let key_handle = self.intern_string(key_name);
                 let key_val = Value::string(key_handle);
                 let key_idx = self.add_constant(key_val)?;
                 if key_idx > 0xFFFF {
@@ -730,7 +747,7 @@ impl ControlFlowCompiler for Compiler {
                 self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16)?;
 
                 // Value: compile expression
-                let compiled_reg = self.compile_expr(val_expr)?;
+                let compiled_reg = self.compile_expr(&arg.value)?;
                 self.emit_abc(OpCode::Move, val_reg, compiled_reg, 0)?;
                 self.free_reg(compiled_reg)?;
             }

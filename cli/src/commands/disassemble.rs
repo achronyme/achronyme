@@ -80,7 +80,7 @@ fn collect_proves_expr(expr: &Expr, out: &mut Vec<(String, usize)>) {
         Expr::Call { callee, args, .. } => {
             collect_proves_expr(callee, out);
             for arg in args {
-                collect_proves_expr(arg, out);
+                collect_proves_expr(&arg.value, out);
             }
         }
         Expr::Index { object, index, .. } => {

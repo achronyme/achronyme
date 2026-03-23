@@ -10,9 +10,12 @@ impl IrLowering {
     pub(super) fn lower_call(
         &mut self,
         callee: &Expr,
-        args: &[Expr],
+        args: &[CallArg],
         span: &Span,
     ) -> Result<SsaVar, IrError> {
+        // Extract values from CallArgs (keyword names ignored in circuit IR)
+        let arg_values: Vec<Expr> = args.iter().map(|a| a.value.clone()).collect();
+        let args = &arg_values;
         let sp = to_ir_span(span);
         // Identifier or DotAccess callees are supported
         let name = match callee {

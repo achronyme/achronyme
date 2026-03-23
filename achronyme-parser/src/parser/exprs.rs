@@ -235,62 +235,50 @@ impl Parser {
         let sp = callee.span().clone();
         self.advance(); // eat `(`
 
-        // Detect keyword arguments: `name(key: val, ...)` → CircuitCall.
-        // If the first token is an identifier followed by `:`, this is a
-        // keyword-argument call (circuit invocation).
-        let is_keyword = !self.at(&TokenKind::RParen)
-            && matches!(self.peek_kind(), TokenKind::Ident)
-            && matches!(self.lookahead(1), TokenKind::Colon);
+        // Parse arguments: supports positional, keyword, and mixed.
+        // Keyword args detected via LL-2 lookahead (ident followed by `:`)
+        let mut args = Vec::new();
+        let mut seen_keyword = false;
+        while !self.at(&TokenKind::RParen) {
+            // Check for keyword arg: `name: expr`
+            let is_keyword = matches!(self.peek_kind(), TokenKind::Ident)
+                && matches!(self.lookahead(1), TokenKind::Colon);
 
-        if is_keyword {
-            // Extract circuit name from callee (must be a simple identifier)
-            let name = match &callee {
-                Expr::Ident { name, .. } => name.clone(),
-                _ => {
-                    let s = callee.span();
-                    return Err(ParseError::new(
-                        "circuit calls with keyword arguments require a simple name",
-                        s.line_start,
-                        s.col_start,
-                    ));
-                }
-            };
-
-            let mut args = Vec::new();
-            while !self.at(&TokenKind::RParen) {
+            if is_keyword {
                 let key = self.expect_ident()?;
                 self.expect(&TokenKind::Colon)?;
                 let val = self.parse_expr()?;
-                args.push((key, val));
-                if self.at(&TokenKind::Comma) {
-                    self.advance();
+                args.push(CallArg {
+                    name: Some(key),
+                    value: val,
+                });
+                seen_keyword = true;
+            } else {
+                // Positional arg — not allowed after keyword args
+                if seen_keyword {
+                    let tok = self.peek();
+                    return Err(ParseError::new(
+                        "positional arguments must come before keyword arguments",
+                        tok.span.line_start,
+                        tok.span.col_start,
+                    ));
                 }
+                let val = self.parse_expr()?;
+                args.push(CallArg {
+                    name: None,
+                    value: val,
+                });
             }
-            self.expect(&TokenKind::RParen)?;
-            Ok(Expr::CircuitCall {
-                name,
-                args,
-                span: self.span_to_prev(&sp),
-            })
-        } else {
-            // Regular positional call
-            let mut args = Vec::new();
-            if !self.at(&TokenKind::RParen) {
-                args.push(self.parse_expr()?);
-                while self.eat(&TokenKind::Comma) {
-                    if self.at(&TokenKind::RParen) {
-                        break; // trailing comma
-                    }
-                    args.push(self.parse_expr()?);
-                }
+            if self.at(&TokenKind::Comma) {
+                self.advance();
             }
-            self.expect(&TokenKind::RParen)?;
-            Ok(Expr::Call {
-                callee: Box::new(callee),
-                args,
-                span: self.span_to_prev(&sp),
-            })
         }
+        self.expect(&TokenKind::RParen)?;
+        Ok(Expr::Call {
+            callee: Box::new(callee),
+            args,
+            span: self.span_to_prev(&sp),
+        })
     }
 
     fn parse_index(&mut self, object: Expr) -> Result<Expr, ParseError> {

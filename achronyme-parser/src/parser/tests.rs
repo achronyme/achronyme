@@ -509,7 +509,7 @@ fn parse_nested_call() {
                 other => panic!("expected Ident, got {other:?}"),
             }
             assert_eq!(args.len(), 1);
-            match &args[0] {
+            match &args[0].value {
                 Expr::Call { .. } => {}
                 other => panic!("expected inner Call, got {other:?}"),
             }

@@ -506,8 +506,8 @@ impl ProveIrCompiler {
                 match name.as_str() {
                     "assert_eq" => {
                         self.check_arity("assert_eq", 2, args.len(), span)?;
-                        let lhs = self.compile_expr(&args[0])?;
-                        let rhs = self.compile_expr(&args[1])?;
+                        let lhs = self.compile_expr(&args[0].value)?;
+                        let rhs = self.compile_expr(&args[1].value)?;
                         self.body.push(CircuitNode::AssertEq {
                             lhs,
                             rhs,
@@ -517,7 +517,7 @@ impl ProveIrCompiler {
                     }
                     "assert" => {
                         self.check_arity("assert", 1, args.len(), span)?;
-                        let cond = self.compile_expr(&args[0])?;
+                        let cond = self.compile_expr(&args[0].value)?;
                         self.body.push(CircuitNode::Assert {
                             expr: cond,
                             span: Some(SpanRange::from(span)),
@@ -600,10 +600,6 @@ impl ProveIrCompiler {
             }
             Expr::Prove { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "prove blocks cannot be nested inside circuits".into(),
-                span: to_span(span),
-            }),
-            Expr::CircuitCall { span, .. } => Err(ProveIrError::UnsupportedOperation {
-                description: "circuit calls are not yet supported in circuits".into(),
                 span: to_span(span),
             }),
             Expr::FnExpr { span, .. } => Err(ProveIrError::UnsupportedOperation {
@@ -755,9 +751,12 @@ impl ProveIrCompiler {
     fn compile_call(
         &mut self,
         callee: &Expr,
-        args: &[Expr],
+        args: &[CallArg],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
+        // Extract values from CallArgs (keyword names ignored in ProveIR)
+        let arg_values: Vec<Expr> = args.iter().map(|a| a.value.clone()).collect();
+        let args = &arg_values;
         match callee {
             // Method call: expr.method(args)
             Expr::DotAccess {

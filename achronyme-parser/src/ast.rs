@@ -145,6 +145,16 @@ pub struct Block {
     pub span: Span,
 }
 
+/// An argument in a function/circuit call.
+///
+/// Positional: `f(42)` → `CallArg { name: None, value: 42 }`
+/// Keyword: `f(x: 42)` → `CallArg { name: Some("x"), value: 42 }`
+#[derive(Clone, Debug)]
+pub struct CallArg {
+    pub name: Option<String>,
+    pub value: Expr,
+}
+
 /// Radix for field element literals (`0p` prefix).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldRadix {
@@ -207,7 +217,7 @@ pub enum Expr {
     },
     Call {
         callee: Box<Expr>,
-        args: Vec<Expr>,
+        args: Vec<CallArg>,
         span: Span,
     },
     Index {
@@ -259,12 +269,6 @@ pub enum Expr {
         params: Vec<TypedParam>,
         span: Span,
     },
-    /// Circuit call with keyword arguments: `name(key: val, ...)`
-    CircuitCall {
-        name: String,
-        args: Vec<(String, Expr)>,
-        span: Span,
-    },
     Array {
         elements: Vec<Expr>,
         span: Span,
@@ -306,7 +310,6 @@ impl Expr {
             | Expr::Forever { span, .. }
             | Expr::FnExpr { span, .. }
             | Expr::Prove { span, .. }
-            | Expr::CircuitCall { span, .. }
             | Expr::Array { span, .. }
             | Expr::Map { span, .. }
             | Expr::StaticAccess { span, .. }
