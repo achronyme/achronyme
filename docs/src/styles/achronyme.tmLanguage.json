@@ -8,7 +8,10 @@
     { "include": "#strings" },
     { "include": "#constants" },
     { "include": "#numbers" },
+    { "include": "#circuit-definition" },
+    { "include": "#prove-block" },
     { "include": "#keywords" },
+    { "include": "#type-annotations" },
     { "include": "#function-definition" },
     { "include": "#builtins" },
     { "include": "#function-call" },
@@ -31,6 +34,17 @@
     },
     "import-statement": {
       "patterns": [
+        {
+          "comment": "Circuit import: import circuit \"path\" as alias",
+          "match": "\\b(import)\\s+(circuit)\\s+(\"[^\"]*\")\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.ach" },
+            "2": { "name": "keyword.other.circuit.ach" },
+            "3": { "name": "string.quoted.double.ach" },
+            "4": { "name": "keyword.control.as.ach" },
+            "5": { "name": "entity.name.namespace.ach" }
+          }
+        },
         {
           "comment": "Selective import: import { x, y } from \"path\"",
           "begin": "\\b(import)\\s*(\\{)",
@@ -133,6 +147,27 @@
         }
       ]
     },
+    "type-annotations": {
+      "patterns": [
+        {
+          "comment": "Visibility + type: Public, Witness, Public Field[3], Witness Bool",
+          "match": "\\b(Public|Witness)\\b(?:\\s+(Field|Bool)(?:\\[(\\d+)\\])?)?",
+          "captures": {
+            "1": { "name": "storage.modifier.visibility.ach" },
+            "2": { "name": "support.type.ach" },
+            "3": { "name": "constant.numeric.integer.ach" }
+          }
+        },
+        {
+          "comment": "Type annotation: Field, Bool, Field[N], Bool[N]",
+          "match": "\\b(Field|Bool)(?:\\[(\\d+)\\])?",
+          "captures": {
+            "1": { "name": "support.type.ach" },
+            "2": { "name": "constant.numeric.integer.ach" }
+          }
+        }
+      ]
+    },
     "keywords": {
       "patterns": [
         {
@@ -141,15 +176,58 @@
         },
         {
           "name": "keyword.other.ach",
-          "match": "\\b(let|mut|fn|public|witness|prove)\\b"
+          "match": "\\b(let|mut|fn|prove|circuit)\\b"
+        },
+        {
+          "comment": "Standalone declarations (legacy flat circuit format)",
+          "name": "keyword.other.declaration.ach",
+          "match": "^\\s*\\b(public|witness)\\b(?=\\s+[a-zA-Z_])"
         }
       ]
+    },
+    "circuit-definition": {
+      "comment": "circuit name(params) { ... }",
+      "match": "\\b(circuit)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "keyword.other.ach" },
+        "2": { "name": "entity.name.function.circuit.ach" }
+      }
+    },
+    "prove-block": {
+      "comment": "prove name(params) { ... } or prove(params) { ... }",
+      "match": "\\b(prove)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\(|\\{)",
+      "captures": {
+        "1": { "name": "keyword.other.ach" },
+        "2": { "name": "entity.name.function.prove.ach" }
+      }
     },
     "builtins": {
       "patterns": [
         {
+          "comment": "ZK builtins (circuit intrinsics)",
+          "name": "support.function.builtin.zk.ach",
+          "match": "\\b(assert_eq|assert|poseidon|poseidon_many|mux|range_check|merkle_verify)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "Global functions",
           "name": "support.function.builtin.ach",
-          "match": "\\b(print|len|typeof|assert|time|push|pop|keys|proof_json|proof_public|proof_vkey|substring|index_of|split|trim|replace|to_upper|to_lower|chars|poseidon|poseidon_many|verify_proof|bigint256|bigint512|to_bits|from_bits|bit_and|bit_or|bit_xor|bit_not|bit_shl|bit_shr|gc_stats|map|filter|reduce|for_each|find|any|all|sort|flat_map|zip)\\b(?=\\s*\\()"
+          "match": "\\b(print|typeof|time|gc_stats|proof_json|proof_public|proof_vkey|verify_proof|bigint256|bigint512|from_bits|parse_int|join)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "Static namespace access (Type::MEMBER)",
+          "match": "\\b(Int|Field|BigInt)(::)(MAX|MIN|ZERO|ONE|ORDER|from_bits)\\b",
+          "captures": {
+            "1": { "name": "support.type.ach" },
+            "2": { "name": "punctuation.accessor.double-colon.ach" },
+            "3": { "name": "support.constant.ach" }
+          }
+        },
+        {
+          "comment": "Method calls (.method(args))",
+          "match": "\\.(len|push|pop|keys|values|entries|contains_key|get|set|remove|map|filter|reduce|for_each|find|any|all|sort|flat_map|zip|abs|min|max|pow|to_field|to_string|to_int|to_bits|to_upper|to_lower|starts_with|ends_with|contains|split|trim|replace|chars|index_of|substring|repeat|bit_and|bit_or|bit_xor|bit_not|bit_shl|bit_shr)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "support.function.method.ach" }
+          }
         }
       ]
     },
