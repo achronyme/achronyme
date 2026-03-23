@@ -157,7 +157,7 @@ fn parse_public_witness_decl() {
         Stmt::PublicDecl { names, .. } => {
             assert_eq!(names.len(), 2);
             assert_eq!(names[0].name, "x");
-            assert!(names[0].array_size().is_none());
+            assert!(names[0].array_size.is_none());
             assert_eq!(names[1].name, "y");
         }
         other => panic!("expected PublicDecl, got {other:?}"),
@@ -166,7 +166,7 @@ fn parse_public_witness_decl() {
         Stmt::WitnessDecl { names, .. } => {
             assert_eq!(names.len(), 1);
             assert_eq!(names[0].name, "z");
-            assert_eq!(names[0].array_size(), Some(3));
+            assert_eq!(names[0].array_size, Some(3));
         }
         other => panic!("expected WitnessDecl, got {other:?}"),
     }
@@ -528,7 +528,7 @@ fn parse_let_with_type() {
     match &prog.stmts[0] {
         Stmt::LetDecl { name, type_ann, .. } => {
             assert_eq!(name, "x");
-            assert_eq!(*type_ann, Some(TypeAnnotation::scalar(BaseType::Field)));
+            assert_eq!(*type_ann, Some(TypeAnnotation::field()));
         }
         other => panic!("expected LetDecl, got {other:?}"),
     }
@@ -540,7 +540,7 @@ fn parse_let_with_bool_type() {
     match &prog.stmts[0] {
         Stmt::LetDecl { name, type_ann, .. } => {
             assert_eq!(name, "ok");
-            assert_eq!(*type_ann, Some(TypeAnnotation::scalar(BaseType::Bool)));
+            assert_eq!(*type_ann, Some(TypeAnnotation::bool()));
         }
         other => panic!("expected LetDecl, got {other:?}"),
     }
@@ -563,7 +563,7 @@ fn parse_mut_with_type() {
     match &prog.stmts[0] {
         Stmt::MutDecl { name, type_ann, .. } => {
             assert_eq!(name, "x");
-            assert_eq!(*type_ann, Some(TypeAnnotation::scalar(BaseType::Field)));
+            assert_eq!(*type_ann, Some(TypeAnnotation::field()));
         }
         other => panic!("expected MutDecl, got {other:?}"),
     }
@@ -575,10 +575,7 @@ fn parse_public_with_type() {
     match &prog.stmts[0] {
         Stmt::PublicDecl { names, .. } => {
             assert_eq!(names[0].name, "x");
-            assert_eq!(
-                names[0].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Field))
-            );
+            assert_eq!(names[0].type_ann, Some(TypeAnnotation::field()));
         }
         other => panic!("expected PublicDecl, got {other:?}"),
     }
@@ -590,10 +587,7 @@ fn parse_witness_with_type() {
     match &prog.stmts[0] {
         Stmt::WitnessDecl { names, .. } => {
             assert_eq!(names[0].name, "flag");
-            assert_eq!(
-                names[0].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Bool))
-            );
+            assert_eq!(names[0].type_ann, Some(TypeAnnotation::bool()));
         }
         other => panic!("expected WitnessDecl, got {other:?}"),
     }
@@ -605,9 +599,8 @@ fn parse_witness_array_with_type() {
     match &prog.stmts[0] {
         Stmt::WitnessDecl { names, .. } => {
             assert_eq!(names[0].name, "path");
-            let ann = names[0].type_ann.as_ref().expect("should have type_ann");
-            assert_eq!(ann.array_size, Some(3));
-            assert_eq!(ann.base, BaseType::Field);
+            assert_eq!(names[0].array_size, Some(3));
+            assert_eq!(names[0].type_ann, Some(TypeAnnotation::field()));
         }
         other => panic!("expected WitnessDecl, got {other:?}"),
     }
@@ -637,16 +630,10 @@ fn parse_fn_with_typed_params() {
             assert_eq!(name, "hash");
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].name, "a");
-            assert_eq!(
-                params[0].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Field))
-            );
+            assert_eq!(params[0].type_ann, Some(TypeAnnotation::field()));
             assert_eq!(params[1].name, "b");
-            assert_eq!(
-                params[1].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Field))
-            );
-            assert_eq!(*return_type, Some(TypeAnnotation::scalar(BaseType::Field)));
+            assert_eq!(params[1].type_ann, Some(TypeAnnotation::field()));
+            assert_eq!(*return_type, Some(TypeAnnotation::field()));
         }
         other => panic!("expected FnDecl, got {other:?}"),
     }
@@ -661,10 +648,7 @@ fn parse_fn_mixed_typed_untyped_params() {
             return_type,
             ..
         } => {
-            assert_eq!(
-                params[0].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Field))
-            );
+            assert_eq!(params[0].type_ann, Some(TypeAnnotation::field()));
             assert!(params[1].type_ann.is_none());
             assert!(return_type.is_none());
         }
@@ -682,11 +666,8 @@ fn parse_fn_expr_with_return_type() {
             ..
         }) => {
             assert_eq!(params[0].name, "x");
-            assert_eq!(
-                params[0].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Bool))
-            );
-            assert_eq!(*return_type, Some(TypeAnnotation::scalar(BaseType::Bool)));
+            assert_eq!(params[0].type_ann, Some(TypeAnnotation::bool()));
+            assert_eq!(*return_type, Some(TypeAnnotation::bool()));
         }
         other => panic!("expected FnExpr, got {other:?}"),
     }
@@ -719,7 +700,7 @@ fn parse_type_annotation_array() {
     let prog = parse_ok("let a: Field[4] = [1, 2, 3, 4]");
     match &prog.stmts[0] {
         Stmt::LetDecl { type_ann, .. } => {
-            assert_eq!(*type_ann, Some(TypeAnnotation::array(BaseType::Field, 4)));
+            assert_eq!(*type_ann, Some(TypeAnnotation::field_array(4)));
         }
         other => panic!("expected LetDecl, got {other:?}"),
     }
@@ -730,10 +711,7 @@ fn parse_type_annotation_bool_array() {
     let prog = parse_ok("witness flags[2]: Bool[2]");
     match &prog.stmts[0] {
         Stmt::WitnessDecl { names, .. } => {
-            assert_eq!(
-                names[0].type_ann,
-                Some(TypeAnnotation::array(BaseType::Bool, 2))
-            );
+            assert_eq!(names[0].type_ann, Some(TypeAnnotation::bool_array(2)));
         }
         other => panic!("expected WitnessDecl, got {other:?}"),
     }
@@ -750,14 +728,8 @@ fn parse_multiple_public_with_types() {
     match &prog.stmts[0] {
         Stmt::PublicDecl { names, .. } => {
             assert_eq!(names.len(), 2);
-            assert_eq!(
-                names[0].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Field))
-            );
-            assert_eq!(
-                names[1].type_ann,
-                Some(TypeAnnotation::scalar(BaseType::Bool))
-            );
+            assert_eq!(names[0].type_ann, Some(TypeAnnotation::field()));
+            assert_eq!(names[1].type_ann, Some(TypeAnnotation::bool()));
         }
         other => panic!("expected PublicDecl, got {other:?}"),
     }

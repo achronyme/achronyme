@@ -232,15 +232,15 @@ impl Parser {
     // ========================================================================
 
     fn parse_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
+        use crate::ast::CallArg;
         let sp = callee.span().clone();
         self.advance(); // eat `(`
 
-        // Parse arguments: supports positional, keyword, and mixed.
-        // Keyword args detected via LL-2 lookahead (ident followed by `:`)
         let mut args = Vec::new();
         let mut seen_keyword = false;
+
         while !self.at(&TokenKind::RParen) {
-            // Check for keyword arg: `name: expr`
+            // Detect keyword arg: ident followed by `:` (LL-2 lookahead)
             let is_keyword = matches!(self.peek_kind(), TokenKind::Ident)
                 && matches!(self.lookahead(1), TokenKind::Colon);
 
@@ -254,7 +254,6 @@ impl Parser {
                 });
                 seen_keyword = true;
             } else {
-                // Positional arg — not allowed after keyword args
                 if seen_keyword {
                     let tok = self.peek();
                     return Err(ParseError::new(
@@ -269,11 +268,13 @@ impl Parser {
                     value: val,
                 });
             }
+
             if self.at(&TokenKind::Comma) {
                 self.advance();
             }
         }
         self.expect(&TokenKind::RParen)?;
+
         Ok(Expr::Call {
             callee: Box::new(callee),
             args,
@@ -532,71 +533,52 @@ impl Parser {
 
     /// Parse optional prove parameter list.
     ///
-    /// New syntax: `(hash: Public, flag: Public Bool)` → typed params with visibility.
-    /// Old syntax: `(public: [x, y])` → emits W010 deprecation, converts to typed params.
-    /// No parens → empty params vec.
+    /// New syntax: `(hash: Public, root: Public Field)` — typed params with visibility.
+    /// Old syntax: `(public: [x, y])` — deprecated, converted to typed params.
+    /// No parens: empty params (all old-style declarations or all-witness).
     pub(super) fn parse_prove_params(&mut self) -> Result<Vec<TypedParam>, ParseError> {
+        use crate::ast::{TypedParam, Visibility};
+
         if !self.at(&TokenKind::LParen) {
             return Ok(Vec::new());
         }
         self.advance(); // eat `(`
 
-        // Detect old syntax: `(public: [...])`
-        if self.at(&TokenKind::Public) && matches!(self.lookahead(1), TokenKind::Colon) {
-            let dep_span = self.span();
-            self.advance(); // eat `public`
-            self.expect(&TokenKind::Colon)?;
-            self.expect(&TokenKind::LBracket)?;
-
-            let mut names = Vec::new();
-            while !self.at(&TokenKind::RBracket) {
-                let name = self.expect_ident()?;
-                names.push(name);
-                if self.at(&TokenKind::Comma) {
-                    self.advance();
-                }
-            }
-            self.expect(&TokenKind::RBracket)?;
-            self.expect(&TokenKind::RParen)?;
-
-            // Emit W010 deprecation
-            let new_syntax = names
-                .iter()
-                .map(|n| format!("{n}: Public"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            self.errors.push(
-                crate::Diagnostic::warning(
-                    format!(
-                        "deprecated prove syntax: use `prove({new_syntax})` instead of `prove(public: [{}])`",
-                        names.join(", ")
-                    ),
-                    crate::diagnostic::SpanRange::from(&dep_span),
-                )
-                .with_code("W010"),
-            );
-
-            // Convert to typed params with Public visibility
-            let params = names
-                .into_iter()
-                .map(|name| TypedParam {
-                    name,
-                    type_ann: Some(TypeAnnotation {
-                        visibility: Some(Visibility::Public),
-                        base: BaseType::Field,
-                        array_size: None,
-                    }),
-                })
-                .collect();
-            return Ok(params);
-        }
-
-        // New syntax: `(name: Type, ...)`
+        // Syntax: `(hash: Public, root: Public Field)`
         let mut params = Vec::new();
         while !self.at(&TokenKind::RParen) {
-            let name = self.expect_ident()?;
-            let type_ann = self.try_parse_type_annotation()?;
-            params.push(TypedParam { name, type_ann });
+            let param_name = self.expect_ident()?;
+            self.expect(&TokenKind::Colon)?;
+            let type_ann = self.parse_type()?;
+
+            // Only Public visibility is allowed in prove params
+            // (witnesses are auto-captured from scope)
+            match type_ann.visibility {
+                Some(Visibility::Public) => {}
+                Some(Visibility::Witness) => {
+                    return Err(ParseError::new(
+                        format!(
+                            "prove parameter `{param_name}` cannot be `Witness` — \
+                             witnesses are auto-captured from outer scope"
+                        ),
+                        0,
+                        0,
+                    ));
+                }
+                None => {
+                    return Err(ParseError::new(
+                        format!("prove parameter `{param_name}` requires `Public` annotation"),
+                        0,
+                        0,
+                    ));
+                }
+            }
+
+            params.push(TypedParam {
+                name: param_name,
+                type_ann: Some(type_ann),
+            });
+
             if self.at(&TokenKind::Comma) {
                 self.advance();
             }

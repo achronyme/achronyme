@@ -102,7 +102,7 @@ pub enum Stmt {
         names: Vec<String>,
         span: Span,
     },
-    /// Reusable circuit definition: `circuit name(x: Public, y: Witness) { body }`
+    /// Reusable circuit definition: `circuit name(root: Public, secret: Witness) { body }`
     CircuitDecl {
         name: String,
         params: Vec<TypedParam>,
@@ -122,20 +122,20 @@ pub enum Stmt {
     },
 }
 
-/// A public/witness input declaration with optional type annotation.
-///
-/// Array size now lives inside `TypeAnnotation.array_size`.
+/// A call argument — positional or keyword.
+#[derive(Clone, Debug)]
+pub struct CallArg {
+    /// `None` = positional, `Some("x")` = keyword (`x: expr`).
+    pub name: Option<String>,
+    pub value: Expr,
+}
+
+/// A public/witness input declaration with optional array size.
 #[derive(Clone, Debug)]
 pub struct InputDecl {
     pub name: String,
+    pub array_size: Option<usize>,
     pub type_ann: Option<TypeAnnotation>,
-}
-
-impl InputDecl {
-    /// Get the array size from the type annotation, if any.
-    pub fn array_size(&self) -> Option<usize> {
-        self.type_ann.as_ref().and_then(|ann| ann.array_size)
-    }
 }
 
 /// A block of statements (e.g., `{ ... }`).
@@ -143,16 +143,6 @@ impl InputDecl {
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub span: Span,
-}
-
-/// An argument in a function/circuit call.
-///
-/// Positional: `f(42)` → `CallArg { name: None, value: 42 }`
-/// Keyword: `f(x: 42)` → `CallArg { name: Some("x"), value: 42 }`
-#[derive(Clone, Debug)]
-pub struct CallArg {
-    pub name: Option<String>,
-    pub value: Expr,
 }
 
 /// Radix for field element literals (`0p` prefix).
@@ -260,15 +250,16 @@ pub enum Expr {
         span: Span,
     },
     Prove {
-        /// Optional name: `prove vote(hash: Public) { ... }`
+        /// Optional name: `prove eligibility(hash: Public) { ... }`
         name: Option<String>,
         body: Block,
-        /// Public params with visibility types: `prove(hash: Public, flag: Public Bool) { ... }`
-        /// Empty vec means no params (old-style or all-witness).
-        /// Witnesses are auto-inferred from outer scope.
+        /// Typed params with visibility: `prove(hash: Public, flag: Public Bool) { ... }`
+        /// When non-empty, witnesses are auto-inferred from outer scope.
+        /// Also supports deprecated `prove(public: [x, y])` (converted to params).
         params: Vec<TypedParam>,
         span: Span,
     },
+    // CircuitCall removed — unified into Call with keyword CallArgs.
     Array {
         elements: Vec<Expr>,
         span: Span,
@@ -366,7 +357,7 @@ pub enum UnaryOp {
     Not,
 }
 
-/// Visibility of a ZK input (circuit/prove parameter).
+/// Visibility qualifier for circuit/prove parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Visibility {
     Public,
@@ -382,7 +373,7 @@ impl std::fmt::Display for Visibility {
     }
 }
 
-/// Base type in a type annotation.
+/// Base type for type annotations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BaseType {
     Field,
@@ -398,19 +389,22 @@ impl std::fmt::Display for BaseType {
     }
 }
 
-/// A type annotation for circuit variables and function parameters.
-///
-/// Carries optional visibility (for circuit/prove params), a base type,
-/// and an optional array size.
+/// A type annotation for circuit variables, prove parameters, and function parameters.
 ///
 /// ```
-/// use achronyme_parser::ast::{TypeAnnotation, BaseType};
+/// use achronyme_parser::ast::{TypeAnnotation, BaseType, Visibility};
 ///
-/// let t = TypeAnnotation::scalar(BaseType::Field);
+/// let t = TypeAnnotation::field();
 /// assert_eq!(format!("{t}"), "Field");
 ///
-/// let arr = TypeAnnotation::array(BaseType::Bool, 4);
+/// let arr = TypeAnnotation::bool_array(4);
 /// assert_eq!(format!("{arr}"), "Bool[4]");
+///
+/// let pub_field = TypeAnnotation::public();
+/// assert_eq!(format!("{pub_field}"), "Public");
+///
+/// let wit_arr = TypeAnnotation::new(Some(Visibility::Witness), BaseType::Field, Some(3));
+/// assert_eq!(format!("{wit_arr}"), "Witness Field[3]");
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeAnnotation {
@@ -420,41 +414,85 @@ pub struct TypeAnnotation {
 }
 
 impl TypeAnnotation {
-    /// Scalar type without visibility: `Field` or `Bool`.
-    pub fn scalar(base: BaseType) -> Self {
+    pub fn new(visibility: Option<Visibility>, base: BaseType, array_size: Option<usize>) -> Self {
+        Self {
+            visibility,
+            base,
+            array_size,
+        }
+    }
+
+    pub fn field() -> Self {
         Self {
             visibility: None,
-            base,
+            base: BaseType::Field,
             array_size: None,
         }
     }
 
-    /// Array type without visibility: `Field[N]` or `Bool[N]`.
-    pub fn array(base: BaseType, size: usize) -> Self {
+    pub fn bool() -> Self {
         Self {
             visibility: None,
-            base,
-            array_size: Some(size),
+            base: BaseType::Bool,
+            array_size: None,
         }
     }
 
-    /// Whether this annotation is an array type.
-    pub fn is_array(&self) -> bool {
-        self.array_size.is_some()
+    pub fn field_array(n: usize) -> Self {
+        Self {
+            visibility: None,
+            base: BaseType::Field,
+            array_size: Some(n),
+        }
     }
 
-    /// Whether this annotation is a `Bool` or `Bool[N]`.
-    pub fn is_bool(&self) -> bool {
-        self.base == BaseType::Bool
+    pub fn bool_array(n: usize) -> Self {
+        Self {
+            visibility: None,
+            base: BaseType::Bool,
+            array_size: Some(n),
+        }
+    }
+
+    pub fn public() -> Self {
+        Self {
+            visibility: Some(Visibility::Public),
+            base: BaseType::Field,
+            array_size: None,
+        }
+    }
+
+    pub fn witness() -> Self {
+        Self {
+            visibility: Some(Visibility::Witness),
+            base: BaseType::Field,
+            array_size: None,
+        }
+    }
+
+    /// Returns the array size if this is an array type.
+    pub fn array_len(&self) -> Option<usize> {
+        self.array_size
+    }
+
+    /// Returns true if this is an array type (Field or Bool).
+    pub fn is_array(&self) -> bool {
+        self.array_size.is_some()
     }
 }
 
 impl std::fmt::Display for TypeAnnotation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(vis) = &self.visibility {
-            write!(f, "{vis} ")?;
+            write!(f, "{vis}")?;
+            // Only show base type if it's Bool or if there's an array size
+            // (Public alone = Public Field, so skip "Field" for brevity)
+            if self.base == BaseType::Bool || self.array_size.is_some() {
+                write!(f, " {}", self.base)?;
+            }
+        } else {
+            write!(f, "{}", self.base)?;
         }
-        write!(f, "{}", self.base)?;
         if let Some(n) = self.array_size {
             write!(f, "[{n}]")?;
         }

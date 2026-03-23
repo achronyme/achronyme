@@ -39,7 +39,7 @@ impl DeclarationCompiler for Compiler {
         // Only for `let` (immutable) — `mut` arrays could be reassigned to different sizes.
         let effective_ann = match (type_ann, value) {
             (None, Expr::Array { elements, .. }) if !elements.is_empty() => {
-                Some(TypeAnnotation::array(BaseType::Field, elements.len()))
+                Some(TypeAnnotation::field_array(elements.len()))
             }
             _ => type_ann.cloned(),
         };
@@ -73,7 +73,14 @@ impl DeclarationCompiler for Compiler {
                 Some(prefix) => format!("{prefix}::{name}"),
                 None => name.to_string(),
             };
-            self.global_symbols.insert(global_name, idx);
+            self.global_symbols.insert(
+                global_name,
+                crate::types::GlobalEntry {
+                    index: idx,
+                    type_ann: effective_ann,
+                    is_mutable: false,
+                },
+            );
             self.emit_abx(OpCode::DefGlobalLet, reg, idx)?;
             self.free_reg(reg)?;
         }
@@ -119,7 +126,14 @@ impl DeclarationCompiler for Compiler {
                 Some(prefix) => format!("{prefix}::{name}"),
                 None => name.to_string(),
             };
-            self.global_symbols.insert(global_name, idx);
+            self.global_symbols.insert(
+                global_name,
+                crate::types::GlobalEntry {
+                    index: idx,
+                    type_ann: type_ann.cloned(),
+                    is_mutable: true,
+                },
+            );
             self.emit_abx(OpCode::DefGlobalVar, reg, idx)?;
             self.free_reg(reg)?;
         }
@@ -139,8 +153,8 @@ impl DeclarationCompiler for Compiler {
                 {
                     self.mark_upvalue_mutated(self.compilers.len() - 1, name);
                     self.emit_abx(OpCode::SetUpvalue, val_reg, upval_idx as u16)?;
-                } else if let Some(global_idx) = self.global_symbols.get(name) {
-                    self.emit_abx(OpCode::SetGlobal, val_reg, *global_idx)?;
+                } else if let Some(entry) = self.global_symbols.get(name) {
+                    self.emit_abx(OpCode::SetGlobal, val_reg, entry.index)?;
                 } else {
                     return Err(self.undefined_var_error(name));
                 }
@@ -232,6 +246,7 @@ fn infer_literal_type(expr: &Expr) -> Option<InferredType> {
 
 /// Check whether a type annotation is compatible with an inferred literal type.
 fn is_ann_compatible(ann: &TypeAnnotation, inferred: &InferredType) -> bool {
+    use achronyme_parser::ast::BaseType;
     match (&ann.base, ann.is_array(), inferred) {
         // Field accepts field literals and integers (int→field coercion)
         (BaseType::Field, false, InferredType::Field | InferredType::Int) => true,
@@ -245,7 +260,7 @@ fn is_ann_compatible(ann: &TypeAnnotation, inferred: &InferredType) -> bool {
 
 /// Extract expected array size from a type annotation, if it's an array type.
 fn ann_array_size(ann: &TypeAnnotation) -> Option<usize> {
-    ann.array_size
+    ann.array_len()
 }
 
 /// Emit W006 (type mismatch) or W007 (array size mismatch) warnings when a type

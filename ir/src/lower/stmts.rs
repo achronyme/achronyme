@@ -110,7 +110,7 @@ impl IrLowering {
     fn lower_public_decl(&mut self, names: &[InputDecl], span: &Span) -> Result<(), IrError> {
         for decl in names {
             self.record_input_span(&decl.name, span);
-            if let Some(size) = decl.array_size() {
+            if let Some(size) = decl.array_size {
                 let vars = self.declare_public_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
                     self.enforce_input_type_ann(ann, &vars);
@@ -128,7 +128,7 @@ impl IrLowering {
     fn lower_witness_decl(&mut self, names: &[InputDecl], span: &Span) -> Result<(), IrError> {
         for decl in names {
             self.record_input_span(&decl.name, span);
-            if let Some(size) = decl.array_size() {
+            if let Some(size) = decl.array_size {
                 let vars = self.declare_witness_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
                     self.enforce_input_type_ann(ann, &vars);
@@ -196,13 +196,13 @@ impl IrLowering {
                 // Reject scalar annotations on array values
                 if !ann.is_array() {
                     return Err(IrError::TypeMismatch {
-                        expected: format!("{}[{}]", ann, vars.len()),
+                        expected: format!("{ann}[{}]", vars.len()),
                         got: format!("{ann}"),
                         span: to_ir_span(span),
                     });
                 }
                 // Validate array size matches annotation
-                let expected_size = ann.array_size;
+                let expected_size = ann.array_len();
                 if let Some(expected) = expected_size {
                     if vars.len() != expected {
                         return Err(IrError::ArrayLengthMismatch {

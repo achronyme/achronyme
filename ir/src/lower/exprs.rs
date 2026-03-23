@@ -53,7 +53,10 @@ impl IrLowering {
             }
             Expr::BinOp { op, lhs, rhs, span } => self.lower_binop(op, lhs, rhs, span),
             Expr::UnaryOp { op, operand, span } => self.lower_unary(op, operand, span),
-            Expr::Call { callee, args, span } => self.lower_call(callee, args, span),
+            Expr::Call { callee, args, span } => {
+                let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
+                self.lower_call(callee, &arg_vals, span)
+            }
             Expr::Index { object, index, span } => self.lower_index(object, index, span),
             Expr::If {
                 condition,
@@ -75,6 +78,7 @@ impl IrLowering {
                 "prove blocks cannot be nested inside circuits (a circuit is already generating constraints)".into(),
                 to_ir_span(span),
             )),
+            // CircuitCall removed — keyword-arg calls are now unified in Call
             Expr::FnExpr { span, .. } => Err(IrError::UnsupportedOperation(
                 "closures are not supported in circuits (captured variables cannot be tracked as circuit wires — use 'fn' declarations instead)".into(),
                 to_ir_span(span),

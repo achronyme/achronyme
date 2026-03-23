@@ -12,6 +12,14 @@ pub struct Local {
     pub type_ann: Option<TypeAnnotation>,
 }
 
+/// Metadata for a global symbol (variable, function, circuit, import).
+#[derive(Debug, Clone)]
+pub struct GlobalEntry {
+    pub index: u16,
+    pub type_ann: Option<TypeAnnotation>,
+    pub is_mutable: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpvalueInfo {
     pub is_local: bool,

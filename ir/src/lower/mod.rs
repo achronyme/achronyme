@@ -49,9 +49,9 @@ pub(super) struct FnDef {
 /// assert!(!prog.instructions.is_empty());
 /// ```
 pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann {
-        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
-        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
+    match ann.base {
+        achronyme_parser::ast::BaseType::Field => IrType::Field,
+        achronyme_parser::ast::BaseType::Bool => IrType::Bool,
     }
 }
 

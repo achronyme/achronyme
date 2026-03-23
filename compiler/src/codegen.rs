@@ -18,8 +18,8 @@ pub struct Compiler {
     // FLAT list of ALL function prototypes (global indices)
     pub prototypes: Vec<memory::Function>,
 
-    // Global Symbol Table (Name -> Index)
-    pub global_symbols: HashMap<String, u16>,
+    // Global Symbol Table (Name -> Entry with index + metadata)
+    pub global_symbols: HashMap<String, crate::types::GlobalEntry>,
     pub next_global_idx: u16,
 
     // String Interner (shared across all functions)
@@ -76,11 +76,19 @@ impl Compiler {
     /// continue from `USER_GLOBAL_START`.  The VM must register the same
     /// modules in the same order via `VM::register_module()`.
     pub fn with_extra_natives(extra: &[NativeMeta]) -> Self {
+        use crate::types::GlobalEntry;
         let mut global_symbols = HashMap::new();
 
         // Pre-populate builtins from SSOT
         for (index, meta) in NATIVE_TABLE.iter().enumerate() {
-            global_symbols.insert(meta.name.to_string(), index as u16);
+            global_symbols.insert(
+                meta.name.to_string(),
+                GlobalEntry {
+                    index: index as u16,
+                    type_ann: None,
+                    is_mutable: false,
+                },
+            );
         }
 
         // Append extra natives (stdlib, user modules, etc.)
@@ -91,7 +99,14 @@ impl Compiler {
                 "Native name collision: '{}' already defined as builtin",
                 meta.name,
             );
-            global_symbols.insert(meta.name.to_string(), index as u16);
+            global_symbols.insert(
+                meta.name.to_string(),
+                GlobalEntry {
+                    index: index as u16,
+                    type_ann: None,
+                    is_mutable: false,
+                },
+            );
         }
 
         let next_global_idx = (NATIVE_TABLE.len() + extra.len()) as u16;
@@ -154,8 +169,8 @@ impl Compiler {
         }
 
         // Global symbols (skip native internals with index < USER_GLOBAL_START)
-        for (name, &idx) in &self.global_symbols {
-            if idx >= USER_GLOBAL_START && !name.contains("::") {
+        for (name, entry) in &self.global_symbols {
+            if entry.index >= USER_GLOBAL_START && !name.contains("::") {
                 names.push(name);
             }
         }
@@ -308,11 +323,14 @@ impl Compiler {
 
     pub fn append_debug_symbols(&self, buffer: &mut Vec<u8>) {
         // 1. Invert Name->Index to (Index, Name) for serialization
-        let mut symbols: Vec<(&u16, &String)> =
-            self.global_symbols.iter().map(|(k, v)| (v, k)).collect();
+        let mut symbols: Vec<(u16, &String)> = self
+            .global_symbols
+            .iter()
+            .map(|(k, v)| (v.index, k))
+            .collect();
 
         // 2. Sort by Index (Deterministic output is mandatory for build reproducibility)
-        symbols.sort_by_key(|&(idx, _)| *idx);
+        symbols.sort_by_key(|&(idx, _)| idx);
 
         // 3. Write Section
         buffer.extend_from_slice(&[0xDB, 0x67]); // Magic "DBg"

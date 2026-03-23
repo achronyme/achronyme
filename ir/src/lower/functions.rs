@@ -15,7 +15,7 @@ impl IrLowering {
     pub(super) fn lower_user_fn_call(
         &mut self,
         name: &str,
-        args: &[Expr],
+        args: &[&Expr],
         sp: OptSpan,
     ) -> Result<SsaVar, IrError> {
         // Try direct lookup first, then prefixed lookup for internal module calls

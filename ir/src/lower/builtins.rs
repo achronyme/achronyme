@@ -10,12 +10,9 @@ impl IrLowering {
     pub(super) fn lower_call(
         &mut self,
         callee: &Expr,
-        args: &[CallArg],
+        args: &[&Expr],
         span: &Span,
     ) -> Result<SsaVar, IrError> {
-        // Extract values from CallArgs (keyword names ignored in circuit IR)
-        let arg_values: Vec<Expr> = args.iter().map(|a| a.value.clone()).collect();
-        let args = &arg_values;
         let sp = to_ir_span(span);
         // Identifier or DotAccess callees are supported
         let name = match callee {
@@ -24,8 +21,8 @@ impl IrLowering {
                 // Method call pattern: expr.len() → treat as len(expr)
                 if field == "len" {
                     // Synthesize args: the object becomes the sole argument
-                    let mut method_args = vec![object.as_ref().clone()];
-                    method_args.extend_from_slice(args);
+                    let mut method_args: Vec<&Expr> = vec![object.as_ref()];
+                    method_args.extend(args.iter());
                     return self.lower_len(&method_args, sp);
                 }
                 // module.func() → qualified name "module::func"
@@ -59,7 +56,7 @@ impl IrLowering {
         }
     }
 
-    fn lower_assert_eq(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_assert_eq(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "assert_eq".into(),
@@ -68,8 +65,8 @@ impl IrLowering {
                 span: sp,
             });
         }
-        let a = self.lower_expr(&args[0])?;
-        let b = self.lower_expr(&args[1])?;
+        let a = self.lower_expr(args[0])?;
+        let b = self.lower_expr(args[1])?;
         let v = self.program.fresh_var();
         self.program.push(Instruction::AssertEq {
             result: v,
@@ -79,7 +76,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_assert(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_assert(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 1 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "assert".into(),
@@ -88,14 +85,14 @@ impl IrLowering {
                 span: sp,
             });
         }
-        let operand = self.lower_expr(&args[0])?;
+        let operand = self.lower_expr(args[0])?;
         let v = self.program.fresh_var();
         self.program
             .push(Instruction::Assert { result: v, operand });
         Ok(v)
     }
 
-    fn lower_poseidon(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_poseidon(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "poseidon".into(),
@@ -104,8 +101,8 @@ impl IrLowering {
                 span: sp,
             });
         }
-        let left = self.lower_expr(&args[0])?;
-        let right = self.lower_expr(&args[1])?;
+        let left = self.lower_expr(args[0])?;
+        let right = self.lower_expr(args[1])?;
         let v = self.program.fresh_var();
         self.program.push(Instruction::PoseidonHash {
             result: v,
@@ -116,7 +113,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_mux(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_mux(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 3 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "mux".into(),
@@ -125,9 +122,9 @@ impl IrLowering {
                 span: sp,
             });
         }
-        let cond = self.lower_expr(&args[0])?;
-        let if_true = self.lower_expr(&args[1])?;
-        let if_false = self.lower_expr(&args[2])?;
+        let cond = self.lower_expr(args[0])?;
+        let if_true = self.lower_expr(args[1])?;
+        let if_false = self.lower_expr(args[2])?;
         let v = self.program.fresh_var();
         self.program.push(Instruction::Mux {
             result: v,
@@ -147,7 +144,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_range_check(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_range_check(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 2 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "range_check".into(),
@@ -156,8 +153,8 @@ impl IrLowering {
                 span: sp,
             });
         }
-        let operand = self.lower_expr(&args[0])?;
-        let bits_var = self.lower_expr(&args[1])?;
+        let operand = self.lower_expr(args[0])?;
+        let bits_var = self.lower_expr(args[1])?;
 
         let bits_fe = self.get_const_value(bits_var).ok_or_else(|| {
             IrError::UnsupportedOperation(
@@ -178,7 +175,7 @@ impl IrLowering {
         Ok(v)
     }
 
-    fn lower_len(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_len(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.len() != 1 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "len".into(),
@@ -187,7 +184,7 @@ impl IrLowering {
                 span: sp.clone(),
             });
         }
-        let arg_name = match &args[0] {
+        let arg_name = match args[0] {
             Expr::Ident { name, .. } => name.clone(),
             _ => {
                 return Err(IrError::UnsupportedOperation(
@@ -209,7 +206,7 @@ impl IrLowering {
         }
     }
 
-    fn lower_poseidon_many(&mut self, args: &[Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
+    fn lower_poseidon_many(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
         if args.is_empty() {
             return Err(IrError::WrongArgumentCount {
                 builtin: "poseidon_many".into(),
@@ -253,7 +250,7 @@ impl IrLowering {
         Ok(acc)
     }
 
-    fn lower_merkle_verify(&mut self, args: &[Expr], span: &Span) -> Result<SsaVar, IrError> {
+    fn lower_merkle_verify(&mut self, args: &[&Expr], span: &Span) -> Result<SsaVar, IrError> {
         let sp = to_ir_span(span);
         if args.len() != 4 {
             return Err(IrError::WrongArgumentCount {
@@ -264,10 +261,10 @@ impl IrLowering {
             });
         }
 
-        let root_val = self.resolve_arg_value(&args[0])?;
-        let leaf_val = self.resolve_arg_value(&args[1])?;
-        let path_val = self.resolve_arg_value(&args[2])?;
-        let indices_val = self.resolve_arg_value(&args[3])?;
+        let root_val = self.resolve_arg_value(args[0])?;
+        let leaf_val = self.resolve_arg_value(args[1])?;
+        let path_val = self.resolve_arg_value(args[2])?;
+        let indices_val = self.resolve_arg_value(args[3])?;
 
         let root = match root_val {
             EnvValue::Scalar(v) => v,

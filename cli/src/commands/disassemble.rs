@@ -226,8 +226,8 @@ fn disassemble_vm(path: &str, source: &str, error_format: ErrorFormat) -> Result
     super::print_warnings(&mut compiler, source, error_format);
 
     let mut inv_globals = std::collections::HashMap::new();
-    for (name, idx) in &compiler.global_symbols {
-        inv_globals.insert(*idx, name);
+    for (name, entry) in &compiler.global_symbols {
+        inv_globals.insert(entry.index, name);
     }
 
     println!("== Disassembly of {} ==", path);

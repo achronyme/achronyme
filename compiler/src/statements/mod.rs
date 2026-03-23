@@ -93,9 +93,15 @@ impl StatementCompiler for Compiler {
                 let arg_reg = self.alloc_reg()?; // Must be func_reg + 1
 
                 // 2. Load "print" (Pre-defined)
-                let print_idx = *self.global_symbols.get("print").ok_or_else(|| {
-                    CompilerError::InternalError("native function 'print' not registered".into())
-                })?;
+                let print_idx = self
+                    .global_symbols
+                    .get("print")
+                    .ok_or_else(|| {
+                        CompilerError::InternalError(
+                            "native function 'print' not registered".into(),
+                        )
+                    })?
+                    .index;
                 self.emit_abx(OpCode::GetGlobal, func_reg, print_idx)?;
 
                 // 3. Compile Argument
@@ -165,19 +171,31 @@ impl StatementCompiler for Compiler {
         body: &Block,
         span: &Span,
     ) -> Result<(), CompilerError> {
+        use achronyme_parser::ast::Visibility;
         // 1. Synthesize public/witness declarations from circuit params
         let mut stmts = Vec::new();
         for param in params {
-            let visibility = param
-                .type_ann
-                .as_ref()
-                .and_then(|ann| ann.visibility)
-                .unwrap_or(Visibility::Witness);
+            let ta = param.type_ann.as_ref().ok_or_else(|| {
+                CompilerError::CompileError(
+                    format!("circuit parameter `{}` has no type annotation", param.name),
+                    span_box(span),
+                )
+            })?;
+            let vis = ta.visibility.ok_or_else(|| {
+                CompilerError::CompileError(
+                    format!(
+                        "circuit parameter `{}` requires Public or Witness visibility",
+                        param.name
+                    ),
+                    span_box(span),
+                )
+            })?;
             let decl = InputDecl {
                 name: param.name.clone(),
-                type_ann: param.type_ann.clone(),
+                array_size: ta.array_size,
+                type_ann: Some(ta.clone()),
             };
-            match visibility {
+            match vis {
                 Visibility::Public => stmts.push(Stmt::PublicDecl {
                     names: vec![decl],
                     span: span.clone(),
@@ -221,7 +239,14 @@ impl StatementCompiler for Compiler {
         }
         let global_idx = self.next_global_idx;
         self.next_global_idx += 1;
-        self.global_symbols.insert(name.to_string(), global_idx);
+        self.global_symbols.insert(
+            name.to_string(),
+            crate::types::GlobalEntry {
+                index: global_idx,
+                type_ann: None,
+                is_mutable: false,
+            },
+        );
 
         // Emit: load the bytes constant into a register, then define as global
         let reg = self.alloc_reg()?;
@@ -260,31 +285,6 @@ impl StatementCompiler for Compiler {
             )
         })?;
 
-        // W011: warn if imported circuit file uses flat syntax
-        {
-            let (ast, _) = achronyme_parser::parse_program(&source);
-            let has_flat_decls = ast
-                .stmts
-                .iter()
-                .any(|s| matches!(s, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }));
-            let has_circuit_decl = ast
-                .stmts
-                .iter()
-                .any(|s| matches!(s, Stmt::CircuitDecl { .. }));
-            if has_flat_decls && !has_circuit_decl {
-                self.warnings.push(
-                    achronyme_parser::Diagnostic::warning(
-                        format!(
-                            "imported circuit `{path}` uses deprecated flat syntax — \
-                             wrap in `circuit {alias}(...) {{ ... }}`"
-                        ),
-                        achronyme_parser::SpanRange::from(span),
-                    )
-                    .with_code("W011"),
-                );
-            }
-        }
-
         // 3. Compile to ProveIR via compile_circuit (self-contained)
         let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile_circuit(&source)
             .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
@@ -308,7 +308,14 @@ impl StatementCompiler for Compiler {
         }
         let global_idx = self.next_global_idx;
         self.next_global_idx += 1;
-        self.global_symbols.insert(alias.to_string(), global_idx);
+        self.global_symbols.insert(
+            alias.to_string(),
+            crate::types::GlobalEntry {
+                index: global_idx,
+                type_ann: None,
+                is_mutable: false,
+            },
+        );
 
         let reg = self.alloc_reg()?;
         self.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
@@ -414,15 +421,19 @@ impl StatementCompiler for Compiler {
 
             // Value: load from the mangled global
             let mangled = format!("{}::{}", alias, name);
-            let global_idx = *self.global_symbols.get(&mangled).ok_or_else(|| {
-                CompilerError::CompileError(
-                    format!(
+            let global_idx = self
+                .global_symbols
+                .get(&mangled)
+                .ok_or_else(|| {
+                    CompilerError::CompileError(
+                        format!(
                         "internal error: mangled global `{}` not found after module compilation",
                         mangled
                     ),
-                    span_box(span),
-                )
-            })?;
+                        span_box(span),
+                    )
+                })?
+                .index;
             self.emit_abx(OpCode::GetGlobal, val_reg, global_idx)?;
         }
 
@@ -442,7 +453,14 @@ impl StatementCompiler for Compiler {
         }
         let idx = self.next_global_idx;
         self.next_global_idx += 1;
-        self.global_symbols.insert(alias.to_string(), idx);
+        self.global_symbols.insert(
+            alias.to_string(),
+            crate::types::GlobalEntry {
+                index: idx,
+                type_ann: None,
+                is_mutable: false,
+            },
+        );
         self.emit_abx(OpCode::DefGlobalLet, map_reg, idx)?;
         self.free_reg(map_reg)?;
 
@@ -558,7 +576,7 @@ impl StatementCompiler for Compiler {
             }
 
             let mangled = format!("{}::{}", internal_prefix, name);
-            let global_idx = *self.global_symbols.get(&mangled).ok_or_else(|| {
+            let mangled_entry = self.global_symbols.get(&mangled).ok_or_else(|| {
                 CompilerError::CompileError(
                     format!(
                         "internal error: mangled global `{}` not found after module compilation",
@@ -567,6 +585,9 @@ impl StatementCompiler for Compiler {
                     span_box(span),
                 )
             })?;
+            let global_idx = mangled_entry.index;
+            let source_type_ann = mangled_entry.type_ann.clone();
+            let source_is_mutable = mangled_entry.is_mutable;
 
             // Emit GetGlobal + DefGlobalLet to copy value to a new global slot
             let tmp_reg = self.alloc_reg()?;
@@ -578,7 +599,14 @@ impl StatementCompiler for Compiler {
             }
             let new_idx = self.next_global_idx;
             self.next_global_idx += 1;
-            self.global_symbols.insert(name.clone(), new_idx);
+            self.global_symbols.insert(
+                name.clone(),
+                crate::types::GlobalEntry {
+                    index: new_idx,
+                    type_ann: source_type_ann,
+                    is_mutable: source_is_mutable,
+                },
+            );
             self.emit_abx(OpCode::DefGlobalLet, tmp_reg, new_idx)?;
             self.free_reg(tmp_reg)?;
 

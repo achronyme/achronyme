@@ -46,7 +46,14 @@ impl FunctionDefinitionCompiler for Compiler {
                 Some(prefix) => format!("{prefix}::{fn_name}"),
                 None => fn_name.clone(),
             };
-            self.global_symbols.insert(global_name, idx);
+            self.global_symbols.insert(
+                global_name,
+                crate::types::GlobalEntry {
+                    index: idx,
+                    type_ann: None,
+                    is_mutable: false,
+                },
+            );
             Some(idx)
         } else {
             None

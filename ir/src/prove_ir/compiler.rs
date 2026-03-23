@@ -106,8 +106,7 @@ impl ProveIrCompiler {
                         .insert(name.clone(), CompEnvValue::Capture(name.clone()));
                 }
                 OuterScopeEntry::Array(n) => {
-                    let elem_names: Vec<String> =
-                        (0..*n).map(|i| format!("{name}_{i}")).collect();
+                    let elem_names: Vec<String> = (0..*n).map(|i| format!("{name}_{i}")).collect();
                     for ename in &elem_names {
                         compiler
                             .env
@@ -506,12 +505,13 @@ impl ProveIrCompiler {
     fn compile_expr_stmt(&mut self, expr: &Expr) -> Result<(), ProveIrError> {
         // Detect assert_eq(a, b) and assert(x) to emit constraint nodes
         if let Expr::Call { callee, args, span } = expr {
+            let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
             if let Expr::Ident { name, .. } = callee.as_ref() {
                 match name.as_str() {
                     "assert_eq" => {
-                        self.check_arity("assert_eq", 2, args.len(), span)?;
-                        let lhs = self.compile_expr(&args[0])?;
-                        let rhs = self.compile_expr(&args[1])?;
+                        self.check_arity("assert_eq", 2, arg_vals.len(), span)?;
+                        let lhs = self.compile_expr(arg_vals[0])?;
+                        let rhs = self.compile_expr(arg_vals[1])?;
                         self.body.push(CircuitNode::AssertEq {
                             lhs,
                             rhs,
@@ -520,8 +520,8 @@ impl ProveIrCompiler {
                         return Ok(());
                     }
                     "assert" => {
-                        self.check_arity("assert", 1, args.len(), span)?;
-                        let cond = self.compile_expr(&args[0])?;
+                        self.check_arity("assert", 1, arg_vals.len(), span)?;
+                        let cond = self.compile_expr(arg_vals[0])?;
                         self.body.push(CircuitNode::Assert {
                             expr: cond,
                             span: Some(SpanRange::from(span)),
@@ -566,7 +566,10 @@ impl ProveIrCompiler {
                 span,
             } => self.compile_static_access(type_name, member, span),
 
-            Expr::Call { callee, args, span } => self.compile_call(callee, args, span),
+            Expr::Call { callee, args, span } => {
+                let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
+                self.compile_call(callee, &arg_vals, span)
+            }
 
             Expr::DotAccess {
                 object,
@@ -606,10 +609,7 @@ impl ProveIrCompiler {
                 description: "prove blocks cannot be nested inside circuits".into(),
                 span: to_span(span),
             }),
-            Expr::CircuitCall { span, .. } => Err(ProveIrError::UnsupportedOperation {
-                description: "circuit calls are not yet supported in circuits".into(),
-                span: to_span(span),
-            }),
+            // CircuitCall removed — keyword-arg calls are now unified in Call
             Expr::FnExpr { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "closures are not supported in circuits \
                               (use named fn declarations instead)"
@@ -759,7 +759,7 @@ impl ProveIrCompiler {
     fn compile_call(
         &mut self,
         callee: &Expr,
-        args: &[Expr],
+        args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
         match callee {
@@ -803,15 +803,15 @@ impl ProveIrCompiler {
     fn compile_named_call(
         &mut self,
         name: &str,
-        args: &[Expr],
+        args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
         match name {
             // Builtins that produce CircuitExpr directly
             "poseidon" => {
                 self.check_arity("poseidon", 2, args.len(), span)?;
-                let left = self.compile_expr(&args[0])?;
-                let right = self.compile_expr(&args[1])?;
+                let left = self.compile_expr(args[0])?;
+                let right = self.compile_expr(args[1])?;
                 Ok(CircuitExpr::PoseidonHash {
                     left: Box::new(left),
                     right: Box::new(right),
@@ -833,9 +833,9 @@ impl ProveIrCompiler {
             }
             "mux" => {
                 self.check_arity("mux", 3, args.len(), span)?;
-                let cond = self.compile_expr(&args[0])?;
-                let if_true = self.compile_expr(&args[1])?;
-                let if_false = self.compile_expr(&args[2])?;
+                let cond = self.compile_expr(args[0])?;
+                let if_true = self.compile_expr(args[1])?;
+                let if_false = self.compile_expr(args[2])?;
                 Ok(CircuitExpr::Mux {
                     cond: Box::new(cond),
                     if_true: Box::new(if_true),
@@ -844,8 +844,8 @@ impl ProveIrCompiler {
             }
             "range_check" => {
                 self.check_arity("range_check", 2, args.len(), span)?;
-                let value = self.compile_expr(&args[0])?;
-                let bits_u64 = self.extract_const_u64(&args[1], span)?;
+                let value = self.compile_expr(args[0])?;
+                let bits_u64 = self.extract_const_u64(args[1], span)?;
                 if bits_u64 > u32::MAX as u64 {
                     return Err(ProveIrError::UnsupportedOperation {
                         description: format!(
@@ -863,11 +863,11 @@ impl ProveIrCompiler {
             }
             "merkle_verify" => {
                 self.check_arity("merkle_verify", 4, args.len(), span)?;
-                let root = self.compile_expr(&args[0])?;
-                let leaf = self.compile_expr(&args[1])?;
+                let root = self.compile_expr(args[0])?;
+                let leaf = self.compile_expr(args[1])?;
                 // path and indices must be array identifiers (referenced by name)
-                let path = self.extract_array_ident(&args[2], span)?;
-                let indices = self.extract_array_ident(&args[3], span)?;
+                let path = self.extract_array_ident(args[2], span)?;
+                let indices = self.extract_array_ident(args[3], span)?;
                 Ok(CircuitExpr::MerkleVerify {
                     root: Box::new(root),
                     leaf: Box::new(leaf),
@@ -877,7 +877,7 @@ impl ProveIrCompiler {
             }
             "len" => {
                 self.check_arity("len", 1, args.len(), span)?;
-                self.compile_len_call(&args[0], span)
+                self.compile_len_call(args[0], span)
             }
 
             // Builtins that produce CircuitNode (handled at statement level)
@@ -885,8 +885,8 @@ impl ProveIrCompiler {
             // nodes — we return a dummy Const(0) since they're constraints, not values.
             "assert_eq" => {
                 self.check_arity("assert_eq", 2, args.len(), span)?;
-                let lhs = self.compile_expr(&args[0])?;
-                let rhs = self.compile_expr(&args[1])?;
+                let lhs = self.compile_expr(args[0])?;
+                let rhs = self.compile_expr(args[1])?;
                 // Always emit the constraint node — even at expression level.
                 // This ensures the constraint is enforced regardless of whether
                 // assert_eq is used as a statement or inside a let binding.
@@ -899,7 +899,7 @@ impl ProveIrCompiler {
             }
             "assert" => {
                 self.check_arity("assert", 1, args.len(), span)?;
-                let cond = self.compile_expr(&args[0])?;
+                let cond = self.compile_expr(args[0])?;
                 // Always emit the constraint node — same rationale as assert_eq.
                 self.body.push(CircuitNode::Assert {
                     expr: cond,
@@ -946,7 +946,7 @@ impl ProveIrCompiler {
         &mut self,
         object: &Expr,
         method: &str,
-        args: &[Expr],
+        args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
         match method {
@@ -1007,7 +1007,7 @@ impl ProveIrCompiler {
             "min" => {
                 self.check_method_arity("min", 1, args.len(), span)?;
                 let n = self.compile_expr(object)?;
-                let m = self.compile_expr(&args[0])?;
+                let m = self.compile_expr(args[0])?;
                 Ok(CircuitExpr::Mux {
                     cond: Box::new(CircuitExpr::Comparison {
                         op: CircuitCmpOp::Lt,
@@ -1021,7 +1021,7 @@ impl ProveIrCompiler {
             "max" => {
                 self.check_method_arity("max", 1, args.len(), span)?;
                 let n = self.compile_expr(object)?;
-                let m = self.compile_expr(&args[0])?;
+                let m = self.compile_expr(args[0])?;
                 Ok(CircuitExpr::Mux {
                     cond: Box::new(CircuitExpr::Comparison {
                         op: CircuitCmpOp::Lt,
@@ -1035,7 +1035,7 @@ impl ProveIrCompiler {
             "pow" => {
                 self.check_method_arity("pow", 1, args.len(), span)?;
                 let base = self.compile_expr(object)?;
-                let exp = self.extract_const_u64(&args[0], span)?;
+                let exp = self.extract_const_u64(args[0], span)?;
                 Ok(CircuitExpr::Pow {
                     base: Box::new(base),
                     exp,
@@ -1099,13 +1099,23 @@ impl ProveIrCompiler {
     // -----------------------------------------------------------------------
 
     /// Extract an array identifier name from an expression (for merkle_verify args).
-    fn extract_array_ident(&self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
+    fn extract_array_ident(&mut self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
         if let Expr::Ident { name, .. } = expr {
-            if matches!(
-                self.env.get(name.as_str()),
-                Some(CompEnvValue::Array(_)) | Some(CompEnvValue::Capture(_))
-            ) {
-                return Ok(name.clone());
+            match self.env.get(name.as_str()) {
+                Some(CompEnvValue::Array(elems)) => {
+                    // Mark element names as captured (only if they ARE captures
+                    // from the outer scope, not declared inputs within the circuit).
+                    for elem in elems.clone() {
+                        if matches!(self.env.get(&elem), Some(CompEnvValue::Capture(_))) {
+                            self.captured_names.insert(elem);
+                        }
+                    }
+                    return Ok(name.clone());
+                }
+                Some(CompEnvValue::Capture(_)) => {
+                    return Ok(name.clone());
+                }
+                _ => {}
             }
         }
         Err(ProveIrError::UnsupportedOperation {
@@ -1402,7 +1412,7 @@ impl ProveIrCompiler {
     fn compile_user_fn_call(
         &mut self,
         name: &str,
-        args: &[Expr],
+        args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
         let fn_def =
@@ -1702,9 +1712,9 @@ fn to_span(span: &Span) -> OptSpan {
 
 /// Convert a TypeAnnotation to IrType.
 fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann {
-        TypeAnnotation::Field | TypeAnnotation::FieldArray(_) => IrType::Field,
-        TypeAnnotation::Bool | TypeAnnotation::BoolArray(_) => IrType::Bool,
+    match ann.base {
+        achronyme_parser::ast::BaseType::Field => IrType::Field,
+        achronyme_parser::ast::BaseType::Bool => IrType::Bool,
     }
 }
 

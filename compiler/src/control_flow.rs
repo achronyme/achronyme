@@ -9,14 +9,14 @@ use achronyme_parser::Diagnostic;
 use memory::Value;
 use vm::opcode::{instruction::encode_abx, OpCode};
 
-/// Search all compiler scopes for a local with the given name that has an
-/// array type annotation. Returns the array size if found.
-fn find_local_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
+/// Search all compiler scopes (locals and globals) for a variable with the
+/// given name that has an array type annotation. Returns the array size if found.
+fn find_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
     // Search current function scope first
     if let Ok(func) = compiler.current_ref() {
         for local in func.locals.iter().rev() {
             if local.name == name {
-                return local.type_ann.as_ref().and_then(|ann| ann.array_size);
+                return local.type_ann.as_ref().and_then(|ta| ta.array_len());
             }
         }
     }
@@ -24,9 +24,13 @@ fn find_local_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
     for fc in compiler.compilers.iter().rev().skip(1) {
         for local in fc.locals.iter().rev() {
             if local.name == name {
-                return local.type_ann.as_ref().and_then(|ann| ann.array_size);
+                return local.type_ann.as_ref().and_then(|ta| ta.array_len());
             }
         }
+    }
+    // Search globals
+    if let Some(entry) = compiler.global_symbols.get(name) {
+        return entry.type_ann.as_ref().and_then(|ta| ta.array_len());
     }
     None
 }
@@ -90,10 +94,10 @@ pub trait ControlFlowCompiler {
         name: Option<&str>,
     ) -> Result<u8, CompilerError>;
 
-    fn compile_keyword_call(
+    fn compile_circuit_call(
         &mut self,
-        callee: &Expr,
-        args: &[CallArg],
+        name: &str,
+        args: &[(String, Expr)],
         span: &Span,
     ) -> Result<u8, CompilerError>;
 }
@@ -445,39 +449,41 @@ impl ControlFlowCompiler for Compiler {
         //    Type annotations are propagated so ProveIR knows about arrays.
         let mut outer_scope: std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry> =
             std::collections::HashMap::new();
+        let to_scope_entry = |ta: &Option<TypeAnnotation>| -> ir::prove_ir::OuterScopeEntry {
+            match ta.as_ref().and_then(|t| t.array_len()) {
+                Some(n) => ir::prove_ir::OuterScopeEntry::Array(n),
+                None => ir::prove_ir::OuterScopeEntry::Scalar,
+            }
+        };
         if let Ok(func) = self.current_ref() {
             for local in &func.locals {
-                let entry = match local.type_ann.as_ref().and_then(|ann| ann.array_size) {
-                    Some(n) => ir::prove_ir::OuterScopeEntry::Array(n),
-                    None => ir::prove_ir::OuterScopeEntry::Scalar,
-                };
-                outer_scope.insert(local.name.clone(), entry);
+                outer_scope.insert(local.name.clone(), to_scope_entry(&local.type_ann));
             }
         }
         for compiler in &self.compilers[..self.compilers.len().saturating_sub(1)] {
             for local in &compiler.locals {
-                let entry = match local.type_ann.as_ref().and_then(|ann| ann.array_size) {
-                    Some(n) => ir::prove_ir::OuterScopeEntry::Array(n),
-                    None => ir::prove_ir::OuterScopeEntry::Scalar,
-                };
-                outer_scope.entry(local.name.clone()).or_insert(entry);
+                outer_scope
+                    .entry(local.name.clone())
+                    .or_insert_with(|| to_scope_entry(&local.type_ann));
             }
         }
-        // Global symbols (no type annotation info available — treated as scalar)
-        for name in self.collect_in_scope_names() {
-            outer_scope
-                .entry(name.to_string())
-                .or_insert(ir::prove_ir::OuterScopeEntry::Scalar);
+        // Global symbols — read type annotations from GlobalEntry
+        for (name, gentry) in &self.global_symbols {
+            if gentry.index >= vm::specs::USER_GLOBAL_START && !name.contains("::") {
+                outer_scope
+                    .entry(name.clone())
+                    .or_insert_with(|| to_scope_entry(&gentry.type_ann));
+            }
         }
 
-        // 2. If params are provided, validate no old-style declarations in the
-        //    body and synthesize PublicDecl stmts from the typed params.
+        // 2. If params are provided (new syntax), validate no old-style
+        //    declarations in the body and synthesize PublicDecl stmts.
         let compile_body = if !params.is_empty() {
             // Validate: no old-style public/witness declarations in body
             for stmt in &body.stmts {
                 if matches!(stmt, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }) {
                     return Err(CompilerError::CompileError(
-                        "cannot mix prove(...) param syntax with explicit \
+                        "cannot mix prove(...) parameter syntax with explicit \
                          public/witness declarations inside the block"
                             .into(),
                         self.cur_span(),
@@ -485,23 +491,19 @@ impl ControlFlowCompiler for Compiler {
                 }
             }
 
-            // Synthesize PublicDecl stmts from params.
-            // If a param has array size in its type annotation, use it.
-            // Otherwise, check the outer scope for array size propagation.
+            // Synthesize PublicDecl stmts from typed params.
+            // Read array_size from the param's type_ann, falling back to outer scope.
             let mut stmts = Vec::new();
             for param in params {
-                let param_array_size = param.type_ann.as_ref().and_then(|ann| ann.array_size);
-                let array_size =
-                    param_array_size.or_else(|| find_local_array_size(self, &param.name));
-                let type_ann = match (param.type_ann.as_ref(), array_size) {
-                    (Some(ann), _) => Some(ann.clone()),
-                    (None, Some(n)) => Some(TypeAnnotation::array(BaseType::Field, n)),
-                    (None, None) => None,
-                };
+                let ta = param.type_ann.as_ref();
+                let array_size = ta
+                    .and_then(|t| t.array_size)
+                    .or_else(|| find_array_size(self, &param.name));
                 stmts.push(Stmt::PublicDecl {
                     names: vec![InputDecl {
                         name: param.name.clone(),
-                        type_ann,
+                        array_size,
+                        type_ann: ta.cloned(),
                     }],
                     span: body.span.clone(),
                 });
@@ -606,7 +608,8 @@ impl ControlFlowCompiler for Compiler {
                 } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
                 {
                     self.emit_abx(OpCode::GetUpvalue, val_reg, upval_idx as u16)?;
-                } else if let Some(&global_idx) = self.global_symbols.get(name) {
+                } else if let Some(global_entry) = self.global_symbols.get(name) {
+                    let global_idx = global_entry.index;
                     if self.imported_names.contains_key(name) {
                         self.used_imported_names.insert(name.to_string());
                     }
@@ -647,27 +650,20 @@ impl ControlFlowCompiler for Compiler {
         Ok(map_reg)
     }
 
-    fn compile_keyword_call(
+    fn compile_circuit_call(
         &mut self,
-        callee: &Expr,
-        args: &[CallArg],
+        name: &str,
+        args: &[(String, Expr)],
         span: &Span,
     ) -> Result<u8, CompilerError> {
-        // Extract circuit name from callee
-        let name = match callee {
-            Expr::Ident { name, .. } => name.as_str(),
-            _ => {
-                return Err(CompilerError::CompileError(
-                    "keyword argument calls require a simple name".into(),
-                    span_box(span),
-                ));
-            }
-        };
-
         // 1. Resolve the circuit name to its global index (contains ProveIR bytes)
-        let global_idx = *self.global_symbols.get(name).ok_or_else(|| {
-            CompilerError::CompileError(format!("circuit `{name}` not found"), span_box(span))
-        })?;
+        let global_idx = self
+            .global_symbols
+            .get(name)
+            .ok_or_else(|| {
+                CompilerError::CompileError(format!("circuit `{name}` not found"), span_box(span))
+            })?
+            .index;
 
         // 2. Load the ProveIR bytes from the global into a register
         let ir_reg = self.alloc_reg()?;
@@ -727,18 +723,12 @@ impl ControlFlowCompiler for Compiler {
         if count > 0 {
             let start_reg = self.alloc_contiguous((count * 2) as u8)?;
 
-            for (i, arg) in args.iter().enumerate() {
+            for (i, (key, val_expr)) in args.iter().enumerate() {
                 let key_reg = start_reg + (i as u8 * 2);
                 let val_reg = key_reg + 1;
 
-                // Key: string constant from keyword name
-                let key_name = arg.name.as_ref().ok_or_else(|| {
-                    CompilerError::CompileError(
-                        "positional arguments not allowed in circuit calls".into(),
-                        span_box(span),
-                    )
-                })?;
-                let key_handle = self.intern_string(key_name);
+                // Key: string constant
+                let key_handle = self.intern_string(key);
                 let key_val = Value::string(key_handle);
                 let key_idx = self.add_constant(key_val)?;
                 if key_idx > 0xFFFF {
@@ -747,7 +737,7 @@ impl ControlFlowCompiler for Compiler {
                 self.emit_abx(OpCode::LoadConst, key_reg, key_idx as u16)?;
 
                 // Value: compile expression
-                let compiled_reg = self.compile_expr(&arg.value)?;
+                let compiled_reg = self.compile_expr(val_expr)?;
                 self.emit_abc(OpCode::Move, val_reg, compiled_reg, 0)?;
                 self.free_reg(compiled_reg)?;
             }

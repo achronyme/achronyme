@@ -145,8 +145,7 @@ impl Parser {
 
     fn parse_input_decl(&mut self) -> Result<InputDecl, ParseError> {
         let name = self.expect_ident()?;
-        // Parse inline array size: `name[N]` (old syntax, before type annotation)
-        let inline_array_size = if self.eat(&TokenKind::LBracket) {
+        let array_size = if self.eat(&TokenKind::LBracket) {
             let tok = self.expect(&TokenKind::Integer)?;
             let size: usize = tok.lexeme.parse().map_err(|_| {
                 ParseError::new(
@@ -155,32 +154,18 @@ impl Parser {
                     tok.span.col_start,
                 )
             })?;
+            // Need to clone span info before expecting
             self.expect(&TokenKind::RBracket)?;
             Some(size)
         } else {
             None
         };
         let type_ann = self.try_parse_type_annotation()?;
-
-        // Merge inline array_size into type annotation
-        let type_ann = match (type_ann, inline_array_size) {
-            (Some(mut ann), Some(size)) => {
-                // If type_ann already has an array_size, inline takes precedence
-                // (this is the `name[3]: Field` case → Field[3])
-                if ann.array_size.is_none() {
-                    ann.array_size = Some(size);
-                }
-                Some(ann)
-            }
-            (None, Some(size)) => {
-                // No explicit type annotation but has inline array size
-                // Default to Field[N]
-                Some(TypeAnnotation::array(BaseType::Field, size))
-            }
-            (ann, None) => ann,
-        };
-
-        Ok(InputDecl { name, type_ann })
+        Ok(InputDecl {
+            name,
+            array_size,
+            type_ann,
+        })
     }
 
     fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -224,11 +209,10 @@ impl Parser {
         })
     }
 
-    /// Parse `circuit name(x: Public, y: Witness Field[3]) { body }`
-    ///
-    /// Also accepts old syntax `circuit name(public x, witness y[3]) { body }`
-    /// for backward compatibility (emits W008 deprecation warning).
+    /// Parse `circuit name(root: Public, leaf: Witness, path: Witness Field[3]) { body }`
     fn parse_circuit_decl(&mut self) -> Result<Stmt, ParseError> {
+        use crate::ast::TypedParam;
+
         let sp = self.span();
         self.advance(); // eat `circuit`
         let name = self.expect_ident()?;
@@ -236,73 +220,33 @@ impl Parser {
 
         let mut params = Vec::new();
         while !self.at(&TokenKind::RParen) {
-            // Detect old syntax: `public name` or `witness name`
-            // vs new syntax: `name: Type`
             let tok = self.peek().clone();
-            if (tok.kind == TokenKind::Public || tok.kind == TokenKind::Witness)
-                && matches!(self.lookahead(1), TokenKind::Ident)
-            {
-                // Old syntax: `public name` or `witness name[N]`
-                let visibility = if tok.kind == TokenKind::Public {
-                    Visibility::Public
-                } else {
-                    Visibility::Witness
-                };
-                self.advance(); // eat visibility keyword
-                let param_name = self.expect_ident()?;
-
-                let array_size = if self.at(&TokenKind::LBracket) {
-                    self.advance();
-                    let size_tok = self.peek().clone();
-                    let size = size_tok.lexeme.parse::<usize>().map_err(|_| {
-                        ParseError::new(
-                            format!("expected array size, found `{}`", tok_display(&size_tok)),
-                            size_tok.span.line_start,
-                            size_tok.span.col_start,
-                        )
-                    })?;
-                    self.advance();
-                    self.expect(&TokenKind::RBracket)?;
-                    Some(size)
-                } else {
-                    None
-                };
-
-                // Emit W008 deprecation warning
-                let new_type = if let Some(n) = array_size {
-                    format!("{visibility} Field[{n}]")
-                } else {
-                    format!("{visibility}")
-                };
-                self.errors.push(
-                    crate::Diagnostic::warning(
-                        format!(
-                            "deprecated circuit param syntax: use `{param_name}: {new_type}` instead of `{} {param_name}{}`",
-                            if visibility == Visibility::Public { "public" } else { "witness" },
-                            if let Some(n) = array_size { format!("[{n}]") } else { String::new() },
-                        ),
-                        crate::diagnostic::SpanRange::from(&tok.span),
-                    )
-                    .with_code("W008"),
-                );
-
-                params.push(TypedParam {
-                    name: param_name,
-                    type_ann: Some(TypeAnnotation {
-                        visibility: Some(visibility),
-                        base: BaseType::Field, // old syntax had no type — default to Field
-                        array_size,
-                    }),
-                });
-            } else {
-                // New syntax: `name: Type`
-                let param_name = self.expect_ident()?;
-                let type_ann = self.try_parse_type_annotation()?;
-                params.push(TypedParam {
-                    name: param_name,
-                    type_ann,
-                });
+            if tok.kind != TokenKind::Ident {
+                return Err(ParseError::new(
+                    format!("expected parameter name, found `{}`", tok_display(&tok)),
+                    tok.span.line_start,
+                    tok.span.col_start,
+                ));
             }
+
+            let param_name = self.expect_ident()?;
+            self.expect(&TokenKind::Colon)?;
+            let type_ann = self.parse_type()?;
+
+            if type_ann.visibility.is_none() {
+                return Err(ParseError::new(
+                    format!(
+                        "circuit parameter `{param_name}` requires `Public` or `Witness` annotation"
+                    ),
+                    tok.span.line_start,
+                    tok.span.col_start,
+                ));
+            }
+
+            params.push(TypedParam {
+                name: param_name,
+                type_ann: Some(type_ann),
+            });
 
             if self.at(&TokenKind::Comma) {
                 self.advance();
@@ -642,13 +586,15 @@ impl Parser {
     }
 
     /// Parse a type: `Field`, `Bool`, `Field[N]`, `Bool[N]`,
-    /// or visibility-prefixed: `Public`, `Witness`, `Public Field[3]`, etc.
-    fn parse_type(&mut self) -> Result<TypeAnnotation, ParseError> {
+    /// or with visibility: `Public`, `Witness`, `Public Field[N]`, `Witness Bool`, etc.
+    pub(super) fn parse_type(&mut self) -> Result<TypeAnnotation, ParseError> {
+        use crate::ast::{BaseType, Visibility};
+
         let tok = self.peek().clone();
         if tok.kind != TokenKind::Ident {
             return Err(ParseError::new(
                 format!(
-                    "expected type (`Field` or `Bool`), found `{}`",
+                    "expected type (`Field`, `Bool`, `Public`, or `Witness`), found `{}`",
                     tok_display(&tok)
                 ),
                 tok.span.line_start,
@@ -656,8 +602,10 @@ impl Parser {
             ));
         }
 
-        // Check for visibility prefix
-        let visibility = match tok.lexeme.as_str() {
+        let ident = tok.lexeme.as_str();
+
+        // Check for visibility prefix (Public/Witness as contextual keywords)
+        let visibility = match ident {
             "Public" => {
                 self.advance();
                 Some(Visibility::Public)
@@ -669,72 +617,63 @@ impl Parser {
             _ => None,
         };
 
-        // After visibility, parse optional base type (defaults to Field)
-        let (base, base_consumed) = if visibility.is_some() {
-            // Peek to see if next token is a base type
+        // Parse base type (Field/Bool). If visibility was given, base type is optional
+        // (Public alone = Public Field).
+        let base = if visibility.is_some() {
+            // After visibility, optionally parse Field/Bool
             let next = self.peek().clone();
             if next.kind == TokenKind::Ident && (next.lexeme == "Field" || next.lexeme == "Bool") {
-                let b = if next.lexeme == "Bool" {
+                self.advance();
+                if next.lexeme == "Bool" {
                     BaseType::Bool
                 } else {
                     BaseType::Field
-                };
-                self.advance();
-                (b, true)
+                }
             } else {
-                // Visibility alone → default to Field
-                (BaseType::Field, false)
+                // Visibility alone defaults to Field
+                BaseType::Field
             }
         } else {
-            // No visibility — must have a base type
-            let base_str = tok.lexeme.as_str();
-            if base_str != "Field" && base_str != "Bool" {
-                let hint = match base_str.to_lowercase().as_str() {
+            // No visibility — must have Field or Bool
+            if ident != "Field" && ident != "Bool" {
+                let hint = match ident.to_lowercase().as_str() {
                     "field" => " (did you mean `Field`?)",
                     "bool" | "boolean" => " (did you mean `Bool`?)",
                     "int" | "integer" | "number" | "u32" | "u64" | "i32" | "i64" => {
-                        " (valid types are `Field`, `Bool`, `Field[N]`, `Bool[N]`)"
+                        " (valid types are `Field`, `Bool`, `Public`, `Witness`)"
                     }
-                    _ => " (valid types are `Field`, `Bool`, `Field[N]`, `Bool[N]`)",
+                    _ => " (valid types are `Field`, `Bool`, `Public`, `Witness`)",
                 };
                 return Err(ParseError::new(
-                    format!("expected type, found `{base_str}`{hint}"),
+                    format!("expected type, found `{ident}`{hint}"),
                     tok.span.line_start,
                     tok.span.col_start,
                 ));
             }
-            let b = if base_str == "Bool" {
+            self.advance();
+            if ident == "Bool" {
                 BaseType::Bool
             } else {
                 BaseType::Field
-            };
-            self.advance();
-            (b, true)
+            }
         };
 
         // Check for array syntax: `[N]`
-        // Only parse `[N]` if the base type was explicitly consumed, or if
-        // visibility was consumed (so `Public[3]` = `Public Field[3]`)
-        let array_size =
-            if (base_consumed || visibility.is_some()) && self.eat(&TokenKind::LBracket) {
-                let size_tok = self.expect(&TokenKind::Integer)?;
-                let size: usize = size_tok.lexeme.parse().map_err(|_| {
-                    ParseError::new(
-                        format!("invalid array size: {}", size_tok.lexeme),
-                        size_tok.span.line_start,
-                        size_tok.span.col_start,
-                    )
-                })?;
-                self.expect(&TokenKind::RBracket)?;
-                Some(size)
-            } else {
-                None
-            };
+        let array_size = if self.eat(&TokenKind::LBracket) {
+            let size_tok = self.expect(&TokenKind::Integer)?;
+            let size: usize = size_tok.lexeme.parse().map_err(|_| {
+                ParseError::new(
+                    format!("invalid array size: {}", size_tok.lexeme),
+                    size_tok.span.line_start,
+                    size_tok.span.col_start,
+                )
+            })?;
+            self.expect(&TokenKind::RBracket)?;
+            Some(size)
+        } else {
+            None
+        };
 
-        Ok(TypeAnnotation {
-            visibility,
-            base,
-            array_size,
-        })
+        Ok(TypeAnnotation::new(visibility, base, array_size))
     }
 }

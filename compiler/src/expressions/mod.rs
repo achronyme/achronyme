@@ -78,11 +78,25 @@ impl ExpressionCompiler for Compiler {
             Expr::Call {
                 callee, args, span, ..
             } => {
-                // If any arg has a keyword name, this is a keyword call (circuit invocation)
+                // If any arg has a keyword name, route to circuit call handler
                 if args.iter().any(|a| a.name.is_some()) {
-                    self.compile_keyword_call(callee, args, span)
+                    let name = match callee.as_ref() {
+                        Expr::Ident { name, .. } => name,
+                        _ => {
+                            return Err(CompilerError::CompileError(
+                                "keyword arguments require a simple function name".into(),
+                                self.cur_span(),
+                            ));
+                        }
+                    };
+                    let kw_args: Vec<(String, Expr)> = args
+                        .iter()
+                        .map(|a| (a.name.clone().unwrap_or_default(), a.value.clone()))
+                        .collect();
+                    self.compile_circuit_call(name, &kw_args, span)
                 } else {
-                    self.compile_call(callee, args)
+                    let positional: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
+                    self.compile_call(callee, &positional)
                 }
             }
             Expr::Index { object, index, .. } => self.compile_index_expr(object, index),
@@ -125,6 +139,8 @@ impl ExpressionCompiler for Compiler {
             Expr::StaticAccess {
                 type_name, member, ..
             } => self.compile_static_access(type_name, member),
+
+            // CircuitCall removed — handled by Call with keyword args
 
             // === Error recovery placeholder ===
             Expr::Error { .. } => {
@@ -239,18 +255,18 @@ impl Compiler {
             Ok(reg)
         } else {
             // 3. Fall back to global lookup (try plain name first, then prefixed)
-            let idx = if let Some(&idx) = self.global_symbols.get(name) {
+            let idx = if let Some(entry) = self.global_symbols.get(name) {
                 // Mark selectively imported name as used (for W005)
                 if self.imported_names.contains_key(name) {
                     self.used_imported_names.insert(name.to_string());
                 }
-                idx
+                entry.index
             } else if let Some(ref prefix) = self.module_prefix {
                 let mangled = format!("{prefix}::{name}");
-                *self
-                    .global_symbols
+                self.global_symbols
                     .get(&mangled)
                     .ok_or_else(|| self.undefined_var_error(name))?
+                    .index
             } else {
                 return Err(self.undefined_var_error(name));
             };
@@ -338,7 +354,7 @@ impl Compiler {
         Ok(target_reg)
     }
 
-    fn compile_call(&mut self, callee: &Expr, args: &[CallArg]) -> Result<u8, CompilerError> {
+    fn compile_call(&mut self, callee: &Expr, args: &[&Expr]) -> Result<u8, CompilerError> {
         // Detect method call pattern: expr.method(args) where method is known
         if let Expr::DotAccess { object, field, .. } = callee {
             // Check: field is a known method AND object is NOT an imported module alias
@@ -357,7 +373,7 @@ impl Compiler {
 
         let arg_count = args.len();
         for arg in args {
-            let _arg_reg = self.compile_expr(&arg.value)?;
+            let _arg_reg = self.compile_expr(arg)?;
         }
 
         if arg_count > 255 {
@@ -381,7 +397,7 @@ impl Compiler {
         &mut self,
         object: &Expr,
         method: &str,
-        args: &[CallArg],
+        args: &[&Expr],
     ) -> Result<u8, CompilerError> {
         // 1. Allocate register for method name (will become result register)
         let name_reg = self.alloc_reg()?;
@@ -393,7 +409,7 @@ impl Compiler {
         // 3. Compile explicit arguments
         let arg_count = args.len();
         for arg in args {
-            let _arg_reg = self.compile_expr(&arg.value)?;
+            let _arg_reg = self.compile_expr(arg)?;
         }
 
         if arg_count > 255 {
@@ -504,7 +520,7 @@ impl Compiler {
                 let idx = self
                     .global_symbols
                     .get("from_bits")
-                    .copied()
+                    .map(|e| e.index)
                     .ok_or_else(|| {
                         CompilerError::CompileError(
                             "BigInt::from_bits is not available (from_bits native not found)"

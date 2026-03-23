@@ -125,8 +125,8 @@ pub fn run_file(
 
         // Transfer Debug Symbols (Source Mode)
         let mut debug_map = std::collections::HashMap::new();
-        for (name, idx) in &compiler.global_symbols {
-            debug_map.insert(*idx, name.clone());
+        for (name, entry) in &compiler.global_symbols {
+            debug_map.insert(entry.index, name.clone());
         }
         vm.debug_symbols = Some(debug_map);
 
