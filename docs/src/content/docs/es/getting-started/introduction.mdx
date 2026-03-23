@@ -24,12 +24,9 @@ print(c())  // 2
 ### Circuito ZK
 
 ```ach
-public root
-witness leaf
-witness path[3]
-witness indices[3]
-
-merkle_verify(root, leaf, path, indices)
+circuit merkle(root: Public, leaf: Witness, path: Witness Field[3], indices: Witness Field[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 ```bash
@@ -43,7 +40,7 @@ merkle_verify(root, leaf, path, indices)
 let secret = 0p42
 let hash = 0p17159...  // poseidon(42, 0)
 
-let p = prove(public: [hash]) {
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 

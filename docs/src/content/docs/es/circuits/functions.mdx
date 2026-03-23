@@ -26,10 +26,10 @@ fn double(x: Field) -> Field {
 Llámalas como de costumbre:
 
 ```ach
-witness vals[3]
-
-fn double(x) { x + x }
-assert_eq(double(vals[0]), vals[0] + vals[0])
+circuit example(vals: Witness Field[3]) {
+    fn double(x) { x + x }
+    assert_eq(double(vals[0]), vals[0] + vals[0])
+}
 ```
 
 ## Inserción en Línea
@@ -70,11 +70,10 @@ Cuando una función tiene parámetros tipados o un tipo de retorno, el compilado
 ```ach
 fn check(b: Bool) { assert(b) }    // cuerpo: 2 restricciones (assert)
 
-witness w                           // no tipado
-check(w)                            // total: 2 + 1 = 3 restricciones (1 por verificación de param)
-
-witness b: Bool                     // tipado
-check(b)                            // total: 2 restricciones (sin verificación necesaria)
+circuit example(w: Witness, b: Witness Bool) {
+    check(w)                        // total: 2 + 1 = 3 restricciones (1 por verificación de param)
+    check(b)                        // total: 2 restricciones (sin verificación necesaria)
+}
 ```
 
 ## Restricciones
@@ -95,17 +94,17 @@ Las funciones en circuitos son puramente un mecanismo de tiempo de compilación.
 Un circuito completo usando una función auxiliar:
 
 ```ach
-public expected_sum
-witness vals[3]
-
-let acc = vals[0]
-let acc = acc + vals[1]
-let acc = acc + vals[2]
-assert_eq(acc, expected_sum)
-
-let n = len(vals)
-assert_eq(n, 3)
-
 fn double(x) { x + x }
-assert_eq(double(vals[0]), vals[0] + vals[0])
+
+circuit sum_check(expected_sum: Public, vals: Witness Field[3]) {
+    let acc = vals[0]
+    let acc = acc + vals[1]
+    let acc = acc + vals[2]
+    assert_eq(acc, expected_sum)
+
+    let n = len(vals)
+    assert_eq(n, 3)
+
+    assert_eq(double(vals[0]), vals[0] + vals[0])
+}
 ```

@@ -3,22 +3,24 @@ title: "Declaraciones"
 description: "Declaraciones públicas y de testigo en circuitos."
 ---
 
-Cada circuito necesita declaraciones de entrada explícitas. Estas le dicen al compilador qué variables son **públicas** (visibles para el verificador) y cuáles son **testigo** (conocidas solo por el probador).
+Cada circuito necesita declaraciones de entrada explícitas. Estas le dicen al compilador qué variables son **públicas** (visibles para el verificador) y cuáles son **testigo** (conocidas solo por el probador). Las entradas se declaran como parámetros del bloque `circuit`.
 
 ## Declaraciones Escalares
 
-Declara una variable a la vez:
+Declara una variable a la vez en los parámetros del circuito:
 
 ```ach
-public output
-witness secret
+circuit example(output: Public, secret: Witness) {
+    assert_eq(secret, output)
+}
 ```
 
-O múltiples en una línea, separadas por comas:
+O múltiples parámetros:
 
 ```ach
-public x, y
-witness a, b, c
+circuit example(x: Public, y: Public, a: Witness, b: Witness, c: Witness) {
+    assert_eq(a + b + c, x + y)
+}
 ```
 
 Las entradas públicas se convierten en parte de la declaración pública de la prueba — cualquiera que verifique la prueba puede ver sus valores. Las entradas testigo permanecen privadas para el probador.
@@ -28,15 +30,17 @@ Las entradas públicas se convierten en parte de la declaración pública de la 
 Declara un array de entradas de tamaño fijo con sintaxis de corchetes:
 
 ```ach
-witness path[3]
-witness indices[3]
+circuit merkle(root: Public, leaf: Witness, path: Witness Field[3], indices: Witness Field[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 Esto crea tres variables indexadas (`path_0`, `path_1`, `path_2`) a las que accedes con indexación estándar. Las declaraciones de array funcionan tanto para entradas públicas como de testigo:
 
 ```ach
-public commitments[4]
-witness secrets[4]
+circuit example(commitments: Public Field[4], secrets: Witness Field[4]) {
+    // ...
+}
 ```
 
 ## Uso de Entradas Declaradas
@@ -44,38 +48,35 @@ witness secrets[4]
 Una vez declaradas, las entradas son variables ordinarias. Úsalas en expresiones, pásalas a funciones integradas e indexa arrays:
 
 ```ach
-public output
-witness a
-witness b
+circuit multiply(output: Public, a: Witness, b: Witness) {
+    let product = a * b
+    assert_eq(product, output)
 
-let product = a * b
-assert_eq(product, output)
-
-let sum = a + b
-assert_eq(sum, a + b)
+    let sum = a + b
+    assert_eq(sum, a + b)
+}
 ```
 
 Los elementos de array se acceden por índice:
 
 ```ach
-public expected_sum
-witness vals[3]
-
-let acc = vals[0]
-let acc = acc + vals[1]
-let acc = acc + vals[2]
-assert_eq(acc, expected_sum)
+circuit sum_check(expected_sum: Public, vals: Witness Field[3]) {
+    let acc = vals[0]
+    let acc = acc + vals[1]
+    let acc = acc + vals[2]
+    assert_eq(acc, expected_sum)
+}
 ```
 
 ## Alternativa por CLI
 
-En lugar de declaraciones en el código fuente, puedes declarar entradas con banderas del CLI:
+Puedes pasar entradas con banderas del CLI:
 
 ```bash
-ach circuit program.ach --public output --witness a,b --inputs "a=3,b=5,output=15"
+ach circuit program.ach --inputs "a=3,b=5,output=15"
 ```
 
-Las banderas `--public` y `--witness` aceptan nombres de variables separados por comas. Si el archivo fuente ya contiene declaraciones `public`/`witness`, omite las banderas — el compilador las detecta automáticamente.
+El compilador detecta automáticamente qué parámetros son públicos y cuáles son testigo a partir de la definición del circuito.
 
 Las entradas de array se pasan con nombres indexados:
 
@@ -85,13 +86,12 @@ ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=
 
 ## Anotaciones de Tipo
 
-Las declaraciones pueden incluir anotaciones de tipo opcionales. Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para detalles.
+Los parámetros del circuito combinan visibilidad y tipo. Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para detalles.
 
 ```ach
-public root: Field
-witness flag: Bool
-witness path[3]: Field
-witness indices[3]: Bool
+circuit example(root: Public Field, flag: Witness Bool, path: Witness Field[3], indices: Witness Bool[3]) {
+    merkle_verify(root, flag, path, indices)
+}
 ```
 
 Anotar un testigo como `Bool` ahorra 1 restricción al omitir la verificación booleana.
@@ -100,6 +100,6 @@ Anotar un testigo como `Bool` ahorra 1 restricción al omitir la verificación b
 
 | Error | Causa |
 |-------|-------|
-| `DuplicateInput` | Mismo nombre declarado como `public` y `witness`, o declarado dos veces |
-| `UndeclaredVariable` | Usar una variable que nunca fue declarada como `public` o `witness` |
+| `DuplicateInput` | Mismo nombre declarado como `Public` y `Witness`, o declarado dos veces |
+| `UndeclaredVariable` | Usar una variable que nunca fue declarada como `Public` o `Witness` |
 | `AnnotationMismatch` | Tipo declarado no coincide con el tipo inferido |

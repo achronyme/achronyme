@@ -16,10 +16,9 @@ En Achronyme, escribes circuitos usando la misma sintaxis que los programas regu
 ### 1. Archivo de circuito independiente
 
 ```ach
-public output
-witness secret
-
-assert_eq(poseidon(secret, 0), output)
+circuit hash_check(output: Public, secret: Witness) {
+    assert_eq(poseidon(secret, 0), output)
+}
 ```
 
 Compila con el CLI:
@@ -34,12 +33,12 @@ ach circuit hash.ach --inputs "output=17159...,secret=42"
 let secret = 0p42
 let hash = 0p17159...
 
-let p = prove(public: [hash]) {
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
 
-El bloque `prove` captura variables del ámbito, compila el cuerpo como un circuito vía ProveIR en tiempo de compilación, y genera una prueba en tiempo de ejecución. Las variables en `public: [...]` son entradas públicas; las demás variables del ámbito externo se infieren automáticamente como testigos privados.
+El bloque `prove` captura variables del ámbito, compila el cuerpo como un circuito vía ProveIR en tiempo de compilación, y genera una prueba en tiempo de ejecución. Las variables marcadas como `Public` son entradas públicas; las demás variables del ámbito externo se infieren automáticamente como testigos privados.
 
 ## Qué Funciona en Circuitos
 

@@ -12,7 +12,7 @@ let x: Field = 0p6
 let y: Field = 0p7
 let product: Field = 0p42
 
-let p = prove(public: [product]) {
+let p = prove(product: Public) {
     assert_eq(x * y, product)
 }
 
@@ -22,31 +22,31 @@ print(proof_json(p))
 El bloque prove:
 1. Compila `assert_eq(x * y, product)` como un circuito en tiempo de compilación
 2. Captura `x` e `y` del ámbito externo como entradas **testigo** (inferidas automáticamente)
-3. Marca `product` como entrada **pública** (declarada en `public: [...]`)
+3. Marca `product` como entrada **pública** (declarada como `Public`)
 4. Genera una prueba Groth16 en tiempo de ejecución
 5. Devuelve un `ProofObject`
 
 ## Auto-Inferencia de Testigos
 
-Con la sintaxis `prove(public: [...])`, solo declaras qué variables son públicas — todo lo demás se infiere automáticamente como testigo:
+Con la sintaxis `prove(...)`, solo declaras qué variables son públicas — todo lo demás se infiere automáticamente como testigo:
 
 ```ach
 let secret: Field = 0p42
 let hash: Field = 0p17159...
 
-let p = prove(public: [hash]) {
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 ```
 
-- `hash` está en `public: [...]` → **entrada pública** (visible para el verificador)
+- `hash` está declarado como `Public` → **entrada pública** (visible para el verificador)
 - `secret` se referencia en el cuerpo pero no está en la lista pública → **testigo** (privado, inferido automáticamente)
 
 El verificador aprende solo que *algún* valor hashea a `hash`, sin conocer `secret`.
 
 ## Declaraciones Explícitas (Sintaxis Clásica)
 
-La sintaxis explícita `witness`/`public` también está soportada:
+La sintaxis explícita `witness`/`public` dentro del bloque también está soportada:
 
 ```ach
 let secret: Field = 0p42
@@ -59,7 +59,7 @@ let p = prove {
 }
 ```
 
-Ambas sintaxis producen circuitos idénticos. La forma `prove(public: [...])` es más concisa; la forma explícita da control total. No se pueden mezclar ambas en el mismo bloque.
+Ambas sintaxis producen circuitos idénticos. La forma `prove(hash: Public)` es más concisa; la forma explícita da control total. No se pueden mezclar ambas en el mismo bloque.
 
 ## Auto-Conversión de Enteros
 
@@ -70,7 +70,7 @@ let a = 10
 let b = 20
 let sum = 30
 
-prove(public: [sum]) {
+prove(sum: Public) {
     assert_eq(a + b, sum)
 }
 ```
@@ -82,7 +82,7 @@ Fuera de los bloques prove, mezclar Int y Field genera un error `TypeMismatch`. 
 Un `ProofObject` contiene tres componentes JSON:
 
 ```ach
-let p = prove(public: [y]) {
+let p = prove(y: Public) {
     assert_eq(x, y)
 }
 
@@ -105,7 +105,7 @@ print(vkey)
 Usa `verify_proof()` para verificar una prueba dentro de la VM:
 
 ```ach
-let p = prove(public: [hash]) {
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 
@@ -123,7 +123,7 @@ let v1: Field = 0p20
 let v2: Field = 0p30
 let total: Field = 0p60
 
-prove(public: [total]) {
+prove(total: Public) {
     let vals: Field[3] = [v0, v1, v2]
     let acc: Field = vals[0] + vals[1] + vals[2]
     assert_eq(acc, total)
@@ -140,7 +140,7 @@ let a: Field = 0p1
 let b: Field = 0p2
 let h: Field = 0p7853200120776062878684798364095072458815029376092732009249414926327459813530
 
-prove(public: [h]) {
+prove(h: Public) {
     assert_eq(poseidon(a, b), h)
 }
 ```
@@ -152,7 +152,7 @@ Fuerza que un valor quepa dentro de cierto número de bits:
 ```ach
 let val: Field = 0p200
 
-prove(public: []) {
+prove {
     range_check(val, 8)   // 0 ≤ val < 256
 }
 ```
@@ -167,11 +167,11 @@ let b: Field = 0p4
 let sum: Field = 0p7
 let product: Field = 0p12
 
-prove(public: [sum]) {
+prove(sum: Public) {
     assert_eq(a + b, sum)
 }
 
-prove(public: [product]) {
+prove(product: Public) {
     assert_eq(a * b, product)
 }
 ```

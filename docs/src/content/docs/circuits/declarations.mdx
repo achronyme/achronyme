@@ -1,70 +1,63 @@
 ---
 title: "Declarations"
-description: "Public and witness declarations in circuits."
+description: "Public and witness declarations in circuit parameters."
 ---
 
-Every circuit needs explicit input declarations. These tell the compiler which variables are **public** (visible to the verifier) and which are **witness** (known only to the prover).
+Every circuit needs explicit input declarations. These tell the compiler which variables are **public** (visible to the verifier) and which are **witness** (known only to the prover). Inputs are declared as parameters on the `circuit` definition.
 
 ## Scalar Declarations
 
-Declare one variable at a time:
+Declare inputs as circuit parameters with their visibility (`Public` or `Witness`):
 
 ```ach
-public output
-witness secret
-```
-
-Or multiple on one line, separated by commas:
-
-```ach
-public x, y
-witness a, b, c
+circuit hash_check(output: Public, secret: Witness) {
+    assert_eq(poseidon(secret, 0), output)
+}
 ```
 
 Public inputs become part of the proof's public statement — anyone verifying the proof can see their values. Witness inputs remain private to the prover.
 
 ## Array Declarations
 
-Declare a fixed-size array of inputs with bracket syntax:
+Declare a fixed-size array of inputs with bracket syntax on the type:
 
 ```ach
-witness path[3]
-witness indices[3]
+circuit merkle(root: Public, leaf: Witness, path: Witness Field[3], indices: Witness Field[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 This creates three indexed variables (`path_0`, `path_1`, `path_2`) that you access with standard indexing. Array declarations work for both public and witness inputs:
 
 ```ach
-public commitments[4]
-witness secrets[4]
+circuit verify(commitments: Public Field[4], secrets: Witness Field[4]) {
+    // ...
+}
 ```
 
 ## Using Declared Inputs
 
-Once declared, inputs are ordinary variables. Use them in expressions, pass them to builtins, and index into arrays:
+Once declared, inputs are ordinary variables inside the circuit body. Use them in expressions, pass them to builtins, and index into arrays:
 
 ```ach
-public output
-witness a
-witness b
+circuit multiply(output: Public, a: Witness, b: Witness) {
+    let product = a * b
+    assert_eq(product, output)
 
-let product = a * b
-assert_eq(product, output)
-
-let sum = a + b
-assert_eq(sum, a + b)
+    let sum = a + b
+    assert_eq(sum, a + b)
+}
 ```
 
 Array elements are accessed by index:
 
 ```ach
-public expected_sum
-witness vals[3]
-
-let acc = vals[0]
-let acc = acc + vals[1]
-let acc = acc + vals[2]
-assert_eq(acc, expected_sum)
+circuit sum_check(expected_sum: Public, vals: Witness Field[3]) {
+    let acc = vals[0]
+    let acc = acc + vals[1]
+    let acc = acc + vals[2]
+    assert_eq(acc, expected_sum)
+}
 ```
 
 ## CLI Alternative
@@ -75,7 +68,7 @@ Instead of in-source declarations, you can declare inputs with CLI flags:
 ach circuit program.ach --public output --witness a,b --inputs "a=3,b=5,output=15"
 ```
 
-The `--public` and `--witness` flags accept comma-separated variable names. If the source file already contains `public`/`witness` declarations, omit the flags — the compiler picks them up automatically.
+The `--public` and `--witness` flags accept comma-separated variable names. If the source file already contains circuit declarations, omit the flags — the compiler picks them up automatically.
 
 Array inputs are passed with indexed names:
 
@@ -85,13 +78,12 @@ ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=
 
 ## Type Annotations
 
-Declarations can include optional type annotations. See [Type Annotations](/circuits/type-annotations/) for details.
+Declarations can include optional type annotations as part of the visibility-type syntax. See [Type Annotations](/circuits/type-annotations/) for details.
 
 ```ach
-public root: Field
-witness flag: Bool
-witness path[3]: Field
-witness indices[3]: Bool
+circuit merkle_typed(root: Public Field, flag: Witness Bool, path: Witness Field[3], indices: Witness Bool[3]) {
+    merkle_verify(root, flag, path, indices)
+}
 ```
 
 Annotating a witness as `Bool` saves 1 constraint by skipping boolean enforcement.
@@ -100,6 +92,6 @@ Annotating a witness as `Bool` saves 1 constraint by skipping boolean enforcemen
 
 | Error | Cause |
 |-------|-------|
-| `DuplicateInput` | Same name declared as both `public` and `witness`, or declared twice |
-| `UndeclaredVariable` | Using a variable that was never declared as `public` or `witness` |
+| `DuplicateInput` | Same name declared as both `Public` and `Witness`, or declared twice |
+| `UndeclaredVariable` | Using a variable that was never declared as `Public` or `Witness` |
 | `AnnotationMismatch` | Declared type doesn't match the inferred type |

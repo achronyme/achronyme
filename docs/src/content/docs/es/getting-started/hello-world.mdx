@@ -41,11 +41,9 @@ for i in 0..10 {
 Crea un archivo `multiply.ach`:
 
 ```ach
-public product
-witness a
-witness b
-
-assert_eq(a * b, product)
+circuit multiply(product: Public, a: Witness, b: Witness) {
+    assert_eq(a * b, product)
+}
 ```
 
 Este circuito demuestra que el probador conoce dos números secretos `a` y `b` cuyo producto es igual al valor público `product`.
@@ -75,7 +73,7 @@ let a = 0p6
 let b = 0p7
 let product = 0p42
 
-let p = prove(public: [product]) {
+let p = prove(product: Public) {
     assert_eq(a * b, product)
 }
 ```
