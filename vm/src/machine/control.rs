@@ -127,7 +127,7 @@ impl ControlFlowOps for super::vm::VM {
                 }
             }
 
-            _ => unreachable!(),
+            _ => return Err(RuntimeError::InvalidOpcode(op as u8)),
         }
 
         Ok(())
