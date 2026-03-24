@@ -11,4 +11,4 @@ pub use error::ParseError;
 pub use lexer::unescape;
 /// Re-export the hand-written parser as the primary API.
 pub use parser::{parse_block, parse_program};
-pub use render::{ColorMode, DiagnosticRenderer};
+pub use render::{atty_stderr, ColorMode, DiagnosticRenderer};

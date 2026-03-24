@@ -30,7 +30,7 @@ impl ColorMode {
 }
 
 /// Check if stderr is a TTY (without external crate dependency).
-fn atty_stderr() -> bool {
+pub fn atty_stderr() -> bool {
     #[cfg(unix)]
     {
         extern "C" {

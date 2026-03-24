@@ -10,20 +10,7 @@ mod ansi {
     pub const CYAN: &str = "\x1b[36m";
 }
 
-/// Check if stderr is a TTY (without external crate dependency).
-fn atty_stderr() -> bool {
-    #[cfg(unix)]
-    {
-        extern "C" {
-            fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int;
-        }
-        unsafe { isatty(2) != 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
+use achronyme_parser::atty_stderr;
 
 /// Controls styled output for CLI pipeline messages.
 ///
