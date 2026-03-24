@@ -29,7 +29,10 @@ pub mod conv_impl {
         let s = vm
             .heap
             .get_string(handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?;
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "parse_int",
+            })?;
         let n: i64 = s
             .trim()
             .parse()

@@ -15,7 +15,10 @@ pub mod io_impl {
         let mut input = String::new();
         std::io::stdin()
             .read_line(&mut input)
-            .map_err(|e| RuntimeError::SystemError(format!("read_line failed: {e}")))?;
+            .map_err(|e| RuntimeError::IoError {
+                operation: "read_line".into(),
+                detail: e.to_string(),
+            })?;
         let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
         let handle = vm.heap.alloc_string(trimmed.to_string())?;
         Ok(Value::string(handle))
@@ -40,13 +43,16 @@ pub mod io_impl {
         let path = vm
             .heap
             .get_string(handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "read_file",
+            })?
             .clone();
 
         const MAX_READ_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
         if let Ok(meta) = std::fs::metadata(&path) {
             if meta.len() > MAX_READ_SIZE {
-                return Err(RuntimeError::SystemError(format!(
+                return Err(RuntimeError::ResourceLimitExceeded(format!(
                     "read_file('{}') file too large ({} bytes, max {})",
                     path,
                     meta.len(),
@@ -54,8 +60,10 @@ pub mod io_impl {
                 )));
             }
         }
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| RuntimeError::SystemError(format!("read_file('{}') failed: {e}", path)))?;
+        let contents = std::fs::read_to_string(&path).map_err(|e| RuntimeError::IoError {
+            operation: format!("read_file('{path}')"),
+            detail: e.to_string(),
+        })?;
         let h = vm.heap.alloc_string(contents)?;
         Ok(Value::string(h))
     }
@@ -84,7 +92,10 @@ pub mod io_impl {
         let path = vm
             .heap
             .get_string(path_handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "write_file",
+            })?
             .clone();
 
         let content_handle = args[1]
@@ -93,11 +104,15 @@ pub mod io_impl {
         let contents = vm
             .heap
             .get_string(content_handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "write_file",
+            })?
             .clone();
 
-        std::fs::write(&path, &contents).map_err(|e| {
-            RuntimeError::SystemError(format!("write_file('{}') failed: {e}", path))
+        std::fs::write(&path, &contents).map_err(|e| RuntimeError::IoError {
+            operation: format!("write_file('{path}')"),
+            detail: e.to_string(),
         })?;
         Ok(Value::nil())
     }

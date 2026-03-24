@@ -38,13 +38,19 @@ pub mod string_ext_impl {
         let sep = vm
             .heap
             .get_string(sep_handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "join",
+            })?
             .clone();
 
         let list = vm
             .heap
             .get_list(list_handle)
-            .ok_or(RuntimeError::SystemError("List missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "List",
+                context: "join",
+            })?
             .clone();
 
         let mut result = String::new();
@@ -60,10 +66,10 @@ pub mod string_ext_impl {
             let h = val
                 .as_handle()
                 .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
-            let s = vm
-                .heap
-                .get_string(h)
-                .ok_or(RuntimeError::SystemError("String missing".into()))?;
+            let s = vm.heap.get_string(h).ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "join",
+            })?;
             result.push_str(s);
         }
         let handle = vm.heap.alloc_string(result)?;
