@@ -1,4 +1,22 @@
 use std::collections::HashSet;
+use std::fmt;
+
+/// Error returned when an arena allocation fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArenaError {
+    /// The arena has reached `u32::MAX` live entries.
+    CapacityExceeded,
+}
+
+impl fmt::Display for ArenaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArenaError::CapacityExceeded => write!(f, "arena capacity exceeded u32::MAX"),
+        }
+    }
+}
+
+impl std::error::Error for ArenaError {}
 
 /// Generic arena allocator with free-list recycling.
 ///
@@ -114,16 +132,15 @@ impl<T> Arena<T> {
     }
 
     /// Insert a value, reusing a freed slot if available, or appending.
-    /// Panics if the arena grows beyond `u32::MAX` entries.
-    pub fn alloc(&mut self, val: T) -> u32 {
+    /// Returns `Err(ArenaError::CapacityExceeded)` if the arena grows beyond `u32::MAX` entries.
+    pub fn alloc(&mut self, val: T) -> Result<u32, ArenaError> {
         if let Some(idx) = self.reclaim_free() {
             self.data[idx as usize] = val;
-            idx
+            Ok(idx)
         } else {
-            let index = u32::try_from(self.data.len())
-                .unwrap_or_else(|_| panic!("arena capacity exceeded u32::MAX"));
+            let index = u32::try_from(self.data.len()).map_err(|_| ArenaError::CapacityExceeded)?;
             self.data.push(val);
-            index
+            Ok(index)
         }
     }
 }
@@ -135,7 +152,7 @@ mod bitmap_tests {
     #[test]
     fn set_mark_returns_true_first_time() {
         let mut arena: Arena<u32> = Arena::new();
-        arena.alloc(42);
+        arena.alloc(42).unwrap();
         assert!(arena.set_mark(0));
         assert!(!arena.set_mark(0)); // already marked
     }
@@ -143,7 +160,7 @@ mod bitmap_tests {
     #[test]
     fn is_marked_after_set() {
         let mut arena: Arena<u32> = Arena::new();
-        arena.alloc(1);
+        arena.alloc(1).unwrap();
         assert!(!arena.is_marked(0));
         arena.set_mark(0);
         assert!(arena.is_marked(0));
@@ -152,8 +169,8 @@ mod bitmap_tests {
     #[test]
     fn clear_marks_resets_all() {
         let mut arena: Arena<u32> = Arena::new();
-        arena.alloc(1);
-        arena.alloc(2);
+        arena.alloc(1).unwrap();
+        arena.alloc(2).unwrap();
         arena.set_mark(0);
         arena.set_mark(1);
         arena.clear_marks();
@@ -165,7 +182,7 @@ mod bitmap_tests {
     fn mark_high_index_grows_bitmap() {
         let mut arena: Arena<u32> = Arena::new();
         for i in 0..200 {
-            arena.alloc(i);
+            arena.alloc(i).unwrap();
         }
         assert!(arena.set_mark(199));
         assert!(arena.is_marked(199));
@@ -182,7 +199,7 @@ mod bitmap_tests {
     fn clear_marks_preserves_capacity() {
         let mut arena: Arena<u32> = Arena::new();
         for i in 0..100 {
-            arena.alloc(i);
+            arena.alloc(i).unwrap();
         }
         arena.set_mark(99);
         let cap_before = arena.mark_bits.capacity();

@@ -9,6 +9,7 @@ pub mod value_conv;
 #[cfg(test)]
 mod value_tests;
 
+pub use arena::ArenaError;
 pub use bigint::{BigInt, BigIntError, BigIntWidth};
 pub use field::FieldElement;
 pub use heap::{
