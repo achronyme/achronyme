@@ -130,7 +130,7 @@ fn method_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 
     let elements = snapshot_list(vm, list_handle, "map")?;
 
-    let result_handle = vm.heap.alloc_list(Vec::with_capacity(elements.len()));
+    let result_handle = vm.heap.alloc_list(Vec::with_capacity(elements.len()))?;
     let root_idx = vm.native_roots.len();
     vm.native_roots.push(Value::list(result_handle));
 
@@ -158,7 +158,7 @@ fn method_filter(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
 
     let elements = snapshot_list(vm, list_handle, "filter")?;
 
-    let result_handle = vm.heap.alloc_list(Vec::new());
+    let result_handle = vm.heap.alloc_list(Vec::new())?;
     let root_idx = vm.native_roots.len();
     vm.native_roots.push(Value::list(result_handle));
 
@@ -302,7 +302,7 @@ fn method_sort(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Ru
     let elements = snapshot_list(vm, list_handle, "sort")?;
 
     if elements.len() <= 1 {
-        let h = vm.heap.alloc_list(elements);
+        let h = vm.heap.alloc_list(elements)?;
         return Ok(Value::list(h));
     }
 
@@ -311,7 +311,7 @@ fn method_sort(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Ru
 
     let result = (|| {
         let sorted = merge_sort(vm, &elements, callback)?;
-        let h = vm.heap.alloc_list(sorted);
+        let h = vm.heap.alloc_list(sorted)?;
         Ok(Value::list(h))
     })();
 
@@ -331,7 +331,7 @@ fn method_flat_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
 
     let elements = snapshot_list(vm, list_handle, "flat_map")?;
 
-    let result_handle = vm.heap.alloc_list(Vec::new());
+    let result_handle = vm.heap.alloc_list(Vec::new())?;
     let root_idx = vm.native_roots.len();
     vm.native_roots.push(Value::list(result_handle));
 
@@ -385,13 +385,13 @@ fn method_zip(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 
     let len = list1.len().min(list2.len());
 
-    let result_handle = vm.heap.alloc_list(Vec::with_capacity(len));
+    let result_handle = vm.heap.alloc_list(Vec::with_capacity(len))?;
     let root_idx = vm.native_roots.len();
     vm.native_roots.push(Value::list(result_handle));
 
     for i in 0..len {
         let pair = vec![list1[i], list2[i]];
-        let pair_handle = vm.heap.alloc_list(pair);
+        let pair_handle = vm.heap.alloc_list(pair)?;
         vm.heap.list_push(result_handle, Value::list(pair_handle));
     }
 

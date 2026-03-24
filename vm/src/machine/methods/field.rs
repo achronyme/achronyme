@@ -37,6 +37,6 @@ fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Val
         .get_field(handle)
         .ok_or(RuntimeError::SystemError("Field missing".into()))?;
     let s = format!("{}", fe);
-    let h = vm.heap.alloc_string(s);
+    let h = vm.heap.alloc_string(s)?;
     Ok(Value::string(h))
 }

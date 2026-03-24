@@ -37,7 +37,7 @@ fn method_to_bits(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value
     let bi = extract_bigint(vm, &receiver)?;
     let bits = bi.to_bits();
     let values: Vec<Value> = bits.iter().map(|&b| Value::int(b as i64)).collect();
-    let handle = vm.heap.alloc_list(values);
+    let handle = vm.heap.alloc_list(values)?;
     Ok(Value::list(handle))
 }
 
@@ -50,7 +50,7 @@ fn method_bit_and(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
     let a = extract_bigint(vm, &receiver)?.clone();
     let b = extract_bigint(vm, &args[0])?.clone();
     let result = a.bit_and(&b).map_err(map_bigint_err)?;
-    let handle = vm.heap.alloc_bigint(result);
+    let handle = vm.heap.alloc_bigint(result)?;
     Ok(Value::bigint(handle))
 }
 
@@ -63,7 +63,7 @@ fn method_bit_or(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
     let a = extract_bigint(vm, &receiver)?.clone();
     let b = extract_bigint(vm, &args[0])?.clone();
     let result = a.bit_or(&b).map_err(map_bigint_err)?;
-    let handle = vm.heap.alloc_bigint(result);
+    let handle = vm.heap.alloc_bigint(result)?;
     Ok(Value::bigint(handle))
 }
 
@@ -76,14 +76,14 @@ fn method_bit_xor(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
     let a = extract_bigint(vm, &receiver)?.clone();
     let b = extract_bigint(vm, &args[0])?.clone();
     let result = a.bit_xor(&b).map_err(map_bigint_err)?;
-    let handle = vm.heap.alloc_bigint(result);
+    let handle = vm.heap.alloc_bigint(result)?;
     Ok(Value::bigint(handle))
 }
 
 fn method_bit_not(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let a = extract_bigint(vm, &receiver)?.clone();
     let result = a.bit_not();
-    let handle = vm.heap.alloc_bigint(result);
+    let handle = vm.heap.alloc_bigint(result)?;
     Ok(Value::bigint(handle))
 }
 
@@ -103,7 +103,7 @@ fn method_bit_shl(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
         ));
     }
     let result = a.shl(amount as u32).map_err(map_bigint_err)?;
-    let handle = vm.heap.alloc_bigint(result);
+    let handle = vm.heap.alloc_bigint(result)?;
     Ok(Value::bigint(handle))
 }
 
@@ -123,6 +123,6 @@ fn method_bit_shr(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
         ));
     }
     let result = a.shr(amount as u32);
-    let handle = vm.heap.alloc_bigint(result);
+    let handle = vm.heap.alloc_bigint(result)?;
     Ok(Value::bigint(handle))
 }

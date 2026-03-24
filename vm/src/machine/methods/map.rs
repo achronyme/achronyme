@@ -53,10 +53,10 @@ fn method_keys(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, R
     vm.heap.lock_gc();
     let mut key_values = Vec::with_capacity(keys_raw.len());
     for k in keys_raw {
-        let handle = vm.heap.alloc_string(k);
+        let handle = vm.heap.alloc_string(k)?;
         key_values.push(Value::string(handle));
     }
-    let list_handle = vm.heap.alloc_list(key_values);
+    let list_handle = vm.heap.alloc_list(key_values)?;
     vm.heap.unlock_gc();
     Ok(Value::list(list_handle))
 }
@@ -71,7 +71,7 @@ fn method_values(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value,
             .ok_or(RuntimeError::SystemError("Map missing".into()))?;
         map.values().cloned().collect()
     };
-    let list_handle = vm.heap.alloc_list(vals);
+    let list_handle = vm.heap.alloc_list(vals)?;
     Ok(Value::list(list_handle))
 }
 
@@ -88,12 +88,12 @@ fn method_entries(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value
     vm.heap.lock_gc();
     let mut entry_lists = Vec::with_capacity(pairs.len());
     for (k, v) in pairs {
-        let key_handle = vm.heap.alloc_string(k);
+        let key_handle = vm.heap.alloc_string(k)?;
         let pair = vec![Value::string(key_handle), v];
-        let pair_handle = vm.heap.alloc_list(pair);
+        let pair_handle = vm.heap.alloc_list(pair)?;
         entry_lists.push(Value::list(pair_handle));
     }
-    let list_handle = vm.heap.alloc_list(entry_lists);
+    let list_handle = vm.heap.alloc_list(entry_lists)?;
     vm.heap.unlock_gc();
     Ok(Value::list(list_handle))
 }

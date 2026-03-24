@@ -100,14 +100,12 @@ fn method_split(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, R
     let delim = arg_string(vm, &args[0], "split")?;
 
     vm.heap.lock_gc();
-    let parts: Vec<Value> = s
-        .split(&delim)
-        .map(|part| {
-            let h = vm.heap.alloc_string(part.to_string());
-            Value::string(h)
-        })
-        .collect();
-    let list_h = vm.heap.alloc_list(parts);
+    let mut parts: Vec<Value> = Vec::new();
+    for part in s.split(&delim) {
+        let h = vm.heap.alloc_string(part.to_string())?;
+        parts.push(Value::string(h));
+    }
+    let list_h = vm.heap.alloc_list(parts)?;
     vm.heap.unlock_gc();
 
     Ok(Value::list(list_h))
@@ -116,7 +114,7 @@ fn method_split(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, R
 fn method_trim(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, receiver)?;
     let trimmed = s.trim().to_string();
-    let h = vm.heap.alloc_string(trimmed);
+    let h = vm.heap.alloc_string(trimmed)?;
     Ok(Value::string(h))
 }
 
@@ -130,19 +128,19 @@ fn method_replace(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
     let search = arg_string(vm, &args[0], "replace")?;
     let repl = arg_string(vm, &args[1], "replace")?;
     let result = s.replace(&search, &repl);
-    let h = vm.heap.alloc_string(result);
+    let h = vm.heap.alloc_string(result)?;
     Ok(Value::string(h))
 }
 
 fn method_to_upper(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, receiver)?;
-    let h = vm.heap.alloc_string(s.to_uppercase());
+    let h = vm.heap.alloc_string(s.to_uppercase())?;
     Ok(Value::string(h))
 }
 
 fn method_to_lower(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, receiver)?;
-    let h = vm.heap.alloc_string(s.to_lowercase());
+    let h = vm.heap.alloc_string(s.to_lowercase())?;
     Ok(Value::string(h))
 }
 
@@ -150,14 +148,12 @@ fn method_chars(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, 
     let s = get_string(vm, receiver)?;
 
     vm.heap.lock_gc();
-    let char_vals: Vec<Value> = s
-        .chars()
-        .map(|ch| {
-            let h = vm.heap.alloc_string(ch.to_string());
-            Value::string(h)
-        })
-        .collect();
-    let list_h = vm.heap.alloc_list(char_vals);
+    let mut char_vals: Vec<Value> = Vec::with_capacity(s.len());
+    for ch in s.chars() {
+        let h = vm.heap.alloc_string(ch.to_string())?;
+        char_vals.push(Value::string(h));
+    }
+    let list_h = vm.heap.alloc_list(char_vals)?;
     vm.heap.unlock_gc();
 
     Ok(Value::list(list_h))
@@ -201,7 +197,7 @@ fn method_substring(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Valu
         String::new()
     };
 
-    let h = vm.heap.alloc_string(result);
+    let h = vm.heap.alloc_string(result)?;
     Ok(Value::string(h))
 }
 
@@ -227,7 +223,7 @@ fn method_repeat(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
         ));
     }
     let result = s.repeat(n as usize);
-    let h = vm.heap.alloc_string(result);
+    let h = vm.heap.alloc_string(result)?;
     Ok(Value::string(h))
 }
 

@@ -87,7 +87,7 @@ fn method_to_field(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Valu
         .as_int()
         .ok_or_else(|| RuntimeError::TypeMismatch("to_field: expected Int".into()))?;
     let fe = FieldElement::from_i64(n);
-    let handle = vm.heap.alloc_field(fe);
+    let handle = vm.heap.alloc_field(fe)?;
     Ok(Value::field(handle))
 }
 
@@ -96,6 +96,6 @@ fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Val
         .as_int()
         .ok_or_else(|| RuntimeError::TypeMismatch("to_string: expected Int".into()))?;
     let s = n.to_string();
-    let handle = vm.heap.alloc_string(s);
+    let handle = vm.heap.alloc_string(s)?;
     Ok(Value::string(handle))
 }
