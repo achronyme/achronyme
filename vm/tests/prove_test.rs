@@ -890,7 +890,7 @@ fn verify_proof_no_handler_gives_error() {
     match result {
         Ok(_) => panic!("should fail without verify handler"),
         Err(err) => assert!(
-            err.contains("no verify handler"),
+            err.contains("VerifyHandlerNotConfigured"),
             "Expected handler error, got: {err}"
         ),
     }
