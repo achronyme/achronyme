@@ -4,6 +4,7 @@
 //! focused submodules for maintainability and scalability.
 
 mod arithmetic;
+mod comparison;
 mod control;
 mod data;
 mod frame;
