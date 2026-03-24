@@ -31,6 +31,12 @@ impl From<std::io::Error> for LoaderError {
     }
 }
 
+impl From<memory::ArenaError> for LoaderError {
+    fn from(e: memory::ArenaError) -> Self {
+        LoaderError::Security(format!("heap allocation failed: {e}"))
+    }
+}
+
 impl VM {
     /// Load an executable binary (.achb) into the VM.
     ///
@@ -95,7 +101,7 @@ impl VM {
                 let l2 = reader.read_u64::<LittleEndian>()?;
                 let l3 = reader.read_u64::<LittleEndian>()?;
                 let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
-                let handle = self.heap.alloc_field(fe);
+                let handle = self.heap.alloc_field(fe)?;
                 handles.push(handle);
             }
             handles
@@ -131,7 +137,7 @@ impl VM {
                 }
                 let bi = memory::BigInt::from_limbs(limbs, width)
                     .ok_or_else(|| LoaderError::Format("Invalid BigInt limb count".to_string()))?;
-                let handle = self.heap.alloc_bigint(bi);
+                let handle = self.heap.alloc_bigint(bi)?;
                 handles.push(handle);
             }
             handles
@@ -205,7 +211,7 @@ impl VM {
                         let l2 = reader.read_u64::<LittleEndian>()?;
                         let l3 = reader.read_u64::<LittleEndian>()?;
                         let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
-                        let handle = self.heap.alloc_field(fe);
+                        let handle = self.heap.alloc_field(fe)?;
                         constants.push(Value::field(handle));
                     }
                 }
@@ -297,7 +303,7 @@ impl VM {
                             let l2 = reader.read_u64::<LittleEndian>()?;
                             let l3 = reader.read_u64::<LittleEndian>()?;
                             let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
-                            let handle = self.heap.alloc_field(fe);
+                            let handle = self.heap.alloc_field(fe)?;
                             proto_constants.push(Value::field(handle));
                         }
                     }
@@ -366,7 +372,7 @@ impl VM {
 
         // Load prototypes into VM
         for proto in proto_funcs {
-            let handle = self.heap.alloc_function(proto);
+            let handle = self.heap.alloc_function(proto)?;
             self.prototypes.push(handle);
         }
 
@@ -393,11 +399,11 @@ impl VM {
             upvalue_info: vec![],
             line_info: vec![],
         };
-        let func_idx = self.heap.alloc_function(func);
+        let func_idx = self.heap.alloc_function(func)?;
         let closure_idx = self.heap.alloc_closure(Closure {
             function: func_idx,
             upvalues: vec![],
-        });
+        })?;
 
         self.frames.push(CallFrame {
             closure: closure_idx,

@@ -1,5 +1,7 @@
 use std::fmt;
 
+use memory::ArenaError;
+
 use crate::machine::prove::ProveError;
 
 #[derive(Debug)]
@@ -63,3 +65,11 @@ impl fmt::Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
+
+impl From<ArenaError> for RuntimeError {
+    fn from(e: ArenaError) -> Self {
+        match e {
+            ArenaError::CapacityExceeded => RuntimeError::SystemError(e.to_string()),
+        }
+    }
+}
