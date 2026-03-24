@@ -123,7 +123,10 @@ impl VM {
             self.heap
                 .get_bytes(handle)
                 .cloned()
-                .ok_or(RuntimeError::SystemError("prove ir bytes missing".into()))?
+                .ok_or(RuntimeError::StaleHeapHandle {
+                    type_name: "Bytes",
+                    context: "prove IR",
+                })?
         };
 
         // 2. Read the capture map from R[A]
@@ -136,9 +139,10 @@ impl VM {
             let map = self
                 .heap
                 .get_map(map_handle)
-                .ok_or(RuntimeError::SystemError(
-                    "prove capture map missing".into(),
-                ))?;
+                .ok_or(RuntimeError::StaleHeapHandle {
+                    type_name: "Map",
+                    context: "prove capture",
+                })?;
 
             let mut field_map = HashMap::new();
             for (key, val) in map.iter() {

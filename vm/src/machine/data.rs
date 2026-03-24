@@ -94,7 +94,10 @@ impl DataOps for super::vm::VM {
                     let s = self
                         .heap
                         .get_string(s_handle)
-                        .ok_or(RuntimeError::SystemError("String missing in heap".into()))?
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "String",
+                            context: "BuildMap",
+                        })?
                         .clone(); // Clone necesario porque HashMap es dueño de la clave
 
                     map.insert(s, val);
@@ -116,7 +119,10 @@ impl DataOps for super::vm::VM {
                     let list = self
                         .heap
                         .get_list(handle)
-                        .ok_or(RuntimeError::SystemError("List missing".into()))?;
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "List",
+                            context: "GetIndex",
+                        })?;
 
                     if let Some(idx_val) = key.as_int() {
                         if idx_val < 0 {
@@ -148,16 +154,21 @@ impl DataOps for super::vm::VM {
                     let map = self
                         .heap
                         .get_map(handle)
-                        .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "Map",
+                            context: "GetIndex",
+                        })?;
 
                     if key.is_string() {
                         let k_handle = key.as_handle().ok_or_else(|| {
                             RuntimeError::TypeMismatch("bad string handle".into())
                         })?;
-                        let k_str = self
-                            .heap
-                            .get_string(k_handle)
-                            .ok_or(RuntimeError::SystemError("String missing".into()))?;
+                        let k_str = self.heap.get_string(k_handle).ok_or(
+                            RuntimeError::StaleHeapHandle {
+                                type_name: "String",
+                                context: "GetIndex map key",
+                            },
+                        )?;
 
                         let val = map.get(k_str).cloned().unwrap_or(Value::nil());
                         self.set_reg(base, a, val)?;
@@ -173,7 +184,10 @@ impl DataOps for super::vm::VM {
                     let s = self
                         .heap
                         .get_string(handle)
-                        .ok_or(RuntimeError::SystemError("String missing".into()))?;
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "String",
+                            context: "GetIndex string",
+                        })?;
 
                     if let Some(idx_val) = key.as_int() {
                         if idx_val < 0 {
@@ -218,10 +232,13 @@ impl DataOps for super::vm::VM {
                         .as_handle()
                         .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
                     // Necesitamos acceso mutable
-                    let list = self
-                        .heap
-                        .get_list_mut(handle)
-                        .ok_or(RuntimeError::SystemError("List missing".into()))?;
+                    let list =
+                        self.heap
+                            .get_list_mut(handle)
+                            .ok_or(RuntimeError::StaleHeapHandle {
+                                type_name: "List",
+                                context: "SetIndex",
+                            })?;
 
                     if let Some(idx_val) = key.as_int() {
                         if idx_val < 0 {
@@ -256,12 +273,18 @@ impl DataOps for super::vm::VM {
                         let k_str = self
                             .heap
                             .get_string(k_handle)
-                            .ok_or(RuntimeError::SystemError("String missing in heap".into()))?
+                            .ok_or(RuntimeError::StaleHeapHandle {
+                                type_name: "String",
+                                context: "SetIndex map key",
+                            })?
                             .clone();
 
-                        self.heap
-                            .map_insert(handle, k_str, val)
-                            .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+                        self.heap.map_insert(handle, k_str, val).ok_or(
+                            RuntimeError::StaleHeapHandle {
+                                type_name: "Map",
+                                context: "SetIndex",
+                            },
+                        )?;
                     } else {
                         return Err(RuntimeError::TypeMismatch(
                             "Map key must be a string".into(),

@@ -41,9 +41,7 @@ impl ClosureOps for super::vm::VM {
                 let upval = self
                     .heap
                     .get_upvalue(upval_idx)
-                    .ok_or(RuntimeError::SystemError(
-                        "Upvalue missing from heap".into(),
-                    ))?;
+                    .ok_or(RuntimeError::StaleUpvalue)?;
 
                 let val = match upval.location {
                     memory::UpvalueLocation::Open(stack_idx) => self.get_reg(0, stack_idx)?,
@@ -69,18 +67,17 @@ impl ClosureOps for super::vm::VM {
                 let upval = self
                     .heap
                     .get_upvalue(upval_idx)
-                    .ok_or(RuntimeError::SystemError(
-                        "Upvalue missing from heap".into(),
-                    ))?;
+                    .ok_or(RuntimeError::StaleUpvalue)?;
 
                 match upval.location {
                     memory::UpvalueLocation::Open(stack_idx) => {
                         self.set_reg(0, stack_idx, val)?;
                     }
                     memory::UpvalueLocation::Closed(_) => {
-                        let upval_mut = self.heap.get_upvalue_mut(upval_idx).ok_or(
-                            RuntimeError::SystemError("Upvalue missing from heap".into()),
-                        )?;
+                        let upval_mut = self
+                            .heap
+                            .get_upvalue_mut(upval_idx)
+                            .ok_or(RuntimeError::StaleUpvalue)?;
                         upval_mut.location = memory::UpvalueLocation::Closed(val);
                     }
                 }

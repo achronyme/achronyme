@@ -17,7 +17,7 @@ impl UpvalueOps for super::vm::VM {
             let upval = self
                 .heap
                 .get_upvalue(idx)
-                .ok_or(RuntimeError::SystemError("stale upvalue handle".into()))?;
+                .ok_or(RuntimeError::StaleUpvalue)?;
 
             // Open upvalue list is sorted by stack index (high → low).
             let loc = match upval.location {
@@ -48,7 +48,7 @@ impl UpvalueOps for super::vm::VM {
             let prev_obj = self
                 .heap
                 .get_upvalue_mut(prev)
-                .ok_or(RuntimeError::SystemError("stale upvalue handle".into()))?;
+                .ok_or(RuntimeError::StaleUpvalue)?;
             prev_obj.next_open = Some(new_idx);
         } else {
             self.open_upvalues = Some(new_idx);
@@ -64,7 +64,7 @@ impl UpvalueOps for super::vm::VM {
             let upval = self
                 .heap
                 .get_upvalue(idx)
-                .ok_or(RuntimeError::SystemError("stale upvalue handle".into()))?;
+                .ok_or(RuntimeError::StaleUpvalue)?;
 
             let stack_idx = match upval.location {
                 memory::UpvalueLocation::Open(si) => si,
@@ -78,7 +78,7 @@ impl UpvalueOps for super::vm::VM {
                 let upval_mut = self
                     .heap
                     .get_upvalue_mut(idx)
-                    .ok_or(RuntimeError::SystemError("stale upvalue handle".into()))?;
+                    .ok_or(RuntimeError::StaleUpvalue)?;
                 upval_mut.location = memory::UpvalueLocation::Closed(captured_val);
 
                 let next = upval_mut.next_open;

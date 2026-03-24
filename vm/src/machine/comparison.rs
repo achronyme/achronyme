@@ -89,11 +89,17 @@ impl super::vm::VM {
             let f1 = self
                 .heap
                 .get_field(h1)
-                .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                .ok_or(RuntimeError::StaleHeapHandle {
+                    type_name: "Field",
+                    context: "comparison",
+                })?;
             let f2 = self
                 .heap
                 .get_field(h2)
-                .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                .ok_or(RuntimeError::StaleHeapHandle {
+                    type_name: "Field",
+                    context: "comparison",
+                })?;
             let (c1, c2) = (f1.to_canonical(), f2.to_canonical());
             return Ok(match op {
                 OpCode::Lt => c1 < c2,

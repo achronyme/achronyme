@@ -39,11 +39,17 @@ impl TypePromotion for super::vm::VM {
                 let fa = *self
                     .heap
                     .get_field(ha)
-                    .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                    .ok_or(RuntimeError::StaleHeapHandle {
+                        type_name: "Field",
+                        context: "binary_op",
+                    })?;
                 let fb = *self
                     .heap
                     .get_field(hb)
-                    .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                    .ok_or(RuntimeError::StaleHeapHandle {
+                        type_name: "Field",
+                        context: "binary_op",
+                    })?;
                 let result = field_op(&fa, &fb)?;
                 let handle = self.heap.alloc_field(result)?;
                 Ok(Value::field(handle))

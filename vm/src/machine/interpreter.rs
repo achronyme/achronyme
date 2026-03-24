@@ -216,9 +216,10 @@ impl super::vm::VM {
                     let method_name = self
                         .heap
                         .get_string(name_handle)
-                        .ok_or(RuntimeError::SystemError(
-                            "MethodCall: method name string missing".into(),
-                        ))?
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "String",
+                            context: "MethodCall name",
+                        })?
                         .clone();
 
                     // Receiver is in R[base + b]

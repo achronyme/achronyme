@@ -45,7 +45,10 @@ impl IteratorOps for super::vm::VM {
                         let snapshot = self
                             .heap
                             .get_list(l_handle)
-                            .ok_or(RuntimeError::SystemError("List missing".into()))?
+                            .ok_or(RuntimeError::StaleHeapHandle {
+                                type_name: "List",
+                                context: "GetIter",
+                            })?
                             .clone();
                         let snap_handle = self.heap.alloc_list(snapshot)?;
                         memory::IteratorObj {
@@ -57,10 +60,13 @@ impl IteratorOps for super::vm::VM {
                             RuntimeError::TypeMismatch("Expected map handle".into())
                         })?;
                         let map_keys: Vec<String> = {
-                            let map = self
-                                .heap
-                                .get_map(handle)
-                                .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+                            let map =
+                                self.heap
+                                    .get_map(handle)
+                                    .ok_or(RuntimeError::StaleHeapHandle {
+                                        type_name: "Map",
+                                        context: "GetIter",
+                                    })?;
                             map.keys().cloned().collect()
                         };
 
@@ -119,10 +125,12 @@ impl IteratorOps for super::vm::VM {
                     .ok_or_else(|| RuntimeError::TypeMismatch("Expected iterator handle".into()))?;
 
                 let (source, index) = {
-                    let iter = self
-                        .heap
-                        .get_iterator(iter_handle)
-                        .ok_or(RuntimeError::SystemError("Iterator missing".into()))?;
+                    let iter = self.heap.get_iterator(iter_handle).ok_or(
+                        RuntimeError::StaleHeapHandle {
+                            type_name: "Iterator",
+                            context: "ForIter",
+                        },
+                    )?;
                     (iter.source, iter.index)
                 };
 

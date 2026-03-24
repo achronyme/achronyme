@@ -334,7 +334,10 @@ impl ArithmeticOps for super::vm::VM {
                     let fa = *self
                         .heap
                         .get_field(ha)
-                        .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "Field",
+                            context: "Pow",
+                        })?;
                     let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if exp_val < 0 {
                         let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
@@ -376,7 +379,10 @@ impl ArithmeticOps for super::vm::VM {
                     let fe = *self
                         .heap
                         .get_field(h)
-                        .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+                        .ok_or(RuntimeError::StaleHeapHandle {
+                            type_name: "Field",
+                            context: "Neg",
+                        })?;
                     let result = fe.neg();
                     let handle = self.heap.alloc_field(result)?;
                     self.set_reg(base, a, Value::field(handle))?;
