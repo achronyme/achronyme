@@ -45,7 +45,7 @@ impl TypePromotion for super::vm::VM {
                     .get_field(hb)
                     .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                 let result = field_op(&fa, &fb)?;
-                let handle = self.heap.alloc_field(result);
+                let handle = self.heap.alloc_field(result)?;
                 Ok(Value::field(handle))
             }
 

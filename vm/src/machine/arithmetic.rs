@@ -43,11 +43,11 @@ impl ArithmeticOps for super::vm::VM {
                 if vb.is_string() || vc.is_string() {
                     let sb = self.val_to_string(&vb);
                     let sc = self.val_to_string(&vc);
-                    let handle = self.heap.alloc_string(sb + &sc);
+                    let handle = self.heap.alloc_string(sb + &sc)?;
                     self.set_reg(base, a, Value::string(handle))?;
                 } else if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
+                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     match ib.checked_add(ic) {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
@@ -57,8 +57,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
-                    let ha = vb.as_handle().unwrap();
-                    let hb = vc.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
+                    let hb = vc.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let ba = self
                         .heap
                         .get_bigint(ha)
@@ -70,7 +70,7 @@ impl ArithmeticOps for super::vm::VM {
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
                     let result = ba.add(&bb).map_err(map_bigint_err)?;
-                    let handle = self.heap.alloc_bigint(result);
+                    let handle = self.heap.alloc_bigint(result)?;
                     self.set_reg(base, a, Value::bigint(handle))?;
                 } else {
                     let res =
@@ -87,8 +87,8 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
+                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     match ib.checked_sub(ic) {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
@@ -98,8 +98,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
-                    let ha = vb.as_handle().unwrap();
-                    let hb = vc.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
+                    let hb = vc.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let ba = self
                         .heap
                         .get_bigint(ha)
@@ -111,7 +111,7 @@ impl ArithmeticOps for super::vm::VM {
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
                     let result = ba.sub(&bb).map_err(map_bigint_err)?;
-                    let handle = self.heap.alloc_bigint(result);
+                    let handle = self.heap.alloc_bigint(result)?;
                     self.set_reg(base, a, Value::bigint(handle))?;
                 } else {
                     let res =
@@ -128,8 +128,8 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
+                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     match ib.checked_mul(ic) {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
@@ -139,8 +139,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
-                    let ha = vb.as_handle().unwrap();
-                    let hb = vc.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
+                    let hb = vc.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let ba = self
                         .heap
                         .get_bigint(ha)
@@ -152,7 +152,7 @@ impl ArithmeticOps for super::vm::VM {
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
                     let result = ba.mul(&bb).map_err(map_bigint_err)?;
-                    let handle = self.heap.alloc_bigint(result);
+                    let handle = self.heap.alloc_bigint(result)?;
                     self.set_reg(base, a, Value::bigint(handle))?;
                 } else {
                     let res =
@@ -169,8 +169,8 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
+                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
@@ -183,8 +183,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
-                    let ha = vb.as_handle().unwrap();
-                    let hb = vc.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
+                    let hb = vc.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let ba = self
                         .heap
                         .get_bigint(ha)
@@ -196,7 +196,7 @@ impl ArithmeticOps for super::vm::VM {
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
                     let result = ba.div(&bb).map_err(map_bigint_err)?;
-                    let handle = self.heap.alloc_bigint(result);
+                    let handle = self.heap.alloc_bigint(result)?;
                     self.set_reg(base, a, Value::bigint(handle))?;
                 } else {
                     let res = self.binary_op(vb, vc, |a: &FieldElement, b: &FieldElement| {
@@ -214,8 +214,8 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().unwrap();
-                    let ic = vc.as_int().unwrap();
+                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
@@ -228,8 +228,8 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
-                    let ha = vb.as_handle().unwrap();
-                    let hb = vc.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
+                    let hb = vc.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let ba = self
                         .heap
                         .get_bigint(ha)
@@ -241,7 +241,7 @@ impl ArithmeticOps for super::vm::VM {
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
                     let result = ba.modulo(&bb).map_err(map_bigint_err)?;
-                    let handle = self.heap.alloc_bigint(result);
+                    let handle = self.heap.alloc_bigint(result)?;
                     self.set_reg(base, a, Value::bigint(handle))?;
                 } else {
                     return Err(RuntimeError::TypeMismatch(
@@ -258,8 +258,8 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let base_val = vb.as_int().unwrap();
-                    let exp_val = vc.as_int().unwrap();
+                    let base_val = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
 
                     if exp_val < 0 {
                         return Err(RuntimeError::TypeMismatch(
@@ -294,13 +294,13 @@ impl ArithmeticOps for super::vm::VM {
                         }
                     }
                 } else if vb.tag() == TAG_BIGINT && vc.is_int() {
-                    let ha = vb.as_handle().unwrap();
+                    let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let ba = self
                         .heap
                         .get_bigint(ha)
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
-                    let exp_val = vc.as_int().unwrap();
+                    let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if exp_val < 0 {
                         return Err(RuntimeError::TypeMismatch(
                             "Cannot raise unsigned BigInt to negative power".into(),
@@ -308,7 +308,7 @@ impl ArithmeticOps for super::vm::VM {
                     }
                     if exp_val == 0 {
                         let result = memory::BigInt::one(ba.width());
-                        let handle = self.heap.alloc_bigint(result);
+                        let handle = self.heap.alloc_bigint(result)?;
                         self.set_reg(base, a, Value::bigint(handle))?;
                     } else {
                         // Repeated squaring
@@ -324,7 +324,7 @@ impl ArithmeticOps for super::vm::VM {
                                 b_cur = b_cur.mul(&b_cur).map_err(map_bigint_err)?;
                             }
                         }
-                        let handle = self.heap.alloc_bigint(result);
+                        let handle = self.heap.alloc_bigint(result)?;
                         self.set_reg(base, a, Value::bigint(handle))?;
                     }
                 } else if vb.is_field() && vc.is_int() {
@@ -335,16 +335,16 @@ impl ArithmeticOps for super::vm::VM {
                         .heap
                         .get_field(ha)
                         .ok_or(RuntimeError::SystemError("Field missing".into()))?;
-                    let exp_val = vc.as_int().unwrap();
+                    let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if exp_val < 0 {
                         let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
                         let result = inv.pow(&[(-exp_val) as u64, 0, 0, 0]);
-                        let handle = self.heap.alloc_field(result);
+                        let handle = self.heap.alloc_field(result)?;
                         self.set_reg(base, a, Value::field(handle))?;
                     } else {
                         let exp = [exp_val as u64, 0, 0, 0];
                         let result = fa.pow(&exp);
-                        let handle = self.heap.alloc_field(result);
+                        let handle = self.heap.alloc_field(result)?;
                         self.set_reg(base, a, Value::field(handle))?;
                     }
                 } else {
@@ -359,7 +359,7 @@ impl ArithmeticOps for super::vm::VM {
                 let b = decode_b(instruction) as usize;
                 let vb = self.get_reg(base, b)?;
                 if vb.is_int() {
-                    let ib = vb.as_int().unwrap();
+                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     // Handle i60 overflow: negating I60_MIN overflows
                     match ib.checked_neg() {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
@@ -378,7 +378,7 @@ impl ArithmeticOps for super::vm::VM {
                         .get_field(h)
                         .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                     let result = fe.neg();
-                    let handle = self.heap.alloc_field(result);
+                    let handle = self.heap.alloc_field(result)?;
                     self.set_reg(base, a, Value::field(handle))?;
                 } else if vb.tag() == TAG_BIGINT {
                     return Err(RuntimeError::TypeMismatch(
@@ -391,7 +391,7 @@ impl ArithmeticOps for super::vm::VM {
                 }
             }
 
-            _ => unreachable!(),
+            _ => return Err(RuntimeError::InvalidOpcode(op as u8)),
         }
 
         Ok(())

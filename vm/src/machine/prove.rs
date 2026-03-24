@@ -179,8 +179,11 @@ impl VM {
             field_map
         };
 
-        // 3. Delegate to the handler (unwrap safe: checked at step 0)
-        let handler = self.prove_handler.as_ref().unwrap();
+        // 3. Delegate to the handler
+        let handler = self
+            .prove_handler
+            .as_ref()
+            .ok_or(RuntimeError::ProveHandlerNotConfigured)?;
 
         let result = handler
             .execute_prove_ir(&prove_ir_bytes, &scope_values)
@@ -201,7 +204,7 @@ impl VM {
                     public_json,
                     vkey_json,
                 };
-                let handle = self.heap.alloc_proof(obj);
+                let handle = self.heap.alloc_proof(obj)?;
                 self.set_reg(base, a, Value::proof(handle))?;
             }
         }

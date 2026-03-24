@@ -48,7 +48,7 @@ impl DataOps for super::vm::VM {
                     list.push(self.get_reg(base, b + i)?);
                 }
 
-                let handle = self.heap.alloc_list(list);
+                let handle = self.heap.alloc_list(list)?;
                 self.set_reg(base, a, Value::list(handle))?;
             }
 
@@ -100,7 +100,7 @@ impl DataOps for super::vm::VM {
                     map.insert(s, val);
                 }
 
-                let handle = self.heap.alloc_map(map);
+                let handle = self.heap.alloc_map(map)?;
                 self.set_reg(base, a, Value::map(handle))?;
             }
 
@@ -185,7 +185,7 @@ impl DataOps for super::vm::VM {
                         let idx = idx_val as usize;
                         if let Some(ch) = s.chars().nth(idx) {
                             let ch_str = ch.to_string();
-                            let h = self.heap.alloc_string(ch_str);
+                            let h = self.heap.alloc_string(ch_str)?;
                             self.set_reg(base, a, Value::string(h))?;
                         } else {
                             return Err(RuntimeError::OutOfBounds(format!(
@@ -274,7 +274,7 @@ impl DataOps for super::vm::VM {
                 }
             }
 
-            _ => unreachable!(),
+            _ => return Err(RuntimeError::InvalidOpcode(op as u8)),
         }
         Ok(())
     }

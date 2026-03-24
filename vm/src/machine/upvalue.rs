@@ -42,7 +42,7 @@ impl UpvalueOps for super::vm::VM {
             location: memory::UpvalueLocation::Open(stack_idx),
             next_open: upval_idx, // link to next (lower index)
         };
-        let new_idx = self.heap.alloc_upvalue(created_upval);
+        let new_idx = self.heap.alloc_upvalue(created_upval)?;
 
         if let Some(prev) = prev_upval_idx {
             let prev_obj = self

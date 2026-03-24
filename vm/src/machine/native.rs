@@ -1,3 +1,4 @@
+use crate::error::RuntimeError;
 use crate::globals::GlobalEntry;
 use crate::module::builtin_modules;
 use crate::native::{NativeFn, NativeObj};
@@ -5,17 +6,27 @@ use memory::Value;
 
 /// Trait for native function registration
 pub trait NativeRegistry {
-    fn define_native(&mut self, name: &str, func: NativeFn, arity: isize);
-    fn bootstrap_natives(&mut self);
+    fn define_native(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        arity: isize,
+    ) -> Result<(), RuntimeError>;
+    fn bootstrap_natives(&mut self) -> Result<(), RuntimeError>;
 }
 
 impl NativeRegistry for super::vm::VM {
-    fn define_native(&mut self, name: &str, func: NativeFn, arity: isize) {
+    fn define_native(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        arity: isize,
+    ) -> Result<(), RuntimeError> {
         let name_string = name.to_string();
 
         // 1. Intern string (still needed for debugging/reflection later, but not for lookup key)
         if !self.interner.contains_key(&name_string) {
-            let h = self.heap.alloc_string(name_string.clone());
+            let h = self.heap.alloc_string(name_string.clone())?;
             self.interner.insert(name_string.clone(), h);
         }
 
@@ -35,9 +46,10 @@ impl NativeRegistry for super::vm::VM {
             value: val,
             mutable: false, // Natives are constant
         });
+        Ok(())
     }
 
-    fn bootstrap_natives(&mut self) {
+    fn bootstrap_natives(&mut self) -> Result<(), RuntimeError> {
         use crate::specs::NATIVE_TABLE;
 
         // Assert empty state to ensure alignment
@@ -88,8 +100,9 @@ impl NativeRegistry for super::vm::VM {
 
         // Register all natives in order
         for def in &all_defs {
-            self.define_native(def.name, def.func, def.arity);
+            self.define_native(def.name, def.func, def.arity)?;
         }
+        Ok(())
     }
 }
 

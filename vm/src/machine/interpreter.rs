@@ -184,7 +184,10 @@ impl super::vm::VM {
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() < f2.to_canonical()))?;
                     } else if v1.is_bigint() && v2.is_bigint() {
-                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let (h1, h2) = (
+                            v1.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                            v2.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                        );
                         let b1 = self
                             .heap
                             .get_bigint(h1)
@@ -227,7 +230,10 @@ impl super::vm::VM {
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() > f2.to_canonical()))?;
                     } else if v1.is_bigint() && v2.is_bigint() {
-                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let (h1, h2) = (
+                            v1.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                            v2.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                        );
                         let b1 = self
                             .heap
                             .get_bigint(h1)
@@ -279,7 +285,10 @@ impl super::vm::VM {
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() <= f2.to_canonical()))?;
                     } else if v1.is_bigint() && v2.is_bigint() {
-                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let (h1, h2) = (
+                            v1.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                            v2.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                        );
                         let b1 = self
                             .heap
                             .get_bigint(h1)
@@ -322,7 +331,10 @@ impl super::vm::VM {
                             .ok_or(RuntimeError::SystemError("Field missing".into()))?;
                         self.set_reg(base, a, Value::bool(f1.to_canonical() >= f2.to_canonical()))?;
                     } else if v1.is_bigint() && v2.is_bigint() {
-                        let (h1, h2) = (v1.as_handle().unwrap(), v2.as_handle().unwrap());
+                        let (h1, h2) = (
+                            v1.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                            v2.as_handle().ok_or(RuntimeError::InvalidOperand)?,
+                        );
                         let b1 = self
                             .heap
                             .get_bigint(h1)
@@ -609,7 +621,7 @@ impl super::vm::VM {
                         function: proto_idx,
                         upvalues: captured,
                     };
-                    let closure_idx = self.heap.alloc_closure(closure);
+                    let closure_idx = self.heap.alloc_closure(closure)?;
                     self.heap.unlock_gc();
                     self.set_reg(base, a, Value::closure(closure_idx))?;
                 }
@@ -633,7 +645,7 @@ impl super::vm::VM {
                                 .get_list(l_handle)
                                 .ok_or(RuntimeError::SystemError("List missing".into()))?
                                 .clone();
-                            let snap_handle = self.heap.alloc_list(snapshot);
+                            let snap_handle = self.heap.alloc_list(snapshot)?;
                             memory::IteratorObj {
                                 source: Value::list(snap_handle),
                                 index: 0,
@@ -656,14 +668,14 @@ impl super::vm::VM {
                                 let handle = if let Some(&h) = self.interner.get(&s) {
                                     h
                                 } else {
-                                    let h = self.heap.alloc_string(s.clone());
+                                    let h = self.heap.alloc_string(s.clone())?;
                                     self.interner.insert(s, h);
                                     h
                                 };
                                 val_keys.push(Value::string(handle));
                             }
 
-                            let list_handle = self.heap.alloc_list(val_keys);
+                            let list_handle = self.heap.alloc_list(val_keys)?;
                             self.heap.unlock_gc();
                             memory::IteratorObj {
                                 source: Value::list(list_handle),
@@ -676,7 +688,7 @@ impl super::vm::VM {
                             )));
                         };
 
-                        let handle = self.heap.alloc_iterator(iter_obj);
+                        let handle = self.heap.alloc_iterator(iter_obj)?;
                         self.set_reg(base, a, Value::iterator(handle))?;
                     }
                 }

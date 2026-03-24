@@ -95,7 +95,8 @@ impl VM {
         };
 
         // Bootstrap native functions and prototype methods
-        vm.bootstrap_natives();
+        vm.bootstrap_natives()
+            .expect("bootstrap_natives: arena allocation failed at startup");
         vm.prototype_registry.bootstrap();
 
         vm
@@ -107,11 +108,15 @@ impl VM {
     /// indices continue after the builtins. The compiler must have been
     /// initialized with the same extra natives via `with_extra_natives()`
     /// so that global indices align.
-    pub fn register_module(&mut self, module: &dyn crate::module::NativeModule) {
+    pub fn register_module(
+        &mut self,
+        module: &dyn crate::module::NativeModule,
+    ) -> Result<(), RuntimeError> {
         use crate::machine::native::NativeRegistry;
         for def in module.natives() {
-            self.define_native(def.name, def.func, def.arity);
+            self.define_native(def.name, def.func, def.arity)?;
         }
+        Ok(())
     }
 
     /// Invoke a callable Value (Closure or Native) with the given arguments.
