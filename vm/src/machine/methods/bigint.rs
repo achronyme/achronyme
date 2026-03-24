@@ -30,7 +30,10 @@ fn extract_bigint<'a>(vm: &'a VM, val: &Value) -> Result<&'a BigInt, RuntimeErro
         .ok_or_else(|| RuntimeError::TypeMismatch("bad bigint handle".into()))?;
     vm.heap
         .get_bigint(handle)
-        .ok_or(RuntimeError::SystemError("BigInt missing".into()))
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "BigInt",
+            context: "extract_bigint",
+        })
 }
 
 fn method_to_bits(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {

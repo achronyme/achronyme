@@ -22,14 +22,17 @@ fn get_map_handle(receiver: Value) -> Result<u32, RuntimeError> {
         .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))
 }
 
-fn resolve_string_arg(vm: &VM, val: Value, method: &str) -> Result<String, RuntimeError> {
+fn resolve_string_arg(vm: &VM, val: Value, method: &'static str) -> Result<String, RuntimeError> {
     let handle = val
         .as_handle()
         .ok_or_else(|| RuntimeError::TypeMismatch(format!("{method}: key must be a String")))?;
     vm.heap
         .get_string(handle)
         .cloned()
-        .ok_or_else(|| RuntimeError::SystemError(format!("{method}: string missing from heap")))
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "String",
+            context: method,
+        })
 }
 
 fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
@@ -37,7 +40,10 @@ fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
     let m = vm
         .heap
         .get_map(handle)
-        .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Map",
+            context: "len",
+        })?;
     Ok(Value::int(m.len() as i64))
 }
 
@@ -47,7 +53,10 @@ fn method_keys(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, R
         let map = vm
             .heap
             .get_map(map_handle)
-            .ok_or(RuntimeError::SystemError("Map corrupted".into()))?;
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Map",
+                context: "keys",
+            })?;
         map.keys().cloned().collect()
     };
     vm.heap.lock_gc();
@@ -68,7 +77,10 @@ fn method_values(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value,
         let map = vm
             .heap
             .get_map(map_handle)
-            .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Map",
+                context: "values",
+            })?;
         map.values().cloned().collect()
     };
     let list_handle = vm.heap.alloc_list(vals)?;
@@ -82,7 +94,10 @@ fn method_entries(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value
         let map = vm
             .heap
             .get_map(map_handle)
-            .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Map",
+                context: "entries",
+            })?;
         map.iter().map(|(k, v)| (k.clone(), *v)).collect()
     };
     vm.heap.lock_gc();
@@ -114,7 +129,10 @@ fn method_contains_key(
     let exists = vm
         .heap
         .get_map(map_handle)
-        .ok_or(RuntimeError::SystemError("Map missing".into()))?
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Map",
+            context: "contains_key",
+        })?
         .contains_key(&key);
     Ok(if exists {
         Value::true_val()
@@ -135,7 +153,10 @@ fn method_get(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
     let val = vm
         .heap
         .get_map(map_handle)
-        .ok_or(RuntimeError::SystemError("Map missing".into()))?
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Map",
+            context: "get",
+        })?
         .get(&key)
         .cloned()
         .unwrap_or(args[1]);
@@ -153,7 +174,10 @@ fn method_set(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
     let key = resolve_string_arg(vm, args[0], "set")?;
     vm.heap
         .map_insert(map_handle, key, args[1])
-        .ok_or(RuntimeError::SystemError("Map missing".into()))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Map",
+            context: "set",
+        })?;
     Ok(Value::nil())
 }
 
@@ -169,7 +193,10 @@ fn method_remove(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
     let removed = vm
         .heap
         .get_map_mut(map_handle)
-        .ok_or(RuntimeError::SystemError("Map missing".into()))?
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Map",
+            context: "remove",
+        })?
         .remove(&key)
         .unwrap_or(Value::nil());
     Ok(removed)

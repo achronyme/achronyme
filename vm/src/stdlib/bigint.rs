@@ -33,7 +33,10 @@ fn construct_bigint(
         let s = vm
             .heap
             .get_string(handle)
-            .ok_or(RuntimeError::SystemError("String missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "String",
+                context: "construct_bigint",
+            })?
             .clone();
         // Detect radix from prefix
         if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -88,7 +91,10 @@ pub mod bigint_impl {
         let list = vm
             .heap
             .get_list(list_handle)
-            .ok_or(RuntimeError::SystemError("List missing".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "List",
+                context: "from_bits",
+            })?
             .clone();
 
         let mut bits = Vec::with_capacity(list.len());

@@ -31,12 +31,15 @@ fn get_string(vm: &VM, receiver: Value) -> Result<String, RuntimeError> {
     Ok(vm
         .heap
         .get_string(handle)
-        .ok_or(RuntimeError::SystemError("String missing".into()))?
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "String",
+            context: "get_string",
+        })?
         .clone())
 }
 
 /// Helper: extract string from a Value argument.
-fn arg_string(vm: &VM, val: &Value, method: &str) -> Result<String, RuntimeError> {
+fn arg_string(vm: &VM, val: &Value, method: &'static str) -> Result<String, RuntimeError> {
     if !val.is_string() {
         return Err(RuntimeError::TypeMismatch(format!(
             "{method}: argument must be a String"
@@ -48,7 +51,10 @@ fn arg_string(vm: &VM, val: &Value, method: &str) -> Result<String, RuntimeError
     Ok(vm
         .heap
         .get_string(handle)
-        .ok_or(RuntimeError::SystemError("String missing".into()))?
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "String",
+            context: method,
+        })?
         .clone())
 }
 
@@ -218,7 +224,7 @@ fn method_repeat(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
     }
     let total_len = s.len().saturating_mul(n as usize);
     if total_len > 10_000_000 {
-        return Err(RuntimeError::SystemError(
+        return Err(RuntimeError::ResourceLimitExceeded(
             "repeat() result exceeds 10MB limit".into(),
         ));
     }

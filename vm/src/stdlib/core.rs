@@ -14,7 +14,10 @@ fn extract_fe(vm: &VM, val: &Value) -> Result<FieldElement, RuntimeError> {
         let fe = vm
             .heap
             .get_field(handle)
-            .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Field",
+                context: "extract_fe",
+            })?;
         Ok(*fe)
     } else if val.is_int() {
         let i = val
@@ -129,7 +132,10 @@ pub mod core_impl {
         let json = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Proof",
+                context: "proof_json",
+            })?
             .proof_json
             .clone();
         let s = vm.heap.alloc_string(json)?;
@@ -155,7 +161,10 @@ pub mod core_impl {
         let json = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Proof",
+                context: "proof_public",
+            })?
             .public_json
             .clone();
         let s = vm.heap.alloc_string(json)?;
@@ -181,7 +190,10 @@ pub mod core_impl {
         let json = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Proof",
+                context: "proof_vkey",
+            })?
             .vkey_json
             .clone();
         let s = vm.heap.alloc_string(json)?;
@@ -241,16 +253,18 @@ pub mod core_impl {
         let proof_obj = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::SystemError("proof not found".into()))?
+            .ok_or(RuntimeError::StaleHeapHandle {
+                type_name: "Proof",
+                context: "verify_proof",
+            })?
             .clone();
-        let handler = vm.verify_handler.as_ref().ok_or(RuntimeError::SystemError(
-            "verify_proof: no verify handler configured".into(),
-        ))?;
+        let handler = vm
+            .verify_handler
+            .as_ref()
+            .ok_or(RuntimeError::VerifyHandlerNotConfigured)?;
         match handler.verify_proof(&proof_obj) {
             Ok(valid) => Ok(Value::bool(valid)),
-            Err(msg) => Err(RuntimeError::SystemError(format!(
-                "verify_proof failed: {msg}"
-            ))),
+            Err(msg) => Err(RuntimeError::VerificationFailed(msg)),
         }
     }
 

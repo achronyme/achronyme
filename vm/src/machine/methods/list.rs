@@ -41,11 +41,14 @@ fn require_callable(val: Value, method: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn snapshot_list(vm: &VM, handle: u32, method: &str) -> Result<Vec<Value>, RuntimeError> {
+fn snapshot_list(vm: &VM, handle: u32, method: &'static str) -> Result<Vec<Value>, RuntimeError> {
     Ok(vm
         .heap
         .get_list(handle)
-        .ok_or_else(|| RuntimeError::SystemError(format!("{method}: list missing from heap")))?
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "List",
+            context: method,
+        })?
         .clone())
 }
 
@@ -86,7 +89,10 @@ fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
     let l = vm
         .heap
         .get_list(handle)
-        .ok_or(RuntimeError::SystemError("List missing".into()))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "List",
+            context: "len",
+        })?;
     Ok(Value::int(l.len() as i64))
 }
 
@@ -100,9 +106,10 @@ fn method_push(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Ru
     let item = args[0];
     vm.heap
         .list_push(handle, item)
-        .ok_or(RuntimeError::SystemError(
-            "List corrupted or missing".into(),
-        ))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "List",
+            context: "push",
+        })?;
     Ok(Value::nil())
 }
 
@@ -111,9 +118,10 @@ fn method_pop(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
     let list = vm
         .heap
         .get_list_mut(handle)
-        .ok_or(RuntimeError::SystemError(
-            "List corrupted or missing".into(),
-        ))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "List",
+            context: "pop",
+        })?;
     let val = list.pop().unwrap_or(Value::nil());
     Ok(val)
 }
@@ -345,8 +353,9 @@ fn method_flat_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
                 let inner = vm
                     .heap
                     .get_list(inner_handle)
-                    .ok_or_else(|| {
-                        RuntimeError::SystemError("flat_map: inner list missing".into())
+                    .ok_or(RuntimeError::StaleHeapHandle {
+                        type_name: "List",
+                        context: "flat_map",
                     })?
                     .clone();
                 for v in inner {

@@ -17,7 +17,10 @@ fn method_to_int(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value,
     let fe = vm
         .heap
         .get_field(handle)
-        .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Field",
+            context: "to_int",
+        })?;
     let canonical = fe.to_canonical();
     if canonical[1] == 0 && canonical[2] == 0 && canonical[3] == 0 {
         Ok(Value::int(canonical[0] as i64))
@@ -35,7 +38,10 @@ fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Val
     let fe = vm
         .heap
         .get_field(handle)
-        .ok_or(RuntimeError::SystemError("Field missing".into()))?;
+        .ok_or(RuntimeError::StaleHeapHandle {
+            type_name: "Field",
+            context: "to_string",
+        })?;
     let s = format!("{}", fe);
     let h = vm.heap.alloc_string(s)?;
     Ok(Value::string(h))
