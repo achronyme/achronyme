@@ -19,8 +19,8 @@ impl ValueOps for super::vm::VM {
                     .cloned()
                     .unwrap_or("<bad string>".into())
             }
-            v if v.is_int() => format!("{}", v.as_int().unwrap()),
-            v if v.is_bool() => format!("{}", v.as_bool().unwrap()),
+            v if v.is_int() => format!("{}", v.as_int().unwrap_or(0)),
+            v if v.is_bool() => format!("{}", v.as_bool().unwrap_or(false)),
             v if v.is_nil() => "nil".to_string(),
             v if v.is_field() => {
                 let Some(handle) = v.as_handle() else {
