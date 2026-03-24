@@ -34,7 +34,7 @@ pub fn run_file(
         let mut file = fs::File::open(path).context("Failed to open binary file")?;
 
         let mut vm = VM::new();
-        super::register_std_modules(&mut vm);
+        super::register_std_modules(&mut vm)?;
         vm.stress_mode = stress_gc;
         if let Some(limit_str) = max_heap {
             let limit = parse_size(limit_str).ok_or_else(|| {
@@ -90,7 +90,7 @@ pub fn run_file(
         super::print_warnings(&mut compiler, &content, error_format);
 
         let mut vm = VM::new();
-        super::register_std_modules(&mut vm);
+        super::register_std_modules(&mut vm)?;
         vm.stress_mode = stress_gc;
         if let Some(limit_str) = max_heap {
             let limit = parse_size(limit_str).ok_or_else(|| {
@@ -114,9 +114,9 @@ pub fn run_file(
         vm.heap.import_bytes(compiler.bytes_interner.blobs);
 
         // Transfer field literals from compiler to VM
-        let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+        let field_map = vm.heap.import_fields(compiler.field_interner.fields)?;
         // Transfer bigint literals from compiler to VM
-        let bigint_map = vm.heap.import_bigints(compiler.bigint_interner.bigints);
+        let bigint_map = vm.heap.import_bigints(compiler.bigint_interner.bigints)?;
         // Remap field and bigint handles in constants
         for proto in &mut compiler.prototypes {
             remap_field_handles(&mut proto.constants, &field_map);
@@ -138,7 +138,7 @@ pub fn run_file(
 
         // Allocate ALL prototypes on heap (flat global architecture)
         for proto in &compiler.prototypes {
-            let handle = vm.heap.alloc_function(proto.clone());
+            let handle = vm.heap.alloc_function(proto.clone())?;
             vm.prototypes.push(handle);
         }
 
@@ -155,11 +155,11 @@ pub fn run_file(
             upvalue_info: vec![],
             line_info: main_func.line_info.clone(),
         };
-        let func_idx = vm.heap.alloc_function(func);
+        let func_idx = vm.heap.alloc_function(func)?;
         let closure_idx = vm.heap.alloc_closure(memory::Closure {
             function: func_idx,
             upvalues: vec![],
-        });
+        })?;
 
         vm.frames.push(CallFrame {
             closure: closure_idx,

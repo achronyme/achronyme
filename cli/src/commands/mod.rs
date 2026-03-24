@@ -12,10 +12,11 @@ pub fn new_compiler() -> Compiler {
 }
 
 /// Register std modules on a VM (call after `VM::new()`).
-pub fn register_std_modules(vm: &mut vm::VM) {
+pub fn register_std_modules(vm: &mut vm::VM) -> Result<(), vm::error::RuntimeError> {
     for module in achronyme_std::std_modules() {
-        vm.register_module(&*module);
+        vm.register_module(&*module)?;
     }
+    Ok(())
 }
 
 /// Output format for compiler diagnostics.
