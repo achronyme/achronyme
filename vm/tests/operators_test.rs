@@ -18,11 +18,14 @@ fn eval(source: &str) -> Value {
         upvalue_info: Vec::new(),
         line_info: Vec::new(),
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: Vec::new(),
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: Vec::new(),
+        })
+        .expect("alloc");
     let frame = CallFrame {
         closure: closure_idx,
         ip: 0,

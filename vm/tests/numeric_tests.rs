@@ -13,12 +13,12 @@ fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
         upvalue_info: Vec::new(),
         line_info: Vec::new(),
     };
-    let func_idx = vm.heap.alloc_function(func);
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
     let closure = memory::Closure {
         function: func_idx,
         upvalues: Vec::new(),
     };
-    let closure_idx = vm.heap.alloc_closure(closure);
+    let closure_idx = vm.heap.alloc_closure(closure).expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,
@@ -63,12 +63,12 @@ fn test_division_by_zero_integer() {
         upvalue_info: Vec::new(),
         line_info: Vec::new(),
     };
-    let func_idx = vm.heap.alloc_function(func);
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
     let closure = memory::Closure {
         function: func_idx,
         upvalues: Vec::new(),
     };
-    let closure_idx = vm.heap.alloc_closure(closure);
+    let closure_idx = vm.heap.alloc_closure(closure).expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_idx,
         ip: 0,

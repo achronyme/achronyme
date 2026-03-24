@@ -24,7 +24,7 @@ fn run(source: &str) -> Result<VM, RuntimeError> {
     vm.import_strings(compiler.interner.strings);
 
     for proto in &compiler.prototypes {
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -37,11 +37,14 @@ fn run(source: &str) -> Result<VM, RuntimeError> {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,
@@ -66,11 +69,14 @@ fn run_raw(chunk: Vec<u32>, constants: Vec<Value>, max_slots: u16) -> Result<VM,
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_idx,
         ip: 0,
@@ -117,7 +123,7 @@ fn deep_recursion_stack_overflow() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let proto_handle = vm.heap.alloc_function(recurse_func);
+    let proto_handle = vm.heap.alloc_function(recurse_func).expect("alloc");
     vm.prototypes.push(proto_handle);
 
     // Main: Closure R[0] = proto[0], DefGlobalVar Global[user_global_idx] = R[0],
@@ -137,11 +143,14 @@ fn deep_recursion_stack_overflow() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let main_handle = vm.heap.alloc_function(main_func);
-    let closure_handle = vm.heap.alloc_closure(Closure {
-        function: main_handle,
-        upvalues: vec![],
-    });
+    let main_handle = vm.heap.alloc_function(main_func).expect("alloc");
+    let closure_handle = vm
+        .heap
+        .alloc_closure(Closure {
+            function: main_handle,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_handle,
         ip: 0,
@@ -181,7 +190,7 @@ fn frame_depth_limit_before_stack_max() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let proto_handle = vm.heap.alloc_function(recurse_func);
+    let proto_handle = vm.heap.alloc_function(recurse_func).expect("alloc");
     vm.prototypes.push(proto_handle);
 
     let main_chunk = vec![
@@ -199,11 +208,14 @@ fn frame_depth_limit_before_stack_max() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let main_handle = vm.heap.alloc_function(main_func);
-    let closure_handle = vm.heap.alloc_closure(Closure {
-        function: main_handle,
-        upvalues: vec![],
-    });
+    let main_handle = vm.heap.alloc_function(main_func).expect("alloc");
+    let closure_handle = vm
+        .heap
+        .alloc_closure(Closure {
+            function: main_handle,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_handle,
         ip: 0,
@@ -258,11 +270,14 @@ fn gc_stress_many_allocations() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_idx,
         ip: 0,
@@ -546,11 +561,14 @@ fn instruction_budget_sufficient() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_idx,
         ip: 0,
@@ -579,11 +597,14 @@ fn instruction_budget_exhausted() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_idx,
         ip: 0,

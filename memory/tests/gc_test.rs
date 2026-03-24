@@ -17,14 +17,14 @@ fn test_gc_stats_initial_values() {
 #[test]
 fn test_gc_stats_peak_tracking() {
     let mut heap = Heap::new();
-    heap.alloc_string("hello".into());
+    heap.alloc_string("hello".into()).expect("alloc");
     assert!(heap.stats.peak_heap_bytes > 0);
 }
 
 #[test]
 fn test_gc_stats_freed_bytes_accumulate() {
     let mut heap = Heap::new();
-    heap.alloc_string("hello world".into());
+    heap.alloc_string("hello world".into()).expect("alloc");
     heap.trace(vec![]);
     heap.sweep();
     assert!(
@@ -37,7 +37,8 @@ fn test_gc_stats_freed_bytes_accumulate() {
 fn test_gc_stats_peak_never_decreases() {
     let mut heap = Heap::new();
     // Allocate to establish a peak
-    heap.alloc_string("hello world, this is a string".into());
+    heap.alloc_string("hello world, this is a string".into())
+        .expect("alloc");
     let peak1 = heap.stats.peak_heap_bytes;
 
     // Sweep everything (no roots) — peak should not decrease
@@ -54,7 +55,7 @@ fn test_gc_alloc_reuse_string() {
     let mut heap = Heap::new();
 
     let s1 = "Hello".to_string();
-    let idx1 = heap.alloc_string(s1);
+    let idx1 = heap.alloc_string(s1).expect("alloc");
 
     // 1. Mark nothing.
     // 2. Sweep.
@@ -68,7 +69,7 @@ fn test_gc_alloc_reuse_string() {
 
     // Alloc new string, should reuse idx1
     let s2 = "World".to_string();
-    let idx2 = heap.alloc_string(s2);
+    let idx2 = heap.alloc_string(s2).expect("alloc");
 
     assert_eq!(idx1, idx2, "Heap should reuse freed index");
     assert_eq!(heap.get_string(idx2).unwrap(), "World");
@@ -79,8 +80,8 @@ fn test_gc_cycle_collection() {
     let mut heap = Heap::new();
 
     // Create two lists
-    let a_idx = heap.alloc_list(vec![]);
-    let b_idx = heap.alloc_list(vec![]);
+    let a_idx = heap.alloc_list(vec![]).expect("alloc");
+    let b_idx = heap.alloc_list(vec![]).expect("alloc");
     let val_a = Value::list(a_idx);
     let val_b = Value::list(b_idx);
 
@@ -120,14 +121,14 @@ fn test_gc_lock_prevents_request() {
     heap.next_gc_threshold = 0; // Force threshold to be always exceeded
 
     // Without lock: alloc should set request_gc
-    heap.alloc_string("hello".into());
+    heap.alloc_string("hello".into()).expect("alloc");
     assert!(heap.request_gc);
     heap.request_gc = false;
 
     // With lock: alloc should NOT set request_gc
     heap.lock_gc();
     assert!(heap.is_gc_locked());
-    heap.alloc_string("world".into());
+    heap.alloc_string("world".into()).expect("alloc");
     assert!(!heap.request_gc);
 
     // After unlock: deferred check_gc() fires immediately
@@ -154,7 +155,7 @@ fn test_gc_lock_nesting() {
         heap.is_gc_locked(),
         "inner unlock should not release outer lock"
     );
-    heap.alloc_string("test".into());
+    heap.alloc_string("test".into()).expect("alloc");
     assert!(!heap.request_gc, "should still be locked at depth 1");
 
     heap.unlock_gc(); // depth 1 → 0, triggers check_gc
@@ -177,7 +178,7 @@ fn test_gc_lock_survives_sweep() {
 
     // Lock, then run a full GC cycle — lock should remain held
     heap.lock_gc();
-    heap.alloc_string("survivor".into());
+    heap.alloc_string("survivor".into()).expect("alloc");
     heap.trace(vec![]);
     heap.sweep();
     assert!(heap.is_gc_locked(), "sweep should not affect gc lock state");
@@ -197,7 +198,7 @@ fn test_heap_limit_flag_set_on_exceed() {
     let mut heap = Heap::new();
     heap.max_heap_bytes = 100;
     for _ in 0..20 {
-        heap.alloc_string("hello world".to_string());
+        heap.alloc_string("hello world".to_string()).expect("alloc");
     }
     assert!(heap.heap_limit_exceeded);
 }
@@ -206,7 +207,7 @@ fn test_heap_limit_flag_set_on_exceed() {
 fn test_heap_limit_not_set_when_under() {
     let mut heap = Heap::new();
     // default usize::MAX
-    heap.alloc_string("hello".into());
+    heap.alloc_string("hello".into()).expect("alloc");
     assert!(!heap.heap_limit_exceeded);
 }
 
@@ -215,7 +216,8 @@ fn test_heap_limit_ignores_gc_lock() {
     let mut heap = Heap::new();
     heap.max_heap_bytes = 10;
     heap.lock_gc();
-    heap.alloc_string("this exceeds the limit".to_string());
+    heap.alloc_string("this exceeds the limit".to_string())
+        .expect("alloc");
     assert!(heap.heap_limit_exceeded);
     heap.unlock_gc();
 }

@@ -14,11 +14,14 @@ fn run_source(source: &str) -> Result<VM, String> {
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
     vm.heap.import_bytes(compiler.bytes_interner.blobs);
-    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+    let field_map = vm
+        .heap
+        .import_fields(compiler.field_interner.fields)
+        .expect("import_fields");
 
     for proto in &mut compiler.prototypes {
         remap_field_handles(&mut proto.constants, &field_map);
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -34,11 +37,14 @@ fn run_source(source: &str) -> Result<VM, String> {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,
@@ -60,11 +66,14 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
     vm.heap.import_bytes(compiler.bytes_interner.blobs);
-    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+    let field_map = vm
+        .heap
+        .import_fields(compiler.field_interner.fields)
+        .expect("import_fields");
 
     for proto in &mut compiler.prototypes {
         remap_field_handles(&mut proto.constants, &field_map);
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -80,11 +89,14 @@ fn run_source_with_prove(source: &str) -> Result<VM, String> {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,
@@ -179,7 +191,7 @@ fn value_to_field_element_field() {
     use vm::machine::prove::value_to_field_element;
     let mut heap = memory::Heap::new();
     let fe = FieldElement::from_u64(42);
-    let handle = heap.alloc_field(fe);
+    let handle = heap.alloc_field(fe).expect("alloc");
     let val = Value::field(handle);
     let result = value_to_field_element(&heap, val);
     assert_eq!(result, Some(fe));
@@ -498,11 +510,14 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
     vm.heap.import_bytes(compiler.bytes_interner.blobs);
-    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+    let field_map = vm
+        .heap
+        .import_fields(compiler.field_interner.fields)
+        .expect("import_fields");
 
     for proto in &mut compiler.prototypes {
         remap_field_handles(&mut proto.constants, &field_map);
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -518,11 +533,14 @@ fn run_source_with_mock_proof(source: &str) -> Result<VM, String> {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,
@@ -668,11 +686,14 @@ fn proof_object_gc_survives_when_rooted() {
 
     vm.import_strings(compiler.interner.strings);
     vm.heap.import_bytes(compiler.bytes_interner.blobs);
-    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+    let field_map = vm
+        .heap
+        .import_fields(compiler.field_interner.fields)
+        .expect("import_fields");
 
     for proto in &mut compiler.prototypes {
         remap_field_handles(&mut proto.constants, &field_map);
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -688,11 +709,14 @@ fn proof_object_gc_survives_when_rooted() {
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,
@@ -717,7 +741,7 @@ fn proof_object_allocation_and_inspection() {
         public_json: r#"["1"]"#.to_string(),
         vkey_json: r#"{"x":"y"}"#.to_string(),
     };
-    let handle = heap.alloc_proof(obj);
+    let handle = heap.alloc_proof(obj).expect("alloc");
     let val = Value::proof(handle);
     assert!(val.is_proof());
     assert!(!val.is_nil());
@@ -759,11 +783,14 @@ fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> 
     let mut vm = VM::new();
     vm.import_strings(compiler.interner.strings);
     vm.heap.import_bytes(compiler.bytes_interner.blobs);
-    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
+    let field_map = vm
+        .heap
+        .import_fields(compiler.field_interner.fields)
+        .expect("import_fields");
 
     for proto in &mut compiler.prototypes {
         remap_field_handles(&mut proto.constants, &field_map);
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -779,11 +806,14 @@ fn run_source_with_mock_verify(source: &str, valid: bool) -> Result<VM, String> 
         upvalue_info: vec![],
         line_info: vec![],
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
 
     vm.frames.push(CallFrame {
         closure: closure_idx,

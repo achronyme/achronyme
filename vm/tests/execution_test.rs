@@ -22,13 +22,13 @@ fn test_execution_end_to_end() {
         line_info: Vec::new(),
     };
 
-    let func_idx = vm.heap.alloc_function(func);
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
 
     let closure = memory::Closure {
         function: func_idx,
         upvalues: Vec::new(),
     };
-    let closure_idx = vm.heap.alloc_closure(closure);
+    let closure_idx = vm.heap.alloc_closure(closure).expect("alloc");
 
     let frame = CallFrame {
         closure: closure_idx,
@@ -70,11 +70,14 @@ fn test_mod_compilation() {
         upvalue_info: Vec::new(),
         line_info: Vec::new(),
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: Vec::new(),
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: Vec::new(),
+        })
+        .expect("alloc");
 
     let frame = CallFrame {
         closure: closure_idx,

@@ -33,7 +33,8 @@ fn register_std_on_vm() {
     assert_eq!(builtin_count, 14); // builtins (beta.13)
 
     for module in achronyme_std::std_modules() {
-        vm.register_module(&*module);
+        vm.register_module(&*module)
+            .expect("register_module failed");
     }
 
     let std_table = achronyme_std::std_native_table();
@@ -101,20 +102,27 @@ fn e2e_std_natives() {
 
     let mut vm = vm::VM::new();
     for module in achronyme_std::std_modules() {
-        vm.register_module(&*module);
+        vm.register_module(&*module)
+            .expect("register_module failed");
     }
 
     // Transfer compiler state to VM
     vm.import_strings(compiler.interner.strings);
-    let field_map = vm.heap.import_fields(compiler.field_interner.fields);
-    let bigint_map = vm.heap.import_bigints(compiler.bigint_interner.bigints);
+    let field_map = vm
+        .heap
+        .import_fields(compiler.field_interner.fields)
+        .expect("import_fields");
+    let bigint_map = vm
+        .heap
+        .import_bigints(compiler.bigint_interner.bigints)
+        .expect("import_bigints");
 
     for proto in &mut compiler.prototypes {
         remap_handles(&mut proto.constants, &field_map, &bigint_map);
     }
     for proto in &compiler.prototypes {
         let f: memory::Function = proto.clone();
-        let handle = vm.heap.alloc_function(f);
+        let handle = vm.heap.alloc_function(f).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -131,11 +139,14 @@ fn e2e_std_natives() {
         upvalue_info: vec![],
         line_info: main_func.line_info.clone(),
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(vm::CallFrame {
         closure: closure_idx,
         ip: 0,

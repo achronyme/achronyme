@@ -12,7 +12,7 @@ fn run_program(source: &str) -> (VM, Result<(), vm::RuntimeError>) {
     vm.import_strings(compiler.interner.strings);
 
     for proto in &compiler.prototypes {
-        let handle = vm.heap.alloc_function(proto.clone());
+        let handle = vm.heap.alloc_function(proto.clone()).expect("alloc");
         vm.prototypes.push(handle);
     }
 
@@ -25,11 +25,14 @@ fn run_program(source: &str) -> (VM, Result<(), vm::RuntimeError>) {
         upvalue_info: vec![],
         line_info: main_func.line_info.clone(),
     };
-    let func_idx = vm.heap.alloc_function(func);
-    let closure_idx = vm.heap.alloc_closure(memory::Closure {
-        function: func_idx,
-        upvalues: vec![],
-    });
+    let func_idx = vm.heap.alloc_function(func).expect("alloc");
+    let closure_idx = vm
+        .heap
+        .alloc_closure(memory::Closure {
+            function: func_idx,
+            upvalues: vec![],
+        })
+        .expect("alloc");
     vm.frames.push(CallFrame {
         closure: closure_idx,
         ip: 0,
