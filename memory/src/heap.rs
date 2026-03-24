@@ -193,7 +193,7 @@ impl Heap {
         self.lists.is_marked(idx)
     }
 
-    pub fn alloc_upvalue(&mut self, val: Upvalue) -> u32 {
+    pub fn alloc_upvalue(&mut self, val: Upvalue) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += std::mem::size_of::<Upvalue>();
         self.check_gc();
         self.upvalues.alloc(val)
@@ -207,7 +207,7 @@ impl Heap {
         self.upvalues.get_mut(index)
     }
 
-    pub fn alloc_closure(&mut self, c: Closure) -> u32 {
+    pub fn alloc_closure(&mut self, c: Closure) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += std::mem::size_of::<Closure>() + c.upvalues.len() * 4;
         self.check_gc();
         self.closures.alloc(c)
@@ -221,19 +221,22 @@ impl Heap {
         self.closures.get_mut(index)
     }
 
-    pub fn alloc_string(&mut self, s: String) -> u32 {
+    pub fn alloc_string(&mut self, s: String) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += s.capacity();
         self.check_gc();
         self.strings.alloc(s)
     }
 
-    pub fn alloc_list(&mut self, l: Vec<Value>) -> u32 {
+    pub fn alloc_list(&mut self, l: Vec<Value>) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += l.capacity() * std::mem::size_of::<Value>();
         self.check_gc();
         self.lists.alloc(l)
     }
 
-    pub fn alloc_map(&mut self, m: HashMap<String, Value>) -> u32 {
+    pub fn alloc_map(
+        &mut self,
+        m: HashMap<String, Value>,
+    ) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += m.capacity() * Self::map_entry_size();
         self.check_gc();
         self.maps.alloc(m)
@@ -613,7 +616,7 @@ impl Heap {
         self.lists.get_mut(index)
     }
 
-    pub fn alloc_function(&mut self, f: Function) -> u32 {
+    pub fn alloc_function(&mut self, f: Function) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated +=
             f.chunk.len() * 4 + f.constants.len() * std::mem::size_of::<Value>();
         self.check_gc();
@@ -649,7 +652,7 @@ impl Heap {
         self.check_gc();
     }
 
-    pub fn alloc_iterator(&mut self, iter: IteratorObj) -> u32 {
+    pub fn alloc_iterator(&mut self, iter: IteratorObj) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += std::mem::size_of::<IteratorObj>();
         self.check_gc();
         self.iterators.alloc(iter)
@@ -663,12 +666,14 @@ impl Heap {
         self.iterators.get_mut(index)
     }
 
-    pub fn import_fields(&mut self, fields: Vec<FieldElement>) -> Vec<u32> {
-        let handles: Vec<u32> = fields.into_iter().map(|fe| self.alloc_field(fe)).collect();
-        handles
+    pub fn import_fields(
+        &mut self,
+        fields: Vec<FieldElement>,
+    ) -> Result<Vec<u32>, crate::arena::ArenaError> {
+        fields.into_iter().map(|fe| self.alloc_field(fe)).collect()
     }
 
-    pub fn alloc_field(&mut self, fe: FieldElement) -> u32 {
+    pub fn alloc_field(&mut self, fe: FieldElement) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += std::mem::size_of::<FieldElement>();
         self.check_gc();
         self.fields.alloc(fe)
@@ -678,7 +683,7 @@ impl Heap {
         self.fields.get(index)
     }
 
-    pub fn alloc_proof(&mut self, p: ProofObject) -> u32 {
+    pub fn alloc_proof(&mut self, p: ProofObject) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += std::mem::size_of::<ProofObject>()
             + p.proof_json.capacity()
             + p.public_json.capacity()
@@ -691,7 +696,7 @@ impl Heap {
         self.proofs.get(index)
     }
 
-    pub fn alloc_bigint(&mut self, bi: BigInt) -> u32 {
+    pub fn alloc_bigint(&mut self, bi: BigInt) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += std::mem::size_of::<BigInt>() + std::mem::size_of_val(bi.limbs());
         self.check_gc();
         self.bigints.alloc(bi)
@@ -705,14 +710,17 @@ impl Heap {
         self.bigints.get_mut(index)
     }
 
-    pub fn import_bigints(&mut self, bigints: Vec<BigInt>) -> Vec<u32> {
+    pub fn import_bigints(
+        &mut self,
+        bigints: Vec<BigInt>,
+    ) -> Result<Vec<u32>, crate::arena::ArenaError> {
         bigints
             .into_iter()
             .map(|bi| self.alloc_bigint(bi))
             .collect()
     }
 
-    pub fn alloc_bytes(&mut self, data: Vec<u8>) -> u32 {
+    pub fn alloc_bytes(&mut self, data: Vec<u8>) -> Result<u32, crate::arena::ArenaError> {
         self.bytes_allocated += data.capacity();
         self.check_gc();
         self.bytes.alloc(data)
