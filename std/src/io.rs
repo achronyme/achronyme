@@ -17,7 +17,7 @@ pub mod io_impl {
             .read_line(&mut input)
             .map_err(|e| RuntimeError::SystemError(format!("read_line failed: {e}")))?;
         let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
-        let handle = vm.heap.alloc_string(trimmed.to_string());
+        let handle = vm.heap.alloc_string(trimmed.to_string())?;
         Ok(Value::string(handle))
     }
 
@@ -56,7 +56,7 @@ pub mod io_impl {
         }
         let contents = std::fs::read_to_string(&path)
             .map_err(|e| RuntimeError::SystemError(format!("read_file('{}') failed: {e}", path)))?;
-        let h = vm.heap.alloc_string(contents);
+        let h = vm.heap.alloc_string(contents)?;
         Ok(Value::string(h))
     }
 

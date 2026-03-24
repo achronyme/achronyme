@@ -66,7 +66,7 @@ pub mod string_ext_impl {
                 .ok_or(RuntimeError::SystemError("String missing".into()))?;
             result.push_str(s);
         }
-        let handle = vm.heap.alloc_string(result);
+        let handle = vm.heap.alloc_string(result)?;
         Ok(Value::string(handle))
     }
 }

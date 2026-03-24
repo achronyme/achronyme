@@ -50,7 +50,7 @@ fn construct_bigint(
         )));
     };
 
-    let handle = vm.heap.alloc_bigint(bi);
+    let handle = vm.heap.alloc_bigint(bi)?;
     Ok(Value::bigint(handle))
 }
 
@@ -121,7 +121,7 @@ pub mod bigint_impl {
         let bi = BigInt::from_bits(&bits, width).ok_or_else(|| {
             RuntimeError::TypeMismatch("Too many bits for the specified width".into())
         })?;
-        let handle = vm.heap.alloc_bigint(bi);
+        let handle = vm.heap.alloc_bigint(bi)?;
         Ok(Value::bigint(handle))
     }
 }

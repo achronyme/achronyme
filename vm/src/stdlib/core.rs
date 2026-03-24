@@ -67,7 +67,7 @@ pub mod core_impl {
         } else if val.is_field() {
             "Field"
         } else if val.is_bigint() {
-            let handle = val.as_handle().unwrap();
+            let handle = val.as_handle().ok_or(RuntimeError::InvalidOperand)?;
             let bi = vm.heap.get_bigint(handle);
             match bi {
                 Some(b) => match b.width() {
@@ -86,7 +86,7 @@ pub mod core_impl {
             "Unknown"
         };
         let s = type_name.to_string();
-        let handle = vm.heap.alloc_string(s);
+        let handle = vm.heap.alloc_string(s)?;
         Ok(Value::string(handle))
     }
 
@@ -132,7 +132,7 @@ pub mod core_impl {
             .ok_or(RuntimeError::SystemError("proof not found".into()))?
             .proof_json
             .clone();
-        let s = vm.heap.alloc_string(json);
+        let s = vm.heap.alloc_string(json)?;
         Ok(Value::string(s))
     }
 
@@ -158,7 +158,7 @@ pub mod core_impl {
             .ok_or(RuntimeError::SystemError("proof not found".into()))?
             .public_json
             .clone();
-        let s = vm.heap.alloc_string(json);
+        let s = vm.heap.alloc_string(json)?;
         Ok(Value::string(s))
     }
 
@@ -184,7 +184,7 @@ pub mod core_impl {
             .ok_or(RuntimeError::SystemError("proof not found".into()))?
             .vkey_json
             .clone();
-        let s = vm.heap.alloc_string(json);
+        let s = vm.heap.alloc_string(json)?;
         Ok(Value::string(s))
     }
 
@@ -199,7 +199,7 @@ pub mod core_impl {
         let right = extract_fe(vm, &args[1])?;
         let params = PoseidonParams::bn254_t3();
         let result = poseidon_hash(&params, left, right);
-        let handle = vm.heap.alloc_field(result);
+        let handle = vm.heap.alloc_field(result)?;
         Ok(Value::field(handle))
     }
 
@@ -218,7 +218,7 @@ pub mod core_impl {
             let fe = extract_fe(vm, arg)?;
             acc = poseidon_hash(&params, acc, fe);
         }
-        let handle = vm.heap.alloc_field(acc);
+        let handle = vm.heap.alloc_field(acc)?;
         Ok(Value::field(handle))
     }
 
@@ -277,7 +277,7 @@ pub mod core_impl {
             "bytes_allocated".into(),
             Value::int(vm.heap.bytes_allocated as i64),
         );
-        let handle = vm.heap.alloc_map(map);
+        let handle = vm.heap.alloc_map(map)?;
         Ok(Value::map(handle))
     }
 }
