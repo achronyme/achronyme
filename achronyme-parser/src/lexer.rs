@@ -57,6 +57,18 @@ impl<'a> Lexer<'a> {
         self.col += 1;
     }
 
+    /// Convert a byte slice (known to be ASCII) to `&str`, propagating as
+    /// `ParseError` instead of panicking on the (structurally impossible) failure.
+    fn ascii_str<'b>(&self, bytes: &'b [u8]) -> Result<&'b str, ParseError> {
+        std::str::from_utf8(bytes).map_err(|_| {
+            ParseError::new(
+                "internal: invalid UTF-8 in ASCII slice",
+                self.line,
+                self.col,
+            )
+        })
+    }
+
     /// Capture current position as start of a span.
     fn start_pos(&self) -> (usize, usize, usize) {
         (self.pos, self.line, self.col)
@@ -149,7 +161,7 @@ impl<'a> Lexer<'a> {
 
         // Identifiers and keywords
         if ch.is_ascii_alphabetic() || ch == b'_' {
-            return Ok(self.lex_ident(start));
+            return self.lex_ident(start);
         }
 
         // Strings
@@ -349,9 +361,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
-            .unwrap()
-            .to_string();
+        let lexeme = self.ascii_str(&self.source[start.0..self.pos])?.to_string();
         Ok(Token {
             kind: TokenKind::Integer,
             span: self.make_span(start),
@@ -381,7 +391,7 @@ impl<'a> Lexer<'a> {
                         start.2,
                     ));
                 }
-                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                let digits = self.ascii_str(&self.source[digit_start..self.pos])?;
                 format!("x{digits}")
             }
             b'b' => {
@@ -401,7 +411,7 @@ impl<'a> Lexer<'a> {
                         start.2,
                     ));
                 }
-                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                let digits = self.ascii_str(&self.source[digit_start..self.pos])?;
                 format!("b{digits}")
             }
             ch if ch.is_ascii_digit() => {
@@ -413,8 +423,7 @@ impl<'a> Lexer<'a> {
                         break;
                     }
                 }
-                std::str::from_utf8(&self.source[digit_start..self.pos])
-                    .unwrap()
+                self.ascii_str(&self.source[digit_start..self.pos])?
                     .to_string()
             }
             _ => {
@@ -478,7 +487,7 @@ impl<'a> Lexer<'a> {
                         start.2,
                     ));
                 }
-                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                let digits = self.ascii_str(&self.source[digit_start..self.pos])?;
                 format!("{width_str}x{digits}")
             }
             b'd' => {
@@ -498,7 +507,7 @@ impl<'a> Lexer<'a> {
                         start.2,
                     ));
                 }
-                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                let digits = self.ascii_str(&self.source[digit_start..self.pos])?;
                 format!("{width_str}d{digits}")
             }
             b'b' => {
@@ -518,7 +527,7 @@ impl<'a> Lexer<'a> {
                         start.2,
                     ));
                 }
-                let digits = std::str::from_utf8(&self.source[digit_start..self.pos]).unwrap();
+                let digits = self.ascii_str(&self.source[digit_start..self.pos])?;
                 format!("{width_str}b{digits}")
             }
             _ => {
@@ -536,7 +545,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn lex_ident(&mut self, start: (usize, usize, usize)) -> Token {
+    fn lex_ident(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         while let Some(ch) = self.peek() {
             if ch.is_ascii_alphanumeric() || ch == b'_' {
                 self.advance();
@@ -544,9 +553,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
-            .unwrap()
-            .to_string();
+        let lexeme = self.ascii_str(&self.source[start.0..self.pos])?.to_string();
         let kind = match lexeme.as_str() {
             "let" => TokenKind::Let,
             "mut" => TokenKind::Mut,
@@ -573,11 +580,11 @@ impl<'a> Lexer<'a> {
             "as" => TokenKind::As,
             _ => TokenKind::Ident,
         };
-        Token {
+        Ok(Token {
             kind,
             span: self.make_span(start),
             lexeme,
-        }
+        })
     }
 
     fn lex_string(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
@@ -601,7 +608,9 @@ impl<'a> Lexer<'a> {
                     match self.peek() {
                         Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => {
                             value.push('\\');
-                            value.push(self.peek().unwrap() as char);
+                            if let Some(ch) = self.peek() {
+                                value.push(ch as char);
+                            }
                             self.advance();
                         }
                         Some(ch) => {
@@ -627,7 +636,10 @@ impl<'a> Lexer<'a> {
                     let rest = &self.source[self.pos..];
                     match std::str::from_utf8(rest) {
                         Ok(s) => {
-                            let c = s.chars().next().unwrap();
+                            let c = s
+                                .chars()
+                                .next()
+                                .expect("non-empty str after peek() returned Some");
                             self.advance_multibyte(c.len_utf8());
                             value.push(c);
                         }
