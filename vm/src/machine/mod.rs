@@ -11,6 +11,7 @@ mod frame;
 mod gc;
 mod globals;
 mod interpreter;
+mod iterator;
 pub mod methods;
 mod native;
 mod promotion;
