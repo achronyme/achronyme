@@ -62,10 +62,7 @@ impl GlobalOps for super::vm::VM {
                         .map(|s| format!("'{}'", s))
                         .unwrap_or_else(|| format!("Index {}", bx));
 
-                    return Err(RuntimeError::Unknown(format!(
-                        "Undefined global variable: {} (Index {})",
-                        name, bx
-                    )));
+                    return Err(RuntimeError::UndefinedGlobal { name });
                 }
                 let entry = &self.globals[bx];
                 self.set_reg(base, a, entry.value)?;
@@ -83,10 +80,7 @@ impl GlobalOps for super::vm::VM {
                         .map(|s| format!("'{}'", s))
                         .unwrap_or_else(|| format!("Index {}", bx));
 
-                    return Err(RuntimeError::Unknown(format!(
-                        "Undefined global variable: {} (Index {})",
-                        name, bx
-                    )));
+                    return Err(RuntimeError::UndefinedGlobal { name });
                 }
 
                 let entry = &mut self.globals[bx];
@@ -100,10 +94,7 @@ impl GlobalOps for super::vm::VM {
                         .map(|s| format!("'{}'", s))
                         .unwrap_or_else(|| format!("Index {}", bx));
 
-                    return Err(RuntimeError::Unknown(format!(
-                        "Cannot assign to immutable global: {} (Index {})",
-                        name, bx
-                    )));
+                    return Err(RuntimeError::ImmutableGlobal { name });
                 }
             }
 
