@@ -1,81 +1,97 @@
 ---
 title: "Declarations"
-description: "Public and witness declarations in circuits."
+description: "Declaring public and witness inputs in circuit definitions."
 ---
 
-Every circuit needs explicit input declarations. These tell the compiler which variables are **public** (visible to the verifier) and which are **witness** (known only to the prover).
+Every circuit declares its inputs in the `circuit` signature. Each parameter specifies a **visibility** — `Public` (visible to the verifier) or `Witness` (known only to the prover).
 
-## Scalar Declarations
+## Basic Syntax
 
-Declare one variable at a time:
-
-```ach
-public output
-witness secret
-```
-
-Or multiple on one line, separated by commas:
+A circuit declaration names the circuit and lists its parameters with their visibility:
 
 ```ach
-public x, y
-witness a, b, c
+circuit multiply(output: Public, a: Witness, b: Witness) {
+    assert_eq(a * b, output)
+}
 ```
 
 Public inputs become part of the proof's public statement — anyone verifying the proof can see their values. Witness inputs remain private to the prover.
 
-## Array Declarations
+## Array Parameters
 
-Declare a fixed-size array of inputs with bracket syntax:
-
-```ach
-witness path[3]
-witness indices[3]
-```
-
-This creates three indexed variables (`path_0`, `path_1`, `path_2`) that you access with standard indexing. Array declarations work for both public and witness inputs:
+Declare a fixed-size array of inputs with bracket syntax after the type:
 
 ```ach
-public commitments[4]
-witness secrets[4]
+circuit merkle_verify(root: Public, path: Witness Field[3], indices: Witness Bool[3]) {
+    // path and indices each have 3 elements
+    // access with standard indexing: path[0], path[1], path[2]
+}
 ```
+
+Array parameters create indexed variables that you access with standard indexing. They work for both public and witness inputs:
+
+```ach
+circuit commitment_check(commitments: Public Field[4], secrets: Witness Field[4]) {
+    for i in 0..4 {
+        assert_eq(poseidon(secrets[i], 0), commitments[i])
+    }
+}
+```
+
+## Type Annotations
+
+Parameters can include optional type annotations (`Field` or `Bool`) between the visibility and the parameter name (or array brackets):
+
+```ach
+circuit typed_example(root: Public Field, flag: Witness Bool) {
+    if flag {
+        assert_eq(root, poseidon(root, 0))
+    }
+}
+```
+
+For array parameters, the type goes between the visibility and the brackets:
+
+```ach
+circuit merkle_path(root: Public Field, path: Witness Field[3], indices: Witness Bool[3]) {
+    // indices are boolean-typed, saving 1 constraint each
+}
+```
+
+Annotating a witness as `Bool` saves 1 constraint by skipping boolean enforcement. See [Type Annotations](/circuits/type-annotations/) for full details.
 
 ## Using Declared Inputs
 
-Once declared, inputs are ordinary variables. Use them in expressions, pass them to builtins, and index into arrays:
+Inside the circuit body, parameters are ordinary variables. Use them in expressions, pass them to builtins, and index into arrays:
 
 ```ach
-public output
-witness a
-witness b
+circuit product_check(output: Public, a: Witness, b: Witness) {
+    let product = a * b
+    assert_eq(product, output)
 
-let product = a * b
-assert_eq(product, output)
-
-let sum = a + b
-assert_eq(sum, a + b)
+    let sum = a + b
+    assert_eq(sum, a + b)
+}
 ```
 
 Array elements are accessed by index:
 
 ```ach
-public expected_sum
-witness vals[3]
-
-let acc = vals[0]
-let acc = acc + vals[1]
-let acc = acc + vals[2]
-assert_eq(acc, expected_sum)
+circuit sum_check(expected_sum: Public, vals: Witness Field[3]) {
+    let acc = vals[0]
+    let acc = acc + vals[1]
+    let acc = acc + vals[2]
+    assert_eq(acc, expected_sum)
+}
 ```
 
-## CLI Alternative
+## CLI Usage
 
-Instead of in-source declarations, you can declare inputs with CLI flags:
+Pass concrete values for circuit inputs with the `--inputs` flag:
 
 ```bash
-ach circuit program.ach --public output --witness a,b --inputs "a=3,b=5,output=15"
+ach circuit program.ach --inputs "a=3,b=5,output=15"
 ```
-
-The `--public` and `--witness` flags accept comma-separated variable names. If the source file already contains `public`/`witness` declarations, omit the flags — the compiler picks them up automatically.
 
 Array inputs are passed with indexed names:
 
@@ -83,23 +99,10 @@ Array inputs are passed with indexed names:
 ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=0,indices_1=1"
 ```
 
-## Type Annotations
-
-Declarations can include optional type annotations. See [Type Annotations](/circuits/type-annotations/) for details.
-
-```ach
-public root: Field
-witness flag: Bool
-witness path[3]: Field
-witness indices[3]: Bool
-```
-
-Annotating a witness as `Bool` saves 1 constraint by skipping boolean enforcement.
-
 ## Errors
 
 | Error | Cause |
 |-------|-------|
-| `DuplicateInput` | Same name declared as both `public` and `witness`, or declared twice |
-| `UndeclaredVariable` | Using a variable that was never declared as `public` or `witness` |
+| `DuplicateInput` | Same name declared twice in the parameter list |
+| `UndeclaredVariable` | Using a variable inside the circuit body that is not a parameter |
 | `AnnotationMismatch` | Declared type doesn't match the inferred type |

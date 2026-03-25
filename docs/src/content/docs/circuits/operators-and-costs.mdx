@@ -19,14 +19,11 @@ Every operation in a circuit compiles to zero or more constraints. Understanding
 | `-` (negation) | `-a` | 0 | Negate LC coefficients |
 
 ```ach
-public x2
-public x3
-public x4
-witness x
-
-assert_eq(x ^ 2, x2)
-assert_eq(x ^ 3, x3)
-assert_eq(x ^ 4, x4)
+circuit exponent(x2: Public, x3: Public, x4: Public, x: Witness) {
+    assert_eq(x ^ 2, x2)
+    assert_eq(x ^ 3, x3)
+    assert_eq(x ^ 4, x4)
+}
 ```
 
 ## Comparison Operators
@@ -43,12 +40,11 @@ assert_eq(x ^ 4, x4)
 Equality checks are cheap (2 constraints). Ordering comparisons are expensive (~760 constraints each) because they require bit decomposition over the BN254 field. Use them sparingly.
 
 ```ach
-witness x
-witness y
-
-let eq = x == y
-let lt = x < y
-assert(lt)
+circuit compare(x: Witness, y: Witness) {
+    let eq = x == y
+    let lt = x < y
+    assert(lt)
+}
 ```
 
 ## Logical Operators
@@ -60,17 +56,16 @@ assert(lt)
 | `!` | `!a` | 0–1 | Free if operand is already proven boolean |
 
 ```ach
-witness x
-witness y
+circuit logical(x: Witness, y: Witness) {
+    let both = (x < y) && (y > x)
+    assert(both)
 
-let both = (x < y) && (y > x)
-assert(both)
+    let either = (x == y) || (x < y)
+    assert(either)
 
-let either = (x == y) || (x < y)
-assert(either)
-
-let not_eq = !(x == y)
-assert(not_eq)
+    let not_eq = !(x == y)
+    assert(not_eq)
+}
 ```
 
 ## Why Some Operations Are Free

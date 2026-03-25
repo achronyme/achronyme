@@ -20,12 +20,9 @@ El verificador recalcula la raíz a partir de estos valores y comprueba que coin
 Crea `merkle.ach`:
 
 ```ach
-public root
-witness leaf
-witness path[3]
-witness indices[3]
-
-merkle_verify(root, leaf, path, indices)
+circuit merkle_proof(root: Public, leaf: Witness, path: Witness Field[3], indices: Witness Field[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 Esto verifica membresía en un árbol de profundidad 3 (8 hojas). La función integrada `merkle_verify`:
@@ -151,16 +148,19 @@ Cambia el tamaño del array para que coincida con la profundidad de tu árbol:
 
 ```ach
 // Profundidad 1 (2 hojas)
-witness path[1]
-witness indices[1]
+circuit merkle_proof_d1(root: Public, leaf: Witness, path: Witness Field[1], indices: Witness Field[1]) {
+    merkle_verify(root, leaf, path, indices)
+}
 
 // Profundidad 5 (32 hojas)
-witness path[5]
-witness indices[5]
+circuit merkle_proof_d5(root: Public, leaf: Witness, path: Witness Field[5], indices: Witness Field[5]) {
+    merkle_verify(root, leaf, path, indices)
+}
 
 // Profundidad 20 (~1M hojas)
-witness path[20]
-witness indices[20]
+circuit merkle_proof_d20(root: Public, leaf: Witness, path: Witness Field[20], indices: Witness Field[20]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 Los arrays `path` e `indices` deben tener la misma longitud.
@@ -170,12 +170,9 @@ Los arrays `path` e `indices` deben tener la misma longitud.
 Para seguridad de tipos explícita, agrega anotaciones:
 
 ```ach
-public root: Field
-witness leaf: Field
-witness path[3]: Field
-witness indices[3]: Bool
-
-merkle_verify(root, leaf, path, indices)
+circuit merkle_proof(root: Public Field, leaf: Witness Field, path: Witness Field[3], indices: Witness Bool[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 La anotación `Bool` en `indices` asegura que estén restringidos a 0 o 1, lo que el pase de optimización `bool_prop` puede usar para omitir verificación booleana redundante.

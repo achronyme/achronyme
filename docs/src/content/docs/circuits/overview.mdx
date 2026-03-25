@@ -16,10 +16,9 @@ In Achronyme, you write circuits using the same syntax as regular programs, with
 ### 1. Standalone circuit file
 
 ```ach
-public output
-witness secret
-
-assert_eq(poseidon(secret, 0), output)
+circuit hash_check(output: Public, secret: Witness) {
+    assert_eq(poseidon(secret, 0), output)
+}
 ```
 
 Compile with the CLI:

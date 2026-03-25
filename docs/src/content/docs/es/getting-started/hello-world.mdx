@@ -41,11 +41,9 @@ for i in 0..10 {
 Crea un archivo `multiply.ach`:
 
 ```ach
-public product
-witness a
-witness b
-
-assert_eq(a * b, product)
+circuit multiply(product: Public, a: Witness, b: Witness) {
+    assert_eq(a * b, product)
+}
 ```
 
 Este circuito demuestra que el probador conoce dos números secretos `a` y `b` cuyo producto es igual al valor público `product`.
@@ -60,7 +58,7 @@ Esto produce `circuit.r1cs` y `witness.wtns`, listos para generación de pruebas
 
 ### ¿Qué acaba de pasar?
 
-1. El parser leyó `multiply.ach` y construyó un AST
+1. El parser leyó `multiply.ach` y construyó un AST con la definición del circuito `multiply`
 2. La fase de bajada a IR lo convirtió en instrucciones SSA
 3. El backend R1CS compiló la multiplicación en una sola restricción: `a * b = product`
 4. El generador de testigos completó los valores concretos: `a=6`, `b=7`, `product=42`

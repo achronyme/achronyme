@@ -1,81 +1,97 @@
 ---
 title: "Declaraciones"
-description: "Declaraciones públicas y de testigo en circuitos."
+description: "Declaraciones de entradas publicas y de testigo en definiciones de circuitos."
 ---
 
-Cada circuito necesita declaraciones de entrada explícitas. Estas le dicen al compilador qué variables son **públicas** (visibles para el verificador) y cuáles son **testigo** (conocidas solo por el probador).
+Cada circuito declara sus entradas en la firma del `circuit`. Cada parametro especifica una **visibilidad** — `Public` (visible para el verificador) o `Witness` (conocida solo por el probador).
 
-## Declaraciones Escalares
+## Sintaxis Basica
 
-Declara una variable a la vez:
-
-```ach
-public output
-witness secret
-```
-
-O múltiples en una línea, separadas por comas:
+Una declaracion de circuito nombra el circuito y lista sus parametros con su visibilidad:
 
 ```ach
-public x, y
-witness a, b, c
+circuit multiplicar(output: Public, a: Witness, b: Witness) {
+    assert_eq(a * b, output)
+}
 ```
 
-Las entradas públicas se convierten en parte de la declaración pública de la prueba — cualquiera que verifique la prueba puede ver sus valores. Las entradas testigo permanecen privadas para el probador.
+Las entradas publicas se convierten en parte de la declaracion publica de la prueba — cualquiera que verifique la prueba puede ver sus valores. Las entradas testigo permanecen privadas para el probador.
 
-## Declaraciones de Array
+## Parametros de Array
 
-Declara un array de entradas de tamaño fijo con sintaxis de corchetes:
+Declara un array de entradas de tamano fijo con sintaxis de corchetes despues del tipo:
 
 ```ach
-witness path[3]
-witness indices[3]
+circuit verificar_merkle(root: Public, path: Witness Field[3], indices: Witness Bool[3]) {
+    // path e indices tienen 3 elementos cada uno
+    // accede con indexacion estandar: path[0], path[1], path[2]
+}
 ```
 
-Esto crea tres variables indexadas (`path_0`, `path_1`, `path_2`) a las que accedes con indexación estándar. Las declaraciones de array funcionan tanto para entradas públicas como de testigo:
+Los parametros de array crean variables indexadas a las que accedes con indexacion estandar. Funcionan tanto para entradas publicas como de testigo:
 
 ```ach
-public commitments[4]
-witness secrets[4]
+circuit verificar_compromisos(commitments: Public Field[4], secrets: Witness Field[4]) {
+    for i in 0..4 {
+        assert_eq(poseidon(secrets[i], 0), commitments[i])
+    }
+}
 ```
+
+## Anotaciones de Tipo
+
+Los parametros pueden incluir anotaciones de tipo opcionales (`Field` o `Bool`) entre la visibilidad y el nombre del parametro (o los corchetes del array):
+
+```ach
+circuit ejemplo_tipado(root: Public Field, flag: Witness Bool) {
+    if flag {
+        assert_eq(root, poseidon(root, 0))
+    }
+}
+```
+
+Para parametros de array, el tipo va entre la visibilidad y los corchetes:
+
+```ach
+circuit camino_merkle(root: Public Field, path: Witness Field[3], indices: Witness Bool[3]) {
+    // indices son de tipo booleano, ahorrando 1 restriccion cada uno
+}
+```
+
+Anotar un testigo como `Bool` ahorra 1 restriccion al omitir la verificacion booleana. Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para detalles completos.
 
 ## Uso de Entradas Declaradas
 
-Una vez declaradas, las entradas son variables ordinarias. Úsalas en expresiones, pásalas a funciones integradas e indexa arrays:
+Dentro del cuerpo del circuito, los parametros son variables ordinarias. Usalas en expresiones, pasalas a funciones integradas e indexa arrays:
 
 ```ach
-public output
-witness a
-witness b
+circuit verificar_producto(output: Public, a: Witness, b: Witness) {
+    let product = a * b
+    assert_eq(product, output)
 
-let product = a * b
-assert_eq(product, output)
-
-let sum = a + b
-assert_eq(sum, a + b)
+    let sum = a + b
+    assert_eq(sum, a + b)
+}
 ```
 
-Los elementos de array se acceden por índice:
+Los elementos de array se acceden por indice:
 
 ```ach
-public expected_sum
-witness vals[3]
-
-let acc = vals[0]
-let acc = acc + vals[1]
-let acc = acc + vals[2]
-assert_eq(acc, expected_sum)
+circuit verificar_suma(expected_sum: Public, vals: Witness Field[3]) {
+    let acc = vals[0]
+    let acc = acc + vals[1]
+    let acc = acc + vals[2]
+    assert_eq(acc, expected_sum)
+}
 ```
 
-## Alternativa por CLI
+## Uso por CLI
 
-En lugar de declaraciones en el código fuente, puedes declarar entradas con banderas del CLI:
+Pasa valores concretos para las entradas del circuito con la bandera `--inputs`:
 
 ```bash
-ach circuit program.ach --public output --witness a,b --inputs "a=3,b=5,output=15"
+ach circuit program.ach --inputs "a=3,b=5,output=15"
 ```
-
-Las banderas `--public` y `--witness` aceptan nombres de variables separados por comas. Si el archivo fuente ya contiene declaraciones `public`/`witness`, omite las banderas — el compilador las detecta automáticamente.
 
 Las entradas de array se pasan con nombres indexados:
 
@@ -83,23 +99,10 @@ Las entradas de array se pasan con nombres indexados:
 ach circuit merkle.ach --inputs "root=123,leaf=42,path_0=99,path_1=77,indices_0=0,indices_1=1"
 ```
 
-## Anotaciones de Tipo
-
-Las declaraciones pueden incluir anotaciones de tipo opcionales. Consulta [Anotaciones de Tipo](/es/circuits/type-annotations/) para detalles.
-
-```ach
-public root: Field
-witness flag: Bool
-witness path[3]: Field
-witness indices[3]: Bool
-```
-
-Anotar un testigo como `Bool` ahorra 1 restricción al omitir la verificación booleana.
-
 ## Errores
 
 | Error | Causa |
 |-------|-------|
-| `DuplicateInput` | Mismo nombre declarado como `public` y `witness`, o declarado dos veces |
-| `UndeclaredVariable` | Usar una variable que nunca fue declarada como `public` o `witness` |
+| `DuplicateInput` | Mismo nombre declarado dos veces en la lista de parametros |
+| `UndeclaredVariable` | Usar una variable dentro del cuerpo del circuito que no es un parametro |
 | `AnnotationMismatch` | Tipo declarado no coincide con el tipo inferido |

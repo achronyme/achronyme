@@ -149,13 +149,10 @@ export fn my_hash(a, b) { poseidon(a, b) }
 // circuit.ach
 import "./hash_lib.ach" as h
 
-public out
-witness a, b
-
-assert_eq(h.my_hash(a, b), out)
+circuit hash_check(out: Public, a: Witness, b: Witness) {
+    assert_eq(h.my_hash(a, b), out)
+}
 ```
-
-Las declaraciones `public` y `witness` dentro de un módulo importado son ignoradas — no afectan las entradas o salidas del circuito que importa.
 
 ## Errores
 

@@ -19,14 +19,11 @@ Cada operación en un circuito se compila a cero o más restricciones. Entender 
 | `-` (negación) | `-a` | 0 | Negar coeficientes de CL |
 
 ```ach
-public x2
-public x3
-public x4
-witness x
-
-assert_eq(x ^ 2, x2)
-assert_eq(x ^ 3, x3)
-assert_eq(x ^ 4, x4)
+circuit exponent(x2: Public, x3: Public, x4: Public, x: Witness) {
+    assert_eq(x ^ 2, x2)
+    assert_eq(x ^ 3, x3)
+    assert_eq(x ^ 4, x4)
+}
 ```
 
 ## Operadores de Comparación
@@ -43,12 +40,11 @@ assert_eq(x ^ 4, x4)
 Las verificaciones de igualdad son baratas (2 restricciones). Las comparaciones de orden son costosas (~760 restricciones cada una) porque requieren descomposición de bits sobre el campo BN254. Úsalas con moderación.
 
 ```ach
-witness x
-witness y
-
-let eq = x == y
-let lt = x < y
-assert(lt)
+circuit compare(x: Witness, y: Witness) {
+    let eq = x == y
+    let lt = x < y
+    assert(lt)
+}
 ```
 
 ## Operadores Lógicos
@@ -60,17 +56,16 @@ assert(lt)
 | `!` | `!a` | 0–1 | Gratis si el operando ya es booleano probado |
 
 ```ach
-witness x
-witness y
+circuit logical(x: Witness, y: Witness) {
+    let both = (x < y) && (y > x)
+    assert(both)
 
-let both = (x < y) && (y > x)
-assert(both)
+    let either = (x == y) || (x < y)
+    assert(either)
 
-let either = (x == y) || (x < y)
-assert(either)
-
-let not_eq = !(x == y)
-assert(not_eq)
+    let not_eq = !(x == y)
+    assert(not_eq)
+}
 ```
 
 ## Por Qué Algunas Operaciones Son Gratis

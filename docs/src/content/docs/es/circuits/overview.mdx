@@ -16,10 +16,9 @@ En Achronyme, escribes circuitos usando la misma sintaxis que los programas regu
 ### 1. Archivo de circuito independiente
 
 ```ach
-public output
-witness secret
-
-assert_eq(poseidon(secret, 0), output)
+circuit hash_check(output: Public, secret: Witness) {
+    assert_eq(poseidon(secret, 0), output)
+}
 ```
 
 Compila con el CLI:

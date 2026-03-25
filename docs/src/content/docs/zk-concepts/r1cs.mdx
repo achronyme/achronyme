@@ -92,10 +92,10 @@ When a linear combination needs to become a concrete wire (for example, as input
 Consider proving knowledge of `x` such that `x^2 + x + 5 = 35`:
 
 ```ach
-public out;
-witness x;
-let x_sq = x * x;
-assert_eq(x_sq + x + 5, out);
+circuit quadratic(out: Public, x: Witness) {
+    let x_sq = x * x
+    assert_eq(x_sq + x + 5, out)
+}
 ```
 
 This produces 2 constraints:

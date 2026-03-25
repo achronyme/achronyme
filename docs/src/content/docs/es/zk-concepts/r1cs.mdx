@@ -92,10 +92,10 @@ Cuando una combinación lineal necesita convertirse en un cable concreto (por ej
 Considera probar conocimiento de `x` tal que `x^2 + x + 5 = 35`:
 
 ```ach
-public out;
-witness x;
-let x_sq = x * x;
-assert_eq(x_sq + x + 5, out);
+circuit quadratic(out: Public, x: Witness) {
+    let x_sq = x * x
+    assert_eq(x_sq + x + 5, out)
+}
 ```
 
 Esto produce 2 restricciones:

@@ -84,12 +84,10 @@ print(h)
 Poseidon funciona tanto en modo VM como en modo circuito. En circuitos, cada hash emite 361 restricciones R1CS (360 rondas de permutación + 1 inicialización de capacidad):
 
 ```ach
-public expected
-witness a
-witness b
-
-let h = poseidon(a, b)
-assert_eq(h, expected)
+circuit poseidon_check(expected: Public, a: Witness, b: Witness) {
+    let h = poseidon(a, b)
+    assert_eq(h, expected)
+}
 ```
 
 Compilar y ejecutar:

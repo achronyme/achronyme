@@ -55,11 +55,9 @@ for i in 0..10 {
 Create a file `multiply.ach`:
 
 ```ach
-public product
-witness a
-witness b
-
-assert_eq(a * b, product)
+circuit multiply(product: Public, a: Witness, b: Witness) {
+    assert_eq(a * b, product)
+}
 ```
 
 This circuit proves that the prover knows two secret numbers `a` and `b` whose product equals the public value `product`.
@@ -74,7 +72,7 @@ This produces `circuit.r1cs` and `witness.wtns`, ready for snarkjs proof generat
 
 ### What just happened?
 
-1. The parser read `multiply.ach` and built an AST
+1. The parser read `multiply.ach` and built an AST with the `multiply` circuit definition
 2. The IR lowering phase converted it to SSA instructions
 3. The R1CS backend compiled the multiplication into a single constraint: `a * b = product`
 4. The witness generator filled in the concrete values: `a=6`, `b=7`, `product=42`

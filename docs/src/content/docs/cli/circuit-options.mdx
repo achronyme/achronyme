@@ -9,15 +9,6 @@ description: "Options for the circuit command."
 ach circuit <path> [options]
 ```
 
-## Input Declaration
-
-| Flag | Description |
-|------|-------------|
-| `--public <vars>` | Comma-separated public input names (e.g., `--public "out,hash"`) |
-| `--witness <vars>` | Comma-separated witness input names (e.g., `--witness "a,b,secret"`) |
-
-If `--public` and `--witness` are omitted, the compiler uses in-source `public` and `witness` declarations.
-
 ## Input Values
 
 | Flag | Description |
@@ -56,11 +47,8 @@ Generates Plonkish gates, lookups, and copy constraints. Verifies locally (no bi
 ## Examples
 
 ```bash
-# In-source declarations, R1CS output
+# R1CS output
 ach circuit circuit.ach --inputs "x=42,y=7"
-
-# CLI declarations
-ach circuit circuit.ach --public "out" --witness "a,b" --inputs "out=42,a=6,b=7"
 
 # Plonkish backend
 ach circuit circuit.ach --backend plonkish --inputs "x=42"

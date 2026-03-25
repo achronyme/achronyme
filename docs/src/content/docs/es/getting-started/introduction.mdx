@@ -24,12 +24,9 @@ print(c())  // 2
 ### Circuito ZK
 
 ```ach
-public root
-witness leaf
-witness path[3]
-witness indices[3]
-
-merkle_verify(root, leaf, path, indices)
+circuit merkle_proof(root: Public, leaf: Witness, path: Witness[3], indices: Witness[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 ```bash

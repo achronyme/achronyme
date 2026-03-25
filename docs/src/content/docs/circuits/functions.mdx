@@ -26,10 +26,10 @@ fn double(x: Field) -> Field {
 Call them as usual:
 
 ```ach
-witness vals[3]
-
-fn double(x) { x + x }
-assert_eq(double(vals[0]), vals[0] + vals[0])
+circuit double_demo(vals: Witness[3]) {
+    fn double(x) { x + x }
+    assert_eq(double(vals[0]), vals[0] + vals[0])
+}
 ```
 
 ## Inlining
@@ -37,12 +37,14 @@ assert_eq(double(vals[0]), vals[0] + vals[0])
 There is no function call stack in circuits. Every call site expands the function body with the arguments substituted in. If you call a function 5 times, its body is compiled 5 times.
 
 ```ach
-fn square(x) { x * x }
+circuit square_demo(vals: Witness[3]) {
+    fn square(x) { x * x }
 
-// Each call inlines independently — 1 constraint each
-let a = square(vals[0])
-let b = square(vals[1])
-let c = square(vals[2])
+    // Each call inlines independently — 1 constraint each
+    let a = square(vals[0])
+    let b = square(vals[1])
+    let c = square(vals[2])
+}
 ```
 
 This means functions are a convenience for code organization, not a mechanism for reducing constraint count.
@@ -68,13 +70,12 @@ When a function has typed parameters or a return type, the compiler may emit add
 - **Already-typed arguments/results that match**: No extra cost
 
 ```ach
-fn check(b: Bool) { assert(b) }    // body: 2 constraints (assert)
+circuit type_cost_demo(w: Witness, b: Witness Bool) {
+    fn check(b: Bool) { assert(b) }    // body: 2 constraints (assert)
 
-witness w                           // untyped
-check(w)                            // total: 2 + 1 = 3 constraints (1 for param enforcement)
-
-witness b: Bool                     // typed
-check(b)                            // total: 2 constraints (no enforcement needed)
+    check(w)                            // total: 2 + 1 = 3 constraints (1 for param enforcement)
+    check(b)                            // total: 2 constraints (no enforcement needed)
+}
 ```
 
 ## Restrictions
@@ -95,17 +96,16 @@ Functions in circuits are purely a compile-time mechanism. They cannot capture v
 A complete circuit using a helper function:
 
 ```ach
-public expected_sum
-witness vals[3]
+circuit sum_and_double(expected_sum: Public, vals: Witness[3]) {
+    let acc = vals[0]
+    let acc = acc + vals[1]
+    let acc = acc + vals[2]
+    assert_eq(acc, expected_sum)
 
-let acc = vals[0]
-let acc = acc + vals[1]
-let acc = acc + vals[2]
-assert_eq(acc, expected_sum)
+    let n = len(vals)
+    assert_eq(n, 3)
 
-let n = len(vals)
-assert_eq(n, 3)
-
-fn double(x) { x + x }
-assert_eq(double(vals[0]), vals[0] + vals[0])
+    fn double(x) { x + x }
+    assert_eq(double(vals[0]), vals[0] + vals[0])
+}
 ```
