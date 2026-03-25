@@ -20,3 +20,6 @@ pub mod types;
 pub use compiler::{OuterScopeEntry, ProveIrCompiler};
 pub use error::ProveIrError;
 pub use types::*;
+
+#[cfg(test)]
+pub(crate) mod test_utils;

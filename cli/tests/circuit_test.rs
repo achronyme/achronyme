@@ -33,8 +33,6 @@ fn circuit_r1cs_basic_compilation() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -61,8 +59,6 @@ fn circuit_plonkish_basic_compilation() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "plonkish",
@@ -87,8 +83,6 @@ fn circuit_nonexistent_file_error() {
         "/tmp/nonexistent_achronyme_test.ach",
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -111,8 +105,6 @@ fn circuit_invalid_source_error() {
         src.path().to_str().unwrap(),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -140,8 +132,6 @@ fn circuit_r1cs_with_witness() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some("out=42,a=6,b=7"),
         false,
         "r1cs",
@@ -177,8 +167,6 @@ fn circuit_plonkish_with_witness() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some("out=42,a=6,b=7"),
         false,
         "plonkish",
@@ -207,8 +195,6 @@ fn circuit_r1cs_wrong_witness_rejected() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some("out=99,a=6,b=7"),
         false,
         "r1cs",
@@ -247,8 +233,6 @@ fn circuit_r1cs_poseidon() {
         &fixture("poseidon.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some(&inputs),
         false,
         "r1cs",
@@ -276,8 +260,6 @@ fn circuit_r1cs_range_check() {
         &fixture("range_check.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some("x=200,y=60000"),
         false,
         "r1cs",
@@ -306,8 +288,6 @@ fn circuit_r1cs_mux() {
         &fixture("mux.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some("out=42,cond=1,a=42,b=99"),
         false,
         "r1cs",
@@ -335,8 +315,6 @@ fn circuit_no_optimize_flag() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         None,
         true, // --no-optimize
         "r1cs",
@@ -362,8 +340,6 @@ fn circuit_unknown_backend_error() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "unknown_backend",
@@ -389,8 +365,6 @@ fn circuit_solidity_with_plonkish_rejected() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "plonkish",
@@ -419,8 +393,6 @@ fn circuit_prove_without_inputs_rejected() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "plonkish",
@@ -452,8 +424,6 @@ fn circuit_plonkish_json_with_inputs() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         Some("out=42,a=6,b=7"),
         false,
         "plonkish",
@@ -486,8 +456,6 @@ fn circuit_plonkish_json_without_inputs() {
         &fixture("basic_arithmetic.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "plonkish",
@@ -519,8 +487,6 @@ fn circuit_plonkish_json_with_r1cs_rejected() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -555,8 +521,6 @@ fn circuit_json_error_format() {
         src.path().to_str().unwrap(),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -579,8 +543,6 @@ fn circuit_short_error_format() {
         src.path().to_str().unwrap(),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -592,41 +554,4 @@ fn circuit_short_error_format() {
         ErrorFormat::Short,
     );
     assert!(result.is_err());
-}
-
-// ======================================================================
-// T14: CLI-provided public/witness declarations
-// ======================================================================
-
-#[test]
-fn circuit_cli_public_witness_declarations() {
-    let src = write_temp_source("assert_eq(a * b, out)");
-
-    let tmpdir = tempfile::tempdir().unwrap();
-    let r1cs = tmpdir.path().join("out.r1cs");
-    let wtns = tmpdir.path().join("out.wtns");
-
-    let result = cli::commands::circuit::circuit_command(
-        src.path().to_str().unwrap(),
-        r1cs.to_str().unwrap(),
-        wtns.to_str().unwrap(),
-        &["out".to_string()],
-        &["a".to_string(), "b".to_string()],
-        Some("out=42,a=6,b=7"),
-        false,
-        "r1cs",
-        false,
-        None,
-        None,
-        false,
-        false,
-        EF,
-    );
-    assert!(
-        result.is_ok(),
-        "CLI declarations failed: {:?}",
-        result.err()
-    );
-    assert!(r1cs.exists());
-    assert!(wtns.exists());
 }

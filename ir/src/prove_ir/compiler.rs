@@ -223,9 +223,13 @@ impl ProveIrCompiler {
             return Ok(prove_ir);
         }
 
-        // Legacy flat format: entire program is the circuit body
-        let block = program_to_block(source, program);
-        Self::compile(&block, &HashMap::new())
+        // Flat format is no longer supported — require circuit declaration
+        Err(ProveIrError::UnsupportedOperation {
+            description: "flat circuit format is not supported; \
+                          use `circuit name(param: Public, ...) { body }` instead"
+                .into(),
+            span: None,
+        })
     }
 
     /// Convenience: parse source and compile as a prove block with scalar outer scope names.
@@ -2389,9 +2393,10 @@ mod tests {
     // Statement compilation tests
     // =====================================================================
 
-    /// Helper: compile a full circuit source (with public/witness declarations).
+    /// Helper: compile a circuit source. Automatically wraps flat format
+    /// (public/witness top-level declarations) into `circuit test(...) { body }`.
     fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
-        ProveIrCompiler::compile_circuit(source)
+        crate::prove_ir::test_utils::compile_circuit(source)
     }
 
     #[test]

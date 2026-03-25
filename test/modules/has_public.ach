@@ -1,2 +1,1 @@
-public x
 export fn double(a) { a * 2 }

@@ -134,7 +134,14 @@ impl StatementCompiler for Compiler {
                 self.free_reg(reg)?;
                 Ok(())
             }
-            Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. } => Ok(()), // no-op in VM
+            Stmt::PublicDecl { span, .. } | Stmt::WitnessDecl { span, .. } => {
+                Err(CompilerError::CompileError(
+                    "top-level `public`/`witness` declarations are not supported; \
+                     use `circuit name(param: Public, ...) { body }` instead"
+                        .into(),
+                    span_box(span),
+                ))
+            }
             Stmt::Import {
                 path, alias, span, ..
             } => self.compile_import(path, alias, span),

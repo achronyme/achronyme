@@ -925,7 +925,7 @@ mod tests {
 
     /// Helper: compile source as a circuit and instantiate (no captures).
     fn compile_and_instantiate(source: &str) -> IrProgram {
-        let program = ProveIrCompiler::compile_circuit(source).unwrap();
+        let program = crate::prove_ir::test_utils::compile_circuit(source).unwrap();
         program.instantiate(&HashMap::new()).unwrap()
     }
 
@@ -1707,14 +1707,19 @@ mod tests {
         );
     }
 
-    // D3: Import rejection uses ImportsNotSupported variant
+    // D3: Import rejection — imports inside circuit body are rejected at parse time.
+    // With flat format removed, imports can only appear at program top-level (before
+    // the circuit decl), which the parser rejects inside blocks.
     #[test]
-    fn audit_import_returns_imports_not_supported() {
-        let err =
-            ProveIrCompiler::compile_circuit("import \"./foo.ach\" as foo\npublic x").unwrap_err();
+    fn audit_import_in_circuit_body_rejected() {
+        let err = ProveIrCompiler::compile_circuit(
+            "circuit test(x: Public) { import \"./foo.ach\" as foo\nassert_eq(x, x) }",
+        )
+        .unwrap_err();
+        // Parser rejects import inside block — surfaces as a parse error
         assert!(
-            matches!(err, ProveIrError::ImportsNotSupported { .. }),
-            "expected ImportsNotSupported, got: {err}"
+            matches!(err, ProveIrError::ParseError(_)),
+            "expected ParseError for import inside circuit body, got: {err}"
         );
     }
 }

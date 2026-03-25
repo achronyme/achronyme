@@ -64,10 +64,7 @@ pub struct VmSection {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CircuitSection {
-    pub public: Option<Vec<String>>,
-    pub witness: Option<Vec<String>>,
-}
+pub struct CircuitSection {}
 
 // ---------------------------------------------------------------------------
 // Resolved config (merged CLI + TOML + defaults)
@@ -92,8 +89,6 @@ pub struct ProjectConfig {
     pub stress_gc: bool,
     pub gc_stats: bool,
     pub circuit_stats: bool,
-    pub public: Vec<String>,
-    pub witness: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -203,10 +198,6 @@ binary = "build/{name}.achb"
 max_heap = "256M"
 stress_gc = true
 gc_stats = true
-
-[circuit]
-public = ["x", "y"]
-witness = ["w"]
 "#,
         )
         .unwrap();
@@ -217,8 +208,6 @@ witness = ["w"]
             Some("plonkish")
         );
         assert_eq!(toml.vm.as_ref().unwrap().max_heap.as_deref(), Some("256M"));
-        let public = toml.circuit.as_ref().unwrap().public.as_ref().unwrap();
-        assert_eq!(public, &["x", "y"]);
     }
 
     #[test]

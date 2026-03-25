@@ -33,9 +33,7 @@ pub fn disassemble_file(path: &str, error_format: ErrorFormat) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn has_circuit_decls(stmts: &[Stmt]) -> bool {
-    stmts
-        .iter()
-        .any(|s| matches!(s, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }))
+    stmts.iter().any(|s| matches!(s, Stmt::CircuitDecl { .. }))
 }
 
 /// Collect `(source_text, line_number)` for every prove block in the AST.

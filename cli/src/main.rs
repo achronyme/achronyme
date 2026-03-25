@@ -101,8 +101,6 @@ fn main() -> Result<()> {
                 path,
                 &cfg.r1cs_path,
                 &cfg.wtns_path,
-                &cfg.public,
-                &cfg.witness,
                 inputs.as_deref(),
                 !cfg.optimize,
                 &cfg.backend,
@@ -164,8 +162,6 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             stress_gc: *stress_gc,
             gc_stats: *gc_stats,
             circuit_stats: *circuit_stats,
-            public: vec![],
-            witness: vec![],
         },
 
         Commands::Disassemble { path } => CliOverrides {
@@ -182,8 +178,6 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
-            public: vec![],
-            witness: vec![],
         },
 
         Commands::Compile { path, .. } => CliOverrides {
@@ -200,16 +194,12 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
-            public: vec![],
-            witness: vec![],
         },
 
         Commands::Circuit {
             path,
             r1cs,
             wtns,
-            public,
-            witness,
             backend,
             no_optimize,
             solidity,
@@ -230,8 +220,6 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: *circuit_stats,
-            public: public.clone(),
-            witness: witness.clone(),
         },
 
         Commands::Init { .. } => unreachable!(),

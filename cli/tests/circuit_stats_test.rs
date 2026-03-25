@@ -25,14 +25,13 @@ fn write_temp_source(content: &str) -> NamedTempFile {
 
 #[test]
 fn circuit_stats_basic_mul() {
-    let src = write_temp_source("public z\nwitness x\nwitness y\nassert_eq(x * y, z)");
+    let src =
+        write_temp_source("circuit mul(z: Public, x: Witness, y: Witness) { assert_eq(x * y, z) }");
     let tmpdir = tempfile::tempdir().unwrap();
     let result = cli::commands::circuit::circuit_command(
         src.path().to_str().unwrap(),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -53,8 +52,6 @@ fn circuit_stats_poseidon() {
         &fixture("poseidon.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -75,8 +72,6 @@ fn circuit_stats_merkle() {
         &fixture("merkle.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -97,8 +92,6 @@ fn circuit_stats_comparison() {
         &fixture("comparison_ops.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",
@@ -119,8 +112,6 @@ fn circuit_stats_disabled_no_crash() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
-        &[],
-        &[],
         None,
         false,
         "r1cs",

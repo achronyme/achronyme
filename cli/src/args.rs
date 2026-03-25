@@ -72,12 +72,6 @@ pub enum Commands {
         /// Output .wtns file path
         #[arg(long)]
         wtns: Option<String>,
-        /// Public input variable names (comma-separated)
-        #[arg(long, value_delimiter = ',')]
-        public: Vec<String>,
-        /// Witness variable names (comma-separated)
-        #[arg(long, value_delimiter = ',')]
-        witness: Vec<String>,
         /// Input values as name=value pairs (comma-separated, decimal or 0x hex)
         #[arg(long)]
         inputs: Option<String>,

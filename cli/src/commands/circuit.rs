@@ -7,7 +7,6 @@ use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use constraints::{write_r1cs, write_wtns};
 use ir::prove_ir::ProveIrCompiler;
-use ir::{IrLowering, ProveIrError};
 use memory::FieldElement;
 
 use super::ErrorFormat;
@@ -45,8 +44,6 @@ pub fn circuit_command(
     path: &str,
     r1cs_path: &str,
     wtns_path: &str,
-    public: &[String],
-    witness: &[String],
     inputs: Option<&str>,
     no_optimize: bool,
     backend: &str,
@@ -87,12 +84,6 @@ pub fn circuit_command(
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
 
-    let render_ir_error = |e: ir::error::IrError| -> anyhow::Error {
-        let diag = e.to_diagnostic();
-        let rendered = super::render_diagnostic(&diag, &source, error_format);
-        anyhow::anyhow!("{rendered}")
-    };
-
     let render_prove_ir_error = |e: ir::ProveIrError| -> anyhow::Error {
         let diag = e.to_diagnostic();
         let rendered = super::render_diagnostic(&diag, &source, error_format);
@@ -113,50 +104,9 @@ pub fn circuit_command(
     }
 
     // 1. Compile to ProveIR and instantiate to IR SSA.
-    //    ProveIR pipeline handles all circuit constructs except imports.
-    //    Falls back to IrLowering for circuits that use imports (until ProveIR
-    //    adds import support).
-    let compile_source = if public.is_empty() && witness.is_empty() {
-        source.clone()
-    } else {
-        // CLI-declared: prepend public/witness declarations to source
-        let mut header = String::new();
-        for spec in public {
-            header.push_str(&format!("public {spec}\n"));
-        }
-        for spec in witness {
-            header.push_str(&format!("witness {spec}\n"));
-        }
-        header.push_str(&source);
-        header
-    };
-
-    let mut program = match ProveIrCompiler::compile_circuit(&compile_source) {
-        Ok(prove_ir) => prove_ir
-            .instantiate(&std::collections::HashMap::new())
-            .map_err(render_prove_ir_error)?,
-        Err(ProveIrError::ImportsNotSupported { .. }) => {
-            // Fallback to IrLowering for imports (not yet supported in ProveIR).
-            // TODO: remove this fallback once ProveIR supports imports.
-            if public.is_empty() && witness.is_empty() {
-                let (_, _, prog) =
-                    IrLowering::lower_self_contained_with_base(&source, source_dir.clone())
-                        .map_err(render_ir_error)?;
-                prog
-            } else {
-                let pub_refs: Vec<&str> = public.iter().map(|s| s.as_str()).collect();
-                let wit_refs: Vec<&str> = witness.iter().map(|s| s.as_str()).collect();
-                IrLowering::lower_circuit_with_base(
-                    &source,
-                    &pub_refs,
-                    &wit_refs,
-                    source_dir.clone(),
-                )
-                .map_err(render_ir_error)?
-            }
-        }
-        Err(e) => return Err(render_prove_ir_error(e)),
-    };
+    let mut program = ProveIrCompiler::compile_circuit(&source)
+        .and_then(|prove_ir| prove_ir.instantiate(&std::collections::HashMap::new()))
+        .map_err(render_prove_ir_error)?;
 
     if verbose {
         eprintln!(

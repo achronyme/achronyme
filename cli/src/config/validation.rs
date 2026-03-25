@@ -41,19 +41,6 @@ pub(super) fn validate(toml: &AchronymeToml) -> Result<()> {
         }
     }
 
-    if let Some(ref circuit) = toml.circuit {
-        if let Some(ref vars) = circuit.public {
-            for v in vars {
-                validate_identifier(v, "circuit.public")?;
-            }
-        }
-        if let Some(ref vars) = circuit.witness {
-            for v in vars {
-                validate_identifier(v, "circuit.witness")?;
-            }
-        }
-    }
-
     if let Some(ref entry) = toml.project.entry {
         if !entry.ends_with(".ach") && !entry.ends_with(".achb") {
             anyhow::bail!("achronyme.toml: entry `{entry}` must end in .ach or .achb");
@@ -97,20 +84,6 @@ fn validate_version(version: &str) -> Result<()> {
                 "achronyme.toml: invalid version `{version}` (non-numeric segment `{seg}`)"
             );
         }
-    }
-    Ok(())
-}
-
-fn validate_identifier(name: &str, field: &str) -> Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("achronyme.toml: empty identifier in {field}");
-    }
-    let first = name.as_bytes()[0];
-    if !(first.is_ascii_alphabetic() || first == b'_') {
-        anyhow::bail!("achronyme.toml: invalid identifier `{name}` in {field}");
-    }
-    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        anyhow::bail!("achronyme.toml: invalid identifier `{name}` in {field}");
     }
     Ok(())
 }

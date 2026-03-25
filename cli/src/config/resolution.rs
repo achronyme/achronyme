@@ -18,8 +18,6 @@ pub struct CliOverrides {
     pub stress_gc: bool,
     pub gc_stats: bool,
     pub circuit_stats: bool,
-    pub public: Vec<String>,
-    pub witness: Vec<String>,
 }
 
 /// Merge CLI overrides + TOML + defaults into a `ProjectConfig`.
@@ -141,21 +139,6 @@ pub fn resolve_config(
 
     let circuit_stats = cli.circuit_stats;
 
-    // Circuit declarations: CLI > toml (non-empty CLI wins)
-    let public = if !cli.public.is_empty() {
-        cli.public.clone()
-    } else {
-        toml.and_then(|t| t.circuit.as_ref()?.public.clone())
-            .unwrap_or_default()
-    };
-
-    let witness = if !cli.witness.is_empty() {
-        cli.witness.clone()
-    } else {
-        toml.and_then(|t| t.circuit.as_ref()?.witness.clone())
-            .unwrap_or_default()
-    };
-
     ProjectConfig {
         project_root: project_root.map(|p| p.to_path_buf()),
         project_name,
@@ -173,8 +156,6 @@ pub fn resolve_config(
         stress_gc,
         gc_stats,
         circuit_stats,
-        public,
-        witness,
     }
 }
 
@@ -209,8 +190,6 @@ mod tests {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
-            public: vec![],
-            witness: vec![],
         };
 
         let config = resolve_config(&cli, Some(&toml), Some(tmp.path()));
@@ -233,8 +212,6 @@ mod tests {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
-            public: vec![],
-            witness: vec![],
         };
 
         let config = resolve_config(&cli, None, None);
@@ -270,8 +247,6 @@ mod tests {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
-            public: vec![],
-            witness: vec![],
         };
 
         let config = resolve_config(&cli, Some(&toml), Some(tmp.path()));
@@ -308,8 +283,6 @@ mod tests {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
-            public: vec![],
-            witness: vec![],
         };
 
         let config = resolve_config(&cli, Some(&toml), Some(tmp.path()));
