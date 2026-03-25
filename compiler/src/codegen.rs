@@ -390,6 +390,29 @@ impl Compiler {
             }
         }
 
+        // W011: flat circuit format deprecation
+        // Warn once if the top-level program uses public/witness declarations
+        // instead of the `circuit name(...) { body }` syntax.
+        let has_flat_decl = program
+            .stmts
+            .iter()
+            .any(|s| matches!(s, Stmt::PublicDecl { .. } | Stmt::WitnessDecl { .. }));
+        if has_flat_decl {
+            // Use the span of the first flat declaration for the diagnostic
+            if let Some(span) = program.stmts.iter().find_map(|s| match s {
+                Stmt::PublicDecl { span, .. } | Stmt::WitnessDecl { span, .. } => Some(span),
+                _ => None,
+            }) {
+                self.emit_warning(
+                    Diagnostic::warning("flat circuit format is deprecated", span.into())
+                        .with_code("W011")
+                        .with_note(
+                            "wrap in `circuit name(param: Public, ...) { body }` declaration",
+                        ),
+                );
+            }
+        }
+
         // Final return
         self.emit_abc(OpCode::Return, 0, 0, 0)?; // Return Nil/0
 
@@ -652,6 +675,46 @@ mod warning_tests {
         let ws = compile_warnings("fn test() { let x: Field[3] = 42; print(x) }");
         assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W007")));
         assert!(ws.iter().any(|w| w.code.as_deref() == Some("W006")));
+    }
+
+    // === W011: Flat circuit format deprecation ===
+
+    #[test]
+    fn w011_public_decl_triggers_warning() {
+        let ws = compile_warnings("public x");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W011")));
+    }
+
+    #[test]
+    fn w011_witness_decl_triggers_warning() {
+        let ws = compile_warnings("witness s");
+        assert!(ws.iter().any(|w| w.code.as_deref() == Some("W011")));
+    }
+
+    #[test]
+    fn w011_message_mentions_circuit_syntax() {
+        let ws = compile_warnings("public root\nwitness leaf");
+        let w011 = ws
+            .iter()
+            .find(|w| w.code.as_deref() == Some("W011"))
+            .unwrap();
+        assert!(w011.message.contains("deprecated"));
+    }
+
+    #[test]
+    fn w011_no_warning_without_flat_decls() {
+        let ws = compile_warnings("fn test() { let x = 5; print(x) }");
+        assert!(!ws.iter().any(|w| w.code.as_deref() == Some("W011")));
+    }
+
+    #[test]
+    fn w011_emitted_only_once() {
+        let ws = compile_warnings("public a\npublic b\nwitness c");
+        let count = ws
+            .iter()
+            .filter(|w| w.code.as_deref() == Some("W011"))
+            .count();
+        assert_eq!(count, 1, "W011 should be emitted once, not per declaration");
     }
 }
 

@@ -124,9 +124,11 @@ impl VM {
                 let (width, n_limbs) = match width_tag {
                     0 => (memory::BigIntWidth::W256, 4usize),
                     1 => (memory::BigIntWidth::W512, 8usize),
-                    _ => return Err(LoaderError::Format(format!(
+                    _ => {
+                        return Err(LoaderError::Format(format!(
                         "unknown BigInt width tag 0x{width_tag:02x} (valid: 0x00=W256, 0x01=W512)"
-                    ))),
+                    )))
+                    }
                 };
                 let mut limbs = Vec::with_capacity(n_limbs);
                 for _ in 0..n_limbs {
