@@ -328,7 +328,28 @@ pub(super) fn compile_circuit_call(
             )
         })? as u16;
 
-    // 3. Build the keyword argument map: { "key1": val1, "key2": val2, ... }
+    // 3. Validate keyword argument names against circuit parameter names
+    if let Some(entry) = compiler.global_symbols.get(name) {
+        if let Some(ref declared_params) = entry.param_names {
+            for (arg_name, _) in args {
+                if !declared_params.contains(arg_name) {
+                    let suggestion = crate::suggest::find_similar(
+                        arg_name,
+                        declared_params.iter().map(|s| s.as_str()),
+                        2,
+                    );
+                    let mut msg =
+                        format!("unknown keyword argument `{arg_name}` in call to `{name}`");
+                    if let Some(did_you_mean) = suggestion {
+                        msg.push_str(&format!("; did you mean `{did_you_mean}`?"));
+                    }
+                    return Err(CompilerError::CompileError(msg, span_box(span)));
+                }
+            }
+        }
+    }
+
+    // 4. Build the keyword argument map: { "key1": val1, "key2": val2, ... }
     let count = args.len();
     if count > 127 {
         return Err(CompilerError::CompilerLimitation(

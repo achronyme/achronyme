@@ -87,6 +87,7 @@ impl Compiler {
                     index: index as u16,
                     type_ann: None,
                     is_mutable: false,
+                    param_names: None,
                 },
             );
         }
@@ -105,6 +106,7 @@ impl Compiler {
                     index: index as u16,
                     type_ann: None,
                     is_mutable: false,
+                    param_names: None,
                 },
             );
         }
@@ -773,5 +775,79 @@ mod suggestion_tests {
     fn suggestion_for_assignment_target() {
         let msg = compile_error_message("fn test() { mut total = 0; totol = 5; total }");
         assert!(msg.contains("undefined variable"), "got: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod kwarg_validation_tests {
+    use super::*;
+
+    fn compile_error_message(source: &str) -> String {
+        let mut compiler = Compiler::new();
+        match compiler.compile(source) {
+            Ok(_) => panic!("expected compilation to fail"),
+            Err(e) => format!("{e}"),
+        }
+    }
+
+    fn compile_ok(source: &str) -> Vec<u32> {
+        let mut compiler = Compiler::new();
+        compiler.compile(source).expect("should compile")
+    }
+
+    #[test]
+    fn valid_kwargs_compile_ok() {
+        // Circuit with params, called with correct keyword args
+        let src = r#"
+            circuit adder(a: Public, b: Witness) {
+                assert_eq(a, b)
+            }
+            adder(a: 1, b: 2)
+        "#;
+        compile_ok(src);
+    }
+
+    #[test]
+    fn unknown_kwarg_errors() {
+        let src = r#"
+            circuit adder(a: Public, b: Witness) {
+                assert_eq(a, b)
+            }
+            adder(x: 1, b: 2)
+        "#;
+        let msg = compile_error_message(src);
+        assert!(msg.contains("unknown keyword argument `x`"), "got: {msg}");
+    }
+
+    #[test]
+    fn typo_kwarg_suggests_correct_name() {
+        let src = r#"
+            circuit eligibility(secret: Witness, threshold: Public) {
+                assert_eq(secret, threshold)
+            }
+            eligibility(secrt: 42, threshold: 100)
+        "#;
+        let msg = compile_error_message(src);
+        assert!(
+            msg.contains("unknown keyword argument `secrt`"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("did you mean `secret`"), "got: {msg}");
+    }
+
+    #[test]
+    fn completely_wrong_kwarg_no_suggestion() {
+        let src = r#"
+            circuit foo(a: Public, b: Witness) {
+                assert_eq(a, b)
+            }
+            foo(zzzzz: 1, b: 2)
+        "#;
+        let msg = compile_error_message(src);
+        assert!(
+            msg.contains("unknown keyword argument `zzzzz`"),
+            "got: {msg}"
+        );
+        assert!(!msg.contains("did you mean"), "got: {msg}");
     }
 }

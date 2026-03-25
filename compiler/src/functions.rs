@@ -52,6 +52,7 @@ impl FunctionDefinitionCompiler for Compiler {
                     index: idx,
                     type_ann: None,
                     is_mutable: false,
+                    param_names: None,
                 },
             );
             Some(idx)

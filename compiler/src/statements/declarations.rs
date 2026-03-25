@@ -79,6 +79,7 @@ impl DeclarationCompiler for Compiler {
                     index: idx,
                     type_ann: effective_ann,
                     is_mutable: false,
+                    param_names: None,
                 },
             );
             self.emit_abx(OpCode::DefGlobalLet, reg, idx)?;
@@ -132,6 +133,7 @@ impl DeclarationCompiler for Compiler {
                     index: idx,
                     type_ann: type_ann.cloned(),
                     is_mutable: true,
+                    param_names: None,
                 },
             );
             self.emit_abx(OpCode::DefGlobalVar, reg, idx)?;

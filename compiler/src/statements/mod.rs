@@ -245,6 +245,7 @@ impl StatementCompiler for Compiler {
                 index: global_idx,
                 type_ann: None,
                 is_mutable: false,
+                param_names: Some(params.iter().map(|p| p.name.clone()).collect()),
             },
         );
 
@@ -308,12 +309,19 @@ impl StatementCompiler for Compiler {
         }
         let global_idx = self.next_global_idx;
         self.next_global_idx += 1;
+        let circuit_param_names: Vec<String> = prove_ir
+            .public_inputs
+            .iter()
+            .chain(prove_ir.witness_inputs.iter())
+            .map(|input| input.name.clone())
+            .collect();
         self.global_symbols.insert(
             alias.to_string(),
             crate::types::GlobalEntry {
                 index: global_idx,
                 type_ann: None,
                 is_mutable: false,
+                param_names: Some(circuit_param_names),
             },
         );
 
@@ -459,6 +467,7 @@ impl StatementCompiler for Compiler {
                 index: idx,
                 type_ann: None,
                 is_mutable: false,
+                param_names: None,
             },
         );
         self.emit_abx(OpCode::DefGlobalLet, map_reg, idx)?;
@@ -605,6 +614,7 @@ impl StatementCompiler for Compiler {
                     index: new_idx,
                     type_ann: source_type_ann,
                     is_mutable: source_is_mutable,
+                    param_names: None,
                 },
             );
             self.emit_abx(OpCode::DefGlobalLet, tmp_reg, new_idx)?;

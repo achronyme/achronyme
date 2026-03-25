@@ -18,6 +18,8 @@ pub struct GlobalEntry {
     pub index: u16,
     pub type_ann: Option<TypeAnnotation>,
     pub is_mutable: bool,
+    /// Parameter names for circuit declarations (used for keyword arg validation).
+    pub param_names: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
