@@ -1,6 +1,7 @@
 //! ProveIR compiler: AST Block → ProveIR template.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use achronyme_parser::ast::*;
 use achronyme_parser::diagnostic::SpanRange;
@@ -70,6 +71,12 @@ pub struct ProveIrCompiler {
     public_inputs: Vec<ProveInputDecl>,
     /// Witness input declarations.
     witness_inputs: Vec<ProveInputDecl>,
+    /// Directory of the source file being compiled (for resolving relative imports).
+    source_dir: Option<std::path::PathBuf>,
+    /// Module loader for resolving imports (shared across recursive loads).
+    module_loader: crate::module_loader::ModuleLoader,
+    /// Tracks modules currently being compiled (for circular import detection).
+    compiling_modules: HashSet<std::path::PathBuf>,
 }
 
 impl ProveIrCompiler {
@@ -84,6 +91,9 @@ impl ProveIrCompiler {
             body: Vec::new(),
             public_inputs: Vec::new(),
             witness_inputs: Vec::new(),
+            source_dir: None,
+            module_loader: crate::module_loader::ModuleLoader::new(),
+            compiling_modules: HashSet::new(),
         }
     }
 
@@ -95,7 +105,20 @@ impl ProveIrCompiler {
         block: &Block,
         outer_scope: &HashMap<String, OuterScopeEntry>,
     ) -> Result<ProveIR, ProveIrError> {
+        Self::compile_with_source_dir(block, outer_scope, None, None)
+    }
+
+    fn compile_with_source_dir(
+        block: &Block,
+        outer_scope: &HashMap<String, OuterScopeEntry>,
+        source_dir: Option<std::path::PathBuf>,
+        source_path: Option<std::path::PathBuf>,
+    ) -> Result<ProveIR, ProveIrError> {
         let mut compiler = Self::new();
+        compiler.source_dir = source_dir;
+        if let Some(path) = source_path {
+            compiler.compiling_modules.insert(path);
+        }
 
         // Register outer scope names as potential captures
         for (name, entry) in outer_scope {
@@ -151,7 +174,10 @@ impl ProveIrCompiler {
     }
 
     /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
-    pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
+    pub fn compile_circuit(
+        source: &str,
+        source_path: Option<&Path>,
+    ) -> Result<ProveIR, ProveIrError> {
         use achronyme_parser::ast::{InputDecl, Stmt, Visibility};
 
         let (program, errors) = achronyme_parser::parse_program(source);
@@ -159,16 +185,43 @@ impl ProveIrCompiler {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
 
-        // Detect `circuit name(...) { body }` declaration format.
-        // If found, extract params as public/witness declarations and use the body.
-        // Otherwise, treat the whole program as a flat circuit (legacy format).
+        // Collect top-level imports (before the circuit declaration) and find
+        // the circuit declaration itself. Imports are processed first so that
+        // module functions are available inside the circuit body.
+        let mut preamble_stmts: Vec<Stmt> = Vec::new();
+        let mut circuit_decl = None;
+
+        for stmt in &program.stmts {
+            match stmt {
+                Stmt::CircuitDecl { span, .. } if circuit_decl.is_none() => {
+                    circuit_decl = Some(stmt);
+                }
+                Stmt::CircuitDecl { span, .. } => {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: "only one circuit declaration is allowed per file".into(),
+                        span: to_span(span),
+                    });
+                }
+                Stmt::Import { .. } | Stmt::SelectiveImport { .. } if circuit_decl.is_none() => {
+                    preamble_stmts.push(stmt.clone());
+                }
+                Stmt::FnDecl { .. } if circuit_decl.is_none() => {
+                    preamble_stmts.push(stmt.clone());
+                }
+                Stmt::Export { .. } if circuit_decl.is_none() => {
+                    preamble_stmts.push(stmt.clone());
+                }
+                _ => {}
+            }
+        }
+
         if let Some(Stmt::CircuitDecl {
             params,
             body,
             name,
             span,
             ..
-        }) = program.stmts.first()
+        }) = circuit_decl
         {
             // Synthesize public/witness declarations from typed params
             let mut stmts = Vec::new();
@@ -213,12 +266,22 @@ impl ProveIrCompiler {
                     }),
                 }
             }
-            stmts.extend(body.stmts.clone());
+            // Prepend preamble (imports, fn decls) before the circuit body
+            let mut all_stmts = preamble_stmts;
+            all_stmts.extend(stmts);
+            all_stmts.extend(body.stmts.clone());
             let circuit_block = Block {
-                stmts,
+                stmts: all_stmts,
                 span: body.span.clone(),
             };
-            let mut prove_ir = Self::compile(&circuit_block, &HashMap::new())?;
+            let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
+            let mut prove_ir = Self::compile_with_source_dir(
+                &circuit_block,
+                &HashMap::new(),
+                source_dir,
+                canonical_source,
+            )?;
             prove_ir.name = Some(name.clone());
             return Ok(prove_ir);
         }
@@ -321,10 +384,9 @@ impl ProveIrCompiler {
                 description: "return is not supported at the top level of a circuit".into(),
                 span: to_span(span),
             }),
-            Stmt::Import { span, .. } | Stmt::SelectiveImport { span, .. } => {
-                Err(ProveIrError::ImportsNotSupported {
-                    span: to_span(span),
-                })
+            Stmt::Import { path, alias, span } => self.compile_import(path, alias, span),
+            Stmt::SelectiveImport { names, path, span } => {
+                self.compile_selective_import(names, path, span)
             }
             Stmt::CircuitDecl { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "circuit declarations are not supported inside circuits".into(),
@@ -335,6 +397,147 @@ impl ProveIrCompiler {
                 span: to_span(span),
             }),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Imports
+    // -----------------------------------------------------------------------
+
+    /// Resolve a relative import path against the source directory.
+    fn resolve_import_path(
+        &self,
+        path: &str,
+        _span: &Span,
+    ) -> Result<std::path::PathBuf, ProveIrError> {
+        let base = self.source_dir.as_ref().ok_or_else(|| {
+            ProveIrError::ModuleLoadError(
+                "imports require a file path context (not available in inline prove blocks)".into(),
+            )
+        })?;
+        let full_path = base.join(path);
+        if !full_path.exists() {
+            return Err(ProveIrError::ModuleNotFound(format!(
+                "{} (resolved from {})",
+                full_path.display(),
+                path
+            )));
+        }
+        full_path.canonicalize().map_err(|e| {
+            ProveIrError::ModuleLoadError(format!("cannot resolve {}: {}", full_path.display(), e))
+        })
+    }
+
+    /// Register exported functions from a module into fn_table with alias prefix.
+    fn register_module_exports(
+        &mut self,
+        alias: &str,
+        module: &crate::module_loader::ModuleExports,
+    ) {
+        for stmt in &module.program.stmts {
+            let inner = match stmt {
+                Stmt::Export { inner, .. } => inner.as_ref(),
+                other => other,
+            };
+            if let Stmt::FnDecl {
+                name,
+                params,
+                body,
+                return_type,
+                ..
+            } = inner
+            {
+                if module.exported_names.contains(name) {
+                    let qualified = format!("{alias}::{name}");
+                    self.fn_table.insert(
+                        qualified,
+                        FnDef {
+                            params: params.clone(),
+                            body: body.clone(),
+                            return_type: return_type.clone(),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// `import "./module.ach" as alias`
+    fn compile_import(&mut self, path: &str, alias: &str, span: &Span) -> Result<(), ProveIrError> {
+        let canonical = self.resolve_import_path(path, span)?;
+        if self.compiling_modules.contains(&canonical) {
+            return Err(ProveIrError::CircularImport(path.to_string()));
+        }
+        self.compiling_modules.insert(canonical.clone());
+        let module = self
+            .module_loader
+            .load(&canonical)
+            .map_err(ProveIrError::ModuleLoadError)?;
+        // Clone what we need before releasing the borrow on module_loader.
+        let exported_names = module.exported_names.clone();
+        let stmts = module.program.stmts.clone();
+        let exports = crate::module_loader::ModuleExports {
+            exported_names,
+            program: achronyme_parser::ast::Program { stmts },
+        };
+        self.register_module_exports(alias, &exports);
+        Ok(())
+    }
+
+    /// `import { fn1, fn2 } from "./module.ach"`
+    fn compile_selective_import(
+        &mut self,
+        names: &[String],
+        path: &str,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        let canonical = self.resolve_import_path(path, span)?;
+        if self.compiling_modules.contains(&canonical) {
+            return Err(ProveIrError::CircularImport(path.to_string()));
+        }
+        self.compiling_modules.insert(canonical.clone());
+        let module = self
+            .module_loader
+            .load(&canonical)
+            .map_err(ProveIrError::ModuleLoadError)?;
+        let exported_names = module.exported_names.clone();
+        let stmts = module.program.stmts.clone();
+
+        // Validate requested names are actually exported
+        for name in names {
+            if !exported_names.contains(name) {
+                return Err(ProveIrError::ModuleLoadError(format!(
+                    "`{name}` is not exported from `{path}`"
+                )));
+            }
+        }
+
+        // Register each requested function directly (no alias prefix)
+        for stmt in &stmts {
+            let inner = match stmt {
+                Stmt::Export { inner, .. } => inner.as_ref(),
+                other => other,
+            };
+            if let Stmt::FnDecl {
+                name,
+                params,
+                body,
+                return_type,
+                ..
+            } = inner
+            {
+                if names.contains(name) {
+                    self.fn_table.insert(
+                        name.clone(),
+                        FnDef {
+                            params: params.clone(),
+                            body: body.clone(),
+                            return_type: return_type.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -848,15 +1051,8 @@ impl ProveIrCompiler {
                 // Check for module.func() first
                 if let Expr::Ident { name: module, .. } = object.as_ref() {
                     let qualified = format!("{module}::{field}");
-                    if self.env.contains_key(&qualified) || self.has_function(&qualified) {
-                        // Module function call — will be handled in step 7 (function inlining)
-                        return Err(ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "module function call `{module}.{field}()` \
-                                 not yet implemented in ProveIR"
-                            ),
-                            span: to_span(span),
-                        });
+                    if self.has_function(&qualified) {
+                        return self.compile_user_fn_call(&qualified, args, span);
                     }
                 }
                 self.compile_method_call(object, field, args, dot_span)

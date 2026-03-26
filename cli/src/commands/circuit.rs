@@ -104,7 +104,8 @@ pub fn circuit_command(
     }
 
     // 1. Compile to ProveIR and instantiate to IR SSA.
-    let mut program = ProveIrCompiler::compile_circuit(&source)
+    let source_path = std::path::Path::new(path);
+    let mut program = ProveIrCompiler::compile_circuit(&source, Some(source_path))
         .and_then(|prove_ir| prove_ir.instantiate(&std::collections::HashMap::new()))
         .map_err(render_prove_ir_error)?;
 

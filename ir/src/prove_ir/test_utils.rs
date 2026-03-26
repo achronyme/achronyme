@@ -58,5 +58,5 @@ pub fn wrap_flat_to_circuit(source: &str) -> String {
 /// Compile a flat-format or circuit-format source string as a circuit.
 pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
     let wrapped = wrap_flat_to_circuit(source);
-    ProveIrCompiler::compile_circuit(&wrapped)
+    ProveIrCompiler::compile_circuit(&wrapped, None)
 }

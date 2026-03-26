@@ -1723,6 +1723,7 @@ mod tests {
     fn audit_import_in_circuit_body_rejected() {
         let err = ProveIrCompiler::compile_circuit(
             "circuit test(x: Public) { import \"./foo.ach\" as foo\nassert_eq(x, x) }",
+            None,
         )
         .unwrap_err();
         // Parser rejects import inside block — surfaces as a parse error
