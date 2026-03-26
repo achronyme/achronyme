@@ -24,6 +24,10 @@ changes.txt
 # Proptest
 **/*.proptest-regressions
 
+# WASM playground
+wasm/target/
+wasm/pkg/
+
 # Astro / Starlight (docs site)
 docs/node_modules/
 docs/.astro/

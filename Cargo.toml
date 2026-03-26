@@ -10,6 +10,7 @@ members = [
     "std",
     "ach-macros",
 ]
+exclude = ["wasm"]
 resolver = "2"
 
 [workspace.package]
