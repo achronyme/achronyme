@@ -14,8 +14,27 @@ ach circuit <path> [options]
 | Flag | Description |
 |------|-------------|
 | `--inputs <vals>` | Comma-separated `key=value` pairs (e.g., `--inputs "a=6,b=7,c=42"`) |
+| `--input-file <path>` | TOML file with input values (arrays supported natively) |
 
-Values are parsed as BN254 field elements. Negative values are supported.
+Values are parsed as BN254 field elements. Supports decimal, hex (`0xFF`), and negative values. The two flags are mutually exclusive.
+
+### TOML input file
+
+For circuits with array parameters, `--input-file` avoids the `_N` naming convention:
+
+```toml
+# inputs.toml
+root = "7853200120375982..."
+leaf = "1"
+path = ["2", "3"]
+indices = ["0", "1"]
+```
+
+```bash
+ach circuit merkle.ach --input-file inputs.toml
+```
+
+TOML arrays expand to `path_0`, `path_1`, etc. internally. Both string (`"42"`) and integer (`42`) values are accepted.
 
 ## Backend Selection
 

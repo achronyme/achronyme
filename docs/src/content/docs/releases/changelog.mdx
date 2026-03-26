@@ -5,6 +5,60 @@ description: Release history for Achronyme.
 
 All notable changes to Achronyme are documented here. Each release bumps all 9 workspace crates to the same version.
 
+## 0.1.0-beta.16 — 2026-03-25
+
+**Hardening, circuit imports, assert messages, TOML inputs.**
+
+### Hardening
+
+- **Panics → Result:** `Arena::alloc()` returns `Result`, `unreachable!()` replaced with `Err(InvalidOpcode)`, ~35 defensive unwrap conversions.
+- **Generic errors eliminated:** `RuntimeError::Unknown` and `SystemError` replaced with specific variants (`StaleHeapHandle`, `StaleUpvalue`, `IoError`, etc.).
+- **Lexer robustness:** `from_utf8().unwrap()` replaced with proper error propagation.
+- **Flat circuit format removed:** Top-level `public`/`witness` declarations are a compile error. Use `circuit name(param: Type, ...) { body }`.
+- **Keyword argument validation:** Typos in circuit calls produce "did you mean?" suggestions.
+
+### `assert_eq` / `assert` with custom messages
+
+```ach
+assert_eq(computed, expected, "commitment mismatch")
+assert(is_valid, "eligibility check failed")
+```
+
+Optional third argument (string literal) shown when witness evaluation fails. Falls back to variable names + values when no message is provided.
+
+### Circuit imports in ProveIR
+
+```ach
+import "./hash_lib.ach" as h
+
+circuit main(out: Public, a: Witness, b: Witness) {
+    assert_eq(h.my_hash(a, b), out)
+}
+```
+
+Circuits can now import functions from other modules. Imported functions are inlined during ProveIR compilation. Supports `import ... as alias` and selective imports. Circular import detection included.
+
+### `--input-file` for TOML circuit inputs
+
+```bash
+ach circuit merkle.ach --input-file inputs.toml
+```
+
+```toml
+root = "7853200120375982..."
+leaf = "1"
+path = ["2", "3"]
+indices = ["0", "1"]
+```
+
+Replaces the `--inputs "path_0=2,path_1=3"` convention with native TOML arrays. Supports string values, integers, hex (`"0xFF"`), and negative values. Mutually exclusive with `--inputs`.
+
+### Internal
+
+- `ModuleLoader` moved from `compiler` to `ir` crate (shared between bytecode compiler and ProveIR).
+- ProveIR format version bumped to v3 (assert message field in `CircuitNode::AssertEq`/`Assert`).
+- WASM feasibility verified: 7/9 core crates compile to `wasm32-unknown-unknown`.
+
 ## 0.1.0-beta.15 — 2026-03-23
 
 **Syntax unification, global type metadata, Tornado Cash example.**
@@ -43,7 +97,7 @@ circuit eligibility(root: Public, secret: Witness, path: Witness Field[3], indic
 }
 ```
 
-- `ach circuit file.ach` now supports both `circuit name(...)` declarations and legacy flat format.
+- `ach circuit file.ach` requires the `circuit name(...)` declaration format.
 - `import circuit "./path.ach" as name` imports standalone circuit files.
 - Circuit calls with keyword arguments: `eligibility(root: val, secret: s)`.
 

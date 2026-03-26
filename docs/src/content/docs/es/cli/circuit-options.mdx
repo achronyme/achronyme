@@ -9,22 +9,32 @@ description: "Opciones para el comando circuit."
 ach circuit <ruta> [opciones]
 ```
 
-## Declaración de Entradas
-
-| Bandera | Descripción |
-|------|-------------|
-| `--public <vars>` | Nombres de entradas públicas separados por comas (ej., `--public "out,hash"`) |
-| `--witness <vars>` | Nombres de entradas testigo separados por comas (ej., `--witness "a,b,secret"`) |
-
-Si `--public` y `--witness` se omiten, el compilador usa las declaraciones `public` y `witness` del código fuente.
-
 ## Valores de Entrada
 
 | Bandera | Descripción |
 |------|-------------|
 | `--inputs <vals>` | Pares `clave=valor` separados por comas (ej., `--inputs "a=6,b=7,c=42"`) |
+| `--input-file <ruta>` | Archivo TOML con valores de entrada (arrays soportados nativamente) |
 
-Los valores se parsean como elementos del campo BN254. Se soportan valores negativos.
+Los valores se parsean como elementos del campo BN254. Soporta decimal, hex (`0xFF`) y valores negativos. Las dos banderas son mutuamente excluyentes.
+
+### Archivo TOML de entradas
+
+Para circuitos con parámetros de array, `--input-file` evita la convención `_N`:
+
+```toml
+# inputs.toml
+root = "7853200120375982..."
+leaf = "1"
+path = ["2", "3"]
+indices = ["0", "1"]
+```
+
+```bash
+ach circuit merkle.ach --input-file inputs.toml
+```
+
+Los arrays TOML se expanden a `path_0`, `path_1`, etc. internamente. Se aceptan valores como string (`"42"`) o entero (`42`).
 
 ## Selección de Backend
 
@@ -56,11 +66,11 @@ Genera puertas Plonkish, lookups y restricciones de copia. Verifica localmente (
 ## Ejemplos
 
 ```bash
-# Declaraciones en el código fuente, salida R1CS
+# Salida R1CS con inputs inline
 ach circuit circuit.ach --inputs "x=42,y=7"
 
-# Declaraciones por CLI
-ach circuit circuit.ach --public "out" --witness "a,b" --inputs "out=42,a=6,b=7"
+# Inputs desde archivo TOML
+ach circuit circuit.ach --input-file inputs.toml
 
 # Backend Plonkish
 ach circuit circuit.ach --backend plonkish --inputs "x=42"
