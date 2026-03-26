@@ -75,6 +75,9 @@ pub enum Commands {
         /// Input values as name=value pairs (comma-separated, decimal or 0x hex)
         #[arg(long)]
         inputs: Option<String>,
+        /// Input values from a TOML file (arrays supported natively)
+        #[arg(long)]
+        input_file: Option<String>,
         /// Disable IR optimization passes
         #[arg(long)]
         no_optimize: Option<bool>,

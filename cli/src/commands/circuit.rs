@@ -39,12 +39,93 @@ fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
     Ok(map)
 }
 
+/// Parse a string value into a FieldElement (decimal, negative decimal, or hex).
+fn parse_field_value(name: &str, val_str: &str) -> Result<FieldElement> {
+    let val_str = val_str.trim();
+    if val_str.starts_with("0x") || val_str.starts_with("0X") {
+        FieldElement::from_hex_str(val_str)
+            .context(format!("invalid hex value for `{name}`: {val_str:?}"))
+    } else if let Some(digits) = val_str.strip_prefix('-') {
+        let abs = FieldElement::from_decimal_str(digits)
+            .context(format!("invalid decimal value for `{name}`: {val_str:?}"))?;
+        Ok(abs.neg())
+    } else {
+        FieldElement::from_decimal_str(val_str)
+            .context(format!("invalid decimal value for `{name}`: {val_str:?}"))
+    }
+}
+
+/// Parse a TOML input file into a flat map of name → FieldElement.
+///
+/// Scalars:  `name = "42"` or `name = "0xFF"`
+/// Arrays:   `path = ["2", "3"]` → expands to `path_0 = 2, path_1 = 3`
+fn parse_inputs_toml(path: &str) -> Result<HashMap<String, FieldElement>> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("cannot read input file: {path}"))?;
+    let table: toml::Table = content
+        .parse()
+        .with_context(|| format!("invalid TOML in {path}"))?;
+
+    let mut map = HashMap::new();
+    for (key, value) in &table {
+        match value {
+            toml::Value::String(s) => {
+                let fe = parse_field_value(key, s)?;
+                map.insert(key.clone(), fe);
+            }
+            toml::Value::Integer(n) => {
+                let fe = if *n < 0 {
+                    FieldElement::from_decimal_str(&n.unsigned_abs().to_string())
+                        .context(format!("invalid integer for `{key}`: {n}"))?
+                        .neg()
+                } else {
+                    FieldElement::from_u64(*n as u64)
+                };
+                map.insert(key.clone(), fe);
+            }
+            toml::Value::Array(arr) => {
+                for (i, elem) in arr.iter().enumerate() {
+                    let elem_name = format!("{key}_{i}");
+                    match elem {
+                        toml::Value::String(s) => {
+                            let fe = parse_field_value(&elem_name, s)?;
+                            map.insert(elem_name, fe);
+                        }
+                        toml::Value::Integer(n) => {
+                            let fe = if *n < 0 {
+                                FieldElement::from_decimal_str(&n.unsigned_abs().to_string())
+                                    .context(format!("invalid integer for `{elem_name}`: {n}"))?
+                                    .neg()
+                            } else {
+                                FieldElement::from_u64(*n as u64)
+                            };
+                            map.insert(elem_name, fe);
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "array element {key}[{i}] must be a string or integer, got {elem}"
+                            ));
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "input `{key}` must be a string, integer, or array of strings/integers"
+                ));
+            }
+        }
+    }
+    Ok(map)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn circuit_command(
     path: &str,
     r1cs_path: &str,
     wtns_path: &str,
     inputs: Option<&str>,
+    input_file: Option<&str>,
     no_optimize: bool,
     backend: &str,
     prove: bool,
@@ -72,6 +153,21 @@ pub fn circuit_command(
             "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
         ));
     }
+
+    if inputs.is_some() && input_file.is_some() {
+        return Err(anyhow::anyhow!(
+            "--inputs and --input-file are mutually exclusive"
+        ));
+    }
+
+    // Resolve inputs from either --inputs or --input-file into a unified map.
+    let resolved_inputs: Option<HashMap<String, FieldElement>> = if let Some(raw) = inputs {
+        Some(parse_inputs(raw)?)
+    } else if let Some(toml_path) = input_file {
+        Some(parse_inputs_toml(toml_path)?)
+    } else {
+        None
+    };
 
     let style = Styler::from_env(&error_format);
     let verbose = style.is_verbose(&error_format);
@@ -221,7 +317,7 @@ pub fn circuit_command(
             &program,
             r1cs_path,
             wtns_path,
-            inputs,
+            resolved_inputs.as_ref(),
             solidity_path,
             &style,
             verbose,
@@ -229,7 +325,7 @@ pub fn circuit_command(
         ),
         "plonkish" => run_plonkish_pipeline(
             &program,
-            inputs,
+            resolved_inputs.as_ref(),
             prove,
             plonkish_json_path,
             &source_dir,
@@ -247,7 +343,7 @@ fn run_r1cs_pipeline(
     program: &ir::IrProgram,
     r1cs_path: &str,
     wtns_path: &str,
-    inputs: Option<&str>,
+    inputs: Option<&HashMap<String, FieldElement>>,
     solidity_path: Option<&str>,
     style: &Styler,
     verbose: bool,
@@ -284,12 +380,10 @@ fn run_r1cs_pipeline(
         })
         .count();
 
-    if let Some(raw_inputs) = inputs {
-        let input_map = parse_inputs(raw_inputs)?;
-
+    if let Some(input_map) = inputs {
         // Unified: compile + witness in one pass (with early IR evaluation)
         let witness_vec = compiler
-            .compile_ir_with_witness(program, &input_map)
+            .compile_ir_with_witness(program, input_map)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
         compiler
@@ -409,7 +503,7 @@ fn run_r1cs_pipeline(
 #[allow(clippy::too_many_arguments)]
 fn run_plonkish_pipeline(
     program: &ir::IrProgram,
-    inputs: Option<&str>,
+    inputs: Option<&HashMap<String, FieldElement>>,
     prove: bool,
     plonkish_json_path: Option<&str>,
     source_dir: &std::path::Path,
@@ -420,12 +514,10 @@ fn run_plonkish_pipeline(
     let mut compiler = PlonkishCompiler::new();
     compiler.set_proven_boolean(proven.clone());
 
-    if let Some(raw_inputs) = inputs {
-        let input_map = parse_inputs(raw_inputs)?;
-
+    if let Some(input_map) = inputs {
         // Unified: compile + witness in one pass (with early IR evaluation)
         compiler
-            .compile_ir_with_witness(program, &input_map)
+            .compile_ir_with_witness(program, input_map)
             .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
 
         compiler
@@ -530,7 +622,7 @@ fn run_plonkish_pipeline(
         }
     } else {
         if prove {
-            return Err(anyhow::anyhow!("--prove requires --inputs"));
+            return Err(anyhow::anyhow!("--prove requires --inputs or --input-file"));
         }
 
         compiler
@@ -620,5 +712,87 @@ mod tests {
     #[test]
     fn parse_inputs_invalid_pair_errors() {
         assert!(parse_inputs("no_equals").is_err());
+    }
+
+    // --- parse_inputs_toml tests ---
+
+    fn write_toml(content: &str) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn toml_scalar_string() {
+        let f = write_toml("x = \"42\"\ny = \"0xFF\"");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], FieldElement::from_u64(42));
+        assert_eq!(map["y"], FieldElement::from_u64(255));
+    }
+
+    #[test]
+    fn toml_scalar_integer() {
+        let f = write_toml("x = 42\ny = 0");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], FieldElement::from_u64(42));
+        assert_eq!(map["y"], FieldElement::ZERO);
+    }
+
+    #[test]
+    fn toml_negative_string() {
+        let f = write_toml("x = \"-1\"");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], FieldElement::from_u64(1).neg());
+    }
+
+    #[test]
+    fn toml_negative_integer() {
+        let f = write_toml("x = -42");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], FieldElement::from_u64(42).neg());
+    }
+
+    #[test]
+    fn toml_array_expands_to_indexed() {
+        let f = write_toml("path = [\"10\", \"20\", \"30\"]");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["path_0"], FieldElement::from_u64(10));
+        assert_eq!(map["path_1"], FieldElement::from_u64(20));
+        assert_eq!(map["path_2"], FieldElement::from_u64(30));
+    }
+
+    #[test]
+    fn toml_array_integer_elements() {
+        let f = write_toml("indices = [0, 1, 0]");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["indices_0"], FieldElement::ZERO);
+        assert_eq!(map["indices_1"], FieldElement::ONE);
+        assert_eq!(map["indices_2"], FieldElement::ZERO);
+    }
+
+    #[test]
+    fn toml_mixed_scalars_and_arrays() {
+        let f = write_toml("root = \"999\"\nleaf = \"1\"\npath = [\"2\", \"3\"]");
+        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 4);
+        assert_eq!(map["root"], FieldElement::from_u64(999));
+        assert_eq!(map["leaf"], FieldElement::ONE);
+        assert_eq!(map["path_0"], FieldElement::from_u64(2));
+        assert_eq!(map["path_1"], FieldElement::from_u64(3));
+    }
+
+    #[test]
+    fn toml_invalid_type_rejected() {
+        let f = write_toml("x = true");
+        assert!(parse_inputs_toml(f.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn toml_file_not_found() {
+        assert!(parse_inputs_toml("/tmp/nonexistent_ach_inputs.toml").is_err());
     }
 }

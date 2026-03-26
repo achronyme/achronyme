@@ -90,6 +90,7 @@ fn main() -> Result<()> {
 
         Commands::Circuit {
             inputs,
+            input_file,
             prove,
             dump_ir,
             ..
@@ -102,6 +103,7 @@ fn main() -> Result<()> {
                 &cfg.r1cs_path,
                 &cfg.wtns_path,
                 inputs.as_deref(),
+                input_file.as_deref(),
                 !cfg.optimize,
                 &cfg.backend,
                 *prove,
