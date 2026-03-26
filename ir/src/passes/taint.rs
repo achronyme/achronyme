@@ -153,7 +153,9 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
                     .merge(taint_of(&taints, *if_false));
                 taints.insert(*result, t);
             }
-            Instruction::AssertEq { result, lhs, rhs } => {
+            Instruction::AssertEq {
+                result, lhs, rhs, ..
+            } => {
                 used_vars.insert(*lhs);
                 used_vars.insert(*rhs);
                 constrained_vars.insert(*lhs);

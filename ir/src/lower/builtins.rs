@@ -57,7 +57,7 @@ impl IrLowering {
     }
 
     fn lower_assert_eq(&mut self, args: &[&Expr], sp: OptSpan) -> Result<SsaVar, IrError> {
-        if args.len() != 2 {
+        if args.len() < 2 || args.len() > 3 {
             return Err(IrError::WrongArgumentCount {
                 builtin: "assert_eq".into(),
                 expected: 2,
@@ -67,11 +67,27 @@ impl IrLowering {
         }
         let a = self.lower_expr(args[0])?;
         let b = self.lower_expr(args[1])?;
+        let message = if args.len() == 3 {
+            match args[2] {
+                Expr::StringLit { value, .. } => Some(value.clone()),
+                _ => {
+                    return Err(IrError::TypeMismatch {
+                        expected: "string literal".into(),
+                        got: "non-string expression (assert_eq message must be a string literal)"
+                            .into(),
+                        span: sp,
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let v = self.program.fresh_var();
         self.program.push(Instruction::AssertEq {
             result: v,
             lhs: a,
             rhs: b,
+            message,
         });
         Ok(v)
     }
@@ -343,6 +359,7 @@ impl IrLowering {
             result: v,
             lhs: current,
             rhs: root,
+            message: None,
         });
         Ok(v)
     }

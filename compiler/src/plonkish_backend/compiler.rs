@@ -228,7 +228,9 @@ impl PlonkishCompiler {
                     let d_cell = self.emit_mux(cond_cell, t_cell, f_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(d_cell));
                 }
-                IrInstruction::AssertEq { result, lhs, rhs } => {
+                IrInstruction::AssertEq {
+                    result, lhs, rhs, ..
+                } => {
                     let a = self.lookup_val(lhs)?;
                     let b = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a)?;

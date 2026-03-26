@@ -236,6 +236,7 @@ impl Instantiator {
                         result: eq_var,
                         lhs: v,
                         rhs: const_var,
+                        message: None,
                     });
                 }
             }
@@ -290,7 +291,9 @@ impl Instantiator {
                 self.env
                     .insert(name.clone(), InstEnvValue::Array(elem_vars));
             }
-            CircuitNode::AssertEq { lhs, rhs, .. } => {
+            CircuitNode::AssertEq {
+                lhs, rhs, message, ..
+            } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
                 let v = self.program.fresh_var();
@@ -298,6 +301,7 @@ impl Instantiator {
                     result: v,
                     lhs: l,
                     rhs: r,
+                    message: message.clone(),
                 });
             }
             CircuitNode::Assert { expr, .. } => {
@@ -735,6 +739,7 @@ impl Instantiator {
                     result: v,
                     lhs: current,
                     rhs: root_var,
+                    message: None,
                 });
                 Ok(v)
             }
@@ -1583,6 +1588,7 @@ mod tests {
                 CircuitNode::AssertEq {
                     lhs: CircuitExpr::Capture("n".into()),
                     rhs: CircuitExpr::Input("out".into()),
+                    message: None,
                     span: None,
                 },
             ],

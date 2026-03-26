@@ -188,7 +188,9 @@ impl R1CSCompiler {
                     let selected = self.multiply_lcs(&cond_lc, &diff);
                     lc_map.insert(*result, selected + else_lc);
                 }
-                IrInstruction::AssertEq { result, lhs, rhs } => {
+                IrInstruction::AssertEq {
+                    result, lhs, rhs, ..
+                } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
                     self.cs.enforce_equal(a, b.clone());

@@ -581,12 +581,14 @@ impl ProveIrCompiler {
             if let Expr::Ident { name, .. } = callee.as_ref() {
                 match name.as_str() {
                     "assert_eq" => {
-                        self.check_arity("assert_eq", 2, arg_vals.len(), span)?;
+                        self.check_assert_eq_arity(arg_vals.len(), span)?;
                         let lhs = self.compile_expr(arg_vals[0])?;
                         let rhs = self.compile_expr(arg_vals[1])?;
+                        let message = self.extract_assert_message(arg_vals.get(2), span)?;
                         self.body.push(CircuitNode::AssertEq {
                             lhs,
                             rhs,
+                            message,
                             span: Some(SpanRange::from(span)),
                         });
                         return Ok(());
@@ -956,15 +958,17 @@ impl ProveIrCompiler {
             // assert_eq and assert are expression-level in the AST but produce
             // nodes — we return a dummy Const(0) since they're constraints, not values.
             "assert_eq" => {
-                self.check_arity("assert_eq", 2, args.len(), span)?;
+                self.check_assert_eq_arity(args.len(), span)?;
                 let lhs = self.compile_expr(args[0])?;
                 let rhs = self.compile_expr(args[1])?;
+                let message = self.extract_assert_message(args.get(2), span)?;
                 // Always emit the constraint node — even at expression level.
                 // This ensures the constraint is enforced regardless of whether
                 // assert_eq is used as a statement or inside a let binding.
                 self.body.push(CircuitNode::AssertEq {
                     lhs,
                     rhs,
+                    message,
                     span: Some(SpanRange::from(span)),
                 });
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
@@ -1232,6 +1236,34 @@ impl ProveIrCompiler {
             });
         }
         Ok(())
+    }
+
+    /// Validate assert_eq arity: 2 or 3 arguments.
+    fn check_assert_eq_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
+        if !(2..=3).contains(&got) {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!("`assert_eq` expects 2 or 3 arguments, got {got}"),
+                span: to_span(span),
+            });
+        }
+        Ok(())
+    }
+
+    /// Extract an optional string literal for assert_eq/assert messages.
+    fn extract_assert_message(
+        &self,
+        arg: Option<&&Expr>,
+        span: &Span,
+    ) -> Result<Option<String>, ProveIrError> {
+        match arg {
+            None => Ok(None),
+            Some(Expr::StringLit { value, .. }) => Ok(Some(value.clone())),
+            Some(_) => Err(ProveIrError::TypeMismatch {
+                expected: "string literal".into(),
+                got: "non-string expression (assert_eq message must be a string literal)".into(),
+                span: to_span(span),
+            }),
+        }
     }
 
     fn check_method_arity(
@@ -2467,6 +2499,45 @@ mod tests {
                 .any(|n| matches!(n, CircuitNode::Assert { .. })),
             "expected Assert node in body"
         );
+    }
+
+    #[test]
+    fn stmt_assert_eq_with_message() {
+        let ir =
+            compile_circuit("public a\npublic b\nassert_eq(a, b, \"values must match\")").unwrap();
+        let node = ir
+            .body
+            .iter()
+            .find(|n| matches!(n, CircuitNode::AssertEq { .. }))
+            .expect("expected AssertEq node");
+        if let CircuitNode::AssertEq { message, .. } = node {
+            assert_eq!(message.as_deref(), Some("values must match"));
+        }
+    }
+
+    #[test]
+    fn stmt_assert_eq_without_message() {
+        let ir = compile_circuit("public a\npublic b\nassert_eq(a, b)").unwrap();
+        let node = ir
+            .body
+            .iter()
+            .find(|n| matches!(n, CircuitNode::AssertEq { .. }))
+            .expect("expected AssertEq node");
+        if let CircuitNode::AssertEq { message, .. } = node {
+            assert_eq!(*message, None);
+        }
+    }
+
+    #[test]
+    fn stmt_assert_eq_message_must_be_string() {
+        let err = compile_circuit("public a\npublic b\nassert_eq(a, b, 42)").unwrap_err();
+        assert!(matches!(err, ProveIrError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn stmt_assert_eq_too_many_args() {
+        let err = compile_circuit("public a\npublic b\nassert_eq(a, b, \"msg\", 1)").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
     }
 
     #[test]

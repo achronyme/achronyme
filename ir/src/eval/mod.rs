@@ -27,6 +27,7 @@ pub enum EvalError {
         rhs_name: Option<String>,
         lhs_value: Option<FieldElement>,
         rhs_value: Option<FieldElement>,
+        message: Option<String>,
     },
     RangeCheckFailed {
         var: SsaVar,
@@ -78,16 +79,23 @@ impl fmt::Display for EvalError {
                 rhs_name,
                 lhs_value,
                 rhs_value,
+                message,
                 ..
-            } => match (lhs_name, rhs_name, lhs_value, rhs_value) {
-                (Some(a), Some(b), Some(av), Some(bv)) => write!(
-                    f,
-                    "assert_eq failed: '{a}' (value {}) != '{b}' (value {})",
-                    av.to_decimal_string(),
-                    bv.to_decimal_string()
-                ),
-                _ => write!(f, "assert_eq failed: values are not equal"),
-            },
+            } => {
+                if let Some(msg) = message {
+                    write!(f, "assert_eq failed: {msg}")
+                } else {
+                    match (lhs_name, rhs_name, lhs_value, rhs_value) {
+                        (Some(a), Some(b), Some(av), Some(bv)) => write!(
+                            f,
+                            "assert_eq failed: '{a}' (value {}) != '{b}' (value {})",
+                            av.to_decimal_string(),
+                            bv.to_decimal_string()
+                        ),
+                        _ => write!(f, "assert_eq failed: values are not equal"),
+                    }
+                }
+            }
             EvalError::RangeCheckFailed {
                 bits, name, value, ..
             } => match (name, value) {
@@ -227,7 +235,12 @@ pub fn evaluate(
                 let hash = poseidon_hash(params, l, r);
                 values.insert(*result, hash);
             }
-            Instruction::AssertEq { result, lhs, rhs } => {
+            Instruction::AssertEq {
+                result,
+                lhs,
+                rhs,
+                message,
+            } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
                 if a != b {
@@ -238,6 +251,7 @@ pub fn evaluate(
                         rhs_name: resolve_name(program, *rhs),
                         lhs_value: Some(a),
                         rhs_value: Some(b),
+                        message: message.clone(),
                     }));
                 }
                 values.insert(*result, a);

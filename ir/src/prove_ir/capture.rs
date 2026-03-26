@@ -228,6 +228,7 @@ mod tests {
         let body = vec![CircuitNode::AssertEq {
             lhs: CircuitExpr::Capture("secret".into()),
             rhs: CircuitExpr::Const(memory::FieldElement::ZERO),
+            message: None,
             span: None,
         }];
         let result = classify_captures(&names(&["secret"]), &body);
@@ -301,6 +302,7 @@ mod tests {
             CircuitNode::AssertEq {
                 lhs: CircuitExpr::Capture("secret".into()),
                 rhs: CircuitExpr::Input("hash".into()),
+                message: None,
                 span: None,
             },
             // n as loop bound
@@ -346,6 +348,7 @@ mod tests {
             then_body: vec![CircuitNode::AssertEq {
                 lhs: CircuitExpr::Capture("x".into()),
                 rhs: CircuitExpr::Const(memory::FieldElement::ZERO),
+                message: None,
                 span: None,
             }],
             else_body: vec![],
@@ -361,6 +364,7 @@ mod tests {
         let body = vec![CircuitNode::AssertEq {
             lhs: CircuitExpr::Capture("z".into()),
             rhs: CircuitExpr::Capture("a".into()),
+            message: None,
             span: None,
         }];
         let result = classify_captures(&names(&["z", "a"]), &body);

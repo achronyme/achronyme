@@ -452,6 +452,7 @@ mod tests {
             result: v2,
             lhs: v0,
             rhs: v1,
+            message: None,
         });
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
@@ -758,6 +759,7 @@ mod tests {
             result: eq,
             lhs: mul,
             rhs: hash,
+            message: None,
         });
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);

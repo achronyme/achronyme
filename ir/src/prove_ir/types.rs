@@ -44,7 +44,8 @@ const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
 
 /// Format version (increment when enum variants change or fields are added).
 /// v2: added `capture_arrays` field to ProveIR.
-const PROVE_IR_FORMAT_VERSION: u8 = 2;
+/// v3: added `message` field to CircuitNode::AssertEq.
+const PROVE_IR_FORMAT_VERSION: u8 = 3;
 
 /// Maximum allowed size for deserialized ProveIR data (64 MB).
 /// Prevents allocation bombs from crafted length prefixes.
@@ -294,10 +295,12 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
-    /// Equality constraint: `assert_eq(lhs, rhs)`
+    /// Equality constraint: `assert_eq(lhs, rhs)` or `assert_eq(lhs, rhs, "msg")`
     AssertEq {
         lhs: CircuitExpr,
         rhs: CircuitExpr,
+        /// Optional user-provided message shown on failure.
+        message: Option<String>,
         #[serde(skip)]
         span: Option<SpanRange>,
     },
@@ -518,6 +521,25 @@ mod tests {
         )
         .unwrap();
         assert_round_trip(&ir);
+    }
+
+    #[test]
+    fn round_trip_assert_eq_with_message() {
+        let ir = crate::prove_ir::test_utils::compile_circuit(
+            "public x\npublic out\nwitness s\nassert_eq(x + s, out, \"sums must match\")",
+        )
+        .unwrap();
+        let bytes = ir.to_bytes().expect("serialization failed");
+        let restored = ProveIR::from_bytes(&bytes).expect("deserialization failed");
+        // Verify message survives round-trip
+        let msg = restored.body.iter().find_map(|n| {
+            if let CircuitNode::AssertEq { message, .. } = n {
+                message.clone()
+            } else {
+                None
+            }
+        });
+        assert_eq!(msg.as_deref(), Some("sums must match"));
     }
 
     #[test]
@@ -804,7 +826,7 @@ mod tests {
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
-        bytes.push(2);
+        bytes.push(PROVE_IR_FORMAT_VERSION);
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
@@ -833,7 +855,7 @@ mod tests {
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
-        bytes.push(2);
+        bytes.push(PROVE_IR_FORMAT_VERSION);
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
@@ -861,7 +883,7 @@ mod tests {
         let payload = bincode::serialize(&ir).unwrap();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
-        bytes.push(2);
+        bytes.push(PROVE_IR_FORMAT_VERSION);
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(

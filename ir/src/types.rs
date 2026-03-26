@@ -82,6 +82,8 @@ pub enum Instruction {
         result: SsaVar,
         lhs: SsaVar,
         rhs: SsaVar,
+        /// Optional user-provided message shown on failure.
+        message: Option<String>,
     },
     /// result = poseidon(left, right)
     PoseidonHash {
@@ -264,9 +266,15 @@ impl std::fmt::Display for Instruction {
                 if_true,
                 if_false,
             } => write!(f, "{result} = Mux({cond}, {if_true}, {if_false})"),
-            Instruction::AssertEq { result, lhs, rhs } => {
-                write!(f, "{result} = AssertEq({lhs}, {rhs})")
-            }
+            Instruction::AssertEq {
+                result,
+                lhs,
+                rhs,
+                message,
+            } => match message {
+                Some(msg) => write!(f, "{result} = AssertEq({lhs}, {rhs}, \"{msg}\")"),
+                None => write!(f, "{result} = AssertEq({lhs}, {rhs})"),
+            },
             Instruction::PoseidonHash {
                 result,
                 left,
@@ -479,6 +487,7 @@ mod tests {
             result: SsaVar(0),
             lhs: SsaVar(1),
             rhs: SsaVar(2),
+            message: None,
         };
         assert!(assert_inst.has_side_effects());
 
