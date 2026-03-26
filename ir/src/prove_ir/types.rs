@@ -304,9 +304,11 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
-    /// Boolean constraint: `assert(expr)` — expr must be 1
+    /// Boolean constraint: `assert(expr)` or `assert(expr, "msg")` — expr must be 1
     Assert {
         expr: CircuitExpr,
+        /// Optional user-provided message shown on failure.
+        message: Option<String>,
         #[serde(skip)]
         span: Option<SpanRange>,
     },

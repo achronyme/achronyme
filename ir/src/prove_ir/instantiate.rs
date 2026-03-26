@@ -304,11 +304,14 @@ impl Instantiator {
                     message: message.clone(),
                 });
             }
-            CircuitNode::Assert { expr, .. } => {
+            CircuitNode::Assert { expr, message, .. } => {
                 let operand = self.emit_expr(expr)?;
                 let v = self.program.fresh_var();
-                self.program
-                    .push(Instruction::Assert { result: v, operand });
+                self.program.push(Instruction::Assert {
+                    result: v,
+                    operand,
+                    message: message.clone(),
+                });
             }
             CircuitNode::For {
                 var, range, body, ..

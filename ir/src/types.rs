@@ -164,7 +164,12 @@ pub enum Instruction {
         bitwidth: u32,
     },
     /// Assertion: enforces operand == 1 (boolean). Side-effecting.
-    Assert { result: SsaVar, operand: SsaVar },
+    Assert {
+        result: SsaVar,
+        operand: SsaVar,
+        /// Optional user-provided message shown on failure.
+        message: Option<String>,
+    },
 }
 
 impl Instruction {
@@ -316,9 +321,14 @@ impl std::fmt::Display for Instruction {
                 rhs,
                 bitwidth,
             } => write!(f, "{result} = IsLeBounded({lhs}, {rhs}, {bitwidth})"),
-            Instruction::Assert { result, operand } => {
-                write!(f, "{result} = Assert({operand})")
-            }
+            Instruction::Assert {
+                result,
+                operand,
+                message,
+            } => match message {
+                Some(msg) => write!(f, "{result} = Assert({operand}, \"{msg}\")"),
+                None => write!(f, "{result} = Assert({operand})"),
+            },
         }
     }
 }

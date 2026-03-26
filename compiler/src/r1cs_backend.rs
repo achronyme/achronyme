@@ -400,7 +400,9 @@ impl R1CSCompiler {
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     lc_map.insert(*result, one - lt_lc);
                 }
-                IrInstruction::Assert { result, operand } => {
+                IrInstruction::Assert {
+                    result, operand, ..
+                } => {
                     let op_lc = lookup(&lc_map, operand)?;
                     let one = LinearCombination::from_constant(FieldElement::ONE);
                     // Skip boolean enforcement if operand is proven boolean

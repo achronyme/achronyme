@@ -82,7 +82,9 @@ pub fn compute_proven_boolean(program: &IrProgram) -> HashSet<SsaVar> {
                     booleans.insert(*result);
                 }
             }
-            Instruction::Assert { result, operand } => {
+            Instruction::Assert {
+                result, operand, ..
+            } => {
                 booleans.insert(*operand);
                 booleans.insert(*result);
             }

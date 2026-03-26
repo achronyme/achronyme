@@ -594,10 +594,12 @@ impl ProveIrCompiler {
                         return Ok(());
                     }
                     "assert" => {
-                        self.check_arity("assert", 1, arg_vals.len(), span)?;
+                        self.check_assert_arity(arg_vals.len(), span)?;
                         let cond = self.compile_expr(arg_vals[0])?;
+                        let message = self.extract_assert_message(arg_vals.get(1), span)?;
                         self.body.push(CircuitNode::Assert {
                             expr: cond,
+                            message,
                             span: Some(SpanRange::from(span)),
                         });
                         return Ok(());
@@ -974,11 +976,13 @@ impl ProveIrCompiler {
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
             }
             "assert" => {
-                self.check_arity("assert", 1, args.len(), span)?;
+                self.check_assert_arity(args.len(), span)?;
                 let cond = self.compile_expr(args[0])?;
+                let message = self.extract_assert_message(args.get(1), span)?;
                 // Always emit the constraint node — same rationale as assert_eq.
                 self.body.push(CircuitNode::Assert {
                     expr: cond,
+                    message,
                     span: Some(SpanRange::from(span)),
                 });
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
@@ -1243,6 +1247,17 @@ impl ProveIrCompiler {
         if !(2..=3).contains(&got) {
             return Err(ProveIrError::UnsupportedOperation {
                 description: format!("`assert_eq` expects 2 or 3 arguments, got {got}"),
+                span: to_span(span),
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate assert arity: 1 or 2 arguments.
+    fn check_assert_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
+        if !(1..=2).contains(&got) {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!("`assert` expects 1 or 2 arguments, got {got}"),
                 span: to_span(span),
             });
         }
@@ -2499,6 +2514,44 @@ mod tests {
                 .any(|n| matches!(n, CircuitNode::Assert { .. })),
             "expected Assert node in body"
         );
+    }
+
+    #[test]
+    fn stmt_assert_with_message() {
+        let ir = compile_circuit("public x\nassert(x, \"x must be true\")").unwrap();
+        let node = ir
+            .body
+            .iter()
+            .find(|n| matches!(n, CircuitNode::Assert { .. }))
+            .expect("expected Assert node");
+        if let CircuitNode::Assert { message, .. } = node {
+            assert_eq!(message.as_deref(), Some("x must be true"));
+        }
+    }
+
+    #[test]
+    fn stmt_assert_without_message() {
+        let ir = compile_circuit("public x\nassert(x)").unwrap();
+        let node = ir
+            .body
+            .iter()
+            .find(|n| matches!(n, CircuitNode::Assert { .. }))
+            .expect("expected Assert node");
+        if let CircuitNode::Assert { message, .. } = node {
+            assert_eq!(*message, None);
+        }
+    }
+
+    #[test]
+    fn stmt_assert_message_must_be_string() {
+        let err = compile_circuit("public x\nassert(x, 42)").unwrap_err();
+        assert!(matches!(err, ProveIrError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn stmt_assert_too_many_args() {
+        let err = compile_circuit("public x\nassert(x, \"msg\", 1)").unwrap_err();
+        assert!(matches!(err, ProveIrError::UnsupportedOperation { .. }));
     }
 
     #[test]

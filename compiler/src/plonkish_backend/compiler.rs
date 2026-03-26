@@ -568,7 +568,9 @@ impl PlonkishCompiler {
                         }),
                     );
                 }
-                IrInstruction::Assert { result, operand } => {
+                IrInstruction::Assert {
+                    result, operand, ..
+                } => {
                     let op_val = self.lookup_val(operand)?;
                     let op_cell = self.materialize_val(&op_val)?;
                     if !self.proven_boolean.contains(operand) {

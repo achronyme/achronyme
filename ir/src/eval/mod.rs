@@ -19,6 +19,7 @@ pub enum EvalError {
         var: SsaVar,
         name: Option<String>,
         value: Option<FieldElement>,
+        message: Option<String>,
     },
     AssertEqFailed {
         lhs: SsaVar,
@@ -65,15 +66,28 @@ impl fmt::Display for EvalError {
                 }
                 _ => write!(f, "division by zero"),
             },
-            EvalError::AssertionFailed { name, value, .. } => match (name, value) {
-                (Some(n), Some(v)) => write!(
-                    f,
-                    "assertion failed at '{n}' (value is {}, expected non-zero)",
-                    v.to_decimal_string()
-                ),
-                (Some(n), None) => write!(f, "assertion failed at '{n}' (expected non-zero)"),
-                _ => write!(f, "assertion failed (expected non-zero)"),
-            },
+            EvalError::AssertionFailed {
+                name,
+                value,
+                message,
+                ..
+            } => {
+                if let Some(msg) = message {
+                    write!(f, "assertion failed: {msg}")
+                } else {
+                    match (name, value) {
+                        (Some(n), Some(v)) => write!(
+                            f,
+                            "assertion failed at '{n}' (value is {}, expected non-zero)",
+                            v.to_decimal_string()
+                        ),
+                        (Some(n), None) => {
+                            write!(f, "assertion failed at '{n}' (expected non-zero)")
+                        }
+                        _ => write!(f, "assertion failed (expected non-zero)"),
+                    }
+                }
+            }
             EvalError::AssertEqFailed {
                 lhs_name,
                 rhs_name,
@@ -256,13 +270,18 @@ pub fn evaluate(
                 }
                 values.insert(*result, a);
             }
-            Instruction::Assert { result, operand } => {
+            Instruction::Assert {
+                result,
+                operand,
+                message,
+            } => {
                 let v = get(&values, operand)?;
                 if v != FieldElement::ONE {
                     return Err(Box::new(EvalError::AssertionFailed {
                         var: *operand,
                         name: resolve_name(program, *operand),
                         value: Some(v),
+                        message: message.clone(),
                     }));
                 }
                 values.insert(*result, v);

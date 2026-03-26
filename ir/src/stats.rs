@@ -648,6 +648,7 @@ mod tests {
         prog.push(Instruction::Assert {
             result: v1,
             operand: v0,
+            message: None,
         });
 
         // Without proven boolean: 1 enforce + 1 boolean = 2
