@@ -34,6 +34,7 @@ fn circuit_r1cs_basic_compilation() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         None,
+        None,
         false,
         "r1cs",
         false,
@@ -60,6 +61,7 @@ fn circuit_plonkish_basic_compilation() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         None,
+        None,
         false,
         "plonkish",
         false,
@@ -84,6 +86,7 @@ fn circuit_nonexistent_file_error() {
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
         None,
+        None,
         false,
         "r1cs",
         false,
@@ -105,6 +108,7 @@ fn circuit_invalid_source_error() {
         src.path().to_str().unwrap(),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
+        None,
         None,
         false,
         "r1cs",
@@ -133,6 +137,7 @@ fn circuit_r1cs_with_witness() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("out=42,a=6,b=7"),
+        None,
         false,
         "r1cs",
         false,
@@ -168,6 +173,7 @@ fn circuit_plonkish_with_witness() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("out=42,a=6,b=7"),
+        None,
         false,
         "plonkish",
         false,
@@ -196,6 +202,7 @@ fn circuit_r1cs_wrong_witness_rejected() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("out=99,a=6,b=7"),
+        None,
         false,
         "r1cs",
         false,
@@ -234,6 +241,7 @@ fn circuit_r1cs_poseidon() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some(&inputs),
+        None,
         false,
         "r1cs",
         false,
@@ -261,6 +269,7 @@ fn circuit_r1cs_range_check() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("x=200,y=60000"),
+        None,
         false,
         "r1cs",
         false,
@@ -289,6 +298,7 @@ fn circuit_r1cs_mux() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("out=42,cond=1,a=42,b=99"),
+        None,
         false,
         "r1cs",
         false,
@@ -316,6 +326,7 @@ fn circuit_no_optimize_flag() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         None,
+        None,
         true, // --no-optimize
         "r1cs",
         false,
@@ -341,6 +352,7 @@ fn circuit_unknown_backend_error() {
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
         None,
+        None,
         false,
         "unknown_backend",
         false,
@@ -365,6 +377,7 @@ fn circuit_solidity_with_plonkish_rejected() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
+        None,
         None,
         false,
         "plonkish",
@@ -393,6 +406,7 @@ fn circuit_prove_without_inputs_rejected() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
+        None,
         None,
         false,
         "plonkish",
@@ -425,6 +439,7 @@ fn circuit_plonkish_json_with_inputs() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("out=42,a=6,b=7"),
+        None,
         false,
         "plonkish",
         false,
@@ -457,6 +472,7 @@ fn circuit_plonkish_json_without_inputs() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         None,
+        None,
         false,
         "plonkish",
         false,
@@ -487,6 +503,7 @@ fn circuit_plonkish_json_with_r1cs_rejected() {
         &fixture("basic_arithmetic.ach"),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
+        None,
         None,
         false,
         "r1cs",
@@ -522,6 +539,7 @@ fn circuit_json_error_format() {
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
         None,
+        None,
         false,
         "r1cs",
         false,
@@ -543,6 +561,7 @@ fn circuit_short_error_format() {
         src.path().to_str().unwrap(),
         tmpdir.path().join("out.r1cs").to_str().unwrap(),
         tmpdir.path().join("out.wtns").to_str().unwrap(),
+        None,
         None,
         false,
         "r1cs",
@@ -570,6 +589,7 @@ fn circuit_assert_eq_with_message_compiles() {
         &fixture("assert_message.ach"),
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
+        None,
         None,
         false,
         "r1cs",
@@ -603,6 +623,7 @@ fn circuit_assert_eq_message_shown_on_failure() {
         r1cs.to_str().unwrap(),
         wtns.to_str().unwrap(),
         Some("x=1,y=2"),
+        None,
         false,
         "r1cs",
         false,
@@ -618,4 +639,64 @@ fn circuit_assert_eq_message_shown_on_failure() {
         msg.contains("values must be equal"),
         "expected custom message in error, got: {msg}"
     );
+}
+
+// ======================================================================
+// --input-file TOML
+// ======================================================================
+
+#[test]
+fn circuit_input_file_toml() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let r1cs = tmpdir.path().join("out.r1cs");
+    let wtns = tmpdir.path().join("out.wtns");
+    let toml_path = tmpdir.path().join("inputs.toml");
+    std::fs::write(&toml_path, "out = \"42\"\na = \"6\"\nb = \"7\"\n").unwrap();
+
+    let result = cli::commands::circuit::circuit_command(
+        &fixture("basic_arithmetic.ach"),
+        r1cs.to_str().unwrap(),
+        wtns.to_str().unwrap(),
+        None,
+        Some(toml_path.to_str().unwrap()),
+        false,
+        "r1cs",
+        false,
+        None,
+        None,
+        false,
+        false,
+        EF,
+    );
+    assert!(result.is_ok(), "input-file failed: {:?}", result.err());
+    assert!(wtns.exists(), "wtns should be created with input-file");
+}
+
+#[test]
+fn circuit_inputs_and_input_file_mutually_exclusive() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let toml_path = tmpdir.path().join("inputs.toml");
+    std::fs::write(&toml_path, "x = \"1\"\n").unwrap();
+
+    let result = cli::commands::circuit::circuit_command(
+        &fixture("basic_arithmetic.ach"),
+        tmpdir.path().join("out.r1cs").to_str().unwrap(),
+        tmpdir.path().join("out.wtns").to_str().unwrap(),
+        Some("out=42,a=6,b=7"),
+        Some(toml_path.to_str().unwrap()),
+        false,
+        "r1cs",
+        false,
+        None,
+        None,
+        false,
+        false,
+        EF,
+    );
+    assert!(
+        result.is_err(),
+        "should reject both --inputs and --input-file"
+    );
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(msg.contains("mutually exclusive"), "got: {msg}");
 }
