@@ -286,6 +286,21 @@ fn lower_wrong_assert_eq_args() {
     assert!(result.is_err());
 }
 
+#[test]
+fn lower_assert_eq_with_message() {
+    let insts = lower("assert_eq(x, y, \"values must match\")", &["x"], &["y"]);
+    let has_msg = insts.iter().any(
+        |i| matches!(i, Instruction::AssertEq { message: Some(m), .. } if m == "values must match"),
+    );
+    assert!(has_msg, "assert_eq should carry the custom message");
+}
+
+#[test]
+fn lower_assert_eq_non_string_message_rejected() {
+    let result = IrLowering::lower_circuit("assert_eq(x, y, 42)", &["x"], &["y"]);
+    assert!(result.is_err(), "non-string 3rd arg should be rejected");
+}
+
 // ============================================================================
 // Input ordering
 // ============================================================================

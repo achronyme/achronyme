@@ -523,9 +523,38 @@ fn eval_assert_eq_fail() {
         result: r,
         lhs: a,
         rhs: b,
+        message: None,
     });
     let err = evaluate(&p, &empty_inputs()).unwrap_err();
     assert!(matches!(*err, EvalError::AssertEqFailed { .. }));
+}
+
+#[test]
+fn eval_assert_eq_fail_with_message() {
+    let mut p = IrProgram::new();
+    let a = p.fresh_var();
+    let b = p.fresh_var();
+    let r = p.fresh_var();
+    p.push(Instruction::Const {
+        result: a,
+        value: fe(1),
+    });
+    p.push(Instruction::Const {
+        result: b,
+        value: fe(2),
+    });
+    p.push(Instruction::AssertEq {
+        result: r,
+        lhs: a,
+        rhs: b,
+        message: Some("commitment mismatch".into()),
+    });
+    let err = evaluate(&p, &empty_inputs()).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("commitment mismatch"),
+        "expected custom message in error, got: {msg}"
+    );
 }
 
 #[test]
@@ -635,6 +664,7 @@ fn error_assert_eq_shows_names_and_values() {
         result: r,
         lhs: a,
         rhs: b,
+        message: None,
     });
 
     let mut inputs = HashMap::new();

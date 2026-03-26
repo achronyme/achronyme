@@ -119,6 +119,7 @@ fn test_add_deferred() {
         result: eq,
         lhs: sum,
         rhs: const42,
+        message: None,
     });
 
     let mut inputs = HashMap::new();

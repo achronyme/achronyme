@@ -1,0 +1,10 @@
+// Prove block: assert_eq with custom message
+let x = 0p6
+let y = 0p7
+let product = 0p42
+
+prove(product: Public) {
+    assert_eq(x * y, product, "product mismatch")
+}
+
+print("PASS: prove_assert_message")

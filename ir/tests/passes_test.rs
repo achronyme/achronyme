@@ -396,6 +396,7 @@ fn dce_keeps_used_const() {
         result: c,
         lhs: a,
         rhs: b,
+        message: None,
     });
 
     let before = p.instructions.len();
@@ -423,6 +424,7 @@ fn dce_keeps_assert_eq() {
         result: c,
         lhs: x,
         rhs: x,
+        message: None,
     });
 
     dce::dead_code_elimination(&mut p);
@@ -554,6 +556,7 @@ fn dce_chain_partial_live() {
         result: d,
         lhs: c,
         rhs: a,
+        message: None,
     });
 
     dce::dead_code_elimination(&mut p);

@@ -1,0 +1,8 @@
+// Circuit: assert_eq with custom messages
+circuit assert_message(out: Public, a: Witness, b: Witness) {
+    let sum = a + b
+    assert_eq(sum, out, "sum does not match expected output")
+
+    // Without message (backward compatible)
+    assert_eq(a + b, out)
+}
