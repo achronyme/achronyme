@@ -310,9 +310,7 @@ fn w005_underscore_suppresses_warning() {
 // Circuit (IR) tests
 // ======================================================================
 
-// TODO: re-enable once ProveIR supports imports
 #[test]
-#[ignore]
 fn circuit_import_with_poseidon() {
     let path = fixture("main_circuit.ach");
     let tmpdir = tempfile::tempdir().unwrap();
@@ -335,4 +333,72 @@ fn circuit_import_with_poseidon() {
     );
     assert!(result.is_ok(), "circuit_command failed: {:?}", result.err());
     assert!(r1cs.exists(), "R1CS file was not created");
+}
+
+#[test]
+fn circuit_import_not_found() {
+    use std::io::Write;
+    let tmpdir = tempfile::tempdir().unwrap();
+    let main_path = tmpdir.path().join("main.ach");
+    std::fs::write(
+        &main_path,
+        "import \"./nonexistent.ach\" as m\n\
+         circuit test(x: Public) { assert_eq(x, x) }\n",
+    )
+    .unwrap();
+
+    let r1cs = tmpdir.path().join("out.r1cs");
+    let wtns = tmpdir.path().join("out.wtns");
+    let result = cli::commands::circuit::circuit_command(
+        main_path.to_str().unwrap(),
+        r1cs.to_str().unwrap(),
+        wtns.to_str().unwrap(),
+        None,
+        false,
+        "r1cs",
+        false,
+        None,
+        None,
+        false,
+        false,
+        EF,
+    );
+    assert!(result.is_err(), "should fail for missing module");
+}
+
+#[test]
+fn circuit_import_self_circular_detected() {
+    let tmpdir = tempfile::tempdir().unwrap();
+
+    // a.ach imports itself — triggers circular detection
+    std::fs::write(
+        tmpdir.path().join("a.ach"),
+        "import \"./a.ach\" as self_ref\n\
+         circuit test(x: Public) { assert_eq(x, x) }\n",
+    )
+    .unwrap();
+
+    let main_path = tmpdir.path().join("a.ach");
+    let r1cs = tmpdir.path().join("out.r1cs");
+    let wtns = tmpdir.path().join("out.wtns");
+    let result = cli::commands::circuit::circuit_command(
+        main_path.to_str().unwrap(),
+        r1cs.to_str().unwrap(),
+        wtns.to_str().unwrap(),
+        None,
+        false,
+        "r1cs",
+        false,
+        None,
+        None,
+        false,
+        false,
+        EF,
+    );
+    assert!(result.is_err(), "should detect circular import");
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("circular") || err_msg.contains("Circular"),
+        "error should mention circular import, got: {err_msg}"
+    );
 }
