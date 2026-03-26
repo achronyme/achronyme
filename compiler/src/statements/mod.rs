@@ -294,8 +294,9 @@ impl StatementCompiler for Compiler {
         })?;
 
         // 3. Compile to ProveIR via compile_circuit (self-contained)
-        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile_circuit(&source)
-            .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+        let mut prove_ir =
+            ir::prove_ir::ProveIrCompiler::compile_circuit(&source, Some(&full_path))
+                .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
         prove_ir.name = Some(alias.to_string());
 
         // 4. Serialize to bytes
@@ -386,7 +387,10 @@ impl StatementCompiler for Compiler {
         }
 
         // 4. Load and parse the module
-        let module = self.module_loader.load(&canonical)?;
+        let module = self
+            .module_loader
+            .load(&canonical)
+            .map_err(CompilerError::ModuleLoadError)?;
         let module_stmts = module.program.stmts.clone();
         let exported_names = module.exported_names.clone();
 
@@ -515,7 +519,10 @@ impl StatementCompiler for Compiler {
         }
 
         // 3. Load and parse the module
-        let module = self.module_loader.load(&canonical)?;
+        let module = self
+            .module_loader
+            .load(&canonical)
+            .map_err(CompilerError::ModuleLoadError)?;
         let module_stmts = module.program.stmts.clone();
         let exported_names = module.exported_names.clone();
 
