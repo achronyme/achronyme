@@ -470,6 +470,21 @@ fn lower_assert() {
 }
 
 #[test]
+fn lower_assert_with_message() {
+    let insts = lower("assert(x, \"must be true\")", &[], &["x"]);
+    let has_msg = insts
+        .iter()
+        .any(|i| matches!(i, Instruction::Assert { message: Some(m), .. } if m == "must be true"));
+    assert!(has_msg, "assert should carry the custom message");
+}
+
+#[test]
+fn lower_assert_non_string_message_rejected() {
+    let result = IrLowering::lower_circuit("assert(x, 42)", &[], &["x"]);
+    assert!(result.is_err(), "non-string 2nd arg should be rejected");
+}
+
+#[test]
 fn lower_bool_true() {
     let insts = lower("true", &[], &[]);
     let last = insts.last().unwrap();

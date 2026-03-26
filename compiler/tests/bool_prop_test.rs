@@ -338,6 +338,7 @@ fn bool_prop_assert_marks_operand_boolean() {
     p.push(Instruction::Assert {
         result: assert_r,
         operand: a,
+        message: None,
     });
 
     let set = compute_proven_boolean(&p);

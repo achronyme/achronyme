@@ -296,6 +296,7 @@ fn taint_assert_constrains() {
             Instruction::Assert {
                 result: SsaVar(1),
                 operand: SsaVar(0),
+                message: None,
             },
         ],
         2,
@@ -330,6 +331,7 @@ fn taint_is_eq_in_assert() {
             Instruction::Assert {
                 result: SsaVar(3),
                 operand: SsaVar(2),
+                message: None,
             },
         ],
         4,

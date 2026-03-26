@@ -840,6 +840,7 @@ fn dce_keeps_assert() {
     p.push(Instruction::Assert {
         result: a,
         operand: x,
+        message: None,
     });
 
     dce::dead_code_elimination(&mut p);
