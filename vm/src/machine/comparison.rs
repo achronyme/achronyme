@@ -59,6 +59,64 @@ impl ComparisonOps for super::vm::VM {
                 self.set_reg(base, a, Value::bool(val.is_falsey()))?;
             }
 
+            // ===== Specialized integer comparisons (no type check) =====
+            OpCode::GtInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                debug_assert!(self.get_reg(base, b)?.is_int(), "GtInt lhs non-int");
+                debug_assert!(self.get_reg(base, c)?.is_int(), "GtInt rhs non-int");
+                let n1 = unsafe { self.get_reg(base, b)?.as_int_unchecked() };
+                let n2 = unsafe { self.get_reg(base, c)?.as_int_unchecked() };
+                self.set_reg(base, a, Value::bool(n1 > n2))?;
+            }
+
+            OpCode::LtInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let n1 = unsafe { self.get_reg(base, b)?.as_int_unchecked() };
+                let n2 = unsafe { self.get_reg(base, c)?.as_int_unchecked() };
+                self.set_reg(base, a, Value::bool(n1 < n2))?;
+            }
+
+            OpCode::GeInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let n1 = unsafe { self.get_reg(base, b)?.as_int_unchecked() };
+                let n2 = unsafe { self.get_reg(base, c)?.as_int_unchecked() };
+                self.set_reg(base, a, Value::bool(n1 >= n2))?;
+            }
+
+            OpCode::LeInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let n1 = unsafe { self.get_reg(base, b)?.as_int_unchecked() };
+                let n2 = unsafe { self.get_reg(base, c)?.as_int_unchecked() };
+                self.set_reg(base, a, Value::bool(n1 <= n2))?;
+            }
+
+            OpCode::EqInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                // Int values are inline — raw u64 equality suffices.
+                let v1 = self.get_reg(base, b)?;
+                let v2 = self.get_reg(base, c)?;
+                self.set_reg(base, a, Value::bool(v1 == v2))?;
+            }
+
+            OpCode::NeqInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let v1 = self.get_reg(base, b)?;
+                let v2 = self.get_reg(base, c)?;
+                self.set_reg(base, a, Value::bool(v1 != v2))?;
+            }
+
             _ => return Err(RuntimeError::InvalidOpcode(op as u8)),
         }
 

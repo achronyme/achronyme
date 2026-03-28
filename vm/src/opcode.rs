@@ -43,6 +43,32 @@ pub enum OpCode {
     Neg = 16,
     // 17 removed (was Sqrt)
 
+    // ===== Specialized Integer Arithmetic (no runtime type check) =====
+    /// Int Add: R[A] = R[B] + R[C]  (operands must be Int)
+    AddInt = 40,
+    /// Int Sub: R[A] = R[B] - R[C]  (operands must be Int)
+    SubInt = 41,
+    /// Int Mul: R[A] = R[B] * R[C]  (operands must be Int)
+    MulInt = 42,
+    /// Int Div: R[A] = R[B] / R[C]  (operands must be Int)
+    DivInt = 43,
+    /// Int Mod: R[A] = R[B] % R[C]  (operands must be Int)
+    ModInt = 44,
+    /// Int Gt: R[A] = R[B] > R[C]   (operands must be Int)
+    GtInt = 45,
+    /// Int Lt: R[A] = R[B] < R[C]   (operands must be Int)
+    LtInt = 46,
+    /// Int Ge: R[A] = R[B] >= R[C]  (operands must be Int)
+    GeInt = 47,
+    /// Int Le: R[A] = R[B] <= R[C]  (operands must be Int)
+    LeInt = 48,
+    /// Int Eq: R[A] = R[B] == R[C]  (operands must be Int)
+    EqInt = 49,
+    /// Int NotEq: R[A] = R[B] != R[C] (operands must be Int)
+    NeqInt = 50,
+    /// Int Neg: R[A] = -R[B]        (operand must be Int)
+    NegInt = 51,
+
     // ===== Comparison =====
     /// Equal: R[A] = R[B] == R[C]
     Eq = 20,
@@ -135,6 +161,18 @@ impl OpCode {
             15 => Some(OpCode::Pow),
             16 => Some(OpCode::Neg),
             // 17 was Sqrt, removed
+            40 => Some(OpCode::AddInt),
+            41 => Some(OpCode::SubInt),
+            42 => Some(OpCode::MulInt),
+            43 => Some(OpCode::DivInt),
+            44 => Some(OpCode::ModInt),
+            45 => Some(OpCode::GtInt),
+            46 => Some(OpCode::LtInt),
+            47 => Some(OpCode::GeInt),
+            48 => Some(OpCode::LeInt),
+            49 => Some(OpCode::EqInt),
+            50 => Some(OpCode::NeqInt),
+            51 => Some(OpCode::NegInt),
             20 => Some(OpCode::Eq),
             21 => Some(OpCode::Lt),
             22 => Some(OpCode::Gt),
@@ -190,6 +228,18 @@ impl OpCode {
             OpCode::Pow => "POW",
             OpCode::Neg => "NEG",
             // Sqrt removed
+            OpCode::AddInt => "ADD_INT",
+            OpCode::SubInt => "SUB_INT",
+            OpCode::MulInt => "MUL_INT",
+            OpCode::DivInt => "DIV_INT",
+            OpCode::ModInt => "MOD_INT",
+            OpCode::GtInt => "GT_INT",
+            OpCode::LtInt => "LT_INT",
+            OpCode::GeInt => "GE_INT",
+            OpCode::LeInt => "LE_INT",
+            OpCode::EqInt => "EQ_INT",
+            OpCode::NeqInt => "NEQ_INT",
+            OpCode::NegInt => "NEG_INT",
             OpCode::Eq => "EQ",
             OpCode::Lt => "LT",
             OpCode::Gt => "GT",

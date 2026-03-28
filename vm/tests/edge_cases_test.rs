@@ -528,7 +528,7 @@ fn division_by_zero_integer() {
 #[test]
 fn all_invalid_opcodes_rejected() {
     // Test a sampling of unassigned opcode values.
-    for invalid_op in [4, 6, 7, 8, 9, 18, 19, 27, 30, 40, 50, 70, 80, 90, 200] {
+    for invalid_op in [4, 6, 7, 8, 9, 18, 19, 27, 30, 52, 53, 70, 80, 90, 200] {
         let chunk = vec![encode_abc(invalid_op, 0, 0, 0)];
         let result = run_raw(chunk, vec![], 4);
         let err = expect_err(result, &format!("opcode {invalid_op} should be invalid"));

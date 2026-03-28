@@ -156,7 +156,8 @@ impl super::vm::VM {
 
             match op {
                 // Arithmetic (delegated to arithmetic.rs)
-                Add | Sub | Mul | Div | Mod | Pow | Neg => {
+                Add | Sub | Mul | Div | Mod | Pow | Neg | AddInt | SubInt | MulInt | DivInt
+                | ModInt | NegInt => {
                     self.handle_arithmetic(op, instruction, base)?;
                 }
 
@@ -196,7 +197,8 @@ impl super::vm::VM {
                 }
 
                 // Comparisons (delegated to comparison.rs)
-                Eq | Lt | Gt | NotEq | Le | Ge | LogNot => {
+                Eq | Lt | Gt | NotEq | Le | Ge | LogNot | GtInt | LtInt | GeInt | LeInt | EqInt
+                | NeqInt => {
                     self.handle_comparison(op, instruction, base)?;
                 }
 

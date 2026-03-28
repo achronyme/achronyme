@@ -393,6 +393,112 @@ impl ArithmeticOps for super::vm::VM {
                 }
             }
 
+            // ===== Specialized integer opcodes (no type check) =====
+            OpCode::AddInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
+                debug_assert!(vb.is_int() && vc.is_int(), "AddInt on non-int");
+                let ib = unsafe { vb.as_int_unchecked() };
+                let ic = unsafe { vc.as_int_unchecked() };
+                match ib.checked_add(ic) {
+                    Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                        self.set_reg(base, a, Value::int(result))?;
+                    }
+                    _ => return Err(RuntimeError::IntegerOverflow),
+                }
+            }
+
+            OpCode::SubInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
+                debug_assert!(vb.is_int() && vc.is_int(), "SubInt on non-int");
+                let ib = unsafe { vb.as_int_unchecked() };
+                let ic = unsafe { vc.as_int_unchecked() };
+                match ib.checked_sub(ic) {
+                    Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                        self.set_reg(base, a, Value::int(result))?;
+                    }
+                    _ => return Err(RuntimeError::IntegerOverflow),
+                }
+            }
+
+            OpCode::MulInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
+                debug_assert!(vb.is_int() && vc.is_int(), "MulInt on non-int");
+                let ib = unsafe { vb.as_int_unchecked() };
+                let ic = unsafe { vc.as_int_unchecked() };
+                match ib.checked_mul(ic) {
+                    Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                        self.set_reg(base, a, Value::int(result))?;
+                    }
+                    _ => return Err(RuntimeError::IntegerOverflow),
+                }
+            }
+
+            OpCode::DivInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
+                debug_assert!(vb.is_int() && vc.is_int(), "DivInt on non-int");
+                let ib = unsafe { vb.as_int_unchecked() };
+                let ic = unsafe { vc.as_int_unchecked() };
+                if ic == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                match ib.checked_div(ic) {
+                    Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                        self.set_reg(base, a, Value::int(result))?;
+                    }
+                    _ => return Err(RuntimeError::IntegerOverflow),
+                }
+            }
+
+            OpCode::ModInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let c = decode_c(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                let vc = self.get_reg(base, c)?;
+                debug_assert!(vb.is_int() && vc.is_int(), "ModInt on non-int");
+                let ib = unsafe { vb.as_int_unchecked() };
+                let ic = unsafe { vc.as_int_unchecked() };
+                if ic == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                match ib.checked_rem(ic) {
+                    Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                        self.set_reg(base, a, Value::int(result))?;
+                    }
+                    _ => return Err(RuntimeError::IntegerOverflow),
+                }
+            }
+
+            OpCode::NegInt => {
+                let a = decode_a(instruction) as usize;
+                let b = decode_b(instruction) as usize;
+                let vb = self.get_reg(base, b)?;
+                debug_assert!(vb.is_int(), "NegInt on non-int");
+                let ib = unsafe { vb.as_int_unchecked() };
+                match ib.checked_neg() {
+                    Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
+                        self.set_reg(base, a, Value::int(result))?;
+                    }
+                    _ => return Err(RuntimeError::IntegerOverflow),
+                }
+            }
+
             _ => return Err(RuntimeError::InvalidOpcode(op as u8)),
         }
 
