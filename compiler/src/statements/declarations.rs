@@ -35,10 +35,13 @@ impl DeclarationCompiler for Compiler {
 
         check_type_annotation(self, name, type_ann, value);
 
-        // Infer type for let-bound literals when no annotation is given.
-        let effective_ann = match type_ann {
-            Some(_) => type_ann.cloned(),
-            None => infer_scalar_annotation(value),
+        // Infer array type for let-bound array literals when no annotation is given.
+        // Only for `let` (immutable) — `mut` arrays could be reassigned to different sizes.
+        let effective_ann = match (type_ann, value) {
+            (None, Expr::Array { elements, .. }) if !elements.is_empty() => {
+                Some(TypeAnnotation::field_array(elements.len()))
+            }
+            _ => type_ann.cloned(),
         };
 
         if self.current()?.scope_depth > 0 {
@@ -102,11 +105,6 @@ impl DeclarationCompiler for Compiler {
             // Check for shadowing at same scope depth
             check_shadowing(self, name, depth, span.as_ref());
 
-            // Infer type for mut-bound literals when no annotation is given.
-            let effective_ann = match type_ann {
-                Some(_) => type_ann.cloned(),
-                None => infer_scalar_annotation(value),
-            };
             self.current()?.locals.push(Local {
                 name: name.to_string(),
                 depth,
@@ -116,7 +114,7 @@ impl DeclarationCompiler for Compiler {
                 is_mutated: false,
                 reg,
                 span,
-                type_ann: effective_ann,
+                type_ann: type_ann.cloned(),
             });
         } else {
             if self.next_global_idx == u16::MAX {
@@ -151,11 +149,8 @@ impl DeclarationCompiler for Compiler {
                 let val_reg = self.compile_expr(value)?;
 
                 if let Some((idx, local_reg)) = self.resolve_local(name) {
-                    let val_type = self.get_reg_type(val_reg)?;
-                    let func = self.current()?;
-                    func.locals[idx].is_mutated = true;
-                    func.emit_abc(OpCode::Move, local_reg, val_reg, 0);
-                    func.set_reg_type(local_reg, val_type);
+                    self.current()?.locals[idx].is_mutated = true;
+                    self.emit_abc(OpCode::Move, local_reg, val_reg, 0)?;
                 } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name)
                 {
                     self.mark_upvalue_mutated(self.compilers.len() - 1, name);
@@ -234,23 +229,6 @@ impl std::fmt::Display for InferredType {
             InferredType::Nil => write!(f, "Nil"),
             InferredType::Array(n) => write!(f, "Array[{n}]"),
         }
-    }
-}
-
-/// Infer a TypeAnnotation from a literal expression for the type tracking system.
-/// Used by let/mut declarations to populate Local.type_ann when no explicit
-/// annotation is given. Returns `None` for non-literal expressions.
-fn infer_scalar_annotation(expr: &Expr) -> Option<TypeAnnotation> {
-    use achronyme_parser::ast::BaseType;
-    match expr {
-        Expr::Number { .. } => Some(TypeAnnotation::new(None, BaseType::Int, None)),
-        Expr::Bool { .. } => Some(TypeAnnotation::new(None, BaseType::Bool, None)),
-        Expr::FieldLit { .. } => Some(TypeAnnotation::new(None, BaseType::Field, None)),
-        Expr::StringLit { .. } => Some(TypeAnnotation::new(None, BaseType::String, None)),
-        Expr::Array { elements, .. } if !elements.is_empty() => {
-            Some(TypeAnnotation::field_array(elements.len()))
-        }
-        _ => None,
     }
 }
 

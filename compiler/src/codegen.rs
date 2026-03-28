@@ -283,19 +283,6 @@ impl Compiler {
         Ok(self.current()?.add_upvalue(is_local, index))
     }
 
-    pub fn get_reg_type(&self, reg: u8) -> Result<crate::types::RegType, CompilerError> {
-        Ok(self.current_ref()?.get_reg_type(reg))
-    }
-
-    pub fn set_reg_type(
-        &mut self,
-        reg: u8,
-        ty: crate::types::RegType,
-    ) -> Result<(), CompilerError> {
-        self.current()?.set_reg_type(reg, ty);
-        Ok(())
-    }
-
     pub fn emit_abc(&mut self, op: OpCode, a: u8, b: u8, c: u8) -> Result<(), CompilerError> {
         self.current()?.emit_abc(op, a, b, c);
         Ok(())

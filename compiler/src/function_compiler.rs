@@ -1,5 +1,5 @@
 use crate::error::CompilerError;
-use crate::types::{Local, LoopContext, RegType, UpvalueInfo};
+use crate::types::{Local, LoopContext, UpvalueInfo};
 use memory::Value;
 use vm::opcode::instruction::{encode_abc, encode_abx};
 use vm::opcode::OpCode;
@@ -18,10 +18,6 @@ pub struct FunctionCompiler {
     // Register allocator state
     pub reg_top: u8,
     pub max_slots: u16,
-
-    /// Best-effort compile-time type per register. Used to select specialized
-    /// opcodes when operand types are statically known.
-    pub reg_types: [RegType; 256],
 
     // Line tracking: one entry per bytecode instruction
     pub line_info: Vec<u32>,
@@ -43,7 +39,6 @@ impl FunctionCompiler {
             loop_stack: Vec::new(),
             reg_top: arity, // Reserve R0..R(arity-1) for arguments
             max_slots: arity as u16,
-            reg_types: [RegType::Unknown; 256],
             line_info: Vec::new(),
             current_line: 0,
         }
@@ -114,26 +109,6 @@ impl FunctionCompiler {
     pub fn emit_abx(&mut self, op: OpCode, a: u8, bx: u16) {
         self.bytecode.push(encode_abx(op.as_u8(), a, bx));
         self.line_info.push(self.current_line);
-    }
-
-    #[inline]
-    pub fn get_reg_type(&self, reg: u8) -> RegType {
-        self.reg_types[reg as usize]
-    }
-
-    #[inline]
-    pub fn set_reg_type(&mut self, reg: u8, ty: RegType) {
-        self.reg_types[reg as usize] = ty;
-    }
-
-    /// Snapshot the current register type state (for save/restore around control flow).
-    pub fn save_reg_types(&self) -> [RegType; 256] {
-        self.reg_types
-    }
-
-    /// Restore register type state from a snapshot.
-    pub fn restore_reg_types(&mut self, saved: [RegType; 256]) {
-        self.reg_types = saved;
     }
 
     pub fn resolve_local(&self, name: &str) -> Option<(usize, u8)> {
