@@ -51,6 +51,19 @@ impl super::vm::VM {
         &mut self,
         target_depth: usize,
     ) -> Result<(), RuntimeError> {
+        // Dispatch cache: avoid re-fetching closure→function on every
+        // instruction when the frame hasn't changed. In a tight loop
+        // (no Call/Return), the closure stays the same across iterations,
+        // so we skip the expensive Arena::get (HashSet `is_free` check)
+        // on every instruction.
+        //
+        // Safety: the current frame's closure is GC-rooted (mark_roots
+        // marks all frame closures), so both the closure and its function
+        // are guaranteed live. GC is mark-sweep without compaction, so
+        // arena indices remain stable.
+        let mut cached_closure_idx: u32 = u32::MAX; // sentinel: cache empty
+        let mut cached_func_idx: u32 = 0;
+
         while self.frames.len() > target_depth {
             // GC Check Point
             if self.heap.request_gc || self.stress_mode {
@@ -77,15 +90,24 @@ impl super::vm::VM {
                 (f.closure, f.ip, f.base)
             };
 
-            let func = {
+            // Fast path: reuse cached function index when closure hasn't changed
+            let func_idx = if closure_idx == cached_closure_idx {
+                cached_func_idx
+            } else {
                 let closure = self
                     .heap
                     .get_closure(closure_idx)
                     .ok_or(RuntimeError::FunctionNotFound)?;
-                self.heap
-                    .get_function(closure.function)
-                    .ok_or(RuntimeError::FunctionNotFound)?
+                let fi = closure.function;
+                cached_closure_idx = closure_idx;
+                cached_func_idx = fi;
+                fi
             };
+
+            // SAFETY: The current frame's closure is GC-rooted, so the
+            // function it references is reachable and will not be freed.
+            // The func_idx was obtained from a validated get_closure call.
+            let func = unsafe { self.heap.get_function_unchecked(func_idx) };
 
             if ip >= func.chunk.len() {
                 self.frames.pop();

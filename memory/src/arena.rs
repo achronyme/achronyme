@@ -89,6 +89,30 @@ impl<T> Arena<T> {
         self.data.get(idx as usize)
     }
 
+    /// Fast unchecked access for objects known to be live (e.g. GC-rooted).
+    ///
+    /// Skips the `is_free` HashSet lookup — the caller **must** guarantee
+    /// that `idx` refers to a live, reachable object (typically because it
+    /// is rooted through the call-frame stack).
+    ///
+    /// # Safety
+    ///
+    /// - `idx` must be a valid index (< `self.data.len()`).
+    /// - The slot at `idx` must not have been freed.
+    #[inline(always)]
+    pub unsafe fn get_unchecked_live(&self, idx: u32) -> &T {
+        debug_assert!(
+            (idx as usize) < self.data.len(),
+            "get_unchecked_live: index {idx} out of bounds (len {})",
+            self.data.len()
+        );
+        debug_assert!(
+            !self.is_free(idx),
+            "get_unchecked_live: index {idx} is freed"
+        );
+        self.data.get_unchecked(idx as usize)
+    }
+
     /// Return a mutable reference to the element at `idx`, or `None` if out of bounds or freed.
     #[inline]
     pub fn get_mut(&mut self, idx: u32) -> Option<&mut T> {

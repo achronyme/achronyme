@@ -217,6 +217,13 @@ impl Heap {
         self.closures.get(index)
     }
 
+    /// # Safety
+    /// `index` must refer to a live (GC-rooted) closure.
+    #[inline(always)]
+    pub unsafe fn get_closure_unchecked(&self, index: u32) -> &Closure {
+        self.closures.get_unchecked_live(index)
+    }
+
     pub fn get_closure_mut(&mut self, index: u32) -> Option<&mut Closure> {
         self.closures.get_mut(index)
     }
@@ -625,6 +632,13 @@ impl Heap {
 
     pub fn get_function(&self, index: u32) -> Option<&Function> {
         self.functions.get(index)
+    }
+
+    /// # Safety
+    /// `index` must refer to a live (GC-reachable) function.
+    #[inline(always)]
+    pub unsafe fn get_function_unchecked(&self, index: u32) -> &Function {
+        self.functions.get_unchecked_live(index)
     }
 
     /// Replace the string arena wholesale with compiler output.
