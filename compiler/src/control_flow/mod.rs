@@ -137,6 +137,10 @@ impl ControlFlowCompiler for Compiler {
     ) -> Result<u8, CompilerError> {
         let target_reg = self.alloc_reg()?;
 
+        // Save register type state — branches may diverge, so we restore
+        // the pre-branch state after compilation (conservative but correct).
+        let saved_types = self.current_ref()?.save_reg_types();
+
         // 1. Compile Condition
         let cond_reg = self.compile_expr(condition)?;
 
@@ -168,6 +172,10 @@ impl ControlFlowCompiler for Compiler {
 
         // 6. End
         self.patch_jump(jump_end)?;
+
+        // Restore pre-branch type state (target_reg type is Unknown since
+        // either branch could have produced a different type).
+        self.current()?.restore_reg_types(saved_types);
 
         Ok(target_reg)
     }

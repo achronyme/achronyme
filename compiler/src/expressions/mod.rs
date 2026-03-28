@@ -33,11 +33,13 @@ impl ExpressionCompiler for Compiler {
             Expr::Bool { value: true, .. } => {
                 let reg = self.alloc_reg()?;
                 self.emit_abx(OpCode::LoadTrue, reg, 0)?;
+                self.set_reg_type(reg, crate::types::RegType::Bool)?;
                 Ok(reg)
             }
             Expr::Bool { value: false, .. } => {
                 let reg = self.alloc_reg()?;
                 self.emit_abx(OpCode::LoadFalse, reg, 0)?;
+                self.set_reg_type(reg, crate::types::RegType::Bool)?;
                 Ok(reg)
             }
             Expr::Nil { .. } => {
@@ -177,6 +179,7 @@ impl Compiler {
             return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+        self.set_reg_type(reg, crate::types::RegType::Int)?;
         Ok(reg)
     }
 
@@ -196,6 +199,7 @@ impl Compiler {
             return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+        self.set_reg_type(reg, crate::types::RegType::Field)?;
         Ok(reg)
     }
 
@@ -238,6 +242,7 @@ impl Compiler {
             return Err(CompilerError::TooManyConstants(self.cur_span()));
         }
         self.emit_abx(OpCode::LoadConst, reg, const_idx as u16)?;
+        self.set_reg_type(reg, crate::types::RegType::String)?;
         Ok(reg)
     }
 
@@ -246,11 +251,18 @@ impl Compiler {
 
         // 1. First check locals (including function parameters)
         if let Some((idx, local_reg)) = self.resolve_local(name) {
-            self.current()?.locals[idx].is_read = true;
-            self.emit_abc(OpCode::Move, reg, local_reg, 0)?;
+            let func = self.current()?;
+            func.locals[idx].is_read = true;
+            // Propagate type: prefer Local's type annotation, fall back to reg_types
+            let src_type = match &func.locals[idx].type_ann {
+                Some(ann) => crate::types::RegType::from_annotation(ann),
+                None => func.get_reg_type(local_reg),
+            };
+            func.emit_abc(OpCode::Move, reg, local_reg, 0);
+            func.set_reg_type(reg, src_type);
             Ok(reg)
         } else if let Some(upval_idx) = self.resolve_upvalue(self.compilers.len() - 1, name) {
-            // 2. Upvalue lookup
+            // 2. Upvalue lookup — type unknown (crosses function boundary)
             self.emit_abx(OpCode::GetUpvalue, reg, upval_idx as u16)?;
             Ok(reg)
         } else {

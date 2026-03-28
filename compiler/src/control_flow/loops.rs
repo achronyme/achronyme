@@ -36,6 +36,8 @@ pub(super) fn compile_for(
     iterable: &ForIterable,
     body: &Block,
 ) -> Result<u8, CompilerError> {
+    let saved_types = compiler.current_ref()?.save_reg_types();
+
     let iter_src_reg = match iterable {
         ForIterable::Expr(expr) => compiler.compile_expr(expr)?,
         ForIterable::Range { start, end } => {
@@ -112,6 +114,8 @@ pub(super) fn compile_for(
 
     compiler.exit_loop()?;
 
+    compiler.current()?.restore_reg_types(saved_types);
+
     compiler.free_reg(iter_reg)?;
     compiler.free_reg(iter_src_reg)?;
 
@@ -124,6 +128,11 @@ pub(super) fn compile_forever(compiler: &mut Compiler, body: &Block) -> Result<u
     let start_label = compiler.current()?.bytecode.len();
     compiler.enter_loop(start_label)?;
 
+    // Save reg_types — the loop body compiles once (single-pass), so the
+    // opcodes inside see pre-loop types (correct). The restore prevents
+    // type info from leaking to code after the loop.
+    let saved_types = compiler.current_ref()?.save_reg_types();
+
     let body_reg = compiler.alloc_reg()?;
     compiler.compile_block(body, body_reg)?;
     compiler.free_reg(body_reg)?;
@@ -131,6 +140,8 @@ pub(super) fn compile_forever(compiler: &mut Compiler, body: &Block) -> Result<u
     compiler.emit_abx(OpCode::Jump, 0, start_label as u16)?;
 
     compiler.exit_loop()?;
+
+    compiler.current()?.restore_reg_types(saved_types);
 
     let target_reg = compiler.alloc_reg()?;
     compiler.emit_abx(OpCode::LoadNil, target_reg, 0)?;
@@ -142,6 +153,8 @@ pub(super) fn compile_while(
     condition: &Expr,
     body: &Block,
 ) -> Result<u8, CompilerError> {
+    let saved_types = compiler.current_ref()?.save_reg_types();
+
     let start_label = compiler.current()?.bytecode.len();
 
     let cond_reg = compiler.compile_expr(condition)?;
@@ -159,6 +172,8 @@ pub(super) fn compile_while(
     compiler.emit_abx(OpCode::Jump, 0, start_label as u16)?;
 
     compiler.patch_jump(jump_end)?;
+
+    compiler.current()?.restore_reg_types(saved_types);
 
     compiler.exit_loop()?;
 

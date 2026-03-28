@@ -1,5 +1,34 @@
 use achronyme_parser::ast::{Span, TypeAnnotation};
 
+/// Best-effort compile-time type for a register. Used to select specialized
+/// opcodes (e.g. `AddInt` instead of `Add`) when both operands are known Int.
+///
+/// `Unknown` means the compiler can't determine the type — generic opcodes
+/// are emitted (always correct, just slower).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegType {
+    Int,
+    Field,
+    Bool,
+    String,
+    Unknown,
+}
+
+impl RegType {
+    /// Derive register type from a type annotation (scalars only, arrays → Unknown).
+    pub fn from_annotation(ann: &TypeAnnotation) -> Self {
+        if ann.is_array() {
+            return RegType::Unknown;
+        }
+        match ann.base {
+            achronyme_parser::ast::BaseType::Int => RegType::Int,
+            achronyme_parser::ast::BaseType::Field => RegType::Field,
+            achronyme_parser::ast::BaseType::Bool => RegType::Bool,
+            achronyme_parser::ast::BaseType::String => RegType::String,
+        }
+    }
+}
+
 pub struct Local {
     pub name: String,
     pub depth: u32,
