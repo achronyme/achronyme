@@ -585,8 +585,9 @@ impl Parser {
         Ok(Some(ann))
     }
 
-    /// Parse a type: `Field`, `Bool`, `Field[N]`, `Bool[N]`,
+    /// Parse a type: `Field`, `Bool`, `Int`, `String`, `Field[N]`, `Bool[N]`, `Int[N]`, `String[N]`,
     /// or with visibility: `Public`, `Witness`, `Public Field[N]`, `Witness Bool`, etc.
+    /// Note: `Int` and `String` cannot be used with visibility modifiers (VM-only types).
     pub(super) fn parse_type(&mut self) -> Result<TypeAnnotation, ParseError> {
         use crate::ast::{BaseType, Visibility};
 
@@ -594,7 +595,7 @@ impl Parser {
         if tok.kind != TokenKind::Ident {
             return Err(ParseError::new(
                 format!(
-                    "expected type (`Field`, `Bool`, `Public`, or `Witness`), found `{}`",
+                    "expected type (`Field`, `Bool`, `Int`, `String`, `Public`, or `Witness`), found `{}`",
                     tok_display(&tok)
                 ),
                 tok.span.line_start,
@@ -617,45 +618,62 @@ impl Parser {
             _ => None,
         };
 
-        // Parse base type (Field/Bool). If visibility was given, base type is optional
+        // Parse base type. If visibility was given, base type is optional
         // (Public alone = Public Field).
         let base = if visibility.is_some() {
-            // After visibility, optionally parse Field/Bool
             let next = self.peek().clone();
-            if next.kind == TokenKind::Ident && (next.lexeme == "Field" || next.lexeme == "Bool") {
-                self.advance();
-                if next.lexeme == "Bool" {
-                    BaseType::Bool
-                } else {
-                    BaseType::Field
+            if next.kind == TokenKind::Ident {
+                match next.lexeme.as_str() {
+                    "Field" => {
+                        self.advance();
+                        BaseType::Field
+                    }
+                    "Bool" => {
+                        self.advance();
+                        BaseType::Bool
+                    }
+                    "Int" | "String" => {
+                        return Err(ParseError::new(
+                            format!(
+                                "`{}` cannot be used with `{}` (only `Field` and `Bool` are valid in circuit context)",
+                                next.lexeme,
+                                if visibility == Some(Visibility::Public) { "Public" } else { "Witness" }
+                            ),
+                            next.span.line_start,
+                            next.span.col_start,
+                        ));
+                    }
+                    _ => BaseType::Field, // Visibility alone defaults to Field
                 }
             } else {
-                // Visibility alone defaults to Field
                 BaseType::Field
             }
         } else {
-            // No visibility — must have Field or Bool
-            if ident != "Field" && ident != "Bool" {
-                let hint = match ident.to_lowercase().as_str() {
-                    "field" => " (did you mean `Field`?)",
-                    "bool" | "boolean" => " (did you mean `Bool`?)",
-                    "int" | "integer" | "number" | "u32" | "u64" | "i32" | "i64" => {
-                        " (valid types are `Field`, `Bool`, `Public`, `Witness`)"
-                    }
-                    _ => " (valid types are `Field`, `Bool`, `Public`, `Witness`)",
-                };
-                return Err(ParseError::new(
-                    format!("expected type, found `{ident}`{hint}"),
-                    tok.span.line_start,
-                    tok.span.col_start,
-                ));
-            }
+            // No visibility — must have a type name
+            let base = match ident {
+                "Field" => BaseType::Field,
+                "Bool" => BaseType::Bool,
+                "Int" => BaseType::Int,
+                "String" => BaseType::String,
+                _ => {
+                    let hint = match ident.to_lowercase().as_str() {
+                        "field" => " (did you mean `Field`?)",
+                        "bool" | "boolean" => " (did you mean `Bool`?)",
+                        "int" | "integer" | "number" | "u32" | "u64" | "i32" | "i64" => {
+                            " (did you mean `Int`?)"
+                        }
+                        "string" | "str" => " (did you mean `String`?)",
+                        _ => " (valid types are `Field`, `Bool`, `Int`, `String`, `Public`, `Witness`)",
+                    };
+                    return Err(ParseError::new(
+                        format!("expected type, found `{ident}`{hint}"),
+                        tok.span.line_start,
+                        tok.span.col_start,
+                    ));
+                }
+            };
             self.advance();
-            if ident == "Bool" {
-                BaseType::Bool
-            } else {
-                BaseType::Field
-            }
+            base
         };
 
         // Check for array syntax: `[N]`

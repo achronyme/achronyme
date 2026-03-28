@@ -254,6 +254,10 @@ fn is_ann_compatible(ann: &TypeAnnotation, inferred: &InferredType) -> bool {
         (BaseType::Field, false, InferredType::Field | InferredType::Int) => true,
         // Bool only accepts bool literals
         (BaseType::Bool, false, InferredType::Bool) => true,
+        // Int accepts integer literals
+        (BaseType::Int, false, InferredType::Int) => true,
+        // String accepts string literals
+        (BaseType::String, false, InferredType::String) => true,
         // Array annotations accept arrays (element types not checked at compile time)
         (_, true, InferredType::Array(_)) => true,
         _ => false,

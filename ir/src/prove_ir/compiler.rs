@@ -2026,10 +2026,14 @@ fn to_span(span: &Span) -> OptSpan {
 }
 
 /// Convert a TypeAnnotation to IrType.
+/// Only circuit types (Field, Bool) are valid here — Int/String are VM-only.
 fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
     match ann.base {
         achronyme_parser::ast::BaseType::Field => IrType::Field,
         achronyme_parser::ast::BaseType::Bool => IrType::Bool,
+        achronyme_parser::ast::BaseType::Int | achronyme_parser::ast::BaseType::String => {
+            unreachable!("type `{}` is not valid in circuit/prove context", ann.base)
+        }
     }
 }
 

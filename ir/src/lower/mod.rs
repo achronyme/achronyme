@@ -52,6 +52,9 @@ pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
     match ann.base {
         achronyme_parser::ast::BaseType::Field => IrType::Field,
         achronyme_parser::ast::BaseType::Bool => IrType::Bool,
+        achronyme_parser::ast::BaseType::Int | achronyme_parser::ast::BaseType::String => {
+            unreachable!("type `{}` is not valid in circuit context", ann.base)
+        }
     }
 }
 

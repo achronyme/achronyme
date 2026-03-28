@@ -378,6 +378,8 @@ impl std::fmt::Display for Visibility {
 pub enum BaseType {
     Field,
     Bool,
+    Int,
+    String,
 }
 
 impl std::fmt::Display for BaseType {
@@ -385,7 +387,16 @@ impl std::fmt::Display for BaseType {
         match self {
             BaseType::Field => write!(f, "Field"),
             BaseType::Bool => write!(f, "Bool"),
+            BaseType::Int => write!(f, "Int"),
+            BaseType::String => write!(f, "String"),
         }
+    }
+}
+
+impl BaseType {
+    /// Returns true if this type is valid in circuit/prove context (R1CS/Plonkish).
+    pub fn is_circuit_type(&self) -> bool {
+        matches!(self, BaseType::Field | BaseType::Bool)
     }
 }
 
@@ -454,6 +465,38 @@ impl TypeAnnotation {
         }
     }
 
+    pub fn int() -> Self {
+        Self {
+            visibility: None,
+            base: BaseType::Int,
+            array_size: None,
+        }
+    }
+
+    pub fn string() -> Self {
+        Self {
+            visibility: None,
+            base: BaseType::String,
+            array_size: None,
+        }
+    }
+
+    pub fn int_array(n: usize) -> Self {
+        Self {
+            visibility: None,
+            base: BaseType::Int,
+            array_size: Some(n),
+        }
+    }
+
+    pub fn string_array(n: usize) -> Self {
+        Self {
+            visibility: None,
+            base: BaseType::String,
+            array_size: Some(n),
+        }
+    }
+
     pub fn public() -> Self {
         Self {
             visibility: Some(Visibility::Public),
@@ -475,7 +518,7 @@ impl TypeAnnotation {
         self.array_size
     }
 
-    /// Returns true if this is an array type (Field or Bool).
+    /// Returns true if this is an array type.
     pub fn is_array(&self) -> bool {
         self.array_size.is_some()
     }
