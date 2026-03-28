@@ -10,24 +10,19 @@ fn extract_fe(vm: &VM, val: &Value) -> Result<FieldElement, RuntimeError> {
     if val.is_field() {
         let handle = val
             .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad field handle".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad field handle"))?;
         let fe = vm
             .heap
             .get_field(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Field",
-                context: "extract_fe",
-            })?;
+            .ok_or(RuntimeError::stale_heap("Field", "extract_fe"))?;
         Ok(*fe)
     } else if val.is_int() {
         let i = val
             .as_int()
-            .ok_or(RuntimeError::TypeMismatch("bad int value".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad int value"))?;
         Ok(FieldElement::from_i64(i))
     } else {
-        Err(RuntimeError::TypeMismatch(
-            "Expected Int or Field value".into(),
-        ))
+        Err(RuntimeError::type_mismatch("Expected Int or Field value"))
     }
 }
 
@@ -50,8 +45,8 @@ pub mod core_impl {
     #[ach_native(name = "typeof", arity = 1)]
     pub fn native_typeof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "typeof() takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "typeof() takes exactly 1 argument",
             ));
         }
         let val = &args[0];
@@ -96,8 +91,8 @@ pub mod core_impl {
     #[ach_native(name = "assert", arity = 1)]
     pub fn native_assert(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "assert() takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "assert() takes exactly 1 argument",
             ));
         }
         if !args[0].as_bool().unwrap_or(false) {
@@ -116,26 +111,21 @@ pub mod core_impl {
     #[ach_native(name = "proof_json", arity = 1)]
     pub fn native_proof_json(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "proof_json() takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "proof_json() takes exactly 1 argument",
             ));
         }
         let val = args[0];
         if !val.is_proof() {
-            return Err(RuntimeError::TypeMismatch(
-                "proof_json expects a Proof".into(),
-            ));
+            return Err(RuntimeError::type_mismatch("proof_json expects a Proof"));
         }
         let handle = val
             .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad proof handle"))?;
         let json = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Proof",
-                context: "proof_json",
-            })?
+            .ok_or(RuntimeError::stale_heap("Proof", "proof_json"))?
             .proof_json
             .clone();
         let s = vm.heap.alloc_string(json)?;
@@ -145,26 +135,21 @@ pub mod core_impl {
     #[ach_native(name = "proof_public", arity = 1)]
     pub fn native_proof_public(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "proof_public() takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "proof_public() takes exactly 1 argument",
             ));
         }
         let val = args[0];
         if !val.is_proof() {
-            return Err(RuntimeError::TypeMismatch(
-                "proof_public expects a Proof".into(),
-            ));
+            return Err(RuntimeError::type_mismatch("proof_public expects a Proof"));
         }
         let handle = val
             .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad proof handle"))?;
         let json = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Proof",
-                context: "proof_public",
-            })?
+            .ok_or(RuntimeError::stale_heap("Proof", "proof_public"))?
             .public_json
             .clone();
         let s = vm.heap.alloc_string(json)?;
@@ -174,26 +159,21 @@ pub mod core_impl {
     #[ach_native(name = "proof_vkey", arity = 1)]
     pub fn native_proof_vkey(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "proof_vkey() takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "proof_vkey() takes exactly 1 argument",
             ));
         }
         let val = args[0];
         if !val.is_proof() {
-            return Err(RuntimeError::TypeMismatch(
-                "proof_vkey expects a Proof".into(),
-            ));
+            return Err(RuntimeError::type_mismatch("proof_vkey expects a Proof"));
         }
         let handle = val
             .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad proof handle"))?;
         let json = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Proof",
-                context: "proof_vkey",
-            })?
+            .ok_or(RuntimeError::stale_heap("Proof", "proof_vkey"))?
             .vkey_json
             .clone();
         let s = vm.heap.alloc_string(json)?;
@@ -203,8 +183,8 @@ pub mod core_impl {
     #[ach_native(name = "poseidon", arity = 2)]
     pub fn native_poseidon(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "poseidon(left, right) takes exactly 2 arguments".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "poseidon(left, right) takes exactly 2 arguments",
             ));
         }
         let left = extract_fe(vm, &args[0])?;
@@ -218,8 +198,8 @@ pub mod core_impl {
     #[ach_native(name = "poseidon_many", arity = -1)]
     pub fn native_poseidon_many(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() < 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "poseidon_many() requires at least 2 arguments".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "poseidon_many() requires at least 2 arguments",
             ));
         }
         let params = PoseidonParams::bn254_t3();
@@ -237,26 +217,21 @@ pub mod core_impl {
     #[ach_native(name = "verify_proof", arity = 1)]
     pub fn native_verify_proof(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "verify_proof(proof) takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "verify_proof(proof) takes exactly 1 argument",
             ));
         }
         let val = args[0];
         if !val.is_proof() {
-            return Err(RuntimeError::TypeMismatch(
-                "verify_proof expects a Proof".into(),
-            ));
+            return Err(RuntimeError::type_mismatch("verify_proof expects a Proof"));
         }
         let handle = val
             .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("bad proof handle".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad proof handle"))?;
         let proof_obj = vm
             .heap
             .get_proof(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Proof",
-                context: "verify_proof",
-            })?
+            .ok_or(RuntimeError::stale_heap("Proof", "verify_proof"))?
             .clone();
         let handler = vm
             .verify_handler
@@ -264,7 +239,7 @@ pub mod core_impl {
             .ok_or(RuntimeError::VerifyHandlerNotConfigured)?;
         match handler.verify_proof(&proof_obj) {
             Ok(valid) => Ok(Value::bool(valid)),
-            Err(msg) => Err(RuntimeError::VerificationFailed(msg)),
+            Err(msg) => Err(RuntimeError::verification_failed(msg)),
         }
     }
 

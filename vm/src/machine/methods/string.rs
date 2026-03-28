@@ -27,34 +27,28 @@ pub fn register(registry: &mut PrototypeRegistry) {
 fn get_string(vm: &VM, receiver: Value) -> Result<String, RuntimeError> {
     let handle = receiver
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
     Ok(vm
         .heap
         .get_string(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "String",
-            context: "get_string",
-        })?
+        .ok_or(RuntimeError::stale_heap("String", "get_string"))?
         .clone())
 }
 
 /// Helper: extract string from a Value argument.
 fn arg_string(vm: &VM, val: &Value, method: &'static str) -> Result<String, RuntimeError> {
     if !val.is_string() {
-        return Err(RuntimeError::TypeMismatch(format!(
+        return Err(RuntimeError::type_mismatch(format!(
             "{method}: argument must be a String"
         )));
     }
     let handle = val
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
     Ok(vm
         .heap
         .get_string(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "String",
-            context: method,
-        })?
+        .ok_or(RuntimeError::stale_heap("String", method))?
         .clone())
 }
 
@@ -65,8 +59,8 @@ fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
 
 fn method_starts_with(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "starts_with() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "starts_with() takes exactly 1 argument",
         ));
     }
     let s = get_string(vm, receiver)?;
@@ -76,8 +70,8 @@ fn method_starts_with(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Va
 
 fn method_ends_with(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "ends_with() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "ends_with() takes exactly 1 argument",
         ));
     }
     let s = get_string(vm, receiver)?;
@@ -87,8 +81,8 @@ fn method_ends_with(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Valu
 
 fn method_contains(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "contains() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "contains() takes exactly 1 argument",
         ));
     }
     let s = get_string(vm, receiver)?;
@@ -98,8 +92,8 @@ fn method_contains(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
 
 fn method_split(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "split() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "split() takes exactly 1 argument",
         ));
     }
     let s = get_string(vm, receiver)?;
@@ -126,8 +120,8 @@ fn method_trim(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, R
 
 fn method_replace(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "replace() takes exactly 2 arguments".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "replace() takes exactly 2 arguments",
         ));
     }
     let s = get_string(vm, receiver)?;
@@ -167,8 +161,8 @@ fn method_chars(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, 
 
 fn method_index_of(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "index_of() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "index_of() takes exactly 1 argument",
         ));
     }
     let haystack = get_string(vm, receiver)?;
@@ -182,16 +176,16 @@ fn method_index_of(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
 
 fn method_substring(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "substring() takes exactly 2 arguments".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "substring() takes exactly 2 arguments",
         ));
     }
     let s = get_string(vm, receiver)?;
-    let start = args[0].as_int().ok_or(RuntimeError::TypeMismatch(
-        "substring: start must be an integer".into(),
+    let start = args[0].as_int().ok_or(RuntimeError::type_mismatch(
+        "substring: start must be an integer",
     ))? as usize;
-    let end = args[1].as_int().ok_or(RuntimeError::TypeMismatch(
-        "substring: end must be an integer".into(),
+    let end = args[1].as_int().ok_or(RuntimeError::type_mismatch(
+        "substring: end must be an integer",
     ))? as usize;
 
     let char_count = s.chars().count();
@@ -209,23 +203,23 @@ fn method_substring(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Valu
 
 fn method_repeat(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "repeat() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "repeat() takes exactly 1 argument",
         ));
     }
     let s = get_string(vm, receiver)?;
     let n = args[0]
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("repeat: argument must be an Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("repeat: argument must be an Int"))?;
     if n < 0 {
-        return Err(RuntimeError::TypeMismatch(
-            "repeat: count must be non-negative".into(),
+        return Err(RuntimeError::type_mismatch(
+            "repeat: count must be non-negative",
         ));
     }
     let total_len = s.len().saturating_mul(n as usize);
     if total_len > 10_000_000 {
-        return Err(RuntimeError::ResourceLimitExceeded(
-            "repeat() result exceeds 10MB limit".into(),
+        return Err(RuntimeError::resource_limit_exceeded(
+            "repeat() result exceeds 10MB limit",
         ));
     }
     let result = s.repeat(n as usize);

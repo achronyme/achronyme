@@ -116,33 +116,27 @@ impl VM {
             let val = func
                 .constants
                 .get(bx)
-                .ok_or(RuntimeError::OutOfBounds("prove ir constant".into()))?;
-            let handle = val.as_handle().ok_or(RuntimeError::TypeMismatch(
-                "prove constant not a bytes handle".into(),
+                .ok_or(RuntimeError::out_of_bounds("prove ir constant"))?;
+            let handle = val.as_handle().ok_or(RuntimeError::type_mismatch(
+                "prove constant not a bytes handle",
             ))?;
             self.heap
                 .get_bytes(handle)
                 .cloned()
-                .ok_or(RuntimeError::StaleHeapHandle {
-                    type_name: "Bytes",
-                    context: "prove IR",
-                })?
+                .ok_or(RuntimeError::stale_heap("Bytes", "prove IR"))?
         };
 
         // 2. Read the capture map from R[A]
         let map_val = self.get_reg(base, a)?;
         let map_handle = map_val
             .as_handle()
-            .ok_or(RuntimeError::TypeMismatch("prove capture not a map".into()))?;
+            .ok_or(RuntimeError::type_mismatch("prove capture not a map"))?;
 
         let scope_values = {
             let map = self
                 .heap
                 .get_map(map_handle)
-                .ok_or(RuntimeError::StaleHeapHandle {
-                    type_name: "Map",
-                    context: "prove capture",
-                })?;
+                .ok_or(RuntimeError::stale_heap("Map", "prove capture"))?;
 
             let mut field_map = HashMap::new();
             for (key, val) in map.iter() {
@@ -150,7 +144,7 @@ impl VM {
                     // Expand list elements into individual scalar captures:
                     // "path" → [a, b] becomes "path_0" → a, "path_1" → b
                     let list_handle = val.as_handle().ok_or_else(|| {
-                        RuntimeError::TypeMismatch(format!(
+                        RuntimeError::type_mismatch(format!(
                             "prove: `{key}` is a list but has no valid handle"
                         ))
                     })?;
@@ -158,14 +152,14 @@ impl VM {
                         .heap
                         .get_list(list_handle)
                         .ok_or_else(|| {
-                            RuntimeError::TypeMismatch(format!(
+                            RuntimeError::type_mismatch(format!(
                                 "prove: `{key}` list data missing from heap"
                             ))
                         })?
                         .to_vec();
                     for (i, elem) in elements.iter().enumerate() {
                         let fe = value_to_field_element(&self.heap, *elem).ok_or_else(|| {
-                            RuntimeError::TypeMismatch(format!(
+                            RuntimeError::type_mismatch(format!(
                                 "prove: element `{key}[{i}]` is not a numeric/field type"
                             ))
                         })?;
@@ -173,7 +167,7 @@ impl VM {
                     }
                 } else {
                     let fe = value_to_field_element(&self.heap, *val).ok_or_else(|| {
-                        RuntimeError::TypeMismatch(format!(
+                        RuntimeError::type_mismatch(format!(
                             "prove: variable `{key}` is not a numeric/field type"
                         ))
                     })?;
@@ -191,7 +185,7 @@ impl VM {
 
         let result = handler
             .execute_prove_ir(&prove_ir_bytes, &scope_values)
-            .map_err(RuntimeError::ProveBlockFailed)?;
+            .map_err(RuntimeError::prove_block_failed)?;
 
         // 4. Set result based on handler response
         match result {

@@ -32,47 +32,39 @@ impl TypePromotion for super::vm::VM {
             (TAG_FIELD, TAG_FIELD) => {
                 let ha = left
                     .as_handle()
-                    .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                    .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
                 let hb = right
                     .as_handle()
-                    .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                    .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
                 let fa = *self
                     .heap
                     .get_field(ha)
-                    .ok_or(RuntimeError::StaleHeapHandle {
-                        type_name: "Field",
-                        context: "binary_op",
-                    })?;
+                    .ok_or(RuntimeError::stale_heap("Field", "binary_op"))?;
                 let fb = *self
                     .heap
                     .get_field(hb)
-                    .ok_or(RuntimeError::StaleHeapHandle {
-                        type_name: "Field",
-                        context: "binary_op",
-                    })?;
+                    .ok_or(RuntimeError::stale_heap("Field", "binary_op"))?;
                 let result = field_op(&fa, &fb)?;
                 let handle = self.heap.alloc_field(result)?;
                 Ok(Value::field(handle))
             }
 
             // Int + Field / Field + Int → type error
-            (TAG_INT, TAG_FIELD) | (TAG_FIELD, TAG_INT) => Err(RuntimeError::TypeMismatch(
-                "Cannot mix Int and Field in arithmetic; use 0p prefix for field literals".into(),
+            (TAG_INT, TAG_FIELD) | (TAG_FIELD, TAG_INT) => Err(RuntimeError::type_mismatch(
+                "Cannot mix Int and Field in arithmetic; use 0p prefix for field literals",
             )),
 
             // BigInt + Int / Int + BigInt → type error
-            (TAG_BIGINT, TAG_INT) | (TAG_INT, TAG_BIGINT) => Err(RuntimeError::TypeMismatch(
-                "Cannot mix Int and BigInt in arithmetic".into(),
+            (TAG_BIGINT, TAG_INT) | (TAG_INT, TAG_BIGINT) => Err(RuntimeError::type_mismatch(
+                "Cannot mix Int and BigInt in arithmetic",
             )),
 
             // BigInt + Field / Field + BigInt → type error
-            (TAG_BIGINT, TAG_FIELD) | (TAG_FIELD, TAG_BIGINT) => Err(RuntimeError::TypeMismatch(
-                "Cannot mix Field and BigInt in arithmetic".into(),
+            (TAG_BIGINT, TAG_FIELD) | (TAG_FIELD, TAG_BIGINT) => Err(RuntimeError::type_mismatch(
+                "Cannot mix Field and BigInt in arithmetic",
             )),
 
-            _ => Err(RuntimeError::TypeMismatch(
-                "Operands must be numeric".into(),
-            )),
+            _ => Err(RuntimeError::type_mismatch("Operands must be numeric")),
         }
     }
 }

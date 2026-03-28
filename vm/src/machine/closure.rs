@@ -37,7 +37,7 @@ impl ClosureOps for super::vm::VM {
                 let upval_idx = *closure
                     .upvalues
                     .get(bx)
-                    .ok_or(RuntimeError::OutOfBounds("Upvalue index".into()))?;
+                    .ok_or(RuntimeError::out_of_bounds("Upvalue index"))?;
                 let upval = self
                     .heap
                     .get_upvalue(upval_idx)
@@ -63,7 +63,7 @@ impl ClosureOps for super::vm::VM {
                 let upval_idx = *closure
                     .upvalues
                     .get(bx)
-                    .ok_or(RuntimeError::OutOfBounds("Upvalue index".into()))?;
+                    .ok_or(RuntimeError::out_of_bounds("Upvalue index"))?;
                 let upval = self
                     .heap
                     .get_upvalue(upval_idx)
@@ -105,7 +105,7 @@ impl ClosureOps for super::vm::VM {
                         .ok_or(RuntimeError::FunctionNotFound)?;
                     let len = proto.upvalue_info.len();
                     if len % 2 != 0 {
-                        return Err(RuntimeError::OutOfBounds(format!(
+                        return Err(RuntimeError::out_of_bounds(format!(
                             "upvalue_info length {len} is not even"
                         )));
                     }
@@ -142,7 +142,7 @@ impl ClosureOps for super::vm::VM {
                             let upval_idx = *current_closure
                                 .upvalues
                                 .get(index)
-                                .ok_or(RuntimeError::OutOfBounds("Upvalue capture".into()))?;
+                                .ok_or(RuntimeError::out_of_bounds("Upvalue capture"))?;
                             captured.push(upval_idx);
                         }
                     }

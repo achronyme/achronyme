@@ -17,7 +17,7 @@ fn run(source: &str) -> Result<VM, RuntimeError> {
     let mut compiler = Compiler::new();
     let bytecode = compiler
         .compile(source)
-        .map_err(|e| RuntimeError::TypeMismatch(format!("{e:?}")))?;
+        .map_err(|e| RuntimeError::type_mismatch(format!("{e:?}")))?;
     let main_func = compiler.compilers.last().expect("no main compiler");
 
     let mut vm = VM::new();

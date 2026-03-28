@@ -48,9 +48,9 @@ impl ControlFlowOps for super::vm::VM {
                 if func_val.is_native() {
                     self.call_native(func_val, args_start, args_count, base, a)?;
                 } else if func_val.is_closure() {
-                    let handle = func_val.as_handle().ok_or_else(|| {
-                        RuntimeError::TypeMismatch("Expected closure handle".into())
-                    })?;
+                    let handle = func_val
+                        .as_handle()
+                        .ok_or_else(|| RuntimeError::type_mismatch("Expected closure handle"))?;
 
                     let closure = self
                         .heap
@@ -63,7 +63,7 @@ impl ControlFlowOps for super::vm::VM {
 
                     // 1. Check arity (optional but good)
                     if func.arity as usize != args_count {
-                        return Err(RuntimeError::ArityMismatch(format!(
+                        return Err(RuntimeError::arity_mismatch(format!(
                             "Expected {} args, got {}",
                             func.arity, args_count
                         )));
@@ -94,8 +94,8 @@ impl ControlFlowOps for super::vm::VM {
                         dest_reg,
                     });
                 } else {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Call target must be Closure or Native".into(),
+                    return Err(RuntimeError::type_mismatch(
+                        "Call target must be Closure or Native",
                     ));
                 }
             }
@@ -143,7 +143,7 @@ impl ControlFlowOps for super::vm::VM {
     ) -> Result<(), RuntimeError> {
         let handle = func_val
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("Expected native handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("Expected native handle"))?;
         let (func, arity) = {
             let n = self
                 .natives
@@ -153,7 +153,7 @@ impl ControlFlowOps for super::vm::VM {
         };
 
         if arity != -1 && arity as usize != args_count {
-            return Err(RuntimeError::ArityMismatch(format!(
+            return Err(RuntimeError::arity_mismatch(format!(
                 "Expected {} args, got {}",
                 arity, args_count
             )));

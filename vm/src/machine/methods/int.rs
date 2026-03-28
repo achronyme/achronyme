@@ -17,66 +17,64 @@ pub fn register(registry: &mut PrototypeRegistry) {
 fn method_abs(_vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let n = receiver
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("abs: expected Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("abs: expected Int"))?;
     Ok(Value::int(n.abs()))
 }
 
 fn method_min(_vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "min() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "min() takes exactly 1 argument",
         ));
     }
     let a = receiver
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("min: expected Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("min: expected Int"))?;
     let b = args[0]
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("min: argument must be Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("min: argument must be Int"))?;
     Ok(Value::int(a.min(b)))
 }
 
 fn method_max(_vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "max() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "max() takes exactly 1 argument",
         ));
     }
     let a = receiver
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("max: expected Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("max: expected Int"))?;
     let b = args[0]
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("max: argument must be Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("max: argument must be Int"))?;
     Ok(Value::int(a.max(b)))
 }
 
 fn method_pow(_vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "pow() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "pow() takes exactly 1 argument",
         ));
     }
     let base = receiver
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("pow: expected Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("pow: expected Int"))?;
     let exp = args[0]
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("pow: exponent must be Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("pow: exponent must be Int"))?;
     if exp < 0 {
-        return Err(RuntimeError::TypeMismatch(
-            "pow() exponent must be non-negative".into(),
+        return Err(RuntimeError::type_mismatch(
+            "pow() exponent must be non-negative",
         ));
     }
     if exp > u32::MAX as i64 {
-        return Err(RuntimeError::TypeMismatch(
-            "pow() exponent too large".into(),
-        ));
+        return Err(RuntimeError::type_mismatch("pow() exponent too large"));
     }
     let result = (base as i128).pow(exp as u32);
     if result > i64::MAX as i128 || result < i64::MIN as i128 {
-        return Err(RuntimeError::TypeMismatch(
-            "pow() result overflows Int range".into(),
+        return Err(RuntimeError::type_mismatch(
+            "pow() result overflows Int range",
         ));
     }
     Ok(Value::int(result as i64))
@@ -85,7 +83,7 @@ fn method_pow(_vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Ru
 fn method_to_field(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let n = receiver
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("to_field: expected Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("to_field: expected Int"))?;
     let fe = FieldElement::from_i64(n);
     let handle = vm.heap.alloc_field(fe)?;
     Ok(Value::field(handle))
@@ -94,7 +92,7 @@ fn method_to_field(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Valu
 fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let n = receiver
         .as_int()
-        .ok_or_else(|| RuntimeError::TypeMismatch("to_string: expected Int".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("to_string: expected Int"))?;
     let s = n.to_string();
     let handle = vm.heap.alloc_string(s)?;
     Ok(Value::string(handle))

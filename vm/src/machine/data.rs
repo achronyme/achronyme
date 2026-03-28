@@ -36,7 +36,7 @@ impl DataOps for super::vm::VM {
                     .and_then(|s| s.checked_add(count))
                     .filter(|&e| e <= self.stack.len())
                     .ok_or_else(|| {
-                        RuntimeError::OutOfBounds(format!(
+                        RuntimeError::out_of_bounds(format!(
                             "BuildList: base={base} b={b} count={count} out of bounds"
                         ))
                     })?;
@@ -56,16 +56,16 @@ impl DataOps for super::vm::VM {
                 // R[A] = { k1:v1, k2:v2 ... }
                 // C es la cantidad de PARES. Consumimos 2*C registros.
                 let count = c;
-                let total_regs = count.checked_mul(2).ok_or_else(|| {
-                    RuntimeError::OutOfBounds("BuildMap: pair count overflow".into())
-                })?;
+                let total_regs = count
+                    .checked_mul(2)
+                    .ok_or_else(|| RuntimeError::out_of_bounds("BuildMap: pair count overflow"))?;
 
                 let _end = base
                     .checked_add(b)
                     .and_then(|s| s.checked_add(total_regs))
                     .filter(|&e| e <= self.stack.len())
                     .ok_or_else(|| {
-                        RuntimeError::OutOfBounds(format!(
+                        RuntimeError::out_of_bounds(format!(
                             "BuildMap: base={base} b={b} pairs={count} out of bounds"
                         ))
                     })?;
@@ -81,7 +81,7 @@ impl DataOps for super::vm::VM {
                     // Validación Estricta: Las claves DEBEN ser strings.
                     // No hacemos magia de toString() implícito aquí. Sé estricto.
                     if !key.is_string() {
-                        return Err(RuntimeError::TypeMismatch(format!(
+                        return Err(RuntimeError::type_mismatch(format!(
                             "Map keys must be strings, got {:?}",
                             key
                         )));
@@ -90,14 +90,11 @@ impl DataOps for super::vm::VM {
                     // Recuperar el string real del Heap
                     let s_handle = key
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
                     let s = self
                         .heap
                         .get_string(s_handle)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "String",
-                            context: "BuildMap",
-                        })?
+                        .ok_or(RuntimeError::stale_heap("String", "BuildMap"))?
                         .clone(); // Clone necesario porque HashMap es dueño de la clave
 
                     map.insert(s, val);
@@ -115,18 +112,15 @@ impl DataOps for super::vm::VM {
                 if target.is_list() {
                     let handle = target
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad list handle"))?;
                     let list = self
                         .heap
                         .get_list(handle)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "List",
-                            context: "GetIndex",
-                        })?;
+                        .ok_or(RuntimeError::stale_heap("List", "GetIndex"))?;
 
                     if let Some(idx_val) = key.as_int() {
                         if idx_val < 0 {
-                            return Err(RuntimeError::OutOfBounds(format!(
+                            return Err(RuntimeError::out_of_bounds(format!(
                                 "Negative index {}",
                                 idx_val
                             )));
@@ -136,62 +130,50 @@ impl DataOps for super::vm::VM {
                             let val = list[idx];
                             self.set_reg(base, a, val)?;
                         } else {
-                            return Err(RuntimeError::OutOfBounds(format!(
+                            return Err(RuntimeError::out_of_bounds(format!(
                                 "Index {} out of bounds (len {})",
                                 idx,
                                 list.len()
                             )));
                         }
                     } else {
-                        return Err(RuntimeError::TypeMismatch(
-                            "List index must be an integer".into(),
-                        ));
+                        return Err(RuntimeError::type_mismatch("List index must be an integer"));
                     }
                 } else if target.is_map() {
                     let handle = target
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad map handle"))?;
                     let map = self
                         .heap
                         .get_map(handle)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "Map",
-                            context: "GetIndex",
-                        })?;
+                        .ok_or(RuntimeError::stale_heap("Map", "GetIndex"))?;
 
                     if key.is_string() {
-                        let k_handle = key.as_handle().ok_or_else(|| {
-                            RuntimeError::TypeMismatch("bad string handle".into())
-                        })?;
-                        let k_str = self.heap.get_string(k_handle).ok_or(
-                            RuntimeError::StaleHeapHandle {
-                                type_name: "String",
-                                context: "GetIndex map key",
-                            },
-                        )?;
+                        let k_handle = key
+                            .as_handle()
+                            .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
+                        let k_str = self
+                            .heap
+                            .get_string(k_handle)
+                            .ok_or(RuntimeError::stale_heap("String", "GetIndex map key"))?;
 
                         let val = map.get(k_str).cloned().unwrap_or(Value::nil());
                         self.set_reg(base, a, val)?;
                     } else {
-                        return Err(RuntimeError::TypeMismatch(
-                            "Map key must be a string".into(),
-                        ));
+                        return Err(RuntimeError::type_mismatch("Map key must be a string"));
                     }
                 } else if target.is_string() {
                     let handle = target
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
                     let s = self
                         .heap
                         .get_string(handle)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "String",
-                            context: "GetIndex string",
-                        })?;
+                        .ok_or(RuntimeError::stale_heap("String", "GetIndex string"))?;
 
                     if let Some(idx_val) = key.as_int() {
                         if idx_val < 0 {
-                            return Err(RuntimeError::OutOfBounds(format!(
+                            return Err(RuntimeError::out_of_bounds(format!(
                                 "Negative index {}",
                                 idx_val
                             )));
@@ -202,20 +184,20 @@ impl DataOps for super::vm::VM {
                             let h = self.heap.alloc_string(ch_str)?;
                             self.set_reg(base, a, Value::string(h))?;
                         } else {
-                            return Err(RuntimeError::OutOfBounds(format!(
+                            return Err(RuntimeError::out_of_bounds(format!(
                                 "String index {} out of bounds (len {})",
                                 idx,
                                 s.chars().count()
                             )));
                         }
                     } else {
-                        return Err(RuntimeError::TypeMismatch(
-                            "String index must be an integer".into(),
+                        return Err(RuntimeError::type_mismatch(
+                            "String index must be an integer",
                         ));
                     }
                 } else {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Can only index Lists, Maps, or Strings".into(),
+                    return Err(RuntimeError::type_mismatch(
+                        "Can only index Lists, Maps, or Strings",
                     ));
                 }
             }
@@ -230,19 +212,16 @@ impl DataOps for super::vm::VM {
                 if target.is_list() {
                     let handle = target
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad list handle"))?;
                     // Necesitamos acceso mutable
-                    let list =
-                        self.heap
-                            .get_list_mut(handle)
-                            .ok_or(RuntimeError::StaleHeapHandle {
-                                type_name: "List",
-                                context: "SetIndex",
-                            })?;
+                    let list = self
+                        .heap
+                        .get_list_mut(handle)
+                        .ok_or(RuntimeError::stale_heap("List", "SetIndex"))?;
 
                     if let Some(idx_val) = key.as_int() {
                         if idx_val < 0 {
-                            return Err(RuntimeError::OutOfBounds(format!(
+                            return Err(RuntimeError::out_of_bounds(format!(
                                 "Negative index {}",
                                 idx_val
                             )));
@@ -251,49 +230,35 @@ impl DataOps for super::vm::VM {
                         if idx < list.len() {
                             list[idx] = val;
                         } else {
-                            return Err(RuntimeError::OutOfBounds(
-                                "List index out of bounds".into(),
-                            ));
+                            return Err(RuntimeError::out_of_bounds("List index out of bounds"));
                         }
                     } else {
-                        return Err(RuntimeError::TypeMismatch(
-                            "List index must be an integer".into(),
-                        ));
+                        return Err(RuntimeError::type_mismatch("List index must be an integer"));
                     }
                 } else if target.is_map() {
                     let handle = target
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad map handle"))?;
 
                     if key.is_string() {
-                        let k_handle = key.as_handle().ok_or_else(|| {
-                            RuntimeError::TypeMismatch("bad string handle".into())
-                        })?;
+                        let k_handle = key
+                            .as_handle()
+                            .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
                         // Clone string first to avoid double borrow of heap
                         let k_str = self
                             .heap
                             .get_string(k_handle)
-                            .ok_or(RuntimeError::StaleHeapHandle {
-                                type_name: "String",
-                                context: "SetIndex map key",
-                            })?
+                            .ok_or(RuntimeError::stale_heap("String", "SetIndex map key"))?
                             .clone();
 
-                        self.heap.map_insert(handle, k_str, val).ok_or(
-                            RuntimeError::StaleHeapHandle {
-                                type_name: "Map",
-                                context: "SetIndex",
-                            },
-                        )?;
+                        self.heap
+                            .map_insert(handle, k_str, val)
+                            .ok_or(RuntimeError::stale_heap("Map", "SetIndex"))?;
                     } else {
-                        return Err(RuntimeError::TypeMismatch(
-                            "Map key must be a string".into(),
-                        ));
+                        return Err(RuntimeError::type_mismatch("Map key must be a string"));
                     }
                 } else {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Can only index Lists or Maps".into(),
-                    ));
+                    return Err(RuntimeError::type_mismatch("Can only index Lists or Maps"));
                 }
             }
 

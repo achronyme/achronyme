@@ -135,7 +135,7 @@ impl VM {
         if callee.is_native() {
             let handle = callee
                 .as_handle()
-                .ok_or_else(|| RuntimeError::TypeMismatch("Expected native handle".into()))?;
+                .ok_or_else(|| RuntimeError::type_mismatch("Expected native handle"))?;
             let (func, arity) = {
                 let n = self
                     .natives
@@ -144,7 +144,7 @@ impl VM {
                 (n.func, n.arity)
             };
             if arity != -1 && arity as usize != args.len() {
-                return Err(RuntimeError::ArityMismatch(format!(
+                return Err(RuntimeError::arity_mismatch(format!(
                     "Expected {} args, got {}",
                     arity,
                     args.len()
@@ -154,14 +154,14 @@ impl VM {
         }
 
         if !callee.is_closure() {
-            return Err(RuntimeError::TypeMismatch(
-                "call_value target must be a Closure or Native".into(),
+            return Err(RuntimeError::type_mismatch(
+                "call_value target must be a Closure or Native",
             ));
         }
 
         let closure_handle = callee
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("Expected closure handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("Expected closure handle"))?;
 
         let (arity, max_slots) = {
             let closure = self
@@ -176,7 +176,7 @@ impl VM {
         };
 
         if arity != args.len() {
-            return Err(RuntimeError::ArityMismatch(format!(
+            return Err(RuntimeError::arity_mismatch(format!(
                 "Expected {} args, got {}",
                 arity,
                 args.len()

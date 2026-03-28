@@ -13,20 +13,17 @@ pub fn register(registry: &mut PrototypeRegistry) {
 fn method_to_int(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = receiver
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
     let fe = vm
         .heap
         .get_field(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Field",
-            context: "to_int",
-        })?;
+        .ok_or(RuntimeError::stale_heap("Field", "to_int"))?;
     let canonical = fe.to_canonical();
     if canonical[1] == 0 && canonical[2] == 0 && canonical[3] == 0 {
         Ok(Value::int(canonical[0] as i64))
     } else {
-        Err(RuntimeError::TypeMismatch(
-            "Field value too large to convert to Int".into(),
+        Err(RuntimeError::type_mismatch(
+            "Field value too large to convert to Int",
         ))
     }
 }
@@ -34,14 +31,11 @@ fn method_to_int(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value,
 fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = receiver
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
     let fe = vm
         .heap
         .get_field(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Field",
-            context: "to_string",
-        })?;
+        .ok_or(RuntimeError::stale_heap("Field", "to_string"))?;
     let s = format!("{}", fe);
     let h = vm.heap.alloc_string(s)?;
     Ok(Value::string(h))

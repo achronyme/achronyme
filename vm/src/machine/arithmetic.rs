@@ -244,8 +244,8 @@ impl ArithmeticOps for super::vm::VM {
                     let handle = self.heap.alloc_bigint(result)?;
                     self.set_reg(base, a, Value::bigint(handle))?;
                 } else {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Modulo requires integer or BigInt operands".into(),
+                    return Err(RuntimeError::type_mismatch(
+                        "Modulo requires integer or BigInt operands",
                     ));
                 }
             }
@@ -262,9 +262,8 @@ impl ArithmeticOps for super::vm::VM {
                     let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
 
                     if exp_val < 0 {
-                        return Err(RuntimeError::TypeMismatch(
-                            "Cannot raise integer to negative power; use 0p prefix for field modular inverse".into(),
-                        ));
+                        return Err(RuntimeError::type_mismatch(
+                            "Cannot raise integer to negative power; use 0p prefix for field modular inverse"));
                     } else if exp_val == 0 {
                         self.set_reg(base, a, Value::int(1))?;
                     } else {
@@ -302,8 +301,8 @@ impl ArithmeticOps for super::vm::VM {
                         .clone();
                     let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if exp_val < 0 {
-                        return Err(RuntimeError::TypeMismatch(
-                            "Cannot raise unsigned BigInt to negative power".into(),
+                        return Err(RuntimeError::type_mismatch(
+                            "Cannot raise unsigned BigInt to negative power",
                         ));
                     }
                     if exp_val == 0 {
@@ -330,14 +329,11 @@ impl ArithmeticOps for super::vm::VM {
                 } else if vb.is_field() && vc.is_int() {
                     let ha = vb
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
                     let fa = *self
                         .heap
                         .get_field(ha)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "Field",
-                            context: "Pow",
-                        })?;
+                        .ok_or(RuntimeError::stale_heap("Field", "Pow"))?;
                     let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     if exp_val < 0 {
                         let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
@@ -351,9 +347,7 @@ impl ArithmeticOps for super::vm::VM {
                         self.set_reg(base, a, Value::field(handle))?;
                     }
                 } else {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Pow requires numeric operands".into(),
-                    ));
+                    return Err(RuntimeError::type_mismatch("Pow requires numeric operands"));
                 }
             }
 
@@ -375,25 +369,18 @@ impl ArithmeticOps for super::vm::VM {
                 } else if vb.is_field() {
                     let h = vb
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
                     let fe = *self
                         .heap
                         .get_field(h)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "Field",
-                            context: "Neg",
-                        })?;
+                        .ok_or(RuntimeError::stale_heap("Field", "Neg"))?;
                     let result = fe.neg();
                     let handle = self.heap.alloc_field(result)?;
                     self.set_reg(base, a, Value::field(handle))?;
                 } else if vb.tag() == TAG_BIGINT {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Cannot negate unsigned BigInt".into(),
-                    ));
+                    return Err(RuntimeError::type_mismatch("Cannot negate unsigned BigInt"));
                 } else {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Neg requires numeric operand".into(),
-                    ));
+                    return Err(RuntimeError::type_mismatch("Neg requires numeric operand"));
                 }
             }
 

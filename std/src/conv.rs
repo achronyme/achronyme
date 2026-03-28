@@ -14,29 +14,24 @@ pub mod conv_impl {
     #[ach_native(name = "parse_int", arity = 1)]
     pub fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return Err(RuntimeError::ArityMismatch(
-                "parse_int() takes exactly 1 argument".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "parse_int() takes exactly 1 argument",
             ));
         }
         if !args[0].is_string() {
-            return Err(RuntimeError::TypeMismatch(
-                "parse_int() expects a String".into(),
-            ));
+            return Err(RuntimeError::type_mismatch("parse_int() expects a String"));
         }
         let handle = args[0]
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
         let s = vm
             .heap
             .get_string(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "String",
-                context: "parse_int",
-            })?;
+            .ok_or(RuntimeError::stale_heap("String", "parse_int"))?;
         let n: i64 = s
             .trim()
             .parse()
-            .map_err(|_| RuntimeError::TypeMismatch(format!("Cannot parse '{}' as integer", s)))?;
+            .map_err(|_| RuntimeError::type_mismatch(format!("Cannot parse '{}' as integer", s)))?;
         Ok(Value::int(n))
     }
 }

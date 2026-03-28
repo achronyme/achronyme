@@ -19,20 +19,17 @@ pub fn register(registry: &mut PrototypeRegistry) {
 fn get_map_handle(receiver: Value) -> Result<u32, RuntimeError> {
     receiver
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))
+        .ok_or_else(|| RuntimeError::type_mismatch("bad map handle"))
 }
 
 fn resolve_string_arg(vm: &VM, val: Value, method: &'static str) -> Result<String, RuntimeError> {
     let handle = val
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch(format!("{method}: key must be a String")))?;
+        .ok_or_else(|| RuntimeError::type_mismatch(format!("{method}: key must be a String")))?;
     vm.heap
         .get_string(handle)
         .cloned()
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "String",
-            context: method,
-        })
+        .ok_or(RuntimeError::stale_heap("String", method))
 }
 
 fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
@@ -40,10 +37,7 @@ fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
     let m = vm
         .heap
         .get_map(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Map",
-            context: "len",
-        })?;
+        .ok_or(RuntimeError::stale_heap("Map", "len"))?;
     Ok(Value::int(m.len() as i64))
 }
 
@@ -53,10 +47,7 @@ fn method_keys(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, R
         let map = vm
             .heap
             .get_map(map_handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Map",
-                context: "keys",
-            })?;
+            .ok_or(RuntimeError::stale_heap("Map", "keys"))?;
         map.keys().cloned().collect()
     };
     vm.heap.lock_gc();
@@ -77,10 +68,7 @@ fn method_values(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value,
         let map = vm
             .heap
             .get_map(map_handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Map",
-                context: "values",
-            })?;
+            .ok_or(RuntimeError::stale_heap("Map", "values"))?;
         map.values().cloned().collect()
     };
     let list_handle = vm.heap.alloc_list(vals)?;
@@ -94,10 +82,7 @@ fn method_entries(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value
         let map = vm
             .heap
             .get_map(map_handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "Map",
-                context: "entries",
-            })?;
+            .ok_or(RuntimeError::stale_heap("Map", "entries"))?;
         map.iter().map(|(k, v)| (k.clone(), *v)).collect()
     };
     vm.heap.lock_gc();
@@ -120,8 +105,8 @@ fn method_contains_key(
     args: &[Value],
 ) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "contains_key() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "contains_key() takes exactly 1 argument",
         ));
     }
     let map_handle = get_map_handle(receiver)?;
@@ -129,10 +114,7 @@ fn method_contains_key(
     let exists = vm
         .heap
         .get_map(map_handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Map",
-            context: "contains_key",
-        })?
+        .ok_or(RuntimeError::stale_heap("Map", "contains_key"))?
         .contains_key(&key);
     Ok(if exists {
         Value::true_val()
@@ -144,8 +126,8 @@ fn method_contains_key(
 /// `map.get(key, default)` → value or default
 fn method_get(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "get() takes exactly 2 arguments (key, default)".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "get() takes exactly 2 arguments (key, default)",
         ));
     }
     let map_handle = get_map_handle(receiver)?;
@@ -153,10 +135,7 @@ fn method_get(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
     let val = vm
         .heap
         .get_map(map_handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Map",
-            context: "get",
-        })?
+        .ok_or(RuntimeError::stale_heap("Map", "get"))?
         .get(&key)
         .cloned()
         .unwrap_or(args[1]);
@@ -166,26 +145,23 @@ fn method_get(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 /// `map.set(key, value)` → nil (mutates the map)
 fn method_set(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "set() takes exactly 2 arguments (key, value)".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "set() takes exactly 2 arguments (key, value)",
         ));
     }
     let map_handle = get_map_handle(receiver)?;
     let key = resolve_string_arg(vm, args[0], "set")?;
     vm.heap
         .map_insert(map_handle, key, args[1])
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Map",
-            context: "set",
-        })?;
+        .ok_or(RuntimeError::stale_heap("Map", "set"))?;
     Ok(Value::nil())
 }
 
 /// `map.remove(key)` → removed value or nil
 fn method_remove(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "remove() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "remove() takes exactly 1 argument",
         ));
     }
     let map_handle = get_map_handle(receiver)?;
@@ -193,10 +169,7 @@ fn method_remove(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
     let removed = vm
         .heap
         .get_map_mut(map_handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "Map",
-            context: "remove",
-        })?
+        .ok_or(RuntimeError::stale_heap("Map", "remove"))?
         .remove(&key)
         .unwrap_or(Value::nil());
     Ok(removed)

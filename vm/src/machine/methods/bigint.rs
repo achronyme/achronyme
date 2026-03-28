@@ -27,13 +27,10 @@ fn map_bigint_err(e: BigIntError) -> RuntimeError {
 fn extract_bigint<'a>(vm: &'a VM, val: &Value) -> Result<&'a BigInt, RuntimeError> {
     let handle = val
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad bigint handle".into()))?;
+        .ok_or_else(|| RuntimeError::type_mismatch("bad bigint handle"))?;
     vm.heap
         .get_bigint(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "BigInt",
-            context: "extract_bigint",
-        })
+        .ok_or(RuntimeError::stale_heap("BigInt", "extract_bigint"))
 }
 
 fn method_to_bits(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
@@ -46,8 +43,8 @@ fn method_to_bits(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value
 
 fn method_bit_and(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "bit_and() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "bit_and() takes exactly 1 argument",
         ));
     }
     let a = extract_bigint(vm, &receiver)?.clone();
@@ -59,8 +56,8 @@ fn method_bit_and(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
 
 fn method_bit_or(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "bit_or() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "bit_or() takes exactly 1 argument",
         ));
     }
     let a = extract_bigint(vm, &receiver)?.clone();
@@ -72,8 +69,8 @@ fn method_bit_or(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
 
 fn method_bit_xor(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "bit_xor() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "bit_xor() takes exactly 1 argument",
         ));
     }
     let a = extract_bigint(vm, &receiver)?.clone();
@@ -92,17 +89,17 @@ fn method_bit_not(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value
 
 fn method_bit_shl(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "bit_shl() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "bit_shl() takes exactly 1 argument",
         ));
     }
     let a = extract_bigint(vm, &receiver)?.clone();
-    let amount = args[0].as_int().ok_or(RuntimeError::TypeMismatch(
-        "Shift amount must be an integer".into(),
+    let amount = args[0].as_int().ok_or(RuntimeError::type_mismatch(
+        "Shift amount must be an integer",
     ))?;
     if amount < 0 {
-        return Err(RuntimeError::TypeMismatch(
-            "Shift amount must be non-negative".into(),
+        return Err(RuntimeError::type_mismatch(
+            "Shift amount must be non-negative",
         ));
     }
     let result = a.shl(amount as u32).map_err(map_bigint_err)?;
@@ -112,17 +109,17 @@ fn method_bit_shl(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value,
 
 fn method_bit_shr(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "bit_shr() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "bit_shr() takes exactly 1 argument",
         ));
     }
     let a = extract_bigint(vm, &receiver)?.clone();
-    let amount = args[0].as_int().ok_or(RuntimeError::TypeMismatch(
-        "Shift amount must be an integer".into(),
+    let amount = args[0].as_int().ok_or(RuntimeError::type_mismatch(
+        "Shift amount must be an integer",
     ))?;
     if amount < 0 {
-        return Err(RuntimeError::TypeMismatch(
-            "Shift amount must be non-negative".into(),
+        return Err(RuntimeError::type_mismatch(
+            "Shift amount must be non-negative",
         ));
     }
     let result = a.shr(amount as u32);

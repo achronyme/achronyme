@@ -63,10 +63,10 @@ impl super::vm::VM {
                 self.collect_garbage();
                 self.heap.heap_limit_exceeded = false;
                 if self.heap.bytes_allocated > self.heap.max_heap_bytes {
-                    return Err(RuntimeError::HeapLimitExceeded {
-                        limit: self.heap.max_heap_bytes,
-                        allocated: self.heap.bytes_allocated,
-                    });
+                    return Err(RuntimeError::heap_limit_exceeded(
+                        self.heap.max_heap_bytes,
+                        self.heap.bytes_allocated,
+                    ));
                 }
             }
 
@@ -130,7 +130,7 @@ impl super::vm::VM {
                 Jump => {
                     let dest = decode_bx(instruction) as usize;
                     if dest > chunk_len {
-                        return Err(RuntimeError::OutOfBounds(format!(
+                        return Err(RuntimeError::out_of_bounds(format!(
                             "Jump target {dest} exceeds chunk length {chunk_len}"
                         )));
                     }
@@ -141,7 +141,7 @@ impl super::vm::VM {
                     let a = decode_a(instruction) as usize;
                     let dest = decode_bx(instruction) as usize;
                     if dest > chunk_len {
-                        return Err(RuntimeError::OutOfBounds(format!(
+                        return Err(RuntimeError::out_of_bounds(format!(
                             "JumpIfFalse target {dest} exceeds chunk length {chunk_len}"
                         )));
                     }
@@ -161,7 +161,7 @@ impl super::vm::VM {
                     let a = decode_a(instruction) as usize;
                     let bx = decode_bx(instruction) as usize;
                     let val = func.constants.get(bx).cloned().ok_or_else(|| {
-                        RuntimeError::OutOfBounds(format!(
+                        RuntimeError::out_of_bounds(format!(
                             "constant index {bx} out of range (len {})",
                             func.constants.len()
                         ))
@@ -209,17 +209,14 @@ impl super::vm::VM {
                     // Method name is in R[base + b - 1] (LoadConst prior)
                     let name_val = self.get_reg(base, b.wrapping_sub(1))?;
                     let name_handle = name_val.as_handle().ok_or_else(|| {
-                        RuntimeError::TypeMismatch(
-                            "MethodCall: method name register is not a string".into(),
+                        RuntimeError::type_mismatch(
+                            "MethodCall: method name register is not a string",
                         )
                     })?;
                     let method_name = self
                         .heap
                         .get_string(name_handle)
-                        .ok_or(RuntimeError::StaleHeapHandle {
-                            type_name: "String",
-                            context: "MethodCall name",
-                        })?
+                        .ok_or(RuntimeError::stale_heap("String", "MethodCall name"))?
                         .clone();
 
                     // Receiver is in R[base + b]
@@ -241,18 +238,18 @@ impl super::vm::VM {
                         // in the map and call it if it's a function/closure.
                         let map_handle = receiver
                             .as_handle()
-                            .ok_or_else(|| RuntimeError::TypeMismatch("bad map handle".into()))?;
+                            .ok_or_else(|| RuntimeError::type_mismatch("bad map handle"))?;
                         let callee = self
                             .heap
                             .get_map(map_handle)
                             .and_then(|m| m.get(&method_name).copied())
                             .ok_or_else(|| {
-                                RuntimeError::TypeMismatch(format!(
+                                RuntimeError::type_mismatch(format!(
                                     "Map has no method or key '{method_name}'"
                                 ))
                             })?;
                         if !callee.is_closure() && !callee.is_native() {
-                            return Err(RuntimeError::TypeMismatch(format!(
+                            return Err(RuntimeError::type_mismatch(format!(
                                 "Map key '{method_name}' is not callable"
                             )));
                         }
@@ -275,7 +272,7 @@ impl super::vm::VM {
                             13 => "BigInt",
                             _ => "Unknown",
                         };
-                        return Err(RuntimeError::TypeMismatch(format!(
+                        return Err(RuntimeError::type_mismatch(format!(
                             "{type_name} has no method '{method_name}'"
                         )));
                     }

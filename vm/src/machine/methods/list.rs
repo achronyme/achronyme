@@ -29,12 +29,12 @@ pub fn register(registry: &mut PrototypeRegistry) {
 fn get_list_handle(receiver: Value) -> Result<u32, RuntimeError> {
     receiver
         .as_handle()
-        .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))
+        .ok_or_else(|| RuntimeError::type_mismatch("bad list handle"))
 }
 
 fn require_callable(val: Value, method: &str) -> Result<(), RuntimeError> {
     if !val.is_closure() && !val.is_native() {
-        return Err(RuntimeError::TypeMismatch(format!(
+        return Err(RuntimeError::type_mismatch(format!(
             "{method}: callback must be a Function"
         )));
     }
@@ -45,10 +45,7 @@ fn snapshot_list(vm: &VM, handle: u32, method: &'static str) -> Result<Vec<Value
     Ok(vm
         .heap
         .get_list(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "List",
-            context: method,
-        })?
+        .ok_or(RuntimeError::stale_heap("List", method))?
         .clone())
 }
 
@@ -64,9 +61,9 @@ fn merge_sort(vm: &mut VM, slice: &[Value], cmp: Value) -> Result<Vec<Value>, Ru
     let (mut i, mut j) = (0, 0);
     while i < left.len() && j < right.len() {
         let cmp_result = vm.call_value(cmp, &[left[i], right[j]])?;
-        let n = cmp_result.as_int().ok_or_else(|| {
-            RuntimeError::TypeMismatch("sort: comparator must return a Number".into())
-        })?;
+        let n = cmp_result
+            .as_int()
+            .ok_or_else(|| RuntimeError::type_mismatch("sort: comparator must return a Number"))?;
         if n <= 0 {
             merged.push(left[i]);
             i += 1;
@@ -89,27 +86,21 @@ fn method_len(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
     let l = vm
         .heap
         .get_list(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "List",
-            context: "len",
-        })?;
+        .ok_or(RuntimeError::stale_heap("List", "len"))?;
     Ok(Value::int(l.len() as i64))
 }
 
 fn method_push(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "push() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "push() takes exactly 1 argument",
         ));
     }
     let handle = get_list_handle(receiver)?;
     let item = args[0];
     vm.heap
         .list_push(handle, item)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "List",
-            context: "push",
-        })?;
+        .ok_or(RuntimeError::stale_heap("List", "push"))?;
     Ok(Value::nil())
 }
 
@@ -118,18 +109,15 @@ fn method_pop(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, Ru
     let list = vm
         .heap
         .get_list_mut(handle)
-        .ok_or(RuntimeError::StaleHeapHandle {
-            type_name: "List",
-            context: "pop",
-        })?;
+        .ok_or(RuntimeError::stale_heap("List", "pop"))?;
     let val = list.pop().unwrap_or(Value::nil());
     Ok(val)
 }
 
 fn method_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "map() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "map() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -156,8 +144,8 @@ fn method_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 
 fn method_filter(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "filter() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "filter() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -186,8 +174,8 @@ fn method_filter(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
 
 fn method_reduce(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::ArityMismatch(
-            "reduce() takes exactly 2 arguments (initial, fn)".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "reduce() takes exactly 2 arguments (initial, fn)",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -214,8 +202,8 @@ fn method_reduce(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, 
 
 fn method_for_each(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "for_each() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "for_each() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -233,8 +221,8 @@ fn method_for_each(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
 
 fn method_find(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "find() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "find() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -255,8 +243,8 @@ fn method_find(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Ru
 
 fn method_any(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "any() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "any() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -277,8 +265,8 @@ fn method_any(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 
 fn method_all(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "all() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "all() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -299,8 +287,8 @@ fn method_all(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 
 fn method_sort(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "sort() takes exactly 1 argument (comparator fn)".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "sort() takes exactly 1 argument (comparator fn)",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -329,8 +317,8 @@ fn method_sort(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Ru
 
 fn method_flat_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "flat_map() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "flat_map() takes exactly 1 argument",
         ));
     }
     let list_handle = get_list_handle(receiver)?;
@@ -347,16 +335,13 @@ fn method_flat_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
         for elem in &elements {
             let mapped = vm.call_value(callback, &[*elem])?;
             if mapped.is_list() {
-                let inner_handle = mapped.as_handle().ok_or_else(|| {
-                    RuntimeError::TypeMismatch("flat_map: bad list handle".into())
-                })?;
+                let inner_handle = mapped
+                    .as_handle()
+                    .ok_or_else(|| RuntimeError::type_mismatch("flat_map: bad list handle"))?;
                 let inner = vm
                     .heap
                     .get_list(inner_handle)
-                    .ok_or(RuntimeError::StaleHeapHandle {
-                        type_name: "List",
-                        context: "flat_map",
-                    })?
+                    .ok_or(RuntimeError::stale_heap("List", "flat_map"))?
                     .clone();
                 for v in inner {
                     vm.heap.list_push(result_handle, v);
@@ -374,19 +359,17 @@ fn method_flat_map(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value
 
 fn method_zip(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(
-            "zip() takes exactly 1 argument".into(),
+        return Err(RuntimeError::arity_mismatch(
+            "zip() takes exactly 1 argument",
         ));
     }
     let handle1 = get_list_handle(receiver)?;
     let handle2 = if !args[0].is_list() {
-        return Err(RuntimeError::TypeMismatch(
-            "zip: argument must be a List".into(),
-        ));
+        return Err(RuntimeError::type_mismatch("zip: argument must be a List"));
     } else {
         args[0]
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?
+            .ok_or_else(|| RuntimeError::type_mismatch("bad list handle"))?
     };
 
     let list1 = snapshot_list(vm, handle1, "zip")?;

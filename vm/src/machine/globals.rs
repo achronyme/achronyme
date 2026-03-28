@@ -62,7 +62,7 @@ impl GlobalOps for super::vm::VM {
                         .map(|s| format!("'{}'", s))
                         .unwrap_or_else(|| format!("Index {}", bx));
 
-                    return Err(RuntimeError::UndefinedGlobal { name });
+                    return Err(RuntimeError::undefined_global(name));
                 }
                 let entry = &self.globals[bx];
                 self.set_reg(base, a, entry.value)?;
@@ -80,7 +80,7 @@ impl GlobalOps for super::vm::VM {
                         .map(|s| format!("'{}'", s))
                         .unwrap_or_else(|| format!("Index {}", bx));
 
-                    return Err(RuntimeError::UndefinedGlobal { name });
+                    return Err(RuntimeError::undefined_global(name));
                 }
 
                 let entry = &mut self.globals[bx];
@@ -94,7 +94,7 @@ impl GlobalOps for super::vm::VM {
                         .map(|s| format!("'{}'", s))
                         .unwrap_or_else(|| format!("Index {}", bx));
 
-                    return Err(RuntimeError::ImmutableGlobal { name });
+                    return Err(RuntimeError::immutable_global(name));
                 }
             }
 

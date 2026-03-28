@@ -39,16 +39,13 @@ impl IteratorOps for super::vm::VM {
                     let iter_obj = if val.is_list() {
                         // Snapshot: clone list contents so mutations during
                         // iteration don't cause stale reads or OOB access.
-                        let l_handle = val.as_handle().ok_or_else(|| {
-                            RuntimeError::TypeMismatch("Expected list handle".into())
-                        })?;
+                        let l_handle = val
+                            .as_handle()
+                            .ok_or_else(|| RuntimeError::type_mismatch("Expected list handle"))?;
                         let snapshot = self
                             .heap
                             .get_list(l_handle)
-                            .ok_or(RuntimeError::StaleHeapHandle {
-                                type_name: "List",
-                                context: "GetIter",
-                            })?
+                            .ok_or(RuntimeError::stale_heap("List", "GetIter"))?
                             .clone();
                         let snap_handle = self.heap.alloc_list(snapshot)?;
                         memory::IteratorObj {
@@ -56,17 +53,14 @@ impl IteratorOps for super::vm::VM {
                             index: 0,
                         }
                     } else if val.is_map() {
-                        let handle = val.as_handle().ok_or_else(|| {
-                            RuntimeError::TypeMismatch("Expected map handle".into())
-                        })?;
+                        let handle = val
+                            .as_handle()
+                            .ok_or_else(|| RuntimeError::type_mismatch("Expected map handle"))?;
                         let map_keys: Vec<String> = {
-                            let map =
-                                self.heap
-                                    .get_map(handle)
-                                    .ok_or(RuntimeError::StaleHeapHandle {
-                                        type_name: "Map",
-                                        context: "GetIter",
-                                    })?;
+                            let map = self
+                                .heap
+                                .get_map(handle)
+                                .ok_or(RuntimeError::stale_heap("Map", "GetIter"))?;
                             map.keys().cloned().collect()
                         };
 
@@ -90,7 +84,7 @@ impl IteratorOps for super::vm::VM {
                             index: 0,
                         }
                     } else {
-                        return Err(RuntimeError::TypeMismatch(format!(
+                        return Err(RuntimeError::type_mismatch(format!(
                             "Value not iterable: {:?}",
                             val
                         )));
@@ -106,7 +100,7 @@ impl IteratorOps for super::vm::VM {
                 let bx = decode_bx(instruction) as usize;
 
                 if bx > chunk_len {
-                    return Err(RuntimeError::OutOfBounds(format!(
+                    return Err(RuntimeError::out_of_bounds(format!(
                         "ForIter exit target {bx} exceeds chunk length {chunk_len}"
                     )));
                 }
@@ -116,21 +110,17 @@ impl IteratorOps for super::vm::VM {
 
                 let iter_val = self.get_reg(base, a)?;
                 if !iter_val.is_iter() {
-                    return Err(RuntimeError::TypeMismatch(
-                        "Expected iterator for loop".into(),
-                    ));
+                    return Err(RuntimeError::type_mismatch("Expected iterator for loop"));
                 }
                 let iter_handle = iter_val
                     .as_handle()
-                    .ok_or_else(|| RuntimeError::TypeMismatch("Expected iterator handle".into()))?;
+                    .ok_or_else(|| RuntimeError::type_mismatch("Expected iterator handle"))?;
 
                 let (source, index) = {
-                    let iter = self.heap.get_iterator(iter_handle).ok_or(
-                        RuntimeError::StaleHeapHandle {
-                            type_name: "Iterator",
-                            context: "ForIter",
-                        },
-                    )?;
+                    let iter = self
+                        .heap
+                        .get_iterator(iter_handle)
+                        .ok_or(RuntimeError::stale_heap("Iterator", "ForIter"))?;
                     (iter.source, iter.index)
                 };
 
@@ -139,7 +129,7 @@ impl IteratorOps for super::vm::VM {
                 if source.is_list() {
                     let l_handle = source
                         .as_handle()
-                        .ok_or_else(|| RuntimeError::TypeMismatch("Expected list handle".into()))?;
+                        .ok_or_else(|| RuntimeError::type_mismatch("Expected list handle"))?;
                     if let Some(list) = self.heap.get_list(l_handle) {
                         if index < list.len() {
                             next_val = Some(list[index]);

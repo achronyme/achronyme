@@ -14,50 +14,44 @@ pub mod string_ext_impl {
     #[ach_native(name = "join", arity = 2)]
     pub fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "join() takes exactly 2 arguments".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "join() takes exactly 2 arguments",
             ));
         }
         if !args[0].is_list() {
-            return Err(RuntimeError::TypeMismatch(
-                "join() first argument must be a List".into(),
+            return Err(RuntimeError::type_mismatch(
+                "join() first argument must be a List",
             ));
         }
         let list_handle = args[0]
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("bad list handle"))?;
 
         if !args[1].is_string() {
-            return Err(RuntimeError::TypeMismatch(
-                "join() second argument must be a String".into(),
+            return Err(RuntimeError::type_mismatch(
+                "join() second argument must be a String",
             ));
         }
         let sep_handle = args[1]
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
         let sep = vm
             .heap
             .get_string(sep_handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "String",
-                context: "join",
-            })?
+            .ok_or(RuntimeError::stale_heap("String", "join"))?
             .clone();
 
         let list = vm
             .heap
             .get_list(list_handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "List",
-                context: "join",
-            })?
+            .ok_or(RuntimeError::stale_heap("List", "join"))?
             .clone();
 
         let mut result = String::new();
         for (i, val) in list.iter().enumerate() {
             if !val.is_string() {
-                return Err(RuntimeError::TypeMismatch(
-                    "join() list must contain only Strings".into(),
+                return Err(RuntimeError::type_mismatch(
+                    "join() list must contain only Strings",
                 ));
             }
             if i > 0 {
@@ -65,11 +59,11 @@ pub mod string_ext_impl {
             }
             let h = val
                 .as_handle()
-                .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
-            let s = vm.heap.get_string(h).ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "String",
-                context: "join",
-            })?;
+                .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
+            let s = vm
+                .heap
+                .get_string(h)
+                .ok_or(RuntimeError::stale_heap("String", "join"))?;
             result.push_str(s);
         }
         let handle = vm.heap.alloc_string(result)?;

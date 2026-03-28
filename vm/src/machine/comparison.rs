@@ -82,24 +82,18 @@ impl super::vm::VM {
         if v1.is_field() && v2.is_field() {
             let h1 = v1
                 .as_handle()
-                .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
             let h2 = v2
                 .as_handle()
-                .ok_or_else(|| RuntimeError::TypeMismatch("bad field handle".into()))?;
+                .ok_or_else(|| RuntimeError::type_mismatch("bad field handle"))?;
             let f1 = self
                 .heap
                 .get_field(h1)
-                .ok_or(RuntimeError::StaleHeapHandle {
-                    type_name: "Field",
-                    context: "comparison",
-                })?;
+                .ok_or(RuntimeError::stale_heap("Field", "comparison"))?;
             let f2 = self
                 .heap
                 .get_field(h2)
-                .ok_or(RuntimeError::StaleHeapHandle {
-                    type_name: "Field",
-                    context: "comparison",
-                })?;
+                .ok_or(RuntimeError::stale_heap("Field", "comparison"))?;
             let (c1, c2) = (f1.to_canonical(), f2.to_canonical());
             return Ok(match op {
                 OpCode::Lt => c1 < c2,
@@ -137,7 +131,7 @@ impl super::vm::VM {
             OpCode::Ge => ">=",
             _ => "?",
         };
-        Err(RuntimeError::TypeMismatch(format!(
+        Err(RuntimeError::type_mismatch(format!(
             "Expected numeric values for {op_str} comparison"
         )))
     }

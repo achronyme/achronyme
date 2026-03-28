@@ -10,7 +10,7 @@ fn construct_bigint(
     name: &str,
 ) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::ArityMismatch(format!(
+        return Err(RuntimeError::arity_mismatch(format!(
             "{name}() takes exactly 1 argument"
         )));
     }
@@ -19,24 +19,21 @@ fn construct_bigint(
     let bi = if val.is_int() {
         let i = val
             .as_int()
-            .ok_or(RuntimeError::TypeMismatch("bad int value".into()))?;
+            .ok_or(RuntimeError::type_mismatch("bad int value"))?;
         if i < 0 {
-            return Err(RuntimeError::TypeMismatch(
-                "BigInt cannot be constructed from a negative integer".into(),
+            return Err(RuntimeError::type_mismatch(
+                "BigInt cannot be constructed from a negative integer",
             ));
         }
         BigInt::from_u64(i as u64, width)
     } else if val.is_string() {
         let handle = val
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("bad string handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("bad string handle"))?;
         let s = vm
             .heap
             .get_string(handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "String",
-                context: "construct_bigint",
-            })?
+            .ok_or(RuntimeError::stale_heap("String", "construct_bigint"))?
             .clone();
         // Detect radix from prefix
         if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -46,9 +43,9 @@ fn construct_bigint(
         } else {
             BigInt::from_decimal_str(&s, width)
         }
-        .ok_or_else(|| RuntimeError::TypeMismatch(format!("Cannot parse string as {name}: {s}")))?
+        .ok_or_else(|| RuntimeError::type_mismatch(format!("Cannot parse string as {name}: {s}")))?
     } else {
-        return Err(RuntimeError::TypeMismatch(format!(
+        return Err(RuntimeError::type_mismatch(format!(
             "{name}() expects Int or String argument"
         )));
     };
@@ -74,59 +71,49 @@ pub mod bigint_impl {
     #[ach_native(name = "from_bits", arity = 2)]
     pub fn native_from_bits(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 2 {
-            return Err(RuntimeError::ArityMismatch(
-                "from_bits(bits, width) takes exactly 2 arguments".into(),
+            return Err(RuntimeError::arity_mismatch(
+                "from_bits(bits, width) takes exactly 2 arguments",
             ));
         }
 
         // First arg: list of 0/1 ints
         if !args[0].is_list() {
-            return Err(RuntimeError::TypeMismatch(
-                "First argument to from_bits must be a List".into(),
+            return Err(RuntimeError::type_mismatch(
+                "First argument to from_bits must be a List",
             ));
         }
         let list_handle = args[0]
             .as_handle()
-            .ok_or_else(|| RuntimeError::TypeMismatch("bad list handle".into()))?;
+            .ok_or_else(|| RuntimeError::type_mismatch("bad list handle"))?;
         let list = vm
             .heap
             .get_list(list_handle)
-            .ok_or(RuntimeError::StaleHeapHandle {
-                type_name: "List",
-                context: "from_bits",
-            })?
+            .ok_or(RuntimeError::stale_heap("List", "from_bits"))?
             .clone();
 
         let mut bits = Vec::with_capacity(list.len());
         for v in &list {
-            let b = v.as_int().ok_or(RuntimeError::TypeMismatch(
-                "Bit values must be integers".into(),
-            ))?;
+            let b = v
+                .as_int()
+                .ok_or(RuntimeError::type_mismatch("Bit values must be integers"))?;
             if b != 0 && b != 1 {
-                return Err(RuntimeError::TypeMismatch(
-                    "Bit values must be 0 or 1".into(),
-                ));
+                return Err(RuntimeError::type_mismatch("Bit values must be 0 or 1"));
             }
             bits.push(b as u8);
         }
 
         // Second arg: width (256 or 512)
-        let width_val = args[1].as_int().ok_or(RuntimeError::TypeMismatch(
-            "Width must be an integer".into(),
-        ))?;
+        let width_val = args[1]
+            .as_int()
+            .ok_or(RuntimeError::type_mismatch("Width must be an integer"))?;
         let width = match width_val {
             256 => BigIntWidth::W256,
             512 => BigIntWidth::W512,
-            _ => {
-                return Err(RuntimeError::TypeMismatch(
-                    "Width must be 256 or 512".into(),
-                ))
-            }
+            _ => return Err(RuntimeError::type_mismatch("Width must be 256 or 512")),
         };
 
-        let bi = BigInt::from_bits(&bits, width).ok_or_else(|| {
-            RuntimeError::TypeMismatch("Too many bits for the specified width".into())
-        })?;
+        let bi = BigInt::from_bits(&bits, width)
+            .ok_or_else(|| RuntimeError::type_mismatch("Too many bits for the specified width"))?;
         let handle = vm.heap.alloc_bigint(bi)?;
         Ok(Value::bigint(handle))
     }
