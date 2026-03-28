@@ -40,12 +40,7 @@ impl ArithmeticOps for super::vm::VM {
                 let vb = self.get_reg(base, b)?;
                 let vc = self.get_reg(base, c)?;
 
-                if vb.is_string() || vc.is_string() {
-                    let sb = self.val_to_string(&vb);
-                    let sc = self.val_to_string(&vc);
-                    let handle = self.heap.alloc_string(sb + &sc)?;
-                    self.set_reg(base, a, Value::string(handle))?;
-                } else if vb.is_int() && vc.is_int() {
+                if vb.is_int() && vc.is_int() {
                     let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
                     match ib.checked_add(ic) {
@@ -56,6 +51,11 @@ impl ArithmeticOps for super::vm::VM {
                             return Err(RuntimeError::IntegerOverflow);
                         }
                     }
+                } else if vb.is_string() || vc.is_string() {
+                    let sb = self.val_to_string(&vb);
+                    let sc = self.val_to_string(&vc);
+                    let handle = self.heap.alloc_string(sb + &sc)?;
+                    self.set_reg(base, a, Value::string(handle))?;
                 } else if vb.tag() == TAG_BIGINT && vc.tag() == TAG_BIGINT {
                     let ha = vb.as_handle().ok_or(RuntimeError::InvalidOperand)?;
                     let hb = vc.as_handle().ok_or(RuntimeError::InvalidOperand)?;
