@@ -73,13 +73,21 @@ impl super::vm::VM {
         // In stress_mode, check every instruction (stress_mode forces GC
         // on every instruction for testing correctness).
         const GC_CHECK_INTERVAL: u32 = 1024;
-        let mut gc_countdown: u32 = if self.stress_mode { 1 } else { GC_CHECK_INTERVAL };
+        let mut gc_countdown: u32 = if self.stress_mode {
+            1
+        } else {
+            GC_CHECK_INTERVAL
+        };
 
         while self.frames.len() > target_depth {
             // Batched GC check point
             gc_countdown -= 1;
             if gc_countdown == 0 {
-                gc_countdown = if self.stress_mode { 1 } else { GC_CHECK_INTERVAL };
+                gc_countdown = if self.stress_mode {
+                    1
+                } else {
+                    GC_CHECK_INTERVAL
+                };
 
                 if self.heap.request_gc || self.stress_mode {
                     self.collect_garbage();
