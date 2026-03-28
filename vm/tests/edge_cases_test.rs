@@ -575,7 +575,7 @@ fn instruction_budget_sufficient() {
         base: 0,
         dest_reg: 0,
     });
-    vm.instruction_budget = Some(10);
+    vm.instruction_budget = 10;
     assert!(vm.interpret().is_ok(), "should complete within budget");
 }
 
@@ -611,7 +611,7 @@ fn instruction_budget_exhausted() {
         base: 0,
         dest_reg: 0,
     });
-    vm.instruction_budget = Some(100);
+    vm.instruction_budget = 100;
     let result = vm.interpret();
     let err = result.expect_err("infinite loop should exhaust budget");
     assert!(

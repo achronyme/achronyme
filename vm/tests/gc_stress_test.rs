@@ -58,7 +58,7 @@ fn run_with_heap_limit(source: &str, max_heap_bytes: usize) -> Result<VM, String
 
     let mut vm = VM::new();
     vm.heap.max_heap_bytes = max_heap_bytes;
-    vm.instruction_budget = Some(200_000);
+    vm.instruction_budget = 200_000;
     vm.import_strings(compiler.interner.strings);
 
     for proto in &compiler.prototypes {

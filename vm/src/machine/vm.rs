@@ -30,10 +30,10 @@ pub struct VM {
     /// If true, GC will run on every possible occasion (for testing)
     pub stress_mode: bool,
 
-    /// Optional instruction budget. When set, each executed instruction
-    /// decrements the counter. Execution stops with
-    /// `RuntimeError::InstructionBudgetExhausted` when it reaches zero.
-    pub instruction_budget: Option<u64>,
+    /// Instruction budget. Each executed instruction decrements the counter.
+    /// Execution stops with `RuntimeError::InstructionBudgetExhausted` when
+    /// it reaches zero. `u64::MAX` means unlimited (no budget).
+    pub instruction_budget: u64,
 
     // Passive Debug Symbols (Sidecar)
     pub debug_symbols: Option<HashMap<u16, String>>,
@@ -85,7 +85,7 @@ impl VM {
             prototypes: Vec::new(),
             open_upvalues: None,
             stress_mode: false,
-            instruction_budget: None,
+            instruction_budget: u64::MAX,
             debug_symbols: None,
             prove_handler: None,
             verify_handler: None,

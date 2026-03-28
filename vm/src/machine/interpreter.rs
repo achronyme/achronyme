@@ -134,13 +134,12 @@ impl super::vm::VM {
             let chunk_len = func.chunk.len();
             self.frames[frame_idx].ip += 1;
 
-            // Instruction fuel check
-            if let Some(ref mut budget) = self.instruction_budget {
-                if *budget == 0 {
-                    return Err(RuntimeError::InstructionBudgetExhausted);
-                }
-                *budget -= 1;
+            // Instruction fuel check (u64::MAX = unlimited, wrapping
+            // decrement means it never reaches 0 from MAX).
+            if self.instruction_budget == 0 {
+                return Err(RuntimeError::InstructionBudgetExhausted);
             }
+            self.instruction_budget = self.instruction_budget.wrapping_sub(1);
 
             let op_byte = decode_opcode(instruction);
             let op = OpCode::from_u8(op_byte).ok_or(RuntimeError::InvalidOpcode(op_byte))?;
