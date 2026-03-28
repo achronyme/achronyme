@@ -64,22 +64,37 @@ impl super::vm::VM {
         let mut cached_closure_idx: u32 = u32::MAX; // sentinel: cache empty
         let mut cached_func_idx: u32 = 0;
 
-        while self.frames.len() > target_depth {
-            // GC Check Point
-            if self.heap.request_gc || self.stress_mode {
-                self.collect_garbage();
-                self.heap.request_gc = false;
-            }
+        // Batch GC checks: instead of checking `request_gc` and
+        // `heap_limit_exceeded` on every instruction (two branch checks),
+        // check every GC_CHECK_INTERVAL instructions. The flags are sticky
+        // (set by alloc, stay true until cleared), so delaying the check by
+        // up to 1024 instructions is safe — the worst case is slightly
+        // delayed collection, which is negligible.
+        // In stress_mode, check every instruction (stress_mode forces GC
+        // on every instruction for testing correctness).
+        const GC_CHECK_INTERVAL: u32 = 1024;
+        let mut gc_countdown: u32 = if self.stress_mode { 1 } else { GC_CHECK_INTERVAL };
 
-            // Heap Limit Check Point
-            if self.heap.heap_limit_exceeded {
-                self.collect_garbage();
-                self.heap.heap_limit_exceeded = false;
-                if self.heap.bytes_allocated > self.heap.max_heap_bytes {
-                    return Err(RuntimeError::heap_limit_exceeded(
-                        self.heap.max_heap_bytes,
-                        self.heap.bytes_allocated,
-                    ));
+        while self.frames.len() > target_depth {
+            // Batched GC check point
+            gc_countdown -= 1;
+            if gc_countdown == 0 {
+                gc_countdown = if self.stress_mode { 1 } else { GC_CHECK_INTERVAL };
+
+                if self.heap.request_gc || self.stress_mode {
+                    self.collect_garbage();
+                    self.heap.request_gc = false;
+                }
+
+                if self.heap.heap_limit_exceeded {
+                    self.collect_garbage();
+                    self.heap.heap_limit_exceeded = false;
+                    if self.heap.bytes_allocated > self.heap.max_heap_bytes {
+                        return Err(RuntimeError::heap_limit_exceeded(
+                            self.heap.max_heap_bytes,
+                            self.heap.bytes_allocated,
+                        ));
+                    }
                 }
             }
 
