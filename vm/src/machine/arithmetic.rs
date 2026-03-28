@@ -41,8 +41,9 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
-                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above for both operands.
+                    let ib = unsafe { vb.as_int_unchecked() };
+                    let ic = unsafe { vc.as_int_unchecked() };
                     match ib.checked_add(ic) {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
@@ -87,8 +88,9 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
-                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above for both operands.
+                    let ib = unsafe { vb.as_int_unchecked() };
+                    let ic = unsafe { vc.as_int_unchecked() };
                     match ib.checked_sub(ic) {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
@@ -128,8 +130,9 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
-                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above for both operands.
+                    let ib = unsafe { vb.as_int_unchecked() };
+                    let ic = unsafe { vc.as_int_unchecked() };
                     match ib.checked_mul(ic) {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {
                             self.set_reg(base, a, Value::int(result))?;
@@ -169,8 +172,9 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
-                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above for both operands.
+                    let ib = unsafe { vb.as_int_unchecked() };
+                    let ic = unsafe { vc.as_int_unchecked() };
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
@@ -214,8 +218,9 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
-                    let ic = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above for both operands.
+                    let ib = unsafe { vb.as_int_unchecked() };
+                    let ic = unsafe { vc.as_int_unchecked() };
                     if ic == 0 {
                         return Err(RuntimeError::DivisionByZero);
                     }
@@ -258,8 +263,9 @@ impl ArithmeticOps for super::vm::VM {
                 let vc = self.get_reg(base, c)?;
 
                 if vb.is_int() && vc.is_int() {
-                    let base_val = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
-                    let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above for both operands.
+                    let base_val = unsafe { vb.as_int_unchecked() };
+                    let exp_val = unsafe { vc.as_int_unchecked() };
 
                     if exp_val < 0 {
                         return Err(RuntimeError::type_mismatch(
@@ -299,7 +305,8 @@ impl ArithmeticOps for super::vm::VM {
                         .get_bigint(ha)
                         .ok_or(RuntimeError::InvalidOperand)?
                         .clone();
-                    let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified in the branch condition above.
+                    let exp_val = unsafe { vc.as_int_unchecked() };
                     if exp_val < 0 {
                         return Err(RuntimeError::type_mismatch(
                             "Cannot raise unsigned BigInt to negative power",
@@ -334,7 +341,8 @@ impl ArithmeticOps for super::vm::VM {
                         .heap
                         .get_field(ha)
                         .ok_or(RuntimeError::stale_heap("Field", "Pow"))?;
-                    let exp_val = vc.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified in the branch condition above.
+                    let exp_val = unsafe { vc.as_int_unchecked() };
                     if exp_val < 0 {
                         let inv = fa.inv().ok_or(RuntimeError::DivisionByZero)?;
                         let result = inv.pow(&[(-exp_val) as u64, 0, 0, 0]);
@@ -356,7 +364,8 @@ impl ArithmeticOps for super::vm::VM {
                 let b = decode_b(instruction) as usize;
                 let vb = self.get_reg(base, b)?;
                 if vb.is_int() {
-                    let ib = vb.as_int().ok_or(RuntimeError::InvalidOperand)?;
+                    // SAFETY: is_int() verified above.
+                    let ib = unsafe { vb.as_int_unchecked() };
                     // Handle i60 overflow: negating I60_MIN overflows
                     match ib.checked_neg() {
                         Some(result) if (I60_MIN..=I60_MAX).contains(&result) => {

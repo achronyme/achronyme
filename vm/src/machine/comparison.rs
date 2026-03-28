@@ -69,7 +69,10 @@ impl ComparisonOps for super::vm::VM {
 impl super::vm::VM {
     /// Compare two values with the given ordering operator.
     fn compare_values(&self, op: OpCode, v1: Value, v2: Value) -> Result<bool, RuntimeError> {
-        if let (Some(n1), Some(n2)) = (v1.as_int(), v2.as_int()) {
+        if v1.is_int() && v2.is_int() {
+            // SAFETY: is_int() verified above for both operands.
+            let n1 = unsafe { v1.as_int_unchecked() };
+            let n2 = unsafe { v2.as_int_unchecked() };
             return Ok(match op {
                 OpCode::Lt => n1 < n2,
                 OpCode::Gt => n1 > n2,

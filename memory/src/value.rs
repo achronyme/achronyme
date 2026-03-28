@@ -238,14 +238,24 @@ impl Value {
         if self.tag() != TAG_INT {
             return None;
         }
+        // SAFETY: tag check above guarantees this is an int.
+        Some(unsafe { self.as_int_unchecked() })
+    }
+
+    /// Extract the i64 payload without checking the tag.
+    ///
+    /// # Safety
+    /// Caller must ensure `self.is_int()` is true.
+    #[inline(always)]
+    pub unsafe fn as_int_unchecked(&self) -> i64 {
         let raw = self.0 & PAYLOAD_MASK;
         // Sign-extend from bit 59
         let extended = if raw & (1u64 << 59) != 0 {
-            raw | !PAYLOAD_MASK // fill upper bits with 1s
+            raw | !PAYLOAD_MASK
         } else {
             raw
         };
-        Some(extended as i64)
+        extended as i64
     }
 
     #[inline]
