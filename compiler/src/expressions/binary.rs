@@ -2,6 +2,7 @@ use crate::codegen::Compiler;
 use crate::control_flow::ControlFlowCompiler;
 use crate::error::CompilerError;
 use crate::expressions::ExpressionCompiler;
+use crate::types::RegType;
 use achronyme_parser::ast::*;
 use vm::opcode::OpCode;
 
@@ -16,24 +17,110 @@ impl BinaryCompiler for Compiler {
         let left_reg = self.compile_expr(lhs)?;
         let right_reg = self.compile_expr(rhs)?;
 
+        let left_type = self.get_reg_type(left_reg)?;
+        let right_type = self.get_reg_type(right_reg)?;
+        let both_int = left_type == RegType::Int && right_type == RegType::Int;
+
         let opcode = match op {
-            BinOp::Add => OpCode::Add,
-            BinOp::Sub => OpCode::Sub,
-            BinOp::Mul => OpCode::Mul,
-            BinOp::Div => OpCode::Div,
-            BinOp::Mod => OpCode::Mod,
-            BinOp::Pow => OpCode::Pow,
-            BinOp::Eq => OpCode::Eq,
-            BinOp::Neq => OpCode::NotEq,
-            BinOp::Lt => OpCode::Lt,
-            BinOp::Le => OpCode::Le,
-            BinOp::Gt => OpCode::Gt,
-            BinOp::Ge => OpCode::Ge,
+            BinOp::Add => {
+                if both_int {
+                    OpCode::AddInt
+                } else {
+                    OpCode::Add
+                }
+            }
+            BinOp::Sub => {
+                if both_int {
+                    OpCode::SubInt
+                } else {
+                    OpCode::Sub
+                }
+            }
+            BinOp::Mul => {
+                if both_int {
+                    OpCode::MulInt
+                } else {
+                    OpCode::Mul
+                }
+            }
+            BinOp::Div => {
+                if both_int {
+                    OpCode::DivInt
+                } else {
+                    OpCode::Div
+                }
+            }
+            BinOp::Mod => {
+                if both_int {
+                    OpCode::ModInt
+                } else {
+                    OpCode::Mod
+                }
+            }
+            BinOp::Pow => OpCode::Pow, // complex type dispatch, skip specialization
+            BinOp::Eq => {
+                if both_int {
+                    OpCode::EqInt
+                } else {
+                    OpCode::Eq
+                }
+            }
+            BinOp::Neq => {
+                if both_int {
+                    OpCode::NeqInt
+                } else {
+                    OpCode::NotEq
+                }
+            }
+            BinOp::Lt => {
+                if both_int {
+                    OpCode::LtInt
+                } else {
+                    OpCode::Lt
+                }
+            }
+            BinOp::Le => {
+                if both_int {
+                    OpCode::LeInt
+                } else {
+                    OpCode::Le
+                }
+            }
+            BinOp::Gt => {
+                if both_int {
+                    OpCode::GtInt
+                } else {
+                    OpCode::Gt
+                }
+            }
+            BinOp::Ge => {
+                if both_int {
+                    OpCode::GeInt
+                } else {
+                    OpCode::Ge
+                }
+            }
             // And/Or are handled separately via compile_and/compile_or
             BinOp::And | BinOp::Or => unreachable!(),
         };
 
+        // Set result type
+        let result_type = match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                if both_int {
+                    RegType::Int
+                } else {
+                    RegType::Unknown
+                }
+            }
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                RegType::Bool
+            }
+            _ => RegType::Unknown,
+        };
+
         self.emit_abc(opcode, left_reg, left_reg, right_reg)?;
+        self.set_reg_type(left_reg, result_type)?;
         self.free_reg(right_reg)?;
         Ok(left_reg)
     }
