@@ -722,7 +722,7 @@ impl fmt::Display for CircuitBoolOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prove_ir::compiler::{OuterScopeEntry, ProveIrCompiler};
+    use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 
     /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
     fn assert_round_trip(prove_ir: &ProveIR) {
@@ -820,11 +820,13 @@ mod tests {
 
     #[test]
     fn round_trip_with_captures() {
-        use std::collections::HashMap;
-        let scope: HashMap<String, OuterScopeEntry> = ["secret", "hash"]
-            .iter()
-            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
-            .collect();
+        let scope = OuterScope {
+            values: ["secret", "hash"]
+                .iter()
+                .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+                .collect(),
+            ..Default::default()
+        };
         let ir = ProveIrCompiler::compile_prove_block(
             "public hash\nassert_eq(poseidon(secret, 0), hash)",
             &scope,
@@ -955,11 +957,13 @@ mod tests {
 
     #[test]
     fn display_with_captures() {
-        use std::collections::HashMap;
-        let scope: HashMap<String, OuterScopeEntry> = [("secret", OuterScopeEntry::Scalar)]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let scope = OuterScope {
+            values: [("secret", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            ..Default::default()
+        };
         let ir = ProveIrCompiler::compile_prove_block(
             "public hash\nassert_eq(poseidon(secret, 0), hash)",
             &scope,

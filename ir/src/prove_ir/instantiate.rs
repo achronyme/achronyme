@@ -929,7 +929,7 @@ fn fe_to_usize(fe: &FieldElement, context: &str) -> Result<usize, ProveIrError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prove_ir::compiler::{OuterScopeEntry, ProveIrCompiler};
+    use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 
     /// Helper: compile source as a circuit and instantiate (no captures).
     fn compile_and_instantiate(source: &str) -> IrProgram {
@@ -943,10 +943,13 @@ mod tests {
         outer_scope: &[&str],
         captures: &[(&str, u64)],
     ) -> IrProgram {
-        let scope: HashMap<String, OuterScopeEntry> = outer_scope
-            .iter()
-            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
-            .collect();
+        let scope = OuterScope {
+            values: outer_scope
+                .iter()
+                .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+                .collect(),
+            ..Default::default()
+        };
         let prove_ir = ProveIrCompiler::compile_prove_block(source, &scope).unwrap();
         let cap_map: HashMap<String, FieldElement> = captures
             .iter()

@@ -113,18 +113,18 @@ impl ProveIrCompiler {
 
     /// Compile an AST Block into a ProveIR template.
     ///
-    /// `outer_scope`: names and type info from the enclosing scope (for prove blocks).
-    /// Pass an empty map for `ach circuit` mode.
+    /// `outer_scope`: values and functions from the enclosing scope.
+    /// Pass `OuterScope::default()` for self-contained circuits.
     pub fn compile(
         block: &Block,
-        outer_scope: &HashMap<String, OuterScopeEntry>,
+        outer_scope: &OuterScope,
     ) -> Result<ProveIR, ProveIrError> {
         Self::compile_with_source_dir(block, outer_scope, None, None)
     }
 
     fn compile_with_source_dir(
         block: &Block,
-        outer_scope: &HashMap<String, OuterScopeEntry>,
+        outer_scope: &OuterScope,
         source_dir: Option<std::path::PathBuf>,
         source_path: Option<std::path::PathBuf>,
     ) -> Result<ProveIR, ProveIrError> {
@@ -134,8 +134,8 @@ impl ProveIrCompiler {
             compiler.compiling_modules.insert(path);
         }
 
-        // Register outer scope names as potential captures
-        for (name, entry) in outer_scope {
+        // Register outer scope values as potential captures
+        for (name, entry) in &outer_scope.values {
             match entry {
                 OuterScopeEntry::Scalar => {
                     compiler
@@ -156,6 +156,27 @@ impl ProveIrCompiler {
             }
         }
 
+        // Register outer scope functions in fn_table for inlining
+        for stmt in &outer_scope.functions {
+            if let Stmt::FnDecl {
+                name,
+                params,
+                return_type,
+                body,
+                ..
+            } = stmt
+            {
+                compiler.fn_table.insert(
+                    name.clone(),
+                    FnDef {
+                        params: params.clone(),
+                        body: body.clone(),
+                        return_type: return_type.clone(),
+                    },
+                );
+            }
+        }
+
         // Compile all statements in the block
         compiler.compile_block_stmts(block)?;
 
@@ -164,7 +185,7 @@ impl ProveIrCompiler {
 
         // Build capture_arrays: arrays from outer scope whose elements were captured
         let mut capture_arrays = Vec::new();
-        for (name, entry) in outer_scope {
+        for (name, entry) in &outer_scope.values {
             if let OuterScopeEntry::Array(n) = entry {
                 let has_captured =
                     (0..*n).any(|i| compiler.captured_names.contains(&format!("{name}_{i}")));
@@ -199,10 +220,11 @@ impl ProveIrCompiler {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
 
-        // Collect top-level imports (before the circuit declaration) and find
-        // the circuit declaration itself. Imports are processed first so that
-        // module functions are available inside the circuit body.
+        // Collect top-level statements before the circuit declaration:
+        // - Imports/exports are prepended to the block (need stmt processing for module resolution)
+        // - FnDecl stmts are passed via OuterScope (registered in fn_table before compilation)
         let mut preamble_stmts: Vec<Stmt> = Vec::new();
+        let mut outer_functions: Vec<Stmt> = Vec::new();
         let mut circuit_decl = None;
 
         for stmt in &program.stmts {
@@ -220,7 +242,7 @@ impl ProveIrCompiler {
                     preamble_stmts.push(stmt.clone());
                 }
                 Stmt::FnDecl { .. } if circuit_decl.is_none() => {
-                    preamble_stmts.push(stmt.clone());
+                    outer_functions.push(stmt.clone());
                 }
                 Stmt::Export { .. } if circuit_decl.is_none() => {
                     preamble_stmts.push(stmt.clone());
@@ -280,7 +302,8 @@ impl ProveIrCompiler {
                     }),
                 }
             }
-            // Prepend preamble (imports, fn decls) before the circuit body
+            // Prepend imports/exports before the circuit body (need stmt processing).
+            // Functions go via OuterScope — registered in fn_table before compilation.
             let mut all_stmts = preamble_stmts;
             all_stmts.extend(stmts);
             all_stmts.extend(body.stmts.clone());
@@ -288,11 +311,15 @@ impl ProveIrCompiler {
                 stmts: all_stmts,
                 span: body.span.clone(),
             };
+            let outer_scope = OuterScope {
+                functions: outer_functions,
+                ..Default::default()
+            };
             let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
             let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
             let mut prove_ir = Self::compile_with_source_dir(
                 &circuit_block,
-                &HashMap::new(),
+                &outer_scope,
                 source_dir,
                 canonical_source,
             )?;
@@ -309,10 +336,10 @@ impl ProveIrCompiler {
         })
     }
 
-    /// Convenience: parse source and compile as a prove block with scalar outer scope names.
+    /// Convenience: parse source and compile as a prove block with outer scope.
     pub fn compile_prove_block(
         source: &str,
-        outer_scope: &HashMap<String, OuterScopeEntry>,
+        outer_scope: &OuterScope,
     ) -> Result<ProveIR, ProveIrError> {
         let (program, errors) = achronyme_parser::parse_program(source);
         if let Some(err) = errors
@@ -3296,10 +3323,13 @@ mod tests {
 
     /// Helper: compile a prove block body with outer scope captures (all scalar).
     fn compile_prove_block(source: &str, outer_vars: &[&str]) -> Result<ProveIR, ProveIrError> {
-        let outer: HashMap<String, OuterScopeEntry> = outer_vars
-            .iter()
-            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
-            .collect();
+        let outer = OuterScope {
+            values: outer_vars
+                .iter()
+                .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+                .collect(),
+            ..Default::default()
+        };
         ProveIrCompiler::compile_prove_block(source, &outer)
     }
 
