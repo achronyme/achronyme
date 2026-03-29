@@ -95,7 +95,7 @@ assert_eq(a * b, c)
     let (compiler, witness) = lower_and_compile_r1cs(source, &[("a", 6), ("b", 7), ("c", 42)]);
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
+    let result = proving::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
         .expect("generate_proof failed");
 
     match result {
@@ -156,7 +156,7 @@ assert_eq(poseidon(a, b), h)
     );
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
+    let result = proving::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
         .expect("generate_proof failed");
 
     match result {
@@ -192,7 +192,7 @@ assert_eq(mux(flag, a, b), r)
         lower_and_compile_r1cs(source, &[("flag", 1), ("a", 10), ("b", 20), ("r", 10)]);
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
+    let result = proving::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
         .expect("generate_proof failed");
 
     match result {
@@ -244,7 +244,7 @@ assert_eq(a * b, c)
     let compiler = lower_and_compile_plonkish(source, &[("a", 6), ("b", 7), ("c", 42)]);
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    let result = proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("generate_plonkish_proof failed");
 
     match result {
@@ -289,7 +289,7 @@ assert_eq(a - b, d)
     let compiler = lower_and_compile_plonkish(source, &[("a", 10), ("b", 3), ("s", 13), ("d", 7)]);
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    let result = proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("generate_plonkish_proof failed");
 
     match result {
@@ -339,7 +339,7 @@ assert_eq(a * b, c)
     let (compiler, witness) = lower_and_compile_r1cs(source, &[("a", 6), ("b", 7), ("c", 42)]);
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
+    let result = proving::groth16::generate_proof(&compiler.cs, &witness, cache_dir.path())
         .expect("generate_proof failed");
 
     match result {
@@ -349,14 +349,15 @@ assert_eq(a * b, c)
             vkey_json,
         } => {
             // Verify the proof using the deserialization + verify roundtrip
-            let valid = cli::groth16::verify_proof_from_json(&proof_json, &public_json, &vkey_json)
-                .expect("verify_proof_from_json failed");
+            let valid =
+                proving::groth16::verify_proof_from_json(&proof_json, &public_json, &vkey_json)
+                    .expect("verify_proof_from_json failed");
             assert!(valid, "proof should verify successfully");
 
             // Tamper with public input and verify it fails
             let tampered_public = serde_json::to_string(&vec!["99"]).unwrap();
             let tampered_result =
-                cli::groth16::verify_proof_from_json(&proof_json, &tampered_public, &vkey_json);
+                proving::groth16::verify_proof_from_json(&proof_json, &tampered_public, &vkey_json);
             match tampered_result {
                 Ok(false) => {} // expected
                 Ok(true) => panic!("tampered proof should not verify"),
@@ -383,7 +384,7 @@ assert_eq(a * b, c)
 
     // First run: a=3, b=5, c=15
     let (compiler1, witness1) = lower_and_compile_r1cs(source, &[("a", 3), ("b", 5), ("c", 15)]);
-    let result1 = cli::groth16::generate_proof(&compiler1.cs, &witness1, cache_dir.path())
+    let result1 = proving::groth16::generate_proof(&compiler1.cs, &witness1, cache_dir.path())
         .expect("first generate_proof failed");
     assert!(matches!(result1, ProveResult::Proof { .. }));
 
@@ -408,7 +409,7 @@ assert_eq(a * b, c)
 
     // Second run: same circuit structure, different witness (a=2, b=9, c=18)
     let (compiler2, witness2) = lower_and_compile_r1cs(source, &[("a", 2), ("b", 9), ("c", 18)]);
-    let result2 = cli::groth16::generate_proof(&compiler2.cs, &witness2, cache_dir.path())
+    let result2 = proving::groth16::generate_proof(&compiler2.cs, &witness2, cache_dir.path())
         .expect("second generate_proof failed (should use cache)");
 
     match result2 {
@@ -462,7 +463,7 @@ assert_eq(poseidon(a, b), h)
         .expect("Plonkish constraint verification failed");
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    let result = proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("generate_plonkish_proof failed");
 
     match result {
@@ -499,7 +500,7 @@ assert_eq(mux(flag, a, b), r)
         lower_and_compile_plonkish(source, &[("flag", 1), ("a", 10), ("b", 20), ("r", 10)]);
 
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    let result = proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("generate_plonkish_proof failed");
 
     match result {
@@ -522,7 +523,7 @@ assert_eq(x, out)
 "#;
     let compiler = lower_and_compile_plonkish(source, &[("x", 42), ("out", 42)]);
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    let result = proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("range_check KZG proof generation failed");
     match result {
         ProveResult::Proof { proof_json, .. } => {
@@ -546,7 +547,7 @@ assert_eq(a < b, out)
 "#;
     let compiler = lower_and_compile_plonkish(source, &[("a", 3), ("b", 5), ("out", 1)]);
     let cache_dir = tempfile::tempdir().unwrap();
-    let result = cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    let result = proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("IsLtBounded KZG proof generation failed");
     match result {
         ProveResult::Proof { proof_json, .. } => {

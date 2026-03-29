@@ -118,7 +118,7 @@ fn lower_and_compile_fe(source: &str, input_pairs: &[(&str, FieldElement)]) -> P
 
 fn prove_and_verify(compiler: PlonkishCompiler) -> ProveResult {
     let cache_dir = tempfile::tempdir().unwrap();
-    cli::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
+    proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir.path())
         .expect("halo2 proof generation failed")
 }
 

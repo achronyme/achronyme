@@ -1,10 +1,7 @@
 pub mod commands;
 pub mod config;
-pub mod groth16;
-pub mod halo2_proof;
 pub mod init;
 pub mod prove_handler;
-pub mod solidity;
 pub mod style;
 
 /// Return the cache directory for Achronyme key material.

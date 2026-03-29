@@ -27,18 +27,8 @@ rand = "0.8"
 tiny_http = "0.12"
 open = "5"
 
-# Groth16 proving (ark-works ecosystem)
-ark-groth16 = "0.5"
-ark-bn254 = "0.5"
-ark-relations = "0.5"
-ark-std = "0.5"
-ark-serialize = "0.5"
-ark-ff = "0.5"
-ark-ec = "0.5"
-ark-snark = "0.5"
-
-# Plonkish proving (halo2/KZG on BN254)
-halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_04_20", features = ["circuit-params"] }
+# Proving backends (shared crate)
+proving = { path = "../proving" }
 
 memory = { path = "../memory" }
 vm = { path = "../vm" }

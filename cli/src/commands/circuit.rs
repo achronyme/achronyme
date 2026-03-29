@@ -512,10 +512,10 @@ fn run_r1cs_pipeline(
     if let Some(sol_path) = solidity_path {
         let cache_dir = crate::cache_dir();
 
-        let vk = crate::groth16::setup_vk_only(&compiler.cs, &cache_dir)
+        let vk = proving::groth16::setup_vk_only(&compiler.cs, &cache_dir)
             .map_err(|e| anyhow::anyhow!("Groth16 setup failed: {e}"))?;
 
-        let sol_source = crate::solidity::generate_solidity_verifier(&vk);
+        let sol_source = proving::solidity::generate_solidity_verifier(&vk);
         fs::write(sol_path, &sol_source).with_context(|| format!("cannot write {sol_path}"))?;
 
         if verbose {
@@ -601,7 +601,7 @@ fn run_plonkish_pipeline(
         if prove {
             let cache_dir = crate::cache_dir();
 
-            let result = crate::halo2_proof::generate_plonkish_proof(compiler, &cache_dir)
+            let result = proving::halo2_proof::generate_plonkish_proof(compiler, &cache_dir)
                 .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
 
             match result {
