@@ -1,6 +1,7 @@
 pub mod bool_prop;
 pub mod bound_inference;
 pub mod const_fold;
+pub mod cse;
 pub mod dce;
 pub mod taint;
 
@@ -12,6 +13,8 @@ pub struct OptimizeStats {
     pub total_before: usize,
     /// Instructions converted to constants by constant folding.
     pub const_fold_converted: usize,
+    /// Common sub-expressions eliminated by CSE.
+    pub cse_eliminated: usize,
     /// Instructions eliminated by dead code elimination.
     pub dce_eliminated: usize,
     /// Total instructions after optimization.
@@ -60,6 +63,8 @@ pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
         .count();
     let const_fold_converted = consts_after.saturating_sub(consts_before);
 
+    let cse_eliminated = cse::common_subexpression_elimination(program);
+
     let before_dce = program.instructions.len();
     dce::dead_code_elimination(program);
     let dce_eliminated = before_dce.saturating_sub(program.instructions.len());
@@ -69,6 +74,7 @@ pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
     OptimizeStats {
         total_before,
         const_fold_converted,
+        cse_eliminated,
         dce_eliminated,
         total_after,
         bound_inference: bi_result,
