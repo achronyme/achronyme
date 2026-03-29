@@ -81,8 +81,8 @@ prove membership(merkle_root: Public) {
     let my_commitment = poseidon(key_5, 0)
 
     // Verify: my_commitment is a leaf in the tree rooted at merkle_root
-    // This unfolds into 3 levels of: mux(idx, H(sib,cur), H(cur,sib))
-    // then assert_eq(computed_root, merkle_root)
+    // This unfolds into 3 levels of: conditional swap + single hash
+    // (2 mux + 1 poseidon per level), then assert_eq(computed_root, merkle_root)
     merkle_verify(merkle_root, my_commitment, proof_path, proof_indices)
 }
 

@@ -350,26 +350,31 @@ impl IrLowering {
         }
 
         for i in 0..path.len() {
-            let left_hash = self.program.fresh_var();
-            self.program.push(Instruction::PoseidonHash {
-                result: left_hash,
-                left: current,
-                right: path[i],
-            });
-            let right_hash = self.program.fresh_var();
-            self.program.push(Instruction::PoseidonHash {
-                result: right_hash,
-                left: path[i],
-                right: current,
-            });
-            let mux_result = self.program.fresh_var();
+            // Conditional swap: select hash input order based on direction bit.
+            // idx=0 → current is left child:  poseidon(current, sibling)
+            // idx=1 → current is right child: poseidon(sibling, current)
+            // Cost: 2 Mux + 1 Poseidon (365) instead of 2 Poseidon + 1 Mux (724).
+            let left = self.program.fresh_var();
             self.program.push(Instruction::Mux {
-                result: mux_result,
+                result: left,
                 cond: indices[i],
-                if_true: right_hash,
-                if_false: left_hash,
+                if_true: path[i],
+                if_false: current,
             });
-            current = mux_result;
+            let right = self.program.fresh_var();
+            self.program.push(Instruction::Mux {
+                result: right,
+                cond: indices[i],
+                if_true: current,
+                if_false: path[i],
+            });
+            let hash_result = self.program.fresh_var();
+            self.program.push(Instruction::PoseidonHash {
+                result: hash_result,
+                left,
+                right,
+            });
+            current = hash_result;
         }
 
         let v = self.program.fresh_var();

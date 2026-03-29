@@ -245,7 +245,7 @@ fn merkle_depth1_constraint_count() {
     let (sibs, dirs) = merkle_proof(&p, &leaves, 0);
     let inputs = merkle_inputs(root, leaves[0], &sibs, &dirs);
     let n = compile_merkle(&merkle_source(1), &inputs);
-    // 1 level: 2 mux + 1 poseidon (~361) + 1 assert_eq ≈ 365
+    // 1 level: conditional swap (2 mux) + 1 poseidon (~361) + 1 assert_eq ≈ 365
     assert!(
         (350..=380).contains(&n),
         "depth-1 constraint count unexpected: {n}"

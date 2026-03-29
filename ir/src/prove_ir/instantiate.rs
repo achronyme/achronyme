@@ -704,34 +704,31 @@ impl Instantiator {
                     });
                 }
 
-                // Walk up the tree: for each level, hash(current, sibling) based on index
+                // Walk up the tree: conditional swap + single hash per level.
+                // idx=0 → current is left child:  poseidon(current, sibling)
+                // idx=1 → current is right child: poseidon(sibling, current)
+                // Cost: 2 Mux + 1 Poseidon (365) instead of 2 Poseidon + 1 Mux (724).
                 let mut current = leaf_var;
                 for (sibling, idx) in path_elems.iter().zip(idx_elems.iter()) {
-                    // mux(idx, hash(sibling, current), hash(current, sibling))
-                    let hash_lr = {
-                        let v = self.program.fresh_var();
-                        self.program.push(Instruction::PoseidonHash {
-                            result: v,
-                            left: current,
-                            right: *sibling,
-                        });
-                        v
-                    };
-                    let hash_rl = {
-                        let v = self.program.fresh_var();
-                        self.program.push(Instruction::PoseidonHash {
-                            result: v,
-                            left: *sibling,
-                            right: current,
-                        });
-                        v
-                    };
-                    let v = self.program.fresh_var();
+                    let left = self.program.fresh_var();
                     self.program.push(Instruction::Mux {
-                        result: v,
+                        result: left,
                         cond: *idx,
-                        if_true: hash_rl,
-                        if_false: hash_lr,
+                        if_true: *sibling,
+                        if_false: current,
+                    });
+                    let right = self.program.fresh_var();
+                    self.program.push(Instruction::Mux {
+                        result: right,
+                        cond: *idx,
+                        if_true: current,
+                        if_false: *sibling,
+                    });
+                    let v = self.program.fresh_var();
+                    self.program.push(Instruction::PoseidonHash {
+                        result: v,
+                        left,
+                        right,
                     });
                     current = v;
                 }
