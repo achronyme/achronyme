@@ -481,6 +481,241 @@ pub enum CircuitBoolOp {
 }
 
 // ---------------------------------------------------------------------------
+// Display implementations
+// ---------------------------------------------------------------------------
+
+use std::fmt;
+
+impl fmt::Display for ProveIR {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Captures
+        if !self.captures.is_empty() {
+            writeln!(f, "  Captures:")?;
+            for cap in &self.captures {
+                let usage = match cap.usage {
+                    CaptureUsage::StructureOnly => "structure",
+                    CaptureUsage::CircuitInput => "witness",
+                    CaptureUsage::Both => "witness+structure",
+                };
+                writeln!(f, "    {:<20} ({})", cap.name, usage)?;
+            }
+        }
+        if !self.capture_arrays.is_empty() {
+            for arr in &self.capture_arrays {
+                writeln!(f, "    {:<20} (array, len={})", arr.name, arr.size)?;
+            }
+        }
+
+        // Inputs
+        if !self.public_inputs.is_empty() {
+            writeln!(f, "  Public inputs:")?;
+            for inp in &self.public_inputs {
+                write!(f, "    {}: {}", inp.name, inp.ir_type)?;
+                if let Some(ref sz) = inp.array_size {
+                    write!(f, "[{}]", sz)?;
+                }
+                writeln!(f)?;
+            }
+        }
+        if !self.witness_inputs.is_empty() {
+            writeln!(f, "  Witness inputs:")?;
+            for inp in &self.witness_inputs {
+                write!(f, "    {}: {}", inp.name, inp.ir_type)?;
+                if let Some(ref sz) = inp.array_size {
+                    write!(f, "[{}]", sz)?;
+                }
+                writeln!(f)?;
+            }
+        }
+
+        // Body
+        if !self.body.is_empty() {
+            writeln!(f, "  Body:")?;
+            for node in &self.body {
+                write_node(f, node, 2)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for ArraySize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArraySize::Literal(n) => write!(f, "{n}"),
+            ArraySize::Capture(name) => write!(f, "{name}"),
+        }
+    }
+}
+
+fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> fmt::Result {
+    let pad = "    ".repeat(indent);
+    match node {
+        CircuitNode::Let { name, value, .. } => {
+            writeln!(f, "{pad}let {name} = {value}")
+        }
+        CircuitNode::LetArray { name, elements, .. } => {
+            write!(f, "{pad}let {name} = [")?;
+            for (i, e) in elements.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{e}")?;
+            }
+            writeln!(f, "]")
+        }
+        CircuitNode::AssertEq {
+            lhs, rhs, message, ..
+        } => {
+            write!(f, "{pad}assert_eq({lhs}, {rhs}")?;
+            if let Some(msg) = message {
+                write!(f, ", \"{msg}\"")?;
+            }
+            writeln!(f, ")")
+        }
+        CircuitNode::Assert { expr, message, .. } => {
+            write!(f, "{pad}assert({expr}")?;
+            if let Some(msg) = message {
+                write!(f, ", \"{msg}\"")?;
+            }
+            writeln!(f, ")")
+        }
+        CircuitNode::For {
+            var, range, body, ..
+        } => {
+            write!(f, "{pad}for {var} in ")?;
+            match range {
+                ForRange::Literal { start, end } => writeln!(f, "{start}..{end} {{")?,
+                ForRange::WithCapture { start, end_capture } => {
+                    writeln!(f, "{start}..{end_capture} {{")?
+                }
+                ForRange::Array(name) => writeln!(f, "{name} {{")?,
+            }
+            for n in body {
+                write_node(f, n, indent + 1)?;
+            }
+            writeln!(f, "{pad}}}")
+        }
+        CircuitNode::If {
+            cond,
+            then_body,
+            else_body,
+            ..
+        } => {
+            writeln!(f, "{pad}if {cond} {{")?;
+            for n in then_body {
+                write_node(f, n, indent + 1)?;
+            }
+            if !else_body.is_empty() {
+                writeln!(f, "{pad}}} else {{")?;
+                for n in else_body {
+                    write_node(f, n, indent + 1)?;
+                }
+            }
+            writeln!(f, "{pad}}}")
+        }
+        CircuitNode::Expr { expr, .. } => {
+            writeln!(f, "{pad}{expr}")
+        }
+    }
+}
+
+impl fmt::Display for CircuitExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CircuitExpr::Const(fe) => write!(f, "{fe}"),
+            CircuitExpr::Input(name) => write!(f, "{name}"),
+            CircuitExpr::Capture(name) => write!(f, "${name}"),
+            CircuitExpr::Var(name) => write!(f, "{name}"),
+            CircuitExpr::BinOp { op, lhs, rhs } => {
+                write!(f, "({lhs} {op} {rhs})")
+            }
+            CircuitExpr::UnaryOp { op, operand } => {
+                write!(f, "{op}{operand}")
+            }
+            CircuitExpr::Comparison { op, lhs, rhs } => {
+                write!(f, "({lhs} {op} {rhs})")
+            }
+            CircuitExpr::BoolOp { op, lhs, rhs } => {
+                write!(f, "({lhs} {op} {rhs})")
+            }
+            CircuitExpr::Mux {
+                cond,
+                if_true,
+                if_false,
+            } => write!(f, "mux({cond}, {if_true}, {if_false})"),
+            CircuitExpr::PoseidonHash { left, right } => {
+                write!(f, "poseidon({left}, {right})")
+            }
+            CircuitExpr::PoseidonMany(args) => {
+                write!(f, "poseidon(")?;
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{a}")?;
+                }
+                write!(f, ")")
+            }
+            CircuitExpr::RangeCheck { value, bits } => {
+                write!(f, "range_check({value}, {bits})")
+            }
+            CircuitExpr::MerkleVerify {
+                root,
+                leaf,
+                path,
+                indices,
+            } => write!(f, "merkle_verify({root}, {leaf}, {path}, {indices})"),
+            CircuitExpr::ArrayIndex { array, index } => write!(f, "{array}[{index}]"),
+            CircuitExpr::ArrayLen(name) => write!(f, "{name}.len()"),
+            CircuitExpr::Pow { base, exp } => write!(f, "({base} ^ {exp})"),
+        }
+    }
+}
+
+impl fmt::Display for CircuitBinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CircuitBinOp::Add => write!(f, "+"),
+            CircuitBinOp::Sub => write!(f, "-"),
+            CircuitBinOp::Mul => write!(f, "*"),
+            CircuitBinOp::Div => write!(f, "/"),
+        }
+    }
+}
+
+impl fmt::Display for CircuitUnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CircuitUnaryOp::Neg => write!(f, "-"),
+            CircuitUnaryOp::Not => write!(f, "!"),
+        }
+    }
+}
+
+impl fmt::Display for CircuitCmpOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CircuitCmpOp::Eq => write!(f, "=="),
+            CircuitCmpOp::Neq => write!(f, "!="),
+            CircuitCmpOp::Lt => write!(f, "<"),
+            CircuitCmpOp::Le => write!(f, "<="),
+            CircuitCmpOp::Gt => write!(f, ">"),
+            CircuitCmpOp::Ge => write!(f, ">="),
+        }
+    }
+}
+
+impl fmt::Display for CircuitBoolOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CircuitBoolOp::And => write!(f, "&&"),
+            CircuitBoolOp::Or => write!(f, "||"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -698,6 +933,64 @@ mod tests {
             "serialized size {} bytes seems too large",
             bytes.len()
         );
+    }
+
+    // =====================================================================
+    // Display tests
+    // =====================================================================
+
+    #[test]
+    fn display_simple_circuit() {
+        let ir = crate::prove_ir::test_utils::compile_circuit(
+            "public x\npublic out\nwitness s\nassert_eq(x + s, out)",
+        )
+        .unwrap();
+        let output = format!("{ir}");
+        assert!(output.contains("Public inputs:"), "got:\n{output}");
+        assert!(output.contains("x: Field"), "got:\n{output}");
+        assert!(output.contains("Witness inputs:"), "got:\n{output}");
+        assert!(output.contains("s: Field"), "got:\n{output}");
+        assert!(output.contains("assert_eq("), "got:\n{output}");
+    }
+
+    #[test]
+    fn display_with_captures() {
+        use std::collections::HashMap;
+        let scope: HashMap<String, OuterScopeEntry> = [("secret", OuterScopeEntry::Scalar)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let ir = ProveIrCompiler::compile_prove_block(
+            "public hash\nassert_eq(poseidon(secret, 0), hash)",
+            &scope,
+        )
+        .unwrap();
+        let output = format!("{ir}");
+        assert!(output.contains("Captures:"), "got:\n{output}");
+        assert!(output.contains("secret"), "got:\n{output}");
+        assert!(output.contains("poseidon("), "got:\n{output}");
+    }
+
+    #[test]
+    fn display_with_for_loop() {
+        let ir = crate::prove_ir::test_utils::compile_circuit(
+            "public out\nmut acc = 0\nfor i in 0..3 { acc = acc + i }\nassert_eq(acc, out)",
+        )
+        .unwrap();
+        let output = format!("{ir}");
+        assert!(output.contains("for i in 0..3"), "got:\n{output}");
+    }
+
+    #[test]
+    fn display_with_mux_from_if() {
+        // if-expressions are desugared to mux by the ProveIR compiler
+        let ir = crate::prove_ir::test_utils::compile_circuit(
+            "public c\npublic out\nlet r = if c { 1 } else { 0 }\nassert_eq(r, out)",
+        )
+        .unwrap();
+        let output = format!("{ir}");
+        assert!(output.contains("mux("), "got:\n{output}");
+        assert!(output.contains("assert_eq("), "got:\n{output}");
     }
 
     // =====================================================================
