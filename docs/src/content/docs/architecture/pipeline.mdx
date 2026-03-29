@@ -16,7 +16,7 @@ Source (.ach)
     │       │
     │       └─► IR Lowering → SSA IR
     │               │
-    │           Optimize (const_fold → dce → bool_prop)
+    │           Optimize (const_fold → bound_inference → CSE → dce)
     │               │
     │           ┌───┴───┐
     │           ▼       ▼
@@ -68,7 +68,7 @@ The lowerer tracks variables via `HashMap<String, EnvValue>` where `EnvValue` is
 
 **Entry point:** `ir::passes::optimize(&mut program)`
 
-Three passes run sequentially on the IR:
+Four passes run sequentially on the IR:
 
 ### Constant Folding (`const_fold`)
 
@@ -77,19 +77,27 @@ Forward pass that evaluates operations on known constants:
 - Simplifies identities: `x * 0 → 0`, `x - x → 0`, `x / x → 1`
 - Folds boolean logic and comparisons on constants
 
+### Bound Inference (`bound_inference`)
+
+Rewrites unbounded `IsLt`/`IsLe` comparisons to bounded variants when operands have proven bitwidth bounds from `RangeCheck`. Unbounded comparisons cost ~761 constraints (full 252-bit decomposition); bounded comparisons cost ~(n+3) where n is the bitwidth.
+
+### Common Sub-expression Elimination (`cse`)
+
+Single-pass O(n) algorithm that identifies duplicate pure computations and remaps their results to the first occurrence. Covers all pure instructions: arithmetic, Poseidon, Mux, boolean ops, comparisons. Side-effecting instructions (`AssertEq`, `Assert`, `RangeCheck`) are never deduplicated. Particularly effective on unrolled loops where the same operation repeats across iterations.
+
 ### Dead Code Elimination (`dce`)
 
-Backward pass that removes instructions whose results are never used. Conservative on side-effecting instructions (`Mul`, `Div`, `Mux`, `PoseidonHash`, `RangeCheck`, `Assert`, etc.).
+Iterative fixpoint pass that removes instructions whose results are never used. Side-effecting instructions (`AssertEq`, `Assert`, `Input`, `RangeCheck`) are never eliminated.
 
 ### Boolean Propagation (`bool_prop`)
 
-Forward pass that computes the set of proven-boolean SSA variables. Seeds include:
+Forward pass that computes the set of proven-boolean SSA variables (run separately, used by backends). Seeds include:
 - `Const(0)` and `Const(1)`
 - Comparison results (`IsEq`, `IsNeq`, `IsLt`, `IsLe`)
 - `RangeCheck(x, 1)` and `Assert` operands
 - `Bool` type annotations
 
-Propagates through `Not`, `And`, `Or`, and `Mux`. The backends use this set to skip redundant boolean enforcement constraints.
+Propagates through `Not`, `And`, `Or`, and `Mux`. The R1CS backend uses this set to skip redundant boolean enforcement constraints, and deduplicates enforcement for the same variable across multiple instructions.
 
 ## Stage 4: Backend Compilation
 
