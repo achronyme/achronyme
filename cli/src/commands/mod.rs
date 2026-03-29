@@ -1,6 +1,7 @@
 pub mod circuit;
 pub mod compile;
 pub mod disassemble;
+pub mod inspect;
 pub mod run;
 
 use compiler::{ColorMode, Compiler, CompilerError, Diagnostic, DiagnosticRenderer};
