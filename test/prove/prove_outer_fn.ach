@@ -1,0 +1,22 @@
+// Prove block: function defined in outer scope is callable inside prove {}
+fn double(x) { x * 2 }
+fn add_three(a, b, c) { a + b + c }
+
+let x = 0p5
+let expected = 0p10
+
+prove(expected: Public) {
+    assert_eq(double(x), expected)
+}
+
+// Second prove: multi-arg outer function
+let a = 0p1
+let b = 0p2
+let c = 0p3
+let sum = 0p6
+
+prove(sum: Public) {
+    assert_eq(add_three(a, b, c), sum)
+}
+
+print("PASS: prove_outer_fn")

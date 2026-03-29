@@ -1,0 +1,9 @@
+// Inline circuit declaration: outer function accessible inside circuit body
+fn triple(x) { x * 3 }
+
+circuit tripler(input: Public, expected: Public) {
+    assert_eq(triple(input), expected)
+}
+
+let result = tripler(input: 0p4, expected: 0p12)
+print("PASS: prove_outer_fn_circuit")

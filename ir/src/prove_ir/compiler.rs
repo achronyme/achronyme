@@ -3768,4 +3768,68 @@ mod tests {
             "expected RangeTooLarge, got {err:?}"
         );
     }
+
+    // =====================================================================
+    // OuterScope function tests
+    // =====================================================================
+
+    #[test]
+    fn outer_scope_fn_in_prove_block() {
+        // Parse a FnDecl to pass via OuterScope
+        let (prog, _) = achronyme_parser::parse_program("fn double(x) { x * 2 }");
+        let fn_stmt = prog.stmts[0].clone();
+
+        let outer = OuterScope {
+            values: [("val", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            functions: vec![fn_stmt],
+        };
+        let ir = ProveIrCompiler::compile_prove_block(
+            "public expected\nassert_eq(double(val), expected)",
+            &outer,
+        )
+        .unwrap();
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.captures.len(), 1);
+        assert_eq!(ir.captures[0].name, "val");
+    }
+
+    #[test]
+    fn outer_scope_fn_in_circuit() {
+        // Functions before circuit declaration should be available via OuterScope
+        let source = "\
+            fn double(x) { x * 2 }\n\
+            circuit test(a: Public, out: Public) {\n\
+                assert_eq(double(a), out)\n\
+            }";
+        let ir = ProveIrCompiler::compile_circuit(source, None).unwrap();
+        assert_eq!(ir.public_inputs.len(), 2);
+        // double(a) should have been inlined — no function calls remain
+        assert!(ir.body.iter().any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+    }
+
+    #[test]
+    fn outer_scope_fn_overridden_by_local() {
+        // A local fn with the same name should override the outer scope fn
+        let (prog, _) = achronyme_parser::parse_program("fn double(x) { x * 2 }");
+        let fn_stmt = prog.stmts[0].clone();
+
+        let outer = OuterScope {
+            values: [("val", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            functions: vec![fn_stmt],
+        };
+        // Local fn triple overrides nothing, but local double overrides outer double
+        let ir = ProveIrCompiler::compile_prove_block(
+            "fn double(x) { x * 3 }\npublic expected\nassert_eq(double(val), expected)",
+            &outer,
+        )
+        .unwrap();
+        // Should compile without error — the local double (x*3) is used
+        assert_eq!(ir.public_inputs.len(), 1);
+    }
 }
