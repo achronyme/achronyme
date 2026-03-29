@@ -854,7 +854,7 @@ impl ProveIrCompiler {
         let compiled = self.compile_expr(expr)?;
         self.body.push(CircuitNode::Expr {
             expr: compiled,
-            span: None,
+            span: Some(SpanRange::from(expr.span())),
         });
         Ok(())
     }
