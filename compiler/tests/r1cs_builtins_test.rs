@@ -389,10 +389,10 @@ fn test_merkle_path_composition() {
     rc.compile_ir(&program).unwrap();
 
     // 2 (mux left: boolean enforcement + mul)
-    // 2 (mux right: boolean enforcement + mul)
+    // 1 (mux right: mul only — boolean enforcement deduped with left)
     // 2 (materialization of each mux result for poseidon inputs)
     // 361 (poseidon: 360 permutation + 1 capacity)
     // 1 (assert_eq)
-    // Total: 368
-    assert_eq!(rc.cs.num_constraints(), 368);
+    // Total: 367
+    assert_eq!(rc.cs.num_constraints(), 367);
 }
