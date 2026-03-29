@@ -385,6 +385,10 @@ pub struct IrProgram {
     pub var_types: HashMap<SsaVar, IrType>,
     /// Maps input variable names to their source declaration spans.
     pub input_spans: HashMap<String, SpanRange>,
+    /// Maps SSA variables to their originating source spans.
+    /// Keyed by SsaVar (not instruction index) so it survives optimization passes
+    /// that reorder or remove instructions (const_fold, DCE, bound_inference).
+    pub var_spans: HashMap<SsaVar, SpanRange>,
 }
 
 impl Default for IrProgram {
@@ -401,6 +405,7 @@ impl IrProgram {
             var_names: HashMap::new(),
             var_types: HashMap::new(),
             input_spans: HashMap::new(),
+            var_spans: HashMap::new(),
         }
     }
 
@@ -436,6 +441,16 @@ impl IrProgram {
     /// Look up the IR type for an SSA variable.
     pub fn get_type(&self, var: SsaVar) -> Option<IrType> {
         self.var_types.get(&var).copied()
+    }
+
+    /// Associate a source span with an SSA variable (for source mapping).
+    pub fn set_span(&mut self, var: SsaVar, span: SpanRange) {
+        self.var_spans.insert(var, span);
+    }
+
+    /// Look up the source span for an SSA variable.
+    pub fn get_span(&self, var: SsaVar) -> Option<&SpanRange> {
+        self.var_spans.get(&var)
     }
 }
 
@@ -621,5 +636,57 @@ mod tests {
         assert!(output.contains("%0 = Input(\"x\", public)"));
         assert!(output.contains("%1 = Input(\"y\", witness)"));
         assert!(output.contains("%2 = Mul(%0, %1)  ; product"));
+    }
+
+    #[test]
+    fn set_get_span_round_trip() {
+        let mut p = IrProgram::new();
+        let v0 = p.fresh_var();
+        let v1 = p.fresh_var();
+        let span = SpanRange::new(10, 20, 3, 5, 3, 15);
+        assert!(p.get_span(v0).is_none());
+        p.set_span(v0, span.clone());
+        assert_eq!(p.get_span(v0), Some(&span));
+        assert!(p.get_span(v1).is_none());
+    }
+
+    #[test]
+    fn var_spans_survive_dce() {
+        // var_spans are keyed by SsaVar, not instruction index,
+        // so they survive DCE which removes instructions via retain().
+        let mut p = IrProgram::new();
+        let v0 = p.fresh_var();
+        p.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: Visibility::Public,
+        });
+        let span = SpanRange::new(0, 10, 1, 1, 1, 10);
+        p.set_span(v0, span.clone());
+
+        // v1 is unused, will be eliminated by DCE
+        let v1 = p.fresh_var();
+        p.push(Instruction::Const {
+            result: v1,
+            value: FieldElement::from_u64(42),
+        });
+
+        let v2 = p.fresh_var();
+        p.push(Instruction::AssertEq {
+            result: v2,
+            lhs: v0,
+            rhs: v0,
+            message: None,
+        });
+        let span2 = SpanRange::new(20, 30, 2, 1, 2, 10);
+        p.set_span(v2, span2.clone());
+
+        // Simulate DCE: remove unused instructions
+        crate::passes::dce::dead_code_elimination(&mut p);
+
+        // v1 instruction should be gone, but spans are still accessible by SsaVar
+        assert_eq!(p.instructions.len(), 2);
+        assert_eq!(p.get_span(v0), Some(&span));
+        assert_eq!(p.get_span(v2), Some(&span2));
     }
 }
