@@ -37,6 +37,20 @@ pub enum OuterScopeEntry {
     Array(usize),
 }
 
+/// Everything the enclosing scope makes available to a prove/circuit block.
+///
+/// `values` carries captured scalars and arrays from the VM scope.
+/// `functions` carries FnDecl AST nodes that should be registered in the
+/// ProveIR compiler's `fn_table` before the block body is compiled, so
+/// that user-defined functions from the outer scope can be inlined.
+#[derive(Clone, Debug, Default)]
+pub struct OuterScope {
+    /// Captured values (scalars / arrays) from the VM scope.
+    pub values: HashMap<String, OuterScopeEntry>,
+    /// Function declarations to register in fn_table before compilation.
+    pub functions: Vec<Stmt>,
+}
+
 // ---------------------------------------------------------------------------
 // Compiler
 // ---------------------------------------------------------------------------

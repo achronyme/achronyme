@@ -17,7 +17,7 @@ pub mod error;
 pub mod instantiate;
 pub mod types;
 
-pub use compiler::{OuterScopeEntry, ProveIrCompiler};
+pub use compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 pub use error::ProveIrError;
 pub use types::*;
 
