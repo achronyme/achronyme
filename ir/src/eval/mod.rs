@@ -379,6 +379,196 @@ pub fn evaluate(
     Ok(values)
 }
 
+/// Evaluate an IR program leniently: skip assertion failures instead of erroring.
+///
+/// Returns `(values, failures)` where `failures` lists the instruction indices
+/// whose assertions failed. Used by the inspector to show wire values even when
+/// constraints are unsatisfied.
+pub fn evaluate_lenient(
+    program: &IrProgram,
+    inputs: &HashMap<String, FieldElement>,
+) -> (HashMap<SsaVar, FieldElement>, Vec<usize>) {
+    let mut values: HashMap<SsaVar, FieldElement> = HashMap::new();
+    let mut poseidon_params: Option<PoseidonParams> = None;
+    let mut failures: Vec<usize> = Vec::new();
+
+    let get = |values: &HashMap<SsaVar, FieldElement>, var: &SsaVar| -> Option<FieldElement> {
+        values.get(var).copied()
+    };
+
+    for (idx, inst) in program.instructions.iter().enumerate() {
+        match inst {
+            Instruction::Const { result, value } => {
+                values.insert(*result, *value);
+            }
+            Instruction::Input { result, name, .. } => {
+                if let Some(val) = inputs.get(name) {
+                    values.insert(*result, *val);
+                }
+            }
+            Instruction::Add { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(*result, a.add(&b));
+                }
+            }
+            Instruction::Sub { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(*result, a.sub(&b));
+                }
+            }
+            Instruction::Mul { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(*result, a.mul(&b));
+                }
+            }
+            Instruction::Div { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    if let Some(inv) = b.inv() {
+                        values.insert(*result, a.mul(&inv));
+                    }
+                }
+            }
+            Instruction::Neg { result, operand } => {
+                if let Some(v) = get(&values, operand) {
+                    values.insert(*result, v.neg());
+                }
+            }
+            Instruction::Mux {
+                result,
+                cond,
+                if_true,
+                if_false,
+            } => {
+                if let (Some(c), Some(t), Some(f)) = (
+                    get(&values, cond),
+                    get(&values, if_true),
+                    get(&values, if_false),
+                ) {
+                    values.insert(*result, if !c.is_zero() { t } else { f });
+                }
+            }
+            Instruction::PoseidonHash {
+                result,
+                left,
+                right,
+            } => {
+                if let (Some(l), Some(r)) = (get(&values, left), get(&values, right)) {
+                    let params = poseidon_params.get_or_insert_with(PoseidonParams::bn254_t3);
+                    values.insert(*result, poseidon_hash(params, l, r));
+                }
+            }
+            Instruction::AssertEq {
+                result, lhs, rhs, ..
+            } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    if a != b {
+                        failures.push(idx);
+                    }
+                    values.insert(*result, a);
+                }
+            }
+            Instruction::Assert {
+                result, operand, ..
+            } => {
+                if let Some(v) = get(&values, operand) {
+                    if v != FieldElement::ONE {
+                        failures.push(idx);
+                    }
+                    values.insert(*result, v);
+                }
+            }
+            Instruction::RangeCheck {
+                result, operand, ..
+            } => {
+                if let Some(v) = get(&values, operand) {
+                    values.insert(*result, v);
+                }
+            }
+            Instruction::Not { result, operand } => {
+                if let Some(v) = get(&values, operand) {
+                    values.insert(*result, FieldElement::ONE.sub(&v));
+                }
+            }
+            Instruction::And { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(*result, a.mul(&b));
+                }
+            }
+            Instruction::Or { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(*result, a.add(&b).sub(&a.mul(&b)));
+                }
+            }
+            Instruction::IsEq { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(
+                        *result,
+                        if a == b {
+                            FieldElement::ONE
+                        } else {
+                            FieldElement::ZERO
+                        },
+                    );
+                }
+            }
+            Instruction::IsNeq { result, lhs, rhs } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    values.insert(
+                        *result,
+                        if a != b {
+                            FieldElement::ONE
+                        } else {
+                            FieldElement::ZERO
+                        },
+                    );
+                }
+            }
+            Instruction::IsLt {
+                result, lhs, rhs, ..
+            }
+            | Instruction::IsLtBounded {
+                result, lhs, rhs, ..
+            } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    let la = a.to_canonical();
+                    let lb = b.to_canonical();
+                    let less = (la[3], la[2], la[1], la[0]) < (lb[3], lb[2], lb[1], lb[0]);
+                    values.insert(
+                        *result,
+                        if less {
+                            FieldElement::ONE
+                        } else {
+                            FieldElement::ZERO
+                        },
+                    );
+                }
+            }
+            Instruction::IsLe {
+                result, lhs, rhs, ..
+            }
+            | Instruction::IsLeBounded {
+                result, lhs, rhs, ..
+            } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    let la = a.to_canonical();
+                    let lb = b.to_canonical();
+                    let le = (la[3], la[2], la[1], la[0]) <= (lb[3], lb[2], lb[1], lb[0]);
+                    values.insert(
+                        *result,
+                        if le {
+                            FieldElement::ONE
+                        } else {
+                            FieldElement::ZERO
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    (values, failures)
+}
+
 /// Check whether a field element fits in `bits` bits.
 fn fits_in_bits(v: &FieldElement, bits: u32) -> bool {
     if bits >= 256 {
