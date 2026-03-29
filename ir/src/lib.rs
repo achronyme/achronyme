@@ -1,5 +1,6 @@
 pub mod error;
 pub mod eval;
+pub mod inspector;
 pub mod lower;
 pub mod module_loader;
 pub mod passes;
