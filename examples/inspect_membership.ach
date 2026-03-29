@@ -1,0 +1,18 @@
+// Standalone circuit version of proof_of_membership for `ach inspect`.
+// Proves membership in a depth-3 Merkle tree using Poseidon hashing.
+//
+// Usage:
+//   ach inspect examples/inspect_membership.ach
+
+circuit membership(
+    merkle_root: Public,
+    key: Witness,
+    path: Witness Field[3],
+    indices: Witness Field[3],
+) {
+    // Compute leaf commitment from secret key
+    let my_commitment = poseidon(key, 0)
+
+    // Verify Merkle path: walk from leaf to root
+    merkle_verify(merkle_root, my_commitment, path, indices)
+}

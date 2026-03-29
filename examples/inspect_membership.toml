@@ -1,0 +1,12 @@
+# Inputs for inspect_membership.ach — Member 5 proving membership
+# The merkle_root is the public commitment of the club.
+# key, path, and indices are the private witness.
+
+merkle_root = "20396959129747742007364018450477211306700927381561068192663051409017506536583"
+key = "606"
+
+# Merkle path siblings (computed from the tree):
+# These need to be actual Poseidon hashes — use placeholder values for now.
+# To get real values, run the full example and extract intermediates.
+path = ["0", "0", "0"]
+indices = ["1", "0", "1"]

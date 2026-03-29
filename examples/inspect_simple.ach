@@ -1,0 +1,11 @@
+// Simple circuit for testing the inspector.
+// Proves knowledge of x, y such that x * y == product (public).
+
+circuit multiplier(
+    product: Public,
+    x: Witness,
+    y: Witness,
+) {
+    let result = x * y
+    assert_eq(result, product, "product mismatch")
+}
