@@ -42,6 +42,7 @@ impl PrototypeRegistry {
     pub fn bootstrap(&mut self) {
         use super::methods;
         methods::int::register(self);
+        methods::bool::register(self);
         methods::string::register(self);
         methods::list::register(self);
         methods::map::register(self);
