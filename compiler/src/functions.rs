@@ -119,6 +119,7 @@ impl FunctionDefinitionCompiler for Compiler {
         let (opt_bytecode, opt_line_info) = crate::optimizer::optimize(
             compiled_func.bytecode,
             compiled_func.line_info,
+            &mut compiled_func.max_slots,
         );
 
         let func = Function {
