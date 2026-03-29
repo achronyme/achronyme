@@ -66,7 +66,7 @@ pub(super) fn compile_prove(
     //    Include locals from ALL enclosing function scopes (not just current),
     //    so that upvalue-accessible variables are visible to ProveIR.
     //    Type annotations are propagated so ProveIR knows about arrays.
-    let mut outer_scope: std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry> =
+    let mut outer_values: std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry> =
         std::collections::HashMap::new();
     let to_scope_entry = |ta: &Option<TypeAnnotation>| -> ir::prove_ir::OuterScopeEntry {
         match ta.as_ref().and_then(|t| t.array_len()) {
@@ -76,12 +76,12 @@ pub(super) fn compile_prove(
     };
     if let Ok(func) = compiler.current_ref() {
         for local in &func.locals {
-            outer_scope.insert(local.name.clone(), to_scope_entry(&local.type_ann));
+            outer_values.insert(local.name.clone(), to_scope_entry(&local.type_ann));
         }
     }
     for fc in &compiler.compilers[..compiler.compilers.len().saturating_sub(1)] {
         for local in &fc.locals {
-            outer_scope
+            outer_values
                 .entry(local.name.clone())
                 .or_insert_with(|| to_scope_entry(&local.type_ann));
         }
@@ -89,11 +89,16 @@ pub(super) fn compile_prove(
     // Global symbols — read type annotations from GlobalEntry
     for (gname, gentry) in &compiler.global_symbols {
         if gentry.index >= vm::specs::USER_GLOBAL_START && !gname.contains("::") {
-            outer_scope
+            outer_values
                 .entry(gname.clone())
                 .or_insert_with(|| to_scope_entry(&gentry.type_ann));
         }
     }
+
+    let outer_scope = ir::prove_ir::OuterScope {
+        values: outer_values,
+        functions: compiler.fn_decl_asts.clone(),
+    };
 
     // 2. If params are provided (new syntax), validate no old-style
     //    declarations in the body and synthesize PublicDecl stmts.
@@ -151,7 +156,7 @@ pub(super) fn compile_prove(
     let mut emitted_arrays: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for cap in &prove_ir.captures {
-        if let Some(parent) = find_array_parent(&cap.name, &outer_scope) {
+        if let Some(parent) = find_array_parent(&cap.name, &outer_scope.values) {
             // Array element capture — load the parent array once
             if emitted_arrays.insert(parent.clone()) {
                 capture_names.push(parent);

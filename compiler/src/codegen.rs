@@ -55,6 +55,10 @@ pub struct Compiler {
 
     /// Set of known method names for detecting `expr.method(args)` patterns.
     pub known_methods: HashSet<String>,
+
+    /// FnDecl AST nodes accumulated during top-level compilation.
+    /// Passed to ProveIR so prove/circuit blocks can inline outer functions.
+    pub fn_decl_asts: Vec<Stmt>,
 }
 
 use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
@@ -141,6 +145,7 @@ impl Compiler {
             current_span: None,
             warnings: Vec::new(),
             known_methods,
+            fn_decl_asts: Vec::new(),
         }
     }
 

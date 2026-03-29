@@ -130,6 +130,11 @@ impl StatementCompiler for Compiler {
             Stmt::FnDecl {
                 name, params, body, ..
             } => {
+                // Store the AST for ProveIR (prove/circuit blocks inline outer functions).
+                // Only capture top-level functions (depth 1 = main script scope).
+                if self.compilers.len() == 1 {
+                    self.fn_decl_asts.push(stmt.clone());
+                }
                 let reg = self.compile_fn_core(Some(name), params, body)?;
                 self.free_reg(reg)?;
                 Ok(())
@@ -219,12 +224,14 @@ impl StatementCompiler for Compiler {
             span: body.span.clone(),
         };
 
-        // 2. Compile to ProveIR (no outer scope — circuit is self-contained)
-        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(
-            &circuit_body,
-            &std::collections::HashMap::new(),
-        )
-        .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+        // 2. Compile to ProveIR — pass outer functions so the circuit can
+        //    inline user-defined helpers from the enclosing scope.
+        let outer_scope = ir::prove_ir::OuterScope {
+            functions: self.fn_decl_asts.clone(),
+            ..Default::default()
+        };
+        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(&circuit_body, &outer_scope)
+            .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
         prove_ir.name = Some(name.to_string());
 
         // 3. Serialize to bytes
