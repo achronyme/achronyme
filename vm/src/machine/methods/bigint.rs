@@ -6,6 +6,8 @@ use crate::machine::VM;
 use memory::{BigInt, BigIntError, Value, TAG_BIGINT};
 
 pub fn register(registry: &mut PrototypeRegistry) {
+    registry.register(TAG_BIGINT, "to_string", method_to_string);
+    registry.register(TAG_BIGINT, "to_hex", method_to_hex);
     registry.register(TAG_BIGINT, "to_bits", method_to_bits);
     registry.register(TAG_BIGINT, "bit_and", method_bit_and);
     registry.register(TAG_BIGINT, "bit_or", method_bit_or);
@@ -31,6 +33,20 @@ fn extract_bigint<'a>(vm: &'a VM, val: &Value) -> Result<&'a BigInt, RuntimeErro
     vm.heap
         .get_bigint(handle)
         .ok_or(RuntimeError::stale_heap("BigInt", "extract_bigint"))
+}
+
+fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
+    let bi = extract_bigint(vm, &receiver)?;
+    let s = bi.to_decimal_string();
+    let handle = vm.heap.alloc_string(s)?;
+    Ok(Value::string(handle))
+}
+
+fn method_to_hex(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
+    let bi = extract_bigint(vm, &receiver)?;
+    let s = format!("0x{}", bi.to_hex_string());
+    let handle = vm.heap.alloc_string(s)?;
+    Ok(Value::string(handle))
 }
 
 fn method_to_bits(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
