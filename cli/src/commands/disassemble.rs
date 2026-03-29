@@ -69,13 +69,18 @@ fn disassemble_circuit(
             // Reconstruct self-contained source: param declarations + body
             let mut circuit_src = String::new();
             for p in params {
-                let vis = p.type_ann.as_ref().and_then(|ta| ta.visibility.as_ref());
+                let ta = p.type_ann.as_ref();
+                let vis = ta.and_then(|t| t.visibility.as_ref());
                 let role = match vis {
                     Some(Visibility::Public) => "public",
                     Some(Visibility::Witness) => "witness",
                     None => "witness", // default
                 };
-                circuit_src.push_str(&format!("{} {}\n", role, p.name));
+                // The self-contained format is: `role name` or `role name[size]`
+                let array_suffix = ta
+                    .and_then(|t| t.array_size.map(|sz| format!("[{sz}]")))
+                    .unwrap_or_default();
+                circuit_src.push_str(&format!("{} {}{}\n", role, p.name, array_suffix));
             }
 
             // Extract body source using span byte offsets
