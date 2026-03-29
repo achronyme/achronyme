@@ -31,6 +31,10 @@ pub struct R1CSCompiler {
     /// SSA variables proven to be boolean by bool_prop analysis.
     /// Boolean enforcement constraints are skipped for these.
     proven_boolean: std::collections::HashSet<ir::types::SsaVar>,
+    /// SSA variables for which boolean enforcement (v * (1-v) = 0) has already
+    /// been emitted. Avoids duplicate constraints when the same condition
+    /// is used in multiple Mux/And/Or instructions.
+    bool_enforced: std::collections::HashSet<ir::types::SsaVar>,
 }
 
 impl Default for R1CSCompiler {
@@ -50,6 +54,7 @@ impl R1CSCompiler {
             poseidon_params: None,
             witness_ops: Vec::new(),
             proven_boolean: std::collections::HashSet::new(),
+            bool_enforced: std::collections::HashSet::new(),
         }
     }
 
@@ -175,8 +180,8 @@ impl R1CSCompiler {
                     let then_lc = lookup(&lc_map, if_true)?;
                     let else_lc = lookup(&lc_map, if_false)?;
 
-                    // Skip boolean enforcement if cond is proven boolean
-                    if !self.proven_boolean.contains(cond) {
+                    // Skip boolean enforcement if cond is proven boolean or already enforced
+                    if !self.proven_boolean.contains(cond) && self.bool_enforced.insert(*cond) {
                         let one = LinearCombination::from_constant(FieldElement::ONE);
                         let one_minus_cond = one - cond_lc.clone();
                         self.cs
@@ -230,8 +235,9 @@ impl R1CSCompiler {
                 IrInstruction::Not { result, operand } => {
                     let op_lc = lookup(&lc_map, operand)?;
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    // Skip boolean enforcement if operand is proven boolean
-                    if !self.proven_boolean.contains(operand) {
+                    // Skip boolean enforcement if proven boolean or already enforced
+                    if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand)
+                    {
                         self.cs.enforce(
                             op_lc.clone(),
                             one.clone() - op_lc.clone(),
@@ -245,14 +251,14 @@ impl R1CSCompiler {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    if !self.proven_boolean.contains(lhs) {
+                    if !self.proven_boolean.contains(lhs) && self.bool_enforced.insert(*lhs) {
                         self.cs.enforce(
                             a.clone(),
                             one.clone() - a.clone(),
                             LinearCombination::zero(),
                         );
                     }
-                    if !self.proven_boolean.contains(rhs) {
+                    if !self.proven_boolean.contains(rhs) && self.bool_enforced.insert(*rhs) {
                         self.cs
                             .enforce(b.clone(), one - b.clone(), LinearCombination::zero());
                     }
@@ -264,14 +270,14 @@ impl R1CSCompiler {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    if !self.proven_boolean.contains(lhs) {
+                    if !self.proven_boolean.contains(lhs) && self.bool_enforced.insert(*lhs) {
                         self.cs.enforce(
                             a.clone(),
                             one.clone() - a.clone(),
                             LinearCombination::zero(),
                         );
                     }
-                    if !self.proven_boolean.contains(rhs) {
+                    if !self.proven_boolean.contains(rhs) && self.bool_enforced.insert(*rhs) {
                         self.cs
                             .enforce(b.clone(), one - b.clone(), LinearCombination::zero());
                     }
@@ -405,8 +411,9 @@ impl R1CSCompiler {
                 } => {
                     let op_lc = lookup(&lc_map, operand)?;
                     let one = LinearCombination::from_constant(FieldElement::ONE);
-                    // Skip boolean enforcement if operand is proven boolean
-                    if !self.proven_boolean.contains(operand) {
+                    // Skip boolean enforcement if proven boolean or already enforced
+                    if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand)
+                    {
                         self.cs.enforce(
                             op_lc.clone(),
                             one.clone() - op_lc.clone(),

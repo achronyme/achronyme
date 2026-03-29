@@ -90,6 +90,11 @@ impl CircuitStats {
     ) -> Self {
         let mut cat_map: HashMap<ConstraintCategory, (usize, usize)> = HashMap::new();
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
+        // Track boolean enforcement dedup (mirrors R1CS backend behavior)
+        let mut bool_enforced: HashSet<SsaVar> = HashSet::new();
+        // Track variables whose LC is non-trivial (products from Mul/Div/Mux).
+        // PoseidonHash materializes these inputs, adding 1 constraint each.
+        let mut non_single: HashSet<SsaVar> = HashSet::new();
         let mut n_public = 0usize;
         let mut n_witness = 0usize;
         let mut n_instructions = 0usize;
@@ -108,16 +113,23 @@ impl CircuitStats {
                     continue;
                 }
 
-                Instruction::Mul { .. } => (ConstraintCategory::Arithmetic, 1),
-                Instruction::Div { .. } => (ConstraintCategory::Arithmetic, 2),
+                Instruction::Mul { result, .. } => {
+                    non_single.insert(*result);
+                    (ConstraintCategory::Arithmetic, 1)
+                }
+                Instruction::Div { result, .. } => {
+                    non_single.insert(*result);
+                    (ConstraintCategory::Arithmetic, 2)
+                }
 
                 Instruction::AssertEq { .. } => (ConstraintCategory::Assertion, 1),
                 Instruction::Assert { operand, .. } => {
-                    let bool_cost = if proven_boolean.contains(operand) {
-                        0
-                    } else {
-                        1
-                    };
+                    let bool_cost =
+                        if proven_boolean.contains(operand) || !bool_enforced.insert(*operand) {
+                            0
+                        } else {
+                            1
+                        };
                     (ConstraintCategory::Assertion, 1 + bool_cost)
                 }
 
@@ -127,11 +139,12 @@ impl CircuitStats {
                 }
 
                 Instruction::Not { operand, .. } => {
-                    let cost = if proven_boolean.contains(operand) {
-                        0
-                    } else {
-                        1
-                    };
+                    let cost =
+                        if proven_boolean.contains(operand) || !bool_enforced.insert(*operand) {
+                            0
+                        } else {
+                            1
+                        };
                     if cost == 0 {
                         continue;
                     }
@@ -139,28 +152,29 @@ impl CircuitStats {
                 }
                 Instruction::And { lhs, rhs, .. } => {
                     let mut cost = 1; // product
-                    if !proven_boolean.contains(lhs) {
+                    if !proven_boolean.contains(lhs) && bool_enforced.insert(*lhs) {
                         cost += 1;
                     }
-                    if !proven_boolean.contains(rhs) {
+                    if !proven_boolean.contains(rhs) && bool_enforced.insert(*rhs) {
                         cost += 1;
                     }
                     (ConstraintCategory::Boolean, cost)
                 }
                 Instruction::Or { lhs, rhs, .. } => {
                     let mut cost = 1; // product
-                    if !proven_boolean.contains(lhs) {
+                    if !proven_boolean.contains(lhs) && bool_enforced.insert(*lhs) {
                         cost += 1;
                     }
-                    if !proven_boolean.contains(rhs) {
+                    if !proven_boolean.contains(rhs) && bool_enforced.insert(*rhs) {
                         cost += 1;
                     }
                     (ConstraintCategory::Boolean, cost)
                 }
 
-                Instruction::Mux { cond, .. } => {
+                Instruction::Mux { result, cond, .. } => {
+                    non_single.insert(*result);
                     let mut cost = 1; // multiply for selection
-                    if !proven_boolean.contains(cond) {
+                    if !proven_boolean.contains(cond) && bool_enforced.insert(*cond) {
                         cost += 1;
                     }
                     (ConstraintCategory::Selection, cost)
@@ -189,7 +203,17 @@ impl CircuitStats {
                 // Materializations: partial=57*2=114, final=3
                 // Capacity: 1
                 // Total: 243 + 114 + 3 + 1 = 361
-                Instruction::PoseidonHash { .. } => (ConstraintCategory::Hash, 361),
+                // + input materializations (1 each for non-single-variable inputs)
+                Instruction::PoseidonHash { left, right, .. } => {
+                    let mut cost = 361;
+                    if non_single.contains(left) {
+                        cost += 1;
+                    }
+                    if non_single.contains(right) {
+                        cost += 1;
+                    }
+                    (ConstraintCategory::Hash, cost)
+                }
             };
 
             n_instructions += 1;
