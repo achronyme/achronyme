@@ -42,9 +42,11 @@ print(message)
 "#
         ),
         "prove" => format!(
-            r#"// {name}
+            r#"// {name} — Zero-Knowledge Proof
 let secret = 0p42
 let expected = poseidon(secret, 0p0)
+
+print("Public hash: " + expected.to_string())
 
 prove check(expected: Public) {{
     assert_eq(poseidon(secret, 0p0), expected, "hash mismatch")
@@ -55,10 +57,22 @@ print("Proof verified!")
         ),
         // "circuit" or default
         _ => format!(
-            r#"// {name}
-circuit multiply(out: Public, a: Witness, b: Witness) {{
+            r#"// {name} — ZK Circuit
+//
+// Proves: a * b == out, without revealing a or b.
+
+let a = 6
+let b = 7
+let out = a * b
+
+print("Generating proof for " + a.to_string() + " * " + b.to_string() + " = " + out.to_string())
+
+let proof = prove multiply(out: Public) {{
     assert_eq(a * b, out)
 }}
+
+print("Proof generated!")
+print("Verified: " + verify_proof(proof).to_string())
 "#
         ),
     };
@@ -91,8 +105,8 @@ mod tests {
         assert!(toml.contains("entry = \"src/main.ach\""));
 
         let main = fs::read_to_string(tmp.path().join("test-proj/src/main.ach")).unwrap();
-        assert!(main.contains("circuit multiply"));
-        assert!(main.contains("Witness"));
+        assert!(main.contains("prove multiply"));
+        assert!(main.contains("verify_proof"));
     }
 
     #[test]
