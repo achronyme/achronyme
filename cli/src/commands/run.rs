@@ -200,7 +200,7 @@ fn print_gc_stats(gc_stats: bool, vm: &VM) {
 }
 
 /// Remap field literal handles from compiler-space to VM heap-space.
-fn remap_field_handles(constants: &mut [memory::Value], field_map: &[u32]) {
+pub fn remap_field_handles(constants: &mut [memory::Value], field_map: &[u32]) {
     for val in constants.iter_mut() {
         if val.is_field() {
             let old_handle = val.as_handle().expect("Field value must have handle");
@@ -212,7 +212,7 @@ fn remap_field_handles(constants: &mut [memory::Value], field_map: &[u32]) {
 }
 
 /// Remap BigInt literal handles from compiler-space to VM heap-space.
-fn remap_bigint_handles(constants: &mut [memory::Value], bigint_map: &[u32]) {
+pub fn remap_bigint_handles(constants: &mut [memory::Value], bigint_map: &[u32]) {
     for val in constants.iter_mut() {
         if val.is_bigint() {
             let old_handle = val.as_handle().expect("BigInt value must have handle");

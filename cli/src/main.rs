@@ -88,6 +88,28 @@ fn main() -> Result<()> {
             cli::commands::compile::compile_file(path, out, ef)
         }
 
+        Commands::Inspect {
+            inputs,
+            input_file,
+            prove,
+            port,
+            no_open,
+            ..
+        } => {
+            let path = cfg.entry.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("no input file specified and no `entry` in achronyme.toml")
+            })?;
+            cli::commands::inspect::inspect_command(
+                path,
+                inputs.as_deref(),
+                input_file.as_deref(),
+                prove.as_deref(),
+                *port,
+                *no_open,
+                ef,
+            )
+        }
+
         Commands::Circuit {
             inputs,
             input_file,
@@ -123,6 +145,7 @@ fn command_start_dir(cmd: &Commands) -> std::path::PathBuf {
         Commands::Run { path, .. }
         | Commands::Disassemble { path }
         | Commands::Compile { path, .. }
+        | Commands::Inspect { path, .. }
         | Commands::Circuit { path, .. } => path.as_deref(),
         Commands::Init { .. } => None,
     };
@@ -222,6 +245,22 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: *circuit_stats,
+        },
+
+        Commands::Inspect { path, .. } => CliOverrides {
+            path: path.clone(),
+            error_format: cli.error_format.clone(),
+            backend: None,
+            prove_backend: None,
+            optimize: None,
+            r1cs_path: None,
+            wtns_path: None,
+            solidity_path: None,
+            plonkish_json_path: None,
+            max_heap: None,
+            stress_gc: false,
+            gc_stats: false,
+            circuit_stats: false,
         },
 
         Commands::Init { .. } => unreachable!(),

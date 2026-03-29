@@ -386,10 +386,42 @@ fn run_r1cs_pipeline(
             .compile_ir_with_witness(program, input_map)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
-        compiler
-            .cs
-            .verify(&witness_vec)
-            .map_err(|idx| anyhow::anyhow!("witness verification failed at constraint {idx}"))?;
+        if let Err(e) = compiler.cs.verify(&witness_vec) {
+            let mut msg = format!("witness verification failed: {e}");
+            if let constraints::r1cs::ConstraintError::ConstraintUnsatisfied(idx) = &e {
+                if let Some(origin) = compiler.constraint_origins.get(*idx) {
+                    let inst = &program.instructions[origin.ir_index];
+                    msg = format!("constraint {idx} unsatisfied in: {inst}");
+                    if let Some(name) = program.get_name(origin.result_var) {
+                        msg.push_str(&format!("  (variable: {name})"));
+                    }
+                    if let Some(span) = program.get_span(origin.result_var) {
+                        let file = span
+                            .file
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        msg.push_str(&format!(
+                            "\n    --> {}:{}:{}",
+                            file, span.line_start, span.col_start
+                        ));
+                    }
+                    // Show assert message if the instruction has one
+                    match inst {
+                        ir::Instruction::AssertEq {
+                            message: Some(m), ..
+                        }
+                        | ir::Instruction::Assert {
+                            message: Some(m), ..
+                        } => {
+                            msg.push_str(&format!("\n    message: {m}"));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return Err(anyhow::anyhow!("{msg}"));
+        }
 
         let r1cs_data = write_r1cs(&compiler.cs);
         fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
