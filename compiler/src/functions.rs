@@ -116,18 +116,23 @@ impl FunctionDefinitionCompiler for Compiler {
             .ok_or_else(|| CompilerError::InternalError("compiler stack underflow".into()))?;
         compiled_func.max_slots = compiled_func.max_slots.max(compiled_func.reg_top as u16);
 
+        let (opt_bytecode, opt_line_info) = crate::optimizer::optimize(
+            compiled_func.bytecode,
+            compiled_func.line_info,
+        );
+
         let func = Function {
             name: compiled_func.name,
             arity: compiled_func.arity,
             max_slots: compiled_func.max_slots,
-            chunk: compiled_func.bytecode,
+            chunk: opt_bytecode,
             constants: compiled_func.constants,
             upvalue_info: compiled_func
                 .upvalues
                 .iter()
                 .flat_map(|u| vec![u.is_local as u8, u.index])
                 .collect(),
-            line_info: compiled_func.line_info,
+            line_info: opt_line_info,
         };
 
         let global_func_idx = self.prototypes.len();

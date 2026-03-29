@@ -395,6 +395,12 @@ impl Compiler {
         // Final return
         self.emit_abc(OpCode::Return, 0, 0, 0)?; // Return Nil/0
 
+        let func = self.current()?;
+        let (opt_bytecode, opt_line_info) =
+            crate::optimizer::optimize(func.bytecode.clone(), func.line_info.clone());
+        func.bytecode = opt_bytecode;
+        func.line_info = opt_line_info;
+
         Ok(self.current()?.bytecode.clone())
     }
 }

@@ -6,6 +6,7 @@ pub mod function_compiler;
 pub mod functions;
 pub mod interner;
 pub mod module_loader;
+pub mod optimizer;
 pub mod plonkish_backend;
 pub mod r1cs_backend;
 pub mod r1cs_error;
