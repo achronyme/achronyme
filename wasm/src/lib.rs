@@ -174,6 +174,58 @@ fn run_inner(source: &str) -> Result<(), String> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// LSP functions (powered by ach-lsp-core)
+// ---------------------------------------------------------------------------
+
+/// Check source code for diagnostics. Returns JSON array of LspDiagnostic[].
+#[wasm_bindgen]
+pub fn check(source: &str) -> String {
+    let diags = ach_lsp_core::diagnostics::check(source);
+    serde_json::to_string(&diags).unwrap_or_else(|_| "[]".into())
+}
+
+/// Get all completion items. Returns JSON array of CompletionItem[].
+/// This is static data (keywords + builtins + snippets), no source needed.
+#[wasm_bindgen]
+pub fn completions() -> String {
+    let mut items = ach_lsp_core::completion::keyword_completions();
+    items.extend(ach_lsp_core::completion::snippet_completions());
+    serde_json::to_string(&items).unwrap_or_else(|_| "[]".into())
+}
+
+/// Get hover documentation for the word at (line, col). Returns markdown string or "".
+#[wasm_bindgen]
+pub fn hover(source: &str, line: u32, col: u32) -> String {
+    let word = match ach_lsp_core::document::word_at_position(source, line, col) {
+        Some((w, _)) => w,
+        None => return String::new(),
+    };
+    ach_lsp_core::hover::hover_for(&word)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Go to definition for the word at (line, col). Returns JSON Range or "".
+#[wasm_bindgen]
+pub fn goto_definition(source: &str, line: u32, col: u32) -> String {
+    let byte_offset = match ach_lsp_core::definitions::position_to_byte_offset(source, line, col) {
+        Some(o) => o,
+        None => return String::new(),
+    };
+    match ach_lsp_core::definitions::goto_definition(source, byte_offset) {
+        Some(range) => serde_json::to_string(&range).unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+/// Extract document symbols. Returns JSON array of DocumentSymbol[].
+#[wasm_bindgen]
+pub fn document_symbols(source: &str) -> String {
+    let syms = ach_lsp_core::symbols::document_symbols(source);
+    serde_json::to_string(&syms).unwrap_or_else(|_| "[]".into())
+}
+
 // --- Handle remapping (mirrors cli/src/commands/run.rs) ---
 
 fn remap_field_handles(constants: &mut [Value], field_map: &[u32]) {
