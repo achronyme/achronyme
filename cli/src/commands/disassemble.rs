@@ -12,18 +12,12 @@ pub fn disassemble_file(path: &str, error_format: ErrorFormat) -> Result<()> {
     // Parse AST to detect circuit mode
     let (ast, _parse_errors) = achronyme_parser::parse_program(&content);
 
-    let is_circuit = has_circuit_decls(&ast.stmts);
-    let prove_blocks = collect_prove_blocks(&ast.stmts);
-
-    if is_circuit {
+    if has_circuit_decls(&ast.stmts) {
         // Self-contained circuit: show IR only
-        disassemble_circuit(path, &content, error_format)
-    } else if !prove_blocks.is_empty() {
-        // Mixed mode: VM bytecode + IR for each prove block
-        disassemble_vm(path, &content, error_format)?;
-        disassemble_prove_blocks(&prove_blocks)
+        disassemble_circuit(path, &content, &ast, error_format)
     } else {
-        // Pure VM: current behavior
+        // VM mode (pure or mixed with prove blocks).
+        // Prove blocks are dumped from the compiled bytecode, not re-parsed.
         disassemble_vm(path, &content, error_format)
     }
 }
@@ -36,121 +30,103 @@ fn has_circuit_decls(stmts: &[Stmt]) -> bool {
     stmts.iter().any(|s| matches!(s, Stmt::CircuitDecl { .. }))
 }
 
-/// Collect `(source_text, line_number)` for every prove block in the AST.
-fn collect_prove_blocks(stmts: &[Stmt]) -> Vec<(String, usize)> {
-    let mut blocks = Vec::new();
-    for stmt in stmts {
-        collect_proves_stmt(stmt, &mut blocks);
-    }
-    blocks
-}
-
-fn collect_proves_stmt(stmt: &Stmt, out: &mut Vec<(String, usize)>) {
-    match stmt {
-        Stmt::Expr(expr) => collect_proves_expr(expr, out),
-        Stmt::LetDecl { value, .. } | Stmt::MutDecl { value, .. } => {
-            collect_proves_expr(value, out);
-        }
-        Stmt::Assignment { target, value, .. } => {
-            collect_proves_expr(target, out);
-            collect_proves_expr(value, out);
-        }
-        Stmt::FnDecl { body, .. } => collect_proves_block(body, out),
-        Stmt::Print { value, .. } => collect_proves_expr(value, out),
-        Stmt::Return {
-            value: Some(expr), ..
-        } => collect_proves_expr(expr, out),
-        Stmt::Export { inner, .. } => collect_proves_stmt(inner, out),
-        _ => {}
-    }
-}
-
-fn collect_proves_expr(expr: &Expr, out: &mut Vec<(String, usize)>) {
-    match expr {
-        Expr::Prove { span, .. } => {
-            out.push(("prove { ... }".to_string(), span.line_start));
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            collect_proves_expr(lhs, out);
-            collect_proves_expr(rhs, out);
-        }
-        Expr::UnaryOp { operand, .. } => collect_proves_expr(operand, out),
-        Expr::Call { callee, args, .. } => {
-            collect_proves_expr(callee, out);
-            for arg in args {
-                collect_proves_expr(&arg.value, out);
-            }
-        }
-        Expr::Index { object, index, .. } => {
-            collect_proves_expr(object, out);
-            collect_proves_expr(index, out);
-        }
-        Expr::DotAccess { object, .. } => collect_proves_expr(object, out),
-        Expr::If {
-            condition,
-            then_block,
-            else_branch,
-            ..
-        } => {
-            collect_proves_expr(condition, out);
-            collect_proves_block(then_block, out);
-            if let Some(branch) = else_branch {
-                match branch {
-                    ElseBranch::Block(b) => collect_proves_block(b, out),
-                    ElseBranch::If(e) => collect_proves_expr(e, out),
-                }
-            }
-        }
-        Expr::For { body, .. }
-        | Expr::While { body, .. }
-        | Expr::Forever { body, .. }
-        | Expr::FnExpr { body, .. } => {
-            collect_proves_block(body, out);
-        }
-        Expr::Block(block) => collect_proves_block(block, out),
-        Expr::Array { elements, .. } => {
-            for elem in elements {
-                collect_proves_expr(elem, out);
-            }
-        }
-        Expr::Map { pairs, .. } => {
-            for (_, val) in pairs {
-                collect_proves_expr(val, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_proves_block(block: &Block, out: &mut Vec<(String, usize)>) {
-    for s in &block.stmts {
-        collect_proves_stmt(s, out);
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Circuit IR disassembly (self-contained .ach files with public/witness)
+// Circuit IR disassembly
 // ---------------------------------------------------------------------------
 
-fn disassemble_circuit(path: &str, source: &str, error_format: ErrorFormat) -> Result<()> {
+fn disassemble_circuit(
+    path: &str,
+    source: &str,
+    ast: &Program,
+    error_format: ErrorFormat,
+) -> Result<()> {
     let source_dir = std::path::Path::new(path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
 
-    let (pub_names, wit_names, mut program) =
-        ir::IrLowering::lower_self_contained_with_base(source, source_dir).map_err(|e| {
-            let diag = e.to_diagnostic();
-            let rendered = super::render_diagnostic(&diag, source, error_format);
-            anyhow::anyhow!("{rendered}")
-        })?;
+    // Try self-contained lowering first (works for inline circuit bodies
+    // that use `public x` / `witness y` declarations directly).
+    if let Ok((pub_names, wit_names, mut program)) =
+        ir::IrLowering::lower_self_contained_with_base(source, source_dir.clone())
+    {
+        ir::passes::optimize(&mut program);
+        print_circuit_ir(path, None, &pub_names, &wit_names, &program);
+        return Ok(());
+    }
 
-    ir::passes::optimize(&mut program);
+    // Self-contained lowering failed — extract each CircuitDecl's body
+    // from the source using byte-range spans and reconstruct the input
+    // declarations from the typed parameters.
+    let mut found = false;
+    for stmt in &ast.stmts {
+        if let Stmt::CircuitDecl {
+            name, params, body, ..
+        } = stmt
+        {
+            found = true;
 
-    println!("== Circuit IR for {} ==", path);
+            // Reconstruct self-contained source: param declarations + body
+            let mut circuit_src = String::new();
+            for p in params {
+                let vis = p.type_ann.as_ref().and_then(|ta| ta.visibility.as_ref());
+                let role = match vis {
+                    Some(Visibility::Public) => "public",
+                    Some(Visibility::Witness) => "witness",
+                    None => "witness", // default
+                };
+                circuit_src.push_str(&format!("{} {}\n", role, p.name));
+            }
+
+            // Extract body source using span byte offsets
+            {
+                let start = body.span.byte_start;
+                let end = body.span.byte_end;
+                if start < source.len() && end <= source.len() && start < end {
+                    // span covers "{ ... }", strip the braces
+                    let body_src = &source[start..end];
+                    let inner = body_src
+                        .trim()
+                        .strip_prefix('{')
+                        .and_then(|s| s.strip_suffix('}'))
+                        .unwrap_or(body_src);
+                    circuit_src.push_str(inner);
+                }
+            }
+
+            match ir::IrLowering::lower_self_contained_with_base(&circuit_src, source_dir.clone()) {
+                Ok((pub_names, wit_names, mut program)) => {
+                    ir::passes::optimize(&mut program);
+                    print_circuit_ir(path, Some(name), &pub_names, &wit_names, &program);
+                }
+                Err(e) => {
+                    let diag = e.to_diagnostic();
+                    let rendered = super::render_diagnostic(&diag, source, error_format);
+                    eprintln!("  (failed to lower circuit `{name}`: {rendered})");
+                }
+            }
+        }
+    }
+
+    if !found {
+        anyhow::bail!("no circuit declarations found in {path}");
+    }
+    Ok(())
+}
+
+fn print_circuit_ir(
+    path: &str,
+    name: Option<&str>,
+    pub_names: &[String],
+    wit_names: &[String],
+    program: &ir::IrProgram,
+) {
+    match name {
+        Some(n) => println!("== Circuit IR for `{}` ({}) ==", n, path),
+        None => println!("== Circuit IR for {} ==", path),
+    }
     println!();
 
-    // Inputs summary
     if !pub_names.is_empty() {
         println!("  public:  {}", pub_names.join(", "));
     }
@@ -159,10 +135,8 @@ fn disassemble_circuit(path: &str, source: &str, error_format: ErrorFormat) -> R
     }
     println!();
 
-    // IR instructions
     print!("{program}");
 
-    // Stats
     let n = program.instructions.len();
     let n_pub = pub_names.len();
     let n_wit = wit_names.len();
@@ -171,47 +145,15 @@ fn disassemble_circuit(path: &str, source: &str, error_format: ErrorFormat) -> R
         .iter()
         .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
         .count();
-    eprintln!("{n} instructions, {} inputs ({n_pub} public, {n_wit} witness), {n_constraints} constraints", n_pub + n_wit);
-
-    Ok(())
+    eprintln!(
+        "{n} instructions, {} inputs ({n_pub} public, {n_wit} witness), {n_constraints} constraints",
+        n_pub + n_wit
+    );
+    println!();
 }
 
 // ---------------------------------------------------------------------------
-// Prove block IR dump (for mixed VM + circuit files)
-// ---------------------------------------------------------------------------
-
-fn disassemble_prove_blocks(prove_blocks: &[(String, usize)]) -> Result<()> {
-    for (i, (prove_src, line)) in prove_blocks.iter().enumerate() {
-        println!();
-        println!(
-            "  -- Circuit IR for prove block {} (line {}) --",
-            i + 1,
-            line
-        );
-
-        // Strip `prove` keyword — source is "prove { ... }", handler expects "{ ... }"
-        let block_src = &prove_src[prove_src.find('{').unwrap_or(0)..];
-        let inner = block_src
-            .trim()
-            .strip_prefix('{')
-            .and_then(|s| s.strip_suffix('}'))
-            .unwrap_or(block_src);
-
-        match ir::IrLowering::lower_self_contained(inner) {
-            Ok((_, _, mut program)) => {
-                ir::passes::optimize(&mut program);
-                print!("{program}");
-            }
-            Err(e) => {
-                println!("  (failed to lower IR: {e})");
-            }
-        }
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// VM bytecode disassembly (original behavior)
+// VM bytecode disassembly (with prove block IR dump)
 // ---------------------------------------------------------------------------
 
 fn disassemble_vm(path: &str, source: &str, error_format: ErrorFormat) -> Result<()> {
@@ -290,5 +232,55 @@ fn disassemble_vm(path: &str, source: &str, error_format: ErrorFormat) -> Result
             }
         }
     }
+
+    // ── Dump ProveIR for each PROVE instruction ─────────────────────────
+    dump_prove_blocks_from_bytecode(&bytecode, &compiler);
+
     Ok(())
+}
+
+/// Scan compiled bytecode for PROVE instructions, deserialize the ProveIR
+/// from the constant pool, and print it.
+fn dump_prove_blocks_from_bytecode(bytecode: &[u32], compiler: &compiler::Compiler) {
+    let main_func = match compiler.compilers.last() {
+        Some(f) => f,
+        None => return,
+    };
+
+    let mut block_num = 0u32;
+    for (i, &inst) in bytecode.iter().enumerate() {
+        if decode_opcode(inst) != OpCode::Prove.as_u8() {
+            continue;
+        }
+        block_num += 1;
+        let bx = decode_bx(inst) as usize;
+
+        println!();
+        println!("  -- ProveIR block {} (instruction {:04}) --", block_num, i);
+
+        let Some(val) = main_func.constants.get(bx) else {
+            println!("  (constant K[{bx}] not found)");
+            continue;
+        };
+
+        if !val.is_bytes() {
+            println!("  (constant K[{bx}] is not bytes)");
+            continue;
+        }
+
+        let Some(handle) = val.as_handle() else {
+            println!("  (could not extract handle from K[{bx}])");
+            continue;
+        };
+
+        let Some(blob) = compiler.bytes_interner.blobs.get(handle as usize) else {
+            println!("  (bytes handle {handle} not found in interner)");
+            continue;
+        };
+
+        match ir::prove_ir::ProveIR::from_bytes(blob) {
+            Ok(prove_ir) => print!("{prove_ir}"),
+            Err(e) => println!("  (failed to deserialize ProveIR: {e})"),
+        }
+    }
 }
