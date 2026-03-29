@@ -7,7 +7,7 @@ All notable changes to Achronyme are documented here. Each release bumps all 9 w
 
 ## 0.1.0-beta.17 — 2026-03-28
 
-**8.6x VM speedup, bytecode optimizer, ProveIR observability, WASM crate.**
+**8.6x VM speedup, bytecode optimizer, ProveIR observability, WASM crate, OuterScope unification, 42% constraint reduction.**
 
 ### Performance: 1315ms → 303ms (8.6x with PGO)
 
@@ -77,9 +77,43 @@ let name: String = "hello"
 
 VM-mode type annotations for documentation and future type checking. Joins the existing `Field`, `Bool`, `Public`, `Witness` annotations.
 
+### OuterScope unification
+
+Functions defined before `prove {}` and inline `circuit {}` blocks are now accessible inside them — the same behavior that `ach circuit` files already had, now unified across all compilation paths.
+
+```ach
+fn double(x) { x * 2 }
+
+prove(expected: Public) {
+    assert_eq(double(val), expected)   // ✓ works now
+}
+```
+
+New `OuterScope` struct replaces the ad-hoc preamble prepend hack in `compile_circuit()`. FnDecl ASTs are registered in the ProveIR compiler's `fn_table` before block compilation, so outer functions are inlined identically to locally-defined ones.
+
+### ZK constraint optimization: 2,539 → 1,461 (-42.4%)
+
+Three optimizations reduce the proof of membership (depth-3 Merkle) constraint count:
+
+| Optimization | Before | After | Δ |
+|---|---|---|---|
+| Conditional swap in `merkle_verify` | 2,539 | 1,464 | -42.3% |
+| Boolean enforcement dedup | 1,464 | 1,461 | -0.2% |
+| **Total** | **2,539** | **1,461** | **-42.4%** |
+
+**Conditional swap** — The `merkle_verify` builtin now uses 2 Mux + 1 Poseidon per Merkle level (365 constraints) instead of 2 Poseidon + 1 Mux (724 constraints). This matches the standard pattern used by Tornado Cash and Semaphore.
+
+**Boolean enforcement dedup** — The R1CS backend now tracks which variables have already had `v * (1-v) = 0` enforced. When the same condition is used in multiple Mux/And/Or instructions, the check is emitted only once.
+
+### New: CSE (Common Sub-expression Elimination) pass
+
+New IR optimization pass that identifies duplicate pure computations and remaps their results to the first occurrence. Covers all pure instructions: arithmetic, Poseidon, Mux, boolean ops, comparisons. Side-effecting instructions (AssertEq, Assert, RangeCheck) are never deduplicated. Handles chained substitutions.
+
+The optimization pipeline is now: constant folding → bound inference → **CSE** → dead code elimination.
+
 ### New: Proof of membership example
 
-`examples/proof_of_membership.ach` — depth-3 Merkle tree with 8 members. Two members prove membership via Poseidon commitments and `merkle_verify` without revealing identity. 2,539 constraints per proof (Groth16, ~850 bytes).
+`examples/proof_of_membership.ach` — depth-3 Merkle tree with 8 members. Two members prove membership via Poseidon commitments and `merkle_verify` without revealing identity. 1,461 constraints per proof (Groth16, ~855 bytes).
 
 ### PGO build script
 
