@@ -336,6 +336,21 @@ pub enum CircuitNode {
     },
 }
 
+impl CircuitNode {
+    /// Extract the source span from any node variant.
+    pub fn span(&self) -> Option<&SpanRange> {
+        match self {
+            CircuitNode::Let { span, .. }
+            | CircuitNode::LetArray { span, .. }
+            | CircuitNode::AssertEq { span, .. }
+            | CircuitNode::Assert { span, .. }
+            | CircuitNode::For { span, .. }
+            | CircuitNode::If { span, .. }
+            | CircuitNode::Expr { span, .. } => span.as_ref(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // For loop range
 // ---------------------------------------------------------------------------
