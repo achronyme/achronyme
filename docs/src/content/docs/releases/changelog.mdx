@@ -5,6 +5,92 @@ description: Release history for Achronyme.
 
 All notable changes to Achronyme are documented here. Each release bumps all 9 workspace crates to the same version.
 
+## 0.1.0-beta.17 — 2026-03-28
+
+**8.6x VM speedup, bytecode optimizer, ProveIR observability, WASM crate.**
+
+### Performance: 1315ms → 303ms (8.6x with PGO)
+
+Six VM hot-path optimizations and a three-pass bytecode optimizer bring the 10M-iteration benchmark from 1315ms to 303ms:
+
+| Optimization | Speedup | Technique |
+|---|---|---|
+| Unchecked register access | -25% | `get(idx)` → `get_unchecked(idx)` in hot loop |
+| Boxed error payloads | fix | `Result<Value>` from 48 → 16 bytes |
+| Dispatch cache | -40% | Cache closure→function lookup, skip Arena free-check |
+| Batch GC | -7% | Check every 1024 instructions, not every instruction |
+| Budget sentinel | -7% | `Option<u64>` → `u64` with `u64::MAX` sentinel |
+| Fused int check | -6% | `as_int_unchecked()` eliminates double tag check |
+| **Bytecode optimizer** | -8% | Three compiler passes (see below) |
+| **PGO** | -34% | Profile-guided optimization via `scripts/build-pgo.sh` |
+
+Three attempted optimizations were reverted after measurement showed no improvement with PGO (branch reordering, Result removal, specialized integer opcodes), confirming that with PGO the branch predictor already handles hot-path branches optimally — future gains must reduce work, not branches.
+
+### Bytecode optimizer (`compiler/src/optimizer.rs`)
+
+Three peephole passes run on every function's bytecode after compilation:
+
+1. **Redundant Load Elimination** — `SetGlobal Ra, idx; GetGlobal Rb, idx` → `Move Rb, Ra`. Jump targets act as barriers.
+2. **Constant Hoisting (LICM)** — Loop-invariant `LoadConst` moved before loop. Re-runs after register promotion to catch newly hoistable constants.
+3. **Register Promotion** — Globals in call-free innermost loops promoted to local registers. `GET_GLOBAL`/`SET_GLOBAL` become `Move`, with one-time load before the loop and write-back at each exit point.
+
+26 unit tests. The optimizer correctly handles `continue` (collapsed back-edges), nested loops (innermost-only promotion), and read-only globals (no write-back for `let` bindings).
+
+### ProveIR Display
+
+```
+ach disassemble examples/proof_of_membership.ach
+```
+
+```
+  -- ProveIR block 1 (instruction 0134) --
+  Captures:
+    key_5                (witness)
+    proof_path_0..2      (witness)
+    proof_indices_0..2   (witness)
+  Public inputs:
+    merkle_root: Field
+  Body:
+    let my_commitment = poseidon($key_5, 0)
+    merkle_verify(merkle_root, my_commitment, proof_path, proof_indices)
+```
+
+Human-readable representation of pre-compiled circuit templates. Captured variables prefixed with `$` to distinguish them from circuit-local names. Shows captures with usage roles (witness/structure/both), typed inputs, and full circuit body with proper indentation.
+
+### Disassembler rewrite
+
+The `ach disassemble` command now works from compiled artifacts instead of re-parsing source:
+
+- **Prove blocks** — Deserialized from bytecode constant pool via `ProveIR::from_bytes()`. Previously failed with "expected expression, found `..`".
+- **Circuit declarations** — `circuit name(params) { body }` extracted from AST with span-based source slicing. Previously failed with "circuit declarations not supported inside circuits".
+
+### New: `achronyme-wasm` crate
+
+7 of 9 core crates compile to `wasm32-unknown-unknown` (parser, compiler, vm, ir, memory, constraints, std). The `wasm/` crate provides a browser-ready API for the planned playground (0.3.0).
+
+### New: `Int` and `String` type annotations
+
+```ach
+let count: Int = 42
+let name: String = "hello"
+```
+
+VM-mode type annotations for documentation and future type checking. Joins the existing `Field`, `Bool`, `Public`, `Witness` annotations.
+
+### New: Proof of membership example
+
+`examples/proof_of_membership.ach` — depth-3 Merkle tree with 8 members. Two members prove membership via Poseidon commitments and `merkle_verify` without revealing identity. 2,539 constraints per proof (Groth16, ~850 bytes).
+
+### PGO build script
+
+```bash
+./scripts/build-pgo.sh
+```
+
+Builds an optimized binary using profile-guided optimization. Collects profiles from the hot-loop benchmark and the VM test suite, then rebuilds with LLVM PGO. Integrated into CI (`release.yml`) for native release targets.
+
+---
+
 ## 0.1.0-beta.16 — 2026-03-25
 
 **Hardening, circuit imports, assert messages, TOML inputs.**
