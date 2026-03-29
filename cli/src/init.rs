@@ -43,24 +43,22 @@ print(message)
         ),
         "prove" => format!(
             r#"// {name}
-let a = 6
-let b = 7
-let result = prove {{
-    public out
-    witness x
-    witness y
-    assert_eq(x * y, out)
+let secret = 0p42
+let expected = poseidon(secret, 0p0)
+
+prove check(expected: Public) {{
+    assert_eq(poseidon(secret, 0p0), expected, "hash mismatch")
 }}
-print("Proof:", result)
+
+print("Proof verified!")
 "#
         ),
         // "circuit" or default
         _ => format!(
             r#"// {name}
-public out
-witness a
-witness b
-assert_eq(a * b, out)
+circuit multiply(out: Public, a: Witness, b: Witness) {{
+    assert_eq(a * b, out)
+}}
 "#
         ),
     };
@@ -93,8 +91,8 @@ mod tests {
         assert!(toml.contains("entry = \"src/main.ach\""));
 
         let main = fs::read_to_string(tmp.path().join("test-proj/src/main.ach")).unwrap();
-        assert!(main.contains("public out"));
-        assert!(main.contains("witness a"));
+        assert!(main.contains("circuit multiply"));
+        assert!(main.contains("Witness"));
     }
 
     #[test]
@@ -115,7 +113,7 @@ mod tests {
         init_project("prove-proj", "prove", tmp.path()).unwrap();
 
         let main = fs::read_to_string(tmp.path().join("prove-proj/src/main.ach")).unwrap();
-        assert!(main.contains("prove {"));
+        assert!(main.contains("prove check"));
         assert!(main.contains("print("));
     }
 
