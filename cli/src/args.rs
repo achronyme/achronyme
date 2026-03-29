@@ -62,6 +62,26 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
+    /// Open the interactive circuit inspector in the browser
+    Inspect {
+        /// Path to the source file (.ach). If omitted, uses [project].entry from achronyme.toml
+        path: Option<String>,
+        /// Name of the prove block to inspect (runs program via VM to resolve captures)
+        #[arg(long)]
+        prove: Option<String>,
+        /// Input values as name=value pairs (comma-separated, for standalone circuits)
+        #[arg(long)]
+        inputs: Option<String>,
+        /// Input values from a TOML file (for standalone circuits)
+        #[arg(long)]
+        input_file: Option<String>,
+        /// HTTP server port (default: 3000)
+        #[arg(long, default_value = "3000")]
+        port: u16,
+        /// Don't auto-open the browser
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Compile a circuit to .r1cs (and optionally generate .wtns)
     Circuit {
         /// Path to the source file (.ach). If omitted, uses [project].entry from achronyme.toml
