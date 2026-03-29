@@ -60,18 +60,26 @@ fn dest_reg(word: u32) -> Option<u8> {
 }
 
 /// Find loops as (start, back_edge_pos) pairs by detecting backward Jump edges.
+///
+/// Multiple backward jumps to the same target (e.g. `continue` + the real
+/// back-edge) are collapsed: only the **furthest** back-edge is kept, as it
+/// defines the actual loop boundary.  Earlier backward jumps to the same
+/// target are `continue` statements and must not be treated as separate loops.
 fn find_loops(instrs: &[(u32, u32)]) -> Vec<(usize, usize)> {
-    let mut loops = Vec::new();
+    let mut loop_map: HashMap<usize, usize> = HashMap::new();
     for (i, &(word, _)) in instrs.iter().enumerate() {
         let op = decode_opcode(word);
         if op == OpCode::Jump.as_u8() {
             let target = decode_bx(word) as usize;
             if target < i {
-                loops.push((target, i));
+                let entry = loop_map.entry(target).or_insert(i);
+                if i > *entry {
+                    *entry = i;
+                }
             }
         }
     }
-    loops
+    loop_map.into_iter().collect()
 }
 
 /// Rewrite all jump targets using an old→new address map.
@@ -234,6 +242,15 @@ fn register_promotion(instrs: Vec<(u32, u32)>, max_slots: &mut u16) -> Vec<(u32,
         return instrs;
     }
 
+    // Only process innermost loops: skip any loop whose body contains
+    // another loop's back-edge.  This avoids conflicts where nested loops
+    // both try to promote the same global variable.
+    let innermost: Vec<(usize, usize)> = loops
+        .iter()
+        .filter(|&&(start, back_edge)| !loops.iter().any(|&(s, be)| s > start && be < back_edge))
+        .copied()
+        .collect();
+
     struct Promotion {
         loop_start: usize,
         exit_point: usize, // back_edge + 1
@@ -245,7 +262,7 @@ fn register_promotion(instrs: Vec<(u32, u32)>, max_slots: &mut u16) -> Vec<(u32,
 
     let mut promotions: Vec<Promotion> = Vec::new();
 
-    for &(start, back_edge) in &loops {
+    for &(start, back_edge) in &innermost {
         // Safety: skip loops containing calls.
         let has_call = (start..=back_edge).any(|i| can_call(decode_opcode(instrs[i].0)));
         if has_call {
