@@ -115,6 +115,20 @@ The optimization pipeline is now: constant folding → bound inference → **CSE
 
 `examples/proof_of_membership.ach` — depth-3 Merkle tree with 8 members. Two members prove membership via Poseidon commitments and `merkle_verify` without revealing identity. 1,461 constraints per proof (Groth16, ~855 bytes).
 
+### Fix: `BigInt.to_string()` and `BigInt.to_hex()`
+
+BigInt values now support string conversion:
+
+```ach
+let b = bigint256(42)
+print(b.to_string())   // "42"
+print(b.to_hex())      // "0x2a"
+```
+
+### Test suite: 2,705 tests
+
+2,543 unit/integration tests (cargo test --workspace) + 162 E2E tests (run_tests.sh). Up from 2,125 in beta.16.
+
 ### PGO build script
 
 ```bash
