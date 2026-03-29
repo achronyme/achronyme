@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use achronyme_parser::diagnostic::SpanRange;
 use memory::FieldElement;
 
 use super::error::ProveIrError;
@@ -46,6 +47,9 @@ struct Instantiator {
     env: HashMap<String, InstEnvValue>,
     /// Concrete capture values (provided by caller).
     captures: HashMap<String, FieldElement>,
+    /// Current source span context — set when entering a CircuitNode,
+    /// propagated to all IR instructions emitted within that node.
+    current_span: Option<SpanRange>,
 }
 
 impl ProveIR {
@@ -61,6 +65,7 @@ impl ProveIR {
             program: IrProgram::new(),
             env: HashMap::new(),
             captures: captures.clone(),
+            current_span: None,
         };
 
         // 1. Validate all required captures are provided
@@ -116,6 +121,19 @@ impl ProveIR {
 
 impl Instantiator {
     // -------------------------------------------------------------------
+    // Span-aware instruction emission
+    // -------------------------------------------------------------------
+
+    /// Push an instruction and tag its result with the current source span.
+    fn push_inst(&mut self, inst: Instruction) -> SsaVar {
+        let var = self.program.push(inst);
+        if let Some(span) = &self.current_span {
+            self.program.set_span(var, span.clone());
+        }
+        var
+    }
+
+    // -------------------------------------------------------------------
     // Validation
     // -------------------------------------------------------------------
 
@@ -170,7 +188,7 @@ impl Instantiator {
     /// and return the final SsaVar (the RangeCheck result if Bool, else the Input result).
     fn emit_input(&mut self, name: &str, visibility: Visibility, ir_type: IrType) -> SsaVar {
         let v = self.program.fresh_var();
-        self.program.push(Instruction::Input {
+        self.push_inst(Instruction::Input {
             result: v,
             name: name.to_string(),
             visibility,
@@ -183,7 +201,7 @@ impl Instantiator {
         // to Bool inputs, breaking downstream boolean logic (And, Or, Not, Mux).
         if ir_type == IrType::Bool {
             let enforced = self.program.fresh_var();
-            self.program.push(Instruction::RangeCheck {
+            self.push_inst(Instruction::RangeCheck {
                 result: enforced,
                 operand: v,
                 bits: 1,
@@ -210,7 +228,7 @@ impl Instantiator {
                 // Becomes a witness input — the concrete value is the witness
                 // assignment provided by the prover.
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Input {
+                self.push_inst(Instruction::Input {
                     result: v,
                     name: cap.name.clone(),
                     visibility: Visibility::Witness,
@@ -227,12 +245,12 @@ impl Instantiator {
                 // producing an unsound proof.
                 if cap.usage == CaptureUsage::Both {
                     let const_var = self.program.fresh_var();
-                    self.program.push(Instruction::Const {
+                    self.push_inst(Instruction::Const {
                         result: const_var,
                         value,
                     });
                     let eq_var = self.program.fresh_var();
-                    self.program.push(Instruction::AssertEq {
+                    self.push_inst(Instruction::AssertEq {
                         result: eq_var,
                         lhs: v,
                         rhs: const_var,
@@ -243,7 +261,7 @@ impl Instantiator {
             CaptureUsage::StructureOnly => {
                 // Inlined as a constant — not a circuit wire.
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Const { result: v, value });
+                self.push_inst(Instruction::Const { result: v, value });
                 self.program.set_name(v, cap.name.clone());
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
             }
@@ -273,6 +291,20 @@ impl Instantiator {
     // -------------------------------------------------------------------
 
     fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
+        // Set span context: all instructions emitted while processing this node
+        // inherit the node's source span for source mapping.
+        let prev_span = self.current_span.take();
+        if let Some(span) = node.span() {
+            self.current_span = Some(span.clone());
+        }
+
+        self.emit_node_inner(node)?;
+
+        self.current_span = prev_span;
+        Ok(())
+    }
+
+    fn emit_node_inner(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
         match node {
             CircuitNode::Let { name, value, .. } => {
                 let v = self.emit_expr(value)?;
@@ -297,7 +329,7 @@ impl Instantiator {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::AssertEq {
+                self.push_inst(Instruction::AssertEq {
                     result: v,
                     lhs: l,
                     rhs: r,
@@ -307,7 +339,7 @@ impl Instantiator {
             CircuitNode::Assert { expr, message, .. } => {
                 let operand = self.emit_expr(expr)?;
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Assert {
+                self.push_inst(Instruction::Assert {
                     result: v,
                     operand,
                     message: message.clone(),
@@ -450,7 +482,7 @@ impl Instantiator {
         match expr {
             CircuitExpr::Const(fe) => {
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Const {
+                self.push_inst(Instruction::Const {
                     result: v,
                     value: *fe,
                 });
@@ -490,7 +522,7 @@ impl Instantiator {
                         rhs: r,
                     },
                 };
-                self.program.push(inst);
+                self.push_inst(inst);
                 self.program.set_type(v, IrType::Field);
                 Ok(v)
             }
@@ -507,7 +539,7 @@ impl Instantiator {
                         operand: inner,
                     },
                 };
-                self.program.push(inst);
+                self.push_inst(inst);
                 let ty = match op {
                     CircuitUnaryOp::Neg => IrType::Field,
                     CircuitUnaryOp::Not => IrType::Bool,
@@ -552,7 +584,7 @@ impl Instantiator {
                         rhs: l,
                     },
                 };
-                self.program.push(inst);
+                self.push_inst(inst);
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
@@ -572,7 +604,7 @@ impl Instantiator {
                         rhs: r,
                     },
                 };
-                self.program.push(inst);
+                self.push_inst(inst);
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
@@ -585,7 +617,7 @@ impl Instantiator {
                 let t = self.emit_expr(if_true)?;
                 let f = self.emit_expr(if_false)?;
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Mux {
+                self.push_inst(Instruction::Mux {
                     result: v,
                     cond: c,
                     if_true: t,
@@ -603,7 +635,7 @@ impl Instantiator {
                 let l = self.emit_expr(left)?;
                 let r = self.emit_expr(right)?;
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::PoseidonHash {
+                self.push_inst(Instruction::PoseidonHash {
                     result: v,
                     left: l,
                     right: r,
@@ -627,12 +659,12 @@ impl Instantiator {
                 if compiled.len() == 1 {
                     // Match IrLowering semantics: single arg → poseidon(arg, ZERO)
                     let zero = self.program.fresh_var();
-                    self.program.push(Instruction::Const {
+                    self.push_inst(Instruction::Const {
                         result: zero,
                         value: FieldElement::ZERO,
                     });
                     let v = self.program.fresh_var();
-                    self.program.push(Instruction::PoseidonHash {
+                    self.push_inst(Instruction::PoseidonHash {
                         result: v,
                         left: compiled[0],
                         right: zero,
@@ -645,7 +677,7 @@ impl Instantiator {
                 let mut acc = iter.next().expect("checked non-empty above");
                 for next in iter {
                     let v = self.program.fresh_var();
-                    self.program.push(Instruction::PoseidonHash {
+                    self.push_inst(Instruction::PoseidonHash {
                         result: v,
                         left: acc,
                         right: next,
@@ -657,7 +689,7 @@ impl Instantiator {
             CircuitExpr::RangeCheck { value, bits } => {
                 let operand = self.emit_expr(value)?;
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::RangeCheck {
+                self.push_inst(Instruction::RangeCheck {
                     result: v,
                     operand,
                     bits: *bits,
@@ -711,21 +743,21 @@ impl Instantiator {
                 let mut current = leaf_var;
                 for (sibling, idx) in path_elems.iter().zip(idx_elems.iter()) {
                     let left = self.program.fresh_var();
-                    self.program.push(Instruction::Mux {
+                    self.push_inst(Instruction::Mux {
                         result: left,
                         cond: *idx,
                         if_true: *sibling,
                         if_false: current,
                     });
                     let right = self.program.fresh_var();
-                    self.program.push(Instruction::Mux {
+                    self.push_inst(Instruction::Mux {
                         result: right,
                         cond: *idx,
                         if_true: current,
                         if_false: *sibling,
                     });
                     let v = self.program.fresh_var();
-                    self.program.push(Instruction::PoseidonHash {
+                    self.push_inst(Instruction::PoseidonHash {
                         result: v,
                         left,
                         right,
@@ -735,7 +767,7 @@ impl Instantiator {
 
                 // Assert computed root == expected root
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::AssertEq {
+                self.push_inst(Instruction::AssertEq {
                     result: v,
                     lhs: current,
                     rhs: root_var,
@@ -789,7 +821,7 @@ impl Instantiator {
                     }
                 };
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Const {
+                self.push_inst(Instruction::Const {
                     result: v,
                     value: FieldElement::from_u64(len as u64),
                 });
@@ -827,7 +859,7 @@ impl Instantiator {
     fn emit_pow(&mut self, base: SsaVar, exp: u64) -> Result<SsaVar, ProveIrError> {
         if exp == 0 {
             let v = self.program.fresh_var();
-            self.program.push(Instruction::Const {
+            self.push_inst(Instruction::Const {
                 result: v,
                 value: FieldElement::ONE,
             });
@@ -845,7 +877,7 @@ impl Instantiator {
                     None => current,
                     Some(acc) => {
                         let v = self.program.fresh_var();
-                        self.program.push(Instruction::Mul {
+                        self.push_inst(Instruction::Mul {
                             result: v,
                             lhs: acc,
                             rhs: current,
@@ -857,7 +889,7 @@ impl Instantiator {
             e >>= 1;
             if e > 0 {
                 let v = self.program.fresh_var();
-                self.program.push(Instruction::Mul {
+                self.push_inst(Instruction::Mul {
                     result: v,
                     lhs: current,
                     rhs: current,
@@ -1731,5 +1763,65 @@ mod tests {
             matches!(err, ProveIrError::ParseError(_)),
             "expected ParseError for import inside circuit body, got: {err}"
         );
+    }
+
+    // --- Source map (span propagation) ---
+
+    #[test]
+    fn spans_propagated_to_assert_eq() {
+        // When compiling from source, CircuitNode::AssertEq gets a span.
+        // After instantiation, the IR instruction's SsaVar should have that span.
+        let ir = compile_and_instantiate("public x\nwitness y\nassert_eq(x, y)");
+        // Find the AssertEq instruction
+        let assert_eq_var = ir
+            .instructions
+            .iter()
+            .find(|i| matches!(i, Instruction::AssertEq { .. }))
+            .map(|i| i.result_var())
+            .expect("should have AssertEq");
+        let span = ir.get_span(assert_eq_var);
+        assert!(
+            span.is_some(),
+            "AssertEq instruction should have a source span"
+        );
+        // wrap_flat_to_circuit moves declarations to params, body starts at line 2
+        assert_eq!(span.unwrap().line_start, 2);
+    }
+
+    #[test]
+    fn spans_propagated_to_let_binding() {
+        let ir = compile_and_instantiate("public x\nwitness y\nlet z = x + y\nassert_eq(z, z)");
+        // The Add instruction comes from `let z = x + y`
+        let add_var = ir
+            .instructions
+            .iter()
+            .find(|i| matches!(i, Instruction::Add { .. }))
+            .map(|i| i.result_var())
+            .expect("should have Add");
+        let span = ir.get_span(add_var);
+        assert!(span.is_some(), "Add instruction should have a source span");
+        // Body line 1: let z = x + y → line 2 in wrapped format
+        assert_eq!(span.unwrap().line_start, 2);
+    }
+
+    #[test]
+    fn spans_propagated_through_for_loop() {
+        // For loop body gets the body node's span, not the loop's span
+        let ir = compile_and_instantiate("public x\nfor i in 0..3 {\n  assert_eq(x, x)\n}");
+        // Should have 3 AssertEq instructions (loop unrolled)
+        let assert_eqs: Vec<_> = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+            .collect();
+        assert_eq!(assert_eqs.len(), 3);
+        // Each should have a span (from the body's assert_eq)
+        for inst in &assert_eqs {
+            let span = ir.get_span(inst.result_var());
+            assert!(
+                span.is_some(),
+                "AssertEq in loop body should have a source span"
+            );
+        }
     }
 }
