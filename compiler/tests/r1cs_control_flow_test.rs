@@ -45,9 +45,10 @@ fn ir_compile_and_verify(source: &str, public: &[(&str, u64)], witness: &[(&str,
 
 #[test]
 fn test_for_static_range_constraint_count() {
-    // for i in 0..3 { assert_eq(a * a, out) } -> 3 * (1 mul + 1 assert_eq) = 6
+    // for i in 0..3 { assert_eq(a * a, out) }
+    // CSE deduplicates a*a across iterations: 1 mul + 3 assert_eq = 4
     let rc = ir_compile("for i in 0..3 { assert_eq(a * a, out) }", &["out"], &["a"]).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 6);
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
@@ -74,15 +75,14 @@ fn test_for_iterator_as_constant() {
 #[test]
 fn test_for_nested() {
     // Nested for: outer 0..2, inner 0..3, body = assert_eq(a * a, out)
-    // Each iteration: 1 mul + 1 assert_eq = 2
-    // Total: 2 * 3 * 2 = 12 constraints
+    // CSE deduplicates a*a across all 6 iterations: 1 mul + 6 assert_eq = 7
     let rc = ir_compile(
         "for i in 0..2 { for j in 0..3 { assert_eq(a * a, out) } }",
         &["out"],
         &["a"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 12);
+    assert_eq!(rc.cs.num_constraints(), 7);
 }
 
 #[test]
@@ -279,15 +279,14 @@ fn test_break_rejected() {
 #[test]
 fn test_for_with_if_inside() {
     // for i in 0..2 { let r = if flag { a * b } else { c }; assert_eq(r, out) }
-    // Each iteration: 1 mul (a*b) + 2 MUX + 1 assert_eq = 4
-    // 2 iterations → 8 constraints
+    // CSE deduplicates across iterations: 1 mul + 1 bool_enforce + 1 mux + 2 assert_eq = 5
     let rc = ir_compile(
         "for i in 0..2 { let r = if flag { a * b } else { c }; assert_eq(r, out) }",
         &["out"],
         &["flag", "a", "b", "c"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 8);
+    assert_eq!(rc.cs.num_constraints(), 5);
 }
 
 #[test]

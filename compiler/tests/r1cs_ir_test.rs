@@ -1562,11 +1562,11 @@ merkle_verify(root, leaf, path, dirs)
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&prog).unwrap();
 
-    // Should have reasonable constraint count: 3 * (2*361 + 2) + 1 ≈ 2175
+    // Conditional swap: 3 * (2 mux + 1 poseidon + 2 materialize) + 1 assert_eq ≈ 1099
     let nc = compiler.cs.num_constraints();
     assert!(
-        nc >= 2000 && nc <= 3000,
-        "expected ~2175 constraints for depth-3 Merkle, got {nc}"
+        nc >= 1000 && nc <= 1200,
+        "expected ~1099 constraints for depth-3 Merkle, got {nc}"
     );
 }
 
