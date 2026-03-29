@@ -1,9 +1,10 @@
 //! List methods: len, push, pop, map, filter, reduce, for_each, find,
-//! any, all, sort, flat_map, zip
+//! any, all, sort, flat_map, zip, to_string
 
 use crate::error::RuntimeError;
 use crate::machine::prototype::PrototypeRegistry;
 use crate::machine::VM;
+use crate::ValueOps;
 use memory::{Value, TAG_LIST};
 
 pub fn register(registry: &mut PrototypeRegistry) {
@@ -20,6 +21,7 @@ pub fn register(registry: &mut PrototypeRegistry) {
     registry.register(TAG_LIST, "sort", method_sort);
     registry.register(TAG_LIST, "flat_map", method_flat_map);
     registry.register(TAG_LIST, "zip", method_zip);
+    registry.register(TAG_LIST, "to_string", method_to_string);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,4 +391,21 @@ fn method_zip(vm: &mut VM, receiver: Value, args: &[Value]) -> Result<Value, Run
 
     vm.native_roots.truncate(root_idx);
     Ok(Value::list(result_handle))
+}
+
+fn method_to_string(vm: &mut VM, receiver: Value, _args: &[Value]) -> Result<Value, RuntimeError> {
+    let handle = get_list_handle(receiver)?;
+    let elements = snapshot_list(vm, handle, "to_string")?;
+
+    let mut parts = Vec::with_capacity(elements.len());
+    for elem in &elements {
+        parts.push(vm.val_to_string(elem));
+    }
+
+    let s = format!("[{}]", parts.join(", "));
+    let str_handle = vm
+        .heap
+        .alloc_string(s)
+        .map_err(|e| RuntimeError::type_mismatch(format!("to_string alloc: {e}")))?;
+    Ok(Value::string(str_handle))
 }

@@ -45,13 +45,25 @@ impl ValueOps for super::vm::VM {
                 let Some(handle) = v.as_handle() else {
                     return "<bad list>".into();
                 };
-                format!("[List:{}]", handle)
+                let Some(elements) = self.heap.get_list(handle) else {
+                    return "<bad list>".into();
+                };
+                let parts: Vec<String> = elements.iter().map(|e| self.val_to_string(e)).collect();
+                format!("[{}]", parts.join(", "))
             }
             v if v.is_map() => {
                 let Some(handle) = v.as_handle() else {
                     return "<bad map>".into();
                 };
-                format!("{{Map:{}}}", handle)
+                let Some(map) = self.heap.get_map(handle) else {
+                    return "<bad map>".into();
+                };
+                let mut parts: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, self.val_to_string(v)))
+                    .collect();
+                parts.sort(); // deterministic output
+                format!("{{{}}}", parts.join(", "))
             }
             _ => format!("{:?}", val), // Fallback
         }
