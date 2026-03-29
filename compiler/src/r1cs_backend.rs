@@ -9,6 +9,15 @@ use crate::r1cs_error::R1CSError;
 use crate::r1cs_gadgets::compute_power_of_two;
 use crate::witness_gen::WitnessOp;
 
+/// Maps an R1CS constraint back to the IR instruction that generated it.
+#[derive(Debug, Clone)]
+pub struct ConstraintOrigin {
+    /// Index of the IR instruction in `IrProgram::instructions`.
+    pub ir_index: usize,
+    /// The SSA variable defined by the instruction.
+    pub result_var: SsaVar,
+}
+
 /// Compiles an Achronyme SSA IR program into an R1CS constraint system.
 ///
 /// The R1CSCompiler walks IR instructions and emits R1CS constraints.
@@ -35,6 +44,9 @@ pub struct R1CSCompiler {
     /// been emitted. Avoids duplicate constraints when the same condition
     /// is used in multiple Mux/And/Or instructions.
     bool_enforced: std::collections::HashSet<ir::types::SsaVar>,
+    /// Maps each R1CS constraint index to the IR instruction that generated it.
+    /// Built during `compile_ir`, parallel to `cs.constraints()`.
+    pub constraint_origins: Vec<ConstraintOrigin>,
 }
 
 impl Default for R1CSCompiler {
@@ -55,6 +67,7 @@ impl R1CSCompiler {
             witness_ops: Vec::new(),
             proven_boolean: std::collections::HashSet::new(),
             bool_enforced: std::collections::HashSet::new(),
+            constraint_origins: Vec::new(),
         }
     }
 
@@ -118,7 +131,9 @@ impl R1CSCompiler {
             })
         };
 
-        for inst in &program.instructions {
+        for (ir_idx, inst) in program.instructions.iter().enumerate() {
+            let constraints_before = self.cs.num_constraints();
+
             match inst {
                 IrInstruction::Const { result, value } => {
                     lc_map.insert(*result, LinearCombination::from_constant(*value));
@@ -461,8 +476,172 @@ impl R1CSCompiler {
                     lc_map.insert(*result, LinearCombination::from_variable(hash_var));
                 }
             }
+
+            // Record which IR instruction generated each new constraint.
+            let constraints_after = self.cs.num_constraints();
+            let result_var = inst.result_var();
+            for _ in constraints_before..constraints_after {
+                self.constraint_origins.push(ConstraintOrigin {
+                    ir_index: ir_idx,
+                    result_var,
+                });
+            }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ir::types::{Instruction, IrProgram, SsaVar, Visibility as IrVisibility};
+
+    #[test]
+    fn constraint_origins_tracks_mul() {
+        let mut prog = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+
+        let mut compiler = R1CSCompiler::new();
+        compiler.compile_ir(&prog).unwrap();
+
+        // Mul generates exactly 1 constraint
+        assert_eq!(compiler.cs.num_constraints(), 1);
+        assert_eq!(compiler.constraint_origins.len(), 1);
+        assert_eq!(compiler.constraint_origins[0].ir_index, 2); // third instruction
+        assert_eq!(compiler.constraint_origins[0].result_var, SsaVar(2));
+    }
+
+    #[test]
+    fn constraint_origins_tracks_assert_eq() {
+        let mut prog = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Public,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::AssertEq {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+            message: Some("values must match".into()),
+        });
+
+        let mut compiler = R1CSCompiler::new();
+        compiler.compile_ir(&prog).unwrap();
+
+        assert_eq!(compiler.cs.num_constraints(), 1);
+        assert_eq!(compiler.constraint_origins.len(), 1);
+        assert_eq!(compiler.constraint_origins[0].ir_index, 2);
+        assert_eq!(compiler.constraint_origins[0].result_var, SsaVar(2));
+    }
+
+    #[test]
+    fn constraint_origins_empty_for_linear_ops() {
+        let mut prog = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        // Add is free (no constraints)
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+
+        let mut compiler = R1CSCompiler::new();
+        compiler.compile_ir(&prog).unwrap();
+
+        assert_eq!(compiler.cs.num_constraints(), 0);
+        assert!(compiler.constraint_origins.is_empty());
+    }
+
+    #[test]
+    fn constraint_origins_count_matches_constraints() {
+        // Mixed circuit: Mul + PoseidonHash + AssertEq
+        let mut prog = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+        let v3 = prog.fresh_var();
+        prog.push(Instruction::PoseidonHash {
+            result: v3,
+            left: v0,
+            right: v1,
+        });
+        let v4 = prog.fresh_var();
+        prog.push(Instruction::AssertEq {
+            result: v4,
+            lhs: v2,
+            rhs: v3,
+            message: None,
+        });
+
+        let mut compiler = R1CSCompiler::new();
+        compiler.compile_ir(&prog).unwrap();
+
+        // Origins length must match constraint count exactly
+        assert_eq!(
+            compiler.constraint_origins.len(),
+            compiler.cs.num_constraints()
+        );
+
+        // Verify Poseidon constraints map back to the PoseidonHash instruction (index 3)
+        let poseidon_origins: Vec<_> = compiler
+            .constraint_origins
+            .iter()
+            .filter(|o| o.ir_index == 3)
+            .collect();
+        assert_eq!(poseidon_origins.len(), 361); // PoseidonHash = 361 constraints
     }
 }
