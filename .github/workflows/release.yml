@@ -57,7 +57,12 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           set -euo pipefail
-          LLVM_PROFDATA="$(find "$(rustc --print sysroot)" -name llvm-profdata | head -1)"
+          SYSROOT="$(rustc --print sysroot)"
+          LLVM_PROFDATA="$(find "$SYSROOT" -name 'llvm-profdata*' | head -1)"
+          if [[ -z "$LLVM_PROFDATA" ]]; then
+            echo "::error::llvm-profdata not found in $SYSROOT"
+            exit 1
+          fi
           PGO_DIR="$PWD/target/pgo-data"
           TARGET="${{ matrix.target }}"
           BIN="target/$TARGET/release/ach"
@@ -93,7 +98,7 @@ jobs:
 
           # Step 3: PGO-optimized rebuild
           echo "::group::PGO Step 3/3: Optimized rebuild"
-          "$LLVM_PROFDATA" merge -o "$PGO_DIR/merged.profdata" "$PGO_DIR"/*.profraw
+          find "$PGO_DIR" -name '*.profraw' | xargs "$LLVM_PROFDATA" merge -o "$PGO_DIR/merged.profdata"
           RUSTFLAGS="-Cprofile-use=$PGO_DIR/merged.profdata -Cllvm-args=-pgo-warn-missing-function=false" \
             cargo build -p cli --release --target "$TARGET"
           echo "::endgroup::"
