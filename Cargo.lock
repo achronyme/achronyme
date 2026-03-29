@@ -478,23 +478,15 @@ dependencies = [
  "achronyme-parser",
  "achronyme-std",
  "anyhow",
- "ark-bn254",
- "ark-ec",
- "ark-ff",
- "ark-groth16",
- "ark-relations",
- "ark-serialize",
- "ark-snark",
- "ark-std",
  "byteorder",
  "clap",
  "compiler",
  "constraints",
  "getrandom 0.2.17",
- "halo2_proofs",
  "ir",
  "memory",
  "open",
+ "proving",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -1098,6 +1090,28 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "proving"
+version = "0.1.0-beta.17"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-groth16",
+ "ark-relations",
+ "ark-serialize",
+ "ark-snark",
+ "ark-std",
+ "compiler",
+ "constraints",
+ "halo2_proofs",
+ "memory",
+ "rand 0.8.5",
+ "serde_json",
+ "sha2",
+ "vm",
 ]
 
 [[package]]

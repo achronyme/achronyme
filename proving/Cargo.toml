@@ -1,0 +1,36 @@
+[package]
+name = "proving"
+description = "Proof generation backends for Achronyme: Groth16 (ark) and PlonK (halo2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# Achronyme crates
+memory = { path = "../memory" }
+constraints = { path = "../constraints" }
+compiler = { path = "../compiler" }
+vm = { path = "../vm" }
+
+# Serialization
+serde_json = "1"
+
+# Groth16 (ark-works ecosystem)
+ark-groth16 = "0.5"
+ark-bn254 = "0.5"
+ark-relations = "0.5"
+ark-std = "0.5"
+ark-serialize = "0.5"
+ark-ff = "0.5"
+ark-ec = "0.5"
+ark-snark = "0.5"
+sha2 = "0.10"
+
+# PlonK (halo2/KZG on BN254)
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_04_20", features = ["circuit-params"] }
+rand = "0.8"

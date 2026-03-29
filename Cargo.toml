@@ -9,6 +9,7 @@ members = [
     "ir",
     "std",
     "ach-macros",
+    "proving",
 ]
 exclude = ["wasm"]
 resolver = "2"
