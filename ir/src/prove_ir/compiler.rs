@@ -115,10 +115,7 @@ impl ProveIrCompiler {
     ///
     /// `outer_scope`: values and functions from the enclosing scope.
     /// Pass `OuterScope::default()` for self-contained circuits.
-    pub fn compile(
-        block: &Block,
-        outer_scope: &OuterScope,
-    ) -> Result<ProveIR, ProveIrError> {
+    pub fn compile(block: &Block, outer_scope: &OuterScope) -> Result<ProveIR, ProveIrError> {
         Self::compile_with_source_dir(block, outer_scope, None, None)
     }
 
@@ -3807,7 +3804,10 @@ mod tests {
         let ir = ProveIrCompiler::compile_circuit(source, None).unwrap();
         assert_eq!(ir.public_inputs.len(), 2);
         // double(a) should have been inlined — no function calls remain
-        assert!(ir.body.iter().any(|n| matches!(n, CircuitNode::AssertEq { .. })));
+        assert!(ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::AssertEq { .. })));
     }
 
     #[test]
