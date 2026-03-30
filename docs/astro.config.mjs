@@ -104,6 +104,14 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Playground',
+					items: [
+						{ label: 'Overview', slug: 'playground/overview', translations: { es: 'Descripción General' } },
+						{ label: 'IDE Features', slug: 'playground/ide-features', translations: { es: 'Features del IDE' } },
+						{ label: 'Projects & Sessions', slug: 'playground/projects', translations: { es: 'Proyectos y Sesiones' } },
+					],
+				},
+				{
 					label: 'Tutorials',
 					translations: { es: 'Tutoriales' },
 					items: [

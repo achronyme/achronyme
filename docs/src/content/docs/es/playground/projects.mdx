@@ -1,0 +1,127 @@
+---
+title: Proyectos y Sesiones
+description: Plantillas, persistencia de sesiones, export/import y configuración de proyectos en el playground.
+---
+
+## Plantillas
+
+El playground ofrece tres plantillas de proyecto, iguales a `ach init --template`:
+
+### vm
+
+Un programa de propósito general. Esta es la plantilla por defecto.
+
+```ach
+// src/main.ach
+let name = "Achronyme"
+print("Hello from " + name + "!")
+```
+
+### circuit
+
+Un circuito ZK con prueba inline.
+
+```ach
+// src/main.ach
+let a = 6
+let b = 7
+let out = a * b
+
+let proof = prove multiply(out: Public) {
+    assert_eq(a * b, out)
+}
+
+print("Proof generated!")
+print("Verified: " + verify_proof(proof).to_string())
+```
+
+### prove
+
+Un programa usando hashing Poseidon con un bloque prove.
+
+```ach
+// src/main.ach
+let secret = 0p42
+let expected = poseidon(secret, 0p0)
+
+let proof = prove check(expected: Public) {
+    let h = poseidon(secret, 0p0)
+    assert_eq(h, expected)
+}
+
+print("Proof: " + proof.to_string())
+print("Valid: " + verify_proof(proof).to_string())
+```
+
+Selecciona una plantilla desde el dropdown en el footer del sidebar. Cambiar de plantilla crea un proyecto nuevo.
+
+## Configuración del proyecto
+
+Cada proyecto incluye un archivo `achronyme.toml`:
+
+```toml
+[project]
+name = "my-project"
+entry = "src/main.ach"
+
+[build]
+backend = "r1cs"
+```
+
+El playground lee este archivo para determinar:
+
+- **entry** — qué archivo compilar y ejecutar (por defecto: `src/main.ach`)
+- **backend** — backend de pruebas: `r1cs` (Groth16) o `plonkish` (Halo2)
+
+Consulta [Configuración del Proyecto](/es/cli/project-config) para todas las opciones disponibles.
+
+## Persistencia de sesiones
+
+Tu trabajo persiste entre recargas de página y reinicios del navegador.
+
+**Auto-backup**: cada 3 segundos, todos los archivos del proyecto se respaldan en `localStorage`. Si el servidor pierde tu sesión (después de un reinicio o expiración del TTL), el playground restaura automáticamente desde este backup.
+
+**Flujo de restauración de sesión:**
+
+1. Intentar reconectar a la sesión existente del servidor
+2. Si el servidor la perdió, crear una nueva sesión y restaurar archivos desde el backup de localStorage
+3. Si no hay backup, cargar la plantilla `vm` por defecto
+
+Las preferencias de layout (ancho del sidebar, posición del panel, visibilidad del panel) también se persisten en `localStorage`.
+
+## Export & Import
+
+### Export
+
+Haz clic en **Export** en el footer del sidebar para descargar tu proyecto como un archivo `project.ach.json`. Esto incluye todos los archivos y sus contenidos.
+
+### Import
+
+Haz clic en **Import** para cargar un proyecto previamente exportado. El playground crea una sesión nueva y escribe todos los archivos desde el JSON.
+
+El formato de exportación es JSON simple:
+
+```json
+{
+  "files": {
+    "achronyme.toml": "[project]\nname = \"demo\"\nentry = \"src/main.ach\"\n",
+    "src/main.ach": "print(\"Hello!\")\n"
+  },
+  "exportedAt": "2026-03-29T12:00:00.000Z"
+}
+```
+
+## Límites
+
+| Recurso | Límite |
+|---------|--------|
+| Archivos por proyecto | 20 |
+| Tamaño de archivo | 32 KB |
+| Workspace total | 256 KB |
+| Extensiones permitidas | `.ach`, `achronyme.toml` |
+| TTL de sesión | 2 horas (inactivo) |
+| Sesiones concurrentes máximas | 200 |
+| Presupuesto de instrucciones | 100M instrucciones |
+| Tamaño del heap | 256 MB |
+| Timeout de ejecución | 10 segundos |
+| Output de print | 1 MB |

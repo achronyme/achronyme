@@ -1,0 +1,86 @@
+---
+title: Features del IDE
+description: Atajos del editor, explorador de archivos, layout de paneles e inteligencia de código en el playground.
+---
+
+El playground replica la experiencia de un IDE de escritorio. Esta página cubre todas las features disponibles.
+
+## Atajos de teclado
+
+| Atajo | Acción |
+|-------|--------|
+| **Ctrl+Enter** | Ejecutar el proyecto |
+| **Ctrl+S** | Guardar el archivo activo |
+| **Ctrl+B** | Mostrar/ocultar sidebar (explorador) |
+| **Ctrl+`** | Mostrar/ocultar panel de terminal |
+| **Ctrl+J** | Mostrar/ocultar panel de terminal (alternativo) |
+| **Tab** | Indentar selección |
+| **Click central en pestaña** | Cerrar pestaña |
+
+En macOS, usa **Cmd** en lugar de Ctrl.
+
+## Editor
+
+El editor está construido sobre CodeMirror 6 con:
+
+- Resaltado de sintaxis de Achronyme (misma gramática TextMate que VS Code)
+- Emparejamiento y auto-cierre de llaves
+- Números de línea y resaltado de línea activa
+- Resaltado de selección y búsqueda
+- Ajuste de línea
+- Tema One Dark
+
+### Inteligencia de código
+
+Toda la inteligencia de código corre localmente en el navegador vía WASM:
+
+- **Diagnósticos** — errores de sintaxis y compilación aparecen como subrayados rojos dentro de 300ms. Pasa el cursor sobre un token subrayado para ver el mensaje de error.
+- **Autocompletado** — escribe las primeras letras de un keyword, builtin o método y aparece la lista de completados. Incluye snippets para patrones comunes como `for`, `if` y `prove`.
+- **Documentación al hover** — pasa el cursor sobre cualquier keyword o función builtin para ver su documentación, firma y ejemplos.
+
+## Explorador de archivos
+
+El sidebar muestra los archivos de tu proyecto en una vista de árbol, agrupados por directorio.
+
+- **Clic** en un archivo para abrirlo en una nueva pestaña
+- **Doble clic** en el nombre de un archivo para renombrarlo inline
+- **Clic derecho** en un archivo para el menú contextual (Renombrar, Eliminar)
+- El archivo activo se resalta en azul
+
+### Nuevos archivos
+
+Haz clic en el botón **+** en el header del Explorer para crear un archivo nuevo. Ingresa la ruta completa (ej., `src/utils.ach`) — los directorios se crean automáticamente.
+
+Solo se permiten archivos `.ach` y `achronyme.toml`. El archivo `achronyme.toml` no puede ser renombrado ni eliminado.
+
+## Pestañas
+
+Los archivos abiertos aparecen como pestañas en la barra de pestañas. Las pestañas muestran:
+
+- Un icono de diamante morado para archivos `.ach`, un icono gris para `.toml`
+- Un indicador de punto cuando el archivo tiene cambios sin guardar
+- Un botón de cierre al pasar el cursor (o clic central para cerrar)
+
+Los archivos se guardan automáticamente 1 segundo después de dejar de escribir.
+
+## Layout de paneles
+
+El panel de output puede posicionarse en la **parte inferior** (por defecto) o a la **derecha** del editor.
+
+- Haz clic en el botón de layout en el header del panel para cambiar la posición
+- Arrastra el handle de redimensionado entre el editor y el panel para ajustar la división
+- Cierra el panel con el botón **x** o **Ctrl+`**. Se reabre automáticamente cuando ejecutas código.
+
+El sidebar también es redimensionable — arrastra su borde derecho para ajustar el ancho (150–500px).
+
+## Barra de estado
+
+La barra de estado inferior muestra:
+
+| Elemento | Descripción |
+|----------|-------------|
+| **Server** | Estado de conexión (verde = conectado, amarillo = ejecutando, rojo = offline) |
+| **LSP** | Si la inteligencia de código basada en WASM está cargada |
+| **Ln, Col** | Posición actual del cursor |
+| **Achronyme** | Identificador del lenguaje |
+| **UTF-8** | Codificación del archivo |
