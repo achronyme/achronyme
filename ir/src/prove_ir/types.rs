@@ -11,6 +11,7 @@
 
 use achronyme_parser::diagnostic::SpanRange;
 use bincode::Options;
+use memory::field::PrimeId;
 use memory::FieldElement;
 use serde::{Deserialize, Serialize};
 
@@ -45,20 +46,24 @@ const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
 /// Format version (increment when enum variants change or fields are added).
 /// v2: added `capture_arrays` field to ProveIR.
 /// v3: added `message` field to CircuitNode::AssertEq.
-const PROVE_IR_FORMAT_VERSION: u8 = 3;
+/// v4: added PrimeId byte after version (multi-prime support).
+const PROVE_IR_FORMAT_VERSION: u8 = 4;
 
 /// Maximum allowed size for deserialized ProveIR data (64 MB).
 /// Prevents allocation bombs from crafted length prefixes.
 const PROVE_IR_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
 impl ProveIR {
-    /// Serialize to bytes with magic header and version (for .achb bytecode files).
-    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+    /// Serialize to bytes with magic header, version, and prime identity.
+    ///
+    /// Format v4: `[MAGIC:4][VERSION:1][PRIME_ID:1][BINCODE_PAYLOAD]`
+    pub fn to_bytes(&self, prime_id: PrimeId) -> Result<Vec<u8>, String> {
         let payload =
             bincode::serialize(self).map_err(|e| format!("ProveIR serialization failed: {e}"))?;
-        let mut out = Vec::with_capacity(5 + payload.len());
+        let mut out = Vec::with_capacity(6 + payload.len());
         out.extend_from_slice(PROVE_IR_MAGIC);
         out.push(PROVE_IR_FORMAT_VERSION);
+        out.push(prime_id.to_byte());
         out.extend_from_slice(&payload);
         Ok(out)
     }
@@ -88,7 +93,10 @@ impl ProveIR {
     }
 
     /// Deserialize from bytes, validating magic header, version, and invariants.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+    ///
+    /// Returns the deserialized `ProveIR` and the `PrimeId` from the header.
+    /// Accepts v3 (legacy, no prime — defaults to BN254) and v4 (with prime byte).
+    pub fn from_bytes(bytes: &[u8]) -> Result<(Self, PrimeId), String> {
         if bytes.len() < 5 {
             return Err("ProveIR data too short (missing header)".into());
         }
@@ -99,13 +107,29 @@ impl ProveIR {
                 &bytes[..4]
             ));
         }
-        if bytes[4] != PROVE_IR_FORMAT_VERSION {
-            return Err(format!(
-                "unsupported ProveIR format version: expected {}, got {}",
-                PROVE_IR_FORMAT_VERSION, bytes[4]
-            ));
-        }
-        let payload = &bytes[5..];
+        let version = bytes[4];
+        let (prime_id, payload) = match version {
+            3 => {
+                // Legacy v3: no PrimeId byte, assume BN254
+                (PrimeId::Bn254, &bytes[5..])
+            }
+            PROVE_IR_FORMAT_VERSION => {
+                // v4+: PrimeId byte at offset 5, payload starts at 6
+                if bytes.len() < 6 {
+                    return Err("ProveIR v4 data too short (missing prime byte)".into());
+                }
+                let pid = PrimeId::from_byte(bytes[5]).ok_or_else(|| {
+                    format!("unknown PrimeId byte 0x{:02x} in ProveIR header", bytes[5])
+                })?;
+                (pid, &bytes[6..])
+            }
+            _ => {
+                return Err(format!(
+                    "unsupported ProveIR format version: expected 3 or {}, got {}",
+                    PROVE_IR_FORMAT_VERSION, version
+                ));
+            }
+        };
         let prove_ir: Self = bincode::options()
             .with_limit(PROVE_IR_MAX_SIZE)
             .with_fixint_encoding()
@@ -113,7 +137,7 @@ impl ProveIR {
             .deserialize(payload)
             .map_err(|e| format!("ProveIR deserialization failed: {e}"))?;
         prove_ir.validate()?;
-        Ok(prove_ir)
+        Ok((prove_ir, prime_id))
     }
 }
 
@@ -783,8 +807,11 @@ mod tests {
 
     /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
     fn assert_round_trip(prove_ir: &ProveIR) {
-        let bytes = prove_ir.to_bytes().expect("serialization failed");
-        let restored = ProveIR::from_bytes(&bytes).expect("deserialization failed");
+        let bytes = prove_ir
+            .to_bytes(PrimeId::Bn254)
+            .expect("serialization failed");
+        let (restored, prime) = ProveIR::from_bytes(&bytes).expect("deserialization failed");
+        assert_eq!(prime, PrimeId::Bn254);
 
         // Spans are skipped, so we compare field-by-field excluding spans.
         assert_eq!(prove_ir.public_inputs, restored.public_inputs);
@@ -823,8 +850,8 @@ mod tests {
             "public x\npublic out\nwitness s\nassert_eq(x + s, out, \"sums must match\")",
         )
         .unwrap();
-        let bytes = ir.to_bytes().expect("serialization failed");
-        let restored = ProveIR::from_bytes(&bytes).expect("deserialization failed");
+        let bytes = ir.to_bytes(PrimeId::Bn254).expect("serialization failed");
+        let (restored, _) = ProveIR::from_bytes(&bytes).expect("deserialization failed");
         // Verify message survives round-trip
         let msg = restored.body.iter().find_map(|n| {
             if let CircuitNode::AssertEq { message, .. } = n {
@@ -917,8 +944,8 @@ mod tests {
             "public out\nassert_eq(Field::ZERO + Field::ONE, out)",
         )
         .unwrap();
-        let bytes = ir.to_bytes().unwrap();
-        let restored = ProveIR::from_bytes(&bytes).unwrap();
+        let bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
+        let (restored, _) = ProveIR::from_bytes(&bytes).unwrap();
 
         // The body should contain Const(ZERO) and Const(ONE) nodes.
         // After round-trip, the FieldElement values must be identical.
@@ -967,8 +994,8 @@ mod tests {
         let program1 = ir.instantiate(&HashMap::new()).unwrap();
 
         // Round-trip and instantiate
-        let bytes = ir.to_bytes().unwrap();
-        let restored = ProveIR::from_bytes(&bytes).unwrap();
+        let bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
+        let (restored, _) = ProveIR::from_bytes(&bytes).unwrap();
         let program2 = restored.instantiate(&HashMap::new()).unwrap();
 
         // Both should produce identical instruction counts and types
@@ -985,7 +1012,7 @@ mod tests {
             "public a\npublic b\npublic out\nassert_eq(poseidon(a, b), out)",
         )
         .unwrap();
-        let bytes = ir.to_bytes().unwrap();
+        let bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
         // A simple circuit should serialize to < 1 KB
         assert!(
             bytes.len() < 1024,
@@ -1083,7 +1110,7 @@ mod tests {
             body: vec![],
             capture_arrays: vec![],
         }
-        .to_bytes()
+        .to_bytes(PrimeId::Bn254)
         .unwrap();
         bytes[4] = 99; // corrupt version byte
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
@@ -1107,7 +1134,7 @@ mod tests {
             body: vec![],
             capture_arrays: vec![],
         }
-        .to_bytes()
+        .to_bytes(PrimeId::Bn254)
         .unwrap();
         // Truncate the payload
         let truncated = &bytes[..bytes.len() / 2];
@@ -1116,7 +1143,8 @@ mod tests {
 
     #[test]
     fn adversarial_random_bytes() {
-        let garbage = b"ACHP\x01\xff\xff\xff\xff\xff\xff\xff\xff";
+        // Version 99 is unsupported
+        let garbage = b"ACHP\x63\xff\xff\xff\xff\xff\xff\xff\xff";
         assert!(ProveIR::from_bytes(garbage).is_err());
     }
 
@@ -1137,7 +1165,7 @@ mod tests {
             }],
             capture_arrays: vec![],
         };
-        let mut bytes = ir.to_bytes().unwrap();
+        let mut bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
 
         // Find the FieldElement in the serialized bytes and corrupt it.
         // The ONE constant has specific limbs — replace them with MODULUS.
@@ -1183,6 +1211,7 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
         bytes.push(PROVE_IR_FORMAT_VERSION);
+        bytes.push(PrimeId::Bn254.to_byte());
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
@@ -1212,6 +1241,7 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
         bytes.push(PROVE_IR_FORMAT_VERSION);
+        bytes.push(PrimeId::Bn254.to_byte());
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
@@ -1240,11 +1270,73 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"ACHP");
         bytes.push(PROVE_IR_FORMAT_VERSION);
+        bytes.push(PrimeId::Bn254.to_byte());
         bytes.extend_from_slice(&payload);
         let err = ProveIR::from_bytes(&bytes).unwrap_err();
         assert!(
             err.contains("range_check"),
             "should reject range_check bits=300: {err}"
+        );
+    }
+
+    // =====================================================================
+    // v4 format / multi-prime tests
+    // =====================================================================
+
+    #[test]
+    fn v3_backward_compat_defaults_to_bn254() {
+        // Manually craft a v3 blob (no prime byte)
+        let ir = ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+            capture_arrays: vec![],
+        };
+        let payload = bincode::serialize(&ir).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"ACHP");
+        bytes.push(3); // v3
+        bytes.extend_from_slice(&payload);
+        let (_, prime) = ProveIR::from_bytes(&bytes).unwrap();
+        assert_eq!(prime, PrimeId::Bn254);
+    }
+
+    #[test]
+    fn v4_roundtrip_with_each_prime() {
+        let ir = ProveIR {
+            name: Some("test".into()),
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+            capture_arrays: vec![],
+        };
+        for prime in [PrimeId::Bn254, PrimeId::Bls12_381, PrimeId::Goldilocks] {
+            let bytes = ir.to_bytes(prime).unwrap();
+            let (restored, restored_prime) = ProveIR::from_bytes(&bytes).unwrap();
+            assert_eq!(restored_prime, prime, "prime mismatch for {}", prime.name());
+            assert_eq!(restored.name, ir.name);
+        }
+    }
+
+    #[test]
+    fn v4_bad_prime_byte_rejected() {
+        let ir = ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![],
+            capture_arrays: vec![],
+        };
+        let mut bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
+        bytes[5] = 0xFF; // invalid prime byte
+        let err = ProveIR::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.contains("PrimeId"),
+            "error should mention PrimeId: {err}"
         );
     }
 
