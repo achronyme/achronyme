@@ -4,9 +4,11 @@
 /// Internal representation: value * R mod p (Montgomery domain)
 /// Zero external dependencies.
 pub(crate) mod arithmetic;
+mod backend;
 mod parsing;
 mod prime_id;
 
+pub use backend::FieldBackend;
 pub use prime_id::PrimeId;
 
 pub use arithmetic::MODULUS;
