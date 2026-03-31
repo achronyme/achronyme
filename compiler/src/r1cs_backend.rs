@@ -121,6 +121,13 @@ impl R1CSCompiler {
         let mut lc_map: HashMap<SsaVar, LinearCombination> = HashMap::new();
         // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
+        // Cache divmod gadgets: (lhs, rhs, max_bits) → (q_lc, r_lc).
+        // When IntDiv and IntMod use the same operands, the second one reuses
+        // the cached result instead of generating duplicate constraints.
+        let mut divmod_cache: HashMap<
+            (SsaVar, SsaVar, u32),
+            (LinearCombination, LinearCombination),
+        > = HashMap::new();
 
         // Helper closure to look up SSA variables with proper error messages
         let lookup = |map: &HashMap<SsaVar, LinearCombination>,
@@ -513,39 +520,42 @@ impl R1CSCompiler {
                     rhs,
                     max_bits,
                 } => {
-                    let a_lc = lookup(&lc_map, lhs)?;
-                    let b_lc = lookup(&lc_map, rhs)?;
+                    let cache_key = (*lhs, *rhs, *max_bits);
+                    if let Some((cached_q, _)) = divmod_cache.get(&cache_key) {
+                        // Reuse cached quotient from a previous divmod on same operands
+                        lc_map.insert(*result, cached_q.clone());
+                    } else {
+                        let a_lc = lookup(&lc_map, lhs)?;
+                        let b_lc = lookup(&lc_map, rhs)?;
 
-                    let q_var = self.cs.alloc_witness();
-                    let r_var = self.cs.alloc_witness();
+                        let q_var = self.cs.alloc_witness();
+                        let r_var = self.cs.alloc_witness();
 
-                    // Materialize before push to avoid double borrow
-                    let lhs_var = self.materialize_lc(&a_lc);
-                    let rhs_var = self.materialize_lc(&b_lc);
-                    self.witness_ops.push(WitnessOp::IntDivMod {
-                        q: q_var,
-                        r: r_var,
-                        lhs: lhs_var,
-                        rhs: rhs_var,
-                    });
+                        let lhs_var = self.materialize_lc(&a_lc);
+                        let rhs_var = self.materialize_lc(&b_lc);
+                        self.witness_ops.push(WitnessOp::IntDivMod {
+                            q: q_var,
+                            r: r_var,
+                            lhs: lhs_var,
+                            rhs: rhs_var,
+                        });
 
-                    let q_lc = LinearCombination::from_variable(q_var);
-                    let r_lc = LinearCombination::from_variable(r_var);
+                        let q_lc = LinearCombination::from_variable(q_var);
+                        let r_lc = LinearCombination::from_variable(r_var);
 
-                    // Constraint: b * q + r = a
-                    let bq = self.multiply_lcs(&b_lc, &q_lc);
-                    self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
+                        let bq = self.multiply_lcs(&b_lc, &q_lc);
+                        self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
 
-                    // Range checks on q and r
-                    self.enforce_n_range(&q_lc, *max_bits);
-                    self.enforce_n_range(&r_lc, *max_bits);
+                        self.enforce_n_range(&q_lc, *max_bits);
+                        self.enforce_n_range(&r_lc, *max_bits);
 
-                    // Soundness: enforce r < b by proving (b - r - 1) >= 0
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
-                    let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
-                    self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
+                        let one = LinearCombination::from_constant(FieldElement::ONE);
+                        let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
+                        self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
-                    lc_map.insert(*result, q_lc);
+                        divmod_cache.insert(cache_key, (q_lc.clone(), r_lc));
+                        lc_map.insert(*result, q_lc);
+                    }
                 }
                 IrInstruction::IntMod {
                     result,
@@ -553,36 +563,42 @@ impl R1CSCompiler {
                     rhs,
                     max_bits,
                 } => {
-                    let a_lc = lookup(&lc_map, lhs)?;
-                    let b_lc = lookup(&lc_map, rhs)?;
+                    let cache_key = (*lhs, *rhs, *max_bits);
+                    if let Some((_, cached_r)) = divmod_cache.get(&cache_key) {
+                        // Reuse cached remainder from a previous divmod on same operands
+                        lc_map.insert(*result, cached_r.clone());
+                    } else {
+                        let a_lc = lookup(&lc_map, lhs)?;
+                        let b_lc = lookup(&lc_map, rhs)?;
 
-                    let q_var = self.cs.alloc_witness();
-                    let r_var = self.cs.alloc_witness();
+                        let q_var = self.cs.alloc_witness();
+                        let r_var = self.cs.alloc_witness();
 
-                    let lhs_var = self.materialize_lc(&a_lc);
-                    let rhs_var = self.materialize_lc(&b_lc);
-                    self.witness_ops.push(WitnessOp::IntDivMod {
-                        q: q_var,
-                        r: r_var,
-                        lhs: lhs_var,
-                        rhs: rhs_var,
-                    });
+                        let lhs_var = self.materialize_lc(&a_lc);
+                        let rhs_var = self.materialize_lc(&b_lc);
+                        self.witness_ops.push(WitnessOp::IntDivMod {
+                            q: q_var,
+                            r: r_var,
+                            lhs: lhs_var,
+                            rhs: rhs_var,
+                        });
 
-                    let q_lc = LinearCombination::from_variable(q_var);
-                    let r_lc = LinearCombination::from_variable(r_var);
+                        let q_lc = LinearCombination::from_variable(q_var);
+                        let r_lc = LinearCombination::from_variable(r_var);
 
-                    let bq = self.multiply_lcs(&b_lc, &q_lc);
-                    self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
+                        let bq = self.multiply_lcs(&b_lc, &q_lc);
+                        self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
 
-                    self.enforce_n_range(&q_lc, *max_bits);
-                    self.enforce_n_range(&r_lc, *max_bits);
+                        self.enforce_n_range(&q_lc, *max_bits);
+                        self.enforce_n_range(&r_lc, *max_bits);
 
-                    // Soundness: enforce r < b
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
-                    let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
-                    self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
+                        let one = LinearCombination::from_constant(FieldElement::ONE);
+                        let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
+                        self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
-                    lc_map.insert(*result, r_lc);
+                        divmod_cache.insert(cache_key, (q_lc, r_lc.clone()));
+                        lc_map.insert(*result, r_lc);
+                    }
                 }
             }
 
