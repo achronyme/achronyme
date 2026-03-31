@@ -30,7 +30,7 @@ pub fn setup_keys(
     ),
     String,
 > {
-    groth16::setup_keys::<Bn254>(cs, cache_dir)
+    groth16::setup_keys::<Bn254>(cs, cache_dir, "bn254")
 }
 
 /// Run trusted setup and return only the verifying key (BN254).
@@ -38,7 +38,7 @@ pub fn setup_vk_only(
     cs: &ConstraintSystem,
     cache_dir: &Path,
 ) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
-    groth16::setup_vk_only::<Bn254>(cs, cache_dir)
+    groth16::setup_vk_only::<Bn254>(cs, cache_dir, "bn254")
 }
 
 /// Generate a BN254 Groth16 proof with snarkjs-compatible JSON output.
@@ -47,7 +47,8 @@ pub fn generate_proof(
     witness: &[FieldElement],
     cache_dir: &Path,
 ) -> Result<ProveResult, String> {
-    let (proof, vk, public_inputs) = groth16::generate_proof_raw::<Bn254>(cs, witness, cache_dir)?;
+    let (proof, vk, public_inputs) =
+        groth16::generate_proof_raw::<Bn254>(cs, witness, cache_dir, "bn254")?;
 
     let proof_json = serialize_proof_json(&proof);
     let public_json = serialize_public_json(&public_inputs);
