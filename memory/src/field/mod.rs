@@ -5,6 +5,9 @@
 /// Zero external dependencies.
 pub(crate) mod arithmetic;
 mod parsing;
+mod prime_id;
+
+pub use prime_id::PrimeId;
 
 pub use arithmetic::MODULUS;
 
