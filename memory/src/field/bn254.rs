@@ -430,26 +430,26 @@ mod tests {
                 let be_b = Bn254Fr::from_u64(b_val);
 
                 // Repr should match
-                assert_eq!(fe_a.repr, be_a, "repr mismatch for {a_val}");
-                assert_eq!(fe_b.repr, be_b, "repr mismatch for {b_val}");
+                assert_eq!(fe_a.into_repr(), be_a, "repr mismatch for {a_val}");
+                assert_eq!(fe_b.into_repr(), be_b, "repr mismatch for {b_val}");
 
                 // Arithmetic
                 assert_eq!(
-                    fe_a.add(&fe_b).repr,
+                    fe_a.add(&fe_b).into_repr(),
                     Bn254Fr::add(&be_a, &be_b),
                     "add({a_val},{b_val})"
                 );
                 assert_eq!(
-                    fe_a.sub(&fe_b).repr,
+                    fe_a.sub(&fe_b).into_repr(),
                     Bn254Fr::sub(&be_a, &be_b),
                     "sub({a_val},{b_val})"
                 );
                 assert_eq!(
-                    fe_a.mul(&fe_b).repr,
+                    fe_a.mul(&fe_b).into_repr(),
                     Bn254Fr::mul(&be_a, &be_b),
                     "mul({a_val},{b_val})"
                 );
-                assert_eq!(fe_a.neg().repr, Bn254Fr::neg(&be_a), "neg({a_val})");
+                assert_eq!(fe_a.neg().into_repr(), Bn254Fr::neg(&be_a), "neg({a_val})");
 
                 // Canonical roundtrip
                 assert_eq!(fe_a.to_canonical(), Bn254Fr::to_canonical_limbs(&be_a));
@@ -463,14 +463,14 @@ mod tests {
             let fe = FieldElement::from_u64(v);
             let be = Bn254Fr::from_u64(v);
             assert_eq!(
-                fe.inv().unwrap().repr,
+                fe.inv().unwrap().into_repr(),
                 Bn254Fr::inv(&be).unwrap(),
                 "inv({v})"
             );
         }
 
         // Constants
-        assert_eq!(FieldElement::ZERO.repr, Bn254Fr::zero());
-        assert_eq!(FieldElement::ONE.repr, Bn254Fr::one());
+        assert_eq!(FieldElement::ZERO.into_repr(), Bn254Fr::zero());
+        assert_eq!(FieldElement::ONE.into_repr(), Bn254Fr::one());
     }
 }

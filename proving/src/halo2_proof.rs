@@ -44,7 +44,7 @@ fn fr_to_decimal(f: &Fr) -> String {
     let bytes: &[u8] = repr.as_ref();
     let mut le_bytes = [0u8; 32];
     le_bytes[..bytes.len()].copy_from_slice(bytes);
-    let fe = FieldElement::from_le_bytes(&le_bytes).expect("valid Fr in range");
+    let fe: FieldElement = FieldElement::from_le_bytes(&le_bytes).expect("valid Fr in range");
     fe.to_decimal_string()
 }
 
