@@ -28,7 +28,7 @@ fn compile_valid_source_with_output() {
     // Verify .achb was created with the ACH magic header
     let bytes = std::fs::read(&out_path).unwrap();
     assert!(bytes.len() >= 4, "output file too small");
-    assert_eq!(&bytes[..4], b"ACH\x0A", "wrong magic header");
+    assert_eq!(&bytes[..4], b"ACH\x0B", "wrong magic header");
 }
 
 #[test]
