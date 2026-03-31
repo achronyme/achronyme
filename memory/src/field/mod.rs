@@ -6,11 +6,13 @@
 /// compatibility across the workspace.
 pub(crate) mod arithmetic;
 mod backend;
+pub mod bls12_381;
 pub mod bn254;
 mod prime_id;
 
 pub use arithmetic::MODULUS;
 pub use backend::FieldBackend;
+pub use bls12_381::Bls12_381Fr;
 pub use bn254::Bn254Fr;
 pub use prime_id::PrimeId;
 
