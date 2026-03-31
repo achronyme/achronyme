@@ -7,6 +7,7 @@ use super::{AchronymeToml, ProjectConfig};
 pub struct CliOverrides {
     pub path: Option<String>,
     pub error_format: Option<String>,
+    pub prime: Option<String>,
     pub backend: Option<String>,
     pub prove_backend: Option<String>,
     pub optimize: Option<bool>,
@@ -40,6 +41,13 @@ pub fn resolve_config(
             })
         })
     });
+
+    // Prime: CLI > toml circuit.prime > default "bn254"
+    let prime = cli
+        .prime
+        .clone()
+        .or_else(|| toml.and_then(|t| t.circuit.as_ref()?.prime.clone()))
+        .unwrap_or_else(|| "bn254".to_string());
 
     // Backend: CLI > toml > default
     let backend = cli
@@ -143,6 +151,7 @@ pub fn resolve_config(
         project_root: project_root.map(|p| p.to_path_buf()),
         project_name,
         entry,
+        prime,
         backend,
         prove_backend,
         optimize,
@@ -179,6 +188,7 @@ mod tests {
         let cli = CliOverrides {
             path: None,
             error_format: None,
+            prime: None,
             backend: Some("r1cs".to_string()),
             prove_backend: None,
             optimize: None,
@@ -201,6 +211,7 @@ mod tests {
         let cli = CliOverrides {
             path: None,
             error_format: None,
+            prime: None,
             backend: None,
             prove_backend: None,
             optimize: None,
@@ -236,6 +247,7 @@ mod tests {
         let cli = CliOverrides {
             path: None,
             error_format: None,
+            prime: None,
             backend: None,
             prove_backend: None,
             optimize: None,
@@ -272,6 +284,7 @@ mod tests {
         let cli = CliOverrides {
             path: None,
             error_format: None,
+            prime: None,
             backend: None,
             prove_backend: None,
             optimize: None,
