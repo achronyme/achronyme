@@ -1,0 +1,20 @@
+// Circuit: functions with array parameters
+circuit fn_array_params(expected: Public, vals: Witness Field[3]) {
+    // Function that takes an array parameter and returns a scalar
+    fn sum_array(arr: Field[3]) -> Field {
+        arr[0] + arr[1] + arr[2]
+    }
+
+    let total = sum_array(vals)
+    assert_eq(total, expected)
+
+    // Function that uses an array param with a for loop
+    fn dot_with_constants(v: Field[3]) -> Field {
+        let weights: Field[3] = [1, 2, 3]
+        v[0] * weights[0] + v[1] * weights[1] + v[2] * weights[2]
+    }
+
+    let dot = dot_with_constants(vals)
+    // vals = [10, 20, 30] → 10*1 + 20*2 + 30*3 = 10 + 40 + 90 = 140
+    assert_eq(dot, 140)
+}

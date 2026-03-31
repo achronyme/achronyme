@@ -1,0 +1,21 @@
+// Circuit: functions that return arrays
+circuit fn_array_return(expected: Public, a: Witness, b: Witness) {
+    // Function that creates and returns an array
+    fn make_pair(x, y) -> Field[2] {
+        let result: Field[2] = [x, y]
+        result
+    }
+
+    let pair = make_pair(a, b)
+    assert_eq(pair[0] + pair[1], expected)
+
+    // Function that takes an array and returns a transformed array
+    fn double_array(arr: Field[2]) -> Field[2] {
+        let out: Field[2] = [arr[0] + arr[0], arr[1] + arr[1]]
+        out
+    }
+
+    let doubled = double_array(pair)
+    // a + a + b + b = 2*(a + b) = 2*expected
+    assert_eq(doubled[0] + doubled[1], expected + expected)
+}

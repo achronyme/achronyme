@@ -668,13 +668,10 @@ impl ProveIrCompiler {
     fn compile_let(
         &mut self,
         name: &str,
-        _type_ann: Option<&TypeAnnotation>,
+        type_ann: Option<&TypeAnnotation>,
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
-        // Type annotations are intentionally ignored: all circuit values are
-        // field elements. The annotation is preserved in the AST for future
-        // validation (AnnotationMismatch error variant exists for this).
         // Array literal → LetArray
         if let Expr::Array {
             elements,
@@ -706,6 +703,41 @@ impl ProveIrCompiler {
             return Ok(());
         }
 
+        // Function call returning an array → inline the function and adopt
+        // the resulting array under this binding's name.
+        if let Some(result_array_name) =
+            self.try_compile_array_fn_call(name, type_ann, value, span)?
+        {
+            // The function was inlined and created an array in the env under
+            // an internal SSA name. Re-register it under the let-binding name.
+            if let Some(CompEnvValue::Array(elems)) = self.env.get(&result_array_name).cloned() {
+                // Create new element names under the let-binding name.
+                let new_elem_names: Vec<String> =
+                    (0..elems.len()).map(|i| format!("{name}_{i}")).collect();
+                let elem_exprs: Vec<CircuitExpr> = elems
+                    .iter()
+                    .map(|e| {
+                        match self.env.get(e) {
+                            Some(CompEnvValue::Scalar(s)) => CircuitExpr::Var(s.clone()),
+                            _ => CircuitExpr::Var(e.clone()),
+                        }
+                    })
+                    .collect();
+                self.body.push(CircuitNode::LetArray {
+                    name: name.to_string(),
+                    elements: elem_exprs,
+                    span: Some(SpanRange::from(span)),
+                });
+                for ename in &new_elem_names {
+                    self.env
+                        .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+                }
+                self.env
+                    .insert(name.to_string(), CompEnvValue::Array(new_elem_names));
+                return Ok(());
+            }
+        }
+
         // Scalar value → Let
         let compiled = self.compile_expr(value)?;
         self.body.push(CircuitNode::Let {
@@ -716,6 +748,187 @@ impl ProveIrCompiler {
         self.env
             .insert(name.to_string(), CompEnvValue::Scalar(name.to_string()));
         Ok(())
+    }
+
+    /// Try to compile a function call that returns an array.
+    ///
+    /// Returns `Some(array_name_in_env)` if the call was handled as an
+    /// array-returning function, or `None` if it should be compiled as a
+    /// normal scalar expression.
+    fn try_compile_array_fn_call(
+        &mut self,
+        _let_name: &str,
+        type_ann: Option<&TypeAnnotation>,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<Option<String>, ProveIrError> {
+        // Only handle direct named calls
+        let (callee_name, args) = match value {
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident { name, .. } = callee.as_ref() {
+                    let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
+                    (name.as_str(), arg_vals)
+                } else {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        };
+
+        // Check if the function exists and has an array return type
+        let fn_def = match self.fn_table.get(callee_name) {
+            Some(fd) => fd.clone(),
+            None => return Ok(None), // Not a user function (might be a builtin)
+        };
+
+        let has_array_return = fn_def
+            .return_type
+            .as_ref()
+            .and_then(|ta| ta.array_size)
+            .is_some();
+
+        // Also check if the let-binding has an array type annotation
+        let let_expects_array = type_ann.and_then(|ta| ta.array_size).is_some();
+
+        if !has_array_return && !let_expects_array {
+            return Ok(None);
+        }
+
+        // This is an array-returning function call. Inline it using the
+        // same mechanism as compile_user_fn_call but capture the array result.
+
+        // Arity check
+        if args.len() != fn_def.params.len() {
+            return Err(ProveIrError::WrongArgumentCount {
+                name: callee_name.into(),
+                expected: fn_def.params.len(),
+                got: args.len(),
+                span: to_span(span),
+            });
+        }
+
+        // Recursion guard
+        if self.call_stack.contains(callee_name) {
+            return Err(ProveIrError::RecursiveFunction {
+                name: callee_name.into(),
+            });
+        }
+        self.call_stack.insert(callee_name.to_string());
+
+        // Save env
+        let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
+        let mut all_shadow_names: Vec<String> = param_names.clone();
+        for (i, param) in fn_def.params.iter().enumerate() {
+            if let Some(ref ta) = param.type_ann {
+                if let Some(size) = ta.array_size {
+                    for j in 0..size {
+                        all_shadow_names.push(format!("{}_{j}", param_names[i]));
+                    }
+                }
+            }
+        }
+        let saved: Vec<(String, Option<CompEnvValue>)> = all_shadow_names
+            .iter()
+            .map(|p| (p.clone(), self.env.get(p).cloned()))
+            .collect();
+
+        let invoke_id = self.inline_counter;
+        self.inline_counter = self.inline_counter.wrapping_add(1);
+
+        // Bind parameters (array-aware)
+        for (i, (param, arg)) in param_names.iter().zip(args.iter()).enumerate() {
+            let is_array_param = fn_def.params[i]
+                .type_ann
+                .as_ref()
+                .and_then(|ta| ta.array_size)
+                .is_some();
+
+            if is_array_param {
+                self.bind_array_fn_param(callee_name, invoke_id, param, arg, span)?;
+            } else {
+                let compiled = self.compile_expr(arg)?;
+                let param_ssa = format!("__{callee_name}${invoke_id}_{param}");
+                self.body.push(CircuitNode::Let {
+                    name: param_ssa.clone(),
+                    value: compiled,
+                    span: Some(SpanRange::from(span)),
+                });
+                self.env
+                    .insert(param.clone(), CompEnvValue::Scalar(param_ssa));
+            }
+        }
+
+        // Compile the function body — all statements except the last one
+        // (which is the array return expression, not a real statement).
+        let stmts = &fn_def.body.stmts;
+        if !stmts.is_empty() {
+            for stmt in &stmts[..stmts.len() - 1] {
+                self.compile_stmt(stmt)?;
+            }
+        }
+
+        // Find the array result: the last expression should be an array name.
+        let result_array = self.find_array_result(stmts, span)?;
+
+        // Restore env
+        for (p, old_val) in saved {
+            match old_val {
+                Some(v) => {
+                    self.env.insert(p, v);
+                }
+                None => {
+                    self.env.remove(&p);
+                }
+            }
+        }
+
+        self.call_stack.remove(callee_name);
+        Ok(Some(result_array))
+    }
+
+    /// Find the array name returned by the last statement/expression in a
+    /// function body. The last statement should be either:
+    /// - A bare `Expr::Ident` referencing an array
+    /// - A `Stmt::Return` with an `Expr::Ident` referencing an array
+    /// - Any other statement (compiled normally) followed by checking env
+    fn find_array_result(
+        &mut self,
+        stmts: &[Stmt],
+        span: &Span,
+    ) -> Result<String, ProveIrError> {
+        let last = stmts.last().ok_or_else(|| ProveIrError::UnsupportedOperation {
+            description: "array-returning function has an empty body".into(),
+            span: to_span(span),
+        })?;
+
+        // Extract the array identifier from the last statement
+        let ident = match last {
+            Stmt::Expr(Expr::Ident { name, .. }) => name.clone(),
+            Stmt::Return {
+                value: Some(Expr::Ident { name, .. }),
+                ..
+            } => name.clone(),
+            // If the last statement is something else (e.g. a let that creates
+            // the array), compile it and then we can't determine the name.
+            other => {
+                self.compile_stmt(other)?;
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: "array-returning function must end with an array variable name \
+                                  (e.g., `return arr` or just `arr`)"
+                        .into(),
+                    span: to_span(span),
+                });
+            }
+        };
+
+        match self.env.get(ident.as_str()) {
+            Some(CompEnvValue::Array(_)) => Ok(ident),
+            _ => Err(ProveIrError::TypeMismatch {
+                expected: "array".into(),
+                got: "scalar".into(),
+                span: to_span(span),
+            }),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1794,15 +2007,22 @@ impl ProveIrCompiler {
         }
         self.call_stack.insert(name.to_string());
 
-        // Compile arguments
-        let compiled_args: Vec<CircuitExpr> = args
-            .iter()
-            .map(|a| self.compile_expr(a))
-            .collect::<Result<_, _>>()?;
-
-        // Save env for param names and bind args
+        // Save env for param names (+ array element names) and bind args
         let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
-        let saved: Vec<(String, Option<CompEnvValue>)> = param_names
+
+        // Collect all names that might be shadowed (param names + element names
+        // for array params) so we can restore them after inlining.
+        let mut all_shadow_names: Vec<String> = param_names.clone();
+        for (i, param) in fn_def.params.iter().enumerate() {
+            if let Some(ref ta) = param.type_ann {
+                if let Some(size) = ta.array_size {
+                    for j in 0..size {
+                        all_shadow_names.push(format!("{}_{j}", param_names[i]));
+                    }
+                }
+            }
+        }
+        let saved: Vec<(String, Option<CompEnvValue>)> = all_shadow_names
             .iter()
             .map(|p| (p.clone(), self.env.get(p).cloned()))
             .collect();
@@ -1812,35 +2032,134 @@ impl ProveIrCompiler {
         let invoke_id = self.inline_counter;
         self.inline_counter = self.inline_counter.wrapping_add(1);
 
-        // Emit Let nodes for each parameter binding and register in env
-        for (param, arg_expr) in param_names.iter().zip(compiled_args) {
-            let param_ssa = format!("__{name}${invoke_id}_{param}");
-            self.body.push(CircuitNode::Let {
-                name: param_ssa.clone(),
-                value: arg_expr,
-                span: Some(SpanRange::from(span)),
-            });
-            self.env
-                .insert(param.clone(), CompEnvValue::Scalar(param_ssa));
+        // Emit Let/LetArray nodes for each parameter binding.
+        for (i, (param, arg)) in param_names.iter().zip(args.iter()).enumerate() {
+            let is_array_param = fn_def.params[i]
+                .type_ann
+                .as_ref()
+                .and_then(|ta| ta.array_size)
+                .is_some();
+
+            if is_array_param {
+                // Array parameter: resolve the argument as an array identifier
+                // and create SSA copies of each element.
+                self.bind_array_fn_param(name, invoke_id, param, arg, span)?;
+            } else {
+                // Scalar parameter: compile as expression and bind.
+                let compiled = self.compile_expr(arg)?;
+                let param_ssa = format!("__{name}${invoke_id}_{param}");
+                self.body.push(CircuitNode::Let {
+                    name: param_ssa.clone(),
+                    value: compiled,
+                    span: Some(SpanRange::from(span)),
+                });
+                self.env
+                    .insert(param.clone(), CompEnvValue::Scalar(param_ssa));
+            }
         }
 
         // Compile the function body, collecting the result
         let result = self.compile_block_as_expr(&fn_def.body)?;
 
         // Restore env
-        for (param, old_val) in saved {
+        for (p, old_val) in saved {
             match old_val {
                 Some(v) => {
-                    self.env.insert(param, v);
+                    self.env.insert(p, v);
                 }
                 None => {
-                    self.env.remove(&param);
+                    self.env.remove(&p);
                 }
             }
         }
 
         self.call_stack.remove(name);
         Ok(result)
+    }
+
+    /// Bind an array parameter for function inlining.
+    ///
+    /// Resolves the argument as an array name in the environment, creates
+    /// SSA-renamed copies of each element, and registers the parameter as
+    /// `CompEnvValue::Array` in the env.
+    fn bind_array_fn_param(
+        &mut self,
+        fn_name: &str,
+        invoke_id: u32,
+        param_name: &str,
+        arg: &Expr,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        let arg_ident = match arg {
+            Expr::Ident { name, .. } => name.as_str(),
+            _ => {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "array argument for parameter `{param_name}` must be a variable name, \
+                         not an expression"
+                    ),
+                    span: to_span(span),
+                });
+            }
+        };
+
+        let src_elems = match self.env.get(arg_ident) {
+            Some(CompEnvValue::Array(elems)) => elems.clone(),
+            Some(CompEnvValue::Capture(_)) => {
+                // Captured array from outer scope — look up the capture's
+                // element names which follow the convention `name_0`, `name_1`, etc.
+                // The outer scope must have provided an array-size entry.
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "captured array `{arg_ident}` cannot be passed directly as a parameter; \
+                         bind it to a local array first: `let local = {arg_ident}`"
+                    ),
+                    span: to_span(span),
+                });
+            }
+            _ => {
+                return Err(ProveIrError::TypeMismatch {
+                    expected: "array".into(),
+                    got: "scalar".into(),
+                    span: to_span(span),
+                });
+            }
+        };
+
+        let base_ssa = format!("__{fn_name}${invoke_id}_{param_name}");
+        let new_elem_names: Vec<String> =
+            (0..src_elems.len()).map(|j| format!("{base_ssa}_{j}")).collect();
+
+        // Emit LetArray node with references to the source elements.
+        let elem_exprs: Vec<CircuitExpr> = src_elems
+            .iter()
+            .map(|e| {
+                match self.env.get(e) {
+                    Some(CompEnvValue::Scalar(s)) => CircuitExpr::Var(s.clone()),
+                    Some(CompEnvValue::Capture(c)) => {
+                        self.captured_names.insert(c.clone());
+                        CircuitExpr::Capture(c.clone())
+                    }
+                    _ => CircuitExpr::Var(e.clone()),
+                }
+            })
+            .collect();
+
+        self.body.push(CircuitNode::LetArray {
+            name: base_ssa.clone(),
+            elements: elem_exprs,
+            span: Some(SpanRange::from(span)),
+        });
+
+        // Register each element as Scalar and the array in env.
+        for ename in &new_elem_names {
+            self.env
+                .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+        }
+        self.env
+            .insert(param_name.to_string(), CompEnvValue::Array(new_elem_names));
+
+        Ok(())
     }
 
     /// Compile a block of statements and return the result of the last expression.

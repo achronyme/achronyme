@@ -1,0 +1,32 @@
+// Circuit: component-like pattern using functions with array params/returns
+// This simulates the Circom component model using Achronyme functions.
+circuit fn_component_pattern(root: Public, leaf_hash: Public, secret: Witness) {
+    // "Component": hash_commitment — takes a secret, returns its commitment
+    fn hash_commitment(s) -> Field {
+        poseidon(s, 0)
+    }
+
+    // "Component": merkle_level — computes one level of a Merkle tree
+    fn merkle_level(current, sibling, direction) -> Field {
+        let left = mux(direction == 0, current, sibling)
+        let right = mux(direction == 0, sibling, current)
+        poseidon(left, right)
+    }
+
+    // "Component": verify_path — walks a Merkle proof of depth 2
+    fn verify_path(leaf, siblings: Field[2], directions: Field[2]) -> Field {
+        let level1 = merkle_level(leaf, siblings[0], directions[0])
+        let level2 = merkle_level(level1, siblings[1], directions[1])
+        level2
+    }
+
+    // Use the "components"
+    let commitment = hash_commitment(secret)
+    assert_eq(commitment, leaf_hash)
+
+    let siblings: Field[2] = [poseidon(1, 0), poseidon(poseidon(2, 0), poseidon(3, 0))]
+    let directions: Field[2] = [0, 0]
+
+    let computed_root = verify_path(commitment, siblings, directions)
+    assert_eq(computed_root, root)
+}
