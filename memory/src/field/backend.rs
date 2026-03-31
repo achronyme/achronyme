@@ -18,14 +18,7 @@ pub trait FieldBackend: Copy + Clone + Eq + std::hash::Hash + Sized + 'static {
     ///
     /// For Montgomery4 backends (BN254, BLS12-381, etc.): `[u64; 4]`
     /// For Goldilocks: `u64`
-    type Repr: Copy
-        + Clone
-        + Eq
-        + std::hash::Hash
-        + Send
-        + Sync
-        + std::fmt::Debug
-        + 'static;
+    type Repr: Copy + Clone + Eq + std::hash::Hash + Send + Sync + std::fmt::Debug + 'static;
 
     /// Which prime this backend implements.
     const PRIME_ID: PrimeId;
@@ -137,8 +130,13 @@ pub trait FieldBackend: Copy + Clone + Eq + std::hash::Hash + Sized + 'static {
 
     /// Serialize the internal representation for Rust-to-Rust serde (e.g., bincode, JSON).
     /// This uses the raw internal form (Montgomery limbs) for deterministic round-trips.
-    fn serde_serialize<S: serde::Serializer>(a: &Self::Repr, serializer: S) -> Result<S::Ok, S::Error>;
+    fn serde_serialize<S: serde::Serializer>(
+        a: &Self::Repr,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>;
 
     /// Deserialize and validate the internal representation.
-    fn serde_deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self::Repr, D::Error>;
+    fn serde_deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Self::Repr, D::Error>;
 }

@@ -30,7 +30,6 @@ impl FieldElement {
     pub(crate) fn from_repr(repr: <Bn254Fr as FieldBackend>::Repr) -> Self {
         Self { repr }
     }
-
 }
 
 // Custom serde: delegates to Bn254Fr backend.
@@ -488,18 +487,30 @@ mod tests {
         for i in 0..4 {
             p_bytes[i * 8..(i + 1) * 8].copy_from_slice(&MODULUS[i].to_le_bytes());
         }
-        assert!(FieldElement::from_le_bytes(&p_bytes).is_none(), "p should be rejected");
+        assert!(
+            FieldElement::from_le_bytes(&p_bytes).is_none(),
+            "p should be rejected"
+        );
 
         let mut p_plus_1 = p_bytes;
         p_plus_1[0] = p_plus_1[0].wrapping_add(1);
-        assert!(FieldElement::from_le_bytes(&p_plus_1).is_none(), "p+1 should be rejected");
+        assert!(
+            FieldElement::from_le_bytes(&p_plus_1).is_none(),
+            "p+1 should be rejected"
+        );
 
         let max_bytes = [0xFF; 32];
-        assert!(FieldElement::from_le_bytes(&max_bytes).is_none(), "2^256-1 should be rejected");
+        assert!(
+            FieldElement::from_le_bytes(&max_bytes).is_none(),
+            "2^256-1 should be rejected"
+        );
 
         let mut p_minus_1 = p_bytes;
         p_minus_1[0] = p_minus_1[0].wrapping_sub(1);
-        assert!(FieldElement::from_le_bytes(&p_minus_1).is_some(), "p-1 should be accepted");
+        assert!(
+            FieldElement::from_le_bytes(&p_minus_1).is_some(),
+            "p-1 should be accepted"
+        );
     }
 
     // ========================================================================
@@ -601,7 +612,10 @@ mod tests {
         let fe = FieldElement::from_decimal_str(input).unwrap();
         let two_256_mod_p = FieldElement::from_canonical(R);
         let expected = two_256_mod_p.add(&FieldElement::ONE);
-        assert_eq!(fe, expected, "from_decimal_str(2^256 + 1) should be correct");
+        assert_eq!(
+            fe, expected,
+            "from_decimal_str(2^256 + 1) should be correct"
+        );
     }
 
     #[test]
@@ -647,7 +661,10 @@ mod tests {
 
     #[test]
     fn test_from_decimal_str_empty_string() {
-        assert!(FieldElement::from_decimal_str("").is_none(), "empty string should return None");
+        assert!(
+            FieldElement::from_decimal_str("").is_none(),
+            "empty string should return None"
+        );
     }
 
     #[test]
