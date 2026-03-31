@@ -22,8 +22,12 @@ fn compile_valid_source_with_output() {
     let out = tempfile::NamedTempFile::with_suffix(".achb").unwrap();
     let out_path = out.path().to_str().unwrap().to_string();
 
-    let result =
-        cli::commands::compile::compile_file(src.path().to_str().unwrap(), Some(&out_path), PrimeId::Bn254, EF);
+    let result = cli::commands::compile::compile_file(
+        src.path().to_str().unwrap(),
+        Some(&out_path),
+        PrimeId::Bn254,
+        EF,
+    );
     assert!(result.is_ok(), "compile_file failed: {:?}", result.err());
 
     // Verify .achb was created with the ACH magic header
@@ -35,7 +39,12 @@ fn compile_valid_source_with_output() {
 #[test]
 fn compile_valid_source_no_output() {
     let src = write_temp_source("let x = 42");
-    let result = cli::commands::compile::compile_file(src.path().to_str().unwrap(), None, PrimeId::Bn254, EF);
+    let result = cli::commands::compile::compile_file(
+        src.path().to_str().unwrap(),
+        None,
+        PrimeId::Bn254,
+        EF,
+    );
     assert!(
         result.is_ok(),
         "compile_file (no output) failed: {:?}",
@@ -46,7 +55,12 @@ fn compile_valid_source_no_output() {
 #[test]
 fn compile_invalid_source_returns_error() {
     let src = write_temp_source("let = ???");
-    let result = cli::commands::compile::compile_file(src.path().to_str().unwrap(), None, PrimeId::Bn254, EF);
+    let result = cli::commands::compile::compile_file(
+        src.path().to_str().unwrap(),
+        None,
+        PrimeId::Bn254,
+        EF,
+    );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(err.contains("error"), "expected compile error, got: {err}");
@@ -54,8 +68,12 @@ fn compile_invalid_source_returns_error() {
 
 #[test]
 fn compile_nonexistent_file_returns_error() {
-    let result =
-        cli::commands::compile::compile_file("/tmp/nonexistent_achronyme_test.ach", None, PrimeId::Bn254, EF);
+    let result = cli::commands::compile::compile_file(
+        "/tmp/nonexistent_achronyme_test.ach",
+        None,
+        PrimeId::Bn254,
+        EF,
+    );
     assert!(result.is_err());
 }
 
@@ -125,11 +143,25 @@ fn run_compiled_binary() {
     let out = tempfile::NamedTempFile::with_suffix(".achb").unwrap();
     let out_path = out.path().to_str().unwrap().to_string();
 
-    cli::commands::compile::compile_file(src.path().to_str().unwrap(), Some(&out_path), PrimeId::Bn254, EF)
-        .expect("compile should succeed");
+    cli::commands::compile::compile_file(
+        src.path().to_str().unwrap(),
+        Some(&out_path),
+        PrimeId::Bn254,
+        EF,
+    )
+    .expect("compile should succeed");
 
-    let result =
-        cli::commands::run::run_file(&out_path, false, None, "r1cs", PrimeId::Bn254, None, false, false, EF);
+    let result = cli::commands::run::run_file(
+        &out_path,
+        false,
+        None,
+        "r1cs",
+        PrimeId::Bn254,
+        None,
+        false,
+        false,
+        EF,
+    );
     assert!(
         result.is_ok(),
         "run compiled binary failed: {:?}",
@@ -162,8 +194,12 @@ fn disassemble_invalid_source_returns_error() {
 #[test]
 fn json_error_format_produces_valid_json() {
     let src = write_temp_source("let = ???");
-    let result =
-        cli::commands::compile::compile_file(src.path().to_str().unwrap(), None, PrimeId::Bn254, ErrorFormat::Json);
+    let result = cli::commands::compile::compile_file(
+        src.path().to_str().unwrap(),
+        None,
+        PrimeId::Bn254,
+        ErrorFormat::Json,
+    );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     // Should be valid JSON
