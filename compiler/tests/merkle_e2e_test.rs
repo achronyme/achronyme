@@ -5,6 +5,7 @@ use compiler::witness_gen::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;
+use memory::field::PrimeId;
 use memory::FieldElement;
 
 /// Build an 8-leaf Merkle tree using Poseidon and return the root.
@@ -196,10 +197,10 @@ fn merkle_depth3_export_roundtrip() {
     compiler.cs.verify(&witness).unwrap();
 
     // Export and verify structure
-    let r1cs_data = write_r1cs(&compiler.cs);
+    let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
     assert_eq!(&r1cs_data[0..4], b"r1cs");
 
-    let wtns_data = write_wtns(&witness);
+    let wtns_data = write_wtns(&witness, PrimeId::Bn254);
     assert_eq!(&wtns_data[0..4], b"wtns");
 
     // Wire counts should match

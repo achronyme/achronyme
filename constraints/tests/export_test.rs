@@ -1,5 +1,6 @@
 use constraints::r1cs::{ConstraintSystem, LinearCombination};
 use constraints::{write_r1cs, write_wtns};
+use memory::field::PrimeId;
 use memory::FieldElement;
 use std::process::Command;
 
@@ -27,7 +28,7 @@ fn make_mul_circuit() -> (ConstraintSystem, Vec<FieldElement>) {
 #[test]
 fn test_r1cs_roundtrip_structure() {
     let (cs, _) = make_mul_circuit();
-    let data = write_r1cs(&cs);
+    let data = write_r1cs(&cs, PrimeId::Bn254);
 
     // Magic + version
     assert_eq!(&data[0..4], b"r1cs");
@@ -44,7 +45,7 @@ fn test_r1cs_roundtrip_structure() {
 #[test]
 fn test_wtns_roundtrip_structure() {
     let (_, witness) = make_mul_circuit();
-    let data = write_wtns(&witness);
+    let data = write_wtns(&witness, PrimeId::Bn254);
 
     assert_eq!(&data[0..4], b"wtns");
     assert_eq!(u32::from_le_bytes(data[4..8].try_into().unwrap()), 2);
@@ -60,8 +61,8 @@ fn test_wtns_roundtrip_structure() {
 #[test]
 fn test_r1cs_and_wtns_consistent_wire_count() {
     let (cs, witness) = make_mul_circuit();
-    let r1cs_data = write_r1cs(&cs);
-    let wtns_data = write_wtns(&witness);
+    let r1cs_data = write_r1cs(&cs, PrimeId::Bn254);
+    let wtns_data = write_wtns(&witness, PrimeId::Bn254);
 
     // nWires from r1cs header (offset 24 + 36 = 60)
     let n_wires = u32::from_le_bytes(r1cs_data[60..64].try_into().unwrap());
@@ -87,7 +88,7 @@ fn test_e2e_pipeline_export() {
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
 
-    let r1cs_data = write_r1cs(&compiler.cs);
+    let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
     assert_eq!(&r1cs_data[0..4], b"r1cs");
 
     let mut inputs = HashMap::new();
@@ -99,7 +100,7 @@ fn test_e2e_pipeline_export() {
     let witness = wg.generate(&inputs).unwrap();
     compiler.cs.verify(&witness).unwrap();
 
-    let wtns_data = write_wtns(&witness);
+    let wtns_data = write_wtns(&witness, PrimeId::Bn254);
     assert_eq!(&wtns_data[0..4], b"wtns");
 }
 
@@ -176,7 +177,7 @@ fn test_snarkjs_groth16_full() {
     let r1cs_path = p("circuit.r1cs");
     let wtns_path = p("witness.wtns");
 
-    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs, PrimeId::Bn254)).unwrap();
 
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), FieldElement::from_u64(42));
@@ -186,7 +187,7 @@ fn test_snarkjs_groth16_full() {
     let wg = WitnessGenerator::from_compiler(&compiler);
     let witness = wg.generate(&inputs).unwrap();
     compiler.cs.verify(&witness).unwrap();
-    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness, PrimeId::Bn254)).unwrap();
 
     // Powers of Tau ceremony
     let pot12 = p("pot12_0000.ptau");
@@ -317,7 +318,7 @@ fn test_snarkjs_r1cs_info() {
     let r1cs_path = p("circuit.r1cs");
     let wtns_path = p("witness.wtns");
 
-    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs, PrimeId::Bn254)).unwrap();
 
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), FieldElement::from_u64(42));
@@ -326,7 +327,7 @@ fn test_snarkjs_r1cs_info() {
 
     let wg = WitnessGenerator::from_compiler(&compiler);
     let witness = wg.generate(&inputs).unwrap();
-    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness, PrimeId::Bn254)).unwrap();
 
     snarkjs(&["snarkjs", "r1cs", "info", &r1cs_path]);
     snarkjs(&["snarkjs", "wtns", "check", &r1cs_path, &wtns_path]);

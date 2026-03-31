@@ -24,7 +24,10 @@ pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat)
 
         let mut file = fs::File::create(out_path).context("Failed to create output file")?;
 
-        file.write_all(b"ACH\x0A")?;
+        file.write_all(b"ACH\x0B")?;
+
+        // PrimeId (v0x0B+): identifies which prime field was used
+        file.write_u8(memory::field::PrimeId::Bn254.to_byte())?;
 
         // Metadata
         let main_func = compiler

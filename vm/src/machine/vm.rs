@@ -1,6 +1,7 @@
 use crate::error::RuntimeError;
 use crate::globals::GlobalEntry;
 use crate::native::NativeObj;
+use memory::field::PrimeId;
 use memory::{Heap, Value};
 use std::collections::HashMap;
 
@@ -58,6 +59,9 @@ pub struct VM {
 
     /// Per-tag method tables for method dispatch (`.method()` syntax).
     pub prototype_registry: PrototypeRegistry,
+
+    /// Prime field loaded from bytecode header (v0x0B+). Defaults to BN254.
+    pub prime_id: PrimeId,
 }
 
 pub const STACK_MAX: usize = 65_536;
@@ -92,6 +96,7 @@ impl VM {
             last_error_location: None,
             native_roots: Vec::new(),
             prototype_registry: PrototypeRegistry::new(),
+            prime_id: PrimeId::Bn254,
         };
 
         // Bootstrap native functions and prototype methods

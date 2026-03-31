@@ -284,7 +284,10 @@ fn dump_prove_blocks_from_bytecode(bytecode: &[u32], compiler: &compiler::Compil
         };
 
         match ir::prove_ir::ProveIR::from_bytes(blob) {
-            Ok(prove_ir) => print!("{prove_ir}"),
+            Ok((prove_ir, prime_id)) => {
+                println!("  prime: {prime_id}");
+                print!("{prove_ir}");
+            }
             Err(e) => println!("  (failed to deserialize ProveIR: {e})"),
         }
     }

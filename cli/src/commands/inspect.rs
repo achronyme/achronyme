@@ -253,7 +253,7 @@ impl ProveHandler for InspectorProveHandler {
         prove_ir_bytes: &[u8],
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
-        let prove_ir = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
+        let (prove_ir, _prime_id) = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
             .map_err(|e| ProveError::IrLowering(format!("ProveIR deserialization: {e}")))?;
 
         let name = prove_ir.name.as_deref().unwrap_or("");

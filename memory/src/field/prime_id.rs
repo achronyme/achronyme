@@ -93,6 +93,37 @@ impl PrimeId {
             _ => 32,
         }
     }
+
+    /// Stable 1-byte encoding for binary serialization (bytecode headers, ProveIR, R1CS).
+    ///
+    /// These values are part of the binary format contract — never reorder or reuse.
+    pub const fn to_byte(self) -> u8 {
+        match self {
+            Self::Bn254 => 0x00,
+            Self::Bls12_381 => 0x01,
+            Self::Goldilocks => 0x02,
+            Self::Grumpkin => 0x03,
+            Self::Pallas => 0x04,
+            Self::Vesta => 0x05,
+            Self::Secp256r1 => 0x06,
+            Self::Bls12_377 => 0x07,
+        }
+    }
+
+    /// Decode from 1-byte binary encoding. Returns `None` for unknown tags.
+    pub const fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0x00 => Some(Self::Bn254),
+            0x01 => Some(Self::Bls12_381),
+            0x02 => Some(Self::Goldilocks),
+            0x03 => Some(Self::Grumpkin),
+            0x04 => Some(Self::Pallas),
+            0x05 => Some(Self::Vesta),
+            0x06 => Some(Self::Secp256r1),
+            0x07 => Some(Self::Bls12_377),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for PrimeId {
@@ -138,5 +169,29 @@ mod tests {
         assert_eq!(PrimeId::Bn254.byte_size(), 32);
         assert_eq!(PrimeId::Bls12_381.byte_size(), 32);
         assert_eq!(PrimeId::Goldilocks.byte_size(), 8);
+    }
+
+    #[test]
+    fn test_byte_roundtrip() {
+        let primes = [
+            PrimeId::Bn254,
+            PrimeId::Bls12_381,
+            PrimeId::Goldilocks,
+            PrimeId::Grumpkin,
+            PrimeId::Pallas,
+            PrimeId::Vesta,
+            PrimeId::Secp256r1,
+            PrimeId::Bls12_377,
+        ];
+        for (i, p) in primes.iter().enumerate() {
+            assert_eq!(p.to_byte(), i as u8);
+            assert_eq!(PrimeId::from_byte(p.to_byte()), Some(*p));
+        }
+    }
+
+    #[test]
+    fn test_byte_unknown() {
+        assert_eq!(PrimeId::from_byte(0x08), None);
+        assert_eq!(PrimeId::from_byte(0xFF), None);
     }
 }

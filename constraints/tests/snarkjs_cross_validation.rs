@@ -26,6 +26,7 @@ use compiler::witness_gen::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;
+use memory::field::PrimeId;
 use memory::FieldElement;
 
 // ============================================================================
@@ -120,8 +121,8 @@ fn cross_validate(
     let wtns_path = dir.path().join("witness.wtns");
     let wtns_json_path = dir.path().join("witness.json");
 
-    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
-    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs, PrimeId::Bn254)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness, PrimeId::Bn254)).unwrap();
 
     let r1cs_str = r1cs_path.to_str().unwrap();
     let wtns_str = wtns_path.to_str().unwrap();
@@ -515,8 +516,8 @@ fn golden_poseidon_groth16_full_cycle() {
     let p = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
     let r1cs_path = p("circuit.r1cs");
     let wtns_path = p("witness.wtns");
-    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
-    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs, PrimeId::Bn254)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness, PrimeId::Bn254)).unwrap();
 
     eprintln!("  Step 1/6: Achronyme compile + export ✓");
     eprintln!("  Constraints: {}", compiler.cs.num_constraints());
