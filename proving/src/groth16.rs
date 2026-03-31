@@ -1,10 +1,11 @@
-//! Native Groth16 proof generation using ark-groth16.
+//! Generic Groth16 proof generation using ark-groth16.
 //!
-//! Replaces the snarkjs subprocess pipeline with in-process proving.
+//! This module is parameterized over `E: Pairing` so it works with any
+//! arkworks-compatible curve (BN254, BLS12-381, etc.). Curve-specific
+//! JSON serialization lives in dedicated modules (e.g., `groth16_bn254`).
 
 use std::path::Path;
 
-use ark_bn254::{Bn254, Fr};
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_groth16::Groth16;
@@ -13,42 +14,46 @@ use ark_relations::r1cs::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
-use ark_std::rand::rngs::OsRng;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
 use constraints::r1cs::ConstraintSystem;
 use memory::FieldElement;
-use vm::ProveResult;
 
 // ============================================================================
 // Field conversion
 // ============================================================================
 
-/// Convert an Achronyme `FieldElement` (BN254 Fr) to an ark `Fr`.
-/// Both use the same modulus, so this is a lossless conversion.
-fn fe_to_ark(fe: &FieldElement) -> Fr {
-    Fr::from_le_bytes_mod_order(&fe.to_le_bytes())
+/// Convert an Achronyme `FieldElement` to an ark scalar field element.
+///
+/// Uses `from_le_bytes_mod_order` — works for any `PrimeField` regardless
+/// of modulus. The caller must ensure the source `FieldElement` was produced
+/// under the same prime; otherwise the value wraps mod the target prime.
+pub fn fe_to_ark<F: PrimeField>(fe: &FieldElement) -> F {
+    F::from_le_bytes_mod_order(&fe.to_le_bytes())
+}
+
+/// Convert an ark field element to a decimal string.
+pub fn fr_to_decimal<F: PrimeField>(f: &F) -> String {
+    f.into_bigint().to_string()
 }
 
 // ============================================================================
-// Circuit adapter
+// Circuit adapter (generic)
 // ============================================================================
 
 /// Wraps an Achronyme `ConstraintSystem` so ark-groth16 can synthesize it.
 #[derive(Clone)]
 pub struct AchronymeCircuit {
-    cs: ConstraintSystem,
-    witness: Option<Vec<FieldElement>>,
+    pub cs: ConstraintSystem,
+    pub witness: Option<Vec<FieldElement>>,
 }
 
-impl ConstraintSynthesizer<Fr> for AchronymeCircuit {
-    fn generate_constraints(self, ark_cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for AchronymeCircuit {
+    fn generate_constraints(self, ark_cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let num_pub = self.cs.num_pub_inputs();
         let num_vars = self.cs.num_variables();
 
-        // Map Achronyme variable indices to ark variables.
-        // Index 0 = ONE (implicit in ark), indices 1..=num_pub = public inputs,
-        // indices num_pub+1.. = witness variables.
         let mut var_map: Vec<ArkVariable> = Vec::with_capacity(num_vars);
 
         // Index 0 → ark's built-in ONE
@@ -59,7 +64,7 @@ impl ConstraintSynthesizer<Fr> for AchronymeCircuit {
             let val = self
                 .witness
                 .as_ref()
-                .map(|w| fe_to_ark(&w[i]))
+                .map(|w| fe_to_ark::<F>(&w[i]))
                 .unwrap_or_default();
             let v = ark_cs.new_input_variable(|| Ok(val))?;
             var_map.push(v);
@@ -70,7 +75,7 @@ impl ConstraintSynthesizer<Fr> for AchronymeCircuit {
             let val = self
                 .witness
                 .as_ref()
-                .map(|w| fe_to_ark(&w[i]))
+                .map(|w| fe_to_ark::<F>(&w[i]))
                 .unwrap_or_default();
             let v = ark_cs.new_witness_variable(|| Ok(val))?;
             var_map.push(v);
@@ -78,9 +83,9 @@ impl ConstraintSynthesizer<Fr> for AchronymeCircuit {
 
         // Convert each (A, B, C) constraint
         for constraint in self.cs.constraints() {
-            let a = convert_lc(&constraint.a, &var_map);
-            let b = convert_lc(&constraint.b, &var_map);
-            let c = convert_lc(&constraint.c, &var_map);
+            let a = convert_lc::<F>(&constraint.a, &var_map);
+            let b = convert_lc::<F>(&constraint.b, &var_map);
+            let c = convert_lc::<F>(&constraint.c, &var_map);
             ark_cs.enforce_constraint(a, b, c)?;
         }
 
@@ -89,43 +94,37 @@ impl ConstraintSynthesizer<Fr> for AchronymeCircuit {
 }
 
 /// Convert an Achronyme `LinearCombination` to an ark `LinearCombination`.
-fn convert_lc(
+fn convert_lc<F: PrimeField>(
     lc: &constraints::r1cs::LinearCombination,
     var_map: &[ArkVariable],
-) -> ark_relations::r1cs::LinearCombination<Fr> {
+) -> ark_relations::r1cs::LinearCombination<F> {
     let mut ark_lc = ark_relations::r1cs::LinearCombination::zero();
     for (var, coeff) in &lc.terms {
-        ark_lc += (fe_to_ark(coeff), var_map[var.index()]);
+        ark_lc += (fe_to_ark::<F>(coeff), var_map[var.index()]);
     }
     ark_lc
 }
 
 // ============================================================================
-// Proof generation (top-level entry point)
+// Proof generation (generic over Pairing)
 // ============================================================================
 
-/// Run trusted setup (or load cached keys) without proving.
-pub fn setup_keys(
+/// Run trusted setup (or load cached keys).
+pub fn setup_keys<E: Pairing>(
     cs: &ConstraintSystem,
     cache_dir: &Path,
-) -> Result<
-    (
-        ark_groth16::ProvingKey<Bn254>,
-        ark_groth16::VerifyingKey<Bn254>,
-    ),
-    String,
-> {
+) -> Result<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>), String> {
     let key = cache_key(cs);
     let cache_subdir = cache_dir.join(&key);
 
-    if let Some(keys) = load_cached_keys(&cache_subdir) {
+    if let Some(keys) = load_cached_keys::<E>(&cache_subdir) {
         Ok(keys)
     } else {
         let setup_circuit = AchronymeCircuit {
             cs: cs.clone(),
             witness: None,
         };
-        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut OsRng)
+        let (pk, vk) = Groth16::<E>::circuit_specific_setup(setup_circuit, &mut OsRng)
             .map_err(|e| format!("Groth16 setup failed: {e}"))?;
         save_cached_keys(&cache_subdir, &pk, &vk)?;
         Ok((pk, vk))
@@ -133,345 +132,78 @@ pub fn setup_keys(
 }
 
 /// Run trusted setup and return only the verifying key.
-///
-/// Tries the cache first (loading only the VK file). On cache miss, runs
-/// full setup but only serializes the VK to disk — avoids the cost of
-/// writing the much larger proving key when only the VK is needed.
-pub fn setup_vk_only(
+pub fn setup_vk_only<E: Pairing>(
     cs: &ConstraintSystem,
     cache_dir: &Path,
-) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
+) -> Result<ark_groth16::VerifyingKey<E>, String> {
     let key = cache_key(cs);
     let cache_subdir = cache_dir.join(&key);
 
-    // Try loading just the VK from cache
-    if let Some(vk) = load_cached_vk(&cache_subdir) {
+    if let Some(vk) = load_cached_vk::<E>(&cache_subdir) {
         return Ok(vk);
     }
 
-    // Full setup required — save only VK
     let setup_circuit = AchronymeCircuit {
         cs: cs.clone(),
         witness: None,
     };
-    let (_pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut OsRng)
+    let (_pk, vk) = Groth16::<E>::circuit_specific_setup(setup_circuit, &mut OsRng)
         .map_err(|e| format!("Groth16 setup failed: {e}"))?;
     save_cached_vk(&cache_subdir, &vk)?;
     Ok(vk)
 }
 
-/// Generate a native Groth16 proof using ark-groth16.
+/// Generate a Groth16 proof and return raw ark types.
 ///
-/// Uses cached proving/verifying keys when available.
-pub fn generate_proof(
+/// Curve-specific modules (e.g., `groth16_bn254`) wrap this to add
+/// JSON serialization and return `ProveResult`.
+pub fn generate_proof_raw<E: Pairing>(
     cs: &ConstraintSystem,
     witness: &[FieldElement],
     cache_dir: &Path,
-) -> Result<ProveResult, String> {
-    let (pk, vk) = setup_keys(cs, cache_dir)?;
+) -> Result<
+    (
+        ark_groth16::Proof<E>,
+        ark_groth16::VerifyingKey<E>,
+        Vec<E::ScalarField>,
+    ),
+    String,
+> {
+    let (pk, vk) = setup_keys::<E>(cs, cache_dir)?;
 
-    // Prove
     let prove_circuit = AchronymeCircuit {
         cs: cs.clone(),
         witness: Some(witness.to_vec()),
     };
-    let proof = Groth16::<Bn254>::prove(&pk, prove_circuit, &mut OsRng)
+    let proof = Groth16::<E>::prove(&pk, prove_circuit, &mut OsRng)
         .map_err(|e| format!("Groth16 prove failed: {e}"))?;
 
-    // 4. Extract public inputs (indices 1..=num_pub)
+    // Extract public inputs (indices 1..=num_pub)
     let num_pub = cs.num_pub_inputs();
-    let public_inputs: Vec<Fr> = (1..=num_pub).map(|i| fe_to_ark(&witness[i])).collect();
+    let public_inputs: Vec<E::ScalarField> =
+        (1..=num_pub).map(|i| fe_to_ark(&witness[i])).collect();
 
-    // 5. Verify (sanity check)
-    let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)
+    // Verify (sanity check)
+    let valid = Groth16::<E>::verify(&vk, &public_inputs, &proof)
         .map_err(|e| format!("Groth16 verify failed: {e}"))?;
     if !valid {
         return Err("Groth16 proof verification failed (internal error)".into());
     }
 
-    // 6. Serialize to snarkjs-compatible JSON
-    let proof_json = serialize_proof_json(&proof);
-    let public_json = serialize_public_json(&public_inputs);
-    let vkey_json = serialize_vkey_json(&vk, num_pub);
-
-    Ok(ProveResult::Proof {
-        proof_json,
-        public_json,
-        vkey_json,
-    })
+    Ok((proof, vk, public_inputs))
 }
 
 // ============================================================================
-// JSON serialization (snarkjs-compatible)
-// ============================================================================
-
-/// Format a G1 affine point as a JSON array of 3 decimal strings [x, y, "1"].
-fn g1_to_json(p: &<Bn254 as Pairing>::G1Affine) -> serde_json::Value {
-    use ark_ec::AffineRepr;
-    if p.is_zero() {
-        return serde_json::json!(["0", "1", "0"]);
-    }
-    let x = p.x().expect("non-zero point has x");
-    let y = p.y().expect("non-zero point has y");
-    serde_json::json!([fr_to_decimal(&x), fr_to_decimal(&y), "1"])
-}
-
-/// Format a G2 affine point as a JSON array of 3 arrays, each with 2 decimal strings.
-fn g2_to_json(p: &<Bn254 as Pairing>::G2Affine) -> serde_json::Value {
-    use ark_ec::AffineRepr;
-    if p.is_zero() {
-        return serde_json::json!([["0", "0"], ["1", "0"], ["0", "0"]]);
-    }
-    let x = p.x().expect("non-zero point has x");
-    let y = p.y().expect("non-zero point has y");
-    // Fq2 has c0, c1 components
-    serde_json::json!([
-        [fr_to_decimal(&x.c0), fr_to_decimal(&x.c1)],
-        [fr_to_decimal(&y.c0), fr_to_decimal(&y.c1)],
-        ["1", "0"]
-    ])
-}
-
-/// Convert an ark field element to a decimal string.
-fn fr_to_decimal<F: PrimeField>(f: &F) -> String {
-    f.into_bigint().to_string()
-}
-
-fn serialize_proof_json(proof: &ark_groth16::Proof<Bn254>) -> String {
-    let obj = serde_json::json!({
-        "pi_a": g1_to_json(&proof.a),
-        "pi_b": g2_to_json(&proof.b),
-        "pi_c": g1_to_json(&proof.c),
-        "protocol": "groth16",
-        "curve": "bn128"
-    });
-    serde_json::to_string_pretty(&obj).unwrap()
-}
-
-fn serialize_public_json(inputs: &[Fr]) -> String {
-    let arr: Vec<String> = inputs.iter().map(fr_to_decimal).collect();
-    serde_json::to_string_pretty(&arr).unwrap()
-}
-
-fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bn254>, num_pub: usize) -> String {
-    let mut ic: Vec<serde_json::Value> = Vec::new();
-    for p in &vk.gamma_abc_g1 {
-        ic.push(g1_to_json(p));
-    }
-    let obj = serde_json::json!({
-        "protocol": "groth16",
-        "curve": "bn128",
-        "nPublic": num_pub,
-        "vk_alpha_1": g1_to_json(&vk.alpha_g1),
-        "vk_beta_2": g2_to_json(&vk.beta_g2),
-        "vk_gamma_2": g2_to_json(&vk.gamma_g2),
-        "vk_delta_2": g2_to_json(&vk.delta_g2),
-        "IC": ic
-    });
-    serde_json::to_string_pretty(&obj).unwrap()
-}
-
-// ============================================================================
-// Solidity calldata formatting
-// ============================================================================
-
-/// Format a Groth16 proof and public inputs as Solidity calldata strings.
-///
-/// Applies EIP-197 coordinate swaps for G2 points (π_B):
-/// arkworks Fq2(c0=real, c1=imag) → EVM (c1=imag, c0=real).
-///
-/// Returns (pA, pB, pC, pubSignals) as decimal strings ready for Solidity.
-pub fn format_solidity_calldata(
-    proof: &ark_groth16::Proof<Bn254>,
-    public_inputs: &[Fr],
-) -> SolidityCalldata {
-    use ark_ec::AffineRepr;
-
-    let a = proof.a;
-    let b = proof.b;
-    let c = proof.c;
-
-    // π_A (G1): direct, no swap
-    let p_a = [
-        fr_to_decimal(&a.x().expect("a.x")),
-        fr_to_decimal(&a.y().expect("a.y")),
-    ];
-
-    // π_B (G2): SWAP c0 ↔ c1 for EIP-197
-    let bx = b.x().expect("b.x");
-    let by = b.y().expect("b.y");
-    let p_b = [
-        [fr_to_decimal(&bx.c1), fr_to_decimal(&bx.c0)], // X: imag first, real second
-        [fr_to_decimal(&by.c1), fr_to_decimal(&by.c0)], // Y: imag first, real second
-    ];
-
-    // π_C (G1): direct, no swap
-    let p_c = [
-        fr_to_decimal(&c.x().expect("c.x")),
-        fr_to_decimal(&c.y().expect("c.y")),
-    ];
-
-    let pub_signals: Vec<String> = public_inputs.iter().map(fr_to_decimal).collect();
-
-    SolidityCalldata {
-        p_a,
-        p_b,
-        p_c,
-        pub_signals,
-    }
-}
-
-/// Structured Solidity calldata for a Groth16 proof.
-pub struct SolidityCalldata {
-    /// π_A point (G1): [x, y]
-    pub p_a: [String; 2],
-    /// π_B point (G2): [[x.c1, x.c0], [y.c1, y.c0]] (EIP-197 order)
-    pub p_b: [[String; 2]; 2],
-    /// π_C point (G1): [x, y]
-    pub p_c: [String; 2],
-    /// Public signals as decimal strings
-    pub pub_signals: Vec<String>,
-}
-
-// ============================================================================
-// JSON deserialization (for verify_proof)
-// ============================================================================
-
-/// Parse a decimal string into an ark Fr.
-fn decimal_to_fr(s: &str) -> Result<Fr, String> {
-    use std::str::FromStr;
-    Fr::from_str(s).map_err(|_| format!("invalid field element: {s}"))
-}
-
-/// Parse a decimal string into an ark Fq (base field).
-fn decimal_to_fq(s: &str) -> Result<ark_bn254::Fq, String> {
-    use std::str::FromStr;
-    ark_bn254::Fq::from_str(s).map_err(|_| format!("invalid base field element: {s}"))
-}
-
-/// Parse a G1 JSON array [x, y, "1"] into an ark G1Affine.
-fn json_to_g1(val: &serde_json::Value) -> Result<<Bn254 as Pairing>::G1Affine, String> {
-    let arr = val.as_array().ok_or("expected array for G1 point")?;
-    if arr.len() != 3 {
-        return Err("G1 point must have 3 elements".into());
-    }
-    let x_str = arr[0].as_str().ok_or("G1 x must be string")?;
-    let y_str = arr[1].as_str().ok_or("G1 y must be string")?;
-    let z_str = arr[2].as_str().ok_or("G1 z must be string")?;
-
-    if z_str == "0" {
-        // Point at infinity
-        use ark_ec::AffineRepr;
-        return Ok(<Bn254 as Pairing>::G1Affine::zero());
-    }
-
-    let x = decimal_to_fq(x_str)?;
-    let y = decimal_to_fq(y_str)?;
-    let p = ark_bn254::G1Affine::new_unchecked(x, y);
-    Ok(p)
-}
-
-/// Parse a G2 JSON array [[x.c0, x.c1], [y.c0, y.c1], ["1","0"]] into an ark G2Affine.
-fn json_to_g2(val: &serde_json::Value) -> Result<<Bn254 as Pairing>::G2Affine, String> {
-    let arr = val.as_array().ok_or("expected array for G2 point")?;
-    if arr.len() != 3 {
-        return Err("G2 point must have 3 elements".into());
-    }
-
-    let x_arr = arr[0].as_array().ok_or("G2 x must be array")?;
-    let y_arr = arr[1].as_array().ok_or("G2 y must be array")?;
-    let z_arr = arr[2].as_array().ok_or("G2 z must be array")?;
-
-    // Check for point at infinity
-    if z_arr.len() >= 2 {
-        let z0 = z_arr[0].as_str().unwrap_or("1");
-        let z1 = z_arr[1].as_str().unwrap_or("0");
-        if z0 == "0" && z1 == "0" {
-            use ark_ec::AffineRepr;
-            return Ok(<Bn254 as Pairing>::G2Affine::zero());
-        }
-    }
-
-    let x_c0 = decimal_to_fq(x_arr[0].as_str().ok_or("x.c0 must be string")?)?;
-    let x_c1 = decimal_to_fq(x_arr[1].as_str().ok_or("x.c1 must be string")?)?;
-    let y_c0 = decimal_to_fq(y_arr[0].as_str().ok_or("y.c0 must be string")?)?;
-    let y_c1 = decimal_to_fq(y_arr[1].as_str().ok_or("y.c1 must be string")?)?;
-
-    let x = ark_bn254::Fq2::new(x_c0, x_c1);
-    let y = ark_bn254::Fq2::new(y_c0, y_c1);
-    let p = ark_bn254::G2Affine::new_unchecked(x, y);
-    Ok(p)
-}
-
-/// Deserialize a snarkjs-format proof JSON string into an ark Proof.
-pub fn deserialize_proof_json(json_str: &str) -> Result<ark_groth16::Proof<Bn254>, String> {
-    let obj: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| format!("invalid proof JSON: {e}"))?;
-    let a = json_to_g1(&obj["pi_a"])?;
-    let b = json_to_g2(&obj["pi_b"])?;
-    let c = json_to_g1(&obj["pi_c"])?;
-    Ok(ark_groth16::Proof { a, b, c })
-}
-
-/// Deserialize a snarkjs-format public inputs JSON string into ark Fr values.
-pub fn deserialize_public_json(json_str: &str) -> Result<Vec<Fr>, String> {
-    let arr: Vec<String> =
-        serde_json::from_str(json_str).map_err(|e| format!("invalid public JSON: {e}"))?;
-    arr.iter().map(|s| decimal_to_fr(s)).collect()
-}
-
-/// Deserialize a snarkjs-format verifying key JSON string into an ark VerifyingKey.
-pub fn deserialize_vkey_json(json_str: &str) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
-    let obj: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| format!("invalid vkey JSON: {e}"))?;
-
-    let alpha_g1 = json_to_g1(&obj["vk_alpha_1"])?;
-    let beta_g2 = json_to_g2(&obj["vk_beta_2"])?;
-    let gamma_g2 = json_to_g2(&obj["vk_gamma_2"])?;
-    let delta_g2 = json_to_g2(&obj["vk_delta_2"])?;
-
-    let ic_arr = obj["IC"].as_array().ok_or("vkey IC must be an array")?;
-    let mut gamma_abc_g1 = Vec::with_capacity(ic_arr.len());
-    for ic in ic_arr {
-        gamma_abc_g1.push(json_to_g1(ic)?);
-    }
-
-    Ok(ark_groth16::VerifyingKey {
-        alpha_g1,
-        beta_g2,
-        gamma_g2,
-        delta_g2,
-        gamma_abc_g1,
-    })
-}
-
-/// Verify a proof using deserialized JSON components.
-pub fn verify_proof_from_json(
-    proof_json: &str,
-    public_json: &str,
-    vkey_json: &str,
-) -> Result<bool, String> {
-    let proof = deserialize_proof_json(proof_json)?;
-    let public_inputs = deserialize_public_json(public_json)?;
-    let vk = deserialize_vkey_json(vkey_json)?;
-    Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)
-        .map_err(|e| format!("verification error: {e}"))
-}
-
-// ============================================================================
-// Cache helpers
+// Cache helpers (generic)
 // ============================================================================
 
 /// Compute a SHA256 cache key from the constraint system structure.
-fn cache_key(cs: &ConstraintSystem) -> String {
+pub fn cache_key(cs: &ConstraintSystem) -> String {
     let mut hasher = Sha256::new();
-    // Version salt — bump when serialization format or setup algorithm changes
     hasher.update(b"achronyme-groth16-cache-v1");
-    // Hash structural parameters
     hasher.update(cs.num_variables().to_le_bytes());
     hasher.update(cs.num_pub_inputs().to_le_bytes());
     hasher.update(cs.num_constraints().to_le_bytes());
-    // Hash each constraint's terms
     for c in cs.constraints() {
         hash_lc(&mut hasher, &c.a);
         hash_lc(&mut hasher, &c.b);
@@ -482,8 +214,6 @@ fn cache_key(cs: &ConstraintSystem) -> String {
 }
 
 fn hash_lc(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination) {
-    // Sort terms by variable index for canonical ordering — avoids
-    // cache misses when semantically identical LCs have different term order.
     let mut terms: Vec<_> = lc.terms.iter().collect();
     terms.sort_by_key(|(var, _)| var.index());
     hasher.update((terms.len() as u64).to_le_bytes());
@@ -493,16 +223,16 @@ fn hash_lc(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination) {
     }
 }
 
-fn load_cached_vk(dir: &Path) -> Option<ark_groth16::VerifyingKey<Bn254>> {
+fn load_cached_vk<E: Pairing>(dir: &Path) -> Option<ark_groth16::VerifyingKey<E>> {
     let vk_path = dir.join("verifying_key.bin");
-    if !vk_path.exists() {
-        return None;
-    }
     let vk_bytes = std::fs::read(&vk_path).ok()?;
-    ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&vk_bytes[..]).ok()
+    ark_groth16::VerifyingKey::<E>::deserialize_compressed(&vk_bytes[..]).ok()
 }
 
-fn save_cached_vk(dir: &Path, vk: &ark_groth16::VerifyingKey<Bn254>) -> Result<(), String> {
+fn save_cached_vk<E: Pairing>(
+    dir: &Path,
+    vk: &ark_groth16::VerifyingKey<E>,
+) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
     let mut vk_buf = Vec::new();
     vk.serialize_compressed(&mut vk_buf)
@@ -512,12 +242,9 @@ fn save_cached_vk(dir: &Path, vk: &ark_groth16::VerifyingKey<Bn254>) -> Result<(
     Ok(())
 }
 
-fn load_cached_keys(
+fn load_cached_keys<E: Pairing>(
     dir: &Path,
-) -> Option<(
-    ark_groth16::ProvingKey<Bn254>,
-    ark_groth16::VerifyingKey<Bn254>,
-)> {
+) -> Option<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>)> {
     let pk_path = dir.join("proving_key.bin");
     let vk_path = dir.join("verifying_key.bin");
     if !pk_path.exists() || !vk_path.exists() {
@@ -525,15 +252,15 @@ fn load_cached_keys(
     }
     let pk_bytes = std::fs::read(&pk_path).ok()?;
     let vk_bytes = std::fs::read(&vk_path).ok()?;
-    let pk = ark_groth16::ProvingKey::<Bn254>::deserialize_compressed(&pk_bytes[..]).ok()?;
-    let vk = ark_groth16::VerifyingKey::<Bn254>::deserialize_compressed(&vk_bytes[..]).ok()?;
+    let pk = ark_groth16::ProvingKey::<E>::deserialize_compressed(&pk_bytes[..]).ok()?;
+    let vk = ark_groth16::VerifyingKey::<E>::deserialize_compressed(&vk_bytes[..]).ok()?;
     Some((pk, vk))
 }
 
-fn save_cached_keys(
+fn save_cached_keys<E: Pairing>(
     dir: &Path,
-    pk: &ark_groth16::ProvingKey<Bn254>,
-    vk: &ark_groth16::VerifyingKey<Bn254>,
+    pk: &ark_groth16::ProvingKey<E>,
+    vk: &ark_groth16::VerifyingKey<E>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
 
