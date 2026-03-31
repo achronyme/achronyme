@@ -151,8 +151,14 @@ pub fn format_solidity_calldata(
     let bx = b.x().expect("b.x");
     let by = b.y().expect("b.y");
     let p_b = [
-        [groth16::fr_to_decimal(&bx.c1), groth16::fr_to_decimal(&bx.c0)],
-        [groth16::fr_to_decimal(&by.c1), groth16::fr_to_decimal(&by.c0)],
+        [
+            groth16::fr_to_decimal(&bx.c1),
+            groth16::fr_to_decimal(&bx.c0),
+        ],
+        [
+            groth16::fr_to_decimal(&by.c1),
+            groth16::fr_to_decimal(&by.c0),
+        ],
     ];
 
     let p_c = [

@@ -157,6 +157,7 @@ pub fn setup_vk_only<E: Pairing>(
 ///
 /// Curve-specific modules (e.g., `groth16_bn254`) wrap this to add
 /// JSON serialization and return `ProveResult`.
+#[allow(clippy::type_complexity)]
 pub fn generate_proof_raw<E: Pairing>(
     cs: &ConstraintSystem,
     witness: &[FieldElement],
@@ -229,10 +230,7 @@ fn load_cached_vk<E: Pairing>(dir: &Path) -> Option<ark_groth16::VerifyingKey<E>
     ark_groth16::VerifyingKey::<E>::deserialize_compressed(&vk_bytes[..]).ok()
 }
 
-fn save_cached_vk<E: Pairing>(
-    dir: &Path,
-    vk: &ark_groth16::VerifyingKey<E>,
-) -> Result<(), String> {
+fn save_cached_vk<E: Pairing>(dir: &Path, vk: &ark_groth16::VerifyingKey<E>) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
     let mut vk_buf = Vec::new();
     vk.serialize_compressed(&mut vk_buf)
