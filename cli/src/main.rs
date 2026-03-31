@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::commands::ErrorFormat;
 use cli::config::{self, CliOverrides};
+use memory::field::PrimeId;
 
 mod args;
 
@@ -53,6 +54,14 @@ fn main() -> Result<()> {
         }
     };
 
+    // ── Parse and validate prime ──
+    let prime_id = memory::field::PrimeId::from_name(&cfg.prime).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid prime `{}` (expected \"bn254\", \"bls12-381\", or \"goldilocks\")",
+            cfg.prime
+        )
+    })?;
+
     // ── Dispatch ──
     match &cli.command {
         Commands::Init { .. } => unreachable!(),
@@ -61,11 +70,13 @@ fn main() -> Result<()> {
             let path = cfg.entry.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("no input file specified and no `entry` in achronyme.toml")
             })?;
+            validate_prime_backend(prime_id, &cfg.prove_backend)?;
             cli::commands::run::run_file(
                 path,
                 cfg.stress_gc,
                 ptau.as_deref(),
                 &cfg.prove_backend,
+                prime_id,
                 cfg.max_heap.as_deref(),
                 cfg.gc_stats,
                 cfg.circuit_stats,
@@ -85,7 +96,7 @@ fn main() -> Result<()> {
                 anyhow::anyhow!("no input file specified and no `entry` in achronyme.toml")
             })?;
             let out = output.as_deref().or(cfg.binary_path.as_deref());
-            cli::commands::compile::compile_file(path, out, ef)
+            cli::commands::compile::compile_file(path, out, prime_id, ef)
         }
 
         Commands::Inspect {
@@ -120,6 +131,7 @@ fn main() -> Result<()> {
             let path = cfg.entry.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("no input file specified and no `entry` in achronyme.toml")
             })?;
+            validate_prime_backend(prime_id, &cfg.backend)?;
             cli::commands::circuit::circuit_command(
                 path,
                 &cfg.r1cs_path,
@@ -128,6 +140,7 @@ fn main() -> Result<()> {
                 input_file.as_deref(),
                 !cfg.optimize,
                 &cfg.backend,
+                prime_id,
                 *prove,
                 cfg.solidity_path.as_deref(),
                 cfg.plonkish_json_path.as_deref(),
@@ -269,5 +282,19 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
         },
 
         Commands::Init { .. } => unreachable!(),
+    }
+}
+
+/// Validate that the (prime, backend) combination is supported for proving.
+fn validate_prime_backend(prime_id: PrimeId, backend: &str) -> Result<()> {
+    match (prime_id, backend) {
+        (PrimeId::Bn254, "r1cs") => Ok(()),      // groth16-bn254
+        (PrimeId::Bn254, "plonkish") => Ok(()),   // plonk-bn254
+        (PrimeId::Bls12_381, "r1cs") => Ok(()),   // groth16-bls12-381
+        _ => Err(anyhow::anyhow!(
+            "unsupported combination: prime `{}` with backend `{backend}`\n  \
+             Supported: bn254+r1cs, bn254+plonkish, bls12-381+r1cs",
+            prime_id.name()
+        )),
     }
 }

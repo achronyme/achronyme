@@ -8,6 +8,8 @@ use compiler::r1cs_backend::R1CSCompiler;
 use memory::FieldElement;
 use vm::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 
+use memory::field::PrimeId;
+
 use crate::commands::ErrorFormat;
 use crate::style::{format_number, Styler};
 
@@ -24,6 +26,7 @@ pub enum ProveBackend {
 pub struct DefaultProveHandler {
     cache_dir: PathBuf,
     backend: ProveBackend,
+    prime_id: PrimeId,
     style: Styler,
     verbose: bool,
     circuit_stats: bool,
@@ -31,13 +34,19 @@ pub struct DefaultProveHandler {
 }
 
 impl DefaultProveHandler {
-    pub fn new(backend: ProveBackend, error_format: ErrorFormat, circuit_stats: bool) -> Self {
+    pub fn new(
+        backend: ProveBackend,
+        prime_id: PrimeId,
+        error_format: ErrorFormat,
+        circuit_stats: bool,
+    ) -> Self {
         let cache_dir = crate::cache_dir();
         let style = Styler::from_env(&error_format);
         let verbose = style.is_verbose(&error_format);
         Self {
             cache_dir,
             backend,
+            prime_id,
             style,
             verbose,
             circuit_stats,
@@ -189,8 +198,19 @@ impl DefaultProveHandler {
 
         let n_constraints = r1cs.cs.num_constraints();
 
-        let result = proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
-            .map_err(ProveError::ProofGeneration)?;
+        // Dispatch to the correct Groth16 prover based on prime
+        let result = match self.prime_id {
+            PrimeId::Bn254 => {
+                proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
+                    .map_err(ProveError::ProofGeneration)?
+            }
+            other => {
+                return Err(ProveError::ProofGeneration(format!(
+                    "Groth16 proof generation not yet supported for prime `{}`",
+                    other.name()
+                )));
+            }
+        };
 
         if self.verbose {
             if let ProveResult::Proof { ref proof_json, .. } = result {

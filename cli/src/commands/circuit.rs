@@ -129,6 +129,7 @@ pub fn circuit_command(
     input_file: Option<&str>,
     no_optimize: bool,
     backend: &str,
+    prime_id: PrimeId,
     prove: bool,
     solidity_path: Option<&str>,
     plonkish_json_path: Option<&str>,
@@ -140,6 +141,12 @@ pub fn circuit_command(
     if solidity_path.is_some() && backend != "r1cs" {
         return Err(anyhow::anyhow!(
             "--solidity is only supported with the r1cs backend"
+        ));
+    }
+
+    if solidity_path.is_some() && prime_id != PrimeId::Bn254 {
+        return Err(anyhow::anyhow!(
+            "--solidity is only supported with BN254 (EVM precompiles require alt_bn128)"
         ));
     }
 
@@ -319,6 +326,7 @@ pub fn circuit_command(
             r1cs_path,
             wtns_path,
             resolved_inputs.as_ref(),
+            prime_id,
             solidity_path,
             &style,
             verbose,
@@ -345,6 +353,7 @@ fn run_r1cs_pipeline(
     r1cs_path: &str,
     wtns_path: &str,
     inputs: Option<&HashMap<String, FieldElement>>,
+    prime_id: PrimeId,
     solidity_path: Option<&str>,
     style: &Styler,
     verbose: bool,
@@ -424,10 +433,10 @@ fn run_r1cs_pipeline(
             return Err(anyhow::anyhow!("{msg}"));
         }
 
-        let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
+        let r1cs_data = write_r1cs(&compiler.cs, prime_id);
         fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
 
-        let wtns_data = write_wtns(&witness_vec, PrimeId::Bn254);
+        let wtns_data = write_wtns(&witness_vec, prime_id);
         fs::write(wtns_path, &wtns_data).with_context(|| format!("cannot write {wtns_path}"))?;
 
         if verbose {
@@ -481,7 +490,7 @@ fn run_r1cs_pipeline(
             .compile_ir(program)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
-        let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
+        let r1cs_data = write_r1cs(&compiler.cs, prime_id);
         fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
 
         if verbose {
