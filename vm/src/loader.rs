@@ -3,6 +3,7 @@ use crate::specs::{
 };
 use crate::{CallFrame, VM};
 use byteorder::{LittleEndian, ReadBytesExt};
+use memory::field::PrimeId;
 use memory::{Closure, Function, Value};
 use std::io::Read;
 
@@ -46,11 +47,22 @@ impl VM {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
         let version = magic[3];
-        if &magic[..3] != b"ACH" || (version != 0x09 && version != 0x0A) {
+        if &magic[..3] != b"ACH" || !matches!(version, 0x09 | 0x0A | 0x0B) {
             return Err(LoaderError::Format(
                 "Invalid binary magic or version".to_string(),
             ));
         }
+
+        // v0x0B+: PrimeId byte after magic, before max_slots
+        let prime_id = if version >= 0x0B {
+            let b = reader.read_u8()?;
+            PrimeId::from_byte(b).ok_or_else(|| {
+                LoaderError::Format(format!("unknown PrimeId byte 0x{b:02x} in bytecode header"))
+            })?
+        } else {
+            PrimeId::Bn254
+        };
+        self.prime_id = prime_id;
 
         let max_slots = reader.read_u16::<LittleEndian>()?;
 
