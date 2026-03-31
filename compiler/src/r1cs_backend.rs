@@ -536,8 +536,14 @@ impl R1CSCompiler {
                     let bq = self.multiply_lcs(&b_lc, &q_lc);
                     self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
 
-                    self.enforce_n_range(&r_lc, *max_bits);
+                    // Range checks on q and r
                     self.enforce_n_range(&q_lc, *max_bits);
+                    self.enforce_n_range(&r_lc, *max_bits);
+
+                    // Soundness: enforce r < b by proving (b - r - 1) >= 0
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
+                    self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
                     lc_map.insert(*result, q_lc);
                 }
@@ -568,8 +574,13 @@ impl R1CSCompiler {
                     let bq = self.multiply_lcs(&b_lc, &q_lc);
                     self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
 
-                    self.enforce_n_range(&r_lc, *max_bits);
                     self.enforce_n_range(&q_lc, *max_bits);
+                    self.enforce_n_range(&r_lc, *max_bits);
+
+                    // Soundness: enforce r < b
+                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
+                    self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
                     lc_map.insert(*result, r_lc);
                 }
