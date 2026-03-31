@@ -11,7 +11,7 @@ mod value_tests;
 
 pub use arena::ArenaError;
 pub use bigint::{BigInt, BigIntError, BigIntWidth};
-pub use field::{FieldBackend, FieldElement, PrimeId};
+pub use field::{Bn254Fr, FieldBackend, FieldElement, PrimeId};
 pub use heap::{
     Closure, Function, GcStats, Heap, IteratorObj, ProofObject, Upvalue, UpvalueLocation,
 };

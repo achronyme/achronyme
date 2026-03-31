@@ -5,10 +5,12 @@
 /// Zero external dependencies.
 pub(crate) mod arithmetic;
 mod backend;
+pub mod bn254;
 mod parsing;
 mod prime_id;
 
 pub use backend::FieldBackend;
+pub use bn254::Bn254Fr;
 pub use prime_id::PrimeId;
 
 pub use arithmetic::MODULUS;
