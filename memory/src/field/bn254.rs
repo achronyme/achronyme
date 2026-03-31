@@ -6,7 +6,7 @@
 use super::arithmetic::*;
 use super::backend::FieldBackend;
 use super::prime_id::PrimeId;
-use crate::limb_ops::{adc, sbb};
+use crate::limb_ops::sbb;
 use serde::Deserialize;
 
 /// BN254 scalar field backend (zero-sized marker type).
@@ -67,28 +67,14 @@ impl FieldBackend for Bn254Fr {
     // Arithmetic
     // ========================================================================
 
+    #[inline]
     fn add(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
-        let (r0, carry) = adc(a[0], b[0], 0);
-        let (r1, carry) = adc(a[1], b[1], carry);
-        let (r2, carry) = adc(a[2], b[2], carry);
-        let (r3, _) = adc(a[3], b[3], carry);
-        let mut result = [r0, r1, r2, r3];
-        subtract_modulus_if_needed(&mut result);
-        result
+        montgomery4_add(a, b)
     }
 
+    #[inline]
     fn sub(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
-        let (r0, borrow) = sbb(a[0], b[0], 0);
-        let (r1, borrow) = sbb(a[1], b[1], borrow);
-        let (r2, borrow) = sbb(a[2], b[2], borrow);
-        let (r3, borrow) = sbb(a[3], b[3], borrow);
-
-        let mask = 0u64.wrapping_sub(borrow);
-        let (r0, carry) = adc(r0, MODULUS[0] & mask, 0);
-        let (r1, carry) = adc(r1, MODULUS[1] & mask, carry);
-        let (r2, carry) = adc(r2, MODULUS[2] & mask, carry);
-        let (r3, _) = adc(r3, MODULUS[3] & mask, carry);
-        [r0, r1, r2, r3]
+        montgomery4_sub(a, b)
     }
 
     #[inline]
@@ -96,15 +82,9 @@ impl FieldBackend for Bn254Fr {
         montgomery_mul(a, b)
     }
 
+    #[inline]
     fn neg(a: &[u64; 4]) -> [u64; 4] {
-        let (r0, borrow) = sbb(MODULUS[0], a[0], 0);
-        let (r1, borrow) = sbb(MODULUS[1], a[1], borrow);
-        let (r2, borrow) = sbb(MODULUS[2], a[2], borrow);
-        let (r3, _) = sbb(MODULUS[3], a[3], borrow);
-        let is_nonzero = a[0] | a[1] | a[2] | a[3];
-        let mask = (is_nonzero | is_nonzero.wrapping_neg()) >> 63;
-        let mask = 0u64.wrapping_sub(mask);
-        [r0 & mask, r1 & mask, r2 & mask, r3 & mask]
+        montgomery4_neg(a)
     }
 
     fn inv(a: &[u64; 4]) -> Option<[u64; 4]> {
@@ -134,13 +114,7 @@ impl FieldBackend for Bn254Fr {
 
     #[inline]
     fn ct_select(a: &[u64; 4], b: &[u64; 4], flag: u64) -> [u64; 4] {
-        let mask = 0u64.wrapping_sub(flag);
-        [
-            (a[0] & !mask) | (b[0] & mask),
-            (a[1] & !mask) | (b[1] & mask),
-            (a[2] & !mask) | (b[2] & mask),
-            (a[3] & !mask) | (b[3] & mask),
-        ]
+        montgomery4_ct_select(a, b, flag)
     }
 
     // ========================================================================
@@ -437,8 +411,66 @@ mod tests {
     #[test]
     fn test_modulus_le_bytes() {
         let bytes = Bn254Fr::modulus_le_bytes();
-        // First 8 bytes should be MODULUS[0] in little-endian
         let limb0 = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
         assert_eq!(limb0, MODULUS[0]);
+    }
+
+    /// Cross-validate: Bn254Fr backend produces identical results to FieldElement.
+    /// This proves the delegation layer introduces no divergence.
+    #[test]
+    fn test_backend_matches_field_element() {
+        use crate::FieldElement;
+
+        let vals = [0u64, 1, 2, 7, 42, 12345, u64::MAX];
+        for &a_val in &vals {
+            for &b_val in &vals {
+                let fe_a = FieldElement::from_u64(a_val);
+                let fe_b = FieldElement::from_u64(b_val);
+                let be_a = Bn254Fr::from_u64(a_val);
+                let be_b = Bn254Fr::from_u64(b_val);
+
+                // Repr should match
+                assert_eq!(fe_a.repr, be_a, "repr mismatch for {a_val}");
+                assert_eq!(fe_b.repr, be_b, "repr mismatch for {b_val}");
+
+                // Arithmetic
+                assert_eq!(
+                    fe_a.add(&fe_b).repr,
+                    Bn254Fr::add(&be_a, &be_b),
+                    "add({a_val},{b_val})"
+                );
+                assert_eq!(
+                    fe_a.sub(&fe_b).repr,
+                    Bn254Fr::sub(&be_a, &be_b),
+                    "sub({a_val},{b_val})"
+                );
+                assert_eq!(
+                    fe_a.mul(&fe_b).repr,
+                    Bn254Fr::mul(&be_a, &be_b),
+                    "mul({a_val},{b_val})"
+                );
+                assert_eq!(fe_a.neg().repr, Bn254Fr::neg(&be_a), "neg({a_val})");
+
+                // Canonical roundtrip
+                assert_eq!(fe_a.to_canonical(), Bn254Fr::to_canonical_limbs(&be_a));
+                assert_eq!(fe_a.to_le_bytes(), Bn254Fr::to_le_bytes(&be_a));
+                assert_eq!(fe_a.to_decimal_string(), Bn254Fr::to_decimal_string(&be_a));
+            }
+        }
+
+        // Inverse (skip zero)
+        for &v in &[1u64, 7, 42, u64::MAX] {
+            let fe = FieldElement::from_u64(v);
+            let be = Bn254Fr::from_u64(v);
+            assert_eq!(
+                fe.inv().unwrap().repr,
+                Bn254Fr::inv(&be).unwrap(),
+                "inv({v})"
+            );
+        }
+
+        // Constants
+        assert_eq!(FieldElement::ZERO.repr, Bn254Fr::zero());
+        assert_eq!(FieldElement::ONE.repr, Bn254Fr::one());
     }
 }

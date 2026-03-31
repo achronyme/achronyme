@@ -154,3 +154,56 @@ pub(crate) fn mul_wide(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
 pub(crate) fn montgomery_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     montgomery_reduce(&mul_wide(a, b))
 }
+
+// ============================================================================
+// Montgomery4 shared operations (used by all 4-limb backends)
+// ============================================================================
+
+/// Modular addition for 4-limb Montgomery form: (a + b) mod p.
+pub(crate) fn montgomery4_add(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let (r0, carry) = adc(a[0], b[0], 0);
+    let (r1, carry) = adc(a[1], b[1], carry);
+    let (r2, carry) = adc(a[2], b[2], carry);
+    let (r3, _) = adc(a[3], b[3], carry);
+    let mut result = [r0, r1, r2, r3];
+    subtract_modulus_if_needed(&mut result);
+    result
+}
+
+/// Modular subtraction for 4-limb Montgomery form: (a - b) mod p (constant-time).
+pub(crate) fn montgomery4_sub(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let (r0, borrow) = sbb(a[0], b[0], 0);
+    let (r1, borrow) = sbb(a[1], b[1], borrow);
+    let (r2, borrow) = sbb(a[2], b[2], borrow);
+    let (r3, borrow) = sbb(a[3], b[3], borrow);
+
+    let mask = 0u64.wrapping_sub(borrow);
+    let (r0, carry) = adc(r0, MODULUS[0] & mask, 0);
+    let (r1, carry) = adc(r1, MODULUS[1] & mask, carry);
+    let (r2, carry) = adc(r2, MODULUS[2] & mask, carry);
+    let (r3, _) = adc(r3, MODULUS[3] & mask, carry);
+    [r0, r1, r2, r3]
+}
+
+/// Modular negation for 4-limb Montgomery form: (-a) mod p (constant-time).
+pub(crate) fn montgomery4_neg(a: &[u64; 4]) -> [u64; 4] {
+    let (r0, borrow) = sbb(MODULUS[0], a[0], 0);
+    let (r1, borrow) = sbb(MODULUS[1], a[1], borrow);
+    let (r2, borrow) = sbb(MODULUS[2], a[2], borrow);
+    let (r3, _) = sbb(MODULUS[3], a[3], borrow);
+    let is_nonzero = a[0] | a[1] | a[2] | a[3];
+    let mask = (is_nonzero | is_nonzero.wrapping_neg()) >> 63;
+    let mask = 0u64.wrapping_sub(mask);
+    [r0 & mask, r1 & mask, r2 & mask, r3 & mask]
+}
+
+/// Constant-time conditional select for 4-limb values.
+pub(crate) fn montgomery4_ct_select(a: &[u64; 4], b: &[u64; 4], flag: u64) -> [u64; 4] {
+    let mask = 0u64.wrapping_sub(flag);
+    [
+        (a[0] & !mask) | (b[0] & mask),
+        (a[1] & !mask) | (b[1] & mask),
+        (a[2] & !mask) | (b[2] & mask),
+        (a[3] & !mask) | (b[3] & mask),
+    ]
+}
