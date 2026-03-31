@@ -7,6 +7,7 @@ use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use constraints::{write_r1cs, write_wtns};
 use ir::prove_ir::ProveIrCompiler;
+use memory::field::PrimeId;
 use memory::FieldElement;
 
 use super::ErrorFormat;
@@ -423,10 +424,10 @@ fn run_r1cs_pipeline(
             return Err(anyhow::anyhow!("{msg}"));
         }
 
-        let r1cs_data = write_r1cs(&compiler.cs);
+        let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
         fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
 
-        let wtns_data = write_wtns(&witness_vec);
+        let wtns_data = write_wtns(&witness_vec, PrimeId::Bn254);
         fs::write(wtns_path, &wtns_data).with_context(|| format!("cannot write {wtns_path}"))?;
 
         if verbose {
@@ -480,7 +481,7 @@ fn run_r1cs_pipeline(
             .compile_ir(program)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
 
-        let r1cs_data = write_r1cs(&compiler.cs);
+        let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
         fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
 
         if verbose {

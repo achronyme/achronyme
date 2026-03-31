@@ -16,6 +16,7 @@ use compiler::witness_gen::WitnessGenerator;
 use constraints::{write_r1cs, write_wtns};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
+use memory::field::PrimeId;
 use memory::FieldElement;
 use vm::ProveResult;
 
@@ -121,8 +122,8 @@ fn solidity_e2e_mul() {
     let d = dir.path();
     let r1cs_path = d.join("circuit.r1cs");
     let wtns_path = d.join("witness.wtns");
-    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
-    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs, PrimeId::Bn254)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness, PrimeId::Bn254)).unwrap();
     eprintln!("  Step 2/6: R1CS + WTNS exported");
 
     // 3. snarkjs trusted setup + prove
@@ -366,8 +367,8 @@ fn solidity_e2e_poseidon() {
     let d = dir.path();
     let r1cs_path = d.join("circuit.r1cs");
     let wtns_path = d.join("witness.wtns");
-    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs)).unwrap();
-    std::fs::write(&wtns_path, write_wtns(&witness)).unwrap();
+    std::fs::write(&r1cs_path, write_r1cs(&compiler.cs, PrimeId::Bn254)).unwrap();
+    std::fs::write(&wtns_path, write_wtns(&witness, PrimeId::Bn254)).unwrap();
 
     // Setup
     let pot = d.join("pot.ptau");

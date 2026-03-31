@@ -31,6 +31,7 @@ use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
+use memory::field::PrimeId;
 use memory::FieldElement;
 
 // ============================================================================
@@ -613,10 +614,10 @@ fn merkle_depth2_export_roundtrip() {
     compiler.cs.verify(&witness).expect("verification failed");
 
     // Export and validate magic bytes
-    let r1cs_data = write_r1cs(&compiler.cs);
+    let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
     assert_eq!(&r1cs_data[0..4], b"r1cs", "R1CS magic mismatch");
 
-    let wtns_data = write_wtns(&witness);
+    let wtns_data = write_wtns(&witness, PrimeId::Bn254);
     assert_eq!(&wtns_data[0..4], b"wtns", "WTNS magic mismatch");
 
     // Wire counts must match
@@ -649,10 +650,10 @@ fn merkle_depth4_export_roundtrip() {
         .expect("R1CS compilation failed");
     compiler.cs.verify(&witness).expect("verification failed");
 
-    let r1cs_data = write_r1cs(&compiler.cs);
+    let r1cs_data = write_r1cs(&compiler.cs, PrimeId::Bn254);
     assert_eq!(&r1cs_data[0..4], b"r1cs");
 
-    let wtns_data = write_wtns(&witness);
+    let wtns_data = write_wtns(&witness, PrimeId::Bn254);
     assert_eq!(&wtns_data[0..4], b"wtns");
 
     let n_wires = u32::from_le_bytes(r1cs_data[60..64].try_into().unwrap());
