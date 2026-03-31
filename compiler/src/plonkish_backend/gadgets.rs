@@ -567,6 +567,142 @@ impl PlonkishCompiler {
         self.range_tables.insert(bits, idx);
         Ok(())
     }
+
+    // ========================================================================
+    // Bit decomposition with exposed bits
+    // ========================================================================
+
+    /// Decompose `operand` into `num_bits` individual bits (LSB first).
+    /// Returns the CellRef for each bit (boolean-enforced).
+    pub(super) fn emit_decompose(
+        &mut self,
+        operand: CellRef,
+        num_bits: u32,
+    ) -> Result<Vec<CellRef>, PlonkishError> {
+        let mut bit_cells = Vec::with_capacity(num_bits as usize);
+        let mut running_sum: Option<CellRef> = None;
+
+        for i in 0..num_bits {
+            let coeff = compute_power_of_two(i);
+            let acc_row = self.alloc_row();
+            self.system
+                .set(self.col_s_arith, acc_row, FieldElement::ONE);
+            let bit_cell = CellRef {
+                column: self.col_a,
+                row: acc_row,
+            };
+            self.witness_ops.push(PlonkWitnessOp::BitExtract {
+                target: bit_cell,
+                source: operand,
+                bit_index: i,
+            });
+            self.constrain_constant(
+                CellRef {
+                    column: self.col_b,
+                    row: acc_row,
+                },
+                coeff,
+            );
+            if let Some(prev) = running_sum {
+                self.wire(
+                    prev,
+                    CellRef {
+                        column: self.col_c,
+                        row: acc_row,
+                    },
+                );
+            } else {
+                self.constrain_zero(CellRef {
+                    column: self.col_c,
+                    row: acc_row,
+                });
+            }
+            self.witness_ops
+                .push(PlonkWitnessOp::ArithRow { row: acc_row });
+            running_sum = Some(CellRef {
+                column: self.col_d,
+                row: acc_row,
+            });
+            self.emit_bool_check(bit_cell);
+            bit_cells.push(bit_cell);
+        }
+        // Enforce sum == operand
+        self.system.add_copy(running_sum.unwrap(), operand);
+        Ok(bit_cells)
+    }
+
+    // ========================================================================
+    // Integer division / modulo
+    // ========================================================================
+
+    /// Emit constraints for integer division: a = b * q + r, 0 <= r < 2^max_bits.
+    /// Returns (q_cell, r_cell).
+    pub(super) fn emit_int_divmod(
+        &mut self,
+        a_cell: CellRef,
+        b_cell: CellRef,
+        max_bits: u32,
+    ) -> Result<(CellRef, CellRef), PlonkishError> {
+        // Allocate witness cells for q and r
+        let q_row = self.alloc_row();
+        let q_cell = CellRef {
+            column: self.col_a,
+            row: q_row,
+        };
+        let r_row = self.alloc_row();
+        let r_cell = CellRef {
+            column: self.col_a,
+            row: r_row,
+        };
+
+        // Witness ops: compute q and r
+        self.witness_ops.push(PlonkWitnessOp::IntDivMod {
+            q: q_cell,
+            r: r_cell,
+            lhs: a_cell,
+            rhs: b_cell,
+        });
+
+        // Constraint: b * q + r = a  (via arithmetic gate)
+        let mul_row = self.alloc_row();
+        self.system
+            .set(self.col_s_arith, mul_row, FieldElement::ONE);
+        self.wire(
+            b_cell,
+            CellRef {
+                column: self.col_a,
+                row: mul_row,
+            },
+        );
+        self.wire(
+            q_cell,
+            CellRef {
+                column: self.col_b,
+                row: mul_row,
+            },
+        );
+        self.wire(
+            r_cell,
+            CellRef {
+                column: self.col_c,
+                row: mul_row,
+            },
+        );
+        // d = a*b + c = b*q + r → constrain d == a
+        self.witness_ops
+            .push(PlonkWitnessOp::ArithRow { row: mul_row });
+        let bq_plus_r = CellRef {
+            column: self.col_d,
+            row: mul_row,
+        };
+        self.system.add_copy(bq_plus_r, a_cell);
+
+        // Range check on r and q
+        self.enforce_n_range(r_cell, max_bits);
+        self.enforce_n_range(q_cell, max_bits);
+
+        Ok((q_cell, r_cell))
+    }
 }
 
 #[cfg(test)]

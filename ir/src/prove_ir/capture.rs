@@ -111,6 +111,9 @@ fn walk_node(
         CircuitNode::Expr { expr, .. } => {
             walk_expr(expr, false, structural, constraint);
         }
+        CircuitNode::Decompose { value, .. } => {
+            walk_expr(value, false, structural, constraint);
+        }
     }
 }
 
@@ -196,6 +199,10 @@ fn walk_expr(
         CircuitExpr::ArrayLen(_) => {
             // ArrayLen references an array name — structural by nature
             // (but the name is already known at compile time for literal arrays)
+        }
+        CircuitExpr::IntDiv { lhs, rhs, .. } | CircuitExpr::IntMod { lhs, rhs, .. } => {
+            walk_expr(lhs, in_structural, structural, constraint);
+            walk_expr(rhs, in_structural, structural, constraint);
         }
     }
 }

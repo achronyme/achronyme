@@ -167,6 +167,7 @@ fn validate_node(
             Ok(())
         }
         CircuitNode::Expr { expr, .. } => validate_expr(expr),
+        CircuitNode::Decompose { value, .. } => validate_expr(value),
     }
 }
 
@@ -215,6 +216,10 @@ fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
         }
         CircuitExpr::ArrayIndex { index, .. } => validate_expr(index),
         CircuitExpr::Pow { base, .. } => validate_expr(base),
+        CircuitExpr::IntDiv { lhs, rhs, .. } | CircuitExpr::IntMod { lhs, rhs, .. } => {
+            validate_expr(lhs)?;
+            validate_expr(rhs)
+        }
         // Leaf nodes — no sub-expressions
         CircuitExpr::Const(_)
         | CircuitExpr::Input(_)
@@ -334,6 +339,15 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// Bit decomposition: `let name = decompose(value, num_bits)`
+    /// Creates an array of bit variables (LSB first).
+    Decompose {
+        name: String,
+        value: CircuitExpr,
+        num_bits: u32,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
 }
 
 impl CircuitNode {
@@ -346,7 +360,8 @@ impl CircuitNode {
             | CircuitNode::Assert { span, .. }
             | CircuitNode::For { span, .. }
             | CircuitNode::If { span, .. }
-            | CircuitNode::Expr { span, .. } => span.as_ref(),
+            | CircuitNode::Expr { span, .. }
+            | CircuitNode::Decompose { span, .. } => span.as_ref(),
         }
     }
 }
@@ -440,6 +455,19 @@ pub enum CircuitExpr {
 
     /// Power: `base ^ exp` (exp must be a constant u64).
     Pow { base: Box<CircuitExpr>, exp: u64 },
+
+    /// Integer quotient: `floor(lhs / rhs)`.
+    IntDiv {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        max_bits: u32,
+    },
+    /// Integer remainder: `lhs - rhs * floor(lhs / rhs)`.
+    IntMod {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        max_bits: u32,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +660,14 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
         CircuitNode::Expr { expr, .. } => {
             writeln!(f, "{pad}{expr}")
         }
+        CircuitNode::Decompose {
+            name,
+            value,
+            num_bits,
+            ..
+        } => {
+            writeln!(f, "{pad}let {name} = decompose({value}, {num_bits})")
+        }
     }
 }
 
@@ -684,6 +720,16 @@ impl fmt::Display for CircuitExpr {
             CircuitExpr::ArrayIndex { array, index } => write!(f, "{array}[{index}]"),
             CircuitExpr::ArrayLen(name) => write!(f, "{name}.len()"),
             CircuitExpr::Pow { base, exp } => write!(f, "({base} ^ {exp})"),
+            CircuitExpr::IntDiv {
+                lhs,
+                rhs,
+                max_bits,
+            } => write!(f, "int_div({lhs}, {rhs}, {max_bits})"),
+            CircuitExpr::IntMod {
+                lhs,
+                rhs,
+                max_bits,
+            } => write!(f, "int_mod({lhs}, {rhs}, {max_bits})"),
         }
     }
 }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::r1cs_backend::R1CSCompiler;
 use crate::r1cs_error::R1CSError;
-use crate::witness_gen::{fill_poseidon_witness, WitnessOp};
+use crate::witness_gen::{fill_poseidon_witness, int_divmod_field_pub, WitnessOp};
 
 use ir::types::IrProgram;
 
@@ -119,6 +119,15 @@ impl R1CSCompiler {
                             .ok_or_else(|| R1CSError::EvalError("IsZero inverse failed".into()))?;
                         witness[target_result.index()] = FieldElement::ZERO;
                     }
+                }
+                WitnessOp::IntDivMod { q, r, lhs, rhs } => {
+                    let a = witness[lhs.index()];
+                    let b = witness[rhs.index()];
+                    let a_limbs = a.to_canonical();
+                    let b_limbs = b.to_canonical();
+                    let (q_val, r_val) = int_divmod_field_pub(&a_limbs, &b_limbs);
+                    witness[q.index()] = q_val;
+                    witness[r.index()] = r_val;
                 }
                 WitnessOp::PoseidonHash {
                     left,

@@ -208,6 +208,31 @@ pub fn taint_analysis(program: &IrProgram) -> (HashMap<SsaVar, Taint>, Vec<Taint
                 constrained_vars.insert(*operand);
                 taints.insert(*result, taint_of(&taints, *operand));
             }
+            Instruction::Decompose {
+                result,
+                bit_results,
+                operand,
+                ..
+            } => {
+                used_vars.insert(*operand);
+                constrained_vars.insert(*operand);
+                let t = taint_of(&taints, *operand);
+                taints.insert(*result, t);
+                for bv in bit_results {
+                    taints.insert(*bv, t);
+                }
+            }
+            Instruction::IntDiv {
+                result, lhs, rhs, ..
+            }
+            | Instruction::IntMod {
+                result, lhs, rhs, ..
+            } => {
+                used_vars.insert(*lhs);
+                used_vars.insert(*rhs);
+                let t = taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs));
+                taints.insert(*result, t);
+            }
         }
     }
 

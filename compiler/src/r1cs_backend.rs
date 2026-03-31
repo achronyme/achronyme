@@ -475,6 +475,104 @@ impl R1CSCompiler {
 
                     lc_map.insert(*result, LinearCombination::from_variable(hash_var));
                 }
+                IrInstruction::Decompose {
+                    result,
+                    bit_results,
+                    operand,
+                    num_bits,
+                } => {
+                    let lc = lookup(&lc_map, operand)?;
+                    // Same as RangeCheck but also registers each bit in lc_map.
+                    let mut sum = LinearCombination::zero();
+                    for (i, bit_ssa) in bit_results.iter().enumerate() {
+                        let bit_var = self.cs.alloc_witness();
+                        // b_i * (1 - b_i) = 0
+                        self.cs.enforce(
+                            LinearCombination::from_variable(bit_var),
+                            LinearCombination::from_constant(FieldElement::ONE)
+                                - LinearCombination::from_variable(bit_var),
+                            LinearCombination::zero(),
+                        );
+                        let coeff = compute_power_of_two(i as u32);
+                        sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+                        self.witness_ops.push(WitnessOp::BitExtract {
+                            target: bit_var,
+                            source: lc.clone(),
+                            bit_index: i as u32,
+                        });
+                        // Register each bit in lc_map so subsequent instructions can use it
+                        lc_map.insert(*bit_ssa, LinearCombination::from_variable(bit_var));
+                    }
+                    self.cs.enforce_equal(lc.clone(), sum);
+                    range_bounds.insert(*operand, *num_bits);
+                    lc_map.insert(*result, lc);
+                }
+                IrInstruction::IntDiv {
+                    result,
+                    lhs,
+                    rhs,
+                    max_bits,
+                } => {
+                    let a_lc = lookup(&lc_map, lhs)?;
+                    let b_lc = lookup(&lc_map, rhs)?;
+
+                    let q_var = self.cs.alloc_witness();
+                    let r_var = self.cs.alloc_witness();
+
+                    // Materialize before push to avoid double borrow
+                    let lhs_var = self.materialize_lc(&a_lc);
+                    let rhs_var = self.materialize_lc(&b_lc);
+                    self.witness_ops.push(WitnessOp::IntDivMod {
+                        q: q_var,
+                        r: r_var,
+                        lhs: lhs_var,
+                        rhs: rhs_var,
+                    });
+
+                    let q_lc = LinearCombination::from_variable(q_var);
+                    let r_lc = LinearCombination::from_variable(r_var);
+
+                    // Constraint: b * q + r = a
+                    let bq = self.multiply_lcs(&b_lc, &q_lc);
+                    self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
+
+                    self.enforce_n_range(&r_lc, *max_bits);
+                    self.enforce_n_range(&q_lc, *max_bits);
+
+                    lc_map.insert(*result, q_lc);
+                }
+                IrInstruction::IntMod {
+                    result,
+                    lhs,
+                    rhs,
+                    max_bits,
+                } => {
+                    let a_lc = lookup(&lc_map, lhs)?;
+                    let b_lc = lookup(&lc_map, rhs)?;
+
+                    let q_var = self.cs.alloc_witness();
+                    let r_var = self.cs.alloc_witness();
+
+                    let lhs_var = self.materialize_lc(&a_lc);
+                    let rhs_var = self.materialize_lc(&b_lc);
+                    self.witness_ops.push(WitnessOp::IntDivMod {
+                        q: q_var,
+                        r: r_var,
+                        lhs: lhs_var,
+                        rhs: rhs_var,
+                    });
+
+                    let q_lc = LinearCombination::from_variable(q_var);
+                    let r_lc = LinearCombination::from_variable(r_var);
+
+                    let bq = self.multiply_lcs(&b_lc, &q_lc);
+                    self.cs.enforce_equal(bq + r_lc.clone(), a_lc);
+
+                    self.enforce_n_range(&r_lc, *max_bits);
+                    self.enforce_n_range(&q_lc, *max_bits);
+
+                    lc_map.insert(*result, r_lc);
+                }
             }
 
             // Record which IR instruction generated each new constraint.

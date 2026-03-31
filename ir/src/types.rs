@@ -170,6 +170,40 @@ pub enum Instruction {
         /// Optional user-provided message shown on failure.
         message: Option<String>,
     },
+
+    /// Decompose a value into individual bits (LSB first).
+    ///
+    /// `bit_results[i]` is the i-th bit (0 or 1).
+    /// Constrains: each bit is boolean, `Σ bit_i * 2^i == operand`.
+    /// `result` is an alias for `operand` (like RangeCheck).
+    Decompose {
+        result: SsaVar,
+        bit_results: Vec<SsaVar>,
+        operand: SsaVar,
+        num_bits: u32,
+    },
+
+    /// Integer quotient: `result = floor(lhs / rhs)`.
+    ///
+    /// Constrains: `lhs = rhs * result + remainder`, `0 <= remainder < rhs`.
+    /// `max_bits` is the bit-width bound for range checks on the quotient.
+    IntDiv {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+        max_bits: u32,
+    },
+
+    /// Integer remainder: `result = lhs - rhs * floor(lhs / rhs)`.
+    ///
+    /// Constrains: `lhs = rhs * quotient + result`, `0 <= result < rhs`.
+    /// `max_bits` is the bit-width bound for range checks.
+    IntMod {
+        result: SsaVar,
+        lhs: SsaVar,
+        rhs: SsaVar,
+        max_bits: u32,
+    },
 }
 
 impl Instruction {
@@ -196,7 +230,19 @@ impl Instruction {
             | Instruction::IsLe { result, .. }
             | Instruction::IsLtBounded { result, .. }
             | Instruction::IsLeBounded { result, .. }
-            | Instruction::Assert { result, .. } => *result,
+            | Instruction::Assert { result, .. }
+            | Instruction::Decompose { result, .. }
+            | Instruction::IntDiv { result, .. }
+            | Instruction::IntMod { result, .. } => *result,
+        }
+    }
+
+    /// Returns additional result variables beyond the primary `result`.
+    /// Currently only `Decompose` produces extra results (the bit variables).
+    pub fn extra_result_vars(&self) -> &[SsaVar] {
+        match self {
+            Instruction::Decompose { bit_results, .. } => bit_results,
+            _ => &[],
         }
     }
 
@@ -208,6 +254,7 @@ impl Instruction {
                 | Instruction::Input { .. }
                 | Instruction::RangeCheck { .. }
                 | Instruction::Assert { .. }
+                | Instruction::Decompose { .. }
         )
     }
 
@@ -238,7 +285,10 @@ impl Instruction {
             } => vec![*cond, *if_true, *if_false],
             Instruction::AssertEq { lhs, rhs, .. } => vec![*lhs, *rhs],
             Instruction::PoseidonHash { left, right, .. } => vec![*left, *right],
-            Instruction::RangeCheck { operand, .. } => vec![*operand],
+            Instruction::RangeCheck { operand, .. }
+            | Instruction::Decompose { operand, .. } => vec![*operand],
+            Instruction::IntDiv { lhs, rhs, .. }
+            | Instruction::IntMod { lhs, rhs, .. } => vec![*lhs, *rhs],
         }
     }
 }
@@ -329,6 +379,31 @@ impl std::fmt::Display for Instruction {
                 Some(msg) => write!(f, "{result} = Assert({operand}, \"{msg}\")"),
                 None => write!(f, "{result} = Assert({operand})"),
             },
+            Instruction::Decompose {
+                result,
+                bit_results,
+                operand,
+                num_bits,
+            } => {
+                let bits_str: Vec<String> = bit_results.iter().map(|b| b.to_string()).collect();
+                write!(
+                    f,
+                    "{result} = Decompose({operand}, {num_bits}) -> [{}]",
+                    bits_str.join(", ")
+                )
+            }
+            Instruction::IntDiv {
+                result,
+                lhs,
+                rhs,
+                max_bits,
+            } => write!(f, "{result} = IntDiv({lhs}, {rhs}, {max_bits})"),
+            Instruction::IntMod {
+                result,
+                lhs,
+                rhs,
+                max_bits,
+            } => write!(f, "{result} = IntMod({lhs}, {rhs}, {max_bits})"),
         }
     }
 }

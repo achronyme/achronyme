@@ -581,6 +581,54 @@ impl PlonkishCompiler {
                     self.system.add_copy(op_cell, one_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }
+                IrInstruction::Decompose {
+                    result,
+                    bit_results,
+                    operand,
+                    num_bits,
+                } => {
+                    let op_val = self.lookup_val(operand)?;
+                    let op_cell = self.materialize_val(&op_val)?;
+                    // Use the same range check path (bit decomposition) but also
+                    // expose each bit. For plonkish, we decompose into individual
+                    // advice cells.
+                    let bit_cells =
+                        self.emit_decompose(op_cell, *num_bits)?;
+                    for (i, bit_ssa) in bit_results.iter().enumerate() {
+                        self.val_map
+                            .insert(*bit_ssa, PlonkVal::Cell(bit_cells[i]));
+                    }
+                    range_bounds.insert(*operand, *num_bits);
+                    self.val_map.insert(*result, PlonkVal::Cell(op_cell));
+                }
+                IrInstruction::IntDiv {
+                    result,
+                    lhs,
+                    rhs,
+                    max_bits,
+                } => {
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
+                    let (q_cell, _r_cell) =
+                        self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
+                    self.val_map.insert(*result, PlonkVal::Cell(q_cell));
+                }
+                IrInstruction::IntMod {
+                    result,
+                    lhs,
+                    rhs,
+                    max_bits,
+                } => {
+                    let a_val = self.lookup_val(lhs)?;
+                    let b_val = self.lookup_val(rhs)?;
+                    let a_cell = self.materialize_val(&a_val)?;
+                    let b_cell = self.materialize_val(&b_val)?;
+                    let (_q_cell, r_cell) =
+                        self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
+                    self.val_map.insert(*result, PlonkVal::Cell(r_cell));
+                }
             }
         }
 

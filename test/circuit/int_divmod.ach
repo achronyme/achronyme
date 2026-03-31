@@ -1,0 +1,13 @@
+// Circuit: integer division and modulo
+circuit int_divmod_test(q_expected: Public, r_expected: Public, a: Witness, b: Witness) {
+    // int_div(a, b, max_bits) = floor(a / b)
+    let q = int_div(a, b, 32)
+    assert_eq(q, q_expected)
+
+    // int_mod(a, b, max_bits) = a - b * floor(a / b)
+    let r = int_mod(a, b, 32)
+    assert_eq(r, r_expected)
+
+    // Verify relationship: a = b * q + r
+    assert_eq(b * q + r, a)
+}

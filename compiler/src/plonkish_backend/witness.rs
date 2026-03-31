@@ -96,6 +96,16 @@ impl PlonkishWitnessGenerator {
                     };
                     assignments.set(target.column, target.row, FieldElement::from_u64(bit));
                 }
+                PlonkWitnessOp::IntDivMod { q, r, lhs, rhs } => {
+                    let a_val = assignments.get(lhs.column, lhs.row);
+                    let b_val = assignments.get(rhs.column, rhs.row);
+                    let a_limbs = a_val.to_canonical();
+                    let b_limbs = b_val.to_canonical();
+                    let (q_val, r_val) =
+                        crate::witness_gen::int_divmod_field_pub(&a_limbs, &b_limbs);
+                    assignments.set(q.column, q.row, q_val);
+                    assignments.set(r.column, r.row, r_val);
+                }
             }
         }
 

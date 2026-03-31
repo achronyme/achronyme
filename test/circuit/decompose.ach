@@ -1,0 +1,24 @@
+// Circuit: bit decomposition via decompose()
+circuit decompose_test(expected: Public, x: Witness) {
+    // Decompose x into 8 bits
+    let bits = decompose(x, 8)
+
+    // Verify individual bits are accessible and correct
+    // x = 42 = 0b00101010
+    // bits[0] = 0, bits[1] = 1, bits[2] = 0, bits[3] = 1,
+    // bits[4] = 0, bits[5] = 1, bits[6] = 0, bits[7] = 0
+
+    // Reconstruct from bits: sum(bits[i] * 2^i)
+    let reconstructed = bits[0]
+        + bits[1] * 2
+        + bits[2] * 4
+        + bits[3] * 8
+        + bits[4] * 16
+        + bits[5] * 32
+        + bits[6] * 64
+        + bits[7] * 128
+    assert_eq(reconstructed, x)
+
+    // Use bits in constraints
+    assert_eq(bits[1], expected)
+}

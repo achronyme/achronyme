@@ -672,6 +672,39 @@ impl ProveIrCompiler {
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
+        // decompose(value, bits) → Decompose node (creates array of bit vars)
+        if let Expr::Call { callee, args, .. } = value {
+            if let Expr::Ident {
+                name: fn_name, ..
+            } = callee.as_ref()
+            {
+                if fn_name == "decompose" {
+                    let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
+                    self.check_arity("decompose", 2, arg_vals.len(), span)?;
+                    let compiled_value = self.compile_expr(arg_vals[0])?;
+                    let num_bits = self.extract_const_u64(arg_vals[1], span)? as u32;
+
+                    let elem_names: Vec<String> =
+                        (0..num_bits).map(|i| format!("{name}_{i}")).collect();
+
+                    self.body.push(CircuitNode::Decompose {
+                        name: name.to_string(),
+                        value: compiled_value,
+                        num_bits,
+                        span: Some(SpanRange::from(span)),
+                    });
+
+                    for ename in &elem_names {
+                        self.env
+                            .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+                    }
+                    self.env
+                        .insert(name.to_string(), CompEnvValue::Array(elem_names));
+                    return Ok(());
+                }
+            }
+        }
+
         // Array literal → LetArray
         if let Expr::Array {
             elements,
@@ -1433,6 +1466,31 @@ impl ProveIrCompiler {
                     span: Some(SpanRange::from(span)),
                 });
                 Ok(CircuitExpr::Const(FieldElement::ZERO))
+            }
+
+            // Integer division: int_div(lhs, rhs, max_bits)
+            "int_div" => {
+                self.check_arity("int_div", 3, args.len(), span)?;
+                let lhs = self.compile_expr(args[0])?;
+                let rhs = self.compile_expr(args[1])?;
+                let max_bits = self.extract_const_u64(args[2], span)? as u32;
+                Ok(CircuitExpr::IntDiv {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    max_bits,
+                })
+            }
+            // Integer remainder: int_mod(lhs, rhs, max_bits)
+            "int_mod" => {
+                self.check_arity("int_mod", 3, args.len(), span)?;
+                let lhs = self.compile_expr(args[0])?;
+                let rhs = self.compile_expr(args[1])?;
+                let max_bits = self.extract_const_u64(args[2], span)? as u32;
+                Ok(CircuitExpr::IntMod {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    max_bits,
+                })
             }
 
             // User function call (inlined)

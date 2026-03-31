@@ -214,6 +214,17 @@ impl CircuitStats {
                     }
                     (ConstraintCategory::Hash, cost)
                 }
+
+                // Decompose: n boolean constraints + 1 reconstruction sum constraint
+                Instruction::Decompose { num_bits, .. } => {
+                    (ConstraintCategory::RangeCheck, (*num_bits as usize) + 1)
+                }
+
+                // IntDiv/IntMod: division constraint + range checks on quotient and remainder
+                // Cost: 1 (division relation) + 2*(max_bits+1) (range checks for q and r)
+                Instruction::IntDiv { max_bits, .. } | Instruction::IntMod { max_bits, .. } => {
+                    (ConstraintCategory::Arithmetic, 1 + 2 * (*max_bits as usize + 1))
+                }
             };
 
             n_instructions += 1;

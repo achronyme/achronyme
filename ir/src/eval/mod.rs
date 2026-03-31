@@ -373,6 +373,72 @@ pub fn evaluate(
                     },
                 );
             }
+            Instruction::Decompose {
+                result,
+                bit_results,
+                operand,
+                num_bits,
+            } => {
+                let v = get(&values, operand)?;
+                if !fits_in_bits(&v, *num_bits) {
+                    return Err(Box::new(EvalError::RangeCheckFailed {
+                        var: *operand,
+                        bits: *num_bits,
+                        name: resolve_name(program, *operand),
+                        value: Some(v),
+                    }));
+                }
+                let limbs = v.to_canonical();
+                for (i, bit_var) in bit_results.iter().enumerate() {
+                    let limb_idx = i / 64;
+                    let bit_pos = i % 64;
+                    let bit = if limb_idx < 4 {
+                        (limbs[limb_idx] >> bit_pos) & 1
+                    } else {
+                        0
+                    };
+                    values.insert(*bit_var, FieldElement::from_u64(bit));
+                }
+                values.insert(*result, v);
+            }
+            Instruction::IntDiv {
+                result,
+                lhs,
+                rhs,
+                ..
+            } => {
+                let a = get(&values, lhs)?;
+                let b = get(&values, rhs)?;
+                let a_limbs = a.to_canonical();
+                let b_limbs = b.to_canonical();
+                let a_small = a_limbs[1] == 0 && a_limbs[2] == 0 && a_limbs[3] == 0;
+                let b_small = b_limbs[1] == 0 && b_limbs[2] == 0 && b_limbs[3] == 0;
+                let q = if a_small && b_small && b_limbs[0] != 0 {
+                    FieldElement::from_u64(a_limbs[0] / b_limbs[0])
+                } else {
+                    FieldElement::ZERO
+                };
+                values.insert(*result, q);
+            }
+            Instruction::IntMod {
+                result,
+                lhs,
+                rhs,
+                ..
+            } => {
+                let a = get(&values, lhs)?;
+                let b = get(&values, rhs)?;
+                let a_limbs = a.to_canonical();
+                let b_limbs = b.to_canonical();
+                let a_small = a_limbs[1] == 0 && a_limbs[2] == 0 && a_limbs[3] == 0;
+                let b_small = b_limbs[1] == 0 && b_limbs[2] == 0 && b_limbs[3] == 0;
+                let r = if a_small && b_small && b_limbs[0] != 0 {
+                    FieldElement::from_u64(a_limbs[0] % b_limbs[0])
+                } else {
+                    FieldElement::ZERO
+                };
+                values.insert(*result, r);
+            }
         }
     }
 
@@ -561,6 +627,49 @@ pub fn evaluate_lenient(
                             FieldElement::ZERO
                         },
                     );
+                }
+            }
+            Instruction::Decompose {
+                result,
+                bit_results,
+                operand,
+                ..
+            } => {
+                if let Some(v) = get(&values, operand) {
+                    let limbs = v.to_canonical();
+                    for (i, bit_var) in bit_results.iter().enumerate() {
+                        let limb_idx = i / 64;
+                        let bit_pos = i % 64;
+                        let bit = if limb_idx < 4 {
+                            (limbs[limb_idx] >> bit_pos) & 1
+                        } else {
+                            0
+                        };
+                        values.insert(*bit_var, FieldElement::from_u64(bit));
+                    }
+                    values.insert(*result, v);
+                }
+            }
+            Instruction::IntDiv {
+                result, lhs, rhs, ..
+            } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    let al = a.to_canonical();
+                    let bl = b.to_canonical();
+                    if al[1] == 0 && al[2] == 0 && al[3] == 0 && bl[1] == 0 && bl[2] == 0 && bl[3] == 0 && bl[0] != 0 {
+                        values.insert(*result, FieldElement::from_u64(al[0] / bl[0]));
+                    }
+                }
+            }
+            Instruction::IntMod {
+                result, lhs, rhs, ..
+            } => {
+                if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
+                    let al = a.to_canonical();
+                    let bl = b.to_canonical();
+                    if al[1] == 0 && al[2] == 0 && al[3] == 0 && bl[1] == 0 && bl[2] == 0 && bl[3] == 0 && bl[0] != 0 {
+                        values.insert(*result, FieldElement::from_u64(al[0] % bl[0]));
+                    }
                 }
             }
         }

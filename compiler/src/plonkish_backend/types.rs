@@ -50,4 +50,11 @@ pub enum PlonkWitnessOp {
         source: CellRef,
         bit_index: u32,
     },
+    /// Integer division/modulo: q = floor(lhs/rhs), r = lhs - rhs*q.
+    IntDivMod {
+        q: CellRef,
+        r: CellRef,
+        lhs: CellRef,
+        rhs: CellRef,
+    },
 }

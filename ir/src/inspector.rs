@@ -333,6 +333,9 @@ fn node_kind(inst: &Instruction) -> NodeKind {
         Instruction::IsLe { .. } => NodeKind::IsLe,
         Instruction::IsLtBounded { .. } => NodeKind::IsLtBounded,
         Instruction::IsLeBounded { .. } => NodeKind::IsLeBounded,
+        Instruction::Decompose { .. } => NodeKind::RangeCheck,
+        Instruction::IntDiv { .. } => NodeKind::Div,
+        Instruction::IntMod { .. } => NodeKind::Div,
     }
 }
 
@@ -379,6 +382,17 @@ fn node_label(inst: &Instruction, program: &IrProgram) -> String {
         Instruction::IsLe { .. } => "IsLe".to_string(),
         Instruction::IsLtBounded { bitwidth, .. } => format!("IsLtBounded({bitwidth})"),
         Instruction::IsLeBounded { bitwidth, .. } => format!("IsLeBounded({bitwidth})"),
+        Instruction::Decompose {
+            num_bits, result, ..
+        } => {
+            let base = format!("Decompose({num_bits})");
+            match program.get_name(*result) {
+                Some(name) => format!("{base} ({name})"),
+                None => base,
+            }
+        }
+        Instruction::IntDiv { result, .. } => label_with_name("IntDiv", *result, program),
+        Instruction::IntMod { result, .. } => label_with_name("IntMod", *result, program),
     }
 }
 

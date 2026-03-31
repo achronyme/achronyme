@@ -31,6 +31,8 @@ enum CseKey {
     IsLe(SsaVar, SsaVar),
     IsLtBounded(SsaVar, SsaVar, u32),
     IsLeBounded(SsaVar, SsaVar, u32),
+    IntDiv(SsaVar, SsaVar, u32),
+    IntMod(SsaVar, SsaVar, u32),
 }
 
 /// Extract a CSE key from an instruction, if it's a pure computation.
@@ -66,7 +68,14 @@ fn cse_key(inst: &Instruction) -> Option<CseKey> {
         | Instruction::Input { .. }
         | Instruction::AssertEq { .. }
         | Instruction::Assert { .. }
-        | Instruction::RangeCheck { .. } => None,
+        | Instruction::RangeCheck { .. }
+        | Instruction::Decompose { .. } => None,
+        Instruction::IntDiv {
+            lhs, rhs, max_bits, ..
+        } => Some(CseKey::IntDiv(*lhs, *rhs, *max_bits)),
+        Instruction::IntMod {
+            lhs, rhs, max_bits, ..
+        } => Some(CseKey::IntMod(*lhs, *rhs, *max_bits)),
     }
 }
 
@@ -130,6 +139,8 @@ fn canonicalize_key(key: &CseKey, replacements: &HashMap<SsaVar, SsaVar>) -> Cse
         CseKey::IsLe(a, b) => CseKey::IsLe(r(a), r(b)),
         CseKey::IsLtBounded(a, b, w) => CseKey::IsLtBounded(r(a), r(b), *w),
         CseKey::IsLeBounded(a, b, w) => CseKey::IsLeBounded(r(a), r(b), *w),
+        CseKey::IntDiv(a, b, w) => CseKey::IntDiv(r(a), r(b), *w),
+        CseKey::IntMod(a, b, w) => CseKey::IntMod(r(a), r(b), *w),
     }
 }
 
@@ -185,6 +196,13 @@ fn rewrite_operands(inst: &mut Instruction, replacements: &HashMap<SsaVar, SsaVa
         }
         Instruction::RangeCheck { operand, .. } => {
             r(operand);
+        }
+        Instruction::Decompose { operand, .. } => {
+            r(operand);
+        }
+        Instruction::IntDiv { lhs, rhs, .. } | Instruction::IntMod { lhs, rhs, .. } => {
+            r(lhs);
+            r(rhs);
         }
     }
 }

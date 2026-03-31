@@ -369,6 +369,31 @@ impl Instantiator {
             CircuitNode::Expr { expr, .. } => {
                 self.emit_expr(expr)?;
             }
+            CircuitNode::Decompose {
+                name,
+                value,
+                num_bits,
+                ..
+            } => {
+                let operand = self.emit_expr(value)?;
+                let result = self.program.fresh_var();
+                let mut bit_vars = Vec::with_capacity(*num_bits as usize);
+                for i in 0..*num_bits {
+                    let bit_v = self.program.fresh_var();
+                    let elem_name = format!("{name}_{i}");
+                    self.program.set_name(bit_v, elem_name.clone());
+                    self.env.insert(elem_name, InstEnvValue::Scalar(bit_v));
+                    bit_vars.push(bit_v);
+                }
+                self.push_inst(Instruction::Decompose {
+                    result,
+                    bit_results: bit_vars.clone(),
+                    operand,
+                    num_bits: *num_bits,
+                });
+                self.env
+                    .insert(name.clone(), InstEnvValue::Array(bit_vars));
+            }
         }
         Ok(())
     }
@@ -830,6 +855,38 @@ impl Instantiator {
             CircuitExpr::Pow { base, exp } => {
                 let base_var = self.emit_expr(base)?;
                 self.emit_pow(base_var, *exp)
+            }
+            CircuitExpr::IntDiv {
+                lhs,
+                rhs,
+                max_bits,
+            } => {
+                let l = self.emit_expr(lhs)?;
+                let r = self.emit_expr(rhs)?;
+                let v = self.program.fresh_var();
+                self.push_inst(Instruction::IntDiv {
+                    result: v,
+                    lhs: l,
+                    rhs: r,
+                    max_bits: *max_bits,
+                });
+                Ok(v)
+            }
+            CircuitExpr::IntMod {
+                lhs,
+                rhs,
+                max_bits,
+            } => {
+                let l = self.emit_expr(lhs)?;
+                let r = self.emit_expr(rhs)?;
+                let v = self.program.fresh_var();
+                self.push_inst(Instruction::IntMod {
+                    result: v,
+                    lhs: l,
+                    rhs: r,
+                    max_bits: *max_bits,
+                });
+                Ok(v)
             }
         }
     }
