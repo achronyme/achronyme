@@ -1,7 +1,6 @@
 # Achronyme
 
 [![CI](https://github.com/achronyme/achronyme/actions/workflows/ci.yml/badge.svg)](https://github.com/achronyme/achronyme/actions/workflows/ci.yml)
-[![Deploy Docs](https://github.com/achronyme/achronyme/actions/workflows/docs.yml/badge.svg)](https://github.com/achronyme/achronyme/actions/workflows/docs.yml)
 
 A programming language for zero-knowledge circuits.
 
@@ -337,7 +336,7 @@ achronyme/
 ├── ir/                 SSA intermediate representation, optimization passes
 ├── compiler/           Bytecode compiler, R1CS backend, Plonkish backend
 ├── vm/                 Register-based VM (37 opcodes, prototype method dispatch)
-├── memory/             Heap, GC, FieldElement (BN254 Montgomery), BigInt
+├── memory/             Heap, GC, FieldElement<F> (BN254, BLS12-381, Goldilocks), BigInt
 ├── constraints/        R1CS/Plonkish systems, Poseidon hash, binary export
 ├── cli/                CLI, native Groth16 (ark-groth16) & PlonK (halo2-KZG)
 ├── std/                Standard library (NativeModule: parse_int, join, I/O)
