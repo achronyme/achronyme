@@ -85,7 +85,7 @@ fn circomlibjs_poseidon_1_2_full_state() {
 /// This is a 4-input hash (t=5, arity 4). Documented for future multi-arity.
 #[test]
 fn circomlibjs_poseidon_1_2_3_4_documented() {
-    let reference = FieldElement::from_hex_str(
+    let reference: FieldElement = FieldElement::from_hex_str(
         "0x299c867db6c1fdd79dcefa40e4510b9837e60ebb1ce0663dbaa525df65250465",
     )
     .unwrap();
@@ -461,17 +461,18 @@ fn poseidon_single_equals_pair_with_zero() {
 #[test]
 fn sbox_identity_values() {
     // 0^5 = 0
-    assert_eq!(sbox(FieldElement::ZERO), FieldElement::ZERO);
+    assert_eq!(sbox(FieldElement::ZERO, 5), FieldElement::ZERO);
     // 1^5 = 1
-    assert_eq!(sbox(FieldElement::ONE), FieldElement::ONE);
+    assert_eq!(sbox(FieldElement::ONE, 5), FieldElement::ONE);
 }
 
 #[test]
 fn sbox_small_values() {
     let cases = [(2u64, 32u64), (3, 243), (4, 1024), (5, 3125), (10, 100000)];
     for (input, expected) in cases {
+        let x: FieldElement = FieldElement::from_u64(input);
         assert_eq!(
-            sbox(FieldElement::from_u64(input)),
+            sbox(x, 5),
             FieldElement::from_u64(expected),
             "{input}^5 != {expected}"
         );
@@ -481,8 +482,9 @@ fn sbox_small_values() {
 /// (-1)^5 = -1 in any field (since 5 is odd)
 #[test]
 fn sbox_neg_one() {
-    let neg1 = FieldElement::from_u64(1).neg();
-    assert_eq!(sbox(neg1), neg1, "(-1)^5 must be -1");
+    let neg1: FieldElement = FieldElement::from_u64(1);
+    let neg1 = neg1.neg();
+    assert_eq!(sbox(neg1, 5), neg1, "(-1)^5 must be -1");
 }
 
 // ============================================================================

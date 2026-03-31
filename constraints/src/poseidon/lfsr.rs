@@ -1,10 +1,10 @@
-use memory::field::MODULUS;
-use memory::FieldElement;
+//! 80-bit LFSR used to generate Poseidon round constants per the paper.
+//!
+//! Retained as reference for auditing. Production BN254 code uses hardcoded
+//! circomlibjs constants via [`super::PoseidonParams::bn254_t3`].
 
-/// 80-bit LFSR used to generate Poseidon round constants per the paper.
-///
-/// Retained as reference for auditing. Production code uses hardcoded
-/// circomlibjs constants via [`super::PoseidonParams::bn254_t3`].
+use memory::{FieldBackend, FieldElement};
+
 pub(super) struct GrainLfsr {
     state: [bool; 80],
 }
@@ -81,7 +81,15 @@ impl GrainLfsr {
         }
     }
 
-    pub(super) fn next_field_element(&mut self, field_size: usize) -> FieldElement {
+    /// Generate the next random field element (rejection sampling).
+    ///
+    /// Generic over the field backend: generates `field_size` random bits,
+    /// interprets as little-endian bytes, and checks via `from_le_bytes`
+    /// that the value is < the field modulus.
+    pub(super) fn next_field_element<F: FieldBackend>(
+        &mut self,
+        field_size: usize,
+    ) -> FieldElement<F> {
         loop {
             let mut bytes = [0u8; 32];
             for bit_idx in 0..field_size {
@@ -94,26 +102,9 @@ impl GrainLfsr {
                 }
             }
             bytes.reverse();
-            let mut limbs = [0u64; 4];
-            for i in 0..4 {
-                limbs[i] = u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
-            }
-            if !ge_modulus(&limbs) {
-                return FieldElement::from_canonical(limbs);
+            if let Some(fe) = FieldElement::<F>::from_le_bytes(&bytes) {
+                return fe;
             }
         }
     }
-}
-
-/// Check if limbs >= MODULUS.
-fn ge_modulus(limbs: &[u64; 4]) -> bool {
-    for i in (0..4).rev() {
-        if limbs[i] > MODULUS[i] {
-            return true;
-        }
-        if limbs[i] < MODULUS[i] {
-            return false;
-        }
-    }
-    true
 }

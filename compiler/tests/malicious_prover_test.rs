@@ -540,11 +540,8 @@ fn compile_circuit_witness(
     use ir::prove_ir::ProveIrCompiler;
     use std::path::Path;
 
-    let prove_ir =
-        ProveIrCompiler::compile_circuit(source, Some(Path::new("test.ach"))).unwrap();
-    let mut program = prove_ir
-        .instantiate(&HashMap::new())
-        .unwrap();
+    let prove_ir = ProveIrCompiler::compile_circuit(source, Some(Path::new("test.ach"))).unwrap();
+    let mut program = prove_ir.instantiate(&HashMap::new()).unwrap();
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
@@ -572,10 +569,8 @@ circuit test(expected: Public, a: Witness, b: Witness) {
     assert_eq(q, expected)
 }
 "#;
-    let (compiler, mut w) = compile_circuit_witness(
-        source,
-        &[("expected", fe(7)), ("a", fe(43)), ("b", fe(6))],
-    );
+    let (compiler, mut w) =
+        compile_circuit_witness(source, &[("expected", fe(7)), ("a", fe(43)), ("b", fe(6))]);
     // Forge: claim quotient is 6
     w[1] = fe(6);
     assert!(
@@ -594,10 +589,8 @@ circuit test(expected: Public, a: Witness, b: Witness) {
     assert_eq(r, expected)
 }
 "#;
-    let (compiler, mut w) = compile_circuit_witness(
-        source,
-        &[("expected", fe(1)), ("a", fe(43)), ("b", fe(6))],
-    );
+    let (compiler, mut w) =
+        compile_circuit_witness(source, &[("expected", fe(1)), ("a", fe(43)), ("b", fe(6))]);
     w[1] = fe(7); // forge: claim remainder is 7
     assert!(
         compiler.cs.verify(&w).is_err(),

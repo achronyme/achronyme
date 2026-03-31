@@ -166,7 +166,8 @@ fn validate_expr_json(expr: &Value, dims: &Dims, ctx: &str) -> Result<(), String
         let s = s
             .as_str()
             .ok_or_else(|| format!("{ctx}: 'const' must be a string"))?;
-        if FieldElement::from_decimal_str(s).is_none() {
+        let parsed: Option<FieldElement> = FieldElement::from_decimal_str(s);
+        if parsed.is_none() {
             return Err(format!("{ctx}: invalid field element '{s}'"));
         }
         return Ok(());
@@ -295,7 +296,8 @@ fn validate_lookup_table_json(table: &Value, dims: &Dims, idx: usize) -> Result<
         let s = v
             .as_str()
             .ok_or_else(|| format!("{ctx}.values[{i}]: expected string"))?;
-        if FieldElement::from_decimal_str(s).is_none() {
+        let parsed: Option<FieldElement> = FieldElement::from_decimal_str(s);
+        if parsed.is_none() {
             return Err(format!("{ctx}.values[{i}]: invalid field element '{s}'"));
         }
     }
@@ -303,7 +305,8 @@ fn validate_lookup_table_json(table: &Value, dims: &Dims, idx: usize) -> Result<
 }
 
 fn validate_field_element_str(s: &str, ctx: &str) -> Result<(), String> {
-    if FieldElement::from_decimal_str(s).is_none() {
+    let parsed: Option<FieldElement> = FieldElement::from_decimal_str(s);
+    if parsed.is_none() {
         return Err(format!("{ctx}: invalid field element '{s}'"));
     }
     Ok(())
