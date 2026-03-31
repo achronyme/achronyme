@@ -156,7 +156,7 @@ impl ProveHandler for SharedProveHandler {
 
 impl VerifyHandler for DefaultProveHandler {
     fn verify_proof(&self, proof: &memory::ProofObject) -> Result<bool, String> {
-        proving::groth16::verify_proof_from_json(
+        proving::groth16_bn254::verify_proof_from_json(
             &proof.proof_json,
             &proof.public_json,
             &proof.vkey_json,
@@ -189,7 +189,7 @@ impl DefaultProveHandler {
 
         let n_constraints = r1cs.cs.num_constraints();
 
-        let result = proving::groth16::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
+        let result = proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
             .map_err(ProveError::ProofGeneration)?;
 
         if self.verbose {
