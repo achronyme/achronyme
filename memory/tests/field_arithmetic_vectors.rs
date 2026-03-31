@@ -557,7 +557,7 @@ fn powers_of_2_mul_chain() {
 #[test]
 fn square_chain_small() {
     // 3^1 = 3, 3^2 = 9, 3^4 = 81, 3^8 = 6561
-    let three = FieldElement::from_u64(3);
+    let three: FieldElement = FieldElement::from_u64(3);
     let mut x = three;
     let expected = [9u64, 81, 6561, 43046721];
     for (i, &exp) in expected.iter().enumerate() {
@@ -595,7 +595,7 @@ fn fermats_little_theorem_small() {
 fn canonical_round_trip() {
     let values = [0u64, 1, 2, 42, 1000, u64::MAX];
     for v in values {
-        let fe = FieldElement::from_u64(v);
+        let fe: FieldElement = FieldElement::from_u64(v);
         let canonical = fe.to_canonical();
         assert_eq!(canonical[0], v, "canonical[0] != {v}");
         assert_eq!(canonical[1], 0, "canonical[1] != 0 for small value {v}");

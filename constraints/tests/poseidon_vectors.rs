@@ -85,7 +85,7 @@ fn circomlibjs_poseidon_1_2_full_state() {
 /// This is a 4-input hash (t=5, arity 4). Documented for future multi-arity.
 #[test]
 fn circomlibjs_poseidon_1_2_3_4_documented() {
-    let reference = FieldElement::from_hex_str(
+    let reference: FieldElement = FieldElement::from_hex_str(
         "0x299c867db6c1fdd79dcefa40e4510b9837e60ebb1ce0663dbaa525df65250465",
     )
     .unwrap();

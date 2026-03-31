@@ -424,7 +424,7 @@ mod tests {
         let vals = [0u64, 1, 2, 7, 42, 12345, u64::MAX];
         for &a_val in &vals {
             for &b_val in &vals {
-                let fe_a = FieldElement::from_u64(a_val);
+                let fe_a: FieldElement = FieldElement::from_u64(a_val);
                 let fe_b = FieldElement::from_u64(b_val);
                 let be_a = Bn254Fr::from_u64(a_val);
                 let be_b = Bn254Fr::from_u64(b_val);
@@ -460,7 +460,7 @@ mod tests {
 
         // Inverse (skip zero)
         for &v in &[1u64, 7, 42, u64::MAX] {
-            let fe = FieldElement::from_u64(v);
+            let fe: FieldElement = FieldElement::from_u64(v);
             let be = Bn254Fr::from_u64(v);
             assert_eq!(
                 fe.inv().unwrap().into_repr(),
