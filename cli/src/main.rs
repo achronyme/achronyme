@@ -288,9 +288,9 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
 /// Validate that the (prime, backend) combination is supported for proving.
 fn validate_prime_backend(prime_id: PrimeId, backend: &str) -> Result<()> {
     match (prime_id, backend) {
-        (PrimeId::Bn254, "r1cs") => Ok(()),      // groth16-bn254
-        (PrimeId::Bn254, "plonkish") => Ok(()),   // plonk-bn254
-        (PrimeId::Bls12_381, "r1cs") => Ok(()),   // groth16-bls12-381
+        (PrimeId::Bn254, "r1cs") => Ok(()),     // groth16-bn254
+        (PrimeId::Bn254, "plonkish") => Ok(()), // plonk-bn254
+        (PrimeId::Bls12_381, "r1cs") => Ok(()), // groth16-bls12-381
         _ => Err(anyhow::anyhow!(
             "unsupported combination: prime `{}` with backend `{backend}`\n  \
              Supported: bn254+r1cs, bn254+plonkish, bls12-381+r1cs",
