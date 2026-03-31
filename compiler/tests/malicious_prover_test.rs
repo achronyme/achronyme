@@ -527,3 +527,80 @@ fn a11_coherent_forgery_change_inputs_and_output() {
         "A11: coherent valid witness (10*10=100) should be accepted — circuit is parametric"
     );
 }
+
+// ============================================================================
+// A12. IntDiv remainder forgery — claim wrong quotient with valid r < 2^max_bits
+// ============================================================================
+
+/// Compile a circuit file and generate a valid witness via ProveIR path.
+fn compile_circuit_witness(
+    source: &str,
+    inputs: &[(&str, FieldElement)],
+) -> (R1CSCompiler, Vec<FieldElement>) {
+    use ir::prove_ir::ProveIrCompiler;
+    use std::path::Path;
+
+    let prove_ir =
+        ProveIrCompiler::compile_circuit(source, Some(Path::new("test.ach"))).unwrap();
+    let mut program = prove_ir
+        .instantiate(&HashMap::new())
+        .unwrap();
+    ir::passes::optimize(&mut program);
+
+    let proven = compute_proven_boolean(&program);
+    let mut compiler = R1CSCompiler::new();
+    compiler.set_proven_boolean(proven);
+
+    let input_map: HashMap<String, FieldElement> =
+        inputs.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+    let w = compiler
+        .compile_ir_with_witness(&program, &input_map)
+        .expect("valid witness gen failed");
+
+    compiler.cs.verify(&w).expect("valid witness must verify");
+    (compiler, w)
+}
+
+#[test]
+fn a12_intdiv_wrong_quotient_valid_range() {
+    // 43 / 6 = 7 remainder 1.
+    // Attack: forge expected output as 6 instead of 7.
+    // With the r<b fix, r=7 >= b=6 fails the range check on (b-r-1).
+    let source = r#"
+circuit test(expected: Public, a: Witness, b: Witness) {
+    let q = int_div(a, b, 32)
+    assert_eq(q, expected)
+}
+"#;
+    let (compiler, mut w) = compile_circuit_witness(
+        source,
+        &[("expected", fe(7)), ("a", fe(43)), ("b", fe(6))],
+    );
+    // Forge: claim quotient is 6
+    w[1] = fe(6);
+    assert!(
+        compiler.cs.verify(&w).is_err(),
+        "A12: forged IntDiv quotient must be rejected (r<b constraint prevents forgery)"
+    );
+}
+
+#[test]
+fn a12_intmod_wrong_remainder() {
+    // 43 % 6 = 1.
+    // Attack: forge expected output as 7.
+    let source = r#"
+circuit test(expected: Public, a: Witness, b: Witness) {
+    let r = int_mod(a, b, 32)
+    assert_eq(r, expected)
+}
+"#;
+    let (compiler, mut w) = compile_circuit_witness(
+        source,
+        &[("expected", fe(1)), ("a", fe(43)), ("b", fe(6))],
+    );
+    w[1] = fe(7); // forge: claim remainder is 7
+    assert!(
+        compiler.cs.verify(&w).is_err(),
+        "A12: forged IntMod remainder must be rejected"
+    );
+}
