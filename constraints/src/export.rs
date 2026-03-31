@@ -15,10 +15,7 @@ fn prime_le_bytes(prime_id: PrimeId) -> [u8; 32] {
         PrimeId::Bls12_381 => memory::field::Bls12_381Fr::modulus_le_bytes(),
         PrimeId::Goldilocks => memory::field::GoldilocksFr::modulus_le_bytes(),
         // Future backends: add here when FieldBackend impls exist
-        _ => unimplemented!(
-            "R1CS/WTNS export not yet supported for {}",
-            prime_id.name()
-        ),
+        _ => unimplemented!("R1CS/WTNS export not yet supported for {}", prime_id.name()),
     }
 }
 

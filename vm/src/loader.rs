@@ -79,7 +79,7 @@ impl VM {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
         let version = magic[3];
-        if &magic[..3] != b"ACH" || !matches!(version, 0x09 | 0x0A | 0x0B) {
+        if &magic[..3] != b"ACH" || !matches!(version, 0x09..=0x0B) {
             return Err(LoaderError::Format(
                 "Invalid binary magic or version".to_string(),
             ));
