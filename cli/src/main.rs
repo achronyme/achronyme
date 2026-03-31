@@ -176,7 +176,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
         } => CliOverrides {
             path: path.clone(),
             error_format: cli.error_format.clone(),
-            prime: None,
+            prime: cli.prime.clone(),
             backend: None,
             prove_backend: prove_backend.clone(),
             optimize: None,
@@ -193,7 +193,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
         Commands::Disassemble { path } => CliOverrides {
             path: path.clone(),
             error_format: cli.error_format.clone(),
-            prime: None,
+            prime: cli.prime.clone(),
             backend: None,
             prove_backend: None,
             optimize: None,
@@ -210,7 +210,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
         Commands::Compile { path, .. } => CliOverrides {
             path: path.clone(),
             error_format: cli.error_format.clone(),
-            prime: None,
+            prime: cli.prime.clone(),
             backend: None,
             prove_backend: None,
             optimize: None,
@@ -237,7 +237,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
         } => CliOverrides {
             path: path.clone(),
             error_format: cli.error_format.clone(),
-            prime: None,
+            prime: cli.prime.clone(),
             backend: backend.clone(),
             prove_backend: None,
             optimize: no_optimize.map(|no| !no),
@@ -254,7 +254,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
         Commands::Inspect { path, .. } => CliOverrides {
             path: path.clone(),
             error_format: cli.error_format.clone(),
-            prime: None,
+            prime: cli.prime.clone(),
             backend: None,
             prove_backend: None,
             optimize: None,
