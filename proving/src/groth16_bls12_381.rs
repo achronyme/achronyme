@@ -1,12 +1,12 @@
-//! BN254-specific Groth16 proof generation and snarkjs-compatible serialization.
+//! BLS12-381-specific Groth16 proof generation and JSON serialization.
 //!
 //! Delegates proof generation to the generic `groth16` module, then applies
-//! BN254-specific JSON serialization (snarkjs format) and Solidity calldata
-//! formatting (EIP-197 coordinate order).
+//! BLS12-381-specific JSON serialization. No Solidity support (EVM precompiles
+//! are BN254-only).
 
 use std::path::Path;
 
-use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine};
+use ark_bls12_381::{Bls12_381, Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::pairing::Pairing;
 
 use constraints::r1cs::ConstraintSystem;
@@ -16,39 +16,39 @@ use vm::ProveResult;
 use crate::groth16;
 
 // ============================================================================
-// Public API (BN254-specialized wrappers)
+// Public API (BLS12-381-specialized wrappers)
 // ============================================================================
 
-/// Run trusted setup (or load cached keys) for BN254 Groth16.
+/// Run trusted setup (or load cached keys) for BLS12-381 Groth16.
 pub fn setup_keys(
     cs: &ConstraintSystem,
     cache_dir: &Path,
 ) -> Result<
     (
-        ark_groth16::ProvingKey<Bn254>,
-        ark_groth16::VerifyingKey<Bn254>,
+        ark_groth16::ProvingKey<Bls12_381>,
+        ark_groth16::VerifyingKey<Bls12_381>,
     ),
     String,
 > {
-    groth16::setup_keys::<Bn254>(cs, cache_dir, "bn254")
+    groth16::setup_keys::<Bls12_381>(cs, cache_dir, "bls12-381")
 }
 
-/// Run trusted setup and return only the verifying key (BN254).
+/// Run trusted setup and return only the verifying key (BLS12-381).
 pub fn setup_vk_only(
     cs: &ConstraintSystem,
     cache_dir: &Path,
-) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
-    groth16::setup_vk_only::<Bn254>(cs, cache_dir, "bn254")
+) -> Result<ark_groth16::VerifyingKey<Bls12_381>, String> {
+    groth16::setup_vk_only::<Bls12_381>(cs, cache_dir, "bls12-381")
 }
 
-/// Generate a BN254 Groth16 proof with snarkjs-compatible JSON output.
+/// Generate a BLS12-381 Groth16 proof with JSON output.
 pub fn generate_proof(
     cs: &ConstraintSystem,
     witness: &[FieldElement],
     cache_dir: &Path,
 ) -> Result<ProveResult, String> {
     let (proof, vk, public_inputs) =
-        groth16::generate_proof_raw::<Bn254>(cs, witness, cache_dir, "bn254")?;
+        groth16::generate_proof_raw::<Bls12_381>(cs, witness, cache_dir, "bls12-381")?;
 
     let proof_json = serialize_proof_json(&proof);
     let public_json = serialize_public_json(&public_inputs);
@@ -62,11 +62,10 @@ pub fn generate_proof(
 }
 
 // ============================================================================
-// JSON serialization (snarkjs-compatible, BN254)
+// JSON serialization (BLS12-381)
 // ============================================================================
 
-/// Format a G1 affine point as a JSON array of 3 decimal strings [x, y, "1"].
-fn g1_to_json(p: &<Bn254 as Pairing>::G1Affine) -> serde_json::Value {
+fn g1_to_json(p: &<Bls12_381 as Pairing>::G1Affine) -> serde_json::Value {
     use ark_ec::AffineRepr;
     if p.is_zero() {
         return serde_json::json!(["0", "1", "0"]);
@@ -76,8 +75,7 @@ fn g1_to_json(p: &<Bn254 as Pairing>::G1Affine) -> serde_json::Value {
     serde_json::json!([groth16::fr_to_decimal(&x), groth16::fr_to_decimal(&y), "1"])
 }
 
-/// Format a G2 affine point as a JSON array of 3 arrays, each with 2 decimal strings.
-fn g2_to_json(p: &<Bn254 as Pairing>::G2Affine) -> serde_json::Value {
+fn g2_to_json(p: &<Bls12_381 as Pairing>::G2Affine) -> serde_json::Value {
     use ark_ec::AffineRepr;
     if p.is_zero() {
         return serde_json::json!([["0", "0"], ["1", "0"], ["0", "0"]]);
@@ -91,13 +89,13 @@ fn g2_to_json(p: &<Bn254 as Pairing>::G2Affine) -> serde_json::Value {
     ])
 }
 
-fn serialize_proof_json(proof: &ark_groth16::Proof<Bn254>) -> String {
+fn serialize_proof_json(proof: &ark_groth16::Proof<Bls12_381>) -> String {
     let obj = serde_json::json!({
         "pi_a": g1_to_json(&proof.a),
         "pi_b": g2_to_json(&proof.b),
         "pi_c": g1_to_json(&proof.c),
         "protocol": "groth16",
-        "curve": "bn128"
+        "curve": "bls12-381"
     });
     serde_json::to_string_pretty(&obj).unwrap()
 }
@@ -107,14 +105,14 @@ fn serialize_public_json(inputs: &[Fr]) -> String {
     serde_json::to_string_pretty(&arr).unwrap()
 }
 
-fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bn254>, num_pub: usize) -> String {
+fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bls12_381>, num_pub: usize) -> String {
     let mut ic: Vec<serde_json::Value> = Vec::new();
     for p in &vk.gamma_abc_g1 {
         ic.push(g1_to_json(p));
     }
     let obj = serde_json::json!({
         "protocol": "groth16",
-        "curve": "bn128",
+        "curve": "bls12-381",
         "nPublic": num_pub,
         "vk_alpha_1": g1_to_json(&vk.alpha_g1),
         "vk_beta_2": g2_to_json(&vk.beta_g2),
@@ -126,67 +124,7 @@ fn serialize_vkey_json(vk: &ark_groth16::VerifyingKey<Bn254>, num_pub: usize) ->
 }
 
 // ============================================================================
-// Solidity calldata formatting (BN254, EIP-197)
-// ============================================================================
-
-/// Format a Groth16 proof and public inputs as Solidity calldata strings.
-///
-/// Applies EIP-197 coordinate swaps for G2 points (π_B):
-/// arkworks Fq2(c0=real, c1=imag) → EVM (c1=imag, c0=real).
-pub fn format_solidity_calldata(
-    proof: &ark_groth16::Proof<Bn254>,
-    public_inputs: &[Fr],
-) -> SolidityCalldata {
-    use ark_ec::AffineRepr;
-
-    let a = proof.a;
-    let b = proof.b;
-    let c = proof.c;
-
-    let p_a = [
-        groth16::fr_to_decimal(&a.x().expect("a.x")),
-        groth16::fr_to_decimal(&a.y().expect("a.y")),
-    ];
-
-    // π_B (G2): SWAP c0 ↔ c1 for EIP-197
-    let bx = b.x().expect("b.x");
-    let by = b.y().expect("b.y");
-    let p_b = [
-        [
-            groth16::fr_to_decimal(&bx.c1),
-            groth16::fr_to_decimal(&bx.c0),
-        ],
-        [
-            groth16::fr_to_decimal(&by.c1),
-            groth16::fr_to_decimal(&by.c0),
-        ],
-    ];
-
-    let p_c = [
-        groth16::fr_to_decimal(&c.x().expect("c.x")),
-        groth16::fr_to_decimal(&c.y().expect("c.y")),
-    ];
-
-    let pub_signals: Vec<String> = public_inputs.iter().map(groth16::fr_to_decimal).collect();
-
-    SolidityCalldata {
-        p_a,
-        p_b,
-        p_c,
-        pub_signals,
-    }
-}
-
-/// Structured Solidity calldata for a Groth16 proof.
-pub struct SolidityCalldata {
-    pub p_a: [String; 2],
-    pub p_b: [[String; 2]; 2],
-    pub p_c: [String; 2],
-    pub pub_signals: Vec<String>,
-}
-
-// ============================================================================
-// JSON deserialization (for verify_proof, BN254)
+// JSON deserialization (for verify_proof, BLS12-381)
 // ============================================================================
 
 fn decimal_to_fr(s: &str) -> Result<Fr, String> {
@@ -247,8 +185,8 @@ fn json_to_g2(val: &serde_json::Value) -> Result<G2Affine, String> {
     Ok(G2Affine::new_unchecked(x, y))
 }
 
-/// Deserialize a snarkjs-format proof JSON string into an ark Proof.
-pub fn deserialize_proof_json(json_str: &str) -> Result<ark_groth16::Proof<Bn254>, String> {
+/// Deserialize a proof JSON string into an ark Proof (BLS12-381).
+pub fn deserialize_proof_json(json_str: &str) -> Result<ark_groth16::Proof<Bls12_381>, String> {
     let obj: serde_json::Value =
         serde_json::from_str(json_str).map_err(|e| format!("invalid proof JSON: {e}"))?;
     let a = json_to_g1(&obj["pi_a"])?;
@@ -257,15 +195,17 @@ pub fn deserialize_proof_json(json_str: &str) -> Result<ark_groth16::Proof<Bn254
     Ok(ark_groth16::Proof { a, b, c })
 }
 
-/// Deserialize a snarkjs-format public inputs JSON string into ark Fr values.
+/// Deserialize a public inputs JSON string into ark Fr values (BLS12-381).
 pub fn deserialize_public_json(json_str: &str) -> Result<Vec<Fr>, String> {
     let arr: Vec<String> =
         serde_json::from_str(json_str).map_err(|e| format!("invalid public JSON: {e}"))?;
     arr.iter().map(|s| decimal_to_fr(s)).collect()
 }
 
-/// Deserialize a snarkjs-format verifying key JSON string into an ark VerifyingKey.
-pub fn deserialize_vkey_json(json_str: &str) -> Result<ark_groth16::VerifyingKey<Bn254>, String> {
+/// Deserialize a verifying key JSON string into an ark VerifyingKey (BLS12-381).
+pub fn deserialize_vkey_json(
+    json_str: &str,
+) -> Result<ark_groth16::VerifyingKey<Bls12_381>, String> {
     let obj: serde_json::Value =
         serde_json::from_str(json_str).map_err(|e| format!("invalid vkey JSON: {e}"))?;
 
@@ -289,7 +229,7 @@ pub fn deserialize_vkey_json(json_str: &str) -> Result<ark_groth16::VerifyingKey
     })
 }
 
-/// Verify a proof using deserialized JSON components (BN254).
+/// Verify a proof using deserialized JSON components (BLS12-381).
 pub fn verify_proof_from_json(
     proof_json: &str,
     public_json: &str,
@@ -300,6 +240,6 @@ pub fn verify_proof_from_json(
     let proof = deserialize_proof_json(proof_json)?;
     let public_inputs = deserialize_public_json(public_json)?;
     let vk = deserialize_vkey_json(vkey_json)?;
-    Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)
+    Groth16::<Bls12_381>::verify(&vk, &public_inputs, &proof)
         .map_err(|e| format!("verification error: {e}"))
 }

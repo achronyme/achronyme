@@ -110,11 +110,15 @@ fn convert_lc<F: PrimeField>(
 // ============================================================================
 
 /// Run trusted setup (or load cached keys).
+///
+/// `curve_tag` is included in the cache key to prevent collisions between
+/// the same circuit compiled for different curves.
 pub fn setup_keys<E: Pairing>(
     cs: &ConstraintSystem,
     cache_dir: &Path,
+    curve_tag: &str,
 ) -> Result<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>), String> {
-    let key = cache_key(cs);
+    let key = cache_key(cs, curve_tag);
     let cache_subdir = cache_dir.join(&key);
 
     if let Some(keys) = load_cached_keys::<E>(&cache_subdir) {
@@ -135,8 +139,9 @@ pub fn setup_keys<E: Pairing>(
 pub fn setup_vk_only<E: Pairing>(
     cs: &ConstraintSystem,
     cache_dir: &Path,
+    curve_tag: &str,
 ) -> Result<ark_groth16::VerifyingKey<E>, String> {
-    let key = cache_key(cs);
+    let key = cache_key(cs, curve_tag);
     let cache_subdir = cache_dir.join(&key);
 
     if let Some(vk) = load_cached_vk::<E>(&cache_subdir) {
@@ -162,6 +167,7 @@ pub fn generate_proof_raw<E: Pairing>(
     cs: &ConstraintSystem,
     witness: &[FieldElement],
     cache_dir: &Path,
+    curve_tag: &str,
 ) -> Result<
     (
         ark_groth16::Proof<E>,
@@ -170,7 +176,7 @@ pub fn generate_proof_raw<E: Pairing>(
     ),
     String,
 > {
-    let (pk, vk) = setup_keys::<E>(cs, cache_dir)?;
+    let (pk, vk) = setup_keys::<E>(cs, cache_dir, curve_tag)?;
 
     let prove_circuit = AchronymeCircuit {
         cs: cs.clone(),
@@ -198,10 +204,15 @@ pub fn generate_proof_raw<E: Pairing>(
 // Cache helpers (generic)
 // ============================================================================
 
-/// Compute a SHA256 cache key from the constraint system structure.
-pub fn cache_key(cs: &ConstraintSystem) -> String {
+/// Compute a SHA256 cache key from the constraint system structure and curve.
+///
+/// The `curve_tag` prevents cache collisions between different curves —
+/// the same circuit compiled for BN254 and BLS12-381 must use separate
+/// cached proving/verifying keys.
+pub fn cache_key(cs: &ConstraintSystem, curve_tag: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"achronyme-groth16-cache-v1");
+    hasher.update(b"achronyme-groth16-cache-v2");
+    hasher.update(curve_tag.as_bytes());
     hasher.update(cs.num_variables().to_le_bytes());
     hasher.update(cs.num_pub_inputs().to_le_bytes());
     hasher.update(cs.num_constraints().to_le_bytes());

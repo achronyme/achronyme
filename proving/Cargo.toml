@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["groth16-bn254", "plonk-bn254"]
+default = ["groth16-bn254", "groth16-bls12-381", "plonk-bn254"]
 
 # Groth16 core (generic over Pairing) — activated by any groth16 variant
 groth16-core = [
