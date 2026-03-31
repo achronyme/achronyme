@@ -165,11 +165,22 @@ impl ProveHandler for SharedProveHandler {
 
 impl VerifyHandler for DefaultProveHandler {
     fn verify_proof(&self, proof: &memory::ProofObject) -> Result<bool, String> {
-        proving::groth16_bn254::verify_proof_from_json(
-            &proof.proof_json,
-            &proof.public_json,
-            &proof.vkey_json,
-        )
+        match self.prime_id {
+            PrimeId::Bn254 => proving::groth16_bn254::verify_proof_from_json(
+                &proof.proof_json,
+                &proof.public_json,
+                &proof.vkey_json,
+            ),
+            PrimeId::Bls12_381 => proving::groth16_bls12_381::verify_proof_from_json(
+                &proof.proof_json,
+                &proof.public_json,
+                &proof.vkey_json,
+            ),
+            other => Err(format!(
+                "proof verification not supported for prime `{}`",
+                other.name()
+            )),
+        }
     }
 }
 
@@ -204,9 +215,13 @@ impl DefaultProveHandler {
                 proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
                     .map_err(ProveError::ProofGeneration)?
             }
+            PrimeId::Bls12_381 => {
+                proving::groth16_bls12_381::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
+                    .map_err(ProveError::ProofGeneration)?
+            }
             other => {
                 return Err(ProveError::ProofGeneration(format!(
-                    "Groth16 proof generation not yet supported for prime `{}`",
+                    "Groth16 proof generation not supported for prime `{}`",
                     other.name()
                 )));
             }
