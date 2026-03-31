@@ -41,6 +41,16 @@ pub(super) fn validate(toml: &AchronymeToml) -> Result<()> {
         }
     }
 
+    if let Some(ref circuit) = toml.circuit {
+        if let Some(ref prime) = circuit.prime {
+            if memory::field::PrimeId::from_name(prime).is_none() {
+                anyhow::bail!(
+                    "achronyme.toml: invalid circuit.prime `{prime}` (expected \"bn254\", \"bls12-381\", or \"goldilocks\")"
+                );
+            }
+        }
+    }
+
     if let Some(ref entry) = toml.project.entry {
         if !entry.ends_with(".ach") && !entry.ends_with(".achb") {
             anyhow::bail!("achronyme.toml: entry `{entry}` must end in .ach or .achb");
@@ -126,6 +136,34 @@ mod tests {
         validate_name("my-circuit").unwrap();
         validate_name("_private").unwrap();
         validate_name("A_B-c").unwrap();
+    }
+
+    #[test]
+    fn validate_valid_circuit_prime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            "[project]\nname = \"t\"\nversion = \"0.1.0\"\n\n[circuit]\nprime = \"bls12-381\"\n",
+        )
+        .unwrap();
+        let toml = load_toml(&path).unwrap();
+        assert_eq!(
+            toml.circuit.as_ref().unwrap().prime.as_deref(),
+            Some("bls12-381")
+        );
+    }
+
+    #[test]
+    fn validate_invalid_circuit_prime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            "[project]\nname = \"t\"\nversion = \"0.1.0\"\n\n[circuit]\nprime = \"secp256k1\"\n",
+        )
+        .unwrap();
+        assert!(load_toml(&path).is_err());
     }
 
     #[test]

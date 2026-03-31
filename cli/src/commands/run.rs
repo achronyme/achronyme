@@ -14,6 +14,7 @@ pub fn run_file(
     stress_gc: bool,
     ptau: Option<&str>,
     prove_backend: &str,
+    prime_id: memory::field::PrimeId,
     max_heap: Option<&str>,
     gc_stats: bool,
     circuit_stats: bool,
@@ -46,6 +47,7 @@ pub fn run_file(
         }
         let handler = Rc::new(DefaultProveHandler::new(
             backend,
+            prime_id,
             error_format,
             circuit_stats,
         ));
@@ -71,6 +73,7 @@ pub fn run_file(
     } else {
         let content = fs::read_to_string(path).context("Failed to source file")?;
         let mut compiler = super::new_compiler();
+        compiler.prime_id = prime_id;
         let source_path = std::path::Path::new(path);
         compiler.base_path = Some(
             source_path
@@ -102,6 +105,7 @@ pub fn run_file(
         }
         let handler = Rc::new(DefaultProveHandler::new(
             backend,
+            prime_id,
             error_format,
             circuit_stats,
         ));

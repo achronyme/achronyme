@@ -235,11 +235,9 @@ impl StatementCompiler for Compiler {
         prove_ir.name = Some(name.to_string());
 
         // 3. Serialize to bytes
-        let ir_bytes = prove_ir
-            .to_bytes(memory::field::PrimeId::Bn254)
-            .map_err(|e| {
-                CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
-            })?;
+        let ir_bytes = prove_ir.to_bytes(self.prime_id).map_err(|e| {
+            CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
+        })?;
 
         // 4. Store bytes in constant pool and bind as global
         let handle = self.intern_bytes(ir_bytes);
@@ -309,11 +307,9 @@ impl StatementCompiler for Compiler {
         prove_ir.name = Some(alias.to_string());
 
         // 4. Serialize to bytes
-        let ir_bytes = prove_ir
-            .to_bytes(memory::field::PrimeId::Bn254)
-            .map_err(|e| {
-                CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
-            })?;
+        let ir_bytes = prove_ir.to_bytes(self.prime_id).map_err(|e| {
+            CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
+        })?;
 
         // 5. Store bytes in constant pool and bind alias as global
         let handle = self.intern_bytes(ir_bytes);

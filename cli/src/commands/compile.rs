@@ -6,9 +6,15 @@ use vm::specs::{
 
 use super::ErrorFormat;
 
-pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat) -> Result<()> {
+pub fn compile_file(
+    path: &str,
+    output: Option<&str>,
+    prime_id: memory::field::PrimeId,
+    error_format: ErrorFormat,
+) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
     let mut compiler = super::new_compiler();
+    compiler.prime_id = prime_id;
     let bytecode = compiler.compile(&content).map_err(|e| {
         let rendered = super::render_compile_error(&e, &content, error_format);
         anyhow::anyhow!("{rendered}")
@@ -27,7 +33,7 @@ pub fn compile_file(path: &str, output: Option<&str>, error_format: ErrorFormat)
         file.write_all(b"ACH\x0B")?;
 
         // PrimeId (v0x0B+): identifies which prime field was used
-        file.write_u8(memory::field::PrimeId::Bn254.to_byte())?;
+        file.write_u8(prime_id.to_byte())?;
 
         // Metadata
         let main_func = compiler

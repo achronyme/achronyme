@@ -64,7 +64,9 @@ pub struct VmSection {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CircuitSection {}
+pub struct CircuitSection {
+    pub prime: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // Resolved config (merged CLI + TOML + defaults)
@@ -76,6 +78,7 @@ pub struct ProjectConfig {
     pub project_root: Option<PathBuf>,
     pub project_name: Option<String>,
     pub entry: Option<String>,
+    pub prime: String,
     pub backend: String,
     pub prove_backend: String,
     pub optimize: bool,

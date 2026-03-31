@@ -8,6 +8,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub error_format: Option<String>,
 
+    /// Prime field: bn254 (default), bls12-381, or goldilocks
+    #[arg(long, global = true)]
+    pub prime: Option<String>,
+
     /// Do not load achronyme.toml project configuration
     #[arg(long, global = true)]
     pub no_config: bool,

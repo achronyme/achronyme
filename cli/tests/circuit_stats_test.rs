@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use cli::commands::ErrorFormat;
+use memory::field::PrimeId;
 use tempfile::NamedTempFile;
 
 const EF: ErrorFormat = ErrorFormat::Human;
@@ -36,6 +37,7 @@ fn circuit_stats_basic_mul() {
         None,
         false,
         "r1cs",
+        PrimeId::Bn254,
         false,
         None,
         None,
@@ -57,6 +59,7 @@ fn circuit_stats_poseidon() {
         None,
         false,
         "r1cs",
+        PrimeId::Bn254,
         false,
         None,
         None,
@@ -78,6 +81,7 @@ fn circuit_stats_merkle() {
         None,
         false,
         "r1cs",
+        PrimeId::Bn254,
         false,
         None,
         None,
@@ -99,6 +103,7 @@ fn circuit_stats_comparison() {
         None,
         false,
         "r1cs",
+        PrimeId::Bn254,
         false,
         None,
         None,
@@ -120,6 +125,7 @@ fn circuit_stats_disabled_no_crash() {
         None,
         false,
         "r1cs",
+        PrimeId::Bn254,
         false,
         None,
         None,
