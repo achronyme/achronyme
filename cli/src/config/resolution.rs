@@ -226,11 +226,76 @@ mod tests {
         };
 
         let config = resolve_config(&cli, None, None);
+        assert_eq!(config.prime, "bn254"); // default
         assert_eq!(config.backend, "r1cs");
         assert!(config.optimize);
         assert_eq!(config.error_format, "human");
         assert_eq!(config.r1cs_path, "circuit.r1cs");
         assert_eq!(config.wtns_path, "witness.wtns");
+    }
+
+    #[test]
+    fn resolve_prime_from_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            "[project]\nname = \"t\"\nversion = \"0.1.0\"\n\n[circuit]\nprime = \"goldilocks\"\n",
+        )
+        .unwrap();
+        let toml = load_toml(&path).unwrap();
+
+        let cli = CliOverrides {
+            path: None,
+            error_format: None,
+            prime: None,
+            backend: None,
+            prove_backend: None,
+            optimize: None,
+            r1cs_path: None,
+            wtns_path: None,
+            solidity_path: None,
+            plonkish_json_path: None,
+            max_heap: None,
+            stress_gc: false,
+            gc_stats: false,
+            circuit_stats: false,
+        };
+
+        let config = resolve_config(&cli, Some(&toml), Some(tmp.path()));
+        assert_eq!(config.prime, "goldilocks");
+    }
+
+    #[test]
+    fn resolve_prime_cli_overrides_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            "[project]\nname = \"t\"\nversion = \"0.1.0\"\n\n[circuit]\nprime = \"goldilocks\"\n",
+        )
+        .unwrap();
+        let toml = load_toml(&path).unwrap();
+
+        let cli = CliOverrides {
+            path: None,
+            error_format: None,
+            prime: Some("bls12-381".to_string()),
+            backend: None,
+            prove_backend: None,
+            optimize: None,
+            r1cs_path: None,
+            wtns_path: None,
+            solidity_path: None,
+            plonkish_json_path: None,
+            max_heap: None,
+            stress_gc: false,
+            gc_stats: false,
+            circuit_stats: false,
+        };
+
+        let config = resolve_config(&cli, Some(&toml), Some(tmp.path()));
+        assert_eq!(config.prime, "bls12-381"); // CLI wins
     }
 
     #[test]
