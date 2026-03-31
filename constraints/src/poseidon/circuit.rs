@@ -2,25 +2,32 @@ use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
 
 use super::PoseidonParams;
 
-/// Synthesize S-box (x^5) as R1CS constraints.
+/// Synthesize S-box (x^α) as R1CS constraints.
 ///
-/// Creates 3 constraints:
-///   x2 = x * x
-///   x4 = x2 * x2
-///   x5 = x4 * x
+/// α=5: x² → x⁴ → x⁵ (3 constraints)
+/// α=7: x² → x³ → x⁶ → x⁷ (4 constraints)
 ///
-/// Returns the variable holding x^5.
-fn sbox_circuit(cs: &mut ConstraintSystem, x: &LinearCombination) -> Variable {
-    // x2 = x * x
-    let x2 = cs.mul_lc(x, x);
-
-    // x4 = x2 * x2
-    let x2_lc = LinearCombination::from_variable(x2);
-    let x4 = cs.mul_lc(&x2_lc, &x2_lc);
-
-    // x5 = x4 * x
-    let x4_lc = LinearCombination::from_variable(x4);
-    cs.mul_lc(&x4_lc, x)
+/// Returns the variable holding x^α.
+fn sbox_circuit(cs: &mut ConstraintSystem, x: &LinearCombination, alpha: u32) -> Variable {
+    match alpha {
+        5 => {
+            let x2 = cs.mul_lc(x, x);
+            let x2_lc = LinearCombination::from_variable(x2);
+            let x4 = cs.mul_lc(&x2_lc, &x2_lc);
+            let x4_lc = LinearCombination::from_variable(x4);
+            cs.mul_lc(&x4_lc, x)
+        }
+        7 => {
+            let x2 = cs.mul_lc(x, x);
+            let x2_lc = LinearCombination::from_variable(x2);
+            let x3 = cs.mul_lc(&x2_lc, x);
+            let x3_lc = LinearCombination::from_variable(x3);
+            let x6 = cs.mul_lc(&x3_lc, &x3_lc);
+            let x6_lc = LinearCombination::from_variable(x6);
+            cs.mul_lc(&x6_lc, x)
+        }
+        _ => panic!("unsupported S-box exponent α={alpha} in R1CS circuit"),
+    }
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -55,13 +62,13 @@ pub fn poseidon_permutation_circuit(
             // Full round: S-box on all elements
             let mut new_state = Vec::with_capacity(params.t);
             for i in 0..params.t {
-                let out = sbox_circuit(cs, &state[i]);
+                let out = sbox_circuit(cs, &state[i], params.alpha);
                 new_state.push(LinearCombination::from_variable(out));
             }
             state = new_state;
         } else {
             // Partial round: S-box on first element only
-            let out = sbox_circuit(cs, &state[0]);
+            let out = sbox_circuit(cs, &state[0], params.alpha);
             state[0] = LinearCombination::from_variable(out);
         }
 
