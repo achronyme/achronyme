@@ -38,6 +38,38 @@ impl From<memory::ArenaError> for LoaderError {
     }
 }
 
+/// Validate that canonical limbs `[l0, l1, l2, l3]` are less than the modulus
+/// for the given `PrimeId`. Returns `true` if valid.
+fn validate_field_limbs(limbs: [u64; 4], prime_id: PrimeId) -> bool {
+    use memory::field::FieldBackend;
+    let modulus_bytes = match prime_id {
+        PrimeId::Bn254 => memory::field::Bn254Fr::modulus_le_bytes(),
+        PrimeId::Bls12_381 => memory::field::Bls12_381Fr::modulus_le_bytes(),
+        PrimeId::Goldilocks => memory::field::GoldilocksFr::modulus_le_bytes(),
+        _ => return true, // Skip validation for backends without impl yet
+    };
+    // Convert modulus bytes back to limbs for comparison
+    let mut mod_limbs = [0u64; 4];
+    for i in 0..4 {
+        mod_limbs[i] = u64::from_le_bytes(
+            modulus_bytes[i * 8..(i + 1) * 8]
+                .try_into()
+                .expect("modulus_le_bytes is always 32 bytes"),
+        );
+    }
+    // Compare limbs in big-endian order (most significant first)
+    for i in (0..4).rev() {
+        if limbs[i] < mod_limbs[i] {
+            return true;
+        }
+        if limbs[i] > mod_limbs[i] {
+            return false;
+        }
+    }
+    // Equal to modulus — not valid (must be strictly less)
+    false
+}
+
 impl VM {
     /// Load an executable binary (.achb) into the VM.
     ///
@@ -107,12 +139,19 @@ impl VM {
                 )));
             }
             let mut handles = Vec::with_capacity(field_count as usize);
-            for _ in 0..field_count {
+            for i in 0..field_count {
                 let l0 = reader.read_u64::<LittleEndian>()?;
                 let l1 = reader.read_u64::<LittleEndian>()?;
                 let l2 = reader.read_u64::<LittleEndian>()?;
                 let l3 = reader.read_u64::<LittleEndian>()?;
-                let fe = memory::FieldElement::from_canonical([l0, l1, l2, l3]);
+                let limbs = [l0, l1, l2, l3];
+                if !validate_field_limbs(limbs, prime_id) {
+                    return Err(LoaderError::Format(format!(
+                        "field constant {i} exceeds {} modulus",
+                        prime_id.name()
+                    )));
+                }
+                let fe = memory::FieldElement::from_canonical(limbs);
                 let handle = self.heap.alloc_field(fe)?;
                 handles.push(handle);
             }
@@ -422,5 +461,61 @@ impl VM {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_field_limbs_bn254_zero_ok() {
+        assert!(validate_field_limbs([0, 0, 0, 0], PrimeId::Bn254));
+    }
+
+    #[test]
+    fn validate_field_limbs_bn254_one_ok() {
+        assert!(validate_field_limbs([1, 0, 0, 0], PrimeId::Bn254));
+    }
+
+    #[test]
+    fn validate_field_limbs_bn254_modulus_rejected() {
+        // BN254 modulus limbs
+        let modulus = [
+            0x43e1f593f0000001,
+            0x2833e84879b97091,
+            0xb85045b68181585d,
+            0x30644e72e131a029,
+        ];
+        assert!(!validate_field_limbs(modulus, PrimeId::Bn254));
+    }
+
+    #[test]
+    fn validate_field_limbs_bn254_modulus_minus_one_ok() {
+        let modulus_minus_1 = [
+            0x43e1f593f0000000, // l0 - 1
+            0x2833e84879b97091,
+            0xb85045b68181585d,
+            0x30644e72e131a029,
+        ];
+        assert!(validate_field_limbs(modulus_minus_1, PrimeId::Bn254));
+    }
+
+    #[test]
+    fn validate_field_limbs_goldilocks_ok() {
+        assert!(validate_field_limbs([42, 0, 0, 0], PrimeId::Goldilocks));
+    }
+
+    #[test]
+    fn validate_field_limbs_goldilocks_modulus_rejected() {
+        // Goldilocks p = 2^64 - 2^32 + 1 = 0xFFFFFFFF00000001
+        let p = 0xFFFFFFFF00000001u64;
+        assert!(!validate_field_limbs([p, 0, 0, 0], PrimeId::Goldilocks));
+    }
+
+    #[test]
+    fn validate_field_limbs_goldilocks_nonzero_upper_rejected() {
+        // l1 != 0 but l0 < p — still exceeds modulus because total > p
+        assert!(!validate_field_limbs([0, 1, 0, 0], PrimeId::Goldilocks));
     }
 }
