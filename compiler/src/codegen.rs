@@ -59,6 +59,9 @@ pub struct Compiler {
     /// FnDecl AST nodes accumulated during top-level compilation.
     /// Passed to ProveIR so prove/circuit blocks can inline outer functions.
     pub fn_decl_asts: Vec<Stmt>,
+
+    /// Prime field for ProveIR serialization. Defaults to BN254.
+    pub prime_id: memory::field::PrimeId,
 }
 
 use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
@@ -146,6 +149,7 @@ impl Compiler {
             warnings: Vec::new(),
             known_methods,
             fn_decl_asts: Vec::new(),
+            prime_id: memory::field::PrimeId::Bn254,
         }
     }
 

@@ -14,6 +14,7 @@ pub fn compile_file(
 ) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read file")?;
     let mut compiler = super::new_compiler();
+    compiler.prime_id = prime_id;
     let bytecode = compiler.compile(&content).map_err(|e| {
         let rendered = super::render_compile_error(&e, &content, error_format);
         anyhow::anyhow!("{rendered}")

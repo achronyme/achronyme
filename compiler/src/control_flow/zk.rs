@@ -259,7 +259,7 @@ pub(super) fn compile_prove(
 
     // 5. Serialize ProveIR and store as bytes constant.
     let ir_bytes = prove_ir
-        .to_bytes(memory::field::PrimeId::Bn254)
+        .to_bytes(compiler.prime_id)
         .map_err(|e| {
             CompilerError::CompileError(format!("ProveIR serialization: {e}"), compiler.cur_span())
         })?;

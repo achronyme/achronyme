@@ -236,7 +236,7 @@ impl StatementCompiler for Compiler {
 
         // 3. Serialize to bytes
         let ir_bytes = prove_ir
-            .to_bytes(memory::field::PrimeId::Bn254)
+            .to_bytes(self.prime_id)
             .map_err(|e| {
                 CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
             })?;
@@ -310,7 +310,7 @@ impl StatementCompiler for Compiler {
 
         // 4. Serialize to bytes
         let ir_bytes = prove_ir
-            .to_bytes(memory::field::PrimeId::Bn254)
+            .to_bytes(self.prime_id)
             .map_err(|e| {
                 CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
             })?;

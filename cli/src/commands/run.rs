@@ -73,6 +73,7 @@ pub fn run_file(
     } else {
         let content = fs::read_to_string(path).context("Failed to source file")?;
         let mut compiler = super::new_compiler();
+        compiler.prime_id = prime_id;
         let source_path = std::path::Path::new(path);
         compiler.base_path = Some(
             source_path
