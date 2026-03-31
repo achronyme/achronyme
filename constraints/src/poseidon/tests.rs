@@ -1,7 +1,11 @@
 use super::*;
 use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
 use crate::witness::WitnessBuilder;
-use memory::FieldElement;
+use memory::{Bls12_381Fr, FieldElement, GoldilocksFr};
+
+// ============================================================================
+// BN254 tests (backward compat)
+// ============================================================================
 
 #[test]
 fn test_poseidon_params_construction() {
@@ -9,20 +13,32 @@ fn test_poseidon_params_construction() {
     assert_eq!(params.t, 3);
     assert_eq!(params.r_f, 8);
     assert_eq!(params.r_p, 57);
+    assert_eq!(params.alpha, 5);
     assert_eq!(params.round_constants.len(), 65 * 3);
     assert_eq!(params.mds.len(), 3);
     assert_eq!(params.mds[0].len(), 3);
 }
 
 #[test]
-fn test_sbox() {
+fn test_sbox_alpha5() {
     // 2^5 = 32
-    let x = FieldElement::from_u64(2);
-    assert_eq!(native::sbox(x), FieldElement::from_u64(32));
+    let x: FieldElement = FieldElement::from_u64(2);
+    assert_eq!(native::sbox(x, 5), FieldElement::from_u64(32));
 
     // 3^5 = 243
-    let x = FieldElement::from_u64(3);
-    assert_eq!(native::sbox(x), FieldElement::from_u64(243));
+    let x: FieldElement = FieldElement::from_u64(3);
+    assert_eq!(native::sbox(x, 5), FieldElement::from_u64(243));
+}
+
+#[test]
+fn test_sbox_alpha7() {
+    // 2^7 = 128
+    let x: FieldElement = FieldElement::from_u64(2);
+    assert_eq!(native::sbox(x, 7), FieldElement::from_u64(128));
+
+    // 3^7 = 2187
+    let x: FieldElement = FieldElement::from_u64(3);
+    assert_eq!(native::sbox(x, 7), FieldElement::from_u64(2187));
 }
 
 #[test]
@@ -64,7 +80,6 @@ fn test_poseidon_not_trivial() {
 fn test_poseidon_circomlibjs_reference_vector() {
     // Reference: circomlibjs poseidon([1, 2]) = 0x115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a
     // Decimal: 7853200120776062878684798364095072458815029376092732009249414926327459813530
-    // Confirmed by iden3/go-iden3-crypto and circomlibjs npm package.
     let params = PoseidonParams::bn254_t3();
     let hash = poseidon_hash(
         &params,
@@ -216,7 +231,7 @@ fn test_poseidon_constraint_count() {
     let _hash = poseidon_hash_circuit(&mut cs, &params, left, right);
 
     // Expected constraints:
-    // S-box = 3 constraints each
+    // S-box = 3 constraints each (α=5)
     // Full rounds: 8 rounds * 3 S-boxes = 24 S-boxes = 72 constraints
     // Partial rounds: 57 rounds * 1 S-box = 57 S-boxes = 171 constraints
     // Partial round materialization: 57 rounds * 2 enforce_equal = 114 constraints
@@ -234,6 +249,7 @@ fn test_lfsr_params_construction() {
     assert_eq!(params.t, 3);
     assert_eq!(params.r_f, 8);
     assert_eq!(params.r_p, 57);
+    assert_eq!(params.alpha, 5);
     assert_eq!(params.round_constants.len(), 195);
     assert_eq!(params.mds.len(), 3);
 }
@@ -290,9 +306,134 @@ fn test_parametric_constructor_validates() {
             3,
             8,
             57,
+            5,
             vec![FieldElement::ZERO; 10], // need 195
             vec![vec![FieldElement::ZERO; 3]; 3],
         );
     });
     assert!(result.is_err());
+}
+
+// ============================================================================
+// BLS12-381 Poseidon tests
+// ============================================================================
+
+#[test]
+fn test_bls12_381_params() {
+    let params = PoseidonParams::<Bls12_381Fr>::bls12_381_t3();
+    assert_eq!(params.t, 3);
+    assert_eq!(params.r_f, 8);
+    assert_eq!(params.r_p, 57);
+    assert_eq!(params.alpha, 5);
+    assert_eq!(params.round_constants.len(), 195);
+    assert_eq!(params.mds.len(), 3);
+}
+
+#[test]
+fn test_bls12_381_deterministic() {
+    let p1 = PoseidonParams::<Bls12_381Fr>::bls12_381_t3();
+    let p2 = PoseidonParams::<Bls12_381Fr>::bls12_381_t3();
+    assert_eq!(p1.round_constants, p2.round_constants);
+    assert_eq!(p1.mds, p2.mds);
+}
+
+#[test]
+fn test_bls12_381_hash_not_trivial() {
+    let params = PoseidonParams::<Bls12_381Fr>::bls12_381_t3();
+    type BlsFE = FieldElement<Bls12_381Fr>;
+
+    let h = poseidon_hash(&params, BlsFE::zero(), BlsFE::zero());
+    assert!(!h.is_zero(), "BLS12-381 poseidon(0,0) should not be 0");
+
+    let h2 = poseidon_hash(&params, BlsFE::from_u64(1), BlsFE::from_u64(2));
+    assert!(!h2.is_zero());
+    assert_ne!(h, h2, "different inputs must produce different hashes");
+}
+
+#[test]
+fn test_bls12_381_differs_from_bn254() {
+    // Same logical inputs (1, 2) hashed in BN254 vs BLS12-381 must differ
+    // (different field, different LFSR constants, different modulus)
+    let bn_params = PoseidonParams::bn254_t3_lfsr();
+    let bls_params = PoseidonParams::<Bls12_381Fr>::bls12_381_t3();
+
+    let bn_hash = poseidon_hash(
+        &bn_params,
+        FieldElement::from_u64(1),
+        FieldElement::from_u64(2),
+    );
+    let bls_hash = poseidon_hash(
+        &bls_params,
+        FieldElement::<Bls12_381Fr>::from_u64(1),
+        FieldElement::<Bls12_381Fr>::from_u64(2),
+    );
+
+    // They are in different fields, so we compare canonical limbs
+    assert_ne!(
+        bn_hash.to_canonical(),
+        bls_hash.to_canonical(),
+        "BN254 and BLS12-381 Poseidon must produce different outputs"
+    );
+}
+
+// ============================================================================
+// Goldilocks Poseidon tests
+// ============================================================================
+
+#[test]
+fn test_goldilocks_params() {
+    let params = PoseidonParams::<GoldilocksFr>::goldilocks_t3();
+    assert_eq!(params.t, 3);
+    assert_eq!(params.r_f, 8);
+    assert_eq!(params.r_p, 22);
+    assert_eq!(params.alpha, 7);
+    assert_eq!(params.round_constants.len(), 90); // (8+22)*3
+    assert_eq!(params.mds.len(), 3);
+}
+
+#[test]
+fn test_goldilocks_deterministic() {
+    let p1 = PoseidonParams::<GoldilocksFr>::goldilocks_t3();
+    let p2 = PoseidonParams::<GoldilocksFr>::goldilocks_t3();
+    assert_eq!(p1.round_constants, p2.round_constants);
+    assert_eq!(p1.mds, p2.mds);
+}
+
+#[test]
+fn test_goldilocks_hash_not_trivial() {
+    let params = PoseidonParams::<GoldilocksFr>::goldilocks_t3();
+    type GlFE = FieldElement<GoldilocksFr>;
+
+    let h = poseidon_hash(&params, GlFE::zero(), GlFE::zero());
+    assert!(!h.is_zero(), "Goldilocks poseidon(0,0) should not be 0");
+
+    let h2 = poseidon_hash(&params, GlFE::from_u64(1), GlFE::from_u64(2));
+    assert!(!h2.is_zero());
+    assert_ne!(h, h2);
+}
+
+#[test]
+fn test_goldilocks_sbox_alpha7() {
+    type GlFE = FieldElement<GoldilocksFr>;
+
+    // x^7 for small values
+    assert_eq!(native::sbox(GlFE::from_u64(2), 7), GlFE::from_u64(128));
+    assert_eq!(native::sbox(GlFE::from_u64(3), 7), GlFE::from_u64(2187));
+    assert_eq!(native::sbox(GlFE::zero(), 7), GlFE::zero());
+    assert_eq!(native::sbox(GlFE::one(), 7), GlFE::one());
+}
+
+#[test]
+fn test_goldilocks_poseidon_single() {
+    let params = PoseidonParams::<GoldilocksFr>::goldilocks_t3();
+    type GlFE = FieldElement<GoldilocksFr>;
+
+    let x = GlFE::from_u64(42);
+    let h = poseidon_hash_single(&params, x);
+
+    // Deterministic
+    assert_eq!(h, poseidon_hash_single(&params, x));
+    // Not trivial
+    assert_ne!(h, x);
+    assert!(!h.is_zero());
 }
