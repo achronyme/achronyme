@@ -720,16 +720,12 @@ impl fmt::Display for CircuitExpr {
             CircuitExpr::ArrayIndex { array, index } => write!(f, "{array}[{index}]"),
             CircuitExpr::ArrayLen(name) => write!(f, "{name}.len()"),
             CircuitExpr::Pow { base, exp } => write!(f, "({base} ^ {exp})"),
-            CircuitExpr::IntDiv {
-                lhs,
-                rhs,
-                max_bits,
-            } => write!(f, "int_div({lhs}, {rhs}, {max_bits})"),
-            CircuitExpr::IntMod {
-                lhs,
-                rhs,
-                max_bits,
-            } => write!(f, "int_mod({lhs}, {rhs}, {max_bits})"),
+            CircuitExpr::IntDiv { lhs, rhs, max_bits } => {
+                write!(f, "int_div({lhs}, {rhs}, {max_bits})")
+            }
+            CircuitExpr::IntMod { lhs, rhs, max_bits } => {
+                write!(f, "int_mod({lhs}, {rhs}, {max_bits})")
+            }
         }
     }
 }

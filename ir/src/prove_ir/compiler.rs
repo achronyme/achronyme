@@ -674,10 +674,7 @@ impl ProveIrCompiler {
     ) -> Result<(), ProveIrError> {
         // decompose(value, bits) → Decompose node (creates array of bit vars)
         if let Expr::Call { callee, args, .. } = value {
-            if let Expr::Ident {
-                name: fn_name, ..
-            } = callee.as_ref()
-            {
+            if let Expr::Ident { name: fn_name, .. } = callee.as_ref() {
                 if fn_name == "decompose" {
                     let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
                     self.check_arity("decompose", 2, arg_vals.len(), span)?;
@@ -749,11 +746,9 @@ impl ProveIrCompiler {
                     (0..elems.len()).map(|i| format!("{name}_{i}")).collect();
                 let elem_exprs: Vec<CircuitExpr> = elems
                     .iter()
-                    .map(|e| {
-                        match self.env.get(e) {
-                            Some(CompEnvValue::Scalar(s)) => CircuitExpr::Var(s.clone()),
-                            _ => CircuitExpr::Var(e.clone()),
-                        }
+                    .map(|e| match self.env.get(e) {
+                        Some(CompEnvValue::Scalar(s)) => CircuitExpr::Var(s.clone()),
+                        _ => CircuitExpr::Var(e.clone()),
                     })
                     .collect();
                 self.body.push(CircuitNode::LetArray {
@@ -924,15 +919,13 @@ impl ProveIrCompiler {
     /// - A bare `Expr::Ident` referencing an array
     /// - A `Stmt::Return` with an `Expr::Ident` referencing an array
     /// - Any other statement (compiled normally) followed by checking env
-    fn find_array_result(
-        &mut self,
-        stmts: &[Stmt],
-        span: &Span,
-    ) -> Result<String, ProveIrError> {
-        let last = stmts.last().ok_or_else(|| ProveIrError::UnsupportedOperation {
-            description: "array-returning function has an empty body".into(),
-            span: to_span(span),
-        })?;
+    fn find_array_result(&mut self, stmts: &[Stmt], span: &Span) -> Result<String, ProveIrError> {
+        let last = stmts
+            .last()
+            .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                description: "array-returning function has an empty body".into(),
+                span: to_span(span),
+            })?;
 
         // Extract the array identifier from the last statement
         let ident = match last {
@@ -2185,21 +2178,20 @@ impl ProveIrCompiler {
         };
 
         let base_ssa = format!("__{fn_name}${invoke_id}_{param_name}");
-        let new_elem_names: Vec<String> =
-            (0..src_elems.len()).map(|j| format!("{base_ssa}_{j}")).collect();
+        let new_elem_names: Vec<String> = (0..src_elems.len())
+            .map(|j| format!("{base_ssa}_{j}"))
+            .collect();
 
         // Emit LetArray node with references to the source elements.
         let elem_exprs: Vec<CircuitExpr> = src_elems
             .iter()
-            .map(|e| {
-                match self.env.get(e) {
-                    Some(CompEnvValue::Scalar(s)) => CircuitExpr::Var(s.clone()),
-                    Some(CompEnvValue::Capture(c)) => {
-                        self.captured_names.insert(c.clone());
-                        CircuitExpr::Capture(c.clone())
-                    }
-                    _ => CircuitExpr::Var(e.clone()),
+            .map(|e| match self.env.get(e) {
+                Some(CompEnvValue::Scalar(s)) => CircuitExpr::Var(s.clone()),
+                Some(CompEnvValue::Capture(c)) => {
+                    self.captured_names.insert(c.clone());
+                    CircuitExpr::Capture(c.clone())
                 }
+                _ => CircuitExpr::Var(e.clone()),
             })
             .collect();
 

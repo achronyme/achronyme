@@ -285,10 +285,12 @@ impl Instruction {
             } => vec![*cond, *if_true, *if_false],
             Instruction::AssertEq { lhs, rhs, .. } => vec![*lhs, *rhs],
             Instruction::PoseidonHash { left, right, .. } => vec![*left, *right],
-            Instruction::RangeCheck { operand, .. }
-            | Instruction::Decompose { operand, .. } => vec![*operand],
-            Instruction::IntDiv { lhs, rhs, .. }
-            | Instruction::IntMod { lhs, rhs, .. } => vec![*lhs, *rhs],
+            Instruction::RangeCheck { operand, .. } | Instruction::Decompose { operand, .. } => {
+                vec![*operand]
+            }
+            Instruction::IntDiv { lhs, rhs, .. } | Instruction::IntMod { lhs, rhs, .. } => {
+                vec![*lhs, *rhs]
+            }
         }
     }
 }

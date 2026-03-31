@@ -402,10 +402,7 @@ pub fn evaluate(
                 values.insert(*result, v);
             }
             Instruction::IntDiv {
-                result,
-                lhs,
-                rhs,
-                ..
+                result, lhs, rhs, ..
             } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
@@ -421,10 +418,7 @@ pub fn evaluate(
                 values.insert(*result, q);
             }
             Instruction::IntMod {
-                result,
-                lhs,
-                rhs,
-                ..
+                result, lhs, rhs, ..
             } => {
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
@@ -656,7 +650,14 @@ pub fn evaluate_lenient(
                 if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
                     let al = a.to_canonical();
                     let bl = b.to_canonical();
-                    if al[1] == 0 && al[2] == 0 && al[3] == 0 && bl[1] == 0 && bl[2] == 0 && bl[3] == 0 && bl[0] != 0 {
+                    if al[1] == 0
+                        && al[2] == 0
+                        && al[3] == 0
+                        && bl[1] == 0
+                        && bl[2] == 0
+                        && bl[3] == 0
+                        && bl[0] != 0
+                    {
                         values.insert(*result, FieldElement::from_u64(al[0] / bl[0]));
                     }
                 }
@@ -667,7 +668,14 @@ pub fn evaluate_lenient(
                 if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
                     let al = a.to_canonical();
                     let bl = b.to_canonical();
-                    if al[1] == 0 && al[2] == 0 && al[3] == 0 && bl[1] == 0 && bl[2] == 0 && bl[3] == 0 && bl[0] != 0 {
+                    if al[1] == 0
+                        && al[2] == 0
+                        && al[3] == 0
+                        && bl[1] == 0
+                        && bl[2] == 0
+                        && bl[3] == 0
+                        && bl[0] != 0
+                    {
                         values.insert(*result, FieldElement::from_u64(al[0] % bl[0]));
                     }
                 }

@@ -390,7 +390,10 @@ pub(crate) fn fill_poseidon_witness(
 ///
 /// Returns `(q, r)` where `a = b * q + r` and `0 <= r < b`.
 /// Both `a` and `b` are given as 4-limb canonical representations.
-pub fn int_divmod_field_pub(a_limbs: &[u64; 4], b_limbs: &[u64; 4]) -> (FieldElement, FieldElement) {
+pub fn int_divmod_field_pub(
+    a_limbs: &[u64; 4],
+    b_limbs: &[u64; 4],
+) -> (FieldElement, FieldElement) {
     // Check if both values fit in a single u64 (common case)
     let a_small = a_limbs[1] == 0 && a_limbs[2] == 0 && a_limbs[3] == 0;
     let b_small = b_limbs[1] == 0 && b_limbs[2] == 0 && b_limbs[3] == 0;
@@ -495,7 +498,9 @@ fn leading_zeros_u256(a: &[u64; 4]) -> usize {
 }
 
 fn shl_u256(a: &[u64; 4], shift: usize) -> [u64; 4] {
-    if shift >= 256 { return [0; 4]; }
+    if shift >= 256 {
+        return [0; 4];
+    }
     let word_shift = shift / 64;
     let bit_shift = shift % 64;
     let mut result = [0u64; 4];
@@ -509,7 +514,9 @@ fn shl_u256(a: &[u64; 4], shift: usize) -> [u64; 4] {
 }
 
 fn shr_u256(a: &[u64; 4], shift: usize) -> [u64; 4] {
-    if shift >= 256 { return [0; 4]; }
+    if shift >= 256 {
+        return [0; 4];
+    }
     let word_shift = shift / 64;
     let bit_shift = shift % 64;
     let mut result = [0u64; 4];

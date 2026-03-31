@@ -592,11 +592,9 @@ impl PlonkishCompiler {
                     // Use the same range check path (bit decomposition) but also
                     // expose each bit. For plonkish, we decompose into individual
                     // advice cells.
-                    let bit_cells =
-                        self.emit_decompose(op_cell, *num_bits)?;
+                    let bit_cells = self.emit_decompose(op_cell, *num_bits)?;
                     for (i, bit_ssa) in bit_results.iter().enumerate() {
-                        self.val_map
-                            .insert(*bit_ssa, PlonkVal::Cell(bit_cells[i]));
+                        self.val_map.insert(*bit_ssa, PlonkVal::Cell(bit_cells[i]));
                     }
                     range_bounds.insert(*operand, *num_bits);
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
@@ -611,8 +609,7 @@ impl PlonkishCompiler {
                     let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val)?;
                     let b_cell = self.materialize_val(&b_val)?;
-                    let (q_cell, _r_cell) =
-                        self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
+                    let (q_cell, _r_cell) = self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
                     self.val_map.insert(*result, PlonkVal::Cell(q_cell));
                 }
                 IrInstruction::IntMod {
@@ -625,8 +622,7 @@ impl PlonkishCompiler {
                     let b_val = self.lookup_val(rhs)?;
                     let a_cell = self.materialize_val(&a_val)?;
                     let b_cell = self.materialize_val(&b_val)?;
-                    let (_q_cell, r_cell) =
-                        self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
+                    let (_q_cell, r_cell) = self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
                     self.val_map.insert(*result, PlonkVal::Cell(r_cell));
                 }
             }

@@ -391,8 +391,7 @@ impl Instantiator {
                     operand,
                     num_bits: *num_bits,
                 });
-                self.env
-                    .insert(name.clone(), InstEnvValue::Array(bit_vars));
+                self.env.insert(name.clone(), InstEnvValue::Array(bit_vars));
             }
         }
         Ok(())
@@ -856,11 +855,7 @@ impl Instantiator {
                 let base_var = self.emit_expr(base)?;
                 self.emit_pow(base_var, *exp)
             }
-            CircuitExpr::IntDiv {
-                lhs,
-                rhs,
-                max_bits,
-            } => {
+            CircuitExpr::IntDiv { lhs, rhs, max_bits } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
                 let v = self.program.fresh_var();
@@ -872,11 +867,7 @@ impl Instantiator {
                 });
                 Ok(v)
             }
-            CircuitExpr::IntMod {
-                lhs,
-                rhs,
-                max_bits,
-            } => {
+            CircuitExpr::IntMod { lhs, rhs, max_bits } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
                 let v = self.program.fresh_var();
