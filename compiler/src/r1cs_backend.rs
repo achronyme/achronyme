@@ -1,5 +1,6 @@
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
+use memory::field::PrimeId;
 use memory::FieldElement;
 use std::collections::HashMap;
 
@@ -37,6 +38,9 @@ pub struct R1CSCompiler {
     pub(crate) poseidon_params: Option<PoseidonParams>,
     /// Witness generation trace: records each intermediate variable allocation.
     pub witness_ops: Vec<WitnessOp>,
+    /// Prime field for this compilation.
+    /// Determines the default bit width for range checks and comparisons.
+    pub prime_id: PrimeId,
     /// SSA variables proven to be boolean by bool_prop analysis.
     /// Boolean enforcement constraints are skipped for these.
     proven_boolean: std::collections::HashSet<ir::types::SsaVar>,
@@ -63,6 +67,7 @@ impl R1CSCompiler {
             bindings: HashMap::new(),
             public_inputs: Vec::new(),
             witnesses: Vec::new(),
+            prime_id: PrimeId::Bn254,
             poseidon_params: None,
             witness_ops: Vec::new(),
             proven_boolean: std::collections::HashSet::new(),
@@ -356,17 +361,18 @@ impl R1CSCompiler {
                     let b = lookup(&lc_map, rhs)?;
                     let bound_a = range_bounds.get(lhs).copied();
                     let bound_b = range_bounds.get(rhs).copied();
+                    let default_bits = self.default_range_bits();
 
                     let effective_bits = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => ba.max(bb),
                         _ => {
                             if bound_a.is_none() {
-                                self.enforce_252_range(&a);
+                                self.enforce_default_range(&a);
                             }
                             if bound_b.is_none() {
-                                self.enforce_252_range(&b);
+                                self.enforce_default_range(&b);
                             }
-                            252
+                            default_bits
                         }
                     };
 
@@ -381,17 +387,18 @@ impl R1CSCompiler {
                     let b = lookup(&lc_map, rhs)?;
                     let bound_a = range_bounds.get(lhs).copied();
                     let bound_b = range_bounds.get(rhs).copied();
+                    let default_bits = self.default_range_bits();
 
                     let effective_bits = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => ba.max(bb),
                         _ => {
                             if bound_a.is_none() {
-                                self.enforce_252_range(&a);
+                                self.enforce_default_range(&a);
                             }
                             if bound_b.is_none() {
-                                self.enforce_252_range(&b);
+                                self.enforce_default_range(&b);
                             }
-                            252
+                            default_bits
                         }
                     };
 

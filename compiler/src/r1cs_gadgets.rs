@@ -5,12 +5,13 @@ use crate::r1cs_backend::R1CSCompiler;
 use crate::r1cs_error::R1CSError;
 use crate::witness_gen::WitnessOp;
 
-/// Pre-computed table of 2^0 .. 2^252 as FieldElements.
-/// Initialized once on first access, O(253) total instead of O(n) per call.
-static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 253]> = std::sync::LazyLock::new(|| {
-    let mut table = [FieldElement::ZERO; 253];
+/// Pre-computed table of 2^0 .. 2^255 as FieldElements.
+/// Covers all supported prime fields (BN254=254 bits, BLS12-381=255 bits).
+/// Initialized once on first access, O(256) total instead of O(n) per call.
+static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 256]> = std::sync::LazyLock::new(|| {
+    let mut table = [FieldElement::ZERO; 256];
     table[0] = FieldElement::ONE;
-    for i in 1..253 {
+    for i in 1..256 {
         table[i] = table[i - 1].add(&table[i - 1]);
     }
     table
@@ -125,9 +126,16 @@ impl R1CSCompiler {
         self.cs.enforce_equal(val.clone(), sum);
     }
 
-    /// Enforce that `val` fits in 252 bits: `val ∈ [0, 2^252)`.
-    pub(crate) fn enforce_252_range(&mut self, val: &LinearCombination) {
-        self.enforce_n_range(val, 252);
+    /// Default range bit width: `modulus_bit_size - 2`.
+    /// BN254 → 252, BLS12-381 → 253.
+    pub(crate) fn default_range_bits(&self) -> u32 {
+        self.prime_id.modulus_bit_size() - 2
+    }
+
+    /// Enforce that `val` fits in the default range for the active prime field.
+    pub(crate) fn enforce_default_range(&mut self, val: &LinearCombination) {
+        let bits = self.default_range_bits();
+        self.enforce_n_range(val, bits);
     }
 
     /// Compile an IsLt check via `num_bits`-bit decomposition.
