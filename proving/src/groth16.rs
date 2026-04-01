@@ -26,11 +26,35 @@ use memory::FieldElement;
 
 /// Convert an Achronyme `FieldElement` to an ark scalar field element.
 ///
-/// Uses `from_le_bytes_mod_order` — works for any `PrimeField` regardless
-/// of modulus. The caller must ensure the source `FieldElement` was produced
-/// under the same prime; otherwise the value wraps mod the target prime.
+/// The source `FieldElement` uses BN254 arithmetic internally. When
+/// converting to a different field (e.g. BLS12-381), negative values
+/// like `-1` are stored as `p_bn254 - 1`. A naïve byte reinterpretation
+/// would give the wrong value in the target field.
+///
+/// This function detects "negative" source values (canonical > p/2) and
+/// maps them to the correct negation in the target field:
+///   source < p/2  →  target = source  (positive, same integer)
+///   source >= p/2 →  target = -(p_bn254 - source)  (negative, re-negated)
 pub fn fe_to_ark<F: PrimeField>(fe: &FieldElement) -> F {
-    F::from_le_bytes_mod_order(&fe.to_le_bytes())
+    let bytes = fe.to_le_bytes();
+    let canonical = fe.to_canonical();
+
+    // Check if value is in the upper half of BN254's field (i.e., "negative")
+    // p_bn254 ≈ 0x30644e72... << 192, so half ≈ 0x18322739... << 192.
+    // Quick check: compare the top limb against MODULUS[3] / 2.
+    const BN254_MOD: [u64; 4] = memory::field::MODULUS;
+    let is_negative = canonical[3] > (BN254_MOD[3] / 2)
+        || (canonical[3] == (BN254_MOD[3] / 2) && canonical[2] > (BN254_MOD[2] / 2));
+
+    if is_negative {
+        // Compute abs = p_bn254 - canonical (the positive magnitude)
+        let neg = fe.neg();
+        let neg_bytes = neg.to_le_bytes();
+        let pos_in_target = F::from_le_bytes_mod_order(&neg_bytes);
+        -pos_in_target
+    } else {
+        F::from_le_bytes_mod_order(&bytes)
+    }
 }
 
 /// Convert an ark field element to a decimal string.
