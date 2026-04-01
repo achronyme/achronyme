@@ -360,6 +360,7 @@ fn run_r1cs_pipeline(
     proven: &std::collections::HashSet<ir::SsaVar>,
 ) -> Result<()> {
     let mut compiler = R1CSCompiler::new();
+    compiler.prime_id = prime_id;
     compiler.set_proven_boolean(proven.clone());
 
     // Count public/witness inputs from IR
