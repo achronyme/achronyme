@@ -13,7 +13,7 @@ use super::PrimeId;
 ///
 /// One `match` at the CLI/session boundary selects the backend; generics carry it
 /// everywhere else. No enum per value, no trait objects, no global mutable state.
-pub trait FieldBackend: Copy + Clone + Eq + std::hash::Hash + Sized + 'static {
+pub trait FieldBackend: Copy + Clone + Eq + std::hash::Hash + std::fmt::Debug + Sized + 'static {
     /// Internal representation of a field element.
     ///
     /// For Montgomery4 backends (BN254, BLS12-381, etc.): `[u64; 4]`
