@@ -43,6 +43,7 @@ fn eval_bool(source: &str) -> bool {
         .unwrap_or_else(|| panic!("expected bool, got {:?}", val))
 }
 
+#[allow(dead_code)]
 fn eval_int(source: &str) -> i64 {
     let val = eval(source);
     val.as_int()

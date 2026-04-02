@@ -56,6 +56,7 @@ fn run(source: &str) -> Result<VM, String> {
     Ok(vm)
 }
 
+#[allow(dead_code)]
 fn result_int(vm: &VM) -> i64 {
     vm.stack[0].as_int().expect("expected int in R[0]")
 }

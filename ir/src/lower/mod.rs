@@ -41,11 +41,10 @@ pub(super) struct FnDef {
 /// Convert a `TypeAnnotation` to an `IrType` (scalar types only).
 ///
 /// ```
-/// use achronyme_parser::ast::TypeAnnotation;
 /// use ir::IrLowering;
 ///
-/// // This is a public helper used during lowering
-/// let prog = IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
+/// let prog: ir::types::IrProgram =
+///     IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
 /// assert!(!prog.instructions.is_empty());
 /// ```
 pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
@@ -237,7 +236,7 @@ impl<F: FieldBackend> IrLowering<F> {
     /// ```
     /// use ir::IrLowering;
     ///
-    /// let prog = IrLowering::lower_circuit(
+    /// let prog: ir::types::IrProgram = IrLowering::lower_circuit(
     ///     "assert_eq(x * y, z)",
     ///     &["z"],
     ///     &["x", "y"],
@@ -302,9 +301,10 @@ impl<F: FieldBackend> IrLowering<F> {
     /// ```
     /// use ir::IrLowering;
     ///
-    /// let (pub_names, wit_names, prog) = IrLowering::lower_self_contained(
-    ///     "public x\nwitness y\nassert_eq(x, y)"
-    /// ).unwrap();
+    /// let (pub_names, wit_names, prog) =
+    ///     IrLowering::<memory::Bn254Fr>::lower_self_contained(
+    ///         "public x\nwitness y\nassert_eq(x, y)"
+    ///     ).unwrap();
     /// assert_eq!(pub_names, vec!["x"]);
     /// assert_eq!(wit_names, vec!["y"]);
     /// ```

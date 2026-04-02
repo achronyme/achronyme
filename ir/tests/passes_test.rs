@@ -8,7 +8,7 @@ use memory::FieldElement;
 
 #[test]
 fn const_fold_add() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -38,7 +38,7 @@ fn const_fold_add() {
 
 #[test]
 fn const_fold_sub() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -67,7 +67,7 @@ fn const_fold_sub() {
 
 #[test]
 fn const_fold_mul() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -96,7 +96,7 @@ fn const_fold_mul() {
 
 #[test]
 fn const_fold_mul_by_zero() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     // x is a non-constant Input
     let x = p.fresh_var();
     p.push(Instruction::Input {
@@ -128,7 +128,7 @@ fn const_fold_mul_by_zero() {
 
 #[test]
 fn const_fold_neg() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -152,7 +152,7 @@ fn const_fold_neg() {
 #[test]
 fn const_fold_chain() {
     // 2 + 3 = 5, then 5 * 4 = 20
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -199,7 +199,7 @@ fn const_fold_chain() {
 #[test]
 fn const_fold_no_fold_on_variable() {
     // x + 3 should NOT be folded
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let x = p.fresh_var();
     p.push(Instruction::Input {
         result: x,
@@ -227,7 +227,7 @@ fn const_fold_no_fold_on_variable() {
 #[test]
 fn const_fold_div_zero_numerator() {
     // 0 / x → 0 (even if x is not constant)
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let zero = p.fresh_var();
     p.push(Instruction::Const {
         result: zero,
@@ -257,7 +257,7 @@ fn const_fold_div_zero_numerator() {
 
 #[test]
 fn const_fold_mux_true() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let one = p.fresh_var();
     p.push(Instruction::Const {
         result: one,
@@ -292,7 +292,7 @@ fn const_fold_mux_true() {
 
 #[test]
 fn const_fold_mux_false() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let zero = p.fresh_var();
     p.push(Instruction::Const {
         result: zero,
@@ -331,7 +331,7 @@ fn const_fold_mux_false() {
 
 #[test]
 fn dce_removes_unused_const() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -350,7 +350,7 @@ fn dce_removes_unused_const() {
 
 #[test]
 fn dce_removes_unused_add() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let x = p.fresh_var();
     p.push(Instruction::Input {
         result: x,
@@ -379,7 +379,7 @@ fn dce_removes_unused_add() {
 
 #[test]
 fn dce_keeps_used_const() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -411,7 +411,7 @@ fn dce_keeps_used_const() {
 
 #[test]
 fn dce_keeps_assert_eq() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let x = p.fresh_var();
     p.push(Instruction::Input {
         result: x,
@@ -435,7 +435,7 @@ fn dce_keeps_assert_eq() {
 #[test]
 fn dce_eliminates_unused_mul() {
     // Unused Mul is eliminated by DCE (only Input survives as side-effect)
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let x = p.fresh_var();
     p.push(Instruction::Input {
         result: x,
@@ -463,7 +463,7 @@ fn dce_eliminates_unused_mul() {
 fn optimize_full_pipeline() {
     use ir::passes::optimize;
 
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -502,7 +502,7 @@ fn dce_chain_fixpoint() {
     // Chain: Const(a) → Add(b, a, a) → Neg(c, b) → nothing uses c
     // Single-pass DCE would remove Neg (c unused), but leave Add (b was "used" by Neg).
     // Fixpoint DCE should remove all three.
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -533,7 +533,7 @@ fn dce_chain_fixpoint() {
 fn dce_chain_partial_live() {
     // Chain: Const(a) → Add(b, a, a) → Sub(c, b, a) → AssertEq uses c
     // Nothing should be removed — the whole chain feeds into a side-effect.
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -574,7 +574,7 @@ fn dce_chain_partial_live() {
 
 #[test]
 fn const_fold_not_zero() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -597,7 +597,7 @@ fn const_fold_not_zero() {
 
 #[test]
 fn const_fold_not_one() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -620,7 +620,7 @@ fn const_fold_not_one() {
 
 #[test]
 fn const_fold_and_short_circuit_zero() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let zero = p.fresh_var();
     p.push(Instruction::Const {
         result: zero,
@@ -650,7 +650,7 @@ fn const_fold_and_short_circuit_zero() {
 
 #[test]
 fn const_fold_or_short_circuit_one() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let one = p.fresh_var();
     p.push(Instruction::Const {
         result: one,
@@ -680,7 +680,7 @@ fn const_fold_or_short_circuit_one() {
 
 #[test]
 fn const_fold_is_eq_same() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -709,7 +709,7 @@ fn const_fold_is_eq_same() {
 
 #[test]
 fn const_fold_is_eq_different() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -738,7 +738,7 @@ fn const_fold_is_eq_different() {
 
 #[test]
 fn const_fold_is_neq() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -767,7 +767,7 @@ fn const_fold_is_neq() {
 
 #[test]
 fn const_fold_and_both_true() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -796,7 +796,7 @@ fn const_fold_and_both_true() {
 
 #[test]
 fn const_fold_or_both_false() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let a = p.fresh_var();
     p.push(Instruction::Const {
         result: a,
@@ -829,7 +829,7 @@ fn const_fold_or_both_false() {
 
 #[test]
 fn dce_keeps_assert() {
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let x = p.fresh_var();
     p.push(Instruction::Input {
         result: x,
@@ -856,7 +856,7 @@ fn dce_keeps_assert() {
 #[test]
 fn const_fold_sub_self_is_zero() {
     // Input(w) → Sub(w, w) → should fold to Const(0)
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let w = p.fresh_var();
     p.push(Instruction::Input {
         result: w,
@@ -885,7 +885,7 @@ fn const_fold_sub_self_is_zero() {
 #[test]
 fn const_fold_div_self_constant_is_one() {
     // Const(5) → Div(c, c) → should fold to Const(1)
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let c = p.fresh_var();
     p.push(Instruction::Const {
         result: c,
@@ -913,7 +913,7 @@ fn const_fold_div_self_constant_is_one() {
 #[test]
 fn const_fold_div_self_witness_not_folded() {
     // Input(w) → Div(w, w) → should NOT fold (preserve w != 0 enforcement)
-    let mut p = IrProgram::new();
+    let mut p: IrProgram = IrProgram::new();
     let w = p.fresh_var();
     p.push(Instruction::Input {
         result: w,

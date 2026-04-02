@@ -34,7 +34,7 @@ pub struct OptimizeStats {
 /// use ir::IrLowering;
 /// use ir::passes::optimize;
 ///
-/// let mut prog = IrLowering::lower_circuit(
+/// let mut prog: ir::types::IrProgram = IrLowering::lower_circuit(
 ///     "let a = 2 + 3\nassert_eq(x, a)",
 ///     &["x"],
 ///     &[],

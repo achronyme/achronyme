@@ -155,7 +155,8 @@ impl<F: FieldBackend> std::error::Error for EvalError<F> {}
 /// use ir::eval::evaluate;
 /// use memory::FieldElement;
 ///
-/// let prog = IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
+/// let prog: ir::types::IrProgram =
+///     IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
 /// let mut inputs = HashMap::new();
 /// inputs.insert("x".to_string(), FieldElement::from_u64(42));
 /// inputs.insert("y".to_string(), FieldElement::from_u64(42));

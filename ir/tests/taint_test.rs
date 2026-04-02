@@ -237,7 +237,7 @@ let h2 = poseidon(l2, r2)
 assert_eq(h2, root)
 "#;
 
-    let program = IrLowering::lower_circuit(
+    let program: IrProgram = IrLowering::lower_circuit(
         source,
         &["root"],
         &["leaf", "s0", "s1", "s2", "d0", "d1", "d2"],
@@ -276,7 +276,7 @@ let h2 = poseidon(l2, r2)
 assert_eq(h2, root)
 "#;
 
-    let (_, _, program) = IrLowering::lower_self_contained(source).unwrap();
+    let (_, _, program) = IrLowering::<memory::Bn254Fr>::lower_self_contained(source).unwrap();
     let (_, warnings) = taint_analysis(&program);
     assert!(
         warnings.is_empty(),

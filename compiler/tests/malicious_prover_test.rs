@@ -540,7 +540,9 @@ fn compile_circuit_witness(
     use ir::prove_ir::ProveIrCompiler;
     use std::path::Path;
 
-    let prove_ir = ProveIrCompiler::compile_circuit(source, Some(Path::new("test.ach"))).unwrap();
+    let prove_ir =
+        ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(source, Some(Path::new("test.ach")))
+            .unwrap();
     let mut program = prove_ir.instantiate(&HashMap::new()).unwrap();
     ir::passes::optimize(&mut program);
 
