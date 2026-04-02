@@ -1,9 +1,10 @@
 use compiler::r1cs_backend::R1CSCompiler;
 use compiler::r1cs_error::R1CSError;
+use memory::Bn254Fr;
 
 #[test]
 fn test_new_compiler_is_empty() {
-    let rc = R1CSCompiler::new();
+    let rc = R1CSCompiler::<Bn254Fr>::new();
     assert_eq!(rc.cs.num_variables(), 1); // only ONE wire
     assert_eq!(rc.cs.num_pub_inputs(), 0);
     assert_eq!(rc.cs.num_constraints(), 0);
@@ -14,7 +15,7 @@ fn test_new_compiler_is_empty() {
 
 #[test]
 fn test_declare_public() {
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let var = rc.declare_public("root");
 
     assert_eq!(var.index(), 1); // first public after ONE
@@ -25,7 +26,7 @@ fn test_declare_public() {
 
 #[test]
 fn test_declare_witness() {
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     // Declare a public first to test ordering
     let pub_var = rc.declare_public("out");
     let wit_var = rc.declare_witness("secret");
@@ -38,7 +39,7 @@ fn test_declare_witness() {
 
 #[test]
 fn test_declare_multiple() {
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let a = rc.declare_public("a");
     let b = rc.declare_public("b");
     let c = rc.declare_witness("c");
@@ -56,7 +57,7 @@ fn test_declare_multiple() {
 
 #[test]
 fn test_lookup_undeclared() {
-    let rc = R1CSCompiler::new();
+    let rc = R1CSCompiler::<Bn254Fr>::new();
     let err = rc.lookup("nonexistent").unwrap_err();
     match err {
         R1CSError::UndeclaredVariable(name, _) => assert_eq!(name, "nonexistent"),
@@ -66,7 +67,7 @@ fn test_lookup_undeclared() {
 
 #[test]
 fn test_lookup_returns_correct_variable() {
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let x = rc.declare_witness("x");
     let y = rc.declare_witness("y");
 
@@ -77,7 +78,7 @@ fn test_lookup_returns_correct_variable() {
 
 #[test]
 fn test_rebinding_overwrites() {
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let v1 = rc.declare_witness("x");
     let v2 = rc.declare_witness("x"); // rebind same name
 

@@ -6,7 +6,7 @@ use ir::IrLowering;
 /// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
 /// Returns the R1CSCompiler so tests can inspect constraint counts etc.
 fn ir_compile(source: &str, public: &[&str], witness: &[&str]) -> Result<R1CSCompiler, String> {
-    let mut prog =
+    let mut prog: ir::types::IrProgram =
         IrLowering::lower_circuit(source, public, witness).map_err(|e| format!("IR: {e}"))?;
     ir::passes::optimize(&mut prog);
     let mut rc = R1CSCompiler::new();
@@ -34,7 +34,7 @@ fn test_r1cs_compile_identifier() {
 
 #[test]
 fn test_r1cs_reject_string() {
-    let err = IrLowering::lower_circuit("\"hello\"", &[], &[]).unwrap_err();
+    let err = IrLowering::<memory::Bn254Fr>::lower_circuit("\"hello\"", &[], &[]).unwrap_err();
     assert!(matches!(err, IrError::TypeNotConstrainable(..)));
 }
 
@@ -47,14 +47,14 @@ fn test_r1cs_bool_literals() {
 
 #[test]
 fn test_r1cs_reject_nil() {
-    let err = IrLowering::lower_circuit("nil", &[], &[]).unwrap_err();
+    let err = IrLowering::<memory::Bn254Fr>::lower_circuit("nil", &[], &[]).unwrap_err();
     assert!(matches!(err, IrError::TypeNotConstrainable(..)));
 }
 
 #[test]
 fn test_r1cs_reject_decimal() {
     // Decimals are now rejected at the grammar level (parse error)
-    let err = IrLowering::lower_circuit("3.14", &[], &[]);
+    let err = IrLowering::<memory::Bn254Fr>::lower_circuit("3.14", &[], &[]);
     assert!(err.is_err(), "Decimal literals should be rejected");
 }
 
@@ -129,7 +129,7 @@ fn test_r1cs_pow_literal() {
 
 #[test]
 fn test_r1cs_pow_variable_rejected() {
-    let err = IrLowering::lower_circuit("x ^ n", &[], &["x", "n"]).unwrap_err();
+    let err = IrLowering::<memory::Bn254Fr>::lower_circuit("x ^ n", &[], &["x", "n"]).unwrap_err();
     assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 
@@ -179,13 +179,13 @@ fn test_r1cs_assert_eq_one_constraint() {
 
 #[test]
 fn test_r1cs_reject_mut() {
-    let err = IrLowering::lower_circuit("mut x = 5", &[], &[]).unwrap_err();
+    let err = IrLowering::<memory::Bn254Fr>::lower_circuit("mut x = 5", &[], &[]).unwrap_err();
     assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 
 #[test]
 fn test_r1cs_reject_print() {
-    let err = IrLowering::lower_circuit("print(42)", &[], &[]).unwrap_err();
+    let err = IrLowering::<memory::Bn254Fr>::lower_circuit("print(42)", &[], &[]).unwrap_err();
     assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 

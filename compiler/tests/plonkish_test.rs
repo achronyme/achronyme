@@ -3,17 +3,17 @@ use std::collections::HashMap;
 use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 /// Helper: compile IR, generate witness, verify.
 /// Integrates bool_prop analysis to match the real pipeline and avoid
 /// redundant boolean checks (B1 audit fix).
 fn compile_and_verify(
-    program: &IrProgram,
-    inputs: &HashMap<String, FieldElement>,
-) -> PlonkishCompiler {
+    program: &IrProgram<Bn254Fr>,
+    inputs: &HashMap<String, FieldElement<Bn254Fr>>,
+) -> PlonkishCompiler<Bn254Fr> {
     let proven = compute_proven_boolean(program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -28,9 +28,9 @@ fn compile_source(
     source: &str,
     public: &[&str],
     witness: &[&str],
-    inputs: &HashMap<String, FieldElement>,
-) -> PlonkishCompiler {
-    let program = ir::IrLowering::lower_circuit(source, public, witness).unwrap();
+    inputs: &HashMap<String, FieldElement<Bn254Fr>>,
+) -> PlonkishCompiler<Bn254Fr> {
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, public, witness).unwrap();
     compile_and_verify(&program, inputs)
 }
 
@@ -40,21 +40,21 @@ fn compile_source(
 
 #[test]
 fn test_const_no_rows() {
-    let mut program = IrProgram::new();
+    let mut program = IrProgram::<Bn254Fr>::new();
     let v = program.fresh_var();
     program.push(Instruction::Const {
         result: v,
         value: FieldElement::from_u64(42),
     });
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(compiler.num_circuit_rows(), 0);
 }
 
 #[test]
 fn test_input_public() {
-    let mut program = IrProgram::new();
+    let mut program = IrProgram::<Bn254Fr>::new();
     let v = program.fresh_var();
     program.push(Instruction::Input {
         result: v,
@@ -71,7 +71,7 @@ fn test_input_public() {
 
 #[test]
 fn test_input_witness() {
-    let mut program = IrProgram::new();
+    let mut program = IrProgram::<Bn254Fr>::new();
     let v = program.fresh_var();
     program.push(Instruction::Input {
         result: v,
@@ -89,7 +89,7 @@ fn test_input_witness() {
 #[test]
 fn test_add_deferred() {
     // x + y should produce a deferred add (materialized on demand)
-    let mut program = IrProgram::new();
+    let mut program = IrProgram::<Bn254Fr>::new();
     let x = program.fresh_var();
     program.push(Instruction::Input {
         result: x,
@@ -147,7 +147,7 @@ fn test_mul_one_row() {
 #[test]
 fn test_mul_const_no_row() {
     // Multiplying two constants should be folded, producing 0 arith rows
-    let mut program = IrProgram::new();
+    let mut program = IrProgram::<Bn254Fr>::new();
     let a = program.fresh_var();
     program.push(Instruction::Const {
         result: a,
@@ -165,7 +165,7 @@ fn test_mul_const_no_row() {
         rhs: b,
     });
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(compiler.num_circuit_rows(), 0);
 }
@@ -791,8 +791,8 @@ fn test_plonkish_wrong_mul_rejected() {
     let wit_names = &["a", "b"];
     let source = "assert_eq(a * b, out)";
 
-    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -815,8 +815,8 @@ fn test_plonkish_wrong_assert_eq_rejected() {
     let wit_names = &["x", "y"];
     let source = "assert_eq(x, y)";
 
-    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -841,8 +841,8 @@ fn test_plonkish_wrong_mux_output_rejected() {
         assert_eq(r, out)
     "#;
 
-    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -869,8 +869,8 @@ fn test_plonkish_wrong_comparison_rejected() {
         assert_eq(r, out)
     "#;
 
-    let program = ir::IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, pub_names, wit_names).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -889,9 +889,10 @@ fn test_plonkish_wrong_comparison_rejected() {
 
 #[test]
 fn test_plonkish_missing_input_error() {
-    let program = ir::IrLowering::lower_circuit("assert_eq(x, y)", &[], &["x", "y"]).unwrap();
+    let program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit("assert_eq(x, y)", &[], &["x", "y"]).unwrap();
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -957,8 +958,9 @@ fn test_plonkish_is_neq_equal_values() {
 fn test_plonkish_is_eq_wrong_result_rejected() {
     // x == y where x=5, y=10 but we claim result=1 (forged equality)
     let source = "let eq = x == y\nassert_eq(eq, expected)";
-    let program = ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -978,8 +980,8 @@ fn test_plonkish_is_eq_wrong_result_rejected() {
 #[test]
 fn test_plonkish_wrong_poseidon_rejected() {
     let source = "assert_eq(poseidon(l, r), out)";
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["l", "r"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["l", "r"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1024,8 +1026,8 @@ use constraints::plonkish::PlonkishError;
 #[test]
 fn test_c1_forge_is_zero_rejected() {
     let source = "let eq = x == y\nassert_eq(eq, out)";
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1076,8 +1078,8 @@ fn test_c1_forge_is_zero_rejected() {
 #[test]
 fn test_c2_forge_division_rejected() {
     let source = "let c = x / y\nassert_eq(c, out)";
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1126,8 +1128,8 @@ fn test_c2_forge_division_rejected() {
 #[test]
 fn test_c3_forge_bit_coeff_rejected() {
     let source = "let r = a < b\nassert_eq(r, out)";
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1180,8 +1182,8 @@ fn test_c3_forge_bit_coeff_rejected() {
 #[test]
 fn test_c4_forge_addition_identity_rejected() {
     let source = "let r = x + y\nassert_eq(r, out)";
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1325,8 +1327,9 @@ fn test_plonkish_mux_non_boolean_flag_rejected() {
         let r = mux(c, a, b)
         assert_eq(r, out)
     "#;
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["c", "a", "b"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["c", "a", "b"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1350,8 +1353,8 @@ fn test_plonkish_mux_non_boolean_flag_rejected() {
 fn test_plonkish_assert_non_boolean_rejected() {
     // assert(x) with x=2 must fail boolean enforcement
     let source = "assert(x)";
-    let program = ir::IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1372,8 +1375,8 @@ fn test_plonkish_assert_non_boolean_rejected() {
 
 /// Helper: compile source, return row count (proxy for circuit size).
 fn plonkish_row_count(source: &str, public: &[&str], witness: &[&str]) -> usize {
-    let program = ir::IrLowering::lower_circuit(source, public, witness).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, public, witness).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     compiler.num_circuit_rows()
 }
@@ -1439,7 +1442,7 @@ fn compile_source_arrays(
     witness: &[&str],
     inputs: &HashMap<String, FieldElement>,
 ) -> PlonkishCompiler {
-    let program = ir::IrLowering::lower_circuit(source, public, witness).unwrap();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, public, witness).unwrap();
     compile_and_verify(&program, inputs)
 }
 
@@ -1521,19 +1524,19 @@ merkle_verify(root, leaf, path, dirs)
 
 #[test]
 fn test_plonkish_compile_number() {
-    let program = ir::IrLowering::lower_circuit("42", &[], &[]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit("42", &[], &[]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(compiler.num_circuit_rows(), 0);
 }
 
 #[test]
 fn test_plonkish_bool_literals() {
-    let prog_t = ir::IrLowering::lower_circuit("true", &[], &[]).unwrap();
+    let prog_t = ir::IrLowering::<Bn254Fr>::lower_circuit("true", &[], &[]).unwrap();
     let mut comp_t = PlonkishCompiler::new();
     comp_t.compile_ir(&prog_t).unwrap();
 
-    let prog_f = ir::IrLowering::lower_circuit("false", &[], &[]).unwrap();
+    let prog_f = ir::IrLowering::<Bn254Fr>::lower_circuit("false", &[], &[]).unwrap();
     let mut comp_f = PlonkishCompiler::new();
     comp_f.compile_ir(&prog_f).unwrap();
 }
@@ -1747,7 +1750,8 @@ fn test_plonkish_mux_complex_branches() {
 fn test_plonkish_if_else_boolean_enforcement() {
     // flag=2 should fail (non-boolean condition)
     let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["flag", "a", "b"]).unwrap();
+    let program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["flag", "a", "b"]).unwrap();
 
     let a_val = FieldElement::from_u64(42);
     let b_val = FieldElement::from_u64(99);
@@ -1762,7 +1766,7 @@ fn test_plonkish_if_else_boolean_enforcement() {
     inputs.insert("a".to_string(), a_val);
     inputs.insert("b".to_string(), b_val);
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
     wg.generate(&inputs, &mut compiler.system.assignments)
@@ -1775,8 +1779,8 @@ fn test_plonkish_if_else_boolean_enforcement() {
 
 #[test]
 fn test_plonkish_fn_declaration_accepted() {
-    let program = ir::IrLowering::lower_circuit("fn foo() { 1 }", &[], &[]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit("fn foo() { 1 }", &[], &[]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(
         compiler.num_circuit_rows(),
@@ -1797,10 +1801,11 @@ fn test_plonkish_ir_const_fold() {
     inputs.insert("x".to_string(), FieldElement::from_u64(10));
 
     let mut program =
-        ir::IrLowering::lower_circuit("assert_eq(x + 2 + 3, out)", &["out"], &["x"]).unwrap();
+        ir::IrLowering::<Bn254Fr>::lower_circuit("assert_eq(x + 2 + 3, out)", &["out"], &["x"])
+            .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
     wg.generate(&inputs, &mut compiler.system.assignments)
@@ -1811,14 +1816,14 @@ fn test_plonkish_ir_const_fold() {
 #[test]
 fn test_plonkish_ir_assert_false_fails() {
     let source = "assert(flag)";
-    let mut program = ir::IrLowering::lower_circuit(source, &[], &["flag"]).unwrap();
+    let mut program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["flag"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
     inputs.insert("flag".to_string(), FieldElement::ZERO);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1834,7 +1839,8 @@ fn test_plonkish_ir_assert_false_fails() {
 fn test_plonkish_ir_is_eq_soundness() {
     // x=5, y=10 but claim eq=1 → should be rejected
     let source = "let eq = x == y\nassert_eq(eq, expected)";
-    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let mut program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1843,7 +1849,7 @@ fn test_plonkish_ir_is_eq_soundness() {
     inputs.insert("expected".to_string(), FieldElement::ONE); // WRONG
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1859,7 +1865,8 @@ fn test_plonkish_ir_is_eq_soundness() {
 fn test_plonkish_ir_is_neq_soundness() {
     // x=7, y=7 but claim neq=1 → should be rejected
     let source = "let neq = x != y\nassert_eq(neq, expected)";
-    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let mut program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1868,7 +1875,7 @@ fn test_plonkish_ir_is_neq_soundness() {
     inputs.insert("expected".to_string(), FieldElement::ONE); // WRONG
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1884,7 +1891,8 @@ fn test_plonkish_ir_is_neq_soundness() {
 fn test_plonkish_ir_is_lt_soundness() {
     // a=10, b=3 but claim lt=1 → should be rejected
     let source = "let lt = a < b\nassert_eq(lt, expected)";
-    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1893,7 +1901,7 @@ fn test_plonkish_ir_is_lt_soundness() {
     inputs.insert("expected".to_string(), FieldElement::ONE); // WRONG
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1908,7 +1916,8 @@ fn test_plonkish_ir_is_lt_soundness() {
 #[test]
 fn test_plonkish_ir_and_non_boolean_fails() {
     let source = "let r = a && b\nassert_eq(r, expected)";
-    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1917,7 +1926,7 @@ fn test_plonkish_ir_and_non_boolean_fails() {
     inputs.insert("expected".to_string(), FieldElement::from_u64(2));
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1932,7 +1941,8 @@ fn test_plonkish_ir_and_non_boolean_fails() {
 #[test]
 fn test_plonkish_ir_or_non_boolean_fails() {
     let source = "let r = a || b\nassert_eq(r, expected)";
-    let mut program = ir::IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let mut program =
+        ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
     ir::passes::optimize(&mut program);
 
     let mut inputs = HashMap::new();
@@ -1941,7 +1951,7 @@ fn test_plonkish_ir_or_non_boolean_fails() {
     inputs.insert("expected".to_string(), FieldElement::from_u64(3));
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).expect("compilation failed");
     let wg = PlonkishWitnessGenerator::from_compiler(&compiler);
@@ -1963,8 +1973,8 @@ fn test_plonkish_ir_division_malicious_witness() {
     inputs.insert("b".to_string(), FieldElement::from_u64(7));
     inputs.insert("out".to_string(), FieldElement::from_u64(99)); // WRONG
 
-    let program = ir::IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     let result = compiler.compile_ir_with_witness(&program, &inputs);
     assert!(
         result.is_err(),

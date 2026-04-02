@@ -4,7 +4,7 @@ use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use ir::IrLowering;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 // ============================================================================
 // R1CS range_check tests
@@ -15,9 +15,9 @@ fn test_r1cs_range_check_valid_8bit() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -33,9 +33,9 @@ fn test_r1cs_range_check_invalid_8bit() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -52,9 +52,9 @@ fn test_r1cs_range_check_cost_equals_bits_plus_1() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     // 8 boolean constraints + 1 sum equality = 9 constraints
@@ -66,9 +66,9 @@ fn test_r1cs_range_check_16bit() {
     let source = r#"
         range_check(x, 16)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     // 16 boolean + 1 sum = 17 constraints
@@ -87,9 +87,9 @@ fn test_r1cs_range_check_zero() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -107,8 +107,8 @@ fn test_r1cs_range_check_zero() {
 #[test]
 fn test_r1cs_range_check_1bit_zero() {
     // bits=1: value=0 should pass (0 < 2^1 = 2)
-    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     // 1 boolean + 1 sum = 2 constraints
     assert_eq!(compiler.cs.num_constraints(), 2);
@@ -123,8 +123,8 @@ fn test_r1cs_range_check_1bit_zero() {
 #[test]
 fn test_r1cs_range_check_1bit_one() {
     // bits=1: value=1 should pass (1 < 2)
-    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -137,8 +137,8 @@ fn test_r1cs_range_check_1bit_one() {
 #[test]
 fn test_r1cs_range_check_1bit_invalid() {
     // bits=1: value=2 should fail (2 >= 2^1)
-    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -154,8 +154,8 @@ fn test_r1cs_range_check_1bit_invalid() {
 #[test]
 fn test_r1cs_range_check_0bit_zero() {
     // bits=0: [0, 2^0) = {0}, only value=0 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -168,8 +168,8 @@ fn test_r1cs_range_check_0bit_zero() {
 #[test]
 fn test_r1cs_range_check_0bit_invalid() {
     // bits=0: value=1 should fail (only 0 allowed)
-    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -185,8 +185,8 @@ fn test_r1cs_range_check_0bit_invalid() {
 #[test]
 fn test_r1cs_range_check_253bit_max() {
     // bits=253: value=2^253-1 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 253)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 253)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(compiler.cs.num_constraints(), 254); // 253 boolean + 1 sum
 
@@ -205,8 +205,8 @@ fn test_r1cs_range_check_253bit_max() {
 #[test]
 fn test_r1cs_range_check_boundary_exact_max() {
     // bits=8: value=255 (2^8 - 1) should pass
-    let program = IrLowering::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -219,8 +219,8 @@ fn test_r1cs_range_check_boundary_exact_max() {
 #[test]
 fn test_r1cs_range_check_32bit_max() {
     // bits=32: value=2^32-1 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 32)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 32)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(compiler.cs.num_constraints(), 33); // 32 boolean + 1 sum
 
@@ -234,8 +234,8 @@ fn test_r1cs_range_check_32bit_max() {
 #[test]
 fn test_r1cs_range_check_32bit_overflow() {
     // bits=32: value=2^32 should fail
-    let program = IrLowering::lower_circuit("range_check(x, 32)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 32)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -254,8 +254,8 @@ fn test_r1cs_range_check_32bit_overflow() {
 #[test]
 fn test_r1cs_range_check_64bit_max() {
     // bits=64: value=2^64-1 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 64)", &[], &["x"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 64)", &[], &["x"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     assert_eq!(compiler.cs.num_constraints(), 65); // 64 boolean + 1 sum
 
@@ -275,9 +275,9 @@ fn test_plonkish_range_check_valid_lookup() {
     let source = r#"
         range_check(x, 4)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -294,9 +294,9 @@ fn test_plonkish_range_check_invalid_lookup() {
     let source = r#"
         range_check(x, 4)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -314,9 +314,9 @@ fn test_plonkish_range_check_cost_one_row() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     // Witness input uses 1 row, materialization of x cell + range check row
@@ -333,8 +333,8 @@ fn test_plonkish_range_check_cost_one_row() {
 #[test]
 fn test_plonkish_range_check_1bit_zero() {
     // bits=1: value=0 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -348,8 +348,8 @@ fn test_plonkish_range_check_1bit_zero() {
 #[test]
 fn test_plonkish_range_check_1bit_one() {
     // bits=1: value=1 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -363,8 +363,8 @@ fn test_plonkish_range_check_1bit_one() {
 #[test]
 fn test_plonkish_range_check_1bit_invalid() {
     // bits=1: value=2 should fail
-    let program = IrLowering::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 1)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -381,8 +381,8 @@ fn test_plonkish_range_check_1bit_invalid() {
 #[test]
 fn test_plonkish_range_check_boundary_exact_max() {
     // bits=8: value=255 (2^8 - 1) should pass
-    let program = IrLowering::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 8)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -396,8 +396,8 @@ fn test_plonkish_range_check_boundary_exact_max() {
 #[test]
 fn test_plonkish_range_check_0bit_zero() {
     // bits=0: only value=0 should pass
-    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -411,8 +411,8 @@ fn test_plonkish_range_check_0bit_zero() {
 #[test]
 fn test_plonkish_range_check_0bit_invalid() {
     // bits=0: value=1 should fail
-    let program = IrLowering::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 0)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let mut inputs = HashMap::new();
@@ -430,8 +430,8 @@ fn test_plonkish_range_check_0bit_invalid() {
 fn test_plonkish_range_check_253bit_rejected() {
     // Plonkish uses lookup tables: bits=253 exceeds the max table size (2^16).
     // The compiler must reject this with an error, not panic.
-    let program = IrLowering::lower_circuit("range_check(x, 253)", &[], &["x"]).unwrap();
-    let mut compiler = PlonkishCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit("range_check(x, 253)", &[], &["x"]).unwrap();
+    let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
     let result = compiler.compile_ir(&program);
     assert!(
         result.is_err(),
@@ -448,13 +448,13 @@ fn test_plonkish_vs_r1cs_8bit() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program_r1cs = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
-    let program_plonk = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program_r1cs = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
+    let program_plonk = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut r1cs = R1CSCompiler::new();
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
     r1cs.compile_ir(&program_r1cs).unwrap();
 
-    let mut plonk = PlonkishCompiler::new();
+    let mut plonk = PlonkishCompiler::<Bn254Fr>::new();
     plonk.compile_ir(&program_plonk).unwrap();
 
     let r1cs_cost = r1cs.cs.num_constraints(); // 9 (8 + 1)
@@ -475,13 +475,13 @@ fn test_plonkish_vs_r1cs_16bit() {
     let source = r#"
         range_check(x, 16)
     "#;
-    let program_r1cs = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
-    let program_plonk = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program_r1cs = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
+    let program_plonk = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
 
-    let mut r1cs = R1CSCompiler::new();
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
     r1cs.compile_ir(&program_r1cs).unwrap();
 
-    let mut plonk = PlonkishCompiler::new();
+    let mut plonk = PlonkishCompiler::<Bn254Fr>::new();
     plonk.compile_ir(&program_plonk).unwrap();
 
     let r1cs_cost = r1cs.cs.num_constraints(); // 17 (16 + 1)
@@ -507,7 +507,7 @@ fn test_range_check_const_fold() {
     let source = r#"
         range_check(42, 8)
     "#;
-    let mut program = IrLowering::lower_circuit(source, &[], &[]).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &[]).unwrap();
     ir::passes::optimize(&mut program);
 
     // After optimization, the RangeCheck should still be present
@@ -527,7 +527,7 @@ fn test_range_check_taint_constrains() {
     let source = r#"
         range_check(x, 8)
     "#;
-    let program = IrLowering::lower_circuit(source, &[], &["x"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
     let warnings = ir::passes::analyze(&program);
 
     // x should NOT be under-constrained because range_check constrains it
@@ -557,16 +557,17 @@ fn test_both_backends_simple_mul() {
     inputs.insert("b".to_string(), FieldElement::from_u64(7));
 
     // R1CS
-    let program_r1cs = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
-    let mut r1cs = R1CSCompiler::new();
+    let program_r1cs = IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
     r1cs.compile_ir(&program_r1cs).unwrap();
     let wg_r1cs = WitnessGenerator::from_compiler(&r1cs);
     let witness = wg_r1cs.generate(&inputs).unwrap();
     r1cs.cs.verify(&witness).unwrap();
 
     // Plonkish
-    let program_plonk = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
-    let mut plonk = PlonkishCompiler::new();
+    let program_plonk =
+        IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let mut plonk = PlonkishCompiler::<Bn254Fr>::new();
     plonk.compile_ir(&program_plonk).unwrap();
     let wg_plonk = PlonkishWitnessGenerator::from_compiler(&plonk);
     wg_plonk

@@ -4,7 +4,7 @@ use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use ir::error::IrError;
 use ir::IrLowering;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 // ====================================================================
 // Poseidon builtin tests
@@ -13,11 +13,15 @@ use memory::FieldElement;
 #[test]
 fn test_poseidon_constraint_count() {
     // poseidon(a, b) with simple variables → 360 permutation + 1 capacity + 1 assert_eq = 362
-    let mut program =
-        IrLowering::lower_circuit("assert_eq(poseidon(a, b), out)", &["out"], &["a", "b"]).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
+        "assert_eq(poseidon(a, b), out)",
+        &["out"],
+        &["a", "b"],
+    )
+    .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 362);
 }
@@ -25,7 +29,7 @@ fn test_poseidon_constraint_count() {
 #[test]
 fn test_poseidon_chained() {
     // poseidon(poseidon(a, b), c) → 2 * 361 + 1 assert_eq = 723
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(poseidon(poseidon(a, b), c), out)",
         &["out"],
         &["a", "b", "c"],
@@ -33,7 +37,7 @@ fn test_poseidon_chained() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 723);
 }
@@ -41,7 +45,7 @@ fn test_poseidon_chained() {
 #[test]
 fn test_poseidon_in_loop() {
     // Two poseidon calls via loop, last result asserted → 2 * 361 + 1 assert_eq = 723
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "let h = poseidon(a, b)\nlet h = poseidon(h, b)\nassert_eq(h, out)",
         &["out"],
         &["a", "b"],
@@ -49,7 +53,7 @@ fn test_poseidon_in_loop() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 723);
 }
@@ -62,7 +66,7 @@ fn test_poseidon_with_expression_args() {
     // poseidon: 361 constraints (360 permutation + 1 capacity)
     // assert_eq: 1 constraint
     // Total: 1 (materialize a+b) + 1 (c*d mul) + 361 + 1 = 364
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(poseidon(a + b, c * d), out)",
         &["out"],
         &["a", "b", "c", "d"],
@@ -70,7 +74,7 @@ fn test_poseidon_with_expression_args() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 364);
 }
@@ -79,17 +83,18 @@ fn test_poseidon_with_expression_args() {
 fn test_poseidon_constant_arg_materialization() {
     // poseidon(5, a) with assert_eq → constant 5 must be materialized (1 constraint) + 361 + 1
     let mut program =
-        IrLowering::lower_circuit("assert_eq(poseidon(5, a), out)", &["out"], &["a"]).unwrap();
+        IrLowering::<Bn254Fr>::lower_circuit("assert_eq(poseidon(5, a), out)", &["out"], &["a"])
+            .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 363);
 }
 
 #[test]
 fn test_poseidon_wrong_arg_count_too_few() {
-    let err = IrLowering::lower_circuit("poseidon(a)", &[], &["a"]).unwrap_err();
+    let err = IrLowering::<Bn254Fr>::lower_circuit("poseidon(a)", &[], &["a"]).unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,
@@ -107,7 +112,8 @@ fn test_poseidon_wrong_arg_count_too_few() {
 
 #[test]
 fn test_poseidon_wrong_arg_count_too_many() {
-    let err = IrLowering::lower_circuit("poseidon(a, b, c)", &[], &["a", "b", "c"]).unwrap_err();
+    let err = IrLowering::<Bn254Fr>::lower_circuit("poseidon(a, b, c)", &[], &["a", "b", "c"])
+        .unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,
@@ -135,11 +141,15 @@ fn test_poseidon_zero_zero_r1cs() {
     let params = PoseidonParams::bn254_t3();
     let expected = poseidon_hash(&params, FieldElement::ZERO, FieldElement::ZERO);
 
-    let mut program =
-        IrLowering::lower_circuit("assert_eq(poseidon(a, b), out)", &["out"], &["a", "b"]).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
+        "assert_eq(poseidon(a, b), out)",
+        &["out"],
+        &["a", "b"],
+    )
+    .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), expected);
     inputs.insert("a".to_string(), FieldElement::ZERO);
@@ -160,7 +170,7 @@ fn test_poseidon_expression_evaluating_to_zero_r1cs() {
     let params = PoseidonParams::bn254_t3();
     let expected = poseidon_hash(&params, FieldElement::ZERO, FieldElement::ZERO);
 
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(poseidon(a - a, b - b), out)",
         &["out"],
         &["a", "b"],
@@ -168,7 +178,7 @@ fn test_poseidon_expression_evaluating_to_zero_r1cs() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), expected);
     inputs.insert("a".to_string(), FieldElement::from_u64(42));
@@ -188,7 +198,7 @@ fn test_poseidon_expression_evaluating_to_zero_r1cs() {
 #[test]
 fn test_mux_constraint_count() {
     // mux(flag, a, b) with assert_eq → 1 boolean check + 1 MUX mul + 1 assert_eq = 3
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a, b), out)",
         &["out"],
         &["flag", "a", "b"],
@@ -196,7 +206,7 @@ fn test_mux_constraint_count() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 3);
 }
@@ -204,7 +214,7 @@ fn test_mux_constraint_count() {
 #[test]
 fn test_mux_selects_first_when_flag_one() {
     // mux(flag, a, b) with flag=1 → result = a = 42
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a, b), out)",
         &["out"],
         &["flag", "a", "b"],
@@ -212,7 +222,7 @@ fn test_mux_selects_first_when_flag_one() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), FieldElement::from_u64(42));
     inputs.insert("flag".to_string(), FieldElement::ONE);
@@ -228,7 +238,7 @@ fn test_mux_selects_first_when_flag_one() {
 #[test]
 fn test_mux_selects_second_when_flag_zero() {
     // mux(flag, a, b) with flag=0 → result = b = 99
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a, b), out)",
         &["out"],
         &["flag", "a", "b"],
@@ -236,7 +246,7 @@ fn test_mux_selects_second_when_flag_zero() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let mut inputs = HashMap::new();
     inputs.insert("out".to_string(), FieldElement::from_u64(99));
     inputs.insert("flag".to_string(), FieldElement::ZERO);
@@ -255,7 +265,7 @@ fn test_mux_boolean_enforcement() {
     // rejects non-boolean mux conditions. Instead, compile via compile_ir,
     // build a witness with WitnessGenerator using flag=2, and verify that
     // the R1CS constraint system rejects the witness.
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a, b), out)",
         &["out"],
         &["flag", "a", "b"],
@@ -263,7 +273,7 @@ fn test_mux_boolean_enforcement() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
 
     let wg = WitnessGenerator::from_compiler(&rc);
@@ -292,7 +302,7 @@ fn test_mux_boolean_enforcement() {
 #[test]
 fn test_mux_with_complex_branches() {
     // mux(flag, a * b, c + d) with assert_eq → 1 mul (a*b) + 2 mux + 1 assert_eq = 4
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a * b, c + d), out)",
         &["out"],
         &["flag", "a", "b", "c", "d"],
@@ -300,14 +310,14 @@ fn test_mux_with_complex_branches() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
 fn test_mux_wrong_arg_count_too_few() {
-    let err = IrLowering::lower_circuit("mux(a, b)", &[], &["a", "b"]).unwrap_err();
+    let err = IrLowering::<Bn254Fr>::lower_circuit("mux(a, b)", &[], &["a", "b"]).unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,
@@ -325,7 +335,8 @@ fn test_mux_wrong_arg_count_too_few() {
 
 #[test]
 fn test_mux_wrong_arg_count_too_many() {
-    let err = IrLowering::lower_circuit("mux(a, b, c, d)", &[], &["a", "b", "c", "d"]).unwrap_err();
+    let err = IrLowering::<Bn254Fr>::lower_circuit("mux(a, b, c, d)", &[], &["a", "b", "c", "d"])
+        .unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,
@@ -347,7 +358,7 @@ fn test_mux_wrong_arg_count_too_many() {
 
 #[test]
 fn test_assert_eq_wrong_arg_count() {
-    let err = IrLowering::lower_circuit("assert_eq(a)", &[], &["a"]).unwrap_err();
+    let err = IrLowering::<Bn254Fr>::lower_circuit("assert_eq(a)", &[], &["a"]).unwrap_err();
     match err {
         IrError::WrongArgumentCount {
             builtin,
@@ -374,7 +385,7 @@ fn test_merkle_path_composition() {
     // let right = mux(bit, leaf, sibling)      → 2 constraints
     // let root_hash = poseidon(left, right)     → 360 constraints
     // assert_eq(root_hash, expected_root)       → 1 constraint
-    let mut program = IrLowering::lower_circuit(
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "let left = mux(bit, sibling, leaf); \
          let right = mux(bit, leaf, sibling); \
          let root_hash = poseidon(left, right); \
@@ -385,7 +396,7 @@ fn test_merkle_path_composition() {
     .unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
 
     // 2 (mux left: boolean enforcement + mul)
