@@ -7,4 +7,5 @@ pub mod witness;
 
 pub use export::{write_r1cs, write_wtns};
 pub use plonkish_export::{validate_plonkish_json, write_plonkish_json};
+pub use poseidon::PoseidonParamsProvider;
 pub use r1cs::{ConstraintError, ConstraintSystem, LinearCombination, Variable};
