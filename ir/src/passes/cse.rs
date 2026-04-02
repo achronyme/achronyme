@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use memory::FieldBackend;
+
 use crate::types::{Instruction, IrProgram, SsaVar};
 
 /// A canonical key for an instruction, ignoring its result variable.
@@ -36,7 +38,7 @@ enum CseKey {
 }
 
 /// Extract a CSE key from an instruction, if it's a pure computation.
-fn cse_key(inst: &Instruction) -> Option<CseKey> {
+fn cse_key<F: FieldBackend>(inst: &Instruction<F>) -> Option<CseKey> {
     match inst {
         Instruction::Add { lhs, rhs, .. } => Some(CseKey::Add(*lhs, *rhs)),
         Instruction::Sub { lhs, rhs, .. } => Some(CseKey::Sub(*lhs, *rhs)),
@@ -84,7 +86,7 @@ fn cse_key(inst: &Instruction) -> Option<CseKey> {
 /// For each duplicate computation, the result variable is remapped to the
 /// first occurrence. The duplicate instruction is retained but becomes dead
 /// (unreferenced) and will be removed by a subsequent DCE pass.
-pub fn common_subexpression_elimination(program: &mut IrProgram) -> usize {
+pub fn common_subexpression_elimination<F: FieldBackend>(program: &mut IrProgram<F>) -> usize {
     // Map: CseKey → first result variable that computed this expression.
     let mut seen: HashMap<CseKey, SsaVar> = HashMap::new();
     // Map: old result var → replacement var (from first occurrence).
@@ -145,7 +147,7 @@ fn canonicalize_key(key: &CseKey, replacements: &HashMap<SsaVar, SsaVar>) -> Cse
 }
 
 /// Rewrite operand references in an instruction using the replacement map.
-fn rewrite_operands(inst: &mut Instruction, replacements: &HashMap<SsaVar, SsaVar>) {
+fn rewrite_operands<F: FieldBackend>(inst: &mut Instruction<F>, replacements: &HashMap<SsaVar, SsaVar>) {
     let r = |v: &mut SsaVar| {
         if let Some(&repl) = replacements.get(v) {
             *v = repl;

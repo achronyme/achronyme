@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use crate::types::{Instruction, IrProgram, IrType, SsaVar};
 
@@ -20,14 +20,14 @@ use crate::types::{Instruction, IrProgram, IrType, SsaVar};
 /// use ir::types::{IrProgram, IrType, Instruction, SsaVar, Visibility};
 /// use ir::passes::bool_prop::compute_proven_boolean;
 ///
-/// let mut prog = IrProgram::new();
+/// let mut prog: IrProgram = IrProgram::new();
 /// let v = prog.fresh_var();
 /// prog.push(Instruction::Input { result: v, name: "b".into(), visibility: Visibility::Witness });
 /// prog.set_type(v, IrType::Bool);
 /// let booleans = compute_proven_boolean(&prog);
 /// assert!(booleans.contains(&v), "annotated Bool var should be in proven_boolean set");
 /// ```
-pub fn compute_proven_boolean(program: &IrProgram) -> HashSet<SsaVar> {
+pub fn compute_proven_boolean<F: FieldBackend>(program: &IrProgram<F>) -> HashSet<SsaVar> {
     let mut booleans = HashSet::new();
 
     // Seed from type annotations: any variable annotated as Bool is proven boolean
@@ -40,7 +40,7 @@ pub fn compute_proven_boolean(program: &IrProgram) -> HashSet<SsaVar> {
     for inst in &program.instructions {
         match inst {
             Instruction::Const { result, value } => {
-                if value.is_zero() || *value == FieldElement::ONE {
+                if value.is_zero() || *value == FieldElement::<F>::one() {
                     booleans.insert(*result);
                 }
             }
