@@ -2,7 +2,8 @@ use crate::error::RuntimeError;
 use crate::machine::value_ops::ValueOps;
 use crate::machine::VM;
 use ach_macros::{ach_module, ach_native};
-use constraints::poseidon::{poseidon_hash, PoseidonParams};
+use constraints::poseidon::poseidon_hash;
+use constraints::PoseidonParamsProvider;
 use memory::{FieldElement, Value};
 
 /// Extract a FieldElement from a VM Value (Int or Field).
@@ -189,7 +190,7 @@ pub mod core_impl {
         }
         let left = extract_fe(vm, &args[0])?;
         let right = extract_fe(vm, &args[1])?;
-        let params = PoseidonParams::bn254_t3();
+        let params = memory::Bn254Fr::default_poseidon_t3();
         let result = poseidon_hash(&params, left, right);
         let handle = vm.heap.alloc_field(result)?;
         Ok(Value::field(handle))
@@ -202,7 +203,7 @@ pub mod core_impl {
                 "poseidon_many() requires at least 2 arguments",
             ));
         }
-        let params = PoseidonParams::bn254_t3();
+        let params = memory::Bn254Fr::default_poseidon_t3();
         let first = extract_fe(vm, &args[0])?;
         let second = extract_fe(vm, &args[1])?;
         let mut acc = poseidon_hash(&params, first, second);

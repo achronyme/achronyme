@@ -1,12 +1,12 @@
 use achronyme_parser::ast::*;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use crate::error::{IrError, OptSpan};
 use crate::types::{Instruction, IrType, SsaVar};
 
 use super::{to_ir_span, EnvValue, IrLowering};
 
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     pub(super) fn lower_call(
         &mut self,
         callee: &Expr,
@@ -229,7 +229,7 @@ impl IrLowering {
         };
         match self.env.get(&arg_name) {
             Some(EnvValue::Array(elems)) => {
-                Ok(self.emit_const(FieldElement::from_u64(elems.len() as u64)))
+                Ok(self.emit_const(FieldElement::<F>::from_u64(elems.len() as u64)))
             }
             Some(EnvValue::Scalar(_)) => Err(IrError::TypeMismatch {
                 expected: "array".into(),
@@ -254,7 +254,7 @@ impl IrLowering {
             .map(|a| self.lower_expr(a))
             .collect::<Result<_, _>>()?;
 
-        let zero = self.emit_const(FieldElement::ZERO);
+        let zero = self.emit_const(FieldElement::<F>::zero());
         let mut acc = if lowered.len() == 1 {
             let v = self.program.fresh_var();
             self.program.push(Instruction::PoseidonHash {

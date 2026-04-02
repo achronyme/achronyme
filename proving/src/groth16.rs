@@ -18,19 +18,62 @@ use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
 use constraints::r1cs::ConstraintSystem;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 // ============================================================================
 // Field conversion
 // ============================================================================
 
-/// Convert an Achronyme `FieldElement` to an ark scalar field element.
+/// Convert an Achronyme `FieldElement<B>` to an ark scalar field element.
 ///
-/// Uses `from_le_bytes_mod_order` — works for any `PrimeField` regardless
-/// of modulus. The caller must ensure the source `FieldElement` was produced
-/// under the same prime; otherwise the value wraps mod the target prime.
-pub fn fe_to_ark<F: PrimeField>(fe: &FieldElement) -> F {
-    F::from_le_bytes_mod_order(&fe.to_le_bytes())
+/// When converting to a different field (e.g. BN254 → BLS12-381), negative
+/// values like `-1` are stored as `p_source - 1`. A naïve byte
+/// reinterpretation would give the wrong value in the target field.
+///
+/// This function detects "negative" source values (canonical > p/2) and
+/// maps them to the correct negation in the target field:
+///   source < p/2  →  target = source  (positive, same integer)
+///   source >= p/2 →  target = -(p_source - source)  (negative, re-negated)
+pub fn fe_to_ark<B: FieldBackend, AF: PrimeField>(fe: &FieldElement<B>) -> AF {
+    let bytes = fe.to_le_bytes();
+    let canonical = fe.to_canonical();
+
+    // Get the source field's modulus and compute floor(p/2) via 256-bit
+    // right-shift (propagating carries between limbs).
+    let half_mod = source_half_modulus::<B>();
+    let is_negative = canonical[3] > half_mod[3]
+        || (canonical[3] == half_mod[3]
+            && (canonical[2] > half_mod[2]
+                || (canonical[2] == half_mod[2]
+                    && (canonical[1] > half_mod[1]
+                        || (canonical[1] == half_mod[1] && canonical[0] > half_mod[0])))));
+
+    if is_negative {
+        // Compute abs = p_source - canonical (the positive magnitude)
+        let neg = fe.neg();
+        let neg_bytes = neg.to_le_bytes();
+        let pos_in_target = AF::from_le_bytes_mod_order(&neg_bytes);
+        -pos_in_target
+    } else {
+        AF::from_le_bytes_mod_order(&bytes)
+    }
+}
+
+/// Compute floor(p/2) for the source field `B` as 4 little-endian u64 limbs.
+fn source_half_modulus<B: FieldBackend>() -> [u64; 4] {
+    let mod_bytes = B::modulus_le_bytes();
+    let m = [
+        u64::from_le_bytes(mod_bytes[0..8].try_into().unwrap()),
+        u64::from_le_bytes(mod_bytes[8..16].try_into().unwrap()),
+        u64::from_le_bytes(mod_bytes[16..24].try_into().unwrap()),
+        u64::from_le_bytes(mod_bytes[24..32].try_into().unwrap()),
+    ];
+    [
+        (m[0] >> 1) | ((m[1] & 1) << 63),
+        (m[1] >> 1) | ((m[2] & 1) << 63),
+        (m[2] >> 1) | ((m[3] & 1) << 63),
+        m[3] >> 1,
+    ]
 }
 
 /// Convert an ark field element to a decimal string.
@@ -44,13 +87,13 @@ pub fn fr_to_decimal<F: PrimeField>(f: &F) -> String {
 
 /// Wraps an Achronyme `ConstraintSystem` so ark-groth16 can synthesize it.
 #[derive(Clone)]
-pub struct AchronymeCircuit {
-    pub cs: ConstraintSystem,
-    pub witness: Option<Vec<FieldElement>>,
+pub struct AchronymeCircuit<B: FieldBackend = Bn254Fr> {
+    pub cs: ConstraintSystem<B>,
+    pub witness: Option<Vec<FieldElement<B>>>,
 }
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for AchronymeCircuit {
-    fn generate_constraints(self, ark_cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+impl<B: FieldBackend, AF: PrimeField> ConstraintSynthesizer<AF> for AchronymeCircuit<B> {
+    fn generate_constraints(self, ark_cs: ConstraintSystemRef<AF>) -> Result<(), SynthesisError> {
         let num_pub = self.cs.num_pub_inputs();
         let num_vars = self.cs.num_variables();
 
@@ -64,7 +107,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AchronymeCircuit {
             let val = self
                 .witness
                 .as_ref()
-                .map(|w| fe_to_ark::<F>(&w[i]))
+                .map(|w| fe_to_ark::<B, AF>(&w[i]))
                 .unwrap_or_default();
             let v = ark_cs.new_input_variable(|| Ok(val))?;
             var_map.push(v);
@@ -75,7 +118,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AchronymeCircuit {
             let val = self
                 .witness
                 .as_ref()
-                .map(|w| fe_to_ark::<F>(&w[i]))
+                .map(|w| fe_to_ark::<B, AF>(&w[i]))
                 .unwrap_or_default();
             let v = ark_cs.new_witness_variable(|| Ok(val))?;
             var_map.push(v);
@@ -83,9 +126,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AchronymeCircuit {
 
         // Convert each (A, B, C) constraint
         for constraint in self.cs.constraints() {
-            let a = convert_lc::<F>(&constraint.a, &var_map);
-            let b = convert_lc::<F>(&constraint.b, &var_map);
-            let c = convert_lc::<F>(&constraint.c, &var_map);
+            let a = convert_lc::<B, AF>(&constraint.a, &var_map);
+            let b = convert_lc::<B, AF>(&constraint.b, &var_map);
+            let c = convert_lc::<B, AF>(&constraint.c, &var_map);
             ark_cs.enforce_constraint(a, b, c)?;
         }
 
@@ -94,13 +137,13 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AchronymeCircuit {
 }
 
 /// Convert an Achronyme `LinearCombination` to an ark `LinearCombination`.
-fn convert_lc<F: PrimeField>(
-    lc: &constraints::r1cs::LinearCombination,
+fn convert_lc<B: FieldBackend, AF: PrimeField>(
+    lc: &constraints::r1cs::LinearCombination<B>,
     var_map: &[ArkVariable],
-) -> ark_relations::r1cs::LinearCombination<F> {
+) -> ark_relations::r1cs::LinearCombination<AF> {
     let mut ark_lc = ark_relations::r1cs::LinearCombination::zero();
     for (var, coeff) in &lc.terms {
-        ark_lc += (fe_to_ark::<F>(coeff), var_map[var.index()]);
+        ark_lc += (fe_to_ark::<B, AF>(coeff), var_map[var.index()]);
     }
     ark_lc
 }
@@ -113,8 +156,8 @@ fn convert_lc<F: PrimeField>(
 ///
 /// `curve_tag` is included in the cache key to prevent collisions between
 /// the same circuit compiled for different curves.
-pub fn setup_keys<E: Pairing>(
-    cs: &ConstraintSystem,
+pub fn setup_keys<B: FieldBackend, E: Pairing>(
+    cs: &ConstraintSystem<B>,
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>), String> {
@@ -136,8 +179,8 @@ pub fn setup_keys<E: Pairing>(
 }
 
 /// Run trusted setup and return only the verifying key.
-pub fn setup_vk_only<E: Pairing>(
-    cs: &ConstraintSystem,
+pub fn setup_vk_only<B: FieldBackend, E: Pairing>(
+    cs: &ConstraintSystem<B>,
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<ark_groth16::VerifyingKey<E>, String> {
@@ -163,9 +206,9 @@ pub fn setup_vk_only<E: Pairing>(
 /// Curve-specific modules (e.g., `groth16_bn254`) wrap this to add
 /// JSON serialization and return `ProveResult`.
 #[allow(clippy::type_complexity)]
-pub fn generate_proof_raw<E: Pairing>(
-    cs: &ConstraintSystem,
-    witness: &[FieldElement],
+pub fn generate_proof_raw<B: FieldBackend, E: Pairing>(
+    cs: &ConstraintSystem<B>,
+    witness: &[FieldElement<B>],
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<
@@ -176,7 +219,7 @@ pub fn generate_proof_raw<E: Pairing>(
     ),
     String,
 > {
-    let (pk, vk) = setup_keys::<E>(cs, cache_dir, curve_tag)?;
+    let (pk, vk) = setup_keys::<B, E>(cs, cache_dir, curve_tag)?;
 
     let prove_circuit = AchronymeCircuit {
         cs: cs.clone(),
@@ -209,7 +252,7 @@ pub fn generate_proof_raw<E: Pairing>(
 /// The `curve_tag` prevents cache collisions between different curves —
 /// the same circuit compiled for BN254 and BLS12-381 must use separate
 /// cached proving/verifying keys.
-pub fn cache_key(cs: &ConstraintSystem, curve_tag: &str) -> String {
+pub fn cache_key<B: FieldBackend>(cs: &ConstraintSystem<B>, curve_tag: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"achronyme-groth16-cache-v2");
     hasher.update(curve_tag.as_bytes());
@@ -225,7 +268,7 @@ pub fn cache_key(cs: &ConstraintSystem, curve_tag: &str) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn hash_lc(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination) {
+fn hash_lc<B: FieldBackend>(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination<B>) {
     let mut terms: Vec<_> = lc.terms.iter().collect();
     terms.sort_by_key(|(var, _)| var.index());
     hasher.update((terms.len() as u64).to_le_bytes());
@@ -286,4 +329,77 @@ fn save_cached_keys<E: Pairing>(
         .map_err(|e| format!("failed to write verifying key: {e}"))?;
 
     Ok(())
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that source_half_modulus computes floor(p/2) correctly for BN254.
+    #[test]
+    fn half_mod_is_correct() {
+        let half = source_half_modulus::<Bn254Fr>();
+
+        let m = memory::field::MODULUS;
+
+        // Verify: 2 * half < p (since p is odd, floor(p/2) * 2 = p - 1)
+        let mut double = [0u64; 4];
+        let mut carry = 0u64;
+        for i in 0..4 {
+            let wide = (half[i] as u128) * 2 + carry as u128;
+            double[i] = wide as u64;
+            carry = (wide >> 64) as u64;
+        }
+        // 2 * floor(p/2) should equal p - 1 (since p is odd)
+        let mut p_minus_1 = m;
+        p_minus_1[0] -= 1; // p is odd, so subtracting 1 from limb 0 is safe
+        assert_eq!(double, p_minus_1, "2 * floor(p/2) should equal p-1");
+
+        // Verify the carry-bit issue: limb[2] of half must have the MSB set
+        // because MOD[3] is odd (LSB = 1), so the carry propagates.
+        assert_eq!(m[3] & 1, 1, "BN254 modulus[3] should be odd");
+        assert_ne!(
+            half[2],
+            m[2] / 2,
+            "half[2] must differ from naive m[2]/2 due to carry from m[3]"
+        );
+        assert_eq!(
+            half[2],
+            (m[2] >> 1) | (1 << 63),
+            "half[2] must include carry bit from m[3]"
+        );
+    }
+
+    /// Verify fe_to_ark correctness at the boundary near p/2.
+    #[test]
+    fn fe_to_ark_boundary_values() {
+        use ark_bn254::Fr as ArkFr;
+
+        // Zero and one should convert to themselves
+        let zero = FieldElement::<Bn254Fr>::from_u64(0);
+        let one = FieldElement::<Bn254Fr>::from_u64(1);
+        let r0: ArkFr = fe_to_ark(&zero);
+        let r1: ArkFr = fe_to_ark(&one);
+        assert_eq!(r0, ArkFr::from(0u64));
+        assert_eq!(r1, ArkFr::from(1u64));
+
+        // -1 (= p - 1) should convert to -1 in the target field
+        let neg_one = FieldElement::<Bn254Fr>::from_u64(1).neg();
+        let result: ArkFr = fe_to_ark(&neg_one);
+        assert_eq!(result, -ArkFr::from(1u64));
+
+        // Small positive should stay positive
+        let small = FieldElement::<Bn254Fr>::from_u64(12345);
+        let r_small: ArkFr = fe_to_ark(&small);
+        assert_eq!(r_small, ArkFr::from(12345u64));
+
+        // Small negative should stay negative
+        let neg_small = FieldElement::<Bn254Fr>::from_u64(12345).neg();
+        let result: ArkFr = fe_to_ark(&neg_small);
+        assert_eq!(result, -ArkFr::from(12345u64));
+    }
 }

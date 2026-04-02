@@ -671,7 +671,8 @@ fn test_r1cs_div_by_zero_in_expression() {
     let wit_names = &["a"];
     let source = "assert_eq(a / (a - a), out)";
 
-    let program = IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
+    let program: ir::types::IrProgram =
+        IrLowering::lower_circuit(source, pub_names, wit_names).unwrap();
     let mut compiler = R1CSCompiler::new();
     let result = compiler.compile_ir(&program);
     assert!(
@@ -1139,7 +1140,7 @@ proptest! {
         offset in 0u64..100,
     ) {
         // 2^bits + offset should exceed the range check
-        let overflow_val = FieldElement::from_u64((1u64 << bits) + offset);
+        let overflow_val: FieldElement = FieldElement::from_u64((1u64 << bits) + offset);
         let pub_names: &[&str] = &[];
         let wit_names = &["x"];
         let source = &format!("range_check(x, {bits})");
@@ -1166,7 +1167,7 @@ proptest! {
         // Ensure val fits in bits
         let max = 1u64 << bits;
         prop_assume!(val < max);
-        let fe_val = FieldElement::from_u64(val);
+        let fe_val: FieldElement = FieldElement::from_u64(val);
         let pub_names: &[&str] = &[];
         let wit_names = &["x"];
         let source = &format!("range_check(x, {bits})");

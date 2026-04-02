@@ -79,7 +79,7 @@ Achronyme has two execution modes from the same source:
 
 **VM mode** (`ach run`) — Full language: closures, recursion, GC, arrays, maps, strings, I/O. Code runs like any scripting language.
 
-**Circuit mode** (`ach circuit`) — Compiles to arithmetic constraints over BN254. No loops at runtime, no I/O — everything is unrolled and flattened into a constraint system for zero-knowledge proofs.
+**Circuit mode** (`ach circuit`) — Compiles to arithmetic constraints over a configurable prime field (BN254, BLS12-381, or Goldilocks). No loops at runtime, no I/O — everything is unrolled and flattened into a constraint system for zero-knowledge proofs. Select the field with `--prime bn254|bls12-381|goldilocks`.
 
 The `prove {}` block bridges both: it runs inside the VM, compiles its body as a circuit, generates a witness from captured variables, and produces a cryptographic proof — all in one expression.
 
@@ -158,7 +158,7 @@ print(add5(3))  // 8
 
 ### Field Elements
 
-BN254 scalar field. Montgomery form internally. Created with the `0p` prefix:
+Prime field elements (BN254 by default, configurable via `--prime`). Created with the `0p` prefix:
 
 ```achronyme
 let a = 0p42

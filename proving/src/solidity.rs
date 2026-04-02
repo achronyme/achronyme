@@ -255,9 +255,6 @@ mod tests {
 
     impl ConstraintSynthesizer<Fr> for TestCircuit {
         fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-            use ark_ff::Field;
-            use ark_relations::r1cs::Variable;
-
             let a_val = self.a.unwrap_or(Fr::from(3u64));
             let b_val = self.b.unwrap_or(Fr::from(5u64));
             let c_val = a_val * b_val;

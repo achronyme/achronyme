@@ -1,11 +1,11 @@
 use constraints::plonkish::{CellRef, Expression, LookupTable, PlonkishError};
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use super::compiler::PlonkishCompiler;
 use super::primitives::compute_power_of_two;
 use super::types::{PlonkVal, PlonkWitnessOp};
 
-impl PlonkishCompiler {
+impl<F: FieldBackend> PlonkishCompiler<F> {
     // ========================================================================
     // Division: 2 rows
     // ========================================================================
@@ -14,7 +14,7 @@ impl PlonkishCompiler {
         // Row 1: den * inv = 1
         let inv_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, inv_row, FieldElement::ONE);
+            .set(self.col_s_arith, inv_row, FieldElement::<F>::one());
         self.wire(
             den,
             CellRef {
@@ -34,7 +34,7 @@ impl PlonkishCompiler {
                 column: self.col_d,
                 row: inv_row,
             },
-            FieldElement::ONE,
+            FieldElement::<F>::one(),
         );
         self.witness_ops
             .push(PlonkWitnessOp::InverseRow { row: inv_row });
@@ -56,7 +56,7 @@ impl PlonkishCompiler {
         // Gate: s*(a*b+c-d)=0 → s*(cond*cond+0-cond)=0 → cond^2=cond
         let bool_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, bool_row, FieldElement::ONE);
+            .set(self.col_s_arith, bool_row, FieldElement::<F>::one());
         self.wire(
             cond,
             CellRef {
@@ -90,13 +90,13 @@ impl PlonkishCompiler {
         let neg_f = self.negate_cell(f);
         let diff_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, diff_row, FieldElement::ONE);
+            .set(self.col_s_arith, diff_row, FieldElement::<F>::one());
         self.constrain_constant(
             CellRef {
                 column: self.col_b,
                 row: diff_row,
             },
-            FieldElement::ONE,
+            FieldElement::<F>::one(),
         );
         self.wire(
             t,
@@ -129,7 +129,8 @@ impl PlonkishCompiler {
 
     pub(super) fn emit_bool_check(&mut self, cell: CellRef) {
         let row = self.alloc_row();
-        self.system.set(self.col_s_arith, row, FieldElement::ONE);
+        self.system
+            .set(self.col_s_arith, row, FieldElement::<F>::one());
         self.wire(
             cell,
             CellRef {
@@ -172,13 +173,13 @@ impl PlonkishCompiler {
         let neg_b = self.negate_cell(b);
         let diff_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, diff_row, FieldElement::ONE);
+            .set(self.col_s_arith, diff_row, FieldElement::<F>::one());
         self.constrain_constant(
             CellRef {
                 column: self.col_b,
                 row: diff_row,
             },
-            FieldElement::ONE,
+            FieldElement::<F>::one(),
         );
         self.wire(
             a,
@@ -205,7 +206,7 @@ impl PlonkishCompiler {
         // Uses IsZeroRow (handles diff=0 without erroring, unlike InverseRow)
         let inv_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, inv_row, FieldElement::ONE);
+            .set(self.col_s_arith, inv_row, FieldElement::<F>::one());
         self.wire(
             diff,
             CellRef {
@@ -230,16 +231,17 @@ impl PlonkishCompiler {
         };
 
         // eq = 1 - diff*inv (witness computation row)
-        let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+        let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::one()))?;
         let neg_dti = self.negate_cell(diff_times_inv);
         let eq_row = self.alloc_row();
-        self.system.set(self.col_s_arith, eq_row, FieldElement::ONE);
+        self.system
+            .set(self.col_s_arith, eq_row, FieldElement::<F>::one());
         self.constrain_constant(
             CellRef {
                 column: self.col_b,
                 row: eq_row,
             },
-            FieldElement::ONE,
+            FieldElement::<F>::one(),
         );
         self.wire(
             one_cell,
@@ -267,7 +269,7 @@ impl PlonkishCompiler {
         // Gate: s_arith * (a*b + c - d) = 0  →  diff*inv + eq - 1 = 0
         let enforce_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, enforce_row, FieldElement::ONE);
+            .set(self.col_s_arith, enforce_row, FieldElement::<F>::one());
         self.wire(
             diff,
             CellRef {
@@ -294,14 +296,14 @@ impl PlonkishCompiler {
                 column: self.col_d,
                 row: enforce_row,
             },
-            FieldElement::ONE,
+            FieldElement::<F>::one(),
         );
 
         // CONSTRAINT 2: diff * eq = 0
         // d=0 is copy-constrained to fixed column so the gate constrains diff*eq = 0.
         let check_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, check_row, FieldElement::ONE);
+            .set(self.col_s_arith, check_row, FieldElement::<F>::one());
         self.wire(
             diff,
             CellRef {
@@ -345,10 +347,10 @@ impl PlonkishCompiler {
         let mut running_sum: Option<CellRef> = None;
 
         for i in 0..num_bits {
-            let coeff = compute_power_of_two(i);
+            let coeff = compute_power_of_two::<F>(i);
             let acc_row = self.alloc_row();
             self.system
-                .set(self.col_s_arith, acc_row, FieldElement::ONE);
+                .set(self.col_s_arith, acc_row, FieldElement::<F>::one());
             let bit_cell = CellRef {
                 column: self.col_a,
                 row: acc_row,
@@ -417,7 +419,7 @@ impl PlonkishCompiler {
             252
         });
         let num_bits = effective_bits + 1;
-        let offset = compute_power_of_two(effective_bits).sub(&FieldElement::ONE);
+        let offset = compute_power_of_two::<F>(effective_bits).sub(&FieldElement::<F>::one());
 
         // diff = b - a + offset
         let diff_val = PlonkVal::DeferredAdd(
@@ -434,11 +436,11 @@ impl PlonkishCompiler {
         let mut running_sum: Option<CellRef> = None;
 
         for i in 0..num_bits {
-            let coeff = compute_power_of_two(i);
+            let coeff = compute_power_of_two::<F>(i);
 
             let acc_row = self.alloc_row();
             self.system
-                .set(self.col_s_arith, acc_row, FieldElement::ONE);
+                .set(self.col_s_arith, acc_row, FieldElement::<F>::one());
             let bit_cell = CellRef {
                 column: self.col_a,
                 row: acc_row,
@@ -507,7 +509,7 @@ impl PlonkishCompiler {
 
         let row = self.alloc_row();
         let sel_col = self.range_selectors[&bits];
-        self.system.set(sel_col, row, FieldElement::ONE);
+        self.system.set(sel_col, row, FieldElement::<F>::one());
         self.wire(
             operand,
             CellRef {
@@ -540,7 +542,7 @@ impl PlonkishCompiler {
 
         let mut values = Vec::with_capacity(table_size);
         for i in 0..table_size {
-            let val = FieldElement::from_u64(i as u64);
+            let val = FieldElement::<F>::from_u64(i as u64);
             self.system.set(table_col, i, val);
             values.push(val);
         }
@@ -583,10 +585,10 @@ impl PlonkishCompiler {
         let mut running_sum: Option<CellRef> = None;
 
         for i in 0..num_bits {
-            let coeff = compute_power_of_two(i);
+            let coeff = compute_power_of_two::<F>(i);
             let acc_row = self.alloc_row();
             self.system
-                .set(self.col_s_arith, acc_row, FieldElement::ONE);
+                .set(self.col_s_arith, acc_row, FieldElement::<F>::one());
             let bit_cell = CellRef {
                 column: self.col_a,
                 row: acc_row,
@@ -671,7 +673,7 @@ impl PlonkishCompiler {
         // Constraint: b * q + r = a  (via arithmetic gate)
         let mul_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, mul_row, FieldElement::ONE);
+            .set(self.col_s_arith, mul_row, FieldElement::<F>::one());
         self.wire(
             b_cell,
             CellRef {
@@ -710,7 +712,7 @@ impl PlonkishCompiler {
         // Compute b - r - 1 via arithmetic gate: d = b*1 + (-r-1)
         let diff_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, diff_row, FieldElement::ONE);
+            .set(self.col_s_arith, diff_row, FieldElement::<F>::one());
         self.wire(
             b_cell,
             CellRef {
@@ -723,7 +725,7 @@ impl PlonkishCompiler {
                 column: self.col_b,
                 row: diff_row,
             },
-            FieldElement::ONE,
+            FieldElement::<F>::one(),
         );
         // c = -(r + 1): materialize r, negate, subtract 1
         // Simpler: use a second gate. First compute r+1, then b-(r+1).
@@ -731,7 +733,7 @@ impl PlonkishCompiler {
         // We need to create a cell with value -(r+1).
         let neg_r_plus_1_row = self.alloc_row();
         self.system
-            .set(self.col_s_arith, neg_r_plus_1_row, FieldElement::ONE);
+            .set(self.col_s_arith, neg_r_plus_1_row, FieldElement::<F>::one());
         self.wire(
             r_cell,
             CellRef {
@@ -744,14 +746,14 @@ impl PlonkishCompiler {
                 column: self.col_b,
                 row: neg_r_plus_1_row,
             },
-            FieldElement::ONE.neg(),
+            FieldElement::<F>::one().neg(),
         );
         self.constrain_constant(
             CellRef {
                 column: self.col_c,
                 row: neg_r_plus_1_row,
             },
-            FieldElement::ONE.neg(),
+            FieldElement::<F>::one().neg(),
         );
         // d = r * (-1) + (-1) = -(r+1)
         self.witness_ops.push(PlonkWitnessOp::ArithRow {
@@ -786,13 +788,14 @@ impl PlonkishCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use memory::Bn254Fr;
 
     #[test]
     fn enforce_n_range_zero_bits_does_not_panic() {
-        let mut compiler = PlonkishCompiler::new();
+        let mut compiler = PlonkishCompiler::<Bn254Fr>::new();
         // Allocate a cell with value zero
         let cell = compiler
-            .materialize_val(&PlonkVal::Constant(FieldElement::ZERO))
+            .materialize_val(&PlonkVal::Constant(FieldElement::<Bn254Fr>::zero()))
             .unwrap();
         // Must not panic — constrains cell == 0
         compiler.enforce_n_range(cell, 0);

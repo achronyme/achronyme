@@ -197,6 +197,7 @@ impl DefaultProveHandler {
         inputs: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
         let mut r1cs = R1CSCompiler::new();
+        r1cs.prime_id = self.prime_id;
         let proven = ir::passes::bool_prop::compute_proven_boolean(program);
         r1cs.set_proven_boolean(proven);
         let witness = r1cs

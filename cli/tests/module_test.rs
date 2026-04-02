@@ -353,7 +353,6 @@ fn circuit_import_with_poseidon() {
 
 #[test]
 fn circuit_import_not_found() {
-    use std::io::Write;
     let tmpdir = tempfile::tempdir().unwrap();
     let main_path = tmpdir.path().join("main.ach");
     std::fs::write(

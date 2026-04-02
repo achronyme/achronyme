@@ -6,7 +6,8 @@ use ir::stats::CircuitStats;
 use ir::IrLowering;
 
 fn compare_stats(source: &str, public: &[&str], witness: &[&str]) {
-    let mut program = IrLowering::lower_circuit(source, public, witness).unwrap();
+    let mut program: ir::types::IrProgram =
+        IrLowering::lower_circuit(source, public, witness).unwrap();
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);

@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use memory::FieldBackend;
+
 use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
 
 /// Broad category of constraint cost.
@@ -83,8 +85,8 @@ impl CircuitStats {
     ///
     /// The `proven_boolean` set should come from `bool_prop::compute_proven_boolean`.
     /// The `name` is typically from `ProveIR.name`.
-    pub fn from_program(
-        program: &IrProgram,
+    pub fn from_program<F: FieldBackend>(
+        program: &IrProgram<F>,
         proven_boolean: &HashSet<SsaVar>,
         name: Option<&str>,
     ) -> Self {
@@ -356,7 +358,7 @@ impl fmt::Display for CircuitStats {
 mod tests {
     use super::*;
     use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
-    use memory::FieldElement;
+    use memory::Bn254Fr;
 
     fn empty_proven() -> HashSet<SsaVar> {
         HashSet::new()
@@ -364,7 +366,7 @@ mod tests {
 
     #[test]
     fn empty_program() {
-        let prog = IrProgram::new();
+        let prog: IrProgram<Bn254Fr> = IrProgram::new();
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
         assert_eq!(stats.name, "<anonymous>");
         assert_eq!(stats.total_constraints, 0);
@@ -375,14 +377,14 @@ mod tests {
 
     #[test]
     fn named_circuit() {
-        let prog = IrProgram::new();
+        let prog: IrProgram<Bn254Fr> = IrProgram::new();
         let stats = CircuitStats::from_program(&prog, &empty_proven(), Some("my_circuit"));
         assert_eq!(stats.name, "my_circuit");
     }
 
     #[test]
     fn input_counts() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -410,7 +412,7 @@ mod tests {
 
     #[test]
     fn mul_costs_one() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -444,7 +446,7 @@ mod tests {
 
     #[test]
     fn div_costs_two() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -470,7 +472,7 @@ mod tests {
 
     #[test]
     fn assert_eq_costs_one() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -497,7 +499,7 @@ mod tests {
 
     #[test]
     fn range_check_cost() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -518,7 +520,7 @@ mod tests {
 
     #[test]
     fn poseidon_costs_362() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -550,7 +552,7 @@ mod tests {
 
     #[test]
     fn is_eq_costs_two() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -576,7 +578,7 @@ mod tests {
 
     #[test]
     fn is_lt_bounded_cost() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -604,7 +606,7 @@ mod tests {
 
     #[test]
     fn is_lt_unbounded_no_range_check() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -631,7 +633,7 @@ mod tests {
 
     #[test]
     fn is_lt_with_range_bounds() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -673,7 +675,7 @@ mod tests {
 
     #[test]
     fn assert_with_proven_boolean() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -700,7 +702,7 @@ mod tests {
 
     #[test]
     fn not_with_proven_boolean_is_free() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -723,7 +725,7 @@ mod tests {
 
     #[test]
     fn mux_with_proven_cond() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -763,7 +765,7 @@ mod tests {
 
     #[test]
     fn mixed_circuit_total() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let x = prog.fresh_var();
         prog.push(Instruction::Input {
             result: x,
@@ -809,7 +811,7 @@ mod tests {
 
     #[test]
     fn add_sub_neg_are_free() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -847,7 +849,7 @@ mod tests {
 
     #[test]
     fn bottleneck_is_highest_cost() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -883,7 +885,7 @@ mod tests {
 
     #[test]
     fn display_format() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -914,7 +916,7 @@ mod tests {
 
     #[test]
     fn and_or_boolean_enforcement_cost() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -948,7 +950,7 @@ mod tests {
 
     #[test]
     fn is_lt_one_bound_one_unbound() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,

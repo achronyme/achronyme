@@ -5,6 +5,8 @@ pub mod cse;
 pub mod dce;
 pub mod taint;
 
+use memory::FieldBackend;
+
 use crate::types::{Instruction, IrProgram};
 
 /// Statistics returned by the optimization pipeline.
@@ -32,7 +34,7 @@ pub struct OptimizeStats {
 /// use ir::IrLowering;
 /// use ir::passes::optimize;
 ///
-/// let mut prog = IrLowering::lower_circuit(
+/// let mut prog: ir::types::IrProgram = IrLowering::lower_circuit(
 ///     "let a = 2 + 3\nassert_eq(x, a)",
 ///     &["x"],
 ///     &[],
@@ -42,7 +44,7 @@ pub struct OptimizeStats {
 /// assert!(prog.instructions.len() <= before);
 /// assert_eq!(stats.total_after, prog.instructions.len());
 /// ```
-pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
+pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
     let total_before = program.instructions.len();
 
     // Count Const instructions before folding
@@ -82,7 +84,7 @@ pub fn optimize(program: &mut IrProgram) -> OptimizeStats {
 }
 
 /// Run analysis passes and return warnings.
-pub fn analyze(program: &IrProgram) -> Vec<taint::TaintWarning> {
+pub fn analyze<F: FieldBackend>(program: &IrProgram<F>) -> Vec<taint::TaintWarning> {
     let (_, warnings) = taint::taint_analysis(program);
     warnings
 }

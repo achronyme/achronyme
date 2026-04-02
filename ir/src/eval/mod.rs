@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::fmt;
 
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
-use memory::FieldElement;
+use constraints::PoseidonParamsProvider;
+use memory::{FieldBackend, FieldElement};
 
 use crate::types::{Instruction, IrProgram, SsaVar};
 
 /// Errors that can occur during IR evaluation.
 #[derive(Debug)]
-pub enum EvalError {
+pub enum EvalError<F: FieldBackend = memory::Bn254Fr> {
     MissingInput(String),
     DivisionByZero {
         var: SsaVar,
@@ -18,7 +19,7 @@ pub enum EvalError {
     AssertionFailed {
         var: SsaVar,
         name: Option<String>,
-        value: Option<FieldElement>,
+        value: Option<FieldElement<F>>,
         message: Option<String>,
     },
     AssertEqFailed {
@@ -26,30 +27,30 @@ pub enum EvalError {
         rhs: SsaVar,
         lhs_name: Option<String>,
         rhs_name: Option<String>,
-        lhs_value: Option<FieldElement>,
-        rhs_value: Option<FieldElement>,
+        lhs_value: Option<FieldElement<F>>,
+        rhs_value: Option<FieldElement<F>>,
         message: Option<String>,
     },
     RangeCheckFailed {
         var: SsaVar,
         bits: u32,
         name: Option<String>,
-        value: Option<FieldElement>,
+        value: Option<FieldElement<F>>,
     },
     NonBooleanMuxCondition {
         var: SsaVar,
         name: Option<String>,
-        value: Option<FieldElement>,
+        value: Option<FieldElement<F>>,
     },
     UndefinedVar(SsaVar),
 }
 
 /// Look up the source-level name for an SSA variable.
-fn resolve_name(program: &IrProgram, var: SsaVar) -> Option<String> {
+fn resolve_name<F: FieldBackend>(program: &IrProgram<F>, var: SsaVar) -> Option<String> {
     program.get_name(var).map(|s| s.to_string())
 }
 
-impl fmt::Display for EvalError {
+impl<F: FieldBackend> fmt::Display for EvalError<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EvalError::MissingInput(name) => write!(f, "missing input: `{name}`"),
@@ -140,7 +141,7 @@ impl fmt::Display for EvalError {
     }
 }
 
-impl std::error::Error for EvalError {}
+impl<F: FieldBackend> std::error::Error for EvalError<F> {}
 
 /// Evaluate an IR program with concrete inputs, returning all SSA variable values.
 ///
@@ -154,22 +155,23 @@ impl std::error::Error for EvalError {}
 /// use ir::eval::evaluate;
 /// use memory::FieldElement;
 ///
-/// let prog = IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
+/// let prog: ir::types::IrProgram =
+///     IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
 /// let mut inputs = HashMap::new();
 /// inputs.insert("x".to_string(), FieldElement::from_u64(42));
 /// inputs.insert("y".to_string(), FieldElement::from_u64(42));
 /// assert!(evaluate(&prog, &inputs).is_ok());
 /// ```
-pub fn evaluate(
-    program: &IrProgram,
-    inputs: &HashMap<String, FieldElement>,
-) -> Result<HashMap<SsaVar, FieldElement>, Box<EvalError>> {
-    let mut values: HashMap<SsaVar, FieldElement> = HashMap::new();
-    let mut poseidon_params: Option<PoseidonParams> = None;
+pub fn evaluate<F: FieldBackend + PoseidonParamsProvider>(
+    program: &IrProgram<F>,
+    inputs: &HashMap<String, FieldElement<F>>,
+) -> Result<HashMap<SsaVar, FieldElement<F>>, Box<EvalError<F>>> {
+    let mut values: HashMap<SsaVar, FieldElement<F>> = HashMap::new();
+    let mut poseidon_params: Option<PoseidonParams<F>> = None;
 
-    let get = |values: &HashMap<SsaVar, FieldElement>,
+    let get = |values: &HashMap<SsaVar, FieldElement<F>>,
                var: &SsaVar|
-     -> Result<FieldElement, Box<EvalError>> {
+     -> Result<FieldElement<F>, Box<EvalError<F>>> {
         values
             .get(var)
             .copied()
@@ -228,7 +230,7 @@ pub fn evaluate(
                 let c = get(&values, cond)?;
                 let t = get(&values, if_true)?;
                 let f = get(&values, if_false)?;
-                if c != FieldElement::ZERO && c != FieldElement::ONE {
+                if c != FieldElement::<F>::zero() && c != FieldElement::<F>::one() {
                     return Err(Box::new(EvalError::NonBooleanMuxCondition {
                         var: *cond,
                         name: resolve_name(program, *cond),
@@ -245,7 +247,7 @@ pub fn evaluate(
             } => {
                 let l = get(&values, left)?;
                 let r = get(&values, right)?;
-                let params = poseidon_params.get_or_insert_with(PoseidonParams::bn254_t3);
+                let params = poseidon_params.get_or_insert_with(F::default_poseidon_t3);
                 let hash = poseidon_hash(params, l, r);
                 values.insert(*result, hash);
             }
@@ -276,7 +278,7 @@ pub fn evaluate(
                 message,
             } => {
                 let v = get(&values, operand)?;
-                if v != FieldElement::ONE {
+                if v != FieldElement::<F>::one() {
                     return Err(Box::new(EvalError::AssertionFailed {
                         var: *operand,
                         name: resolve_name(program, *operand),
@@ -304,7 +306,7 @@ pub fn evaluate(
             }
             Instruction::Not { result, operand } => {
                 let v = get(&values, operand)?;
-                values.insert(*result, FieldElement::ONE.sub(&v));
+                values.insert(*result, FieldElement::<F>::one().sub(&v));
             }
             Instruction::And { result, lhs, rhs } => {
                 let a = get(&values, lhs)?;
@@ -321,9 +323,9 @@ pub fn evaluate(
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
                 let eq = if a == b {
-                    FieldElement::ONE
+                    FieldElement::<F>::one()
                 } else {
-                    FieldElement::ZERO
+                    FieldElement::<F>::zero()
                 };
                 values.insert(*result, eq);
             }
@@ -331,9 +333,9 @@ pub fn evaluate(
                 let a = get(&values, lhs)?;
                 let b = get(&values, rhs)?;
                 let neq = if a != b {
-                    FieldElement::ONE
+                    FieldElement::<F>::one()
                 } else {
-                    FieldElement::ZERO
+                    FieldElement::<F>::zero()
                 };
                 values.insert(*result, neq);
             }
@@ -349,9 +351,9 @@ pub fn evaluate(
                 values.insert(
                     *result,
                     if less {
-                        FieldElement::ONE
+                        FieldElement::<F>::one()
                     } else {
-                        FieldElement::ZERO
+                        FieldElement::<F>::zero()
                     },
                 );
             }
@@ -367,9 +369,9 @@ pub fn evaluate(
                 values.insert(
                     *result,
                     if le {
-                        FieldElement::ONE
+                        FieldElement::<F>::one()
                     } else {
-                        FieldElement::ZERO
+                        FieldElement::<F>::zero()
                     },
                 );
             }
@@ -397,7 +399,7 @@ pub fn evaluate(
                     } else {
                         0
                     };
-                    values.insert(*bit_var, FieldElement::from_u64(bit));
+                    values.insert(*bit_var, FieldElement::<F>::from_u64(bit));
                 }
                 values.insert(*result, v);
             }
@@ -428,17 +430,17 @@ pub fn evaluate(
 /// Returns `(values, failures)` where `failures` lists the instruction indices
 /// whose assertions failed. Used by the inspector to show wire values even when
 /// constraints are unsatisfied.
-pub fn evaluate_lenient(
-    program: &IrProgram,
-    inputs: &HashMap<String, FieldElement>,
-) -> (HashMap<SsaVar, FieldElement>, Vec<usize>) {
-    let mut values: HashMap<SsaVar, FieldElement> = HashMap::new();
-    let mut poseidon_params: Option<PoseidonParams> = None;
+pub fn evaluate_lenient<F: FieldBackend + PoseidonParamsProvider>(
+    program: &IrProgram<F>,
+    inputs: &HashMap<String, FieldElement<F>>,
+) -> (HashMap<SsaVar, FieldElement<F>>, Vec<usize>) {
+    let mut values: HashMap<SsaVar, FieldElement<F>> = HashMap::new();
+    let mut poseidon_params: Option<PoseidonParams<F>> = None;
     let mut failures: Vec<usize> = Vec::new();
 
-    let get = |values: &HashMap<SsaVar, FieldElement>, var: &SsaVar| -> Option<FieldElement> {
-        values.get(var).copied()
-    };
+    let get = |values: &HashMap<SsaVar, FieldElement<F>>,
+               var: &SsaVar|
+     -> Option<FieldElement<F>> { values.get(var).copied() };
 
     for (idx, inst) in program.instructions.iter().enumerate() {
         match inst {
@@ -497,7 +499,7 @@ pub fn evaluate_lenient(
                 right,
             } => {
                 if let (Some(l), Some(r)) = (get(&values, left), get(&values, right)) {
-                    let params = poseidon_params.get_or_insert_with(PoseidonParams::bn254_t3);
+                    let params = poseidon_params.get_or_insert_with(F::default_poseidon_t3);
                     values.insert(*result, poseidon_hash(params, l, r));
                 }
             }
@@ -515,7 +517,7 @@ pub fn evaluate_lenient(
                 result, operand, ..
             } => {
                 if let Some(v) = get(&values, operand) {
-                    if v != FieldElement::ONE {
+                    if v != FieldElement::<F>::one() {
                         failures.push(idx);
                     }
                     values.insert(*result, v);
@@ -530,7 +532,7 @@ pub fn evaluate_lenient(
             }
             Instruction::Not { result, operand } => {
                 if let Some(v) = get(&values, operand) {
-                    values.insert(*result, FieldElement::ONE.sub(&v));
+                    values.insert(*result, FieldElement::<F>::one().sub(&v));
                 }
             }
             Instruction::And { result, lhs, rhs } => {
@@ -548,9 +550,9 @@ pub fn evaluate_lenient(
                     values.insert(
                         *result,
                         if a == b {
-                            FieldElement::ONE
+                            FieldElement::<F>::one()
                         } else {
-                            FieldElement::ZERO
+                            FieldElement::<F>::zero()
                         },
                     );
                 }
@@ -560,9 +562,9 @@ pub fn evaluate_lenient(
                     values.insert(
                         *result,
                         if a != b {
-                            FieldElement::ONE
+                            FieldElement::<F>::one()
                         } else {
-                            FieldElement::ZERO
+                            FieldElement::<F>::zero()
                         },
                     );
                 }
@@ -580,9 +582,9 @@ pub fn evaluate_lenient(
                     values.insert(
                         *result,
                         if less {
-                            FieldElement::ONE
+                            FieldElement::<F>::one()
                         } else {
-                            FieldElement::ZERO
+                            FieldElement::<F>::zero()
                         },
                     );
                 }
@@ -600,9 +602,9 @@ pub fn evaluate_lenient(
                     values.insert(
                         *result,
                         if le {
-                            FieldElement::ONE
+                            FieldElement::<F>::one()
                         } else {
-                            FieldElement::ZERO
+                            FieldElement::<F>::zero()
                         },
                     );
                 }
@@ -623,7 +625,7 @@ pub fn evaluate_lenient(
                         } else {
                             0
                         };
-                        values.insert(*bit_var, FieldElement::from_u64(bit));
+                        values.insert(*bit_var, FieldElement::<F>::from_u64(bit));
                     }
                     values.insert(*result, v);
                 }
@@ -651,7 +653,7 @@ pub fn evaluate_lenient(
 }
 
 /// Check whether a field element fits in `bits` bits.
-fn fits_in_bits(v: &FieldElement, bits: u32) -> bool {
+fn fits_in_bits<F: FieldBackend>(v: &FieldElement<F>, bits: u32) -> bool {
     if bits >= 256 {
         return true;
     }
@@ -680,22 +682,28 @@ fn fits_in_bits(v: &FieldElement, bits: u32) -> bool {
 
 /// Integer division and modulo on field elements (unsigned).
 /// Returns `(q, r)` where `a = b * q + r` and `0 <= r < b`.
-fn int_divmod_field(a: &FieldElement, b: &FieldElement) -> (FieldElement, FieldElement) {
+fn int_divmod_field<F: FieldBackend>(
+    a: &FieldElement<F>,
+    b: &FieldElement<F>,
+) -> (FieldElement<F>, FieldElement<F>) {
     let a_limbs = a.to_canonical();
     let b_limbs = b.to_canonical();
     let a_small = a_limbs[1] == 0 && a_limbs[2] == 0 && a_limbs[3] == 0;
     let b_small = b_limbs[1] == 0 && b_limbs[2] == 0 && b_limbs[3] == 0;
     if b_small && b_limbs[0] == 0 {
-        return (FieldElement::ZERO, FieldElement::ZERO);
+        return (FieldElement::<F>::zero(), FieldElement::<F>::zero());
     }
     if a_small && b_small {
         let q = a_limbs[0] / b_limbs[0];
         let r = a_limbs[0] % b_limbs[0];
-        return (FieldElement::from_u64(q), FieldElement::from_u64(r));
+        return (
+            FieldElement::<F>::from_u64(q),
+            FieldElement::<F>::from_u64(r),
+        );
     }
     // Multi-limb: use shift-and-subtract
     let (q, r) = divmod_u256(&a_limbs, &b_limbs);
-    (u256_to_field(&q), u256_to_field(&r))
+    (u256_to_field::<F>(&q), u256_to_field::<F>(&r))
 }
 
 fn divmod_u256(a: &[u64; 4], b: &[u64; 4]) -> ([u64; 4], [u64; 4]) {
@@ -779,20 +787,21 @@ fn sub_u256(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     r
 }
 
-fn u256_to_field(limbs: &[u64; 4]) -> FieldElement {
-    let mut result = FieldElement::from_u64(limbs[0]);
-    let shift64 = FieldElement::from_u64(1u64 << 32).mul(&FieldElement::from_u64(1u64 << 32));
+fn u256_to_field<F: FieldBackend>(limbs: &[u64; 4]) -> FieldElement<F> {
+    let mut result = FieldElement::<F>::from_u64(limbs[0]);
+    let shift64 =
+        FieldElement::<F>::from_u64(1u64 << 32).mul(&FieldElement::<F>::from_u64(1u64 << 32));
     if limbs[1] != 0 {
-        result = result.add(&FieldElement::from_u64(limbs[1]).mul(&shift64));
+        result = result.add(&FieldElement::<F>::from_u64(limbs[1]).mul(&shift64));
     }
     if limbs[2] != 0 {
         let shift128 = shift64.mul(&shift64);
-        result = result.add(&FieldElement::from_u64(limbs[2]).mul(&shift128));
+        result = result.add(&FieldElement::<F>::from_u64(limbs[2]).mul(&shift128));
     }
     if limbs[3] != 0 {
         let shift128 = shift64.mul(&shift64);
         let shift192 = shift128.mul(&shift64);
-        result = result.add(&FieldElement::from_u64(limbs[3]).mul(&shift192));
+        result = result.add(&FieldElement::<F>::from_u64(limbs[3]).mul(&shift192));
     }
     result
 }

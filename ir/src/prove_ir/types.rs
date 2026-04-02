@@ -12,10 +12,93 @@
 use achronyme_parser::diagnostic::SpanRange;
 use bincode::Options;
 use memory::field::PrimeId;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 use serde::{Deserialize, Serialize};
 
 use crate::types::IrType;
+
+// ---------------------------------------------------------------------------
+// FieldConst — field-erased constant (canonical LE bytes)
+// ---------------------------------------------------------------------------
+
+/// A field-erased constant stored as 32 canonical little-endian bytes.
+///
+/// This allows ProveIR to remain non-generic while storing constants from
+/// any supported prime field. The `PrimeId` in the serialization header
+/// tells the instantiator which `FieldElement<F>` to reconstruct.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldConst([u8; 32]);
+
+impl std::fmt::Debug for FieldConst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Show as hex for readability
+        let limbs = [
+            u64::from_le_bytes(self.0[0..8].try_into().unwrap()),
+            u64::from_le_bytes(self.0[8..16].try_into().unwrap()),
+            u64::from_le_bytes(self.0[16..24].try_into().unwrap()),
+            u64::from_le_bytes(self.0[24..32].try_into().unwrap()),
+        ];
+        if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+            write!(f, "FieldConst({})", limbs[0])
+        } else {
+            write!(
+                f,
+                "FieldConst(0x{:016x}{:016x}{:016x}{:016x})",
+                limbs[3], limbs[2], limbs[1], limbs[0]
+            )
+        }
+    }
+}
+
+impl FieldConst {
+    /// The additive identity (zero) — same in all fields.
+    pub fn zero() -> Self {
+        Self([0u8; 32])
+    }
+
+    /// The multiplicative identity (one) — same in all fields.
+    pub fn one() -> Self {
+        let mut bytes = [0u8; 32];
+        bytes[0] = 1;
+        Self(bytes)
+    }
+
+    /// Create from a small integer. Valid in all fields (all moduli > 2^64).
+    pub fn from_u64(v: u64) -> Self {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&v.to_le_bytes());
+        Self(bytes)
+    }
+
+    /// Create from a `FieldElement<F>` by extracting canonical LE bytes.
+    pub fn from_field<F: FieldBackend>(fe: FieldElement<F>) -> Self {
+        Self(fe.to_le_bytes())
+    }
+
+    /// Reconstruct a `FieldElement<F>` from the stored bytes.
+    /// Returns `None` if the bytes are not valid in field `F` (e.g., >= modulus).
+    pub fn to_field<F: FieldBackend>(&self) -> Option<FieldElement<F>> {
+        FieldElement::<F>::from_le_bytes(&self.0)
+    }
+
+    /// Extract as u64 if the value fits. Returns `None` if upper bytes are nonzero.
+    pub fn to_u64(&self) -> Option<u64> {
+        if self.0[8..].iter().any(|&b| b != 0) {
+            return None;
+        }
+        Some(u64::from_le_bytes(self.0[..8].try_into().unwrap()))
+    }
+
+    /// Check if this is zero.
+    pub fn is_zero(&self) -> bool {
+        self.0.iter().all(|&b| b == 0)
+    }
+
+    /// Raw bytes access.
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Top-level ProveIR
@@ -47,7 +130,8 @@ const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
 /// v2: added `capture_arrays` field to ProveIR.
 /// v3: added `message` field to CircuitNode::AssertEq.
 /// v4: added PrimeId byte after version (multi-prime support).
-const PROVE_IR_FORMAT_VERSION: u8 = 4;
+/// v5: CircuitExpr::Const uses FieldConst ([u8;32] canonical LE) instead of FieldElement.
+const PROVE_IR_FORMAT_VERSION: u8 = 5;
 
 /// Maximum allowed size for deserialized ProveIR data (64 MB).
 /// Prevents allocation bombs from crafted length prefixes.
@@ -109,14 +193,20 @@ impl ProveIR {
         }
         let version = bytes[4];
         let (prime_id, payload) = match version {
-            3 => {
+            3 | 4 => {
                 // Legacy v3: no PrimeId byte, assume BN254
-                (PrimeId::Bn254, &bytes[5..])
+                // Legacy v4: has PrimeId byte, uses FieldElement<Bn254Fr> layout
+                // Both use the old serialization format — require recompile.
+                return Err(format!(
+                    "ProveIR format version {version} is no longer supported \
+                     (current: {PROVE_IR_FORMAT_VERSION}). Please recompile the source."
+                ));
             }
             PROVE_IR_FORMAT_VERSION => {
-                // v4+: PrimeId byte at offset 5, payload starts at 6
+                // v5: PrimeId byte at offset 5, payload starts at 6.
+                // CircuitExpr::Const uses FieldConst ([u8;32] canonical LE).
                 if bytes.len() < 6 {
-                    return Err("ProveIR v4 data too short (missing prime byte)".into());
+                    return Err("ProveIR v5 data too short (missing prime byte)".into());
                 }
                 let pid = PrimeId::from_byte(bytes[5]).ok_or_else(|| {
                     format!("unknown PrimeId byte 0x{:02x} in ProveIR header", bytes[5])
@@ -125,7 +215,7 @@ impl ProveIR {
             }
             _ => {
                 return Err(format!(
-                    "unsupported ProveIR format version: expected 3 or {}, got {}",
+                    "unsupported ProveIR format version: expected {}, got {}",
                     PROVE_IR_FORMAT_VERSION, version
                 ));
             }
@@ -412,8 +502,8 @@ pub enum ForRange {
 /// An expression in the circuit template.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CircuitExpr {
-    /// Compile-time constant field element.
-    Const(FieldElement),
+    /// Compile-time constant (field-erased canonical bytes).
+    Const(FieldConst),
     /// Reference to a public or witness input.
     Input(String),
     /// Reference to a captured template parameter.
@@ -698,7 +788,7 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
 impl fmt::Display for CircuitExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CircuitExpr::Const(fe) => write!(f, "{fe}"),
+            CircuitExpr::Const(fe) => write!(f, "{fe:?}"),
             CircuitExpr::Input(name) => write!(f, "{name}"),
             CircuitExpr::Capture(name) => write!(f, "${name}"),
             CircuitExpr::Var(name) => write!(f, "{name}"),
@@ -804,6 +894,7 @@ impl fmt::Display for CircuitBoolOp {
 mod tests {
     use super::*;
     use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+    use memory::Bn254Fr;
 
     /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
     fn assert_round_trip(prove_ir: &ProveIR) {
@@ -911,7 +1002,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        let ir = ProveIrCompiler::compile_prove_block(
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "public hash\nassert_eq(poseidon(secret, 0), hash)",
             &scope,
         )
@@ -949,7 +1040,7 @@ mod tests {
 
         // The body should contain Const(ZERO) and Const(ONE) nodes.
         // After round-trip, the FieldElement values must be identical.
-        fn collect_consts(body: &[CircuitNode]) -> Vec<&FieldElement> {
+        fn collect_consts(body: &[CircuitNode]) -> Vec<&FieldConst> {
             let mut consts = Vec::new();
             for node in body {
                 if let CircuitNode::Let { value, .. } = node {
@@ -962,7 +1053,7 @@ mod tests {
             }
             consts
         }
-        fn collect_expr_consts<'a>(expr: &'a CircuitExpr, out: &mut Vec<&'a FieldElement>) {
+        fn collect_expr_consts<'a>(expr: &'a CircuitExpr, out: &mut Vec<&'a FieldConst>) {
             match expr {
                 CircuitExpr::Const(fe) => out.push(fe),
                 CircuitExpr::BinOp { lhs, rhs, .. } => {
@@ -991,12 +1082,12 @@ mod tests {
         .unwrap();
 
         // Instantiate original
-        let program1 = ir.instantiate(&HashMap::new()).unwrap();
+        let program1 = ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
 
         // Round-trip and instantiate
         let bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
         let (restored, _) = ProveIR::from_bytes(&bytes).unwrap();
-        let program2 = restored.instantiate(&HashMap::new()).unwrap();
+        let program2 = restored.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
 
         // Both should produce identical instruction counts and types
         assert_eq!(
@@ -1048,7 +1139,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        let ir = ProveIrCompiler::compile_prove_block(
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "public hash\nassert_eq(poseidon(secret, 0), hash)",
             &scope,
         )
@@ -1149,9 +1240,18 @@ mod tests {
     }
 
     #[test]
-    fn adversarial_invalid_field_element() {
-        // Craft bytes with FieldElement limbs >= MODULUS
+    fn adversarial_invalid_field_const_rejected_at_instantiation() {
+        // FieldConst stores raw bytes — any [u8;32] is valid at the
+        // serialization layer. But values >= modulus are rejected when
+        // instantiation calls to_field::<F>().
         use memory::field::MODULUS;
+
+        // Build bytes >= BN254 modulus
+        let mut bad_bytes = [0u8; 32];
+        for (i, limb) in MODULUS.iter().enumerate() {
+            bad_bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        let bad_const = FieldConst(bad_bytes);
 
         let ir = ProveIR {
             name: None,
@@ -1160,36 +1260,27 @@ mod tests {
             captures: vec![],
             body: vec![CircuitNode::Let {
                 name: "x".into(),
-                value: CircuitExpr::Const(FieldElement::ONE),
+                value: CircuitExpr::Const(bad_const),
                 span: None,
             }],
             capture_arrays: vec![],
         };
-        let mut bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
 
-        // Find the FieldElement in the serialized bytes and corrupt it.
-        // The ONE constant has specific limbs — replace them with MODULUS.
-        // The FieldElement is serialized as [u64;4] = 32 bytes.
-        // Search for the ONE limbs and replace with MODULUS.
-        let one_bytes = bincode::serialize(&FieldElement::ONE).unwrap();
+        // Serialization + deserialization succeeds (FieldConst is just bytes)
+        let bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
+        let (restored, _) = ProveIR::from_bytes(&bytes).unwrap();
 
-        let modulus_bytes: Vec<u8> = MODULUS.iter().flat_map(|l| l.to_le_bytes()).collect();
-        let one_bytes_len = one_bytes.len();
-
-        // Find the ONE pattern in serialized bytes
-        if let Some(pos) = bytes
-            .windows(one_bytes_len)
-            .position(|w| w == one_bytes.as_slice())
-        {
-            bytes[pos..pos + one_bytes_len].copy_from_slice(&modulus_bytes);
-            let err = ProveIR::from_bytes(&bytes).unwrap_err();
-            assert!(
-                err.contains("modulus") || err.contains("FieldElement"),
-                "error should mention modulus/FieldElement: {err}"
-            );
-        } else {
-            panic!("could not find ONE limbs in serialized bytes");
-        }
+        // But instantiation fails because the bytes are >= BN254 modulus
+        let result = restored.instantiate::<Bn254Fr>(&std::collections::HashMap::new());
+        assert!(
+            result.is_err(),
+            "instantiation should reject FieldConst >= modulus"
+        );
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("invalid") || err.contains("field"),
+            "error should mention invalid field constant: {err}"
+        );
     }
 
     // F4: PoseidonMany with < 2 args rejected after deserialization
@@ -1230,7 +1321,7 @@ mod tests {
             captures: vec![],
             body: vec![CircuitNode::Expr {
                 expr: CircuitExpr::RangeCheck {
-                    value: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
+                    value: Box::new(CircuitExpr::Const(FieldConst::from_u64(0))),
                     bits: 0,
                 },
                 span: None,
@@ -1259,7 +1350,7 @@ mod tests {
             captures: vec![],
             body: vec![CircuitNode::Expr {
                 expr: CircuitExpr::RangeCheck {
-                    value: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
+                    value: Box::new(CircuitExpr::Const(FieldConst::from_u64(0))),
                     bits: 300,
                 },
                 span: None,
@@ -1284,8 +1375,7 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn v3_backward_compat_defaults_to_bn254() {
-        // Manually craft a v3 blob (no prime byte)
+    fn v3_and_v4_rejected_with_recompile_message() {
         let ir = ProveIR {
             name: None,
             public_inputs: vec![],
@@ -1294,13 +1384,29 @@ mod tests {
             body: vec![],
             capture_arrays: vec![],
         };
+        // v3 blob (no prime byte)
         let payload = bincode::serialize(&ir).unwrap();
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"ACHP");
-        bytes.push(3); // v3
-        bytes.extend_from_slice(&payload);
-        let (_, prime) = ProveIR::from_bytes(&bytes).unwrap();
-        assert_eq!(prime, PrimeId::Bn254);
+        let mut bytes_v3 = Vec::new();
+        bytes_v3.extend_from_slice(b"ACHP");
+        bytes_v3.push(3);
+        bytes_v3.extend_from_slice(&payload);
+        let err = ProveIR::from_bytes(&bytes_v3).unwrap_err();
+        assert!(
+            err.contains("no longer supported") && err.contains("recompile"),
+            "v3 error should mention recompile: {err}"
+        );
+
+        // v4 blob (has prime byte, but old serialization format)
+        let mut bytes_v4 = Vec::new();
+        bytes_v4.extend_from_slice(b"ACHP");
+        bytes_v4.push(4);
+        bytes_v4.push(PrimeId::Bn254.to_byte());
+        bytes_v4.extend_from_slice(&payload);
+        let err = ProveIR::from_bytes(&bytes_v4).unwrap_err();
+        assert!(
+            err.contains("no longer supported") && err.contains("recompile"),
+            "v4 error should mention recompile: {err}"
+        );
     }
 
     #[test]

@@ -149,11 +149,13 @@ fn stats_matches_actual_r1cs_count_for_merkle() {
 
     let source = std::fs::read_to_string(fixture("merkle.ach")).unwrap();
     let merkle_path = fixture("merkle.ach");
-    let prove_ir =
-        ProveIrCompiler::compile_circuit(&source, Some(std::path::Path::new(&merkle_path)))
-            .unwrap();
+    let prove_ir = ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(
+        &source,
+        Some(std::path::Path::new(&merkle_path)),
+    )
+    .unwrap();
     let mut program = prove_ir
-        .instantiate(&std::collections::HashMap::new())
+        .instantiate::<memory::Bn254Fr>(&std::collections::HashMap::new())
         .unwrap();
     ir::passes::optimize(&mut program);
 

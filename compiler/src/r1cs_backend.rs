@@ -1,12 +1,14 @@
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
-use memory::FieldElement;
+use constraints::PoseidonParamsProvider;
+use memory::field::PrimeId;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 use std::collections::HashMap;
 
 use ir::types::{Instruction as IrInstruction, IrProgram, SsaVar, Visibility as IrVisibility};
 
 use crate::r1cs_error::R1CSError;
-use crate::r1cs_gadgets::compute_power_of_two;
+use crate::r1cs_gadgets::power_of_two_generic;
 use crate::witness_gen::WitnessOp;
 
 /// Maps an R1CS constraint back to the IR instruction that generated it.
@@ -23,9 +25,9 @@ pub struct ConstraintOrigin {
 /// The R1CSCompiler walks IR instructions and emits R1CS constraints.
 /// Each expression maps to a `LinearCombination`, and only multiplications /
 /// materializations generate actual constraints.
-pub struct R1CSCompiler {
+pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// The underlying R1CS constraint system being built.
-    pub cs: ConstraintSystem,
+    pub cs: ConstraintSystem<F>,
     /// Declared variables: maps `public`/`witness` names → allocated R1CS wire.
     /// Only contains explicitly declared circuit inputs (not `let` bindings).
     pub bindings: HashMap<String, Variable>,
@@ -34,9 +36,12 @@ pub struct R1CSCompiler {
     /// Names of variables declared as private witnesses (in declaration order).
     pub witnesses: Vec<String>,
     /// Cached Poseidon parameters. Initialized on first `poseidon()` call.
-    pub(crate) poseidon_params: Option<PoseidonParams>,
+    pub(crate) poseidon_params: Option<PoseidonParams<F>>,
     /// Witness generation trace: records each intermediate variable allocation.
-    pub witness_ops: Vec<WitnessOp>,
+    pub witness_ops: Vec<WitnessOp<F>>,
+    /// Prime field for this compilation.
+    /// Determines the default bit width for range checks and comparisons.
+    pub prime_id: PrimeId,
     /// SSA variables proven to be boolean by bool_prop analysis.
     /// Boolean enforcement constraints are skipped for these.
     proven_boolean: std::collections::HashSet<ir::types::SsaVar>,
@@ -49,13 +54,13 @@ pub struct R1CSCompiler {
     pub constraint_origins: Vec<ConstraintOrigin>,
 }
 
-impl Default for R1CSCompiler {
+impl<F: FieldBackend> Default for R1CSCompiler<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl R1CSCompiler {
+impl<F: FieldBackend> R1CSCompiler<F> {
     /// Create an empty R1CS compiler with a fresh constraint system.
     pub fn new() -> Self {
         Self {
@@ -63,6 +68,7 @@ impl R1CSCompiler {
             bindings: HashMap::new(),
             public_inputs: Vec::new(),
             witnesses: Vec::new(),
+            prime_id: PrimeId::Bn254,
             poseidon_params: None,
             witness_ops: Vec::new(),
             proven_boolean: std::collections::HashSet::new(),
@@ -110,29 +116,33 @@ impl R1CSCompiler {
     /// use compiler::r1cs_backend::R1CSCompiler;
     /// use ir::IrLowering;
     ///
-    /// let prog = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
+    /// let prog: ir::types::IrProgram = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
     /// let mut rc = R1CSCompiler::new();
     /// rc.compile_ir(&prog).unwrap();
     /// assert!(rc.cs.num_constraints() > 0);
     /// ```
-    pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError> {
+    pub fn compile_ir(&mut self, program: &IrProgram<F>) -> Result<(), R1CSError>
+    where
+        F: PoseidonParamsProvider,
+    {
         // Lookup cache: SSA variable → its LinearCombination. Used for O(1)
         // lookups only — never iterated, so HashMap ordering is irrelevant.
-        let mut lc_map: HashMap<SsaVar, LinearCombination> = HashMap::new();
+        let mut lc_map: HashMap<SsaVar, LinearCombination<F>> = HashMap::new();
         // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
         // Cache divmod gadgets: (lhs, rhs, max_bits) → (q_lc, r_lc).
         // When IntDiv and IntMod use the same operands, the second one reuses
         // the cached result instead of generating duplicate constraints.
+        #[allow(clippy::type_complexity)]
         let mut divmod_cache: HashMap<
             (SsaVar, SsaVar, u32),
-            (LinearCombination, LinearCombination),
+            (LinearCombination<F>, LinearCombination<F>),
         > = HashMap::new();
 
         // Helper closure to look up SSA variables with proper error messages
-        let lookup = |map: &HashMap<SsaVar, LinearCombination>,
+        let lookup = |map: &HashMap<SsaVar, LinearCombination<F>>,
                       var: &SsaVar|
-         -> Result<LinearCombination, R1CSError> {
+         -> Result<LinearCombination<F>, R1CSError> {
             map.get(var).cloned().ok_or_else(|| {
                 R1CSError::UnsupportedOperation(format!("undefined SSA variable {:?}", var), None)
             })
@@ -178,7 +188,7 @@ impl R1CSCompiler {
                 }
                 IrInstruction::Neg { result, operand } => {
                     let lc = lookup(&lc_map, operand)?;
-                    lc_map.insert(*result, lc * FieldElement::ONE.neg());
+                    lc_map.insert(*result, lc * FieldElement::<F>::one().neg());
                 }
                 IrInstruction::Mul { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
@@ -204,7 +214,7 @@ impl R1CSCompiler {
 
                     // Skip boolean enforcement if cond is proven boolean or already enforced
                     if !self.proven_boolean.contains(cond) && self.bool_enforced.insert(*cond) {
-                        let one = LinearCombination::from_constant(FieldElement::ONE);
+                        let one = LinearCombination::from_constant(FieldElement::<F>::one());
                         let one_minus_cond = one - cond_lc.clone();
                         self.cs
                             .enforce(cond_lc.clone(), one_minus_cond, LinearCombination::zero());
@@ -237,11 +247,11 @@ impl R1CSCompiler {
                         // b_i * (1 - b_i) = 0  (enforces b_i ∈ {0, 1})
                         self.cs.enforce(
                             LinearCombination::from_variable(bit_var),
-                            LinearCombination::from_constant(FieldElement::ONE)
+                            LinearCombination::from_constant(FieldElement::<F>::one())
                                 - LinearCombination::from_variable(bit_var),
                             LinearCombination::zero(),
                         );
-                        let coeff = compute_power_of_two(i);
+                        let coeff = power_of_two_generic::<F>(i);
                         sum = sum + LinearCombination::from_variable(bit_var) * coeff;
                         self.witness_ops.push(WitnessOp::BitExtract {
                             target: bit_var,
@@ -256,7 +266,7 @@ impl R1CSCompiler {
                 }
                 IrInstruction::Not { result, operand } => {
                     let op_lc = lookup(&lc_map, operand)?;
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     // Skip boolean enforcement if proven boolean or already enforced
                     if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand)
                     {
@@ -272,7 +282,7 @@ impl R1CSCompiler {
                 IrInstruction::And { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     if !self.proven_boolean.contains(lhs) && self.bool_enforced.insert(*lhs) {
                         self.cs.enforce(
                             a.clone(),
@@ -291,7 +301,7 @@ impl R1CSCompiler {
                 IrInstruction::Or { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     if !self.proven_boolean.contains(lhs) && self.bool_enforced.insert(*lhs) {
                         self.cs.enforce(
                             a.clone(),
@@ -323,7 +333,7 @@ impl R1CSCompiler {
                     });
                     let inv_lc = LinearCombination::from_variable(inv_var);
                     let eq_lc = LinearCombination::from_variable(eq_var);
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     self.cs.enforce(diff.clone(), inv_lc, one - eq_lc.clone());
                     self.cs
                         .enforce(diff, eq_lc.clone(), LinearCombination::zero());
@@ -343,7 +353,7 @@ impl R1CSCompiler {
                     });
                     let inv_lc = LinearCombination::from_variable(inv_var);
                     let eq_lc = LinearCombination::from_variable(eq_var);
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     self.cs
                         .enforce(diff.clone(), inv_lc, one.clone() - eq_lc.clone());
                     self.cs
@@ -356,21 +366,23 @@ impl R1CSCompiler {
                     let b = lookup(&lc_map, rhs)?;
                     let bound_a = range_bounds.get(lhs).copied();
                     let bound_b = range_bounds.get(rhs).copied();
+                    let default_bits = self.default_range_bits();
 
                     let effective_bits = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => ba.max(bb),
                         _ => {
                             if bound_a.is_none() {
-                                self.enforce_252_range(&a);
+                                self.enforce_default_range(&a);
                             }
                             if bound_b.is_none() {
-                                self.enforce_252_range(&b);
+                                self.enforce_default_range(&b);
                             }
-                            252
+                            default_bits
                         }
                     };
 
-                    let offset = compute_power_of_two(effective_bits).sub(&FieldElement::ONE);
+                    let offset =
+                        power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
                     let diff = b - a + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
                     lc_map.insert(*result, lt_lc);
@@ -381,24 +393,26 @@ impl R1CSCompiler {
                     let b = lookup(&lc_map, rhs)?;
                     let bound_a = range_bounds.get(lhs).copied();
                     let bound_b = range_bounds.get(rhs).copied();
+                    let default_bits = self.default_range_bits();
 
                     let effective_bits = match (bound_a, bound_b) {
                         (Some(ba), Some(bb)) => ba.max(bb),
                         _ => {
                             if bound_a.is_none() {
-                                self.enforce_252_range(&a);
+                                self.enforce_default_range(&a);
                             }
                             if bound_b.is_none() {
-                                self.enforce_252_range(&b);
+                                self.enforce_default_range(&b);
                             }
-                            252
+                            default_bits
                         }
                     };
 
-                    let offset = compute_power_of_two(effective_bits).sub(&FieldElement::ONE);
+                    let offset =
+                        power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
                     let diff = a - b + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     lc_map.insert(*result, one - lt_lc);
                 }
                 IrInstruction::IsLtBounded {
@@ -409,7 +423,8 @@ impl R1CSCompiler {
                 } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    let offset = compute_power_of_two(*bitwidth).sub(&FieldElement::ONE);
+                    let offset =
+                        power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                     let diff = b - a + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
                     lc_map.insert(*result, lt_lc);
@@ -422,17 +437,18 @@ impl R1CSCompiler {
                 } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    let offset = compute_power_of_two(*bitwidth).sub(&FieldElement::ONE);
+                    let offset =
+                        power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                     let diff = a - b + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     lc_map.insert(*result, one - lt_lc);
                 }
                 IrInstruction::Assert {
                     result, operand, ..
                 } => {
                     let op_lc = lookup(&lc_map, operand)?;
-                    let one = LinearCombination::from_constant(FieldElement::ONE);
+                    let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     // Skip boolean enforcement if proven boolean or already enforced
                     if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand)
                     {
@@ -458,8 +474,7 @@ impl R1CSCompiler {
                     let right_var = self.materialize_lc(&right_lc);
 
                     if self.poseidon_params.is_none() {
-                        self.poseidon_params =
-                            Some(constraints::poseidon::PoseidonParams::bn254_t3());
+                        self.poseidon_params = Some(F::default_poseidon_t3());
                     }
                     let params = self.poseidon_params.as_ref().unwrap();
 
@@ -496,11 +511,11 @@ impl R1CSCompiler {
                         // b_i * (1 - b_i) = 0
                         self.cs.enforce(
                             LinearCombination::from_variable(bit_var),
-                            LinearCombination::from_constant(FieldElement::ONE)
+                            LinearCombination::from_constant(FieldElement::<F>::one())
                                 - LinearCombination::from_variable(bit_var),
                             LinearCombination::zero(),
                         );
-                        let coeff = compute_power_of_two(i as u32);
+                        let coeff = power_of_two_generic::<F>(i as u32);
                         sum = sum + LinearCombination::from_variable(bit_var) * coeff;
                         self.witness_ops.push(WitnessOp::BitExtract {
                             target: bit_var,
@@ -549,7 +564,7 @@ impl R1CSCompiler {
                         self.enforce_n_range(&q_lc, *max_bits);
                         self.enforce_n_range(&r_lc, *max_bits);
 
-                        let one = LinearCombination::from_constant(FieldElement::ONE);
+                        let one = LinearCombination::from_constant(FieldElement::<F>::one());
                         let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
                         self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
@@ -592,7 +607,7 @@ impl R1CSCompiler {
                         self.enforce_n_range(&q_lc, *max_bits);
                         self.enforce_n_range(&r_lc, *max_bits);
 
-                        let one = LinearCombination::from_constant(FieldElement::ONE);
+                        let one = LinearCombination::from_constant(FieldElement::<F>::one());
                         let b_minus_r_minus_1 = b_lc.clone() - r_lc.clone() - one;
                         self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
@@ -624,7 +639,7 @@ mod tests {
 
     #[test]
     fn constraint_origins_tracks_mul() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -656,7 +671,7 @@ mod tests {
 
     #[test]
     fn constraint_origins_tracks_assert_eq() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -688,7 +703,7 @@ mod tests {
 
     #[test]
     fn constraint_origins_empty_for_linear_ops() {
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,
@@ -719,7 +734,7 @@ mod tests {
     #[test]
     fn constraint_origins_count_matches_constraints() {
         // Mixed circuit: Mul + PoseidonHash + AssertEq
-        let mut prog = IrProgram::new();
+        let mut prog: IrProgram = IrProgram::new();
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
             result: v0,

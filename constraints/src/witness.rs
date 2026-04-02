@@ -3,34 +3,34 @@ use crate::r1cs::{ConstraintSystem, Variable};
 ///
 /// Manages the assignment of values to circuit variables during
 /// witness generation (the "prover" side of computation).
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
-/// Mutable witness vector builder.
-pub struct WitnessBuilder {
+/// Mutable witness vector builder, generic over the field backend.
+pub struct WitnessBuilder<F: FieldBackend = Bn254Fr> {
     /// Values assigned to each variable. Index 0 = ONE.
-    values: Vec<FieldElement>,
+    values: Vec<FieldElement<F>>,
 }
 
-impl WitnessBuilder {
+impl<F: FieldBackend> WitnessBuilder<F> {
     /// Create a new witness builder sized for the given constraint system.
-    pub fn new(cs: &ConstraintSystem) -> Self {
-        let mut values = vec![FieldElement::ZERO; cs.num_variables()];
-        values[0] = FieldElement::ONE; // Wire 0 = constant 1
+    pub fn new(cs: &ConstraintSystem<F>) -> Self {
+        let mut values = vec![FieldElement::<F>::zero(); cs.num_variables()];
+        values[0] = FieldElement::<F>::one(); // Wire 0 = constant 1
         Self { values }
     }
 
     /// Set the value of a variable.
-    pub fn set(&mut self, var: Variable, val: FieldElement) {
+    pub fn set(&mut self, var: Variable, val: FieldElement<F>) {
         self.values[var.index()] = val;
     }
 
     /// Get the value of a variable.
-    pub fn get(&self, var: Variable) -> FieldElement {
+    pub fn get(&self, var: Variable) -> FieldElement<F> {
         self.values[var.index()]
     }
 
     /// Consume and return the witness vector for verification.
-    pub fn build(self) -> Vec<FieldElement> {
+    pub fn build(self) -> Vec<FieldElement<F>> {
         self.values
     }
 }
@@ -39,11 +39,12 @@ impl WitnessBuilder {
 mod tests {
     use super::*;
     use crate::r1cs::{ConstraintSystem, LinearCombination};
+    use memory::FieldElement;
 
     #[test]
     fn test_witness_builder_roundtrip() {
         // Circuit: a * b = c
-        let mut cs = ConstraintSystem::new();
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
         let c = cs.alloc_input();
         let a = cs.alloc_witness();
         let b = cs.alloc_witness();

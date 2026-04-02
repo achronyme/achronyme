@@ -83,7 +83,8 @@ fn test_e2e_pipeline_export() {
     use std::collections::HashMap;
 
     let source = "assert_eq(a * b, out)";
-    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let program: ir::types::IrProgram =
+        IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
 
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
@@ -165,7 +166,8 @@ fn test_snarkjs_groth16_full() {
     use std::collections::HashMap;
 
     let source = "assert_eq(a * b, out)";
-    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let program: ir::types::IrProgram =
+        IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
 
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();
@@ -268,7 +270,8 @@ fn test_plonkish_json_export_roundtrip() {
     use std::collections::HashMap;
 
     let source = "assert_eq(a * b, out)";
-    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let program: ir::types::IrProgram =
+        IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
 
     let mut compiler = PlonkishCompiler::new();
     compiler.compile_ir(&program).unwrap();
@@ -308,7 +311,8 @@ fn test_snarkjs_r1cs_info() {
     use std::collections::HashMap;
 
     let source = "assert_eq(a * b, out)";
-    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let program: ir::types::IrProgram =
+        IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
 
     let mut compiler = R1CSCompiler::new();
     compiler.compile_ir(&program).unwrap();

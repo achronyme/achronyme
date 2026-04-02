@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use achronyme_parser::ast::*;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use crate::error::{IrError, OptSpan};
 use crate::types::{Instruction, IrType, SsaVar};
@@ -10,7 +10,7 @@ use super::{
     annotation_to_ir_type, field_to_u64, to_ir_span, type_compatible, EnvValue, FnDef, IrLowering,
 };
 
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     /// Handle a call to a user-defined function (inline the body).
     pub(super) fn lower_user_fn_call(
         &mut self,
@@ -230,7 +230,7 @@ impl IrLowering {
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Const {
                     result: v,
-                    value: FieldElement::ZERO,
+                    value: FieldElement::<F>::zero(),
                 });
                 v
             }
@@ -281,7 +281,7 @@ impl IrLowering {
                     let cv = self.program.fresh_var();
                     self.program.push(Instruction::Const {
                         result: cv,
-                        value: FieldElement::from_u64(i),
+                        value: FieldElement::<F>::from_u64(i),
                     });
                     self.env.insert(var.to_string(), EnvValue::Scalar(cv));
                     last = Some(self.lower_block(body)?);
@@ -292,7 +292,7 @@ impl IrLowering {
                     let v = self.program.fresh_var();
                     self.program.push(Instruction::Const {
                         result: v,
-                        value: FieldElement::ZERO,
+                        value: FieldElement::<F>::zero(),
                     });
                     v
                 }))
@@ -317,7 +317,7 @@ impl IrLowering {
                             let v = self.program.fresh_var();
                             self.program.push(Instruction::Const {
                                 result: v,
-                                value: FieldElement::ZERO,
+                                value: FieldElement::<F>::zero(),
                             });
                             v
                         }));
@@ -380,7 +380,7 @@ impl IrLowering {
             let v = self.program.fresh_var();
             self.program.push(Instruction::Const {
                 result: v,
-                value: FieldElement::ZERO,
+                value: FieldElement::<F>::zero(),
             });
             v
         }))
@@ -392,7 +392,7 @@ impl IrLowering {
             let v = self.program.fresh_var();
             self.program.push(Instruction::Const {
                 result: v,
-                value: FieldElement::ONE,
+                value: FieldElement::<F>::one(),
             });
             self.program.set_type(v, IrType::Field);
             return Ok(v);
@@ -437,7 +437,7 @@ impl IrLowering {
     }
 
     /// Look up the constant value of an SSA variable (if it was defined by a Const instruction).
-    pub(super) fn get_const_value(&self, var: SsaVar) -> Option<FieldElement> {
+    pub(super) fn get_const_value(&self, var: SsaVar) -> Option<FieldElement<F>> {
         for inst in &self.program.instructions {
             if let Instruction::Const { result, value } = inst {
                 if *result == var {
@@ -449,7 +449,7 @@ impl IrLowering {
     }
 
     /// Emit a constant field element and return its SSA variable.
-    pub(super) fn emit_const(&mut self, value: FieldElement) -> SsaVar {
+    pub(super) fn emit_const(&mut self, value: FieldElement<F>) -> SsaVar {
         let v = self.program.fresh_var();
         self.program.push(Instruction::Const { result: v, value });
         v

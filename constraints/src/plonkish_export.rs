@@ -7,13 +7,13 @@ use serde_json::{json, Value};
 use crate::plonkish::{
     Column, ColumnKind, CopyConstraint, Expression, Gate, Lookup, LookupTable, PlonkishSystem,
 };
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 // ============================================================================
 // Serialization
 // ============================================================================
 
-fn fe_to_json(fe: &FieldElement) -> Value {
+fn fe_to_json<F: FieldBackend>(fe: &FieldElement<F>) -> Value {
     Value::String(fe.to_decimal_string())
 }
 
@@ -28,7 +28,7 @@ fn column_to_json(col: &Column) -> Value {
     })
 }
 
-fn expr_to_json(expr: &Expression) -> Value {
+fn expr_to_json<F: FieldBackend>(expr: &Expression<F>) -> Value {
     match expr {
         Expression::Constant(fe) => json!({ "const": fe.to_decimal_string() }),
         Expression::Cell(col, rotation) => json!({
@@ -43,7 +43,7 @@ fn expr_to_json(expr: &Expression) -> Value {
     }
 }
 
-fn gate_to_json(gate: &Gate) -> Value {
+fn gate_to_json<F: FieldBackend>(gate: &Gate<F>) -> Value {
     json!({
         "name": gate.name,
         "poly": expr_to_json(&gate.poly),
@@ -63,7 +63,7 @@ fn copy_to_json(copy: &CopyConstraint) -> Value {
     })
 }
 
-fn lookup_to_json(lookup: &Lookup) -> Value {
+fn lookup_to_json<F: FieldBackend>(lookup: &Lookup<F>) -> Value {
     let mut obj = json!({
         "name": lookup.name,
         "input_exprs": lookup.input_exprs.iter().map(expr_to_json).collect::<Vec<_>>(),
@@ -75,7 +75,7 @@ fn lookup_to_json(lookup: &Lookup) -> Value {
     obj
 }
 
-fn lookup_table_to_json(table: &LookupTable) -> Value {
+fn lookup_table_to_json<F: FieldBackend>(table: &LookupTable<F>) -> Value {
     json!({
         "name": table.name,
         "column": column_to_json(&table.column),
@@ -83,7 +83,10 @@ fn lookup_table_to_json(table: &LookupTable) -> Value {
     })
 }
 
-fn column_assignments_to_json(system: &PlonkishSystem, columns: &[Column]) -> Vec<Vec<String>> {
+fn column_assignments_to_json<F: FieldBackend>(
+    system: &PlonkishSystem<F>,
+    columns: &[Column],
+) -> Vec<Vec<String>> {
     columns
         .iter()
         .map(|col| match system.assignments.column_values(*col) {
@@ -104,7 +107,7 @@ fn column_assignments_to_json(system: &PlonkishSystem, columns: &[Column]) -> Ve
 /// **WARNING**: The output includes private witness data (advice columns) in
 /// plaintext. Do not share the resulting JSON in untrusted environments, as
 /// this breaks the zero-knowledge property of the circuit.
-pub fn write_plonkish_json(system: &PlonkishSystem) -> String {
+pub fn write_plonkish_json<F: FieldBackend>(system: &PlonkishSystem<F>) -> String {
     let root = json!({
         "format": "achronyme-plonkish-v1",
         "num_advice": system.advice_columns.len(),
@@ -431,7 +434,7 @@ mod tests {
 
     #[test]
     fn empty_system_roundtrip() {
-        let system = PlonkishSystem::new(0);
+        let system: PlonkishSystem = PlonkishSystem::new(0);
         let json = write_plonkish_json(&system);
         validate_plonkish_json(&json).expect("validation failed");
 
@@ -445,7 +448,7 @@ mod tests {
         // Compile a simple circuit through PlonkishCompiler and export
         use crate::plonkish::PlonkishSystem;
 
-        let system = PlonkishSystem::new(0);
+        let system: PlonkishSystem = PlonkishSystem::new(0);
         let json = write_plonkish_json(&system);
         validate_plonkish_json(&json).expect("validation failed");
 

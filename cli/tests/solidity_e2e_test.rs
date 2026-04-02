@@ -12,13 +12,11 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::WitnessGenerator;
 use constraints::{write_r1cs, write_wtns};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
 use memory::field::PrimeId;
 use memory::FieldElement;
-use vm::ProveResult;
 
 // ============================================================================
 // Helpers
@@ -218,7 +216,7 @@ fn solidity_e2e_mul() {
 
     // snarkjs soliditycalldata outputs: ["0x..","0x.."],[[...],[...]],["0x..","0x.."],["0x.."]
     // We need to parse it and generate proper Solidity code with typed variables
-    let calldata_raw = calldata_output.trim().replace('"', "");
+    let _calldata_raw = calldata_output.trim().replace('"', "");
 
     // Parse the 4 groups: pA, pB, pC, pubSignals
     // Format: [a0,a1],[[b00,b01],[b10,b11]],[c0,c1],[pub0,pub1,...]
@@ -447,7 +445,7 @@ fn solidity_e2e_poseidon() {
         zkey1.to_str().unwrap(),
         verifier_path.to_str().unwrap(),
     ]);
-    let calldata = run_snarkjs(&[
+    let _calldata = run_snarkjs(&[
         "snarkjs",
         "zkey",
         "export",

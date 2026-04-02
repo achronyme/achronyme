@@ -4,7 +4,7 @@ use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 // ============================================================================
 // Unit tests for compute_proven_boolean
@@ -12,7 +12,7 @@ use memory::FieldElement;
 
 #[test]
 fn bool_prop_const_0_1_are_boolean() {
-    let mut p = IrProgram::new();
+    let mut p = IrProgram::<Bn254Fr>::new();
     let c0 = p.fresh_var();
     p.push(Instruction::Const {
         result: c0,
@@ -37,7 +37,7 @@ fn bool_prop_const_0_1_are_boolean() {
 
 #[test]
 fn bool_prop_is_eq_result_boolean() {
-    let mut p = IrProgram::new();
+    let mut p = IrProgram::<Bn254Fr>::new();
     let a = p.fresh_var();
     p.push(Instruction::Input {
         result: a,
@@ -65,7 +65,7 @@ fn bool_prop_is_eq_result_boolean() {
 
 #[test]
 fn bool_prop_not_of_boolean() {
-    let mut p = IrProgram::new();
+    let mut p = IrProgram::<Bn254Fr>::new();
     let a = p.fresh_var();
     p.push(Instruction::Input {
         result: a,
@@ -106,7 +106,7 @@ fn bool_prop_not_of_boolean() {
 
 #[test]
 fn bool_prop_and_of_booleans() {
-    let mut p = IrProgram::new();
+    let mut p = IrProgram::<Bn254Fr>::new();
     let a = p.fresh_var();
     p.push(Instruction::Input {
         result: a,
@@ -170,16 +170,16 @@ fn constraint_counts_with_without(
     source: &str,
     inputs: &[(&str, u64)],
 ) -> (usize, usize) {
-    let program = ir::IrLowering::lower_circuit(source, pub_decls, wit_decls).unwrap();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, pub_decls, wit_decls).unwrap();
 
     // Without bool_prop
-    let mut compiler_no = R1CSCompiler::new();
+    let mut compiler_no = R1CSCompiler::<Bn254Fr>::new();
     compiler_no.compile_ir(&program).unwrap();
     let count_without = compiler_no.cs.num_constraints();
 
     // With bool_prop
     let proven = compute_proven_boolean(&program);
-    let mut compiler_yes = R1CSCompiler::new();
+    let mut compiler_yes = R1CSCompiler::<Bn254Fr>::new();
     compiler_yes.set_proven_boolean(proven);
     compiler_yes.compile_ir(&program).unwrap();
     let count_with = compiler_yes.cs.num_constraints();
@@ -252,16 +252,16 @@ let eq = x == y
 let neg = !eq
 assert(neg)
 "#;
-    let program = ir::IrLowering::lower_circuit(source, &[], &["x", "y"]).unwrap();
+    let program = ir::IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["x", "y"]).unwrap();
 
     // Without bool_prop
-    let mut compiler_no = PlonkishCompiler::new();
+    let mut compiler_no = PlonkishCompiler::<Bn254Fr>::new();
     compiler_no.compile_ir(&program).unwrap();
     let rows_without = compiler_no.num_circuit_rows();
 
     // With bool_prop
     let proven = compute_proven_boolean(&program);
-    let mut compiler_yes = PlonkishCompiler::new();
+    let mut compiler_yes = PlonkishCompiler::<Bn254Fr>::new();
     compiler_yes.set_proven_boolean(proven);
     compiler_yes.compile_ir(&program).unwrap();
     let rows_with = compiler_yes.num_circuit_rows();
@@ -287,7 +287,7 @@ assert(neg)
 
 #[test]
 fn bool_prop_range_check_1_bit_is_boolean() {
-    let mut p = IrProgram::new();
+    let mut p = IrProgram::<Bn254Fr>::new();
     let a = p.fresh_var();
     p.push(Instruction::Input {
         result: a,
@@ -327,7 +327,7 @@ fn bool_prop_range_check_1_bit_is_boolean() {
 
 #[test]
 fn bool_prop_assert_marks_operand_boolean() {
-    let mut p = IrProgram::new();
+    let mut p = IrProgram::<Bn254Fr>::new();
     let a = p.fresh_var();
     p.push(Instruction::Input {
         result: a,
@@ -362,7 +362,7 @@ fn soundness_let_bool_on_untyped_witness_enforced() {
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).unwrap();
 
@@ -397,7 +397,7 @@ assert(r)
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).unwrap();
 
@@ -430,7 +430,7 @@ f(w)
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).unwrap();
 
@@ -469,7 +469,7 @@ let r = mux(flag, a, b)
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).unwrap();
 
@@ -508,7 +508,7 @@ let r2 = mux(indices[1], b, a)
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).unwrap();
 
@@ -548,7 +548,7 @@ let r = mux(flag, a, b)
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
     compiler.compile_ir(&program).unwrap();
 

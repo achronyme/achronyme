@@ -11,6 +11,8 @@
 
 use std::collections::HashMap;
 
+use memory::FieldBackend;
+
 use crate::types::{Instruction, IrProgram, SsaVar};
 
 /// Result of the bound inference pass.
@@ -26,7 +28,7 @@ pub struct BoundInferenceResult {
 ///
 /// Scans for RangeCheck instructions to build a bounds map, then rewrites
 /// IsLt → IsLtBounded and IsLe → IsLeBounded when both operands have bounds.
-pub fn bound_inference(program: &mut IrProgram) -> BoundInferenceResult {
+pub fn bound_inference<F: FieldBackend>(program: &mut IrProgram<F>) -> BoundInferenceResult {
     // Phase 1: collect proven bounds from RangeCheck instructions.
     // RangeCheck { result, operand, bits } proves that `operand` fits in `bits` bits.
     // We track the tightest (smallest) bound per variable.
@@ -107,10 +109,9 @@ pub fn bound_inference(program: &mut IrProgram) -> BoundInferenceResult {
 mod tests {
     use super::*;
     use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
-    use memory::FieldElement;
 
     fn make_program_with_rangecheck_and_islt() -> IrProgram {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let a = p.fresh_var(); // %0
         let b = p.fresh_var(); // %1
         let ra = p.fresh_var(); // %2
@@ -164,7 +165,7 @@ mod tests {
 
     #[test]
     fn no_rewrite_when_one_unbounded() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let a = p.fresh_var();
         let b = p.fresh_var();
         let ra = p.fresh_var();
@@ -199,7 +200,7 @@ mod tests {
 
     #[test]
     fn uses_max_bitwidth() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let a = p.fresh_var();
         let b = p.fresh_var();
         let ra = p.fresh_var();
@@ -244,7 +245,7 @@ mod tests {
 
     #[test]
     fn rewrites_isle_too() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let a = p.fresh_var();
         let b = p.fresh_var();
         let ra = p.fresh_var();
@@ -289,7 +290,7 @@ mod tests {
 
     #[test]
     fn no_rewrite_without_rangechecks() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let a = p.fresh_var();
         let b = p.fresh_var();
         let lt = p.fresh_var();

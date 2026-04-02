@@ -234,7 +234,7 @@ mod tests {
         // secret used in assert_eq → CircuitInput
         let body = vec![CircuitNode::AssertEq {
             lhs: CircuitExpr::Capture("secret".into()),
-            rhs: CircuitExpr::Const(memory::FieldElement::ZERO),
+            rhs: CircuitExpr::Const(FieldConst::from_u64(0)),
             message: None,
             span: None,
         }];
@@ -292,7 +292,7 @@ mod tests {
                 value: CircuitExpr::BinOp {
                     op: CircuitBinOp::Mul,
                     lhs: Box::new(CircuitExpr::Capture("n".into())),
-                    rhs: Box::new(CircuitExpr::Const(memory::FieldElement::from_u64(2))),
+                    rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(2))),
                 },
                 span: None,
             },
@@ -351,10 +351,10 @@ mod tests {
     fn capture_in_nested_if() {
         // Capture inside if/else body → constraint
         let body = vec![CircuitNode::If {
-            cond: CircuitExpr::Const(memory::FieldElement::ONE),
+            cond: CircuitExpr::Const(FieldConst::from_u64(1)),
             then_body: vec![CircuitNode::AssertEq {
                 lhs: CircuitExpr::Capture("x".into()),
-                rhs: CircuitExpr::Const(memory::FieldElement::ZERO),
+                rhs: CircuitExpr::Const(FieldConst::from_u64(0)),
                 message: None,
                 span: None,
             }],

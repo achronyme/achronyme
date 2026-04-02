@@ -1,11 +1,12 @@
 //! ProveIR compiler: AST Block → ProveIR template.
 
 use std::collections::{HashMap, HashSet};
+use std::marker::PhantomData;
 use std::path::Path;
 
 use achronyme_parser::ast::*;
 use achronyme_parser::diagnostic::SpanRange;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 use super::error::ProveIrError;
 use super::types::*;
@@ -65,7 +66,7 @@ struct FnDef {
 }
 
 /// Compiles an AST `Block` (from a prove block or circuit file) into a `ProveIR`.
-pub struct ProveIrCompiler {
+pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     /// Maps variable names → what they resolve to.
     env: HashMap<String, CompEnvValue>,
     /// Mutable variable SSA versioning: original_name → current version number.
@@ -91,9 +92,11 @@ pub struct ProveIrCompiler {
     module_loader: crate::module_loader::ModuleLoader,
     /// Tracks modules currently being compiled (for circular import detection).
     compiling_modules: HashSet<std::path::PathBuf>,
+    /// Phantom data for the field backend type parameter.
+    _field: PhantomData<F>,
 }
 
-impl ProveIrCompiler {
+impl<F: FieldBackend> ProveIrCompiler<F> {
     fn new() -> Self {
         Self {
             env: HashMap::new(),
@@ -108,6 +111,7 @@ impl ProveIrCompiler {
             source_dir: None,
             module_loader: crate::module_loader::ModuleLoader::new(),
             compiling_modules: HashSet::new(),
+            _field: PhantomData,
         }
     }
 
@@ -1109,8 +1113,8 @@ impl ProveIrCompiler {
             Expr::FieldLit {
                 value, radix, span, ..
             } => self.compile_field_lit(value, radix, span),
-            Expr::Bool { value: true, .. } => Ok(CircuitExpr::Const(FieldElement::ONE)),
-            Expr::Bool { value: false, .. } => Ok(CircuitExpr::Const(FieldElement::ZERO)),
+            Expr::Bool { value: true, .. } => Ok(CircuitExpr::Const(FieldConst::one())),
+            Expr::Bool { value: false, .. } => Ok(CircuitExpr::Const(FieldConst::zero())),
             Expr::Ident { name, span } => self.compile_ident(name, span),
 
             Expr::BinOp { op, lhs, rhs, span } => self.compile_binop(op, lhs, rhs, span),
@@ -1216,19 +1220,20 @@ impl ProveIrCompiler {
         } else {
             (false, s)
         };
-        let fe = FieldElement::from_decimal_str(digits).ok_or_else(|| {
+        let fe = FieldElement::<F>::from_decimal_str(digits).ok_or_else(|| {
             ProveIrError::UnsupportedOperation {
                 description: format!("invalid integer literal: {s}"),
                 span: to_span(span),
             }
         })?;
+        let fc = FieldConst::from_field(fe);
         if negative {
             Ok(CircuitExpr::UnaryOp {
                 op: CircuitUnaryOp::Neg,
-                operand: Box::new(CircuitExpr::Const(fe)),
+                operand: Box::new(CircuitExpr::Const(fc)),
             })
         } else {
-            Ok(CircuitExpr::Const(fe))
+            Ok(CircuitExpr::Const(fc))
         }
     }
 
@@ -1239,15 +1244,15 @@ impl ProveIrCompiler {
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
         let fe = match radix {
-            FieldRadix::Decimal => FieldElement::from_decimal_str(value),
-            FieldRadix::Hex => FieldElement::from_hex_str(value),
-            FieldRadix::Binary => FieldElement::from_binary_str(value),
+            FieldRadix::Decimal => FieldElement::<F>::from_decimal_str(value),
+            FieldRadix::Hex => FieldElement::<F>::from_hex_str(value),
+            FieldRadix::Binary => FieldElement::<F>::from_binary_str(value),
         }
         .ok_or_else(|| ProveIrError::UnsupportedOperation {
             description: format!("invalid field literal: {value}"),
             span: to_span(span),
         })?;
-        Ok(CircuitExpr::Const(fe))
+        Ok(CircuitExpr::Const(FieldConst::from_field(fe)))
     }
 
     // -----------------------------------------------------------------------
@@ -1285,8 +1290,8 @@ impl ProveIrCompiler {
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
         match (type_name, member) {
-            ("Field", "ZERO") => Ok(CircuitExpr::Const(FieldElement::ZERO)),
-            ("Field", "ONE") => Ok(CircuitExpr::Const(FieldElement::ONE)),
+            ("Field", "ZERO") => Ok(CircuitExpr::Const(FieldConst::zero())),
+            ("Field", "ONE") => Ok(CircuitExpr::Const(FieldConst::one())),
             ("Field", "ORDER") => Err(ProveIrError::StaticAccessNotConstrainable {
                 type_name: "Field".into(),
                 member: "ORDER".into(),
@@ -1295,8 +1300,12 @@ impl ProveIrCompiler {
                     .into(),
                 span: to_span(span),
             }),
-            ("Int", "MAX") => Ok(CircuitExpr::Const(FieldElement::from_i64(memory::I60_MAX))),
-            ("Int", "MIN") => Ok(CircuitExpr::Const(FieldElement::from_i64(memory::I60_MIN))),
+            ("Int", "MAX") => Ok(CircuitExpr::Const(FieldConst::from_field(
+                FieldElement::<F>::from_i64(memory::I60_MAX),
+            ))),
+            ("Int", "MIN") => Ok(CircuitExpr::Const(FieldConst::from_field(
+                FieldElement::<F>::from_i64(memory::I60_MIN),
+            ))),
             ("BigInt", _) => Err(ProveIrError::TypeNotConstrainable {
                 type_name: "BigInt".into(),
                 span: to_span(span),
@@ -1446,7 +1455,7 @@ impl ProveIrCompiler {
                     message,
                     span: Some(SpanRange::from(span)),
                 });
-                Ok(CircuitExpr::Const(FieldElement::ZERO))
+                Ok(CircuitExpr::Const(FieldConst::zero()))
             }
             "assert" => {
                 self.check_assert_arity(args.len(), span)?;
@@ -1458,7 +1467,7 @@ impl ProveIrCompiler {
                     message,
                     span: Some(SpanRange::from(span)),
                 });
-                Ok(CircuitExpr::Const(FieldElement::ZERO))
+                Ok(CircuitExpr::Const(FieldConst::zero()))
             }
 
             // Integer division: int_div(lhs, rhs, max_bits)
@@ -1568,7 +1577,7 @@ impl ProveIrCompiler {
                     });
                 }
                 let x = self.compile_expr(object)?;
-                let zero = CircuitExpr::Const(FieldElement::ZERO);
+                let zero = CircuitExpr::Const(FieldConst::zero());
                 Ok(CircuitExpr::Mux {
                     cond: Box::new(CircuitExpr::Comparison {
                         op: CircuitCmpOp::Lt,
@@ -1853,7 +1862,7 @@ impl ProveIrCompiler {
                 let r = self.compile_expr(if_expr)?;
                 (r, std::mem::take(&mut self.body))
             }
-            None => (CircuitExpr::Const(FieldElement::ZERO), Vec::new()),
+            None => (CircuitExpr::Const(FieldConst::zero()), Vec::new()),
         };
 
         // Restore body and emit the If node
@@ -1965,7 +1974,7 @@ impl ProveIrCompiler {
         });
 
         // For loops don't produce a useful expression value in circuit context
-        Ok(CircuitExpr::Const(FieldElement::ZERO))
+        Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
     fn compile_index(
@@ -2219,7 +2228,7 @@ impl ProveIrCompiler {
     fn compile_block_as_expr(&mut self, block: &Block) -> Result<CircuitExpr, ProveIrError> {
         let stmts = &block.stmts;
         if stmts.is_empty() {
-            return Ok(CircuitExpr::Const(FieldElement::ZERO));
+            return Ok(CircuitExpr::Const(FieldConst::zero()));
         }
 
         // Compile all but the last statement normally
@@ -2228,7 +2237,7 @@ impl ProveIrCompiler {
             if let Stmt::Return { value, .. } = stmt {
                 return match value {
                     Some(expr) => self.compile_expr(expr),
-                    None => Ok(CircuitExpr::Const(FieldElement::ZERO)),
+                    None => Ok(CircuitExpr::Const(FieldConst::zero())),
                 };
             }
             self.compile_stmt(stmt)?;
@@ -2240,11 +2249,11 @@ impl ProveIrCompiler {
             Stmt::Expr(expr) => self.compile_expr(expr),
             Stmt::Return { value, .. } => match value {
                 Some(expr) => self.compile_expr(expr),
-                None => Ok(CircuitExpr::Const(FieldElement::ZERO)),
+                None => Ok(CircuitExpr::Const(FieldConst::zero())),
             },
             other => {
                 self.compile_stmt(other)?;
-                Ok(CircuitExpr::Const(FieldElement::ZERO))
+                Ok(CircuitExpr::Const(FieldConst::zero()))
             }
         }
     }
@@ -2457,7 +2466,7 @@ mod tests {
     fn compile_single_expr(source: &str) -> Result<CircuitExpr, ProveIrError> {
         let (program, errors) = parse_program(source);
         assert!(errors.is_empty(), "parse errors: {errors:?}");
-        let mut compiler = ProveIrCompiler::new();
+        let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
         match &program.stmts[0] {
             Stmt::Expr(expr) => compiler.compile_expr(expr),
             _ => panic!("expected expression statement"),
@@ -2471,7 +2480,7 @@ mod tests {
     ) -> Result<CircuitExpr, ProveIrError> {
         let (program, errors) = parse_program(source);
         assert!(errors.is_empty(), "parse errors: {errors:?}");
-        let mut compiler = ProveIrCompiler::new();
+        let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
         for (name, val) in scope {
             compiler.env.insert(name.to_string(), val.clone());
         }
@@ -2486,7 +2495,7 @@ mod tests {
     #[test]
     fn number_literal() {
         let expr = compile_single_expr("42").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::from_u64(42)));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::from_u64(42)));
     }
 
     #[test]
@@ -2496,7 +2505,7 @@ mod tests {
             expr,
             CircuitExpr::UnaryOp {
                 op: CircuitUnaryOp::Neg,
-                operand: Box::new(CircuitExpr::Const(FieldElement::from_u64(7))),
+                operand: Box::new(CircuitExpr::Const(FieldConst::from_u64(7))),
             }
         );
     }
@@ -2504,25 +2513,25 @@ mod tests {
     #[test]
     fn field_literal_decimal() {
         let expr = compile_single_expr("0p42").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::from_u64(42)));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::from_u64(42)));
     }
 
     #[test]
     fn field_literal_hex() {
         let expr = compile_single_expr("0pxFF").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::from_u64(255)));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::from_u64(255)));
     }
 
     #[test]
     fn bool_true() {
         let expr = compile_single_expr("true").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::ONE));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::one()));
     }
 
     #[test]
     fn bool_false() {
         let expr = compile_single_expr("false").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::ZERO));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::zero()));
     }
 
     #[test]
@@ -2771,13 +2780,13 @@ mod tests {
     #[test]
     fn static_field_zero() {
         let expr = compile_single_expr("Field::ZERO").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::ZERO));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::zero()));
     }
 
     #[test]
     fn static_field_one() {
         let expr = compile_single_expr("Field::ONE").unwrap();
-        assert_eq!(expr, CircuitExpr::Const(FieldElement::ONE));
+        assert_eq!(expr, CircuitExpr::Const(FieldConst::one()));
     }
 
     #[test]
@@ -2785,7 +2794,9 @@ mod tests {
         let expr = compile_single_expr("Int::MAX").unwrap();
         assert_eq!(
             expr,
-            CircuitExpr::Const(FieldElement::from_i64(memory::I60_MAX))
+            CircuitExpr::Const(FieldConst::from_field(FieldElement::<Bn254Fr>::from_i64(
+                memory::I60_MAX
+            )))
         );
     }
 
@@ -2794,7 +2805,9 @@ mod tests {
         let expr = compile_single_expr("Int::MIN").unwrap();
         assert_eq!(
             expr,
-            CircuitExpr::Const(FieldElement::from_i64(memory::I60_MIN))
+            CircuitExpr::Const(FieldConst::from_field(FieldElement::<Bn254Fr>::from_i64(
+                memory::I60_MIN
+            )))
         );
     }
 
@@ -2832,8 +2845,8 @@ mod tests {
             expr,
             CircuitExpr::BinOp {
                 op: CircuitBinOp::Add,
-                lhs: Box::new(CircuitExpr::Const(FieldElement::ONE)),
-                rhs: Box::new(CircuitExpr::Const(FieldElement::ZERO)),
+                lhs: Box::new(CircuitExpr::Const(FieldConst::one())),
+                rhs: Box::new(CircuitExpr::Const(FieldConst::zero())),
             }
         );
     }
@@ -3268,7 +3281,7 @@ mod tests {
         // Field::ZERO should work inside a circuit now!
         let ir = compile_circuit("public x\nlet zero = Field::ZERO\nassert_eq(x, zero)").unwrap();
         if let CircuitNode::Let { value, .. } = &ir.body[0] {
-            assert_eq!(*value, CircuitExpr::Const(FieldElement::ZERO));
+            assert_eq!(*value, CircuitExpr::Const(FieldConst::zero()));
         } else {
             panic!("expected Let node");
         }
@@ -3355,7 +3368,7 @@ mod tests {
                 CircuitExpr::BinOp {
                     op: CircuitBinOp::Add,
                     lhs: Box::new(CircuitExpr::Var("acc".into())),
-                    rhs: Box::new(CircuitExpr::Const(FieldElement::ONE)),
+                    rhs: Box::new(CircuitExpr::Const(FieldConst::one())),
                 }
             );
         } else {
@@ -3550,7 +3563,7 @@ mod tests {
         ];
         let expr = compile_expr_with_scope("if c { a }", &scope).unwrap();
         if let CircuitExpr::Mux { if_false, .. } = &expr {
-            assert_eq!(**if_false, CircuitExpr::Const(FieldElement::ZERO));
+            assert_eq!(**if_false, CircuitExpr::Const(FieldConst::zero()));
         } else {
             panic!("expected Mux, got {expr:?}");
         }
@@ -3696,7 +3709,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        ProveIrCompiler::compile_prove_block(source, &outer)
+        ProveIrCompiler::<Bn254Fr>::compile_prove_block(source, &outer)
     }
 
     #[test]
@@ -3946,11 +3959,11 @@ mod tests {
         // Field::ZERO and Field::ONE should compile to constants
         if let CircuitNode::Let { value, name, .. } = &ir.body[0] {
             assert_eq!(name, "zero");
-            assert_eq!(*value, CircuitExpr::Const(FieldElement::ZERO));
+            assert_eq!(*value, CircuitExpr::Const(FieldConst::zero()));
         }
         if let CircuitNode::Let { value, name, .. } = &ir.body[1] {
             assert_eq!(name, "one");
-            assert_eq!(*value, CircuitExpr::Const(FieldElement::ONE));
+            assert_eq!(*value, CircuitExpr::Const(FieldConst::one()));
         }
     }
 
@@ -4152,7 +4165,7 @@ mod tests {
                 .collect(),
             functions: vec![fn_stmt],
         };
-        let ir = ProveIrCompiler::compile_prove_block(
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "public expected\nassert_eq(double(val), expected)",
             &outer,
         )
@@ -4170,7 +4183,7 @@ mod tests {
             circuit test(a: Public, out: Public) {\n\
                 assert_eq(double(a), out)\n\
             }";
-        let ir = ProveIrCompiler::compile_circuit(source, None).unwrap();
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_circuit(source, None).unwrap();
         assert_eq!(ir.public_inputs.len(), 2);
         // double(a) should have been inlined — no function calls remain
         assert!(ir
@@ -4193,7 +4206,7 @@ mod tests {
             functions: vec![fn_stmt],
         };
         // Local fn triple overrides nothing, but local double overrides outer double
-        let ir = ProveIrCompiler::compile_prove_block(
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "fn double(x) { x * 3 }\npublic expected\nassert_eq(double(val), expected)",
             &outer,
         )

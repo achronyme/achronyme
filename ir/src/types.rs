@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use achronyme_parser::diagnostic::SpanRange;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 /// An SSA variable — defined exactly once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,9 +35,12 @@ impl std::fmt::Display for Visibility {
 /// flat list of these instructions — no phi-nodes needed because circuits have
 /// no dynamic branching.
 #[derive(Debug, Clone)]
-pub enum Instruction {
+pub enum Instruction<F: FieldBackend = Bn254Fr> {
     /// A compile-time constant field element.
-    Const { result: SsaVar, value: FieldElement },
+    Const {
+        result: SsaVar,
+        value: FieldElement<F>,
+    },
     /// A circuit input (public or witness).
     Input {
         result: SsaVar,
@@ -206,7 +209,7 @@ pub enum Instruction {
     },
 }
 
-impl Instruction {
+impl<F: FieldBackend> Instruction<F> {
     /// The SSA variable defined by this instruction.
     pub fn result_var(&self) -> SsaVar {
         match self {
@@ -295,7 +298,7 @@ impl Instruction {
     }
 }
 
-impl std::fmt::Display for Instruction {
+impl<F: FieldBackend> std::fmt::Display for Instruction<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Instruction::Const { result, value } => write!(f, "{result} = Const({value})"),
@@ -441,7 +444,7 @@ impl std::fmt::Display for IrType {
 /// use ir::types::{IrProgram, IrType, Instruction, SsaVar};
 /// use memory::FieldElement;
 ///
-/// let mut prog = IrProgram::new();
+/// let mut prog: IrProgram = IrProgram::new();
 /// let v = prog.fresh_var();
 /// prog.push(Instruction::Const { result: v, value: FieldElement::from_u64(42) });
 /// assert_eq!(prog.instructions.len(), 1);
@@ -453,8 +456,8 @@ impl std::fmt::Display for IrType {
 /// assert_eq!(prog.get_type(v), Some(IrType::Field));
 /// ```
 #[derive(Debug)]
-pub struct IrProgram {
-    pub instructions: Vec<Instruction>,
+pub struct IrProgram<F: FieldBackend = Bn254Fr> {
+    pub instructions: Vec<Instruction<F>>,
     pub next_var: u32,
     /// Maps SSA variables to their source-level names (for error messages).
     pub var_names: HashMap<SsaVar, String>,
@@ -468,13 +471,13 @@ pub struct IrProgram {
     pub var_spans: HashMap<SsaVar, SpanRange>,
 }
 
-impl Default for IrProgram {
+impl<F: FieldBackend> Default for IrProgram<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IrProgram {
+impl<F: FieldBackend> IrProgram<F> {
     pub fn new() -> Self {
         Self {
             instructions: Vec::new(),
@@ -494,7 +497,7 @@ impl IrProgram {
     }
 
     /// Append an instruction and return its result variable.
-    pub fn push(&mut self, inst: Instruction) -> SsaVar {
+    pub fn push(&mut self, inst: Instruction<F>) -> SsaVar {
         let v = inst.result_var();
         self.instructions.push(inst);
         v
@@ -531,7 +534,7 @@ impl IrProgram {
     }
 }
 
-impl std::fmt::Display for IrProgram {
+impl<F: FieldBackend> std::fmt::Display for IrProgram<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for inst in &self.instructions {
             let var = inst.result_var();
@@ -554,7 +557,7 @@ mod tests {
 
     #[test]
     fn fresh_var_increments() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         assert_eq!(p.fresh_var(), SsaVar(0));
         assert_eq!(p.fresh_var(), SsaVar(1));
         assert_eq!(p.fresh_var(), SsaVar(2));
@@ -563,7 +566,7 @@ mod tests {
 
     #[test]
     fn result_var_extracts_correctly() {
-        let inst = Instruction::Add {
+        let inst: Instruction = Instruction::Add {
             result: SsaVar(42),
             lhs: SsaVar(0),
             rhs: SsaVar(1),
@@ -573,7 +576,7 @@ mod tests {
 
     #[test]
     fn push_appends_and_returns_result() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let v = p.fresh_var();
         let r = p.push(Instruction::Const {
             result: v,
@@ -585,7 +588,7 @@ mod tests {
 
     #[test]
     fn has_side_effects() {
-        let assert_inst = Instruction::AssertEq {
+        let assert_inst: Instruction = Instruction::AssertEq {
             result: SsaVar(0),
             lhs: SsaVar(1),
             rhs: SsaVar(2),
@@ -593,7 +596,7 @@ mod tests {
         };
         assert!(assert_inst.has_side_effects());
 
-        let add_inst = Instruction::Add {
+        let add_inst: Instruction = Instruction::Add {
             result: SsaVar(0),
             lhs: SsaVar(1),
             rhs: SsaVar(2),
@@ -603,7 +606,7 @@ mod tests {
 
     #[test]
     fn set_get_type_round_trip() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let v0 = p.fresh_var();
         let v1 = p.fresh_var();
         assert!(p.get_type(v0).is_none());
@@ -621,7 +624,7 @@ mod tests {
 
     #[test]
     fn operands_returns_correct_vars() {
-        let mux = Instruction::Mux {
+        let mux: Instruction = Instruction::Mux {
             result: SsaVar(10),
             cond: SsaVar(1),
             if_true: SsaVar(2),
@@ -650,34 +653,34 @@ mod tests {
 
     #[test]
     fn instruction_display() {
-        let inst = Instruction::Input {
+        let inst: Instruction = Instruction::Input {
             result: SsaVar(0),
             name: "x".into(),
             visibility: Visibility::Public,
         };
         assert_eq!(format!("{inst}"), "%0 = Input(\"x\", public)");
 
-        let inst = Instruction::Mul {
+        let inst: Instruction = Instruction::Mul {
             result: SsaVar(2),
             lhs: SsaVar(0),
             rhs: SsaVar(1),
         };
         assert_eq!(format!("{inst}"), "%2 = Mul(%0, %1)");
 
-        let inst = Instruction::Const {
+        let inst: Instruction = Instruction::Const {
             result: SsaVar(3),
             value: FieldElement::from_u64(42),
         };
         assert_eq!(format!("{inst}"), "%3 = Const(42)");
 
-        let inst = Instruction::RangeCheck {
+        let inst: Instruction = Instruction::RangeCheck {
             result: SsaVar(5),
             operand: SsaVar(4),
             bits: 8,
         };
         assert_eq!(format!("{inst}"), "%5 = RangeCheck(%4, 8)");
 
-        let inst = Instruction::Mux {
+        let inst: Instruction = Instruction::Mux {
             result: SsaVar(6),
             cond: SsaVar(0),
             if_true: SsaVar(1),
@@ -688,7 +691,7 @@ mod tests {
 
     #[test]
     fn program_display() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let v0 = p.fresh_var();
         p.push(Instruction::Input {
             result: v0,
@@ -717,7 +720,7 @@ mod tests {
 
     #[test]
     fn set_get_span_round_trip() {
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let v0 = p.fresh_var();
         let v1 = p.fresh_var();
         let span = SpanRange::new(10, 20, 3, 5, 3, 15);
@@ -731,7 +734,7 @@ mod tests {
     fn var_spans_survive_dce() {
         // var_spans are keyed by SsaVar, not instruction index,
         // so they survive DCE which removes instructions via retain().
-        let mut p = IrProgram::new();
+        let mut p: IrProgram = IrProgram::new();
         let v0 = p.fresh_var();
         p.push(Instruction::Input {
             result: v0,

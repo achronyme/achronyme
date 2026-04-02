@@ -1,5 +1,5 @@
 use constraints::plonkish::{CellRef, PlonkishError};
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use super::compiler::PlonkishCompiler;
 use super::types::{PlonkVal, PlonkWitnessOp};
@@ -8,7 +8,7 @@ use super::types::{PlonkVal, PlonkWitnessOp};
 // Row allocation
 // ============================================================================
 
-impl PlonkishCompiler {
+impl<F: FieldBackend> PlonkishCompiler<F> {
     pub(super) fn alloc_row(&mut self) -> usize {
         let row = self.current_row;
         self.current_row += 1;
@@ -39,7 +39,7 @@ impl PlonkishCompiler {
     /// 1. Records SetConstant witness op (generator fills the advice cell)
     /// 2. Writes value to col_constant (fixed, verifier-committed)
     /// 3. Adds copy constraint: advice cell == fixed cell
-    pub(super) fn constrain_constant(&mut self, cell: CellRef, value: FieldElement) {
+    pub(super) fn constrain_constant(&mut self, cell: CellRef, value: FieldElement<F>) {
         self.witness_ops
             .push(PlonkWitnessOp::SetConstant { cell, value });
         self.system.set(self.col_constant, cell.row, value);
@@ -62,7 +62,7 @@ impl PlonkishCompiler {
     pub(super) fn constrain_zero(&mut self, cell: CellRef) {
         self.witness_ops.push(PlonkWitnessOp::SetConstant {
             cell,
-            value: FieldElement::ZERO,
+            value: FieldElement::<F>::zero(),
         });
         // col_zero defaults to zero everywhere — no need to set it
         self.system.add_copy(
@@ -78,7 +78,7 @@ impl PlonkishCompiler {
     // Materialization: PlonkVal → CellRef
     // ========================================================================
 
-    pub(super) fn materialize_val(&mut self, val: &PlonkVal) -> Result<CellRef, PlonkishError> {
+    pub(super) fn materialize_val(&mut self, val: &PlonkVal<F>) -> Result<CellRef, PlonkishError> {
         self.materialize_val_depth(val, 0)
     }
 
@@ -86,7 +86,7 @@ impl PlonkishCompiler {
     /// from deeply nested deferred arithmetic (e.g. 10,000 chained additions).
     fn materialize_val_depth(
         &mut self,
-        val: &PlonkVal,
+        val: &PlonkVal<F>,
         depth: usize,
     ) -> Result<CellRef, PlonkishError> {
         const MAX_DEPTH: usize = 1_000;
@@ -101,7 +101,8 @@ impl PlonkishCompiler {
             PlonkVal::Constant(fe) => {
                 // Row: 0 * 0 + fe = fe → gate: s*(0*0 + fe - fe) = 0
                 let row = self.alloc_row();
-                self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                self.system
+                    .set(self.col_s_arith, row, FieldElement::<F>::one());
                 // Constrain col_a to zero so prover cannot inject a*b offset
                 self.constrain_zero(CellRef {
                     column: self.col_a,
@@ -125,13 +126,14 @@ impl PlonkishCompiler {
                 let b_cell = self.materialize_val_depth(b, depth + 1)?;
                 // d = a*1 + b
                 let row = self.alloc_row();
-                self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                self.system
+                    .set(self.col_s_arith, row, FieldElement::<F>::one());
                 self.constrain_constant(
                     CellRef {
                         column: self.col_b,
                         row,
                     },
-                    FieldElement::ONE,
+                    FieldElement::<F>::one(),
                 );
                 self.wire(
                     a_cell,
@@ -160,13 +162,14 @@ impl PlonkishCompiler {
                 // Negate b first
                 let neg_b = self.negate_cell(b_cell);
                 let row = self.alloc_row();
-                self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                self.system
+                    .set(self.col_s_arith, row, FieldElement::<F>::one());
                 self.constrain_constant(
                     CellRef {
                         column: self.col_b,
                         row,
                     },
-                    FieldElement::ONE,
+                    FieldElement::<F>::one(),
                 );
                 self.wire(
                     a_cell,
@@ -198,7 +201,8 @@ impl PlonkishCompiler {
     /// d = a * (-1) + 0 = -a
     pub(super) fn negate_cell(&mut self, cell: CellRef) -> CellRef {
         let row = self.alloc_row();
-        self.system.set(self.col_s_arith, row, FieldElement::ONE);
+        self.system
+            .set(self.col_s_arith, row, FieldElement::<F>::one());
         self.wire(
             cell,
             CellRef {
@@ -211,7 +215,7 @@ impl PlonkishCompiler {
                 column: self.col_b,
                 row,
             },
-            FieldElement::ONE.neg(),
+            FieldElement::<F>::one().neg(),
         );
         // Constrain col_c to zero so prover cannot add arbitrary offset
         self.constrain_zero(CellRef {
@@ -236,7 +240,8 @@ impl PlonkishCompiler {
         c_cell: Option<CellRef>,
     ) -> CellRef {
         let row = self.alloc_row();
-        self.system.set(self.col_s_arith, row, FieldElement::ONE);
+        self.system
+            .set(self.col_s_arith, row, FieldElement::<F>::one());
         self.wire(
             a_cell,
             CellRef {
@@ -275,21 +280,20 @@ impl PlonkishCompiler {
 }
 
 // ============================================================================
-// Power-of-two lookup table
+// Power-of-two helper
 // ============================================================================
 
-/// Pre-computed table of 2^0 .. 2^252 as FieldElements.
-/// Initialized once on first access, O(253) total instead of O(n) per call.
-static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 253]> = std::sync::LazyLock::new(|| {
-    let mut table = [FieldElement::ZERO; 253];
-    table[0] = FieldElement::ONE;
-    for i in 1..253 {
-        table[i] = table[i - 1].add(&table[i - 1]);
+/// Compute 2^n as a FieldElement<F> via repeated doubling.
+///
+/// This is O(n) per call. For BN254 there is no cached table here since
+/// the generic version cannot use a `LazyLock` parameterised by `F`.
+/// The call sites (range check setup, IsLt decomposition) are not on hot
+/// paths — they run once per circuit compilation, not per witness row.
+pub(super) fn compute_power_of_two<F: FieldBackend>(n: u32) -> FieldElement<F> {
+    let mut result = FieldElement::<F>::one();
+    let two = FieldElement::<F>::from_u64(2);
+    for _ in 0..n {
+        result = result.mul(&two);
     }
-    table
-});
-
-/// Look up 2^n from the pre-computed table.
-pub(super) fn compute_power_of_two(n: u32) -> FieldElement {
-    POWERS_OF_TWO[n as usize]
+    result
 }

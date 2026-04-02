@@ -4,15 +4,19 @@ use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use ir::IrError;
 use ir::IrLowering;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 /// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
 /// Returns the R1CSCompiler so tests can inspect constraint counts etc.
-fn ir_compile(source: &str, public: &[&str], witness: &[&str]) -> Result<R1CSCompiler, String> {
-    let mut prog =
-        IrLowering::lower_circuit(source, public, witness).map_err(|e| format!("IR: {e}"))?;
+fn ir_compile(
+    source: &str,
+    public: &[&str],
+    witness: &[&str],
+) -> Result<R1CSCompiler<Bn254Fr>, String> {
+    let mut prog = IrLowering::<Bn254Fr>::lower_circuit(source, public, witness)
+        .map_err(|e| format!("IR: {e}"))?;
     ir::passes::optimize(&mut prog);
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&prog).map_err(|e| format!("R1CS: {e}"))?;
     Ok(rc)
 }
@@ -23,8 +27,8 @@ fn ir_compile_and_verify(source: &str, public: &[(&str, u64)], witness: &[(&str,
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
 
-    let mut prog =
-        IrLowering::lower_circuit(source, &pub_names, &wit_names).expect("IR lowering failed");
+    let mut prog = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names)
+        .expect("IR lowering failed");
     ir::passes::optimize(&mut prog);
 
     let mut inputs = HashMap::new();
@@ -32,7 +36,7 @@ fn ir_compile_and_verify(source: &str, public: &[(&str, u64)], witness: &[(&str,
         inputs.insert(name.to_string(), FieldElement::from_u64(*val));
     }
 
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     let w = rc
         .compile_ir_with_witness(&prog, &inputs)
         .expect("compile_ir_with_witness failed");
@@ -109,7 +113,8 @@ fn test_for_integration_with_witness() {
 #[test]
 fn test_for_non_literal_rejected() {
     // for i in expr (not a range and not an array) -> error from IR lowering
-    let err = IrLowering::lower_circuit("for i in a { let x = 1 }", &[], &["a"]).unwrap_err();
+    let err =
+        IrLowering::<Bn254Fr>::lower_circuit("for i in a { let x = 1 }", &[], &["a"]).unwrap_err();
     assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 
@@ -172,11 +177,12 @@ fn test_if_else_boolean_enforcement() {
     // flag=2 value to verify the constraint system catches it.
     let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
 
-    let mut prog = IrLowering::lower_circuit(source, &["out"], &["flag", "a", "b"]).unwrap();
+    let mut prog =
+        IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["flag", "a", "b"]).unwrap();
     ir::passes::optimize(&mut prog);
 
     // Compile constraints only (no evaluation)
-    let mut rc = R1CSCompiler::new();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&prog).unwrap();
 
     // Generate witness with flag=2 (invalid boolean)
@@ -247,13 +253,14 @@ fn test_if_else_if_chain() {
 
 #[test]
 fn test_while_rejected() {
-    let err = IrLowering::lower_circuit("while x { let a = 1 }", &[], &["x"]).unwrap_err();
+    let err =
+        IrLowering::<Bn254Fr>::lower_circuit("while x { let a = 1 }", &[], &["x"]).unwrap_err();
     assert!(matches!(err, IrError::UnboundedLoop(..)));
 }
 
 #[test]
 fn test_forever_rejected() {
-    let err = IrLowering::lower_circuit("forever { let a = 1 }", &[], &[]).unwrap_err();
+    let err = IrLowering::<Bn254Fr>::lower_circuit("forever { let a = 1 }", &[], &[]).unwrap_err();
     assert!(matches!(err, IrError::UnboundedLoop(..)));
 }
 
@@ -268,7 +275,8 @@ fn test_fn_declaration_accepted() {
 #[test]
 fn test_break_rejected() {
     // break inside a for loop -- still rejected in circuits
-    let err = IrLowering::lower_circuit("for i in 0..3 { break }", &[], &[]).unwrap_err();
+    let err =
+        IrLowering::<Bn254Fr>::lower_circuit("for i in 0..3 { break }", &[], &[]).unwrap_err();
     assert!(matches!(err, IrError::UnsupportedOperation(..)));
 }
 

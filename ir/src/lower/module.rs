@@ -2,12 +2,13 @@ use std::path::Path;
 
 use achronyme_parser::ast::*;
 use achronyme_parser::parse_program as ast_parse_program;
+use memory::FieldBackend;
 
 use crate::error::IrError;
 
 use super::{EnvValue, FnDef, IrLowering};
 
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     pub(super) fn load_module_selective(
         &mut self,
         names: &[String],

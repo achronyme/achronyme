@@ -1,5 +1,7 @@
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 use std::collections::HashMap;
+
+use constraints::PoseidonParamsProvider;
 
 use crate::r1cs_backend::R1CSCompiler;
 use crate::r1cs_error::R1CSError;
@@ -8,7 +10,7 @@ use crate::witness_gen::{fill_poseidon_witness, int_divmod_field_pub, WitnessOp}
 use ir::types::IrProgram;
 
 /// Witness generation methods for R1CSCompiler.
-impl R1CSCompiler {
+impl<F: FieldBackend> R1CSCompiler<F> {
     /// Compile an SSA IR program and generate a witness in a single pass.
     ///
     /// Three-pass design (intentional):
@@ -29,7 +31,8 @@ impl R1CSCompiler {
     /// use ir::IrLowering;
     /// use memory::FieldElement;
     ///
-    /// let prog = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
+    /// let prog: ir::types::IrProgram =
+    ///     IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
     /// let mut inputs = HashMap::new();
     /// inputs.insert("z".to_string(), FieldElement::from_u64(42));
     /// inputs.insert("x".to_string(), FieldElement::from_u64(6));
@@ -41,9 +44,12 @@ impl R1CSCompiler {
     /// ```
     pub fn compile_ir_with_witness(
         &mut self,
-        program: &IrProgram,
-        inputs: &HashMap<String, FieldElement>,
-    ) -> Result<Vec<FieldElement>, R1CSError> {
+        program: &IrProgram<F>,
+        inputs: &HashMap<String, FieldElement<F>>,
+    ) -> Result<Vec<FieldElement<F>>, R1CSError>
+    where
+        F: PoseidonParamsProvider,
+    {
         // 1. Evaluate IR — early validation
         let _ssa_values = ir::eval::evaluate(program, inputs)
             .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
@@ -52,8 +58,8 @@ impl R1CSCompiler {
         self.compile_ir(program)?;
 
         // 3. Build witness vector
-        let mut witness = vec![FieldElement::ZERO; self.cs.num_variables()];
-        witness[0] = FieldElement::ONE;
+        let mut witness = vec![FieldElement::<F>::zero(); self.cs.num_variables()];
+        witness[0] = FieldElement::<F>::one();
 
         // 3a. Fill inputs
         for name in &self.public_inputs {
@@ -100,7 +106,7 @@ impl R1CSCompiler {
                     let li = (*bit_index / 64) as usize;
                     let bp = *bit_index % 64;
                     let bit = if li < 4 { (limbs[li] >> bp) & 1 } else { 0 };
-                    witness[target.index()] = FieldElement::from_u64(bit);
+                    witness[target.index()] = FieldElement::<F>::from_u64(bit);
                 }
                 WitnessOp::IsZero {
                     diff,
@@ -111,13 +117,13 @@ impl R1CSCompiler {
                         .evaluate(&witness)
                         .map_err(|e| R1CSError::EvalError(e.to_string()))?;
                     if d.is_zero() {
-                        witness[target_inv.index()] = FieldElement::ZERO;
-                        witness[target_result.index()] = FieldElement::ONE;
+                        witness[target_inv.index()] = FieldElement::<F>::zero();
+                        witness[target_result.index()] = FieldElement::<F>::one();
                     } else {
                         witness[target_inv.index()] = d
                             .inv()
                             .ok_or_else(|| R1CSError::EvalError("IsZero inverse failed".into()))?;
-                        witness[target_result.index()] = FieldElement::ZERO;
+                        witness[target_result.index()] = FieldElement::<F>::zero();
                     }
                 }
                 WitnessOp::IntDivMod { q, r, lhs, rhs } => {
@@ -125,7 +131,7 @@ impl R1CSCompiler {
                     let b = witness[rhs.index()];
                     let a_limbs = a.to_canonical();
                     let b_limbs = b.to_canonical();
-                    let (q_val, r_val) = int_divmod_field_pub(&a_limbs, &b_limbs);
+                    let (q_val, r_val) = int_divmod_field_pub::<F>(&a_limbs, &b_limbs);
                     witness[q.index()] = q_val;
                     witness[r.index()] = r_val;
                 }

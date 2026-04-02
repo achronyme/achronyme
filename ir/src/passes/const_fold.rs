@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use crate::types::{Instruction, IrProgram, SsaVar};
 
@@ -9,8 +9,8 @@ use crate::types::{Instruction, IrProgram, SsaVar};
 /// Forward pass O(n). Tracks which SSA variables have known constant values.
 /// If all operands of an arithmetic instruction are constants, replaces the
 /// instruction with a `Const`.
-pub fn constant_fold(program: &mut IrProgram) {
-    let mut constants: HashMap<SsaVar, FieldElement> = HashMap::new();
+pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
+    let mut constants: HashMap<SsaVar, FieldElement<F>> = HashMap::new();
 
     for inst in &mut program.instructions {
         match inst {
@@ -60,10 +60,10 @@ pub fn constant_fold(program: &mut IrProgram) {
                 if lhs == rhs {
                     // x - x → 0 regardless of whether x is constant
                     let r = *result;
-                    constants.insert(r, FieldElement::ZERO);
+                    constants.insert(r, FieldElement::<F>::zero());
                     *inst = Instruction::Const {
                         result: r,
-                        value: FieldElement::ZERO,
+                        value: FieldElement::<F>::zero(),
                     };
                 } else {
                     let lhs_val = constants.get(lhs).copied();
@@ -94,13 +94,13 @@ pub fn constant_fold(program: &mut IrProgram) {
                 let lhs_zero = lhs_val.is_some_and(|v| v.is_zero());
                 let rhs_zero = rhs_val.is_some_and(|v| v.is_zero());
                 if lhs_zero || rhs_zero {
-                    constants.insert(*result, FieldElement::ZERO);
+                    constants.insert(*result, FieldElement::<F>::zero());
                     *inst = Instruction::Const {
                         result: *result,
-                        value: FieldElement::ZERO,
+                        value: FieldElement::<F>::zero(),
                     };
                 // x * 1 → x, 1 * x → x
-                } else if lhs_val == Some(FieldElement::ONE) {
+                } else if lhs_val == Some(FieldElement::<F>::one()) {
                     if let Some(val) = rhs_val {
                         constants.insert(*result, val);
                         *inst = Instruction::Const {
@@ -108,7 +108,7 @@ pub fn constant_fold(program: &mut IrProgram) {
                             value: val,
                         };
                     }
-                } else if rhs_val == Some(FieldElement::ONE) {
+                } else if rhs_val == Some(FieldElement::<F>::one()) {
                     if let Some(val) = lhs_val {
                         constants.insert(*result, val);
                         *inst = Instruction::Const {
@@ -135,10 +135,10 @@ pub fn constant_fold(program: &mut IrProgram) {
                 if l == rh {
                     if let Some(val) = constants.get(&l).copied() {
                         if !val.is_zero() {
-                            constants.insert(r, FieldElement::ONE);
+                            constants.insert(r, FieldElement::<F>::one());
                             *inst = Instruction::Const {
                                 result: r,
-                                value: FieldElement::ONE,
+                                value: FieldElement::<F>::one(),
                             };
                             folded_self = true;
                         }
@@ -151,13 +151,13 @@ pub fn constant_fold(program: &mut IrProgram) {
                     let lhs_zero = lhs_val.is_some_and(|v| v.is_zero());
                     let rhs_zero = rhs_val.is_some_and(|v| v.is_zero());
                     if lhs_zero && !rhs_zero {
-                        constants.insert(r, FieldElement::ZERO);
+                        constants.insert(r, FieldElement::<F>::zero());
                         *inst = Instruction::Const {
                             result: r,
-                            value: FieldElement::ZERO,
+                            value: FieldElement::<F>::zero(),
                         };
                     // x / 1 → x
-                    } else if rhs_val == Some(FieldElement::ONE) {
+                    } else if rhs_val == Some(FieldElement::<F>::one()) {
                         if let Some(val) = lhs_val {
                             constants.insert(r, val);
                             *inst = Instruction::Const {
@@ -212,7 +212,7 @@ pub fn constant_fold(program: &mut IrProgram) {
                                 value: val,
                             };
                         }
-                    } else if c == FieldElement::ONE {
+                    } else if c == FieldElement::<F>::one() {
                         if let Some(val) = true_val {
                             constants.insert(*result, val);
                             *inst = Instruction::Const {
@@ -261,11 +261,11 @@ pub fn constant_fold(program: &mut IrProgram) {
                     // Only fold if operand is actually boolean (0 or 1).
                     // Non-boolean values must keep the instruction so the
                     // boolean enforcement constraint is emitted in the circuit.
-                    if v.is_zero() || *v == FieldElement::ONE {
+                    if v.is_zero() || *v == FieldElement::<F>::one() {
                         let folded = if v.is_zero() {
-                            FieldElement::ONE
+                            FieldElement::<F>::one()
                         } else {
-                            FieldElement::ZERO
+                            FieldElement::<F>::zero()
                         };
                         constants.insert(*result, folded);
                         *inst = Instruction::Const {
@@ -278,13 +278,13 @@ pub fn constant_fold(program: &mut IrProgram) {
             Instruction::And { result, lhs, rhs } => {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
-                let is_bool = |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
+                let is_bool = |v: FieldElement<F>| v.is_zero() || v == FieldElement::<F>::one();
                 // Short-circuit: 0 && x = 0 (safe: 0 is boolean)
                 if lhs_val.is_some_and(|v| v.is_zero()) || rhs_val.is_some_and(|v| v.is_zero()) {
-                    constants.insert(*result, FieldElement::ZERO);
+                    constants.insert(*result, FieldElement::<F>::zero());
                     *inst = Instruction::Const {
                         result: *result,
-                        value: FieldElement::ZERO,
+                        value: FieldElement::<F>::zero(),
                     };
                 } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
                     // Only fold if both operands are actually boolean.
@@ -303,13 +303,15 @@ pub fn constant_fold(program: &mut IrProgram) {
             Instruction::Or { result, lhs, rhs } => {
                 let lhs_val = constants.get(lhs).copied();
                 let rhs_val = constants.get(rhs).copied();
-                let is_bool = |v: FieldElement| v.is_zero() || v == FieldElement::ONE;
+                let is_bool = |v: FieldElement<F>| v.is_zero() || v == FieldElement::<F>::one();
                 // Short-circuit: 1 || x = 1 (safe: 1 is boolean)
-                if lhs_val == Some(FieldElement::ONE) || rhs_val == Some(FieldElement::ONE) {
-                    constants.insert(*result, FieldElement::ONE);
+                if lhs_val == Some(FieldElement::<F>::one())
+                    || rhs_val == Some(FieldElement::<F>::one())
+                {
+                    constants.insert(*result, FieldElement::<F>::one());
                     *inst = Instruction::Const {
                         result: *result,
-                        value: FieldElement::ONE,
+                        value: FieldElement::<F>::one(),
                     };
                 } else if let (Some(a), Some(b)) = (lhs_val, rhs_val) {
                     // Only fold if both operands are actually boolean.
@@ -327,9 +329,9 @@ pub fn constant_fold(program: &mut IrProgram) {
             Instruction::IsEq { result, lhs, rhs } => {
                 if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
                     let folded = if a == b {
-                        FieldElement::ONE
+                        FieldElement::<F>::one()
                     } else {
-                        FieldElement::ZERO
+                        FieldElement::<F>::zero()
                     };
                     constants.insert(*result, folded);
                     *inst = Instruction::Const {
@@ -341,9 +343,9 @@ pub fn constant_fold(program: &mut IrProgram) {
             Instruction::IsNeq { result, lhs, rhs } => {
                 if let (Some(a), Some(b)) = (constants.get(lhs), constants.get(rhs)) {
                     let folded = if a != b {
-                        FieldElement::ONE
+                        FieldElement::<F>::one()
                     } else {
-                        FieldElement::ZERO
+                        FieldElement::<F>::zero()
                     };
                     constants.insert(*result, folded);
                     *inst = Instruction::Const {
@@ -362,9 +364,9 @@ pub fn constant_fold(program: &mut IrProgram) {
                     let lb = b.to_canonical();
                     let less = (la[3], la[2], la[1], la[0]) < (lb[3], lb[2], lb[1], lb[0]);
                     let folded = if less {
-                        FieldElement::ONE
+                        FieldElement::<F>::one()
                     } else {
-                        FieldElement::ZERO
+                        FieldElement::<F>::zero()
                     };
                     constants.insert(*result, folded);
                     *inst = Instruction::Const {
@@ -382,9 +384,9 @@ pub fn constant_fold(program: &mut IrProgram) {
                     let lb = b.to_canonical();
                     let le = (la[3], la[2], la[1], la[0]) <= (lb[3], lb[2], lb[1], lb[0]);
                     let folded = if le {
-                        FieldElement::ONE
+                        FieldElement::<F>::one()
                     } else {
-                        FieldElement::ZERO
+                        FieldElement::<F>::zero()
                     };
                     constants.insert(*result, folded);
                     *inst = Instruction::Const {

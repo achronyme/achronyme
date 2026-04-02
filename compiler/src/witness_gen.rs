@@ -3,7 +3,8 @@ use std::fmt;
 
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{LinearCombination, Variable};
-use memory::FieldElement;
+use constraints::PoseidonParamsProvider;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 // ============================================================================
 // WitnessOp — records intermediate variable computation
@@ -15,37 +16,37 @@ use memory::FieldElement;
 /// intermediate variable. Replaying these operations with concrete input
 /// values produces the full witness vector.
 #[derive(Debug, Clone)]
-pub enum WitnessOp {
+pub enum WitnessOp<F: FieldBackend = Bn254Fr> {
     /// Assign: `target = lc.evaluate(witness)`
     /// Emitted by `materialize_lc` when it allocates a new variable.
     AssignLC {
         target: Variable,
-        lc: LinearCombination,
+        lc: LinearCombination<F>,
     },
     /// Multiply: `target = a.evaluate(witness) * b.evaluate(witness)`
     /// Emitted by `multiply_lcs` (general case).
     Multiply {
         target: Variable,
-        a: LinearCombination,
-        b: LinearCombination,
+        a: LinearCombination<F>,
+        b: LinearCombination<F>,
     },
     /// Inverse: `target = 1 / operand.evaluate(witness)`
     /// Emitted by `divide_lcs` (general case).
     Inverse {
         target: Variable,
-        operand: LinearCombination,
+        operand: LinearCombination<F>,
     },
     /// Bit extraction: target = (source >> bit_index) & 1.
     /// Emitted by RangeCheck boolean decomposition.
     /// Field elements are 256 bits (4 × 64-bit limbs), so max bit_index is 255.
     BitExtract {
         target: Variable,
-        source: LinearCombination,
+        source: LinearCombination<F>,
         bit_index: u32,
     },
     /// IsZero gadget: if diff==0 then inv=0,result=1 else inv=1/diff,result=0.
     IsZero {
-        diff: LinearCombination,
+        diff: LinearCombination<F>,
         target_inv: Variable,
         target_result: Variable,
     },
@@ -107,20 +108,20 @@ impl std::error::Error for WitnessError {}
 /// After `R1CSCompiler::compile_ir()`, call `WitnessGenerator::from_compiler()`
 /// to capture the compilation trace. Then call `generate()` with concrete input
 /// values to produce a witness that satisfies `cs.verify()`.
-pub struct WitnessGenerator {
-    ops: Vec<WitnessOp>,
+pub struct WitnessGenerator<F: FieldBackend = Bn254Fr> {
+    ops: Vec<WitnessOp<F>>,
     num_variables: usize,
     public_inputs: Vec<(String, Variable)>,
     witnesses: Vec<(String, Variable)>,
-    poseidon_params: Option<PoseidonParams>,
+    poseidon_params: Option<PoseidonParams<F>>,
 }
 
-impl WitnessGenerator {
+impl<F: FieldBackend> WitnessGenerator<F> {
     /// Build a `WitnessGenerator` from a compiled `R1CSCompiler`.
     ///
     /// Must be called after `compile_ir()` — captures the ops trace,
     /// variable layout, and (if used) Poseidon parameters.
-    pub fn from_compiler(compiler: &crate::r1cs_backend::R1CSCompiler) -> Self {
+    pub fn from_compiler(compiler: &crate::r1cs_backend::R1CSCompiler<F>) -> Self {
         let public_inputs: Vec<(String, Variable)> = compiler
             .public_inputs
             .iter()
@@ -149,10 +150,13 @@ impl WitnessGenerator {
     /// be present.
     pub fn generate(
         &self,
-        inputs: &HashMap<String, FieldElement>,
-    ) -> Result<Vec<FieldElement>, WitnessError> {
-        let mut witness = vec![FieldElement::ZERO; self.num_variables];
-        witness[0] = FieldElement::ONE;
+        inputs: &HashMap<String, FieldElement<F>>,
+    ) -> Result<Vec<FieldElement<F>>, WitnessError>
+    where
+        F: PoseidonParamsProvider,
+    {
+        let mut witness = vec![FieldElement::<F>::zero(); self.num_variables];
+        witness[0] = FieldElement::<F>::one();
 
         // Fill public inputs
         for (name, var) in &self.public_inputs {
@@ -179,7 +183,14 @@ impl WitnessGenerator {
     }
 
     /// Execute a single `WitnessOp`, filling in the target wire(s).
-    fn execute_op(&self, op: &WitnessOp, witness: &mut [FieldElement]) -> Result<(), WitnessError> {
+    fn execute_op(
+        &self,
+        op: &WitnessOp<F>,
+        witness: &mut [FieldElement<F>],
+    ) -> Result<(), WitnessError>
+    where
+        F: PoseidonParamsProvider,
+    {
         match op {
             WitnessOp::AssignLC { target, lc } => {
                 witness[target.index()] = lc
@@ -220,7 +231,7 @@ impl WitnessGenerator {
                 } else {
                     0
                 };
-                witness[target.index()] = FieldElement::from_u64(bit);
+                witness[target.index()] = FieldElement::<F>::from_u64(bit);
             }
             WitnessOp::IsZero {
                 diff,
@@ -231,15 +242,15 @@ impl WitnessGenerator {
                     .evaluate(witness)
                     .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
                 if diff_val.is_zero() {
-                    witness[target_inv.index()] = FieldElement::ZERO;
-                    witness[target_result.index()] = FieldElement::ONE;
+                    witness[target_inv.index()] = FieldElement::<F>::zero();
+                    witness[target_result.index()] = FieldElement::<F>::one();
                 } else {
                     // Safe: diff_val is non-zero, so inv() always returns Some
                     let inv = diff_val.inv().ok_or(WitnessError::DivisionByZero {
                         variable_index: target_inv.index(),
                     })?;
                     witness[target_inv.index()] = inv;
-                    witness[target_result.index()] = FieldElement::ZERO;
+                    witness[target_result.index()] = FieldElement::<F>::zero();
                 }
             }
             WitnessOp::IntDivMod { q, r, lhs, rhs } => {
@@ -250,7 +261,7 @@ impl WitnessGenerator {
                 let b_limbs = b.to_canonical();
                 // For simplicity, use the first limb if value fits in 64 bits,
                 // otherwise fall back to multi-limb division.
-                let (q_val, r_val) = int_divmod_field_pub(&a_limbs, &b_limbs);
+                let (q_val, r_val) = int_divmod_field_pub::<F>(&a_limbs, &b_limbs);
                 witness[q.index()] = q_val;
                 witness[r.index()] = r_val;
             }
@@ -270,12 +281,15 @@ impl WitnessGenerator {
     /// Fill the ~361 internal Poseidon wires by replaying the permutation natively.
     fn fill_poseidon(
         &self,
-        witness: &mut [FieldElement],
+        witness: &mut [FieldElement<F>],
         left: Variable,
         right: Variable,
         internal_start: usize,
         internal_count: usize,
-    ) -> Result<(), WitnessError> {
+    ) -> Result<(), WitnessError>
+    where
+        F: PoseidonParamsProvider,
+    {
         let params = self.poseidon_params.as_ref().ok_or_else(|| {
             WitnessError::MissingInput("poseidon parameters not initialized".into())
         })?;
@@ -289,9 +303,9 @@ impl WitnessGenerator {
 /// `poseidon_hash_circuit` → `poseidon_permutation_circuit` in
 /// `constraints/src/poseidon.rs`.
 #[allow(clippy::needless_range_loop)]
-pub(crate) fn fill_poseidon_witness(
-    witness: &mut [FieldElement],
-    params: &PoseidonParams,
+pub(crate) fn fill_poseidon_witness<F: FieldBackend>(
+    witness: &mut [FieldElement<F>],
+    params: &PoseidonParams<F>,
     left: Variable,
     right: Variable,
     internal_start: usize,
@@ -303,12 +317,12 @@ pub(crate) fn fill_poseidon_witness(
     let mut var_idx = internal_start;
 
     // First wire: capacity = 0
-    witness[var_idx] = FieldElement::ZERO;
+    witness[var_idx] = FieldElement::<F>::zero();
     var_idx += 1;
 
     // Initial state: [capacity=0, left, right]
     let mut state = [
-        FieldElement::ZERO,
+        FieldElement::<F>::zero(),
         witness[left.index()],
         witness[right.index()],
     ];
@@ -353,7 +367,7 @@ pub(crate) fn fill_poseidon_witness(
         // 3. MDS matrix multiplication
         let old = state;
         for i in 0..params.t {
-            state[i] = FieldElement::ZERO;
+            state[i] = FieldElement::<F>::zero();
             for j in 0..params.t {
                 state[i] = state[i].add(&params.mds[i][j].mul(&old[j]));
             }
@@ -390,10 +404,10 @@ pub(crate) fn fill_poseidon_witness(
 ///
 /// Returns `(q, r)` where `a = b * q + r` and `0 <= r < b`.
 /// Both `a` and `b` are given as 4-limb canonical representations.
-pub fn int_divmod_field_pub(
+pub fn int_divmod_field_pub<F: FieldBackend>(
     a_limbs: &[u64; 4],
     b_limbs: &[u64; 4],
-) -> (FieldElement, FieldElement) {
+) -> (FieldElement<F>, FieldElement<F>) {
     // Check if both values fit in a single u64 (common case)
     let a_small = a_limbs[1] == 0 && a_limbs[2] == 0 && a_limbs[3] == 0;
     let b_small = b_limbs[1] == 0 && b_limbs[2] == 0 && b_limbs[3] == 0;
@@ -402,11 +416,14 @@ pub fn int_divmod_field_pub(
         let a = a_limbs[0];
         let b = b_limbs[0];
         if b == 0 {
-            return (FieldElement::ZERO, FieldElement::ZERO);
+            return (FieldElement::<F>::zero(), FieldElement::<F>::zero());
         }
         let q = a / b;
         let r = a % b;
-        return (FieldElement::from_u64(q), FieldElement::from_u64(r));
+        return (
+            FieldElement::<F>::from_u64(q),
+            FieldElement::<F>::from_u64(r),
+        );
     }
 
     // Multi-limb: convert to BigUint-style division
@@ -414,33 +431,36 @@ pub fn int_divmod_field_pub(
     let a_val = limbs_to_u256(a_limbs);
     let b_val = limbs_to_u256(b_limbs);
     if b_val == [0u64; 4] {
-        return (FieldElement::ZERO, FieldElement::ZERO);
+        return (FieldElement::<F>::zero(), FieldElement::<F>::zero());
     }
     let (q_val, r_val) = divmod_u256(&a_val, &b_val);
-    (u256_to_field(&q_val), u256_to_field(&r_val))
+    (u256_to_field::<F>(&q_val), u256_to_field::<F>(&r_val))
 }
 
 fn limbs_to_u256(limbs: &[u64; 4]) -> [u64; 4] {
     *limbs
 }
 
-fn u256_to_field(limbs: &[u64; 4]) -> FieldElement {
+fn u256_to_field<F: FieldBackend>(limbs: &[u64; 4]) -> FieldElement<F> {
     // Reconstruct: limbs[0] + limbs[1]*2^64 + limbs[2]*2^128 + limbs[3]*2^192
-    let mut result = FieldElement::from_u64(limbs[0]);
+    let mut result = FieldElement::<F>::from_u64(limbs[0]);
     if limbs[1] != 0 {
-        let shift64 = FieldElement::from_u64(1u64 << 32).mul(&FieldElement::from_u64(1u64 << 32));
-        result = result.add(&FieldElement::from_u64(limbs[1]).mul(&shift64));
+        let shift64 =
+            FieldElement::<F>::from_u64(1u64 << 32).mul(&FieldElement::<F>::from_u64(1u64 << 32));
+        result = result.add(&FieldElement::<F>::from_u64(limbs[1]).mul(&shift64));
     }
     if limbs[2] != 0 {
-        let shift64 = FieldElement::from_u64(1u64 << 32).mul(&FieldElement::from_u64(1u64 << 32));
+        let shift64 =
+            FieldElement::<F>::from_u64(1u64 << 32).mul(&FieldElement::<F>::from_u64(1u64 << 32));
         let shift128 = shift64.mul(&shift64);
-        result = result.add(&FieldElement::from_u64(limbs[2]).mul(&shift128));
+        result = result.add(&FieldElement::<F>::from_u64(limbs[2]).mul(&shift128));
     }
     if limbs[3] != 0 {
-        let shift64 = FieldElement::from_u64(1u64 << 32).mul(&FieldElement::from_u64(1u64 << 32));
+        let shift64 =
+            FieldElement::<F>::from_u64(1u64 << 32).mul(&FieldElement::<F>::from_u64(1u64 << 32));
         let shift128 = shift64.mul(&shift64);
         let shift192 = shift128.mul(&shift64);
-        result = result.add(&FieldElement::from_u64(limbs[3]).mul(&shift192));
+        result = result.add(&FieldElement::<F>::from_u64(limbs[3]).mul(&shift192));
     }
     result
 }

@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use constraints::plonkish::{CellRef, Column, Expression, PlonkishError, PlonkishSystem};
 use constraints::poseidon::PoseidonParams;
+use constraints::PoseidonParamsProvider;
 use ir::types::{Instruction as IrInstruction, IrProgram, SsaVar, Visibility as IrVisibility};
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 use super::types::{PlonkVal, PlonkWitnessOp};
 use super::witness::PlonkishWitnessGenerator;
@@ -12,8 +13,8 @@ use super::witness::PlonkishWitnessGenerator;
 // PlonkishCompiler
 // ============================================================================
 
-pub struct PlonkishCompiler {
-    pub system: PlonkishSystem,
+pub struct PlonkishCompiler<F: FieldBackend = Bn254Fr> {
+    pub system: PlonkishSystem<F>,
     // Standard column refs
     pub col_s_arith: Column,
     pub col_constant: Column,
@@ -24,7 +25,7 @@ pub struct PlonkishCompiler {
     pub col_d: Column,
     pub col_instance: Column,
     // SSA → PlonkVal mapping
-    pub(super) val_map: HashMap<SsaVar, PlonkVal>,
+    pub(super) val_map: HashMap<SsaVar, PlonkVal<F>>,
     // Named inputs
     pub bindings: HashMap<String, CellRef>,
     pub public_inputs: Vec<String>,
@@ -32,9 +33,9 @@ pub struct PlonkishCompiler {
     pub(super) instance_row: usize,
     pub(super) current_row: usize,
     // Witness ops trace
-    pub witness_ops: Vec<PlonkWitnessOp>,
+    pub witness_ops: Vec<PlonkWitnessOp<F>>,
     // Poseidon params (lazy)
-    pub(super) poseidon_params: Option<PoseidonParams>,
+    pub(super) poseidon_params: Option<PoseidonParams<F>>,
     // Range table bits already created (maps bits → lookup_table index)
     pub(super) range_tables: HashMap<u32, usize>,
     // Per-bit-width range selector columns
@@ -43,13 +44,13 @@ pub struct PlonkishCompiler {
     pub(super) proven_boolean: HashSet<SsaVar>,
 }
 
-impl Default for PlonkishCompiler {
+impl<F: FieldBackend> Default for PlonkishCompiler<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PlonkishCompiler {
+impl<F: FieldBackend> PlonkishCompiler<F> {
     pub fn new() -> Self {
         let mut system = PlonkishSystem::new(1024);
 
@@ -101,7 +102,7 @@ impl PlonkishCompiler {
     }
 
     /// Look up an SSA variable, returning an error instead of panicking.
-    pub(super) fn lookup_val(&self, var: &SsaVar) -> Result<PlonkVal, PlonkishError> {
+    pub(super) fn lookup_val(&self, var: &SsaVar) -> Result<PlonkVal<F>, PlonkishError> {
         self.val_map
             .get(var)
             .cloned()
@@ -109,7 +110,10 @@ impl PlonkishCompiler {
     }
 
     /// Compile an SSA IR program into a Plonkish constraint system.
-    pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), PlonkishError> {
+    pub fn compile_ir(&mut self, program: &IrProgram<F>) -> Result<(), PlonkishError>
+    where
+        F: PoseidonParamsProvider,
+    {
         // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
 
@@ -269,16 +273,18 @@ impl PlonkishCompiler {
                         self.emit_bool_check(op_cell);
                     }
                     // result = 1 - op: d = op * (-1) + 1
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+                    let one_cell =
+                        self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::one()))?;
                     let neg_op = self.negate_cell(op_cell);
                     let row = self.alloc_row();
-                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.system
+                        .set(self.col_s_arith, row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         neg_op,
@@ -335,13 +341,13 @@ impl PlonkishCompiler {
                     // sum = a*1 + b
                     let sum_row = self.alloc_row();
                     self.system
-                        .set(self.col_s_arith, sum_row, FieldElement::ONE);
+                        .set(self.col_s_arith, sum_row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row: sum_row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         a_cell,
@@ -366,13 +372,13 @@ impl PlonkishCompiler {
                     // result = sum*1 + neg_product
                     let result_row = self.alloc_row();
                     self.system
-                        .set(self.col_s_arith, result_row, FieldElement::ONE);
+                        .set(self.col_s_arith, result_row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row: result_row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         sum_cell,
@@ -413,16 +419,18 @@ impl PlonkishCompiler {
                     let b_cell = self.materialize_val(&b_val)?;
                     let eq_cell = self.emit_is_zero(a_cell, b_cell)?;
                     // neq = 1 - eq
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+                    let one_cell =
+                        self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::one()))?;
                     let neg_eq = self.negate_cell(eq_cell);
                     let row = self.alloc_row();
-                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.system
+                        .set(self.col_s_arith, row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         one_cell,
@@ -475,16 +483,18 @@ impl PlonkishCompiler {
                     };
                     let lt_cell = self.emit_is_lt_bounded(b_cell, a_cell, bound)?;
                     // 1 - lt
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+                    let one_cell =
+                        self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::one()))?;
                     let neg_lt = self.negate_cell(lt_cell);
                     let row = self.alloc_row();
-                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.system
+                        .set(self.col_s_arith, row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         one_cell,
@@ -534,16 +544,18 @@ impl PlonkishCompiler {
                     let b_cell = self.materialize_val(&b_val)?;
                     let lt_cell = self.emit_is_lt_bounded(b_cell, a_cell, Some(*bitwidth))?;
                     // 1 - lt
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+                    let one_cell =
+                        self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::one()))?;
                     let neg_lt = self.negate_cell(lt_cell);
                     let row = self.alloc_row();
-                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.system
+                        .set(self.col_s_arith, row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         one_cell,
@@ -577,7 +589,8 @@ impl PlonkishCompiler {
                         self.emit_bool_check(op_cell);
                     }
                     // Enforce op == 1 via copy constraint to a materialized 1
-                    let one_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ONE))?;
+                    let one_cell =
+                        self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::one()))?;
                     self.system.add_copy(op_cell, one_cell);
                     self.val_map.insert(*result, PlonkVal::Cell(op_cell));
                 }
@@ -640,7 +653,7 @@ impl PlonkishCompiler {
         // entry instead of leaving zeros. Zero-filled lookup columns are a
         // soundness attack vector — a (0, 0) tuple validates f(0)=0 for any
         // table (cf. Plonky2 CVE GHSA-hj49-h7fq-px5h).
-        let table_padding: Vec<(Column, usize, FieldElement)> = self
+        let table_padding: Vec<(Column, usize, FieldElement<F>)> = self
             .system
             .lookup_tables
             .iter()
@@ -669,9 +682,12 @@ impl PlonkishCompiler {
     /// 3. Generates the witness by replaying ops into assignments.
     pub fn compile_ir_with_witness(
         &mut self,
-        program: &IrProgram,
-        inputs: &HashMap<String, FieldElement>,
-    ) -> Result<(), PlonkishError> {
+        program: &IrProgram<F>,
+        inputs: &HashMap<String, FieldElement<F>>,
+    ) -> Result<(), PlonkishError>
+    where
+        F: PoseidonParamsProvider,
+    {
         // 1. Evaluate IR — early validation
         let _ssa_values = ir::eval::evaluate(program, inputs)
             .map_err(|e| PlonkishError::MissingInput(format!("evaluation error: {e}")))?;

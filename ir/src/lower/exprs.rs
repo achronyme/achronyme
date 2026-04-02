@@ -1,12 +1,12 @@
 use achronyme_parser::ast::*;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use crate::error::IrError;
 use crate::types::{Instruction, IrType, SsaVar};
 
 use super::{field_to_u64, to_ir_span, EnvValue, IrLowering};
 
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     pub(super) fn lower_expr(&mut self, expr: &Expr) -> Result<SsaVar, IrError> {
         match expr {
             Expr::Number { value, span } => self.lower_number(value, span),
@@ -19,7 +19,7 @@ impl IrLowering {
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Const {
                     result: v,
-                    value: FieldElement::ONE,
+                    value: FieldElement::<F>::one(),
                 });
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
@@ -28,7 +28,7 @@ impl IrLowering {
                 let v = self.program.fresh_var();
                 self.program.push(Instruction::Const {
                     result: v,
-                    value: FieldElement::ZERO,
+                    value: FieldElement::<F>::zero(),
                 });
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
@@ -265,7 +265,7 @@ impl IrLowering {
                     let v = self.program.fresh_var();
                     self.program.push(Instruction::Const {
                         result: v,
-                        value: FieldElement::ONE,
+                        value: FieldElement::<F>::one(),
                     });
                     self.program.set_type(v, IrType::Field);
                     return Ok(v);

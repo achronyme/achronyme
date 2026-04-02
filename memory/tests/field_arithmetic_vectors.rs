@@ -28,6 +28,7 @@ fn fe(s: &str) -> FieldElement {
 }
 
 /// The field prime p as a decimal string.
+#[allow(dead_code)]
 const P: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 /// p - 1
 const P_MINUS_1: &str =

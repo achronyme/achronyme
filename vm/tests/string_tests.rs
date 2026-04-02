@@ -1,5 +1,5 @@
 use compiler::Compiler;
-use memory::{Function, Value};
+use memory::Function;
 use vm::{CallFrame, VM};
 
 /// Helper: compile and run Achronyme source, returning the VM after execution.

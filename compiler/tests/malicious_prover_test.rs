@@ -26,7 +26,7 @@ use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 // ============================================================================
 // Helpers
@@ -51,10 +51,10 @@ fn compile_valid_witness(
     witness: &[&str],
     inputs: &[(&str, FieldElement)],
 ) -> (R1CSCompiler, Vec<FieldElement>) {
-    let mut program = IrLowering::lower_circuit(source, public, witness).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(source, public, witness).unwrap();
     ir::passes::optimize(&mut program);
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
 
     let input_map: HashMap<String, FieldElement> =
@@ -540,12 +540,14 @@ fn compile_circuit_witness(
     use ir::prove_ir::ProveIrCompiler;
     use std::path::Path;
 
-    let prove_ir = ProveIrCompiler::compile_circuit(source, Some(Path::new("test.ach"))).unwrap();
+    let prove_ir =
+        ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(source, Some(Path::new("test.ach")))
+            .unwrap();
     let mut program = prove_ir.instantiate(&HashMap::new()).unwrap();
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.set_proven_boolean(proven);
 
     let input_map: HashMap<String, FieldElement> =

@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 use serde::Serialize;
 
 use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
@@ -150,9 +150,9 @@ pub enum NodeStatus {
 /// * `source_code` — The original .ach source (for the source panel).
 /// * `prove_ir_text` — ProveIR Display text (for the ProveIR panel).
 /// * `circuit_name` — Circuit name from ProveIR metadata.
-pub fn build_inspector_graph(
-    program: &IrProgram,
-    witness_values: &HashMap<SsaVar, FieldElement>,
+pub fn build_inspector_graph<F: FieldBackend>(
+    program: &IrProgram<F>,
+    witness_values: &HashMap<SsaVar, FieldElement<F>>,
     failed_nodes: &HashMap<usize, Option<String>>,
     constraint_counts: &HashMap<usize, usize>,
     source_code: Option<String>,
@@ -310,7 +310,7 @@ pub fn build_inspector_graph(
 // ---------------------------------------------------------------------------
 
 /// Map an IR instruction to its NodeKind.
-fn node_kind(inst: &Instruction) -> NodeKind {
+fn node_kind<F: FieldBackend>(inst: &Instruction<F>) -> NodeKind {
     match inst {
         Instruction::Const { .. } => NodeKind::Const,
         Instruction::Input { .. } => NodeKind::Input,
@@ -340,7 +340,7 @@ fn node_kind(inst: &Instruction) -> NodeKind {
 }
 
 /// Produce a human-readable label for a node.
-fn node_label(inst: &Instruction, program: &IrProgram) -> String {
+fn node_label<F: FieldBackend>(inst: &Instruction<F>, program: &IrProgram<F>) -> String {
     match inst {
         Instruction::Const { value, .. } => {
             let s = format_field(value);
@@ -397,7 +397,7 @@ fn node_label(inst: &Instruction, program: &IrProgram) -> String {
 }
 
 /// Append variable name if available: "Mul" → "Mul (product)".
-fn label_with_name(base: &str, var: SsaVar, program: &IrProgram) -> String {
+fn label_with_name<F: FieldBackend>(base: &str, var: SsaVar, program: &IrProgram<F>) -> String {
     match program.get_name(var) {
         Some(name) => format!("{base} ({name})"),
         None => base.to_string(),
@@ -406,7 +406,7 @@ fn label_with_name(base: &str, var: SsaVar, program: &IrProgram) -> String {
 
 /// Format a field element for display.
 /// Small values (< 2^64) show as decimal; large values as truncated hex.
-fn format_field(fe: &FieldElement) -> String {
+fn format_field<F: FieldBackend>(fe: &FieldElement<F>) -> String {
     let limbs = fe.to_canonical();
     // If upper 3 limbs are zero, it fits in u64 — show decimal
     if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
@@ -433,10 +433,10 @@ fn format_field(fe: &FieldElement) -> String {
 mod tests {
     use super::*;
     use crate::types::{Instruction, IrProgram, SsaVar, Visibility};
-    use memory::FieldElement;
+    use memory::{Bn254Fr, FieldElement};
 
-    fn simple_program() -> IrProgram {
-        let mut prog = IrProgram::new();
+    fn simple_program() -> IrProgram<Bn254Fr> {
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         // %0 = Input("x", public)
         let v0 = prog.fresh_var();
         prog.push(Instruction::Input {
@@ -660,11 +660,11 @@ mod tests {
 
     #[test]
     fn format_field_small() {
-        assert_eq!(format_field(&FieldElement::ZERO), "0");
-        assert_eq!(format_field(&FieldElement::ONE), "1");
-        assert_eq!(format_field(&FieldElement::from_u64(42)), "42");
+        assert_eq!(format_field(&FieldElement::<Bn254Fr>::ZERO), "0");
+        assert_eq!(format_field(&FieldElement::<Bn254Fr>::ONE), "1");
+        assert_eq!(format_field(&FieldElement::<Bn254Fr>::from_u64(42)), "42");
         assert_eq!(
-            format_field(&FieldElement::from_u64(u64::MAX)),
+            format_field(&FieldElement::<Bn254Fr>::from_u64(u64::MAX)),
             u64::MAX.to_string()
         );
     }

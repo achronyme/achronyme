@@ -4,6 +4,8 @@
 //! into `circuit test(...) { body }` syntax so tests continue to work after
 //! the flat format was removed from production code.
 
+use memory::Bn254Fr;
+
 use super::compiler::ProveIrCompiler;
 use super::error::ProveIrError;
 use super::types::ProveIR;
@@ -58,5 +60,5 @@ pub fn wrap_flat_to_circuit(source: &str) -> String {
 /// Compile a flat-format or circuit-format source string as a circuit.
 pub fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
     let wrapped = wrap_flat_to_circuit(source);
-    ProveIrCompiler::compile_circuit(&wrapped, None)
+    ProveIrCompiler::<Bn254Fr>::compile_circuit(&wrapped, None)
 }

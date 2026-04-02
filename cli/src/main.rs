@@ -285,15 +285,19 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
     }
 }
 
-/// Validate that the (prime, backend) combination is supported for proving.
+/// Validate that the (prime, backend) combination is supported.
+///
+/// Goldilocks+r1cs is allowed for constraint generation and witness, but
+/// proof generation will fail at runtime (no pairing-friendly prover).
 fn validate_prime_backend(prime_id: PrimeId, backend: &str) -> Result<()> {
     match (prime_id, backend) {
-        (PrimeId::Bn254, "r1cs") => Ok(()),     // groth16-bn254
-        (PrimeId::Bn254, "plonkish") => Ok(()), // plonk-bn254
-        (PrimeId::Bls12_381, "r1cs") => Ok(()), // groth16-bls12-381
+        (PrimeId::Bn254, "r1cs") => Ok(()),      // groth16-bn254
+        (PrimeId::Bn254, "plonkish") => Ok(()),  // plonk-bn254
+        (PrimeId::Bls12_381, "r1cs") => Ok(()),  // groth16-bls12-381
+        (PrimeId::Goldilocks, "r1cs") => Ok(()), // constraints only (no prover)
         _ => Err(anyhow::anyhow!(
             "unsupported combination: prime `{}` with backend `{backend}`\n  \
-             Supported: bn254+r1cs, bn254+plonkish, bls12-381+r1cs",
+             Supported: bn254+r1cs, bn254+plonkish, bls12-381+r1cs, goldilocks+r1cs",
             prime_id.name()
         )),
     }

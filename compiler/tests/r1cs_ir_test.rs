@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use compiler::r1cs_backend::R1CSCompiler;
 use compiler::witness_gen::WitnessGenerator;
 use ir::IrLowering;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldElement};
 
 /// Full pipeline: source → IR → R1CS → witness → verify.
 fn ir_pipeline_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {
@@ -27,9 +27,9 @@ fn ir_pipeline_verify_fe(
 ) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut ir_compiler = R1CSCompiler::new();
+    let mut ir_compiler = R1CSCompiler::<Bn254Fr>::new();
     ir_compiler.compile_ir(&program).unwrap();
 
     // Witness generation + verification
@@ -58,9 +58,9 @@ fn ir_only_verify_fe(
 ) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -83,11 +83,11 @@ fn ir_only_verify_fe(
 fn ir_pipeline_optimized_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness.iter().map(|(n, _)| *n).collect();
-    let mut program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
     ir::passes::optimize(&mut program);
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -309,10 +309,10 @@ fn ir_optimized_poseidon() {
     let wit_names: Vec<&str> = vec!["l", "r"];
     let source = "assert_eq(poseidon(l, r), out)";
 
-    let mut program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -396,9 +396,9 @@ fn ir_assert_pass() {
     let source = "assert(flag)";
     let pub_names: Vec<&str> = vec![];
     let wit_names: Vec<&str> = vec!["flag"];
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -415,9 +415,9 @@ fn ir_assert_eq_via_operators() {
     let source = "assert(x == y)";
     let pub_names: Vec<&str> = vec![];
     let wit_names: Vec<&str> = vec!["x", "y"];
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -438,9 +438,9 @@ fn ir_assert_not_false() {
     let source = "assert(!flag)";
     let pub_names: Vec<&str> = vec![];
     let wit_names: Vec<&str> = vec!["flag"];
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -457,9 +457,9 @@ fn ir_assert_and() {
     let source = "assert(a && b)";
     let pub_names: Vec<&str> = vec![];
     let wit_names: Vec<&str> = vec!["a", "b"];
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -480,9 +480,9 @@ fn ir_assert_or() {
     let source = "assert(a || b)";
     let pub_names: Vec<&str> = vec![];
     let wit_names: Vec<&str> = vec!["a", "b"];
-    let program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &pub_names, &wit_names).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -521,9 +521,9 @@ fn ir_optimized_complex() {
 #[test]
 fn ir_assert_false_fails_verification() {
     let source = "assert(flag)";
-    let program = IrLowering::lower_circuit(source, &[], &["flag"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["flag"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -541,9 +541,9 @@ fn ir_assert_false_fails_verification() {
 fn ir_is_eq_soundness_wrong_result_rejected() {
     // x == y where x=5, y=10 but we claim result=1 (forged equality)
     let source = "let eq = x == y\nassert_eq(eq, expected)";
-    let program = IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -563,9 +563,9 @@ fn ir_is_eq_soundness_wrong_result_rejected() {
 fn ir_is_neq_soundness_wrong_result_rejected() {
     // x != y where x=7, y=7 but we claim result=1 (forged inequality)
     let source = "let neq = x != y\nassert_eq(neq, expected)";
-    let program = IrLowering::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["x", "y"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -584,9 +584,9 @@ fn ir_is_neq_soundness_wrong_result_rejected() {
 #[test]
 fn ir_is_lt_soundness_wrong_result_rejected() {
     let source = "let lt = a < b\nassert_eq(lt, expected)";
-    let program = IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -605,9 +605,9 @@ fn ir_is_lt_soundness_wrong_result_rejected() {
 #[test]
 fn ir_and_non_boolean_input_fails() {
     let source = "let r = a && b\nassert_eq(r, expected)";
-    let program = IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -626,9 +626,9 @@ fn ir_and_non_boolean_input_fails() {
 #[test]
 fn ir_or_non_boolean_input_fails() {
     let source = "let r = a || b\nassert_eq(r, expected)";
-    let program = IrLowering::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["expected"], &["a", "b"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -754,9 +754,9 @@ fn ir_division_malicious_witness_divisor_zero_rejected() {
     // Compile a/b, then craft a witness where b=0 and a=0, claiming result=42.
     // The constraint den * inv = 1 cannot be satisfied when den=0.
     let source = "assert_eq(a / b, out)";
-    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     // Build witness from honest generator with valid inputs to get correct size
@@ -782,9 +782,9 @@ fn ir_division_malicious_witness_divisor_zero_rejected() {
 fn ir_division_malicious_witness_forged_result_rejected() {
     // Honest computation: 42/7=6. Prover claims result=99.
     let source = "assert_eq(a / b, out)";
-    let program = IrLowering::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["out"], &["a", "b"]).unwrap();
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -806,8 +806,8 @@ fn ir_division_malicious_witness_forged_result_rejected() {
 
 /// Helper: compile source with given pub/wit names and return constraint count.
 fn compile_constraint_count(source: &str, public: &[&str], witness: &[&str]) -> usize {
-    let program = IrLowering::lower_circuit(source, public, witness).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, public, witness).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     compiler.cs.num_constraints()
 }
@@ -937,8 +937,8 @@ fn ir_array_verify(
     wit_decls: &[&str],
     source: &str,
 ) {
-    let program = IrLowering::lower_circuit(source, pub_decls, wit_decls).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, pub_decls, wit_decls).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -960,7 +960,7 @@ fn ir_array_verify(
 /// Self-contained pipeline helper.
 fn ir_self_contained_verify(inputs: &[(&str, FieldElement)], source: &str) {
     let (_, _, program) = IrLowering::lower_self_contained(source).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -1044,7 +1044,7 @@ assert_eq(x + y + z, sum)"#,
 
 #[test]
 fn ir_array_index_out_of_bounds() {
-    let result = IrLowering::lower_circuit(
+    let result = IrLowering::<Bn254Fr>::lower_circuit(
         "let a = [x, y, z]\nassert_eq(a[5], x)",
         &[],
         &["x", "y", "z"],
@@ -1060,8 +1060,11 @@ fn ir_array_index_out_of_bounds() {
 #[test]
 fn ir_array_dynamic_index_rejected() {
     // a[x] where x is a witness (not compile-time constant) → error
-    let result =
-        IrLowering::lower_circuit("let a = [y, y, y]\nassert_eq(a[x], y)", &[], &["x", "y"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit(
+        "let a = [y, y, y]\nassert_eq(a[x], y)",
+        &[],
+        &["x", "y"],
+    );
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1099,7 +1102,7 @@ fn ir_array_in_let_binding() {
 
 #[test]
 fn ir_array_empty_rejected() {
-    let result = IrLowering::lower_circuit("let a = []", &[], &[]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit("let a = []", &[], &[]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1169,8 +1172,11 @@ fn ir_fn_multiple_calls() {
 
 #[test]
 fn ir_fn_wrong_arg_count() {
-    let result =
-        IrLowering::lower_circuit("fn double(x) { x + x }\ndouble(a, b)", &[], &["a", "b"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit(
+        "fn double(x) { x + x }\ndouble(a, b)",
+        &[],
+        &["a", "b"],
+    );
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1181,7 +1187,7 @@ fn ir_fn_wrong_arg_count() {
 
 #[test]
 fn ir_fn_recursive_rejected() {
-    let result = IrLowering::lower_circuit("fn f(x) { f(x) }\nf(a)", &[], &["a"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit("fn f(x) { f(x) }\nf(a)", &[], &["a"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1192,7 +1198,11 @@ fn ir_fn_recursive_rejected() {
 
 #[test]
 fn ir_fn_mutual_recursive_rejected() {
-    let result = IrLowering::lower_circuit("fn f(x) { g(x) }\nfn g(x) { f(x) }\nf(a)", &[], &["a"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit(
+        "fn f(x) { g(x) }\nfn g(x) { f(x) }\nf(a)",
+        &[],
+        &["a"],
+    );
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1220,13 +1230,13 @@ assert_eq(sum10(a) + 9 * a, out)"#,
 #[test]
 fn ir_fn_with_builtins() {
     // Function body uses poseidon
-    let program = IrLowering::lower_circuit(
+    let program = IrLowering::<Bn254Fr>::lower_circuit(
         "fn hash_pair(a, b) { poseidon(a, b) }\nhash_pair(x, y)",
         &[],
         &["x", "y"],
     )
     .unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     // Should produce same constraints as a direct poseidon call
     assert!(
@@ -1239,7 +1249,7 @@ fn ir_fn_with_builtins() {
 #[test]
 fn ir_fn_scope_isolation() {
     // Inner let doesn't leak to caller
-    let result = IrLowering::lower_circuit(
+    let result = IrLowering::<Bn254Fr>::lower_circuit(
         "fn f(x) { let inner = x + 1\n inner }\nf(a)\nassert_eq(inner, a)",
         &[],
         &["a"],
@@ -1255,7 +1265,7 @@ fn ir_fn_scope_isolation() {
 #[test]
 fn ir_fn_forward_reference_rejected() {
     // Call before definition → error
-    let result = IrLowering::lower_circuit("f(a)\nfn f(x) { x + x }", &[], &["a"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit("f(a)\nfn f(x) { x + x }", &[], &["a"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1274,12 +1284,12 @@ fn ir_poseidon_many_single() {
     let source_many = "poseidon_many(a)";
     let source_direct = "poseidon(a, 0)";
 
-    let prog_many = IrLowering::lower_circuit(source_many, &[], &["a"]).unwrap();
-    let prog_direct = IrLowering::lower_circuit(source_direct, &[], &["a"]).unwrap();
+    let prog_many = IrLowering::<Bn254Fr>::lower_circuit(source_many, &[], &["a"]).unwrap();
+    let prog_direct = IrLowering::<Bn254Fr>::lower_circuit(source_direct, &[], &["a"]).unwrap();
 
-    let mut comp_many = R1CSCompiler::new();
+    let mut comp_many = R1CSCompiler::<Bn254Fr>::new();
     comp_many.compile_ir(&prog_many).unwrap();
-    let mut comp_direct = R1CSCompiler::new();
+    let mut comp_direct = R1CSCompiler::<Bn254Fr>::new();
     comp_direct.compile_ir(&prog_direct).unwrap();
 
     assert_eq!(
@@ -1299,12 +1309,14 @@ fn ir_poseidon_many_single() {
 #[test]
 fn ir_poseidon_many_two() {
     // poseidon_many(a, b) = poseidon(a, b)
-    let prog_many = IrLowering::lower_circuit("poseidon_many(a, b)", &[], &["a", "b"]).unwrap();
-    let prog_direct = IrLowering::lower_circuit("poseidon(a, b)", &[], &["a", "b"]).unwrap();
+    let prog_many =
+        IrLowering::<Bn254Fr>::lower_circuit("poseidon_many(a, b)", &[], &["a", "b"]).unwrap();
+    let prog_direct =
+        IrLowering::<Bn254Fr>::lower_circuit("poseidon(a, b)", &[], &["a", "b"]).unwrap();
 
-    let mut comp_many = R1CSCompiler::new();
+    let mut comp_many = R1CSCompiler::<Bn254Fr>::new();
     comp_many.compile_ir(&prog_many).unwrap();
-    let mut comp_direct = R1CSCompiler::new();
+    let mut comp_direct = R1CSCompiler::<Bn254Fr>::new();
     comp_direct.compile_ir(&prog_direct).unwrap();
 
     assert_eq!(
@@ -1317,8 +1329,8 @@ fn ir_poseidon_many_two() {
 fn ir_poseidon_many_three() {
     // poseidon_many(a, b, c) = poseidon(poseidon(a, b), c)
     let source = "poseidon_many(a, b, c)";
-    let prog = IrLowering::lower_circuit(source, &[], &["a", "b", "c"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let prog = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &["a", "b", "c"]).unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&prog).unwrap();
 
     // Should be ~722 constraints (2 poseidon hashes)
@@ -1339,7 +1351,7 @@ fn ir_poseidon_many_three() {
 
 #[test]
 fn ir_poseidon_many_empty_rejected() {
-    let result = IrLowering::lower_circuit("poseidon_many()", &[], &[]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit("poseidon_many()", &[], &[]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1356,8 +1368,9 @@ let path = [sibling]
 let dirs = [dir]
 merkle_verify(root, leaf, path, dirs)
 "#;
-    let prog = IrLowering::lower_circuit(source, &["root"], &["leaf", "sibling", "dir"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let prog = IrLowering::<Bn254Fr>::lower_circuit(source, &["root"], &["leaf", "sibling", "dir"])
+        .unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&prog).unwrap();
 
     // At depth 1: 2 poseidon hashes + 1 mux + 1 assert_eq ≈ 725 constraints
@@ -1387,8 +1400,11 @@ let path = [s0, s1, s2]
 let dirs = [d0, d1]
 merkle_verify(root, leaf, path, dirs)
 "#;
-    let result =
-        IrLowering::lower_circuit(source, &["root"], &["leaf", "s0", "s1", "s2", "d0", "d1"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit(
+        source,
+        &["root"],
+        &["leaf", "s0", "s1", "s2", "d0", "d1"],
+    );
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1404,8 +1420,9 @@ let path = [sibling]
 let dirs = [dir]
 merkle_verify(root, leaf, path, dirs)
 "#;
-    let prog = IrLowering::lower_circuit(source, &["root"], &["leaf", "sibling", "dir"]).unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let prog = IrLowering::<Bn254Fr>::lower_circuit(source, &["root"], &["leaf", "sibling", "dir"])
+        .unwrap();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&prog).unwrap();
 
     let gen = WitnessGenerator::from_compiler(&compiler);
@@ -1429,17 +1446,18 @@ merkle_verify(root, leaf, path, dirs)
 #[test]
 fn ir_fn_inline_same_constraints() {
     // double(a) should produce same constraints as a + a
-    let prog_fn = IrLowering::lower_circuit(
+    let prog_fn = IrLowering::<Bn254Fr>::lower_circuit(
         "fn double(x) { x + x }\nassert_eq(double(a), out)",
         &["out"],
         &["a"],
     )
     .unwrap();
-    let prog_direct = IrLowering::lower_circuit("assert_eq(a + a, out)", &["out"], &["a"]).unwrap();
+    let prog_direct =
+        IrLowering::<Bn254Fr>::lower_circuit("assert_eq(a + a, out)", &["out"], &["a"]).unwrap();
 
-    let mut comp_fn = R1CSCompiler::new();
+    let mut comp_fn = R1CSCompiler::<Bn254Fr>::new();
     comp_fn.compile_ir(&prog_fn).unwrap();
-    let mut comp_direct = R1CSCompiler::new();
+    let mut comp_direct = R1CSCompiler::<Bn254Fr>::new();
     comp_direct.compile_ir(&prog_direct).unwrap();
 
     assert_eq!(
@@ -1529,7 +1547,7 @@ fn ir_fn_returning_expression() {
 #[test]
 fn ir_array_scalar_type_mismatch() {
     // Using a scalar as array → TypeMismatch
-    let result = IrLowering::lower_circuit("assert_eq(x[0], x)", &[], &["x"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit("assert_eq(x[0], x)", &[], &["x"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -1541,7 +1559,7 @@ fn ir_array_scalar_type_mismatch() {
 #[test]
 fn ir_array_as_bare_expression_rejected() {
     // Array not in let binding → TypeMismatch
-    let result = IrLowering::lower_circuit("assert_eq([x, y], x)", &[], &["x", "y"]);
+    let result = IrLowering::<Bn254Fr>::lower_circuit("assert_eq([x, y], x)", &[], &["x", "y"]);
     assert!(result.is_err());
 }
 
@@ -1553,13 +1571,13 @@ let path = [s0, s1, s2]
 let dirs = [d0, d1, d2]
 merkle_verify(root, leaf, path, dirs)
 "#;
-    let prog = IrLowering::lower_circuit(
+    let prog = IrLowering::<Bn254Fr>::lower_circuit(
         source,
         &["root"],
         &["leaf", "s0", "s1", "s2", "d0", "d1", "d2"],
     )
     .unwrap();
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&prog).unwrap();
 
     // Conditional swap: 3 * (2 mux + 1 poseidon + 2 materialize) + 1 assert_eq ≈ 1099
@@ -1685,9 +1703,9 @@ fn ir_is_le_limb_boundary_equal_2_192() {
 
 /// Helper: compile with optimization, verify the folded result.
 fn const_fold_verify(source: &str) {
-    let mut program = IrLowering::lower_circuit(source, &[], &[]).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &[]).unwrap();
     ir::passes::optimize(&mut program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     let gen = WitnessGenerator::from_compiler(&compiler);
     let w = gen.generate(&HashMap::new()).unwrap();
@@ -1738,9 +1756,9 @@ fn ir_is_le_const_fold_near_modulus() {
 fn ir_is_lt_const_fold_limb_2_64_false() {
     // 2^64 ≮ 2^64 - 1 → const_fold produces false → assert(false) → verification fails
     let source = "assert(18446744073709551616 < 18446744073709551615)";
-    let mut program = IrLowering::lower_circuit(source, &[], &[]).unwrap();
+    let mut program = IrLowering::<Bn254Fr>::lower_circuit(source, &[], &[]).unwrap();
     ir::passes::optimize(&mut program);
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
     compiler.compile_ir(&program).unwrap();
     let gen = WitnessGenerator::from_compiler(&compiler);
     let w = gen.generate(&HashMap::new()).unwrap();

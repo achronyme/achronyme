@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use memory::FieldBackend;
+
 use crate::types::{IrProgram, SsaVar};
 
 /// Dead code elimination pass.
@@ -11,7 +13,7 @@ use crate::types::{IrProgram, SsaVar};
 /// Side-effect instructions (`AssertEq`, `Assert`, `Input`, `RangeCheck`)
 /// are never eliminated. All other instructions are eliminated if their
 /// result variable is unused by any retained instruction.
-pub fn dead_code_elimination(program: &mut IrProgram) {
+pub fn dead_code_elimination<F: FieldBackend>(program: &mut IrProgram<F>) {
     loop {
         let before = program.instructions.len();
 

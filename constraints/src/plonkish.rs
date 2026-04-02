@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 // ============================================================================
 // Column types
@@ -40,16 +40,16 @@ pub struct CellRef {
 // ============================================================================
 
 #[derive(Debug, Clone)]
-pub enum Expression {
-    Constant(FieldElement),
+pub enum Expression<F: FieldBackend = Bn254Fr> {
+    Constant(FieldElement<F>),
     Cell(Column, i32), // column, rotation offset (0 = current row)
-    Neg(Box<Expression>),
-    Sum(Box<Expression>, Box<Expression>),
-    Product(Box<Expression>, Box<Expression>),
+    Neg(Box<Expression<F>>),
+    Sum(Box<Expression<F>>, Box<Expression<F>>),
+    Product(Box<Expression<F>>, Box<Expression<F>>),
 }
 
-impl Expression {
-    pub fn constant(val: FieldElement) -> Self {
+impl<F: FieldBackend> Expression<F> {
+    pub fn constant(val: FieldElement<F>) -> Self {
         Expression::Constant(val)
     }
 
@@ -78,15 +78,11 @@ impl Expression {
     }
 
     /// Evaluate this expression at a given row using the assignments table.
-    ///
-    /// Returns an error if a rotation refers to a row outside `[0, num_rows)`,
-    /// preventing the silent-zero soundness bug documented in Plonky2
-    /// (CVE GHSA-hj49-h7fq-px5h) and the Halo2 wrap-around issue.
     pub fn evaluate(
         &self,
-        assignments: &Assignments,
+        assignments: &Assignments<F>,
         row: usize,
-    ) -> Result<FieldElement, PlonkishError> {
+    ) -> Result<FieldElement<F>, PlonkishError> {
         match self {
             Expression::Constant(val) => Ok(*val),
             Expression::Cell(col, rotation) => {
@@ -121,25 +117,25 @@ impl Expression {
 // Gate, Lookup, CopyConstraint
 // ============================================================================
 
-pub struct Gate {
+pub struct Gate<F: FieldBackend = Bn254Fr> {
     pub name: String,
-    pub poly: Expression,
+    pub poly: Expression<F>,
 }
 
-pub struct Lookup {
+pub struct Lookup<F: FieldBackend = Bn254Fr> {
     pub name: String,
     /// Optional selector expression: when present, only rows where this evaluates
     /// to non-zero are checked. When absent, falls back to the legacy all-zero skip.
-    pub selector: Option<Expression>,
-    pub input_exprs: Vec<Expression>,
-    pub table_exprs: Vec<Expression>,
+    pub selector: Option<Expression<F>>,
+    pub input_exprs: Vec<Expression<F>>,
+    pub table_exprs: Vec<Expression<F>>,
 }
 
 /// A precomputed lookup table stored as a set of value tuples.
-pub struct LookupTable {
+pub struct LookupTable<F: FieldBackend = Bn254Fr> {
     pub name: String,
     pub column: Column,
-    pub values: Vec<FieldElement>,
+    pub values: Vec<FieldElement<F>>,
 }
 
 pub struct CopyConstraint {
@@ -151,12 +147,12 @@ pub struct CopyConstraint {
 // Assignments (2D table)
 // ============================================================================
 
-pub struct Assignments {
+pub struct Assignments<F: FieldBackend = Bn254Fr> {
     pub num_rows: usize,
-    values: HashMap<Column, Vec<FieldElement>>,
+    values: HashMap<Column, Vec<FieldElement<F>>>,
 }
 
-impl Assignments {
+impl<F: FieldBackend> Assignments<F> {
     pub fn new(num_rows: usize) -> Self {
         Self {
             num_rows,
@@ -167,30 +163,30 @@ impl Assignments {
     pub fn init_column(&mut self, col: Column, num_rows: usize) {
         self.values
             .entry(col)
-            .or_insert_with(|| vec![FieldElement::ZERO; num_rows]);
+            .or_insert_with(|| vec![FieldElement::<F>::zero(); num_rows]);
     }
 
-    pub fn set(&mut self, col: Column, row: usize, val: FieldElement) {
+    pub fn set(&mut self, col: Column, row: usize, val: FieldElement<F>) {
         let col_vals = self
             .values
             .entry(col)
-            .or_insert_with(|| vec![FieldElement::ZERO; self.num_rows]);
+            .or_insert_with(|| vec![FieldElement::<F>::zero(); self.num_rows]);
         if row >= col_vals.len() {
-            col_vals.resize(row + 1, FieldElement::ZERO);
+            col_vals.resize(row + 1, FieldElement::<F>::zero());
         }
         col_vals[row] = val;
     }
 
-    pub fn get(&self, col: Column, row: usize) -> FieldElement {
+    pub fn get(&self, col: Column, row: usize) -> FieldElement<F> {
         self.values
             .get(&col)
             .and_then(|v| v.get(row))
             .copied()
-            .unwrap_or(FieldElement::ZERO)
+            .unwrap_or_else(FieldElement::<F>::zero)
     }
 
     /// Get the values for a column as a slice.
-    pub fn column_values(&self, col: Column) -> Option<&[FieldElement]> {
+    pub fn column_values(&self, col: Column) -> Option<&[FieldElement<F>]> {
         self.values.get(&col).map(|v| v.as_slice())
     }
 
@@ -199,7 +195,7 @@ impl Assignments {
         self.num_rows = self.num_rows.max(num_rows);
         for vals in self.values.values_mut() {
             if vals.len() < self.num_rows {
-                vals.resize(self.num_rows, FieldElement::ZERO);
+                vals.resize(self.num_rows, FieldElement::<F>::zero());
             }
         }
     }
@@ -273,23 +269,23 @@ impl std::error::Error for PlonkishError {}
 // PlonkishSystem
 // ============================================================================
 
-pub struct PlonkishSystem {
+pub struct PlonkishSystem<F: FieldBackend = Bn254Fr> {
     pub fixed_columns: Vec<Column>,
     pub advice_columns: Vec<Column>,
     pub instance_columns: Vec<Column>,
-    pub gates: Vec<Gate>,
-    pub lookups: Vec<Lookup>,
+    pub gates: Vec<Gate<F>>,
+    pub lookups: Vec<Lookup<F>>,
     pub copies: Vec<CopyConstraint>,
-    pub assignments: Assignments,
+    pub assignments: Assignments<F>,
     pub num_rows: usize,
-    pub lookup_tables: Vec<LookupTable>,
+    pub lookup_tables: Vec<LookupTable<F>>,
     // Counters for column allocation
     next_fixed: usize,
     next_advice: usize,
     next_instance: usize,
 }
 
-impl PlonkishSystem {
+impl<F: FieldBackend> PlonkishSystem<F> {
     pub fn new(initial_rows: usize) -> Self {
         Self {
             fixed_columns: Vec::new(),
@@ -344,7 +340,7 @@ impl PlonkishSystem {
 
     // --- Gate registration ---
 
-    pub fn register_gate(&mut self, name: &str, poly: Expression) {
+    pub fn register_gate(&mut self, name: &str, poly: Expression<F>) {
         self.gates.push(Gate {
             name: name.to_string(),
             poly,
@@ -362,8 +358,8 @@ impl PlonkishSystem {
     pub fn register_lookup(
         &mut self,
         name: &str,
-        input_exprs: Vec<Expression>,
-        table_exprs: Vec<Expression>,
+        input_exprs: Vec<Expression<F>>,
+        table_exprs: Vec<Expression<F>>,
     ) {
         self.lookups.push(Lookup {
             name: name.to_string(),
@@ -381,9 +377,9 @@ impl PlonkishSystem {
     pub fn register_lookup_with_selector(
         &mut self,
         name: &str,
-        selector: Expression,
-        input_exprs: Vec<Expression>,
-        table_exprs: Vec<Expression>,
+        selector: Expression<F>,
+        input_exprs: Vec<Expression<F>>,
+        table_exprs: Vec<Expression<F>>,
     ) {
         self.lookups.push(Lookup {
             name: name.to_string(),
@@ -401,7 +397,7 @@ impl PlonkishSystem {
 
     // --- Assignment helpers ---
 
-    pub fn set(&mut self, col: Column, row: usize, val: FieldElement) {
+    pub fn set(&mut self, col: Column, row: usize, val: FieldElement<F>) {
         if row >= self.num_rows {
             self.num_rows = row + 1;
             self.assignments.ensure_rows(self.num_rows);
@@ -409,7 +405,7 @@ impl PlonkishSystem {
         self.assignments.set(col, row, val);
     }
 
-    pub fn get(&self, col: Column, row: usize) -> FieldElement {
+    pub fn get(&self, col: Column, row: usize) -> FieldElement<F> {
         self.assignments.get(col, row)
     }
 
@@ -445,9 +441,9 @@ impl PlonkishSystem {
         //    tuple must appear in the table columns.
         for lookup in &self.lookups {
             // Build the set of table tuples — O(N) with HashSet for O(1) membership.
-            let mut table_set: HashSet<Vec<FieldElement>> = HashSet::new();
+            let mut table_set: HashSet<Vec<FieldElement<F>>> = HashSet::new();
             for row in 0..self.num_rows {
-                let tuple: Vec<FieldElement> = lookup
+                let tuple: Vec<FieldElement<F>> = lookup
                     .table_exprs
                     .iter()
                     .map(|e| e.evaluate(&self.assignments, row))
@@ -463,7 +459,7 @@ impl PlonkishSystem {
                     }
                 }
 
-                let input: Vec<FieldElement> = lookup
+                let input: Vec<FieldElement<F>> = lookup
                     .input_exprs
                     .iter()
                     .map(|e| e.evaluate(&self.assignments, row))
@@ -498,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_column_allocation() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let f0 = sys.alloc_fixed();
         let a0 = sys.alloc_advice();
         let i0 = sys.alloc_instance();
@@ -512,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_cell_assignment_and_get() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(42));
         assert_eq!(sys.get(a, 0), FieldElement::from_u64(42));
@@ -521,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_expression_constant() {
-        let sys = PlonkishSystem::new(4);
+        let sys: PlonkishSystem = PlonkishSystem::new(4);
         let expr = Expression::constant(FieldElement::from_u64(7));
         assert_eq!(
             expr.evaluate(&sys.assignments, 0).unwrap(),
@@ -531,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_expression_cell() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         sys.set(a, 2, FieldElement::from_u64(99));
         let expr = Expression::cell(a, 0);
@@ -543,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_expression_arithmetic() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         let b = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(3));
@@ -564,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_expression_sub_neg() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(10));
         // -a
@@ -576,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_rotation_out_of_bounds_error() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         sys.set(a, 3, FieldElement::from_u64(42));
         // Rotation +1 at row 3 → row 4, out of bounds for 4-row system
@@ -598,7 +594,7 @@ mod tests {
     #[test]
     fn test_gate_satisfied() {
         // Gate: s * (a * b + c - d) = 0
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let s = sys.alloc_fixed();
         let a = sys.alloc_advice();
         let b = sys.alloc_advice();
@@ -626,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_gate_not_satisfied() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let s = sys.alloc_fixed();
         let a = sys.alloc_advice();
         let b = sys.alloc_advice();
@@ -652,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_copy_constraint_ok() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         let b = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(42));
@@ -663,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_copy_constraint_fails() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let a = sys.alloc_advice();
         let b = sys.alloc_advice();
         sys.set(a, 0, FieldElement::from_u64(42));
@@ -675,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_range_table() {
-        let mut sys = PlonkishSystem::new(8);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(8);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
         let selector = sys.alloc_fixed();
@@ -700,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_lookup_fails() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
 
@@ -724,7 +720,7 @@ mod tests {
     #[test]
     fn test_full_arithmetic_circuit() {
         // Circuit: prove a*b + c = d
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let s_arith = sys.alloc_fixed();
         let a = sys.alloc_advice();
         let b = sys.alloc_advice();
@@ -760,13 +756,13 @@ mod tests {
 
     #[test]
     fn test_empty_system_verifies() {
-        let sys = PlonkishSystem::new(4);
+        let sys: PlonkishSystem = PlonkishSystem::new(4);
         assert!(sys.verify().is_ok());
     }
 
     #[test]
     fn test_grow_rows() {
-        let mut sys = PlonkishSystem::new(2);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(2);
         let a = sys.alloc_advice();
         sys.set(a, 5, FieldElement::from_u64(77));
         assert_eq!(sys.get(a, 5), FieldElement::from_u64(77));
@@ -775,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_multiple_gates() {
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let s1 = sys.alloc_fixed();
         let s2 = sys.alloc_fixed();
         let a = sys.alloc_advice();
@@ -805,7 +801,7 @@ mod tests {
     #[test]
     fn test_lookup_inactive_rows_pass() {
         // Lookup with all-zero inputs should be skipped (inactive)
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
 
@@ -831,7 +827,7 @@ mod tests {
     #[test]
     fn test_lookup_with_selector_active_passes() {
         // Selector=1, value=5, 5 is in table → pass
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
         let selector = sys.alloc_fixed();
@@ -854,7 +850,7 @@ mod tests {
     #[test]
     fn test_lookup_with_selector_active_zero_value_passes() {
         // Selector=1, value=0, 0 is in table → must NOT be skipped, must pass
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
         let selector = sys.alloc_fixed();
@@ -880,7 +876,7 @@ mod tests {
     #[test]
     fn test_lookup_with_selector_inactive_skipped() {
         // Selector=0, value=99 (NOT in table) → inactive, should be skipped
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
         let selector = sys.alloc_fixed();
@@ -907,7 +903,7 @@ mod tests {
     #[test]
     fn test_lookup_with_selector_active_invalid_fails() {
         // Selector=1, value=99 (NOT in table) → must fail
-        let mut sys = PlonkishSystem::new(4);
+        let mut sys: PlonkishSystem = PlonkishSystem::new(4);
         let table_col = sys.alloc_fixed();
         let input_col = sys.alloc_advice();
         let selector = sys.alloc_fixed();

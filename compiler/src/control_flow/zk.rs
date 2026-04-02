@@ -142,8 +142,9 @@ pub(super) fn compile_prove(
     };
 
     // 3. Compile AST Block -> ProveIR template.
-    let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(&compile_body, &outer_scope)
-        .map_err(|e| CompilerError::CompileError(format!("{e}"), compiler.cur_span()))?;
+    let mut prove_ir =
+        ir::prove_ir::ProveIrCompiler::<memory::Bn254Fr>::compile(&compile_body, &outer_scope)
+            .map_err(|e| CompilerError::CompileError(format!("{e}"), compiler.cur_span()))?;
     prove_ir.name = name.map(|n| n.to_string());
 
     // 4. Build capture name list: captures + public inputs + witness inputs.

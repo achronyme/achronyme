@@ -921,7 +921,7 @@ fn negative_recursion_rejected() {
 fn f(x) { f(x) }
 assert_eq(f(a), out)
 "#;
-    let result = IrLowering::lower_circuit(source, &["out"], &["a"]);
+    let result = IrLowering::<memory::Bn254Fr>::lower_circuit(source, &["out"], &["a"]);
     assert!(result.is_err(), "recursion should be rejected at lowering");
 }
 
