@@ -223,6 +223,50 @@ run_test "bls12-381/prove/typed_prove" \
     "$ACH" run "$SCRIPT_DIR/prove/typed_prove.ach" --prime bls12-381
 
 # ============================================================================
+# Goldilocks + R1CS -- Circuit tests (constraint generation + witness)
+# Goldilocks is a 64-bit field. No pairing-friendly prover exists, so proof
+# generation is not supported. Constraint generation and witness work fully.
+# ============================================================================
+
+echo ""
+echo "=== Goldilocks Circuit tests (R1CS, constraints only) ==="
+
+run_test "goldilocks/circuit/basic_arithmetic" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/basic_arithmetic.ach" \
+    --prime goldilocks \
+    --r1cs "$TMP_DIR/gl_basic.r1cs" --wtns "$TMP_DIR/gl_basic.wtns" \
+    --inputs "out=42,a=6,b=7"
+
+run_test "goldilocks/circuit/division" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/division.ach" \
+    --prime goldilocks \
+    --r1cs "$TMP_DIR/gl_div.r1cs" --wtns "$TMP_DIR/gl_div.wtns" \
+    --inputs "q=3,a=42,b=14"
+
+run_test "goldilocks/circuit/range_check" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/range_check.ach" \
+    --prime goldilocks \
+    --r1cs "$TMP_DIR/gl_range.r1cs" --wtns "$TMP_DIR/gl_range.wtns" \
+    --inputs "x=200,y=65000"
+
+run_test "goldilocks/circuit/comparison_ops" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/comparison_ops.ach" \
+    --prime goldilocks \
+    --r1cs "$TMP_DIR/gl_cmp.r1cs" --wtns "$TMP_DIR/gl_cmp.wtns" \
+    --inputs "x=3,y=5"
+
+run_test "goldilocks/circuit/mux" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/mux.ach" \
+    --prime goldilocks \
+    --r1cs "$TMP_DIR/gl_mux.r1cs" --wtns "$TMP_DIR/gl_mux.wtns" \
+    --inputs "out=42,cond=1,a=42,b=99"
+
+run_test "goldilocks/circuit/poseidon_constraints" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/poseidon.ach" \
+    --prime goldilocks \
+    --r1cs "$TMP_DIR/gl_pos.r1cs"
+
+# ============================================================================
 # Validation tests -- unsupported combinations must fail gracefully
 # ============================================================================
 
@@ -233,13 +277,6 @@ echo "=== Validation tests (expected failures) ==="
 run_fail_test "bls12-381/plonkish/rejected" \
     "$ACH" circuit "$SCRIPT_DIR/circuit/basic_arithmetic.ach" \
     --prime bls12-381 --backend plonkish \
-    --r1cs /dev/null --wtns /dev/null \
-    --inputs "out=42,a=6,b=7"
-
-# Goldilocks + R1CS -> not supported (no pairing-friendly prover)
-run_fail_test "goldilocks/r1cs/rejected" \
-    "$ACH" circuit "$SCRIPT_DIR/circuit/basic_arithmetic.ach" \
-    --prime goldilocks \
     --r1cs /dev/null --wtns /dev/null \
     --inputs "out=42,a=6,b=7"
 

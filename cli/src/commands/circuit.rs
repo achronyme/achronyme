@@ -61,6 +61,7 @@ impl Bn254Ops for memory::Bn254Fr {
 }
 
 impl Bn254Ops for memory::Bls12_381Fr {}
+impl Bn254Ops for memory::GoldilocksFr {}
 
 /// Parse an `--inputs` string like `"out=42,a=6,b=0x07"` into a map.
 fn parse_inputs<F: FieldBackend>(raw: &str) -> Result<HashMap<String, FieldElement<F>>> {
@@ -237,6 +238,22 @@ pub fn circuit_command(
             error_format,
         ),
         PrimeId::Bls12_381 => circuit_command_inner::<memory::Bls12_381Fr>(
+            path,
+            r1cs_path,
+            wtns_path,
+            inputs,
+            input_file,
+            no_optimize,
+            backend,
+            prime_id,
+            prove,
+            solidity_path,
+            plonkish_json_path,
+            dump_ir,
+            circuit_stats,
+            error_format,
+        ),
+        PrimeId::Goldilocks => circuit_command_inner::<memory::GoldilocksFr>(
             path,
             r1cs_path,
             wtns_path,
