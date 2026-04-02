@@ -147,7 +147,10 @@ fn canonicalize_key(key: &CseKey, replacements: &HashMap<SsaVar, SsaVar>) -> Cse
 }
 
 /// Rewrite operand references in an instruction using the replacement map.
-fn rewrite_operands<F: FieldBackend>(inst: &mut Instruction<F>, replacements: &HashMap<SsaVar, SsaVar>) {
+fn rewrite_operands<F: FieldBackend>(
+    inst: &mut Instruction<F>,
+    replacements: &HashMap<SsaVar, SsaVar>,
+) {
     let r = |v: &mut SsaVar| {
         if let Some(&repl) = replacements.get(v) {
             *v = repl;

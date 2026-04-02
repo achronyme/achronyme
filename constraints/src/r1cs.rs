@@ -91,10 +91,10 @@ impl Variable {
 /// use constraints::{Variable, LinearCombination};
 /// use memory::FieldElement;
 ///
-/// let lc_var = LinearCombination::from_variable(Variable(1));
+/// let lc_var: LinearCombination = LinearCombination::from_variable(Variable(1));
 /// assert_eq!(lc_var.terms.len(), 1);
 ///
-/// let lc_const = LinearCombination::from_constant(FieldElement::from_u64(42));
+/// let lc_const: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(42));
 /// assert!(lc_const.is_constant());
 /// assert_eq!(lc_const.constant_value(), Some(FieldElement::from_u64(42)));
 /// ```
@@ -145,7 +145,8 @@ impl<F: FieldBackend> LinearCombination<F> {
     /// use constraints::{Variable, LinearCombination};
     ///
     /// let x = Variable(1);
-    /// let lc = LinearCombination::from_variable(x) - LinearCombination::from_variable(x);
+    /// let lc: LinearCombination = LinearCombination::from_variable(x)
+    ///     - LinearCombination::from_variable(x);
     /// assert!(lc.is_constant());
     /// ```
     pub fn simplify(&self) -> Self {
@@ -464,11 +465,7 @@ impl<F: FieldBackend> ConstraintSystem<F> {
     /// ];
     /// assert!(cs.verify(&witness).is_ok());
     /// ```
-    pub fn mul_lc(
-        &mut self,
-        a: &LinearCombination<F>,
-        b: &LinearCombination<F>,
-    ) -> Variable {
+    pub fn mul_lc(&mut self, a: &LinearCombination<F>, b: &LinearCombination<F>) -> Variable {
         let out = self.alloc_witness();
         self.enforce(a.clone(), b.clone(), LinearCombination::from_variable(out));
         out
@@ -719,8 +716,7 @@ mod tests {
 
     #[test]
     fn test_mixed_lc_not_constant() {
-        let mut lc: LinearCombination =
-            LinearCombination::from_constant(FieldElement::from_u64(5));
+        let mut lc: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(5));
         lc.add_term(Variable(1), FieldElement::ONE);
         assert!(!lc.is_constant());
         assert_eq!(lc.constant_value(), None);
@@ -774,10 +770,8 @@ mod tests {
     fn test_lc_simplify_merges_same_var() {
         // 3x + 5x → 8x (not single variable since coeff != 1)
         let x = Variable(1);
-        let a: LinearCombination =
-            LinearCombination::from_variable(x) * FieldElement::from_u64(3);
-        let b: LinearCombination =
-            LinearCombination::from_variable(x) * FieldElement::from_u64(5);
+        let a: LinearCombination = LinearCombination::from_variable(x) * FieldElement::from_u64(3);
+        let b: LinearCombination = LinearCombination::from_variable(x) * FieldElement::from_u64(5);
         let sum = a + b;
         let simplified = sum.simplify();
         assert_eq!(simplified.terms.len(), 1);
@@ -800,8 +794,7 @@ mod tests {
     fn test_lc_constant_with_cancellation() {
         // (5*ONE + 3x) - 3x → constant 5
         let x = Variable(1);
-        let mut a: LinearCombination =
-            LinearCombination::from_constant(FieldElement::from_u64(5));
+        let mut a: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(5));
         a.add_term(x, FieldElement::from_u64(3));
         let b = LinearCombination::from_variable(x) * FieldElement::from_u64(3);
         let diff = a - b;

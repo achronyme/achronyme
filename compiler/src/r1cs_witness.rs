@@ -31,7 +31,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// use ir::IrLowering;
     /// use memory::FieldElement;
     ///
-    /// let prog = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
+    /// let prog: ir::types::IrProgram =
+    ///     IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
     /// let mut inputs = HashMap::new();
     /// inputs.insert("z".to_string(), FieldElement::from_u64(42));
     /// inputs.insert("x".to_string(), FieldElement::from_u64(6));

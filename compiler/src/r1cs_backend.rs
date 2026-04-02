@@ -116,7 +116,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// use compiler::r1cs_backend::R1CSCompiler;
     /// use ir::IrLowering;
     ///
-    /// let prog = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
+    /// let prog: ir::types::IrProgram = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();
     /// let mut rc = R1CSCompiler::new();
     /// rc.compile_ir(&prog).unwrap();
     /// assert!(rc.cs.num_constraints() > 0);
@@ -133,6 +133,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         // Cache divmod gadgets: (lhs, rhs, max_bits) → (q_lc, r_lc).
         // When IntDiv and IntMod use the same operands, the second one reuses
         // the cached result instead of generating duplicate constraints.
+        #[allow(clippy::type_complexity)]
         let mut divmod_cache: HashMap<
             (SsaVar, SsaVar, u32),
             (LinearCombination<F>, LinearCombination<F>),
@@ -380,7 +381,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                         }
                     };
 
-                    let offset = power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
+                    let offset =
+                        power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
                     let diff = b - a + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
                     lc_map.insert(*result, lt_lc);
@@ -406,7 +408,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                         }
                     };
 
-                    let offset = power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
+                    let offset =
+                        power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
                     let diff = a - b + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
                     let one = LinearCombination::from_constant(FieldElement::<F>::one());
@@ -420,7 +423,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                 } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    let offset = power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
+                    let offset =
+                        power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                     let diff = b - a + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
                     lc_map.insert(*result, lt_lc);
@@ -433,7 +437,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                 } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    let offset = power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
+                    let offset =
+                        power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                     let diff = a - b + LinearCombination::from_constant(offset);
                     let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
                     let one = LinearCombination::from_constant(FieldElement::<F>::one());
@@ -469,8 +474,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     let right_var = self.materialize_lc(&right_lc);
 
                     if self.poseidon_params.is_none() {
-                        self.poseidon_params =
-                            Some(F::default_poseidon_t3());
+                        self.poseidon_params = Some(F::default_poseidon_t3());
                     }
                     let params = self.poseidon_params.as_ref().unwrap();
 

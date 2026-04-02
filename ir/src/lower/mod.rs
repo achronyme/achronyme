@@ -308,6 +308,7 @@ impl<F: FieldBackend> IrLowering<F> {
     /// assert_eq!(pub_names, vec!["x"]);
     /// assert_eq!(wit_names, vec!["y"]);
     /// ```
+    #[allow(clippy::type_complexity)]
     pub fn lower_self_contained(
         source: &str,
     ) -> Result<(Vec<String>, Vec<String>, IrProgram<F>), IrError> {
@@ -315,6 +316,7 @@ impl<F: FieldBackend> IrLowering<F> {
     }
 
     /// Like `lower_self_contained` but with a base path for module resolution.
+    #[allow(clippy::type_complexity)]
     pub fn lower_self_contained_with_base(
         source: &str,
         base_path: PathBuf,

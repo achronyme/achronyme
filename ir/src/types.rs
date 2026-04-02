@@ -37,7 +37,10 @@ impl std::fmt::Display for Visibility {
 #[derive(Debug, Clone)]
 pub enum Instruction<F: FieldBackend = Bn254Fr> {
     /// A compile-time constant field element.
-    Const { result: SsaVar, value: FieldElement<F> },
+    Const {
+        result: SsaVar,
+        value: FieldElement<F>,
+    },
     /// A circuit input (public or witness).
     Input {
         result: SsaVar,

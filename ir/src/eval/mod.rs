@@ -437,10 +437,9 @@ pub fn evaluate_lenient<F: FieldBackend + PoseidonParamsProvider>(
     let mut poseidon_params: Option<PoseidonParams<F>> = None;
     let mut failures: Vec<usize> = Vec::new();
 
-    let get =
-        |values: &HashMap<SsaVar, FieldElement<F>>, var: &SsaVar| -> Option<FieldElement<F>> {
-            values.get(var).copied()
-        };
+    let get = |values: &HashMap<SsaVar, FieldElement<F>>,
+               var: &SsaVar|
+     -> Option<FieldElement<F>> { values.get(var).copied() };
 
     for (idx, inst) in program.instructions.iter().enumerate() {
         match inst {
@@ -696,7 +695,10 @@ fn int_divmod_field<F: FieldBackend>(
     if a_small && b_small {
         let q = a_limbs[0] / b_limbs[0];
         let r = a_limbs[0] % b_limbs[0];
-        return (FieldElement::<F>::from_u64(q), FieldElement::<F>::from_u64(r));
+        return (
+            FieldElement::<F>::from_u64(q),
+            FieldElement::<F>::from_u64(r),
+        );
     }
     // Multi-limb: use shift-and-subtract
     let (q, r) = divmod_u256(&a_limbs, &b_limbs);

@@ -86,7 +86,9 @@ impl fmt::Display for TaintWarning {
 ///
 /// Returns the taint map and a list of warnings about under-constrained
 /// or unused inputs.
-pub fn taint_analysis<F: FieldBackend>(program: &IrProgram<F>) -> (HashMap<SsaVar, Taint>, Vec<TaintWarning>) {
+pub fn taint_analysis<F: FieldBackend>(
+    program: &IrProgram<F>,
+) -> (HashMap<SsaVar, Taint>, Vec<TaintWarning>) {
     // Collect all input variables
     let mut inputs: Vec<(SsaVar, String, Visibility)> = Vec::new();
     let mut taints: HashMap<SsaVar, Taint> = HashMap::new();

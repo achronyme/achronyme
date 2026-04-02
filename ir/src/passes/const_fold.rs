@@ -305,7 +305,9 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
                 let rhs_val = constants.get(rhs).copied();
                 let is_bool = |v: FieldElement<F>| v.is_zero() || v == FieldElement::<F>::one();
                 // Short-circuit: 1 || x = 1 (safe: 1 is boolean)
-                if lhs_val == Some(FieldElement::<F>::one()) || rhs_val == Some(FieldElement::<F>::one()) {
+                if lhs_val == Some(FieldElement::<F>::one())
+                    || rhs_val == Some(FieldElement::<F>::one())
+                {
                     constants.insert(*result, FieldElement::<F>::one());
                     *inst = Instruction::Const {
                         result: *result,
