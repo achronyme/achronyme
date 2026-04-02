@@ -5,16 +5,65 @@ use anyhow::{Context, Result};
 
 use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
+use constraints::PoseidonParamsProvider;
 use constraints::{write_r1cs, write_wtns};
 use ir::prove_ir::ProveIrCompiler;
 use memory::field::PrimeId;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use super::ErrorFormat;
 use crate::style::{format_number, Styler};
 
+// ---------------------------------------------------------------------------
+// Trait for BN254-specific operations in generic circuit context.
+//
+// Solidity verifier generation and halo2 PlonK proof generation are inherently
+// BN254-only (EVM precompiles, halo2 library). Flag validation in
+// `circuit_command` guarantees these paths only run with BN254, but the generic
+// `F` parameter doesn't carry that information. This trait bridges the gap.
+// ---------------------------------------------------------------------------
+
+trait Bn254Ops: FieldBackend + PoseidonParamsProvider + Sized {
+    fn solidity_from_cs(
+        _cs: &constraints::r1cs::ConstraintSystem<Self>,
+        _cache_dir: &std::path::Path,
+    ) -> Result<String, String> {
+        Err(format!(
+            "Solidity not supported for {}",
+            Self::PRIME_ID.name()
+        ))
+    }
+
+    fn halo2_proof(
+        _compiler: PlonkishCompiler<Self>,
+        _cache_dir: &std::path::Path,
+    ) -> Result<vm::ProveResult, String> {
+        Err(format!("halo2 not supported for {}", Self::PRIME_ID.name()))
+    }
+}
+
+impl Bn254Ops for memory::Bn254Fr {
+    fn solidity_from_cs(
+        cs: &constraints::r1cs::ConstraintSystem<Self>,
+        cache_dir: &std::path::Path,
+    ) -> Result<String, String> {
+        let vk = proving::groth16_bn254::setup_vk_only(cs, cache_dir)
+            .map_err(|e| format!("Groth16 setup failed: {e}"))?;
+        Ok(proving::solidity::generate_solidity_verifier(&vk))
+    }
+
+    fn halo2_proof(
+        compiler: PlonkishCompiler<Self>,
+        cache_dir: &std::path::Path,
+    ) -> Result<vm::ProveResult, String> {
+        proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir)
+    }
+}
+
+impl Bn254Ops for memory::Bls12_381Fr {}
+
 /// Parse an `--inputs` string like `"out=42,a=6,b=0x07"` into a map.
-fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
+fn parse_inputs<F: FieldBackend>(raw: &str) -> Result<HashMap<String, FieldElement<F>>> {
     let mut map = HashMap::new();
     for pair in raw.split(',') {
         let pair = pair.trim();
@@ -25,14 +74,14 @@ fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
             "invalid input pair: {pair:?} (expected name=value)"
         ))?;
         let val = if val_str.starts_with("0x") || val_str.starts_with("0X") {
-            FieldElement::from_hex_str(val_str)
+            FieldElement::<F>::from_hex_str(val_str)
                 .context(format!("invalid hex value for {name:?}: {val_str:?}"))?
         } else if let Some(digits) = val_str.strip_prefix('-') {
-            let abs = FieldElement::from_decimal_str(digits)
+            let abs = FieldElement::<F>::from_decimal_str(digits)
                 .context(format!("invalid decimal value for {name:?}: {val_str:?}"))?;
             abs.neg()
         } else {
-            FieldElement::from_decimal_str(val_str)
+            FieldElement::<F>::from_decimal_str(val_str)
                 .context(format!("invalid decimal value for {name:?}: {val_str:?}"))?
         };
         map.insert(name.to_string(), val);
@@ -41,17 +90,17 @@ fn parse_inputs(raw: &str) -> Result<HashMap<String, FieldElement>> {
 }
 
 /// Parse a string value into a FieldElement (decimal, negative decimal, or hex).
-fn parse_field_value(name: &str, val_str: &str) -> Result<FieldElement> {
+fn parse_field_value<F: FieldBackend>(name: &str, val_str: &str) -> Result<FieldElement<F>> {
     let val_str = val_str.trim();
     if val_str.starts_with("0x") || val_str.starts_with("0X") {
-        FieldElement::from_hex_str(val_str)
+        FieldElement::<F>::from_hex_str(val_str)
             .context(format!("invalid hex value for `{name}`: {val_str:?}"))
     } else if let Some(digits) = val_str.strip_prefix('-') {
-        let abs = FieldElement::from_decimal_str(digits)
+        let abs = FieldElement::<F>::from_decimal_str(digits)
             .context(format!("invalid decimal value for `{name}`: {val_str:?}"))?;
         Ok(abs.neg())
     } else {
-        FieldElement::from_decimal_str(val_str)
+        FieldElement::<F>::from_decimal_str(val_str)
             .context(format!("invalid decimal value for `{name}`: {val_str:?}"))
     }
 }
@@ -60,7 +109,7 @@ fn parse_field_value(name: &str, val_str: &str) -> Result<FieldElement> {
 ///
 /// Scalars:  `name = "42"` or `name = "0xFF"`
 /// Arrays:   `path = ["2", "3"]` → expands to `path_0 = 2, path_1 = 3`
-fn parse_inputs_toml(path: &str) -> Result<HashMap<String, FieldElement>> {
+fn parse_inputs_toml<F: FieldBackend>(path: &str) -> Result<HashMap<String, FieldElement<F>>> {
     let content =
         fs::read_to_string(path).with_context(|| format!("cannot read input file: {path}"))?;
     let table: toml::Table = content
@@ -71,16 +120,16 @@ fn parse_inputs_toml(path: &str) -> Result<HashMap<String, FieldElement>> {
     for (key, value) in &table {
         match value {
             toml::Value::String(s) => {
-                let fe = parse_field_value(key, s)?;
+                let fe = parse_field_value::<F>(key, s)?;
                 map.insert(key.clone(), fe);
             }
             toml::Value::Integer(n) => {
                 let fe = if *n < 0 {
-                    FieldElement::from_decimal_str(&n.unsigned_abs().to_string())
+                    FieldElement::<F>::from_decimal_str(&n.unsigned_abs().to_string())
                         .context(format!("invalid integer for `{key}`: {n}"))?
                         .neg()
                 } else {
-                    FieldElement::from_u64(*n as u64)
+                    FieldElement::<F>::from_u64(*n as u64)
                 };
                 map.insert(key.clone(), fe);
             }
@@ -89,16 +138,18 @@ fn parse_inputs_toml(path: &str) -> Result<HashMap<String, FieldElement>> {
                     let elem_name = format!("{key}_{i}");
                     match elem {
                         toml::Value::String(s) => {
-                            let fe = parse_field_value(&elem_name, s)?;
+                            let fe = parse_field_value::<F>(&elem_name, s)?;
                             map.insert(elem_name, fe);
                         }
                         toml::Value::Integer(n) => {
                             let fe = if *n < 0 {
-                                FieldElement::from_decimal_str(&n.unsigned_abs().to_string())
-                                    .context(format!("invalid integer for `{elem_name}`: {n}"))?
+                                FieldElement::<F>::from_decimal_str(&n.unsigned_abs().to_string())
+                                    .context(format!(
+                                        "invalid integer for `{elem_name}`: {n}"
+                                    ))?
                                     .neg()
                             } else {
-                                FieldElement::from_u64(*n as u64)
+                                FieldElement::<F>::from_u64(*n as u64)
                             };
                             map.insert(elem_name, fe);
                         }
@@ -168,11 +219,70 @@ pub fn circuit_command(
         ));
     }
 
+    // Dispatch on prime_id: one match at the CLI boundary, generics carry
+    // the concrete field type through the rest of the pipeline.
+    match prime_id {
+        PrimeId::Bn254 => circuit_command_inner::<memory::Bn254Fr>(
+            path,
+            r1cs_path,
+            wtns_path,
+            inputs,
+            input_file,
+            no_optimize,
+            backend,
+            prime_id,
+            prove,
+            solidity_path,
+            plonkish_json_path,
+            dump_ir,
+            circuit_stats,
+            error_format,
+        ),
+        PrimeId::Bls12_381 => circuit_command_inner::<memory::Bls12_381Fr>(
+            path,
+            r1cs_path,
+            wtns_path,
+            inputs,
+            input_file,
+            no_optimize,
+            backend,
+            prime_id,
+            prove,
+            solidity_path,
+            plonkish_json_path,
+            dump_ir,
+            circuit_stats,
+            error_format,
+        ),
+        other => Err(anyhow::anyhow!(
+            "prime `{}` is not supported for circuit compilation",
+            other.name()
+        )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
+    path: &str,
+    r1cs_path: &str,
+    wtns_path: &str,
+    inputs: Option<&str>,
+    input_file: Option<&str>,
+    no_optimize: bool,
+    backend: &str,
+    prime_id: PrimeId,
+    prove: bool,
+    solidity_path: Option<&str>,
+    plonkish_json_path: Option<&str>,
+    dump_ir: bool,
+    circuit_stats: bool,
+    error_format: ErrorFormat,
+) -> Result<()> {
     // Resolve inputs from either --inputs or --input-file into a unified map.
-    let resolved_inputs: Option<HashMap<String, FieldElement>> = if let Some(raw) = inputs {
-        Some(parse_inputs(raw)?)
+    let resolved_inputs: Option<HashMap<String, FieldElement<F>>> = if let Some(raw) = inputs {
+        Some(parse_inputs::<F>(raw)?)
     } else if let Some(toml_path) = input_file {
-        Some(parse_inputs_toml(toml_path)?)
+        Some(parse_inputs_toml::<F>(toml_path)?)
     } else {
         None
     };
@@ -209,10 +319,9 @@ pub fn circuit_command(
 
     // 1. Compile to ProveIR and instantiate to IR SSA.
     let source_path = std::path::Path::new(path);
-    let mut program =
-        ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(&source, Some(source_path))
-            .and_then(|prove_ir| prove_ir.instantiate(&std::collections::HashMap::new()))
-            .map_err(render_prove_ir_error)?;
+    let mut program = ProveIrCompiler::<F>::compile_circuit(&source, Some(source_path))
+        .and_then(|prove_ir| prove_ir.instantiate(&std::collections::HashMap::new()))
+        .map_err(render_prove_ir_error)?;
 
     if verbose {
         eprintln!(
@@ -349,18 +458,18 @@ pub fn circuit_command(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_r1cs_pipeline(
-    program: &ir::IrProgram,
+fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
+    program: &ir::IrProgram<F>,
     r1cs_path: &str,
     wtns_path: &str,
-    inputs: Option<&HashMap<String, FieldElement>>,
+    inputs: Option<&HashMap<String, FieldElement<F>>>,
     prime_id: PrimeId,
     solidity_path: Option<&str>,
     style: &Styler,
     verbose: bool,
     proven: &std::collections::HashSet<ir::SsaVar>,
 ) -> Result<()> {
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = R1CSCompiler::<F>::new();
     compiler.prime_id = prime_id;
     compiler.set_proven_boolean(proven.clone());
 
@@ -520,14 +629,13 @@ fn run_r1cs_pipeline(
         }
     }
 
-    // Generate Solidity verifier if requested
+    // Generate Solidity verifier if requested (BN254-only, validated by caller)
     if let Some(sol_path) = solidity_path {
         let cache_dir = crate::cache_dir();
 
-        let vk = proving::groth16_bn254::setup_vk_only(&compiler.cs, &cache_dir)
-            .map_err(|e| anyhow::anyhow!("Groth16 setup failed: {e}"))?;
+        let sol_source = F::solidity_from_cs(&compiler.cs, &cache_dir)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        let sol_source = proving::solidity::generate_solidity_verifier(&vk);
         fs::write(sol_path, &sol_source).with_context(|| format!("cannot write {sol_path}"))?;
 
         if verbose {
@@ -545,9 +653,9 @@ fn run_r1cs_pipeline(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_plonkish_pipeline(
-    program: &ir::IrProgram,
-    inputs: Option<&HashMap<String, FieldElement>>,
+fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
+    program: &ir::IrProgram<F>,
+    inputs: Option<&HashMap<String, FieldElement<F>>>,
     prove: bool,
     plonkish_json_path: Option<&str>,
     source_dir: &std::path::Path,
@@ -555,7 +663,7 @@ fn run_plonkish_pipeline(
     verbose: bool,
     proven: &std::collections::HashSet<ir::SsaVar>,
 ) -> Result<()> {
-    let mut compiler = PlonkishCompiler::new();
+    let mut compiler = PlonkishCompiler::<F>::new();
     compiler.set_proven_boolean(proven.clone());
 
     if let Some(input_map) = inputs {
@@ -613,7 +721,7 @@ fn run_plonkish_pipeline(
         if prove {
             let cache_dir = crate::cache_dir();
 
-            let result = proving::halo2_proof::generate_plonkish_proof(compiler, &cache_dir)
+            let result = F::halo2_proof(compiler, &cache_dir)
                 .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
 
             match result {
@@ -720,42 +828,45 @@ fn run_plonkish_pipeline(
 mod tests {
     use super::*;
 
+    // Type alias to constrain F = Bn254Fr in tests (avoids turbofish noise).
+    type Fe = FieldElement;
+
     #[test]
     fn parse_inputs_positive_decimal() {
-        let map = parse_inputs("x=42,y=0").unwrap();
-        assert_eq!(map["x"], FieldElement::from_u64(42));
-        assert_eq!(map["y"], FieldElement::ZERO);
+        let map: HashMap<String, Fe> = parse_inputs("x=42,y=0").unwrap();
+        assert_eq!(map["x"], Fe::from_u64(42));
+        assert_eq!(map["y"], Fe::ZERO);
     }
 
     #[test]
     fn parse_inputs_negative_decimal() {
-        let map = parse_inputs("x=-1").unwrap();
+        let map: HashMap<String, Fe> = parse_inputs("x=-1").unwrap();
         // -1 mod p = p - 1
-        assert_eq!(map["x"], FieldElement::from_u64(1).neg());
+        assert_eq!(map["x"], Fe::from_u64(1).neg());
     }
 
     #[test]
     fn parse_inputs_negative_large() {
-        let map = parse_inputs("a=-42,b=7").unwrap();
-        assert_eq!(map["a"], FieldElement::from_u64(42).neg());
-        assert_eq!(map["b"], FieldElement::from_u64(7));
+        let map: HashMap<String, Fe> = parse_inputs("a=-42,b=7").unwrap();
+        assert_eq!(map["a"], Fe::from_u64(42).neg());
+        assert_eq!(map["b"], Fe::from_u64(7));
     }
 
     #[test]
     fn parse_inputs_hex() {
-        let map = parse_inputs("x=0xFF").unwrap();
-        assert_eq!(map["x"], FieldElement::from_u64(255));
+        let map: HashMap<String, Fe> = parse_inputs("x=0xFF").unwrap();
+        assert_eq!(map["x"], Fe::from_u64(255));
     }
 
     #[test]
     fn parse_inputs_empty_pair_skipped() {
-        let map = parse_inputs("x=1,,y=2").unwrap();
+        let map: HashMap<String, Fe> = parse_inputs("x=1,,y=2").unwrap();
         assert_eq!(map.len(), 2);
     }
 
     #[test]
     fn parse_inputs_invalid_pair_errors() {
-        assert!(parse_inputs("no_equals").is_err());
+        assert!(parse_inputs::<memory::Bn254Fr>("no_equals").is_err());
     }
 
     // --- parse_inputs_toml tests ---
@@ -771,72 +882,72 @@ mod tests {
     #[test]
     fn toml_scalar_string() {
         let f = write_toml("x = \"42\"\ny = \"0xFF\"");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
-        assert_eq!(map["x"], FieldElement::from_u64(42));
-        assert_eq!(map["y"], FieldElement::from_u64(255));
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], Fe::from_u64(42));
+        assert_eq!(map["y"], Fe::from_u64(255));
     }
 
     #[test]
     fn toml_scalar_integer() {
         let f = write_toml("x = 42\ny = 0");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
-        assert_eq!(map["x"], FieldElement::from_u64(42));
-        assert_eq!(map["y"], FieldElement::ZERO);
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], Fe::from_u64(42));
+        assert_eq!(map["y"], Fe::ZERO);
     }
 
     #[test]
     fn toml_negative_string() {
         let f = write_toml("x = \"-1\"");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
-        assert_eq!(map["x"], FieldElement::from_u64(1).neg());
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], Fe::from_u64(1).neg());
     }
 
     #[test]
     fn toml_negative_integer() {
         let f = write_toml("x = -42");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
-        assert_eq!(map["x"], FieldElement::from_u64(42).neg());
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(map["x"], Fe::from_u64(42).neg());
     }
 
     #[test]
     fn toml_array_expands_to_indexed() {
         let f = write_toml("path = [\"10\", \"20\", \"30\"]");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
         assert_eq!(map.len(), 3);
-        assert_eq!(map["path_0"], FieldElement::from_u64(10));
-        assert_eq!(map["path_1"], FieldElement::from_u64(20));
-        assert_eq!(map["path_2"], FieldElement::from_u64(30));
+        assert_eq!(map["path_0"], Fe::from_u64(10));
+        assert_eq!(map["path_1"], Fe::from_u64(20));
+        assert_eq!(map["path_2"], Fe::from_u64(30));
     }
 
     #[test]
     fn toml_array_integer_elements() {
         let f = write_toml("indices = [0, 1, 0]");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
         assert_eq!(map.len(), 3);
-        assert_eq!(map["indices_0"], FieldElement::ZERO);
-        assert_eq!(map["indices_1"], FieldElement::ONE);
-        assert_eq!(map["indices_2"], FieldElement::ZERO);
+        assert_eq!(map["indices_0"], Fe::ZERO);
+        assert_eq!(map["indices_1"], Fe::ONE);
+        assert_eq!(map["indices_2"], Fe::ZERO);
     }
 
     #[test]
     fn toml_mixed_scalars_and_arrays() {
         let f = write_toml("root = \"999\"\nleaf = \"1\"\npath = [\"2\", \"3\"]");
-        let map = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
+        let map: HashMap<String, Fe> = parse_inputs_toml(f.path().to_str().unwrap()).unwrap();
         assert_eq!(map.len(), 4);
-        assert_eq!(map["root"], FieldElement::from_u64(999));
-        assert_eq!(map["leaf"], FieldElement::ONE);
-        assert_eq!(map["path_0"], FieldElement::from_u64(2));
-        assert_eq!(map["path_1"], FieldElement::from_u64(3));
+        assert_eq!(map["root"], Fe::from_u64(999));
+        assert_eq!(map["leaf"], Fe::ONE);
+        assert_eq!(map["path_0"], Fe::from_u64(2));
+        assert_eq!(map["path_1"], Fe::from_u64(3));
     }
 
     #[test]
     fn toml_invalid_type_rejected() {
         let f = write_toml("x = true");
-        assert!(parse_inputs_toml(f.path().to_str().unwrap()).is_err());
+        assert!(parse_inputs_toml::<memory::Bn254Fr>(f.path().to_str().unwrap()).is_err());
     }
 
     #[test]
     fn toml_file_not_found() {
-        assert!(parse_inputs_toml("/tmp/nonexistent_ach_inputs.toml").is_err());
+        assert!(parse_inputs_toml::<memory::Bn254Fr>("/tmp/nonexistent_ach_inputs.toml").is_err());
     }
 }
