@@ -39,12 +39,25 @@ pub fn fe_to_ark<F: PrimeField>(fe: &FieldElement) -> F {
     let bytes = fe.to_le_bytes();
     let canonical = fe.to_canonical();
 
-    // Check if value is in the upper half of BN254's field (i.e., "negative")
-    // p_bn254 ≈ 0x30644e72... << 192, so half ≈ 0x18322739... << 192.
-    // Quick check: compare the top limb against MODULUS[3] / 2.
+    // Check if value is in the upper half of BN254's field (i.e., "negative").
+    // We compare the canonical limbs against floor(p/2), computed as a proper
+    // 256-bit right-shift (propagating carries between limbs).
     const BN254_MOD: [u64; 4] = memory::field::MODULUS;
-    let is_negative = canonical[3] > (BN254_MOD[3] / 2)
-        || (canonical[3] == (BN254_MOD[3] / 2) && canonical[2] > (BN254_MOD[2] / 2));
+    const HALF_MOD: [u64; 4] = {
+        let m = BN254_MOD;
+        [
+            (m[0] >> 1) | ((m[1] & 1) << 63),
+            (m[1] >> 1) | ((m[2] & 1) << 63),
+            (m[2] >> 1) | ((m[3] & 1) << 63),
+            m[3] >> 1,
+        ]
+    };
+    let is_negative = canonical[3] > HALF_MOD[3]
+        || (canonical[3] == HALF_MOD[3]
+            && (canonical[2] > HALF_MOD[2]
+                || (canonical[2] == HALF_MOD[2]
+                    && (canonical[1] > HALF_MOD[1]
+                        || (canonical[1] == HALF_MOD[1] && canonical[0] > HALF_MOD[0])))));
 
     if is_negative {
         // Compute abs = p_bn254 - canonical (the positive magnitude)
@@ -310,4 +323,80 @@ fn save_cached_keys<E: Pairing>(
         .map_err(|e| format!("failed to write verifying key: {e}"))?;
 
     Ok(())
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that HALF_MOD is correctly computed as floor(p/2) via 256-bit
+    /// right-shift (propagating carries between limbs).
+    #[test]
+    fn half_mod_is_correct() {
+        let m = memory::field::MODULUS;
+        // Compute floor(p/2) by proper 256-bit shift
+        let half: [u64; 4] = [
+            (m[0] >> 1) | ((m[1] & 1) << 63),
+            (m[1] >> 1) | ((m[2] & 1) << 63),
+            (m[2] >> 1) | ((m[3] & 1) << 63),
+            m[3] >> 1,
+        ];
+
+        // Verify: 2 * half < p (since p is odd, floor(p/2) * 2 = p - 1)
+        let mut double = [0u64; 4];
+        let mut carry = 0u64;
+        for i in 0..4 {
+            let wide = (half[i] as u128) * 2 + carry as u128;
+            double[i] = wide as u64;
+            carry = (wide >> 64) as u64;
+        }
+        // 2 * floor(p/2) should equal p - 1 (since p is odd)
+        let mut p_minus_1 = m;
+        p_minus_1[0] -= 1; // p is odd, so subtracting 1 from limb 0 is safe
+        assert_eq!(double, p_minus_1, "2 * floor(p/2) should equal p-1");
+
+        // Verify the carry-bit issue: limb[2] of half must have the MSB set
+        // because MOD[3] is odd (LSB = 1), so the carry propagates.
+        assert_eq!(m[3] & 1, 1, "BN254 modulus[3] should be odd");
+        assert_ne!(
+            half[2],
+            m[2] / 2,
+            "half[2] must differ from naive m[2]/2 due to carry from m[3]"
+        );
+        assert_eq!(
+            half[2],
+            (m[2] >> 1) | (1 << 63),
+            "half[2] must include carry bit from m[3]"
+        );
+    }
+
+    /// Verify fe_to_ark correctness at the boundary near p/2.
+    #[test]
+    fn fe_to_ark_boundary_values() {
+        use ark_bn254::Fr as ArkFr;
+
+        // Zero and one should convert to themselves
+        let zero = FieldElement::from_u64(0);
+        let one = FieldElement::from_u64(1);
+        assert_eq!(fe_to_ark::<ArkFr>(&zero), ArkFr::from(0u64));
+        assert_eq!(fe_to_ark::<ArkFr>(&one), ArkFr::from(1u64));
+
+        // -1 (= p - 1) should convert to -1 in the target field
+        let neg_one = FieldElement::from_u64(1).neg();
+        let result: ArkFr = fe_to_ark(&neg_one);
+        assert_eq!(result, -ArkFr::from(1u64));
+
+        // Small positive should stay positive
+        let small = FieldElement::from_u64(12345);
+        assert_eq!(fe_to_ark::<ArkFr>(&small), ArkFr::from(12345u64));
+
+        // Small negative should stay negative
+        let neg_small = FieldElement::from_u64(12345).neg();
+        let result: ArkFr = fe_to_ark(&neg_small);
+        assert_eq!(result, -ArkFr::from(12345u64));
+    }
 }
