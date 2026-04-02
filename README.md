@@ -158,7 +158,7 @@ print(add5(3))  // 8
 
 ### Field Elements
 
-BN254 scalar field. Montgomery form internally. Created with the `0p` prefix:
+Prime field elements (BN254 by default, configurable via `--prime`). Created with the `0p` prefix:
 
 ```achronyme
 let a = 0p42
