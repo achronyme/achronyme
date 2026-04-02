@@ -5,22 +5,6 @@ use crate::r1cs_backend::R1CSCompiler;
 use crate::r1cs_error::R1CSError;
 use crate::witness_gen::WitnessOp;
 
-/// Pre-computed table of 2^0 .. 2^255 as FieldElements (BN254).
-/// Initialized once on first access, O(256) total instead of O(n) per call.
-static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 256]> = std::sync::LazyLock::new(|| {
-    let mut table = [FieldElement::ZERO; 256];
-    table[0] = FieldElement::ONE;
-    for i in 1..256 {
-        table[i] = table[i - 1].add(&table[i - 1]);
-    }
-    table
-});
-
-/// Look up 2^n from the pre-computed table (BN254-only).
-pub(crate) fn compute_power_of_two(n: u32) -> FieldElement {
-    POWERS_OF_TWO[n as usize]
-}
-
 /// Compute 2^n as a field element for any backend.
 ///
 /// O(n) via repeated doubling. For BN254, prefer [`compute_power_of_two`]
@@ -35,13 +19,13 @@ pub(crate) fn power_of_two_generic<F: FieldBackend>(n: u32) -> FieldElement<F> {
 }
 
 /// R1CS gadget methods: reusable constraint-generation helpers.
-impl R1CSCompiler {
+impl<F: FieldBackend> R1CSCompiler<F> {
     /// Convert a `LinearCombination` to a `Variable`.
     ///
     /// If the LC is already a single variable with coefficient 1, returns it
     /// directly (0 constraints). Otherwise allocates a fresh witness variable
     /// and enforces equality (1 constraint).
-    pub(crate) fn materialize_lc(&mut self, lc: &LinearCombination) -> Variable {
+    pub(crate) fn materialize_lc(&mut self, lc: &LinearCombination<F>) -> Variable {
         if let Some(var) = lc.as_single_variable() {
             return var;
         }
@@ -64,9 +48,9 @@ impl R1CSCompiler {
     /// variables). This is unavoidable when LCs are multi-term (e.g. `3*x + 5*y`).
     pub(crate) fn multiply_lcs(
         &mut self,
-        a: &LinearCombination,
-        b: &LinearCombination,
-    ) -> LinearCombination {
+        a: &LinearCombination<F>,
+        b: &LinearCombination<F>,
+    ) -> LinearCombination<F> {
         // Constant * anything → scalar mul (0 constraints)
         if let Some(scalar) = a.constant_value() {
             return b.clone() * scalar;
@@ -89,9 +73,9 @@ impl R1CSCompiler {
     /// product witnesses (2 constraints).
     pub(crate) fn divide_lcs(
         &mut self,
-        num: &LinearCombination,
-        den: &LinearCombination,
-    ) -> Result<LinearCombination, R1CSError> {
+        num: &LinearCombination<F>,
+        den: &LinearCombination<F>,
+    ) -> Result<LinearCombination<F>, R1CSError> {
         // Constant denominator → multiply by inverse (0 constraints)
         if let Some(scalar) = den.constant_value() {
             let inv = scalar
@@ -117,17 +101,17 @@ impl R1CSCompiler {
 
     /// Enforce that `val` fits in `num_bits` bits: `val ∈ [0, 2^num_bits)`.
     /// Decomposes into `num_bits` boolean-enforced bits and checks sum == val.
-    pub(crate) fn enforce_n_range(&mut self, val: &LinearCombination, num_bits: u32) {
+    pub(crate) fn enforce_n_range(&mut self, val: &LinearCombination<F>, num_bits: u32) {
         let mut sum = LinearCombination::zero();
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
             self.cs.enforce(
                 LinearCombination::from_variable(bit_var),
-                LinearCombination::from_constant(FieldElement::ONE)
+                LinearCombination::from_constant(FieldElement::<F>::one())
                     - LinearCombination::from_variable(bit_var),
                 LinearCombination::zero(),
             );
-            let coeff = compute_power_of_two(i);
+            let coeff = power_of_two_generic::<F>(i);
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
             self.witness_ops.push(WitnessOp::BitExtract {
                 target: bit_var,
@@ -145,7 +129,7 @@ impl R1CSCompiler {
     }
 
     /// Enforce that `val` fits in the default range for the active prime field.
-    pub(crate) fn enforce_default_range(&mut self, val: &LinearCombination) {
+    pub(crate) fn enforce_default_range(&mut self, val: &LinearCombination<F>) {
         let bits = self.default_range_bits();
         self.enforce_n_range(val, bits);
     }
@@ -155,9 +139,9 @@ impl R1CSCompiler {
     /// Returns an LC that is 1 if a < b, 0 otherwise (bit `num_bits - 1`).
     pub(crate) fn compile_is_lt_via_bits(
         &mut self,
-        diff: &LinearCombination,
+        diff: &LinearCombination<F>,
         num_bits: u32,
-    ) -> LinearCombination {
+    ) -> LinearCombination<F> {
         let mut sum = LinearCombination::zero();
         let mut top_bit_lc = LinearCombination::zero();
         let top_index = num_bits - 1;
@@ -167,11 +151,11 @@ impl R1CSCompiler {
             // b_i * (1 - b_i) = 0
             self.cs.enforce(
                 LinearCombination::from_variable(bit_var),
-                LinearCombination::from_constant(FieldElement::ONE)
+                LinearCombination::from_constant(FieldElement::<F>::one())
                     - LinearCombination::from_variable(bit_var),
                 LinearCombination::zero(),
             );
-            let coeff = compute_power_of_two(i);
+            let coeff = power_of_two_generic::<F>(i);
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
             self.witness_ops.push(WitnessOp::BitExtract {
                 target: bit_var,
