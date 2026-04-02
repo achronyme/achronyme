@@ -84,6 +84,43 @@ impl<F: FieldBackend> PoseidonParams<F> {
 }
 
 // ============================================================================
+// PoseidonParamsProvider — dispatch Poseidon params by backend type
+// ============================================================================
+
+/// Trait for backends that have a default Poseidon t=3 configuration.
+///
+/// This enables generic code to obtain the right Poseidon parameters
+/// without knowing the concrete backend at compile time:
+///
+/// ```ignore
+/// fn compile_poseidon<F: PoseidonParamsProvider>() {
+///     let params = F::default_poseidon_t3();
+/// }
+/// ```
+pub trait PoseidonParamsProvider: FieldBackend {
+    /// Returns the default Poseidon parameters (t=3) for this field.
+    fn default_poseidon_t3() -> PoseidonParams<Self>;
+}
+
+impl PoseidonParamsProvider for memory::Bn254Fr {
+    fn default_poseidon_t3() -> PoseidonParams<Self> {
+        PoseidonParams::bn254_t3()
+    }
+}
+
+impl PoseidonParamsProvider for Bls12_381Fr {
+    fn default_poseidon_t3() -> PoseidonParams<Self> {
+        PoseidonParams::bls12_381_t3()
+    }
+}
+
+impl PoseidonParamsProvider for GoldilocksFr {
+    fn default_poseidon_t3() -> PoseidonParams<Self> {
+        PoseidonParams::goldilocks_t3()
+    }
+}
+
+// ============================================================================
 // BN254-specific constructors
 // ============================================================================
 

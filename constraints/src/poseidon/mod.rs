@@ -42,4 +42,4 @@ mod tests;
 
 pub use circuit::{poseidon_hash_circuit, poseidon_permutation_circuit};
 pub use native::{poseidon_hash, poseidon_hash_single, poseidon_permutation};
-pub use params::PoseidonParams;
+pub use params::{PoseidonParams, PoseidonParamsProvider};
