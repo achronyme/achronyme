@@ -6,7 +6,7 @@ Manages the Heap and Values for the Achronyme VM.
 
 - **value.rs**: Tagged u64 representation — 4-bit tag (bits 63-60) + 60-bit payload. No floats; all numeric values are i60 integers or BN254 FieldElements on heap.
 - **heap.rs**: Typed arenas for strings, lists, maps, functions, closures, upvalues, iterators, fields, and proofs. Mark-sweep garbage collector.
-- **field.rs**: BN254 scalar field arithmetic in Montgomery form (`[u64; 4]` limbs).
+- **field.rs**: Generic prime field arithmetic via `FieldBackend` trait. Three backends: `Bn254Fr` (Montgomery `[u64;4]`), `Bls12_381Fr` (Montgomery `[u64;4]`), `GoldilocksFr` (direct `u64`). `FieldElement<F>` wraps `F::Repr` and delegates all operations. `PrimeId` enum for runtime field selection.
 
 ## Value Tags
 

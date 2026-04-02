@@ -264,7 +264,7 @@ Los 3 niveles de integración están completados:
 
 | # | Debilidad | Impacto | Esfuerzo |
 |---|-----------|---------|----------|
-| D2 | **Una sola curva (BN254)** | No interoperable con BLS12-381 (EIP-2537), Pasta (Halo2/Zcash), ni campos STARK. | Alto — genericizar `FieldElement` sobre un trait `Field` |
+| ~~D2~~ | ~~Una sola curva (BN254)~~ | **RESUELTO** — `FieldBackend` trait con BN254, BLS12-381, Goldilocks. CLI `--prime`. | Completado beta.19 |
 | D4 | **Sin imports / sistema de módulos** | Todo es un archivo. Circuitos grandes son inmanejables. | Medio — `import "path"` con resolución de nombres |
 
 ### Degradan DX

@@ -32,4 +32,4 @@
 ## Futuro (sin prioridad definida)
 
 - [ ] **Tensor System** — `TAG_TENSOR` para representación de polinomios y operaciones ZKML (FFT/MSM). No está en el roadmap inmediato.
-- [ ] **Multi-curva** — Genericizar `FieldElement` sobre un trait `Field` para soportar BLS12-381, Pasta, campos STARK. Planeado para v1.0.0.
+- [x] **Multi-curva** — `FieldBackend` trait con BN254, BLS12-381, Goldilocks. Pipeline completo genérico. CLI `--prime`. Completado en beta.19.

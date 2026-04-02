@@ -1,8 +1,9 @@
 # Architecture
 
 Achronyme is a programming language for zero-knowledge circuits.
-It compiles source code into R1CS constraint systems over the BN254 scalar field,
-producing outputs compatible with snarkjs for Groth16 proof generation.
+It compiles source code into R1CS or Plonkish constraint systems over a configurable
+prime field (BN254, BLS12-381, or Goldilocks), producing outputs compatible with
+snarkjs for Groth16 proof generation, or native PlonK proofs via halo2.
 
 ## Pipeline
 
@@ -42,7 +43,7 @@ Source (.ach)
 
 | Crate | Path | Purpose | Key Types |
 |-------|------|---------|-----------|
-| `memory` | `memory/` | BN254 field arithmetic, tagged values, heap/GC | `FieldElement`, `Value`, `Heap` |
+| `memory` | `memory/` | Generic field arithmetic (`F: FieldBackend`), tagged values, heap/GC | `FieldElement<F>`, `FieldBackend`, `Value`, `Heap` |
 | `achronyme-parser` | `achronyme-parser/` | Recursive descent parser, AST types | `Program`, `Stmt`, `Expr`, `Block` |
 | `constraints` | `constraints/` | R1CS + Plonkish constraint systems, export | `ConstraintSystem`, `Variable`, `LinearCombination`, `PlonkishSystem` |
 | `ir` | `ir/` | SSA intermediate representation, lowering, optimization | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering` |
@@ -60,6 +61,29 @@ cli → compiler → ir → achronyme-parser
  │       └────────────────────
  └──→ vm → memory
 ```
+
+## Field Architecture
+
+The entire constraint pipeline is generic over `F: FieldBackend`. One `match` at the CLI
+boundary selects the concrete backend; generics carry it through the rest of the pipeline:
+
+```
+CLI --prime flag
+    │
+    ├─ bn254      → circuit_command_inner::<Bn254Fr>(...)
+    ├─ bls12-381  → circuit_command_inner::<Bls12_381Fr>(...)
+    └─ goldilocks → circuit_command_inner::<GoldilocksFr>(...)
+```
+
+| Field | Bit size | Repr | Groth16 | PlonK | Solidity |
+|-------|----------|------|---------|-------|----------|
+| BN254 | 254 | `[u64;4]` Montgomery | Yes (ark-bn254) | Yes (halo2) | Yes (EVM precompiles) |
+| BLS12-381 | 255 | `[u64;4]` Montgomery | Yes (ark-bls12-381) | No | No |
+| Goldilocks | 64 | `u64` direct | No (no pairing) | No | No |
+
+ProveIR uses `FieldConst([u8;32])` — field-erased canonical LE bytes — so the serialized
+format is non-generic. `FieldElement<F>` is reconstructed at instantiation time via
+`FieldConst::to_field::<F>()`. Format version: v5.
 
 ## Data Flow: Circuit Compilation
 
@@ -81,14 +105,14 @@ so a single call can report multiple errors. Handles `public`/`witness` declarat
 
 ```rust
 // ir/src/lower.rs
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     // External inputs specified by caller:
     pub fn lower_circuit(source: &str, public: &[&str], witness: &[&str])
-        -> Result<IrProgram, IrError>
+        -> Result<IrProgram<F>, IrError>
 
     // In-source public/witness declarations:
     pub fn lower_self_contained(source: &str)
-        -> Result<(Vec<String>, Vec<String>, IrProgram), IrError>
+        -> Result<(Vec<String>, Vec<String>, IrProgram<F>), IrError>
 }
 ```
 
@@ -100,7 +124,7 @@ calls are inlined at each call site with a recursion guard.
 
 ```rust
 // ir/src/passes/mod.rs
-pub fn optimize(program: &mut IrProgram)
+pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>)
 ```
 
 Runs three passes in sequence:
@@ -117,13 +141,13 @@ Runs three passes in sequence:
 
 ```rust
 // compiler/src/r1cs_backend.rs
-impl R1CSCompiler {
-    pub fn compile_ir(&mut self, program: &IrProgram) -> Result<(), R1CSError>
+impl<F: FieldBackend + PoseidonParamsProvider> R1CSCompiler<F> {
+    pub fn compile_ir(&mut self, program: &IrProgram<F>) -> Result<(), R1CSError>
 
     // Evaluate + compile + build witness in one pass:
     pub fn compile_ir_with_witness(
-        &mut self, program: &IrProgram, inputs: &HashMap<String, FieldElement>,
-    ) -> Result<Vec<FieldElement>, R1CSError>
+        &mut self, program: &IrProgram<F>, inputs: &HashMap<String, FieldElement<F>>,
+    ) -> Result<Vec<FieldElement<F>>, R1CSError>
 }
 ```
 
@@ -136,8 +160,8 @@ actual R1CS constraints.
 
 ```rust
 // constraints/src/export.rs
-pub fn write_r1cs(cs: &ConstraintSystem) -> Vec<u8>   // iden3 v1
-pub fn write_wtns(witness: &[FieldElement]) -> Vec<u8> // iden3 v2
+pub fn write_r1cs<F: FieldBackend>(cs: &ConstraintSystem<F>, prime_id: PrimeId) -> Vec<u8>
+pub fn write_wtns<F: FieldBackend>(witness: &[FieldElement<F>], prime_id: PrimeId) -> Vec<u8>
 ```
 
 Produces binary files directly consumable by `snarkjs r1cs info` and
@@ -149,7 +173,9 @@ Produces binary files directly consumable by `snarkjs r1cs info` and
 
 | Type | Description |
 |------|-------------|
-| `FieldElement` | BN254 scalar field element in Montgomery form (`[u64; 4]` limbs) |
+| `FieldBackend` | Trait: zero-sized marker type carrying all field-specific logic. Impls: `Bn254Fr`, `Bls12_381Fr`, `GoldilocksFr` |
+| `FieldElement<F>` | Generic wrapper over `F::Repr`. Montgomery `[u64;4]` for 254/255-bit fields, direct `u64` for Goldilocks |
+| `PrimeId` | Runtime enum for field selection at the CLI boundary (`--prime bn254\|bls12-381\|goldilocks`) |
 | `Value` | Tagged u64: 4-bit tag + 60-bit payload. No floats — integers are i60 |
 | `Heap` | Arena allocator for strings, lists, maps, closures, field elements |
 
@@ -158,9 +184,9 @@ Produces binary files directly consumable by `snarkjs r1cs info` and
 | Type | Description |
 |------|-------------|
 | `Variable(usize)` | Wire reference. `Variable::ONE` = index 0 (constant-1 wire) |
-| `LinearCombination` | Sparse `Vec<(Variable, FieldElement)>` — sum of weighted wires |
-| `ConstraintSystem` | Collects `A * B = C` constraints, allocates wires, verifies witnesses |
-| `PlonkishSystem` | Gate/lookup/copy constraint system for Plonkish arithmetization |
+| `LinearCombination<F>` | Sparse `Vec<(Variable, FieldElement<F>)>` — sum of weighted wires |
+| `ConstraintSystem<F>` | Collects `A * B = C` constraints, allocates wires, verifies witnesses |
+| `PlonkishSystem<F>` | Gate/lookup/copy constraint system for Plonkish arithmetization |
 
 ### ir
 
@@ -168,15 +194,16 @@ Produces binary files directly consumable by `snarkjs r1cs info` and
 |------|-------------|
 | `SsaVar(u32)` | SSA variable — defined exactly once |
 | `Instruction` | One of 19 variants: `Const`, `Input`, `Add`, `Sub`, `Mul`, `Div`, `Neg`, `Mux`, `AssertEq`, `PoseidonHash`, `RangeCheck`, `Not`, `And`, `Or`, `IsEq`, `IsNeq`, `IsLt`, `IsLe`, `Assert` |
-| `IrProgram` | Flat list of instructions + variable name map |
-| `IrLowering` | AST→IR converter with environment, function table, call stack |
+| `IrProgram<F>` | Flat list of instructions + variable name map. `Const` embeds `FieldElement<F>` |
+| `IrLowering<F>` | AST→IR converter with environment, function table, call stack |
+| `FieldConst` | Field-erased `[u8;32]` constant in ProveIR. Reconstructed to `FieldElement<F>` at instantiation |
 
 ### compiler
 
 | Type | Description |
 |------|-------------|
-| `R1CSCompiler` | IR→R1CS: maps `SsaVar` to `LinearCombination`, emits constraints |
-| `PlonkishCompiler` | IR→Plonkish: deferred add/sub, cell-based with arith rows |
+| `R1CSCompiler<F>` | IR→R1CS: maps `SsaVar` to `LinearCombination<F>`, emits constraints |
+| `PlonkishCompiler<F>` | IR→Plonkish: deferred add/sub, cell-based with arith rows |
 | `WitnessOp` | Trace entry for witness generation replay |
 | `Compiler` | Bytecode compiler for VM execution (non-circuit path) |
 
@@ -416,6 +443,7 @@ stress_gc = false
 gc_stats = false
 
 [circuit]
+prime = "bn254"               # "bn254" | "bls12-381" | "goldilocks"
 public = []                   # ["x", "y"]
 witness = []                  # ["w"]
 ```

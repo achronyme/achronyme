@@ -22,7 +22,19 @@ ach circuit circuit.ach --backend plonkish --inputs "x=42"
 ach circuit circuit.ach --inputs "x=42" --prove           # Generate proof
 ach circuit circuit.ach --inputs "x=42" --solidity         # Solidity verifier
 ach circuit circuit.ach --inputs "x=42" --no-optimize      # Skip IR optimization
+ach circuit circuit.ach --prime bls12-381 --inputs "x=42" # BLS12-381 field
+ach circuit circuit.ach --prime goldilocks --inputs "x=42" # Goldilocks field
 ```
+
+### Field Selection
+
+Three prime fields are supported via `--prime`:
+
+| Field | Default | Groth16 | PlonK | Solidity |
+|-------|---------|---------|-------|----------|
+| `bn254` | Yes | Yes | Yes | Yes |
+| `bls12-381` | No | Yes | No | No |
+| `goldilocks` | No | No (constraints only) | No | No |
 
 ### `compile` — Compile to bytecode
 
