@@ -230,8 +230,9 @@ impl StatementCompiler for Compiler {
             functions: self.fn_decl_asts.clone(),
             ..Default::default()
         };
-        let mut prove_ir = ir::prove_ir::ProveIrCompiler::compile(&circuit_body, &outer_scope)
-            .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+        let mut prove_ir =
+            ir::prove_ir::ProveIrCompiler::<memory::Bn254Fr>::compile(&circuit_body, &outer_scope)
+                .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
         prove_ir.name = Some(name.to_string());
 
         // 3. Serialize to bytes
@@ -301,9 +302,11 @@ impl StatementCompiler for Compiler {
         })?;
 
         // 3. Compile to ProveIR via compile_circuit (self-contained)
-        let mut prove_ir =
-            ir::prove_ir::ProveIrCompiler::compile_circuit(&source, Some(&full_path))
-                .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+        let mut prove_ir = ir::prove_ir::ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(
+            &source,
+            Some(&full_path),
+        )
+        .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
         prove_ir.name = Some(alias.to_string());
 
         // 4. Serialize to bytes

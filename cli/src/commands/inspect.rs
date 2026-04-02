@@ -63,8 +63,8 @@ fn inspect_circuit(
         anyhow::anyhow!("{rendered}")
     };
 
-    let prove_ir =
-        ProveIrCompiler::compile_circuit(source, Some(source_path)).map_err(render_error)?;
+    let prove_ir = ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(source, Some(source_path))
+        .map_err(render_error)?;
     let prove_ir_text = format!("{prove_ir}");
     let circuit_name = prove_ir.name.clone();
 
