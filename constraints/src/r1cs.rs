@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 // ============================================================================
 // Error types
@@ -84,7 +84,8 @@ impl Variable {
 
 /// A linear combination: Σ(coefficient_i * variable_i).
 ///
-/// Stored as sparse (variable, coefficient) pairs.
+/// Stored as sparse (variable, coefficient) pairs. Generic over `F: FieldBackend`;
+/// bare `LinearCombination` defaults to BN254 for backward compatibility.
 ///
 /// ```
 /// use constraints::{Variable, LinearCombination};
@@ -97,12 +98,18 @@ impl Variable {
 /// assert!(lc_const.is_constant());
 /// assert_eq!(lc_const.constant_value(), Some(FieldElement::from_u64(42)));
 /// ```
-#[derive(Debug, Clone, Default)]
-pub struct LinearCombination {
-    pub terms: Vec<(Variable, FieldElement)>,
+#[derive(Debug, Clone)]
+pub struct LinearCombination<F: FieldBackend = Bn254Fr> {
+    pub terms: Vec<(Variable, FieldElement<F>)>,
 }
 
-impl LinearCombination {
+impl<F: FieldBackend> Default for LinearCombination<F> {
+    fn default() -> Self {
+        Self { terms: vec![] }
+    }
+}
+
+impl<F: FieldBackend> LinearCombination<F> {
     pub fn zero() -> Self {
         Self { terms: vec![] }
     }
@@ -110,12 +117,12 @@ impl LinearCombination {
     /// Create LC from a single variable with coefficient 1.
     pub fn from_variable(var: Variable) -> Self {
         Self {
-            terms: vec![(var, FieldElement::ONE)],
+            terms: vec![(var, FieldElement::<F>::one())],
         }
     }
 
     /// Create LC from a constant field element: coeff * ONE.
-    pub fn from_constant(coeff: FieldElement) -> Self {
+    pub fn from_constant(coeff: FieldElement<F>) -> Self {
         if coeff.is_zero() {
             return Self::zero();
         }
@@ -125,7 +132,7 @@ impl LinearCombination {
     }
 
     /// Add a (coefficient * variable) term.
-    pub fn add_term(&mut self, var: Variable, coeff: FieldElement) {
+    pub fn add_term(&mut self, var: Variable, coeff: FieldElement<F>) {
         self.terms.push((var, coeff));
     }
 
@@ -145,9 +152,9 @@ impl LinearCombination {
         if self.terms.len() <= 1 {
             return self.clone();
         }
-        let mut map: BTreeMap<usize, FieldElement> = BTreeMap::new();
+        let mut map: BTreeMap<usize, FieldElement<F>> = BTreeMap::new();
         for (var, coeff) in &self.terms {
-            let e = map.entry(var.0).or_insert(FieldElement::ZERO);
+            let e = map.entry(var.0).or_insert_with(FieldElement::<F>::zero);
             *e = e.add(coeff);
         }
         Self {
@@ -169,7 +176,7 @@ impl LinearCombination {
 
     /// If this LC is a pure constant (only `Variable::ONE` terms), return the scalar value.
     /// Returns `None` if any non-ONE variable is present.
-    pub fn constant_value(&self) -> Option<FieldElement> {
+    pub fn constant_value(&self) -> Option<FieldElement<F>> {
         let simplified = self.simplify();
         if !simplified
             .terms
@@ -178,7 +185,7 @@ impl LinearCombination {
         {
             return None;
         }
-        let mut sum = FieldElement::ZERO;
+        let mut sum = FieldElement::<F>::zero();
         for (_, coeff) in &simplified.terms {
             sum = sum.add(coeff);
         }
@@ -194,7 +201,7 @@ impl LinearCombination {
         let simplified = self.simplify();
         if simplified.terms.len() == 1 {
             let (var, coeff) = &simplified.terms[0];
-            if *var != Variable::ONE && *coeff == FieldElement::ONE {
+            if *var != Variable::ONE && *coeff == FieldElement::<F>::one() {
                 return Some(*var);
             }
         }
@@ -203,8 +210,11 @@ impl LinearCombination {
 
     /// Evaluate the LC given a full witness assignment.
     /// witness[i] = value of variable i.
-    pub fn evaluate(&self, witness: &[FieldElement]) -> Result<FieldElement, ConstraintError> {
-        let mut sum = FieldElement::ZERO;
+    pub fn evaluate(
+        &self,
+        witness: &[FieldElement<F>],
+    ) -> Result<FieldElement<F>, ConstraintError> {
+        let mut sum = FieldElement::<F>::zero();
         for (var, coeff) in &self.terms {
             let val = witness
                 .get(var.0)
@@ -222,7 +232,7 @@ impl LinearCombination {
 // Arithmetic on LinearCombinations
 // ============================================================================
 
-impl std::ops::Add for LinearCombination {
+impl<F: FieldBackend> std::ops::Add for LinearCombination<F> {
     type Output = Self;
     fn add(mut self, rhs: Self) -> Self {
         self.terms.extend(rhs.terms);
@@ -230,7 +240,7 @@ impl std::ops::Add for LinearCombination {
     }
 }
 
-impl std::ops::Sub for LinearCombination {
+impl<F: FieldBackend> std::ops::Sub for LinearCombination<F> {
     type Output = Self;
     fn sub(mut self, rhs: Self) -> Self {
         for (var, coeff) in rhs.terms {
@@ -241,9 +251,9 @@ impl std::ops::Sub for LinearCombination {
 }
 
 /// Scalar multiplication: coeff * LC
-impl std::ops::Mul<FieldElement> for LinearCombination {
+impl<F: FieldBackend> std::ops::Mul<FieldElement<F>> for LinearCombination<F> {
     type Output = Self;
-    fn mul(mut self, scalar: FieldElement) -> Self {
+    fn mul(mut self, scalar: FieldElement<F>) -> Self {
         for (_, coeff) in &mut self.terms {
             *coeff = coeff.mul(&scalar);
         }
@@ -261,10 +271,10 @@ impl std::ops::Mul<FieldElement> for LinearCombination {
 /// means "the dot product of the LC's evaluation with the witness
 /// vector, then multiplied together".
 #[derive(Debug, Clone)]
-pub struct Constraint {
-    pub a: LinearCombination,
-    pub b: LinearCombination,
-    pub c: LinearCombination,
+pub struct Constraint<F: FieldBackend = Bn254Fr> {
+    pub a: LinearCombination<F>,
+    pub b: LinearCombination<F>,
+    pub c: LinearCombination<F>,
 }
 
 // ============================================================================
@@ -304,22 +314,22 @@ pub struct Constraint {
 /// assert!(cs.verify(&witness).is_ok());
 /// ```
 #[derive(Clone)]
-pub struct ConstraintSystem {
+pub struct ConstraintSystem<F: FieldBackend = Bn254Fr> {
     /// Total number of variables (including ONE at index 0).
     num_variables: usize,
     /// Number of public input variables (indices 1..=num_pub_inputs).
     num_pub_inputs: usize,
     /// All constraints: each is (A, B, C) with A * B = C.
-    constraints: Vec<Constraint>,
+    constraints: Vec<Constraint<F>>,
 }
 
-impl Default for ConstraintSystem {
+impl<F: FieldBackend> Default for ConstraintSystem<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ConstraintSystem {
+impl<F: FieldBackend> ConstraintSystem<F> {
     pub fn new() -> Self {
         Self {
             // Variable 0 = ONE (constant wire)
@@ -350,19 +360,17 @@ impl ConstraintSystem {
     // --- Constraint enforcement ---
 
     /// Add a constraint: A * B = C
-    pub fn enforce(&mut self, a: LinearCombination, b: LinearCombination, c: LinearCombination) {
+    pub fn enforce(
+        &mut self,
+        a: LinearCombination<F>,
+        b: LinearCombination<F>,
+        c: LinearCombination<F>,
+    ) {
         self.constraints.push(Constraint { a, b, c });
     }
 
-    /// Convenience: enforce that lc = 0 (i.e., 0 * 0 = lc is wrong,
-    /// so we do lc * ONE = 0 → enforce(lc, ONE, zero)).
-    /// Actually: enforce(lc, 1, 0) doesn't work.
-    /// Correct encoding: enforce(lc, ONE, zero_lc) means lc * 1 = 0.
-    /// Wait — that constrains lc to be zero. Let me think.
-    /// enforce(A, B, C) means A*B = C.
-    /// To constrain x = y: enforce(x, 1, y) → x*1 = y.
-    pub fn enforce_equal(&mut self, x: LinearCombination, y: LinearCombination) {
-        // x * 1 = y  →  x = y
+    /// Convenience: constrain x = y via x * 1 = y.
+    pub fn enforce_equal(&mut self, x: LinearCombination<F>, y: LinearCombination<F>) {
         self.enforce(x, LinearCombination::from_variable(Variable::ONE), y);
     }
 
@@ -384,7 +392,7 @@ impl ConstraintSystem {
     }
 
     /// Access constraints for serialization or verification.
-    pub fn constraints(&self) -> &[Constraint] {
+    pub fn constraints(&self) -> &[Constraint<F>] {
         &self.constraints
     }
 
@@ -392,13 +400,13 @@ impl ConstraintSystem {
 
     /// Verify that a witness satisfies all constraints.
     ///
-    /// witness[0] must be ONE (FieldElement::ONE).
+    /// witness[0] must be ONE (the multiplicative identity).
     /// witness[1..=num_pub_inputs] = public inputs.
     /// witness[num_pub_inputs+1..] = private/intermediate values.
     ///
     /// Returns Ok(()) if all constraints satisfied, or the index
     /// of the first failing constraint.
-    pub fn verify(&self, witness: &[FieldElement]) -> Result<(), ConstraintError> {
+    pub fn verify(&self, witness: &[FieldElement<F>]) -> Result<(), ConstraintError> {
         if witness.len() != self.num_variables {
             return Err(ConstraintError::WitnessLengthMismatch {
                 expected: self.num_variables,
@@ -406,7 +414,7 @@ impl ConstraintSystem {
             });
         }
         // witness[0] must be 1
-        if witness[0] != FieldElement::ONE {
+        if witness[0] != FieldElement::<F>::one() {
             return Err(ConstraintError::BadConstantWire);
         }
 
@@ -430,7 +438,7 @@ impl ConstraintSystem {
 // Builder helpers (syntactic sugar for circuit construction)
 // ============================================================================
 
-impl ConstraintSystem {
+impl<F: FieldBackend> ConstraintSystem<F> {
     /// Allocate a witness variable and constrain it to be the product of two LCs.
     /// Returns the new variable (= a * b in the field).
     ///
@@ -456,7 +464,11 @@ impl ConstraintSystem {
     /// ];
     /// assert!(cs.verify(&witness).is_ok());
     /// ```
-    pub fn mul_lc(&mut self, a: &LinearCombination, b: &LinearCombination) -> Variable {
+    pub fn mul_lc(
+        &mut self,
+        a: &LinearCombination<F>,
+        b: &LinearCombination<F>,
+    ) -> Variable {
         let out = self.alloc_witness();
         self.enforce(a.clone(), b.clone(), LinearCombination::from_variable(out));
         out
@@ -464,19 +476,23 @@ impl ConstraintSystem {
 
     /// Constrain: out = a + b (linear, no new constraint needed if we track LCs).
     /// This just returns the sum LC. Only use enforce if a multiplication is involved.
-    pub fn add_lc(&self, a: &LinearCombination, b: &LinearCombination) -> LinearCombination {
+    pub fn add_lc(
+        &self,
+        a: &LinearCombination<F>,
+        b: &LinearCombination<F>,
+    ) -> LinearCombination<F> {
         a.clone() + b.clone()
     }
 
     /// Allocate a witness variable constrained to be the inverse of x.
     /// Enforces: x * x_inv = 1
     /// Returns x_inv variable. Caller must assign the correct witness value.
-    pub fn inv_lc(&mut self, x: &LinearCombination) -> Variable {
+    pub fn inv_lc(&mut self, x: &LinearCombination<F>) -> Variable {
         let x_inv = self.alloc_witness();
         self.enforce(
             x.clone(),
             LinearCombination::from_variable(x_inv),
-            LinearCombination::from_constant(FieldElement::ONE),
+            LinearCombination::from_constant(FieldElement::<F>::one()),
         );
         x_inv
     }
@@ -682,28 +698,29 @@ mod tests {
 
     #[test]
     fn test_constant_lc_is_constant() {
-        let lc = LinearCombination::from_constant(FieldElement::from_u64(42));
+        let lc: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(42));
         assert!(lc.is_constant());
         assert_eq!(lc.constant_value(), Some(FieldElement::from_u64(42)));
     }
 
     #[test]
     fn test_zero_lc_is_constant() {
-        let lc = LinearCombination::zero();
+        let lc: LinearCombination = LinearCombination::zero();
         assert!(lc.is_constant());
         assert_eq!(lc.constant_value(), Some(FieldElement::ZERO));
     }
 
     #[test]
     fn test_variable_lc_not_constant() {
-        let lc = LinearCombination::from_variable(Variable(1));
+        let lc: LinearCombination = LinearCombination::from_variable(Variable(1));
         assert!(!lc.is_constant());
         assert_eq!(lc.constant_value(), None);
     }
 
     #[test]
     fn test_mixed_lc_not_constant() {
-        let mut lc = LinearCombination::from_constant(FieldElement::from_u64(5));
+        let mut lc: LinearCombination =
+            LinearCombination::from_constant(FieldElement::from_u64(5));
         lc.add_term(Variable(1), FieldElement::ONE);
         assert!(!lc.is_constant());
         assert_eq!(lc.constant_value(), None);
@@ -712,8 +729,8 @@ mod tests {
     #[test]
     fn test_constant_sum() {
         // Adding two constants should still be constant
-        let a = LinearCombination::from_constant(FieldElement::from_u64(3));
-        let b = LinearCombination::from_constant(FieldElement::from_u64(7));
+        let a: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(3));
+        let b: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(7));
         let sum = a + b;
         assert!(sum.is_constant());
         assert_eq!(sum.constant_value(), Some(FieldElement::from_u64(10)));
@@ -724,8 +741,8 @@ mod tests {
         let x = Variable(1);
         let y = Variable(2);
 
-        let lc_x = LinearCombination::from_variable(x);
-        let lc_y = LinearCombination::from_variable(y);
+        let lc_x: LinearCombination = LinearCombination::from_variable(x);
+        let lc_y: LinearCombination = LinearCombination::from_variable(y);
 
         // x + y
         let sum = lc_x.clone() + lc_y.clone();
@@ -747,7 +764,8 @@ mod tests {
     fn test_lc_simplify_cancels_vars() {
         // x - x should simplify to constant zero
         let x = Variable(1);
-        let lc = LinearCombination::from_variable(x) - LinearCombination::from_variable(x);
+        let lc: LinearCombination =
+            LinearCombination::from_variable(x) - LinearCombination::from_variable(x);
         assert!(lc.is_constant());
         assert_eq!(lc.constant_value(), Some(FieldElement::ZERO));
     }
@@ -756,8 +774,10 @@ mod tests {
     fn test_lc_simplify_merges_same_var() {
         // 3x + 5x → 8x (not single variable since coeff != 1)
         let x = Variable(1);
-        let a = LinearCombination::from_variable(x) * FieldElement::from_u64(3);
-        let b = LinearCombination::from_variable(x) * FieldElement::from_u64(5);
+        let a: LinearCombination =
+            LinearCombination::from_variable(x) * FieldElement::from_u64(3);
+        let b: LinearCombination =
+            LinearCombination::from_variable(x) * FieldElement::from_u64(5);
         let sum = a + b;
         let simplified = sum.simplify();
         assert_eq!(simplified.terms.len(), 1);
@@ -769,8 +789,9 @@ mod tests {
     fn test_lc_as_single_variable_after_cancellation() {
         // 2x - x → x (single variable)
         let x = Variable(1);
-        let two_x = LinearCombination::from_variable(x) * FieldElement::from_u64(2);
-        let one_x = LinearCombination::from_variable(x);
+        let two_x: LinearCombination =
+            LinearCombination::from_variable(x) * FieldElement::from_u64(2);
+        let one_x: LinearCombination = LinearCombination::from_variable(x);
         let diff = two_x - one_x;
         assert_eq!(diff.as_single_variable(), Some(x));
     }
@@ -779,7 +800,8 @@ mod tests {
     fn test_lc_constant_with_cancellation() {
         // (5*ONE + 3x) - 3x → constant 5
         let x = Variable(1);
-        let mut a = LinearCombination::from_constant(FieldElement::from_u64(5));
+        let mut a: LinearCombination =
+            LinearCombination::from_constant(FieldElement::from_u64(5));
         a.add_term(x, FieldElement::from_u64(3));
         let b = LinearCombination::from_variable(x) * FieldElement::from_u64(3);
         let diff = a - b;
