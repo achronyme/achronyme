@@ -1,12 +1,11 @@
 use constraints::r1cs::{LinearCombination, Variable};
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use crate::r1cs_backend::R1CSCompiler;
 use crate::r1cs_error::R1CSError;
 use crate::witness_gen::WitnessOp;
 
-/// Pre-computed table of 2^0 .. 2^255 as FieldElements.
-/// Covers all supported prime fields (BN254=254 bits, BLS12-381=255 bits).
+/// Pre-computed table of 2^0 .. 2^255 as FieldElements (BN254).
 /// Initialized once on first access, O(256) total instead of O(n) per call.
 static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 256]> = std::sync::LazyLock::new(|| {
     let mut table = [FieldElement::ZERO; 256];
@@ -17,9 +16,22 @@ static POWERS_OF_TWO: std::sync::LazyLock<[FieldElement; 256]> = std::sync::Lazy
     table
 });
 
-/// Look up 2^n from the pre-computed table.
+/// Look up 2^n from the pre-computed table (BN254-only).
 pub(crate) fn compute_power_of_two(n: u32) -> FieldElement {
     POWERS_OF_TWO[n as usize]
+}
+
+/// Compute 2^n as a field element for any backend.
+///
+/// O(n) via repeated doubling. For BN254, prefer [`compute_power_of_two`]
+/// which uses a cached table — this function is for generic code paths.
+pub(crate) fn power_of_two_generic<F: FieldBackend>(n: u32) -> FieldElement<F> {
+    let mut result = FieldElement::<F>::one();
+    let two = FieldElement::<F>::from_u64(2);
+    for _ in 0..n {
+        result = result.mul(&two);
+    }
+    result
 }
 
 /// R1CS gadget methods: reusable constraint-generation helpers.
