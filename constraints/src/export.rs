@@ -4,22 +4,7 @@
 /// consumed directly by `snarkjs` for Groth16 proof generation.
 use crate::r1cs::{ConstraintSystem, LinearCombination};
 use memory::field::PrimeId;
-use memory::FieldElement;
-
-/// Return the prime modulus as 32 little-endian bytes for the given `PrimeId`.
-///
-/// Uses the canonical `modulus_le_bytes()` from each `FieldBackend` impl.
-fn prime_le_bytes(prime_id: PrimeId) -> [u8; 32] {
-    match prime_id {
-        PrimeId::Bn254 => memory::field::Bn254Fr::modulus_le_bytes(),
-        PrimeId::Bls12_381 => memory::field::Bls12_381Fr::modulus_le_bytes(),
-        PrimeId::Goldilocks => memory::field::GoldilocksFr::modulus_le_bytes(),
-        // Future backends: add here when FieldBackend impls exist
-        _ => unimplemented!("R1CS/WTNS export not yet supported for {}", prime_id.name()),
-    }
-}
-
-use memory::field::FieldBackend;
+use memory::{FieldBackend, FieldElement};
 
 // ============================================================================
 // Helpers
@@ -33,7 +18,7 @@ fn write_u64(buf: &mut Vec<u8>, v: u64) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
-fn write_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
+fn write_lc<F: FieldBackend>(buf: &mut Vec<u8>, lc: &LinearCombination<F>) {
     // Simplify to merge duplicate wire IDs before serialization.
     // The iden3 R1CS spec expects unique wire IDs per LC; snarkjs
     // silently drops duplicates, causing witness check failures.
@@ -62,7 +47,7 @@ fn write_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
 /// use constraints::{ConstraintSystem, LinearCombination, write_r1cs};
 /// use memory::field::PrimeId;
 ///
-/// let mut cs = ConstraintSystem::new();
+/// let mut cs: ConstraintSystem = ConstraintSystem::new();
 /// let a = cs.alloc_witness();
 /// let b = cs.alloc_witness();
 /// cs.enforce(
@@ -74,15 +59,15 @@ fn write_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
 /// let data = write_r1cs(&cs, PrimeId::Bn254);
 /// assert_eq!(&data[0..4], b"r1cs");
 /// ```
-pub fn write_r1cs(cs: &ConstraintSystem, prime_id: PrimeId) -> Vec<u8> {
+pub fn write_r1cs<F: FieldBackend>(cs: &ConstraintSystem<F>, _prime_id: PrimeId) -> Vec<u8> {
     let n_wires = cs.num_variables() as u32;
     let n_pub_out: u32 = 0;
     let n_pub_in = cs.num_pub_inputs() as u32;
     let n_prv_in = n_wires - 1 - n_pub_in;
     let n_labels = n_wires as u64;
     let n_constraints = cs.num_constraints() as u32;
-    let field_size = prime_id.byte_size() as u32;
-    let prime_bytes = prime_le_bytes(prime_id);
+    let field_size = F::BYTE_SIZE as u32;
+    let prime_bytes = FieldElement::<F>::modulus_le_bytes();
 
     let mut buf = Vec::new();
 
@@ -146,10 +131,10 @@ pub fn write_r1cs(cs: &ConstraintSystem, prime_id: PrimeId) -> Vec<u8> {
 /// let data = write_wtns(&witness, PrimeId::Bn254);
 /// assert_eq!(&data[0..4], b"wtns");
 /// ```
-pub fn write_wtns(witness: &[FieldElement], prime_id: PrimeId) -> Vec<u8> {
+pub fn write_wtns<F: FieldBackend>(witness: &[FieldElement<F>], _prime_id: PrimeId) -> Vec<u8> {
     let n_witness = witness.len() as u32;
-    let field_size = prime_id.byte_size() as u32;
-    let prime_bytes = prime_le_bytes(prime_id);
+    let field_size = F::BYTE_SIZE as u32;
+    let prime_bytes = FieldElement::<F>::modulus_le_bytes();
 
     let mut buf = Vec::new();
 
@@ -224,7 +209,7 @@ mod tests {
         assert_eq!(field_size, 32);
 
         let prime = &body[4..36];
-        assert_eq!(prime, &prime_le_bytes(PrimeId::Bn254));
+        assert_eq!(prime, &memory::Bn254Fr::modulus_le_bytes());
 
         let n_wires = u32::from_le_bytes(body[36..40].try_into().unwrap());
         assert_eq!(n_wires, 4); // ONE, c, a, b
@@ -332,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_bn254_prime_bytes() {
-        // Verify prime_le_bytes(Bn254) matches the known MODULUS limbs
+        // Verify modulus_le_bytes matches the known MODULUS limbs
         let mut expected = [0u8; 32];
         let modulus: [u64; 4] = [
             0x43e1f593f0000001,
@@ -343,13 +328,13 @@ mod tests {
         for i in 0..4 {
             expected[i * 8..(i + 1) * 8].copy_from_slice(&modulus[i].to_le_bytes());
         }
-        assert_eq!(prime_le_bytes(PrimeId::Bn254), expected);
+        assert_eq!(memory::Bn254Fr::modulus_le_bytes(), expected);
     }
 
     #[test]
     fn test_r1cs_zero_public_inputs() {
         // Circuit with only witness variables, no public inputs
-        let mut cs = ConstraintSystem::new();
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
         let a = cs.alloc_witness();
         let b = cs.alloc_witness();
         let c = cs.alloc_witness();

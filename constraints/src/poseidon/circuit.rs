@@ -1,3 +1,5 @@
+use memory::FieldBackend;
+
 use crate::r1cs::{ConstraintSystem, LinearCombination, Variable};
 
 use super::PoseidonParams;
@@ -8,7 +10,11 @@ use super::PoseidonParams;
 /// α=7: x² → x³ → x⁶ → x⁷ (4 constraints)
 ///
 /// Returns the variable holding x^α.
-fn sbox_circuit(cs: &mut ConstraintSystem, x: &LinearCombination, alpha: u32) -> Variable {
+fn sbox_circuit<F: FieldBackend>(
+    cs: &mut ConstraintSystem<F>,
+    x: &LinearCombination<F>,
+    alpha: u32,
+) -> Variable {
     match alpha {
         5 => {
             let x2 = cs.mul_lc(x, x);
@@ -36,16 +42,16 @@ fn sbox_circuit(cs: &mut ConstraintSystem, x: &LinearCombination, alpha: u32) ->
 /// Takes state variables as input, returns output state variables.
 /// All linear operations (add constants, MDS) are folded into LCs
 /// without creating constraints. Only S-boxes generate constraints.
-pub fn poseidon_permutation_circuit(
-    cs: &mut ConstraintSystem,
-    params: &PoseidonParams,
+pub fn poseidon_permutation_circuit<F: FieldBackend>(
+    cs: &mut ConstraintSystem<F>,
+    params: &PoseidonParams<F>,
     input_vars: &[Variable],
 ) -> Vec<Variable> {
     let total_rounds = params.r_f + params.r_p;
     let half_f = params.r_f / 2;
 
     // Current state as LCs (start from input variables)
-    let mut state: Vec<LinearCombination> = input_vars
+    let mut state: Vec<LinearCombination<F>> = input_vars
         .iter()
         .map(|v| LinearCombination::from_variable(*v))
         .collect();
@@ -111,9 +117,9 @@ pub fn poseidon_permutation_circuit(
 /// Output: the hash variable
 ///
 /// Also returns all state variables for witness assignment.
-pub fn poseidon_hash_circuit(
-    cs: &mut ConstraintSystem,
-    params: &PoseidonParams,
+pub fn poseidon_hash_circuit<F: FieldBackend>(
+    cs: &mut ConstraintSystem<F>,
+    params: &PoseidonParams<F>,
     left: Variable,
     right: Variable,
 ) -> Variable {
