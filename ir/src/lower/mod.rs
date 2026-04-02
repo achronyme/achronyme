@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use achronyme_parser::ast::*;
 use achronyme_parser::parse_program as ast_parse_program;
-use memory::FieldElement;
+use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 use crate::error::{span_box, IrError, OptSpan};
 use crate::types::{Instruction, IrProgram, IrType, SsaVar, Visibility};
@@ -86,7 +86,7 @@ fn parse_decl_specs(specs: &[&str]) -> Result<Vec<(String, Option<usize>)>, IrEr
 }
 
 /// Try to extract a small u64 from a FieldElement.
-pub(super) fn field_to_u64(fe: &FieldElement) -> Option<u64> {
+pub(super) fn field_to_u64<F: FieldBackend>(fe: &FieldElement<F>) -> Option<u64> {
     let limbs = fe.to_canonical();
     if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
         return None;
@@ -95,8 +95,8 @@ pub(super) fn field_to_u64(fe: &FieldElement) -> Option<u64> {
 }
 
 /// Lowers an Achronyme AST into an SSA IR program.
-pub struct IrLowering {
-    pub(super) program: IrProgram,
+pub struct IrLowering<F: FieldBackend = Bn254Fr> {
+    pub(super) program: IrProgram<F>,
     /// Maps variable names to their current value (scalar or array).
     pub(super) env: HashMap<String, EnvValue>,
     /// User-defined functions, inlined at each call site.
@@ -115,13 +115,13 @@ pub struct IrLowering {
     pub(super) fn_call_prefix: Option<String>,
 }
 
-impl Default for IrLowering {
+impl<F: FieldBackend> Default for IrLowering<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     pub fn new() -> Self {
         Self {
             program: IrProgram::new(),
@@ -219,7 +219,7 @@ impl IrLowering {
 
     /// Parse and lower an Achronyme source string into an IR program.
     /// Public/witness inputs must be declared before calling this.
-    pub fn lower(mut self, source: &str) -> Result<IrProgram, IrError> {
+    pub fn lower(mut self, source: &str) -> Result<IrProgram<F>, IrError> {
         let (program, parse_errors) = ast_parse_program(source);
         if let Some(err) = parse_errors
             .iter()
@@ -250,7 +250,7 @@ impl IrLowering {
         public: &[&str],
         witness: &[&str],
         base_path: PathBuf,
-    ) -> Result<IrProgram, IrError> {
+    ) -> Result<IrProgram<F>, IrError> {
         let pub_decls = parse_decl_specs(public)?;
         let wit_decls = parse_decl_specs(witness)?;
 
@@ -291,7 +291,7 @@ impl IrLowering {
         source: &str,
         public: &[&str],
         witness: &[&str],
-    ) -> Result<IrProgram, IrError> {
+    ) -> Result<IrProgram<F>, IrError> {
         Self::lower_circuit_with_base(source, public, witness, PathBuf::from("."))
     }
 
@@ -310,7 +310,7 @@ impl IrLowering {
     /// ```
     pub fn lower_self_contained(
         source: &str,
-    ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
+    ) -> Result<(Vec<String>, Vec<String>, IrProgram<F>), IrError> {
         Self::lower_self_contained_with_base(source, PathBuf::from("."))
     }
 
@@ -318,7 +318,7 @@ impl IrLowering {
     pub fn lower_self_contained_with_base(
         source: &str,
         base_path: PathBuf,
-    ) -> Result<(Vec<String>, Vec<String>, IrProgram), IrError> {
+    ) -> Result<(Vec<String>, Vec<String>, IrProgram<F>), IrError> {
         let (ast_program, parse_errors) = ast_parse_program(source);
         if let Some(err) = parse_errors
             .iter()

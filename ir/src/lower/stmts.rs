@@ -1,11 +1,12 @@
 use achronyme_parser::ast::*;
+use memory::FieldBackend;
 
 use crate::error::IrError;
 use crate::types::{Instruction, IrType, SsaVar};
 
 use super::{annotation_to_ir_type, to_ir_span, type_compatible, EnvValue, FnDef, IrLowering};
 
-impl IrLowering {
+impl<F: FieldBackend> IrLowering<F> {
     pub(super) fn lower_program(&mut self, program: &Program) -> Result<(), IrError> {
         for stmt in &program.stmts {
             self.lower_stmt(stmt)?;
