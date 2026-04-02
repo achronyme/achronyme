@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use achronyme_parser::diagnostic::SpanRange;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 use super::error::ProveIrError;
 use super::types::*;
@@ -42,11 +42,11 @@ enum InstEnvValue {
 // ---------------------------------------------------------------------------
 
 /// Converts a ProveIR template into a flat IrProgram given concrete capture values.
-struct Instantiator {
-    program: IrProgram,
+struct Instantiator<F: FieldBackend> {
+    program: IrProgram<F>,
     env: HashMap<String, InstEnvValue>,
     /// Concrete capture values (provided by caller).
-    captures: HashMap<String, FieldElement>,
+    captures: HashMap<String, FieldElement<F>>,
     /// Current source span context — set when entering a CircuitNode,
     /// propagated to all IR instructions emitted within that node.
     current_span: Option<SpanRange>,
@@ -57,10 +57,10 @@ impl ProveIR {
     ///
     /// The resulting IrProgram is compatible with the existing optimize → R1CS/Plonkish
     /// pipeline (same format as `IrLowering::lower_circuit()`).
-    pub fn instantiate(
+    pub fn instantiate<F: FieldBackend>(
         &self,
-        captures: &HashMap<String, FieldElement>,
-    ) -> Result<IrProgram, ProveIrError> {
+        captures: &HashMap<String, FieldElement<F>>,
+    ) -> Result<IrProgram<F>, ProveIrError> {
         let mut inst = Instantiator {
             program: IrProgram::new(),
             env: HashMap::new(),
@@ -119,13 +119,13 @@ impl ProveIR {
     }
 }
 
-impl Instantiator {
+impl<F: FieldBackend> Instantiator<F> {
     // -------------------------------------------------------------------
     // Span-aware instruction emission
     // -------------------------------------------------------------------
 
     /// Push an instruction and tag its result with the current source span.
-    fn push_inst(&mut self, inst: Instruction) -> SsaVar {
+    fn push_inst(&mut self, inst: Instruction<F>) -> SsaVar {
         let var = self.program.push(inst);
         if let Some(span) = &self.current_span {
             self.program.set_span(var, span.clone());
@@ -467,7 +467,7 @@ impl Instantiator {
                 let v = this.program.fresh_var();
                 this.program.push(Instruction::Const {
                     result: v,
-                    value: FieldElement::from_u64(i),
+                    value: FieldElement::<F>::from_u64(i),
                 });
                 this.program.set_name(v, var.to_string());
                 this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
@@ -481,9 +481,9 @@ impl Instantiator {
     }
 
     /// Save a variable's env binding, run a closure, then restore it.
-    fn with_saved_var<F>(&mut self, var: &str, f: F) -> Result<(), ProveIrError>
+    fn with_saved_var<Func>(&mut self, var: &str, f: Func) -> Result<(), ProveIrError>
     where
-        F: FnOnce(&mut Self) -> Result<(), ProveIrError>,
+        Func: FnOnce(&mut Self) -> Result<(), ProveIrError>,
     {
         let saved = self.env.get(var).cloned();
         let result = f(self);
@@ -504,11 +504,19 @@ impl Instantiator {
 
     fn emit_expr(&mut self, expr: &CircuitExpr) -> Result<SsaVar, ProveIrError> {
         match expr {
-            CircuitExpr::Const(fe) => {
+            CircuitExpr::Const(field_const) => {
+                let fe = field_const.to_field::<F>().ok_or_else(|| {
+                    ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "field constant {field_const:?} is not valid in the target field"
+                        ),
+                        span: None,
+                    }
+                })?;
                 let v = self.program.fresh_var();
                 self.push_inst(Instruction::Const {
                     result: v,
-                    value: *fe,
+                    value: fe,
                 });
                 self.program.set_type(v, IrType::Field);
                 Ok(v)
@@ -685,7 +693,7 @@ impl Instantiator {
                     let zero = self.program.fresh_var();
                     self.push_inst(Instruction::Const {
                         result: zero,
-                        value: FieldElement::ZERO,
+                        value: FieldElement::<F>::zero(),
                     });
                     let v = self.program.fresh_var();
                     self.push_inst(Instruction::PoseidonHash {
@@ -847,7 +855,7 @@ impl Instantiator {
                 let v = self.program.fresh_var();
                 self.push_inst(Instruction::Const {
                     result: v,
-                    value: FieldElement::from_u64(len as u64),
+                    value: FieldElement::<F>::from_u64(len as u64),
                 });
                 Ok(v)
             }
@@ -909,7 +917,7 @@ impl Instantiator {
             let v = self.program.fresh_var();
             self.push_inst(Instruction::Const {
                 result: v,
-                value: FieldElement::ONE,
+                value: FieldElement::<F>::one(),
             });
             return Ok(v);
         }
@@ -974,7 +982,7 @@ impl Instantiator {
 
 /// Convert a FieldElement to u64, with error on overflow.
 /// Only valid for "small" values that fit in a single limb.
-fn fe_to_u64(fe: &FieldElement, context: &str) -> Result<u64, ProveIrError> {
+fn fe_to_u64<F: FieldBackend>(fe: &FieldElement<F>, context: &str) -> Result<u64, ProveIrError> {
     let limbs = fe.to_canonical(); // [u64; 4]
                                    // Value fits in u64 only if upper limbs are zero
     if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
@@ -989,7 +997,10 @@ fn fe_to_u64(fe: &FieldElement, context: &str) -> Result<u64, ProveIrError> {
 }
 
 /// Convert a FieldElement to usize, with error on overflow.
-fn fe_to_usize(fe: &FieldElement, context: &str) -> Result<usize, ProveIrError> {
+fn fe_to_usize<F: FieldBackend>(
+    fe: &FieldElement<F>,
+    context: &str,
+) -> Result<usize, ProveIrError> {
     let v = fe_to_u64(fe, context)?;
     usize::try_from(v).map_err(|_| ProveIrError::UnsupportedOperation {
         description: format!(
@@ -1007,11 +1018,12 @@ fn fe_to_usize(fe: &FieldElement, context: &str) -> Result<usize, ProveIrError> 
 mod tests {
     use super::*;
     use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+    use memory::Bn254Fr;
 
     /// Helper: compile source as a circuit and instantiate (no captures).
-    fn compile_and_instantiate(source: &str) -> IrProgram {
+    fn compile_and_instantiate(source: &str) -> IrProgram<Bn254Fr> {
         let program = crate::prove_ir::test_utils::compile_circuit(source).unwrap();
-        program.instantiate(&HashMap::new()).unwrap()
+        program.instantiate::<Bn254Fr>(&HashMap::new()).unwrap()
     }
 
     /// Helper: compile source as a prove block with captures and instantiate.
@@ -1019,7 +1031,7 @@ mod tests {
         source: &str,
         outer_scope: &[&str],
         captures: &[(&str, u64)],
-    ) -> IrProgram {
+    ) -> IrProgram<Bn254Fr> {
         let scope = OuterScope {
             values: outer_scope
                 .iter()
@@ -1027,10 +1039,10 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        let prove_ir = ProveIrCompiler::compile_prove_block(source, &scope).unwrap();
-        let cap_map: HashMap<String, FieldElement> = captures
+        let prove_ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(source, &scope).unwrap();
+        let cap_map: HashMap<String, FieldElement<Bn254Fr>> = captures
             .iter()
-            .map(|(k, v)| (k.to_string(), FieldElement::from_u64(*v)))
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
             .collect();
         prove_ir.instantiate(&cap_map).unwrap()
     }
@@ -1205,7 +1217,7 @@ mod tests {
         let has_const_one = ir
             .instructions
             .iter()
-            .any(|i| matches!(i, Instruction::Const { value, .. } if *value == FieldElement::ONE));
+            .any(|i| matches!(i, Instruction::Const { value, .. } if *value == FieldElement::<Bn254Fr>::one()));
         assert!(has_const_one, "x^0 should produce Const(1)");
     }
 
@@ -1296,8 +1308,8 @@ mod tests {
             }],
             capture_arrays: vec![],
         };
-        let captures: HashMap<String, FieldElement> =
-            [("n".to_string(), FieldElement::from_u64(4))]
+        let captures: HashMap<String, FieldElement<Bn254Fr>> =
+            [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(4))]
                 .into_iter()
                 .collect();
         let ir = prove_ir.instantiate(&captures).unwrap();
@@ -1330,7 +1342,7 @@ mod tests {
             body: vec![],
             capture_arrays: vec![],
         };
-        let result = prove_ir.instantiate(&HashMap::new());
+        let result = prove_ir.instantiate::<Bn254Fr>(&HashMap::new());
         assert!(result.is_err(), "should fail with missing capture");
     }
 
@@ -1461,7 +1473,7 @@ mod tests {
         );
         // len(arr) → Const(3)
         let has_const_3 = ir.instructions.iter().any(|i| {
-            matches!(i, Instruction::Const { value, .. } if *value == FieldElement::from_u64(3))
+            matches!(i, Instruction::Const { value, .. } if *value == FieldElement::<Bn254Fr>::from_u64(3))
         });
         assert!(has_const_3);
     }
@@ -1485,7 +1497,7 @@ mod tests {
             body: vec![],
             capture_arrays: vec![],
         };
-        let ir = prove_ir.instantiate(&HashMap::new()).unwrap();
+        let ir = prove_ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
         let range_checks = ir
             .instructions
             .iter()
@@ -1511,7 +1523,7 @@ mod tests {
             body: vec![],
             capture_arrays: vec![],
         };
-        let ir = prove_ir.instantiate(&HashMap::new()).unwrap();
+        let ir = prove_ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
         let range_checks = ir
             .instructions
             .iter()
@@ -1621,7 +1633,7 @@ mod tests {
     // ForRange::Array with empty array
     #[test]
     fn audit_for_array_empty() {
-        let prove_ir = ProveIR {
+        let _prove_ir = ProveIR {
             name: None,
             public_inputs: vec![],
             witness_inputs: vec![],
@@ -1677,8 +1689,8 @@ mod tests {
             ],
             capture_arrays: vec![],
         };
-        let captures: HashMap<String, FieldElement> =
-            [("n".to_string(), FieldElement::from_u64(3))]
+        let captures: HashMap<String, FieldElement<Bn254Fr>> =
+            [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
                 .into_iter()
                 .collect();
         let ir = prove_ir.instantiate(&captures).unwrap();
@@ -1746,10 +1758,12 @@ mod tests {
             }],
             capture_arrays: vec![],
         };
-        let captures: HashMap<String, FieldElement> =
-            [("n".to_string(), FieldElement::from_u64(2_000_000))]
-                .into_iter()
-                .collect();
+        let captures: HashMap<String, FieldElement<Bn254Fr>> = [(
+            "n".to_string(),
+            FieldElement::<Bn254Fr>::from_u64(2_000_000),
+        )]
+        .into_iter()
+        .collect();
         let err = prove_ir.instantiate(&captures).unwrap_err();
         assert!(
             matches!(err, ProveIrError::RangeTooLarge { .. }),
@@ -1779,8 +1793,8 @@ mod tests {
             }],
             capture_arrays: vec![],
         };
-        let captures: HashMap<String, FieldElement> =
-            [("n".to_string(), FieldElement::from_u64(3))]
+        let captures: HashMap<String, FieldElement<Bn254Fr>> =
+            [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
                 .into_iter()
                 .collect();
         let ir = prove_ir.instantiate(&captures).unwrap();
@@ -1801,7 +1815,7 @@ mod tests {
     // the circuit decl), which the parser rejects inside blocks.
     #[test]
     fn audit_import_in_circuit_body_rejected() {
-        let err = ProveIrCompiler::compile_circuit(
+        let err = ProveIrCompiler::<Bn254Fr>::compile_circuit(
             "circuit test(x: Public) { import \"./foo.ach\" as foo\nassert_eq(x, x) }",
             None,
         )
