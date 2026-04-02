@@ -8,18 +8,14 @@
 #   BN254     + Plonkish -> circuit (PlonK)           [already in run_tests.sh]
 #   BLS12-381 + R1CS     -> circuit + prove (Groth16) [THIS SCRIPT]
 #
-# Exclusions (BLS12-381):
-#   - Poseidon-based: backends hardcode BN254 Poseidon params (not wired to prime_id)
-#   - Division (/): requires field inverse (BN254-specific witness values)
-#   - IsNotEqual (!=, assert(x==y)): requires field inverse (IsZero gadget)
-#   - Unbounded comparisons (<, <=): work if both operands have range bounds,
-#     but the default enforce_default_range path is fine; the issue is only when
-#     combined with IsNotEqual.
+# The circuit compilation pipeline (`ach circuit`) is fully generic over
+# FieldBackend since Fase 6. All operations (including division, comparison,
+# inequality, and Poseidon) work natively in BLS12-381.
 #
-# Root cause: FieldElement<Bn254Fr> performs arithmetic in BN254's field.
-# Field inverses (1/x) produce values specific to BN254 that are invalid in
-# BLS12-381. This will be resolved when the constraint system becomes generic
-# over FieldBackend.
+# The prove pipeline (`ach run`) uses BN254 arithmetic internally in the VM,
+# with cross-field conversion at proof generation time via fe_to_ark. This
+# works for most operations but Poseidon prove tests require BLS12-381-specific
+# expected hash values (the VM computes with BN254 params).
 #
 set -euo pipefail
 
@@ -66,8 +62,9 @@ trap "rm -rf $TMP_DIR" EXIT
 
 # ============================================================================
 # BLS12-381 + R1CS -- Circuit tests (constraint generation + witness)
-# Excludes: poseidon, merkle, hash_chain, commitment, nullifier, secret_vote
-# Excludes: division (field inverse), comparison_ops (uses !=)
+# All circuit tests work natively in BLS12-381 (generic pipeline).
+# Poseidon circuit generates correct BLS12-381 constraints (no witness test
+# since the expected hash value differs from BN254).
 # ============================================================================
 
 echo ""
@@ -170,10 +167,29 @@ run_test "bls12-381/circuit/typed_arrays_and_functions" \
     --r1cs "$TMP_DIR/bls_typed_arr.r1cs" --wtns "$TMP_DIR/bls_typed_arr.wtns" \
     --inputs "expected_sum=60,vals_0=10,vals_1=20,vals_2=30"
 
+# Division + comparison — native BLS12-381 field arithmetic (fixed in Fase 6)
+run_test "bls12-381/circuit/division" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/division.ach" \
+    --prime bls12-381 \
+    --r1cs "$TMP_DIR/bls_div.r1cs" --wtns "$TMP_DIR/bls_div.wtns" \
+    --inputs "q=3,a=42,b=14"
+
+run_test "bls12-381/circuit/comparison_ops" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/comparison_ops.ach" \
+    --prime bls12-381 \
+    --r1cs "$TMP_DIR/bls_cmp.r1cs" --wtns "$TMP_DIR/bls_cmp.wtns" \
+    --inputs "x=3,y=5"
+
+# Poseidon constraints-only (no witness: expected hash differs from BN254)
+run_test "bls12-381/circuit/poseidon_constraints" \
+    "$ACH" circuit "$SCRIPT_DIR/circuit/poseidon.ach" \
+    --prime bls12-381 \
+    --r1cs "$TMP_DIR/bls_pos.r1cs"
+
 # ============================================================================
 # BLS12-381 + R1CS -- Prove tests (Groth16 proof generation + verification)
-# Excludes: prove_with_poseidon, prove_chain, prove_secret_vote (Poseidon)
-# Excludes: prove_comparison (uses !=), prove_division (field inverse)
+# Poseidon prove tests excluded: VM computes hash with BN254 params, circuit
+# expects BLS12-381 params, causing a mismatch. Requires multi-field VM.
 # ============================================================================
 
 echo ""

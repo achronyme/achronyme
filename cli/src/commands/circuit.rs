@@ -144,9 +144,7 @@ fn parse_inputs_toml<F: FieldBackend>(path: &str) -> Result<HashMap<String, Fiel
                         toml::Value::Integer(n) => {
                             let fe = if *n < 0 {
                                 FieldElement::<F>::from_decimal_str(&n.unsigned_abs().to_string())
-                                    .context(format!(
-                                        "invalid integer for `{elem_name}`: {n}"
-                                    ))?
+                                    .context(format!("invalid integer for `{elem_name}`: {n}"))?
                                     .neg()
                             } else {
                                 FieldElement::<F>::from_u64(*n as u64)
@@ -633,8 +631,8 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
     if let Some(sol_path) = solidity_path {
         let cache_dir = crate::cache_dir();
 
-        let sol_source = F::solidity_from_cs(&compiler.cs, &cache_dir)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let sol_source =
+            F::solidity_from_cs(&compiler.cs, &cache_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         fs::write(sol_path, &sol_source).with_context(|| format!("cannot write {sol_path}"))?;
 
