@@ -1,21 +1,21 @@
 use constraints::plonkish::CellRef;
-use memory::FieldElement;
+use memory::{FieldBackend, FieldElement};
 
 // ============================================================================
 // PlonkVal — lazy representation of SSA values in Plonkish
 // ============================================================================
 
 #[derive(Debug, Clone)]
-pub enum PlonkVal {
+pub enum PlonkVal<F: FieldBackend> {
     Cell(CellRef),
-    Constant(FieldElement),
-    DeferredAdd(Box<PlonkVal>, Box<PlonkVal>),
-    DeferredSub(Box<PlonkVal>, Box<PlonkVal>),
-    DeferredNeg(Box<PlonkVal>),
+    Constant(FieldElement<F>),
+    DeferredAdd(Box<PlonkVal<F>>, Box<PlonkVal<F>>),
+    DeferredSub(Box<PlonkVal<F>>, Box<PlonkVal<F>>),
+    DeferredNeg(Box<PlonkVal<F>>),
 }
 
-impl PlonkVal {
-    pub(super) fn constant_value(&self) -> Option<FieldElement> {
+impl<F: FieldBackend> PlonkVal<F> {
+    pub(super) fn constant_value(&self) -> Option<FieldElement<F>> {
         match self {
             PlonkVal::Constant(v) => Some(*v),
             _ => None,
@@ -28,13 +28,16 @@ impl PlonkVal {
 // ============================================================================
 
 #[derive(Debug, Clone)]
-pub enum PlonkWitnessOp {
+pub enum PlonkWitnessOp<F: FieldBackend> {
     /// Assign a named input value to a cell.
     AssignInput { cell: CellRef, name: String },
     /// Copy value from `from` cell to `to` cell.
     CopyValue { from: CellRef, to: CellRef },
     /// Set a cell to a constant value.
-    SetConstant { cell: CellRef, value: FieldElement },
+    SetConstant {
+        cell: CellRef,
+        value: FieldElement<F>,
+    },
     /// Compute d = a*b + c for a given row.
     ArithRow { row: usize },
     /// Compute b = 1/a for a given row (a is already in col_a).

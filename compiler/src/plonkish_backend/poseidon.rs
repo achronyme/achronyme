@@ -1,23 +1,26 @@
 use constraints::plonkish::{CellRef, PlonkishError};
-use constraints::poseidon::PoseidonParams;
-use memory::FieldElement;
+use constraints::PoseidonParamsProvider;
+use memory::{FieldBackend, FieldElement};
 
 use super::compiler::PlonkishCompiler;
 use super::types::{PlonkVal, PlonkWitnessOp};
 
-impl PlonkishCompiler {
+impl<F: FieldBackend> PlonkishCompiler<F> {
     #[allow(clippy::needless_range_loop)]
     pub(super) fn emit_poseidon(
         &mut self,
         left: CellRef,
         right: CellRef,
-    ) -> Result<CellRef, PlonkishError> {
+    ) -> Result<CellRef, PlonkishError>
+    where
+        F: PoseidonParamsProvider,
+    {
         if self.poseidon_params.is_none() {
-            self.poseidon_params = Some(PoseidonParams::bn254_t3());
+            self.poseidon_params = Some(F::default_poseidon_t3());
         }
         let params = self.poseidon_params.clone().unwrap();
 
-        let zero_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::ZERO))?;
+        let zero_cell = self.materialize_val(&PlonkVal::Constant(FieldElement::<F>::zero()))?;
         let mut state = [zero_cell, left, right];
 
         let total_rounds = params.r_f + params.r_p;
@@ -31,13 +34,14 @@ impl PlonkishCompiler {
                     let rc_cell = self.materialize_val(&PlonkVal::Constant(rc))?;
                     // state[i] = state[i]*1 + rc
                     let row = self.alloc_row();
-                    self.system.set(self.col_s_arith, row, FieldElement::ONE);
+                    self.system
+                        .set(self.col_s_arith, row, FieldElement::<F>::one());
                     self.constrain_constant(
                         CellRef {
                             column: self.col_b,
                             row,
                         },
-                        FieldElement::ONE,
+                        FieldElement::<F>::one(),
                     );
                     self.wire(
                         state[i],
@@ -82,13 +86,13 @@ impl PlonkishCompiler {
                 // sum01 = prod0*1 + prod1
                 let sum01_row = self.alloc_row();
                 self.system
-                    .set(self.col_s_arith, sum01_row, FieldElement::ONE);
+                    .set(self.col_s_arith, sum01_row, FieldElement::<F>::one());
                 self.constrain_constant(
                     CellRef {
                         column: self.col_b,
                         row: sum01_row,
                     },
-                    FieldElement::ONE,
+                    FieldElement::<F>::one(),
                 );
                 self.wire(
                     prod0,
@@ -113,13 +117,13 @@ impl PlonkishCompiler {
                 // sum_all = sum01*1 + prod2
                 let sum_all_row = self.alloc_row();
                 self.system
-                    .set(self.col_s_arith, sum_all_row, FieldElement::ONE);
+                    .set(self.col_s_arith, sum_all_row, FieldElement::<F>::one());
                 self.constrain_constant(
                     CellRef {
                         column: self.col_b,
                         row: sum_all_row,
                     },
-                    FieldElement::ONE,
+                    FieldElement::<F>::one(),
                 );
                 self.wire(
                     sum01,
