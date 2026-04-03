@@ -4,6 +4,8 @@
 //! expressions, statements). These operate on the Circom AST and
 //! don't depend on ProveIR types.
 
+use std::collections::HashMap;
+
 use crate::ast::{self, Expr};
 
 /// Extract a simple identifier name from an expression.
@@ -32,6 +34,60 @@ pub fn const_eval_u64(expr: &Expr) -> Option<u64> {
             u64::from_str_radix(hex, 16).ok()
         }
         _ => None,
+    }
+}
+
+/// Evaluate a Circom expression as u64 by substituting known parameter values.
+///
+/// Like `const_eval_u64` but also resolves identifiers from the param map.
+/// Used for signal array dimensions and loop bounds that involve template params.
+pub fn const_eval_with_params(expr: &Expr, params: &HashMap<String, u64>) -> Option<u64> {
+    match expr {
+        Expr::Number { value, .. } => value.parse().ok(),
+        Expr::HexNumber { value, .. } => {
+            let hex = value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+                .unwrap_or(value);
+            u64::from_str_radix(hex, 16).ok()
+        }
+        Expr::Ident { name, .. } => params.get(name.as_str()).copied(),
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            let l = const_eval_with_params(lhs, params)?;
+            let r = const_eval_with_params(rhs, params)?;
+            match op {
+                ast::BinOp::Add => l.checked_add(r),
+                ast::BinOp::Sub => l.checked_sub(r),
+                ast::BinOp::Mul => l.checked_mul(r),
+                ast::BinOp::Div | ast::BinOp::IntDiv => {
+                    if r != 0 {
+                        Some(l / r)
+                    } else {
+                        None
+                    }
+                }
+                ast::BinOp::Mod => {
+                    if r != 0 {
+                        Some(l % r)
+                    } else {
+                        None
+                    }
+                }
+                ast::BinOp::ShiftL => Some(l << (r & 63)),
+                ast::BinOp::ShiftR => Some(l >> (r & 63)),
+                ast::BinOp::Pow => Some(l.pow(r as u32)),
+                _ => None,
+            }
+        }
+        Expr::UnaryOp { op, operand, .. } => {
+            let val = const_eval_with_params(operand, params)?;
+            match op {
+                ast::UnaryOp::Neg => Some(val.wrapping_neg()),
+                _ => None,
+            }
+        }
+        // Fall back to const_eval for literals
+        _ => const_eval_u64(expr),
     }
 }
 

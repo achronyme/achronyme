@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 
 use diagnostics::SpanRange;
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, ForRange};
+use ir::prove_ir::types::{CircuitBinOp, CircuitExpr, CircuitNode, FieldConst, ForRange};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
@@ -42,11 +42,24 @@ pub fn lower_stmts<'a>(
     env: &mut LoweringEnv,
     ctx: &mut LoweringContext<'a>,
 ) -> Result<Vec<CircuitNode>, LoweringError> {
-    let mut nodes = Vec::new();
     let mut pending: HashMap<String, PendingComponent> = HashMap::new();
+    lower_stmts_with_pending(stmts, env, ctx, &mut pending)
+}
+
+/// Lower statements with an externally provided pending component map.
+///
+/// Used by `lower_for_loop` to propagate component wirings from loop body
+/// to the parent scope (e.g., `for (...) { mux.c[0][i] <== c[i]; }`).
+fn lower_stmts_with_pending<'a>(
+    stmts: &'a [Stmt],
+    env: &mut LoweringEnv,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
+) -> Result<Vec<CircuitNode>, LoweringError> {
+    let mut nodes = Vec::new();
 
     for stmt in stmts {
-        lower_stmt(stmt, env, &mut nodes, ctx, &mut pending)?;
+        lower_stmt(stmt, env, &mut nodes, ctx, pending)?;
     }
 
     // Inline any components that weren't triggered by wiring completion
@@ -284,7 +297,7 @@ fn lower_stmt<'a>(
             body,
             span,
         } => {
-            lower_for_loop(init, condition, step, body, span, env, nodes, ctx)?;
+            lower_for_loop(init, condition, step, body, span, env, nodes, ctx, pending)?;
         }
 
         // ── While loop ──────────────────────────────────────────────
@@ -341,7 +354,7 @@ fn lower_stmt<'a>(
                         if let Some(template) = ctx.templates.get(tmpl_name.as_str()) {
                             let template = *template;
                             // Register mangled output/intermediate locals
-                            register_component_locals(comp_name, template, env);
+                            register_component_locals(comp_name, template, &tmpl_args, env);
 
                             // Collect input signal names for wiring tracking
                             let signals = collect_signal_names(&template.body.stmts);
@@ -447,12 +460,15 @@ fn lower_stmt<'a>(
     Ok(())
 }
 
-/// Describes the target of a signal assignment: either scalar or indexed.
+/// Describes the target of a signal assignment.
 enum AssignTarget {
     /// Simple identifier: `x`
     Scalar(String),
     /// Indexed array element: `out[i]`
     Indexed { array: String, index: Box<Expr> },
+    /// Multi-indexed: `c[i][j]`, `c[i][j][k]`, etc.
+    /// Indices are in order: [outer, ..., inner].
+    MultiIndexed { array: String, indices: Vec<Expr> },
 }
 
 /// Extract a target from either a simple identifier, dot access, or array index.
@@ -467,23 +483,53 @@ fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
             extract_ident_name(object).map(|obj| AssignTarget::Scalar(format!("{obj}.{field}")))
         }
         Expr::Index { object, index, .. } => {
-            // Support both `arr[i]` and `comp.signal[i]`
-            let array = extract_ident_name(object).or_else(|| {
-                if let Expr::DotAccess {
-                    object: inner,
-                    field,
-                    ..
-                } = object.as_ref()
-                {
-                    extract_ident_name(inner).map(|obj| format!("{obj}.{field}"))
-                } else {
-                    None
+            // Unwrap nested Index chains: arr[i][j][k] → base + [i, j, k]
+            let mut indices: Vec<Expr> = vec![index.as_ref().clone()];
+            let mut current = object.as_ref();
+            loop {
+                match current {
+                    Expr::Ident { name, .. } => {
+                        indices.reverse();
+                        return if indices.len() == 1 {
+                            Some(AssignTarget::Indexed {
+                                array: name.clone(),
+                                index: Box::new(indices.remove(0)),
+                            })
+                        } else {
+                            Some(AssignTarget::MultiIndexed {
+                                array: name.clone(),
+                                indices,
+                            })
+                        };
+                    }
+                    Expr::DotAccess {
+                        object: inner,
+                        field,
+                        ..
+                    } => {
+                        let obj = extract_ident_name(inner)?;
+                        let array = format!("{obj}.{field}");
+                        indices.reverse();
+                        return if indices.len() == 1 {
+                            Some(AssignTarget::Indexed {
+                                array,
+                                index: Box::new(indices.remove(0)),
+                            })
+                        } else {
+                            Some(AssignTarget::MultiIndexed { array, indices })
+                        };
+                    }
+                    Expr::Index {
+                        object: inner_obj,
+                        index: inner_idx,
+                        ..
+                    } => {
+                        indices.push(inner_idx.as_ref().clone());
+                        current = inner_obj.as_ref();
+                    }
+                    _ => return None,
                 }
-            })?;
-            Some(AssignTarget::Indexed {
-                array,
-                index: index.clone(),
-            })
+            }
         }
         _ => None,
     }
@@ -493,7 +539,7 @@ fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
 fn extract_target_name(expr: &Expr) -> Option<String> {
     match extract_assign_target(expr)? {
         AssignTarget::Scalar(name) => Some(name),
-        AssignTarget::Indexed { .. } => None,
+        AssignTarget::Indexed { .. } | AssignTarget::MultiIndexed { .. } => None,
     }
 }
 
@@ -506,19 +552,33 @@ fn extract_component_wiring(target: &Expr) -> Option<(String, String)> {
         Expr::DotAccess { object, field, .. } => {
             extract_ident_name(object).map(|obj| (obj, field.clone()))
         }
-        // comp.signal[i] <== expr (array signal wiring)
+        // comp.signal[i] <== expr or comp.signal[i][j] <== expr
         // Return the base signal name for tracking purposes.
         Expr::Index { object, .. } => {
+            // Single index: comp.signal[i]
             if let Expr::DotAccess {
                 object: inner,
                 field,
                 ..
             } = object.as_ref()
             {
-                extract_ident_name(inner).map(|obj| (obj, field.clone()))
-            } else {
-                None
+                return extract_ident_name(inner).map(|obj| (obj, field.clone()));
             }
+            // Double index: comp.signal[i][j]
+            if let Expr::Index {
+                object: inner_obj, ..
+            } = object.as_ref()
+            {
+                if let Expr::DotAccess {
+                    object: da_obj,
+                    field,
+                    ..
+                } = inner_obj.as_ref()
+                {
+                    return extract_ident_name(da_obj).map(|obj| (obj, field.clone()));
+                }
+            }
+            None
         }
         _ => None,
     }
@@ -592,6 +652,24 @@ fn lower_substitution<'a>(
                         span: sr,
                     });
                 }
+                AssignTarget::MultiIndexed { array, indices } => {
+                    let idx_expr = linearize_multi_index(&array, &indices, env, ctx)?;
+                    nodes.push(CircuitNode::LetIndexed {
+                        array: array.clone(),
+                        index: idx_expr.clone(),
+                        value: lowered.clone(),
+                        span: sr.clone(),
+                    });
+                    nodes.push(CircuitNode::AssertEq {
+                        lhs: CircuitExpr::ArrayIndex {
+                            array,
+                            index: Box::new(idx_expr),
+                        },
+                        rhs: lowered,
+                        message: None,
+                        span: sr,
+                    });
+                }
             }
             maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
@@ -616,6 +694,15 @@ fn lower_substitution<'a>(
                 }
                 AssignTarget::Indexed { array, index } => {
                     let idx_expr = lower_expr(&index, env, ctx)?;
+                    nodes.push(CircuitNode::WitnessHintIndexed {
+                        array,
+                        index: idx_expr,
+                        hint: lowered,
+                        span: sr,
+                    });
+                }
+                AssignTarget::MultiIndexed { array, indices } => {
+                    let idx_expr = linearize_multi_index(&array, &indices, env, ctx)?;
                     nodes.push(CircuitNode::WitnessHintIndexed {
                         array,
                         index: idx_expr,
@@ -653,6 +740,72 @@ fn lower_substitution<'a>(
     Ok(())
 }
 
+/// Linearize multi-dimensional array indices using strides.
+///
+/// For `arr[i][j]` with strides [s0]: linear = i * s0 + j
+/// For `arr[i][j][k]` with strides [s0, s1]: linear = i * s0 + j * s1 + k
+///
+/// Falls back to stride=1 if no stride info is available.
+fn linearize_multi_index(
+    array_name: &str,
+    indices: &[Expr],
+    env: &LoweringEnv,
+    ctx: &mut LoweringContext<'_>,
+) -> Result<CircuitExpr, LoweringError> {
+    let strides = env.strides.get(array_name);
+    let n = indices.len();
+
+    // Try full constant evaluation first
+    let const_indices: Option<Vec<u64>> = indices.iter().map(const_eval_u64).collect();
+    if let Some(vals) = const_indices {
+        let mut linear: usize = 0;
+        for (dim, &val) in vals.iter().enumerate() {
+            let stride = if dim < n - 1 {
+                strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+            } else {
+                1
+            };
+            linear += val as usize * stride;
+        }
+        if let Some(elem_name) = env.resolve_array_element(array_name, linear) {
+            return Ok(CircuitExpr::Var(elem_name));
+        }
+        return Ok(CircuitExpr::Const(FieldConst::from_u64(linear as u64)));
+    }
+
+    // Build symbolic linearized expression
+    let mut result: Option<CircuitExpr> = None;
+    for (dim, idx_expr) in indices.iter().enumerate() {
+        let lowered = lower_expr(idx_expr, env, ctx)?;
+        let stride = if dim < n - 1 {
+            strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+        } else {
+            1
+        };
+
+        let term = if stride == 1 {
+            lowered
+        } else {
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Mul,
+                lhs: Box::new(lowered),
+                rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(stride as u64))),
+            }
+        };
+
+        result = Some(match result {
+            None => term,
+            Some(acc) => CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(acc),
+                rhs: Box::new(term),
+            },
+        });
+    }
+
+    Ok(result.unwrap())
+}
+
 /// Flush pending components whose inputs were wired via indexed
 /// assignments (`comp.signal[i]`). These can't trigger eagerly because
 /// we don't know when the array is fully wired, so we flush before
@@ -667,10 +820,10 @@ fn flush_indexed_pending<'a>(
         .filter(|(_, c)| c.has_indexed_wirings)
         .map(|(name, _)| name.clone())
         .collect();
-    for comp_name in to_flush {
-        if let Some(comp) = pending.remove(&comp_name) {
+    for comp_name in &to_flush {
+        if let Some(comp) = pending.remove(comp_name) {
             let body = inline_component_body(
-                &comp_name,
+                comp_name,
                 comp.template,
                 &comp.template_args,
                 ctx,
@@ -762,6 +915,7 @@ fn lower_for_loop<'a>(
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
     // Extract loop variable and start value from init
     let (var_name, start) = match init {
@@ -813,8 +967,16 @@ fn lower_for_loop<'a>(
     // Register loop variable
     env.locals.insert(var_name.clone());
 
-    // Lower body
-    let body_nodes = lower_stmts(&body.stmts, env, ctx)?;
+    // Lower body — propagate pending so component wirings in loops
+    // (like `mux.c[0][i] <== c[i]`) update the parent's pending map.
+    // Don't flush remaining at end — that's the parent's job.
+    let body_nodes = {
+        let mut lowered = Vec::new();
+        for stmt in &body.stmts {
+            lower_stmt(stmt, env, &mut lowered, ctx, pending)?;
+        }
+        lowered
+    };
 
     let range = match bound {
         LoopBound::Literal(end) => ForRange::Literal { start, end },
@@ -822,6 +984,13 @@ fn lower_for_loop<'a>(
             start,
             end_capture: name,
         },
+        LoopBound::Expr(ast_expr) => {
+            let circuit_expr = lower_expr(&ast_expr, env, ctx)?;
+            ForRange::WithExpr {
+                start,
+                end_expr: Box::new(circuit_expr),
+            }
+        }
     };
 
     nodes.push(CircuitNode::For {
@@ -834,10 +1003,12 @@ fn lower_for_loop<'a>(
     Ok(())
 }
 
-/// A loop bound: either a literal constant or a template parameter (capture).
+/// A loop bound: literal constant, template parameter, or AST expression.
 enum LoopBound {
     Literal(u64),
     Capture(String),
+    /// Expression bound (e.g., `n + 1`) — the AST Expr, lowered in lower_for_loop.
+    Expr(Expr),
 }
 
 /// Extract the upper bound from a loop condition like `i < N` or `i <= N`.
@@ -874,6 +1045,11 @@ fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Op
                         _ => None,
                     };
                 }
+            }
+
+            // Expression bound (e.g., `i < n + 1`) — defer lowering to caller
+            if matches!(op, ast::BinOp::Lt) {
+                return Some(LoopBound::Expr(rhs.as_ref().clone()));
             }
 
             None

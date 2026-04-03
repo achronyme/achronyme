@@ -7,7 +7,7 @@
 //!
 //! Array signals (`signal input x[N]`) map to `ProveInputDecl` with `ArraySize`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ir::prove_ir::types::{ArraySize, ProveInputDecl};
 use ir::types::IrType;
@@ -15,7 +15,7 @@ use ir::types::IrType;
 use crate::ast::{Expr, MainComponent, SignalType, Stmt, TemplateDef};
 
 use super::error::LoweringError;
-use super::utils::const_eval_u64;
+use super::utils::{const_eval_u64, const_eval_with_params};
 
 /// Collected signal declarations from a template, categorized by role.
 #[derive(Debug)]
@@ -59,6 +59,19 @@ pub fn extract_signal_layout(
 
     let template_params: HashSet<String> = template.params.iter().cloned().collect();
 
+    // Build param values from main component template args (if available).
+    // This allows evaluating expression dimensions like `n+1` eagerly.
+    let param_values: HashMap<String, u64> = template
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, param)| {
+            main.and_then(|m| m.template_args.get(i))
+                .and_then(const_eval_u64)
+                .map(|val| (param.clone(), val))
+        })
+        .collect();
+
     let mut layout = SignalLayout {
         public_inputs: Vec::new(),
         witness_inputs: Vec::new(),
@@ -75,7 +88,8 @@ pub fn extract_signal_layout(
         } = stmt
         {
             for decl in declarations {
-                let dimensions = eval_dimensions(&decl.dimensions, &template_params, span)?;
+                let dimensions =
+                    eval_dimensions(&decl.dimensions, &template_params, &param_values, span)?;
 
                 match signal_type {
                     SignalType::Input => {
@@ -129,26 +143,54 @@ enum ResolvedDim {
 
 /// Evaluate signal dimension expressions.
 ///
-/// Dimensions can be literal numbers or template parameter identifiers
-/// (which become `ArraySize::Capture` in ProveIR, resolved at instantiation).
+/// Dimensions can be:
+/// - Literal numbers: `signal input x[4]`
+/// - Template parameter identifiers: `signal input x[n]`
+/// - Expressions over params: `signal output x[n+1]` (evaluated with param_values)
 fn eval_dimensions(
     dims: &[Expr],
     template_params: &HashSet<String>,
+    param_values: &HashMap<String, u64>,
     parent_span: &diagnostics::Span,
 ) -> Result<Vec<ResolvedDim>, LoweringError> {
     let mut result = Vec::with_capacity(dims.len());
     for dim in dims {
+        // 1. Try pure constant (no params needed)
         if let Some(n) = const_eval_u64(dim) {
             result.push(ResolvedDim::Literal(n));
-        } else if let Expr::Ident { name, .. } = dim {
+        }
+        // 2. Simple template param identifier
+        else if let Expr::Ident { name, .. } = dim {
             if template_params.contains(name) {
-                result.push(ResolvedDim::Capture(name.clone()));
+                // If we have the value, resolve eagerly
+                if let Some(&val) = param_values.get(name) {
+                    result.push(ResolvedDim::Literal(val));
+                } else {
+                    result.push(ResolvedDim::Capture(name.clone()));
+                }
             } else {
                 return Err(LoweringError::new(
                     format!(
                         "signal array dimension `{name}` is not a compile-time constant \
                          or template parameter"
                     ),
+                    parent_span,
+                ));
+            }
+        }
+        // 3. Expression involving params (e.g., n+1, n*2)
+        else if let Some(n) = const_eval_with_params(dim, param_values) {
+            result.push(ResolvedDim::Literal(n));
+        }
+        // 4. Expression with unknown params — check if all vars are params
+        else if expr_uses_only_params(dim, template_params) {
+            // Valid expression but param values not available yet.
+            // Store the first param as capture (best effort — works for simple cases).
+            if let Some(name) = find_first_param(dim, template_params) {
+                result.push(ResolvedDim::Capture(name));
+            } else {
+                return Err(LoweringError::new(
+                    "signal array dimension must be a compile-time constant or template parameter",
                     parent_span,
                 ));
             }
@@ -160,6 +202,31 @@ fn eval_dimensions(
         }
     }
     Ok(result)
+}
+
+/// Check if an expression only references template parameters (no unknown vars).
+fn expr_uses_only_params(expr: &Expr, params: &HashSet<String>) -> bool {
+    match expr {
+        Expr::Number { .. } | Expr::HexNumber { .. } => true,
+        Expr::Ident { name, .. } => params.contains(name),
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_uses_only_params(lhs, params) && expr_uses_only_params(rhs, params)
+        }
+        Expr::UnaryOp { operand, .. } => expr_uses_only_params(operand, params),
+        _ => false,
+    }
+}
+
+/// Find the first template parameter referenced in an expression.
+fn find_first_param(expr: &Expr, params: &HashSet<String>) -> Option<String> {
+    match expr {
+        Expr::Ident { name, .. } if params.contains(name) => Some(name.clone()),
+        Expr::BinOp { lhs, rhs, .. } => {
+            find_first_param(lhs, params).or_else(|| find_first_param(rhs, params))
+        }
+        Expr::UnaryOp { operand, .. } => find_first_param(operand, params),
+        _ => None,
+    }
 }
 
 /// Convert resolved dimensions to an `ArraySize`.
@@ -193,6 +260,95 @@ fn make_input_decl(name: &str, dims: &[ResolvedDim]) -> ProveInputDecl {
         array_size: dims_to_array_size(dims),
         ir_type: IrType::Field,
     }
+}
+
+/// Extract multi-dimensional array stride info from a template's signal declarations.
+///
+/// For each signal with 2+ dimensions, computes the inner dimension strides.
+/// Used during component inlining to enable linearized multi-dim indexing.
+///
+/// `param_values` maps template param names to their concrete values.
+pub fn extract_signal_strides(
+    template: &TemplateDef,
+    param_values: &HashMap<String, u64>,
+) -> HashMap<String, Vec<usize>> {
+    let mut strides = HashMap::new();
+
+    for stmt in &template.body.stmts {
+        if let Stmt::SignalDecl { declarations, .. } = stmt {
+            for decl in declarations {
+                if decl.dimensions.len() >= 2 {
+                    // Resolve each dimension to a concrete size
+                    let resolved: Vec<Option<u64>> = decl
+                        .dimensions
+                        .iter()
+                        .map(|dim| {
+                            const_eval_u64(dim)
+                                .or_else(|| const_eval_with_params(dim, param_values))
+                        })
+                        .collect();
+
+                    // Compute strides from right to left:
+                    // For dims [d0, d1, d2], strides = [d1*d2, d2]
+                    let n = resolved.len();
+                    let mut dim_strides = Vec::with_capacity(n - 1);
+                    let mut product: usize = 1;
+                    for i in (1..n).rev() {
+                        if let Some(d) = resolved[i] {
+                            product *= d as usize;
+                        }
+                        dim_strides.push(product);
+                    }
+                    dim_strides.reverse();
+                    // Only the first n-1 dimensions have strides
+                    // (the last dimension has implicit stride 1)
+
+                    if dim_strides.iter().all(|&s| s > 0) {
+                        strides.insert(decl.name.clone(), dim_strides);
+                    }
+                }
+            }
+        }
+    }
+
+    strides
+}
+
+/// Extract total array sizes for all array signals in a template.
+///
+/// Returns a map of signal name → total flattened element count.
+/// Used during component inlining to register arrays in the env.
+pub fn extract_signal_array_sizes(
+    template: &TemplateDef,
+    param_values: &HashMap<String, u64>,
+) -> HashMap<String, usize> {
+    let mut sizes = HashMap::new();
+
+    for stmt in &template.body.stmts {
+        if let Stmt::SignalDecl { declarations, .. } = stmt {
+            for decl in declarations {
+                if !decl.dimensions.is_empty() {
+                    let mut total: usize = 1;
+                    let mut resolved = true;
+                    for dim in &decl.dimensions {
+                        if let Some(n) = const_eval_u64(dim)
+                            .or_else(|| const_eval_with_params(dim, param_values))
+                        {
+                            total *= n as usize;
+                        } else {
+                            resolved = false;
+                            break;
+                        }
+                    }
+                    if resolved && total > 0 {
+                        sizes.insert(decl.name.clone(), total);
+                    }
+                }
+            }
+        }
+    }
+
+    sizes
 }
 
 /// Collect all signal names declared in a template body (non-recursive, top-level only).
