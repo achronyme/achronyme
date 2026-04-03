@@ -304,7 +304,17 @@ pub enum ElseBranch {
 /// For-loop iterable: either a range or an expression.
 #[derive(Clone, Debug)]
 pub enum ForIterable {
-    Range { start: u64, end: u64 },
+    Range {
+        start: u64,
+        end: u64,
+    },
+    /// Dynamic end bound: `0..n` or `0..(n+1)`.
+    /// Start is a literal, end is an expression resolved at instantiation.
+    /// Only valid in circuit/prove contexts; VM mode rejects this variant.
+    ExprRange {
+        start: u64,
+        end: Box<Expr>,
+    },
     Expr(Box<Expr>),
 }
 

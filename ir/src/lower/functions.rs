@@ -324,8 +324,22 @@ impl<F: FieldBackend> IrLowering<F> {
                     }
                 }
                 Err(IrError::UnsupportedOperation(
-                    "for loops in circuits require a literal range (e.g., 0..5) or an array (the loop must be fully unrolled at compile time)".into(),
+                    "for loops in circuits require a literal range (e.g., 0..5), \
+                     a dynamic range (0..n), or an array"
+                        .into(),
                     sp,
+                ))
+            }
+            ForIterable::ExprRange { .. } => {
+                // Dynamic bounds can't be unrolled in the SSA lowerer (IrLowering).
+                // They are supported in ProveIR compilation (compile_for_expr)
+                // which preserves ForRange::WithCapture/WithExpr for deferred
+                // unrolling at instantiation time.
+                Err(IrError::UnsupportedOperation(
+                    "dynamic range bounds (e.g., 0..n) are only supported in \
+                     prove {} blocks, not in standalone circuit declarations"
+                        .into(),
+                    to_ir_span(span),
                 ))
             }
         }

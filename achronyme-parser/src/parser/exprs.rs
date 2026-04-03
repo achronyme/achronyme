@@ -442,11 +442,10 @@ impl Parser {
         let var = self.expect_ident()?;
         self.expect(&TokenKind::In)?;
 
-        // Try range: `integer..integer`
+        // Try range: `integer..integer` or `integer..expr`
         let iterable = if self.at(&TokenKind::Integer) && self.lookahead(1) == &TokenKind::DotDot {
             let start_tok = self.advance().clone();
             self.advance(); // eat `..`
-            let end_tok = self.expect(&TokenKind::Integer)?;
             let start: u64 = start_tok.lexeme.parse().map_err(|e| {
                 ParseError::new(
                     format!("invalid range start: {e}"),
@@ -454,14 +453,25 @@ impl Parser {
                     start_tok.span.col_start,
                 )
             })?;
-            let end: u64 = end_tok.lexeme.parse().map_err(|e| {
-                ParseError::new(
-                    format!("invalid range end: {e}"),
-                    end_tok.span.line_start,
-                    end_tok.span.col_start,
-                )
-            })?;
-            ForIterable::Range { start, end }
+            if self.at(&TokenKind::Integer) {
+                // Literal end bound: `0..5`
+                let end_tok = self.advance().clone();
+                let end: u64 = end_tok.lexeme.parse().map_err(|e| {
+                    ParseError::new(
+                        format!("invalid range end: {e}"),
+                        end_tok.span.line_start,
+                        end_tok.span.col_start,
+                    )
+                })?;
+                ForIterable::Range { start, end }
+            } else {
+                // Expression end bound: `0..n`, `0..n+1`, `0..(n*2)`
+                let end_expr = self.parse_expr()?;
+                ForIterable::ExprRange {
+                    start,
+                    end: Box::new(end_expr),
+                }
+            }
         } else {
             ForIterable::Expr(Box::new(self.parse_expr()?))
         };

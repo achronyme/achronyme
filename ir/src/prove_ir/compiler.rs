@@ -1909,6 +1909,34 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     end: *end,
                 }
             }
+            ForIterable::ExprRange { start, end } => {
+                // Dynamic end bound: compile to WithCapture or WithExpr.
+                // Simple capture name → WithCapture; expression → WithExpr.
+                if let Expr::Ident { name, .. } = end.as_ref() {
+                    if matches!(self.env.get(name.as_str()), Some(CompEnvValue::Capture(_))) {
+                        self.captured_names.insert(name.clone());
+                        ForRange::WithCapture {
+                            start: *start,
+                            end_capture: name.clone(),
+                        }
+                    } else {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "dynamic loop bound `{name}` must be a captured variable \
+                                 (from outer scope)"
+                            ),
+                            span: to_span(span),
+                        });
+                    }
+                } else {
+                    // Compile the end expression to a CircuitExpr
+                    let end_circuit = self.compile_expr(end)?;
+                    ForRange::WithExpr {
+                        start: *start,
+                        end_expr: Box::new(end_circuit),
+                    }
+                }
+            }
             ForIterable::Expr(expr) => {
                 // Must be an array identifier
                 if let Expr::Ident { name, .. } = expr.as_ref() {
@@ -1930,7 +1958,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 } else {
                     return Err(ProveIrError::UnsupportedOperation {
                         description: "for loops in circuits require a literal range \
-                                      (e.g., 0..5) or an array identifier"
+                                      (e.g., 0..5), a dynamic range (0..n), or an array"
                             .into(),
                         span: to_span(span),
                     });
@@ -4209,5 +4237,64 @@ mod tests {
         .unwrap();
         // Should compile without error — the local double (x*3) is used
         assert_eq!(ir.public_inputs.len(), 1);
+    }
+
+    // ── Dynamic loop bounds ─────────────────────────────────────
+
+    #[test]
+    fn dynamic_loop_bound_capture() {
+        // `for i in 0..n` where n is a capture from outer scope
+        let outer = OuterScope {
+            values: [("n", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            functions: vec![],
+        };
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
+            "public result\nmut sum = 0\nfor i in 0..n { sum = sum + i }\nassert_eq(sum, result)",
+            &outer,
+        )
+        .unwrap();
+        assert!(!ir.captures.is_empty(), "n should be a capture");
+        // Should have a For node with WithCapture range
+        assert!(
+            ir.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::For {
+                    range: ForRange::WithCapture { start: 0, .. },
+                    ..
+                }
+            )),
+            "expected For with WithCapture range"
+        );
+    }
+
+    #[test]
+    fn dynamic_loop_bound_expr() {
+        // `for i in 0..n+1` where n is a capture
+        let outer = OuterScope {
+            values: [("n", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            functions: vec![],
+        };
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
+            "public result\nmut sum = 0\nfor i in 0..n+1 { sum = sum + i }\nassert_eq(sum, result)",
+            &outer,
+        )
+        .unwrap();
+        // Should have a For node with WithExpr range (n+1 is an expression)
+        assert!(
+            ir.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::For {
+                    range: ForRange::WithExpr { start: 0, .. },
+                    ..
+                }
+            )),
+            "expected For with WithExpr range"
+        );
     }
 }
