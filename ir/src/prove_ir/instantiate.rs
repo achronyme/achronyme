@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use achronyme_parser::diagnostic::SpanRange;
+use diagnostics::SpanRange;
 use memory::{FieldBackend, FieldElement};
 
 use super::error::ProveIrError;

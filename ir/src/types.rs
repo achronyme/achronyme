@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use achronyme_parser::diagnostic::SpanRange;
+use diagnostics::SpanRange;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 /// An SSA variable — defined exactly once.

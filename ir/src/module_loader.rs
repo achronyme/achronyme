@@ -43,7 +43,7 @@ impl ModuleLoader {
         let (program, parse_errors) = achronyme_parser::parse_program(&source);
         if let Some(err) = parse_errors
             .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
+            .find(|d| d.severity == diagnostics::Severity::Error)
         {
             return Err(format!(
                 "parse error in {}: {}",

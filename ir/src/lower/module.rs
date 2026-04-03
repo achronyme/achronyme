@@ -155,7 +155,7 @@ impl<F: FieldBackend> IrLowering<F> {
         let (program, parse_errors) = ast_parse_program(&source);
         if let Some(err) = parse_errors
             .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
+            .find(|d| d.severity == diagnostics::Severity::Error)
         {
             let mut err = err.clone();
             err.message = format!("in {}: {}", canonical.display(), err.message);

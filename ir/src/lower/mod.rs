@@ -20,7 +20,7 @@ pub const MAX_UNROLL_ITERATIONS: u64 = 10_000;
 
 /// Convert an AST span to a boxed SpanRange for error reporting.
 pub(super) fn to_ir_span(span: &Span) -> OptSpan {
-    span_box(Some(achronyme_parser::SpanRange::from(span)))
+    span_box(Some(diagnostics::SpanRange::from(span)))
 }
 
 /// A value in the lowering environment: either a single SSA variable or an array.
@@ -136,7 +136,7 @@ impl<F: FieldBackend> IrLowering<F> {
 
     /// Record the source span for an input variable declaration.
     pub(super) fn record_input_span(&mut self, name: &str, span: &Span) {
-        use achronyme_parser::diagnostic::SpanRange;
+        use diagnostics::SpanRange;
         self.program.input_spans.insert(
             name.to_string(),
             SpanRange::new(
@@ -222,7 +222,7 @@ impl<F: FieldBackend> IrLowering<F> {
         let (program, parse_errors) = ast_parse_program(source);
         if let Some(err) = parse_errors
             .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
+            .find(|d| d.severity == diagnostics::Severity::Error)
         {
             return Err(IrError::ParseError(Box::new(err.clone())));
         }
@@ -324,7 +324,7 @@ impl<F: FieldBackend> IrLowering<F> {
         let (ast_program, parse_errors) = ast_parse_program(source);
         if let Some(err) = parse_errors
             .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
+            .find(|d| d.severity == diagnostics::Severity::Error)
         {
             return Err(IrError::ParseError(Box::new(err.clone())));
         }

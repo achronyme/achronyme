@@ -9,7 +9,7 @@
 //! bytecode files. Spans are skipped during serialization since they are
 //! only useful at compile time.
 
-use achronyme_parser::diagnostic::SpanRange;
+use diagnostics::SpanRange;
 use bincode::Options;
 use memory::field::PrimeId;
 use memory::{FieldBackend, FieldElement};

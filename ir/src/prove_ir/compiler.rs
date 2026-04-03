@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use achronyme_parser::ast::*;
-use achronyme_parser::diagnostic::SpanRange;
+use diagnostics::SpanRange;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 use super::error::ProveIrError;
@@ -273,7 +273,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                                 param.name
                             ),
                             span: crate::error::span_box(Some(
-                                achronyme_parser::diagnostic::SpanRange::from(span),
+                                diagnostics::SpanRange::from(span),
                             )),
                         })?;
                 let vis = ta
@@ -284,7 +284,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             param.name
                         ),
                         span: crate::error::span_box(Some(
-                            achronyme_parser::diagnostic::SpanRange::from(span),
+                            diagnostics::SpanRange::from(span),
                         )),
                     })?;
                 let decl = InputDecl {
@@ -345,7 +345,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         let (program, errors) = achronyme_parser::parse_program(source);
         if let Some(err) = errors
             .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
+            .find(|d| d.severity == diagnostics::Severity::Error)
         {
             return Err(ProveIrError::ParseError(Box::new(err.clone())));
         }

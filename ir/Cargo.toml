@@ -13,6 +13,7 @@ categories.workspace = true
 [dependencies]
 memory = { path = "../memory" }
 constraints = { path = "../constraints" }
+diagnostics = { path = "../diagnostics" }
 achronyme-parser = { path = "../achronyme-parser" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
