@@ -88,9 +88,7 @@ pub fn resolve_source(source: &str) -> Result<ResolvedProgram, IncludeError> {
         parse_circom(source).map_err(|e| IncludeError::Parse("<source>".into(), e))?;
 
     if !prog.includes.is_empty() {
-        return Err(IncludeError::IncludeInSource(
-            prog.includes[0].path.clone(),
-        ));
+        return Err(IncludeError::IncludeInSource(prog.includes[0].path.clone()));
     }
 
     Ok(ResolvedProgram {
@@ -136,8 +134,8 @@ impl Resolver {
         let source = std::fs::read_to_string(canonical_path)
             .map_err(|e| IncludeError::Io(canonical_path.to_path_buf(), e))?;
 
-        let (prog, parse_diags) =
-            parse_circom(&source).map_err(|e| IncludeError::Parse(canonical_path.to_path_buf(), e))?;
+        let (prog, parse_diags) = parse_circom(&source)
+            .map_err(|e| IncludeError::Parse(canonical_path.to_path_buf(), e))?;
 
         self.diagnostics.extend(parse_diags);
 
@@ -154,8 +152,7 @@ impl Resolver {
 
         self.in_progress.remove(canonical_path);
         self.visited.insert(canonical_path.to_path_buf());
-        self.parsed_cache
-            .insert(canonical_path.to_path_buf(), prog);
+        self.parsed_cache.insert(canonical_path.to_path_buf(), prog);
 
         Ok(())
     }
@@ -163,11 +160,7 @@ impl Resolver {
     /// Find an include path:
     /// 1. Relative to the including file's directory
     /// 2. In each library directory
-    fn find_include(
-        &self,
-        include_path: &str,
-        file_dir: &Path,
-    ) -> Result<PathBuf, IncludeError> {
+    fn find_include(&self, include_path: &str, file_dir: &Path) -> Result<PathBuf, IncludeError> {
         // Try relative to the including file's directory
         let relative = file_dir.join(include_path);
         if relative.exists() {
@@ -280,11 +273,7 @@ mod tests {
     fn resolve_relative_include() {
         let dir = make_temp_dir();
         let lib_file = dir.path().join("utils.circom");
-        fs::write(
-            &lib_file,
-            "template Utils() { signal input a; }",
-        )
-        .unwrap();
+        fs::write(&lib_file, "template Utils() { signal input a; }").unwrap();
 
         let main_file = dir.path().join("main.circom");
         fs::write(
@@ -386,10 +375,8 @@ mod tests {
 
     #[test]
     fn resolve_source_no_includes() {
-        let resolved = resolve_source(
-            "template T() { signal input x; } component main = T();",
-        )
-        .unwrap();
+        let resolved =
+            resolve_source("template T() { signal input x; } component main = T();").unwrap();
         assert_eq!(resolved.definitions.len(), 1);
         assert!(resolved.main_component.is_some());
     }
@@ -398,7 +385,10 @@ mod tests {
     fn resolve_source_rejects_includes() {
         let result = resolve_source(r#"include "something.circom";"#);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), IncludeError::IncludeInSource(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            IncludeError::IncludeInSource(_)
+        ));
     }
 
     #[test]

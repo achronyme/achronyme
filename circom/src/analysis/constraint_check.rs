@@ -56,20 +56,14 @@ fn check_template(template: &TemplateDef) -> ConstraintReport {
             let span_range = span_to_range(assign_span);
 
             let diag = Diagnostic::error(
-                format!(
-                    "signal `{name}` is assigned with `<--` but has no `===` constraint"
-                ),
+                format!("signal `{name}` is assigned with `<--` but has no `===` constraint"),
                 span_range,
             )
             .with_code("E100")
             .with_note(
-                "under-constrained signals are the #1 source of ZK vulnerabilities"
-                    .to_string(),
+                "under-constrained signals are the #1 source of ZK vulnerabilities".to_string(),
             )
-            .with_note(
-                "use `<==` for automatic constraint, or add an explicit `===`"
-                    .to_string(),
-            );
+            .with_note("use `<==` for automatic constraint, or add an explicit `===`".to_string());
 
             diagnostics.push(diag);
         }

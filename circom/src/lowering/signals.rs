@@ -128,10 +128,7 @@ fn eval_dimensions(
 }
 
 /// Create a `ProveInputDecl` from a signal name and its evaluated dimensions.
-fn make_input_decl(
-    name: &str,
-    dimensions: &[u64],
-) -> Result<ProveInputDecl, LoweringError> {
+fn make_input_decl(name: &str, dimensions: &[u64]) -> Result<ProveInputDecl, LoweringError> {
     let array_size = match dimensions.len() {
         0 => None,
         1 => Some(ArraySize::Literal(dimensions[0] as usize)),
@@ -291,9 +288,7 @@ mod tests {
 
     #[test]
     fn all_signals_are_field_type() {
-        let t = parse_template(
-            "template T() { signal input a; signal output b; signal c; }",
-        );
+        let t = parse_template("template T() { signal input a; signal output b; signal c; }");
         let layout = extract_signal_layout(&t, None).unwrap();
         assert_eq!(layout.witness_inputs[0].ir_type, IrType::Field);
     }

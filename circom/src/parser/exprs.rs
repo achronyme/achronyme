@@ -258,13 +258,11 @@ impl Parser {
             TokenKind::LParen => self.parse_paren_or_tuple(),
             // Array literal
             TokenKind::LBracket => self.parse_array_lit(),
-            _ => {
-                Err(ParseError::new(
-                    format!("expected expression, found {}", tok_display(tok)),
-                    tok.span.line_start,
-                    tok.span.col_start,
-                ))
-            }
+            _ => Err(ParseError::new(
+                format!("expected expression, found {}", tok_display(tok)),
+                tok.span.line_start,
+                tok.span.col_start,
+            )),
         }
     }
 
@@ -359,7 +357,8 @@ impl Parser {
 
     fn parse_anon_signal_arg(&mut self) -> Result<AnonSignalArg, ParseError> {
         // Named: `input_name <== expr`
-        if self.peek_kind() == &TokenKind::Ident && self.lookahead(1) == &TokenKind::ConstraintAssign
+        if self.peek_kind() == &TokenKind::Ident
+            && self.lookahead(1) == &TokenKind::ConstraintAssign
         {
             let name = self.expect_ident()?;
             self.expect(&TokenKind::ConstraintAssign)?;

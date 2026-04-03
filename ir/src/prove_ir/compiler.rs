@@ -272,9 +272,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                                 "circuit parameter `{}` has no type annotation",
                                 param.name
                             ),
-                            span: crate::error::span_box(Some(
-                                diagnostics::SpanRange::from(span),
-                            )),
+                            span: crate::error::span_box(Some(diagnostics::SpanRange::from(span))),
                         })?;
                 let vis = ta
                     .visibility
@@ -283,9 +281,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             "circuit parameter `{}` requires Public or Witness",
                             param.name
                         ),
-                        span: crate::error::span_box(Some(
-                            diagnostics::SpanRange::from(span),
-                        )),
+                        span: crate::error::span_box(Some(diagnostics::SpanRange::from(span))),
                     })?;
                 let decl = InputDecl {
                     name: param.name.clone(),

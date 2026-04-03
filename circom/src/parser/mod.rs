@@ -88,9 +88,7 @@ mod tests {
 
     #[test]
     fn parse_template_with_modifiers() {
-        let prog = parse(
-            "template custom parallel MyGate() { signal input a; }",
-        );
+        let prog = parse("template custom parallel MyGate() { signal input a; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
             assert!(t.modifiers.custom);
             assert!(t.modifiers.parallel);
@@ -122,9 +120,7 @@ mod tests {
 
     #[test]
     fn parse_main_component() {
-        let prog = parse(
-            "component main {public [a, b]} = Multiplier(2);",
-        );
+        let prog = parse("component main {public [a, b]} = Multiplier(2);");
         let main = prog.main_component.unwrap();
         assert_eq!(main.public_signals, vec!["a", "b"]);
         assert_eq!(main.template_name, "Multiplier");
@@ -145,7 +141,12 @@ mod tests {
     fn parse_signal_input() {
         let prog = parse("template T() { signal input x; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            if let crate::ast::Stmt::SignalDecl { signal_type, declarations, .. } = &t.body.stmts[0] {
+            if let crate::ast::Stmt::SignalDecl {
+                signal_type,
+                declarations,
+                ..
+            } = &t.body.stmts[0]
+            {
                 assert_eq!(*signal_type, crate::ast::SignalType::Input);
                 assert_eq!(declarations[0].name, "x");
             } else {
@@ -220,7 +221,10 @@ mod tests {
     fn parse_constraint_eq() {
         let prog = parse("template T() { signal x; signal y; x === y; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            assert!(matches!(&t.body.stmts[2], crate::ast::Stmt::ConstraintEq { .. }));
+            assert!(matches!(
+                &t.body.stmts[2],
+                crate::ast::Stmt::ConstraintEq { .. }
+            ));
         }
     }
 
@@ -283,7 +287,10 @@ mod tests {
     fn parse_binary_ops() {
         let prog = parse("template T() { var x = 1 + 2 * 3; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            if let crate::ast::Stmt::VarDecl { init: Some(expr), .. } = &t.body.stmts[0] {
+            if let crate::ast::Stmt::VarDecl {
+                init: Some(expr), ..
+            } = &t.body.stmts[0]
+            {
                 // Should be Add(1, Mul(2, 3)) due to precedence
                 if let Expr::BinOp { op, .. } = expr {
                     assert_eq!(*op, BinOp::Add);
@@ -298,7 +305,10 @@ mod tests {
     fn parse_ternary() {
         let prog = parse("template T() { var x = 1 == 0 ? 2 : 3; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            if let crate::ast::Stmt::VarDecl { init: Some(expr), .. } = &t.body.stmts[0] {
+            if let crate::ast::Stmt::VarDecl {
+                init: Some(expr), ..
+            } = &t.body.stmts[0]
+            {
                 assert!(matches!(expr, Expr::Ternary { .. }));
             }
         }
@@ -308,7 +318,10 @@ mod tests {
     fn parse_array_literal() {
         let prog = parse("template T() { var x = [1, 2, 3]; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            if let crate::ast::Stmt::VarDecl { init: Some(expr), .. } = &t.body.stmts[0] {
+            if let crate::ast::Stmt::VarDecl {
+                init: Some(expr), ..
+            } = &t.body.stmts[0]
+            {
                 if let Expr::ArrayLit { elements, .. } = expr {
                     assert_eq!(elements.len(), 3);
                 } else {
@@ -322,7 +335,10 @@ mod tests {
     fn parse_call_expr() {
         let prog = parse("template T() { var x = f(1, 2); }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            if let crate::ast::Stmt::VarDecl { init: Some(expr), .. } = &t.body.stmts[0] {
+            if let crate::ast::Stmt::VarDecl {
+                init: Some(expr), ..
+            } = &t.body.stmts[0]
+            {
                 assert!(matches!(expr, Expr::Call { .. }));
             }
         }
@@ -353,7 +369,13 @@ mod tests {
         let prog = parse("template T() { var i = 0; i++; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
             if let crate::ast::Stmt::Expr { expr, .. } = &t.body.stmts[1] {
-                assert!(matches!(expr, Expr::PostfixOp { op: PostfixOp::Increment, .. }));
+                assert!(matches!(
+                    expr,
+                    Expr::PostfixOp {
+                        op: PostfixOp::Increment,
+                        ..
+                    }
+                ));
             }
         }
     }
@@ -362,7 +384,10 @@ mod tests {
     fn parse_compound_assign() {
         let prog = parse("template T() { var i = 0; i += 1; }");
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
-            assert!(matches!(&t.body.stmts[1], crate::ast::Stmt::CompoundAssign { .. }));
+            assert!(matches!(
+                &t.body.stmts[1],
+                crate::ast::Stmt::CompoundAssign { .. }
+            ));
         }
     }
 

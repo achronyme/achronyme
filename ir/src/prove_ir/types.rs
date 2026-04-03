@@ -9,8 +9,8 @@
 //! bytecode files. Spans are skipped during serialization since they are
 //! only useful at compile time.
 
-use diagnostics::SpanRange;
 use bincode::Options;
+use diagnostics::SpanRange;
 use memory::field::PrimeId;
 use memory::{FieldBackend, FieldElement};
 use serde::{Deserialize, Serialize};

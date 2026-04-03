@@ -605,7 +605,10 @@ impl Parser {
         let op = self.try_parse_assign_op().ok_or_else(|| {
             let tok = self.peek();
             ParseError::new(
-                format!("expected assignment operator after tuple, found {}", tok_display(tok)),
+                format!(
+                    "expected assignment operator after tuple, found {}",
+                    tok_display(tok)
+                ),
                 tok.span.line_start,
                 tok.span.col_start,
             )

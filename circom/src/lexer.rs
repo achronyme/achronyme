@@ -66,12 +66,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn make_token(
-        &self,
-        kind: TokenKind,
-        start: (usize, usize, usize),
-        lexeme: &str,
-    ) -> Token {
+    fn make_token(&self, kind: TokenKind, start: (usize, usize, usize), lexeme: &str) -> Token {
         Token {
             kind,
             span: self.make_span(start),
@@ -568,7 +563,12 @@ mod tests {
     fn signal_constraint_assign() {
         assert_eq!(
             kinds("a <== b"),
-            vec![TokenKind::Ident, TokenKind::ConstraintAssign, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::ConstraintAssign,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -576,7 +576,12 @@ mod tests {
     fn signal_assign() {
         assert_eq!(
             kinds("a <-- b"),
-            vec![TokenKind::Ident, TokenKind::SignalAssign, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::SignalAssign,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -584,7 +589,12 @@ mod tests {
     fn constraint_eq() {
         assert_eq!(
             kinds("a === b"),
-            vec![TokenKind::Ident, TokenKind::ConstraintEq, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::ConstraintEq,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -592,7 +602,12 @@ mod tests {
     fn reverse_constraint_assign() {
         assert_eq!(
             kinds("a ==> b"),
-            vec![TokenKind::Ident, TokenKind::RConstraintAssign, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::RConstraintAssign,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -600,7 +615,12 @@ mod tests {
     fn reverse_signal_assign() {
         assert_eq!(
             kinds("a --> b"),
-            vec![TokenKind::Ident, TokenKind::RSignalAssign, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::RSignalAssign,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -611,15 +631,30 @@ mod tests {
         // `<` then `<==` on separate expressions
         assert_eq!(
             kinds("a < b"),
-            vec![TokenKind::Ident, TokenKind::Lt, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::Lt,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
         assert_eq!(
             kinds("a <= b"),
-            vec![TokenKind::Ident, TokenKind::Le, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::Le,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
         assert_eq!(
             kinds("a <== b"),
-            vec![TokenKind::Ident, TokenKind::ConstraintAssign, TokenKind::Ident, TokenKind::Eof]
+            vec![
+                TokenKind::Ident,
+                TokenKind::ConstraintAssign,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -628,14 +663,20 @@ mod tests {
         assert_eq!(kinds("=")[..2], [TokenKind::Assign, TokenKind::Eof]);
         assert_eq!(kinds("==")[..2], [TokenKind::Eq, TokenKind::Eof]);
         assert_eq!(kinds("===")[..2], [TokenKind::ConstraintEq, TokenKind::Eof]);
-        assert_eq!(kinds("==>")[..2], [TokenKind::RConstraintAssign, TokenKind::Eof]);
+        assert_eq!(
+            kinds("==>")[..2],
+            [TokenKind::RConstraintAssign, TokenKind::Eof]
+        );
     }
 
     #[test]
     fn minus_disambiguation() {
         assert_eq!(kinds("-")[..2], [TokenKind::Minus, TokenKind::Eof]);
         assert_eq!(kinds("--")[..2], [TokenKind::Decrement, TokenKind::Eof]);
-        assert_eq!(kinds("-->")[..2], [TokenKind::RSignalAssign, TokenKind::Eof]);
+        assert_eq!(
+            kinds("-->")[..2],
+            [TokenKind::RSignalAssign, TokenKind::Eof]
+        );
         assert_eq!(kinds("-=")[..2], [TokenKind::MinusAssign, TokenKind::Eof]);
     }
 
@@ -676,8 +717,10 @@ mod tests {
         assert_eq!(
             kinds("i++ j--"),
             vec![
-                TokenKind::Ident, TokenKind::Increment,
-                TokenKind::Ident, TokenKind::Decrement,
+                TokenKind::Ident,
+                TokenKind::Increment,
+                TokenKind::Ident,
+                TokenKind::Decrement,
                 TokenKind::Eof,
             ]
         );
@@ -690,11 +733,16 @@ mod tests {
         assert_eq!(
             kinds("a & b | c ^ d ~ e"),
             vec![
-                TokenKind::Ident, TokenKind::BitAnd,
-                TokenKind::Ident, TokenKind::BitOr,
-                TokenKind::Ident, TokenKind::BitXor,
-                TokenKind::Ident, TokenKind::BitNot,
-                TokenKind::Ident, TokenKind::Eof,
+                TokenKind::Ident,
+                TokenKind::BitAnd,
+                TokenKind::Ident,
+                TokenKind::BitOr,
+                TokenKind::Ident,
+                TokenKind::BitXor,
+                TokenKind::Ident,
+                TokenKind::BitNot,
+                TokenKind::Ident,
+                TokenKind::Eof,
             ]
         );
     }
@@ -706,9 +754,14 @@ mod tests {
         assert_eq!(
             kinds("signal input output template component var function pragma"),
             vec![
-                TokenKind::Signal, TokenKind::Input, TokenKind::Output,
-                TokenKind::Template, TokenKind::Component, TokenKind::Var,
-                TokenKind::Function, TokenKind::Pragma,
+                TokenKind::Signal,
+                TokenKind::Input,
+                TokenKind::Output,
+                TokenKind::Template,
+                TokenKind::Component,
+                TokenKind::Var,
+                TokenKind::Function,
+                TokenKind::Pragma,
                 TokenKind::Eof,
             ]
         );
@@ -719,9 +772,14 @@ mod tests {
         assert_eq!(
             kinds("if else for while do return assert log"),
             vec![
-                TokenKind::If, TokenKind::Else, TokenKind::For,
-                TokenKind::While, TokenKind::Do, TokenKind::Return,
-                TokenKind::Assert, TokenKind::Log,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::For,
+                TokenKind::While,
+                TokenKind::Do,
+                TokenKind::Return,
+                TokenKind::Assert,
+                TokenKind::Log,
                 TokenKind::Eof,
             ]
         );
@@ -732,8 +790,12 @@ mod tests {
         assert_eq!(
             kinds("parallel custom public bus include main"),
             vec![
-                TokenKind::Parallel, TokenKind::Custom, TokenKind::Public,
-                TokenKind::Bus, TokenKind::Include, TokenKind::MainKw,
+                TokenKind::Parallel,
+                TokenKind::Custom,
+                TokenKind::Public,
+                TokenKind::Bus,
+                TokenKind::Include,
+                TokenKind::MainKw,
                 TokenKind::Eof,
             ]
         );
@@ -827,11 +889,16 @@ mod tests {
         assert_eq!(
             kinds("()[]{},:;.?"),
             vec![
-                TokenKind::LParen, TokenKind::RParen,
-                TokenKind::LBracket, TokenKind::RBracket,
-                TokenKind::LBrace, TokenKind::RBrace,
-                TokenKind::Comma, TokenKind::Colon,
-                TokenKind::Semicolon, TokenKind::Dot,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::Comma,
+                TokenKind::Colon,
+                TokenKind::Semicolon,
+                TokenKind::Dot,
                 TokenKind::Question,
                 TokenKind::Eof,
             ]
@@ -845,9 +912,12 @@ mod tests {
         assert_eq!(
             kinds("a ? b : c"),
             vec![
-                TokenKind::Ident, TokenKind::Question,
-                TokenKind::Ident, TokenKind::Colon,
-                TokenKind::Ident, TokenKind::Eof,
+                TokenKind::Ident,
+                TokenKind::Question,
+                TokenKind::Ident,
+                TokenKind::Colon,
+                TokenKind::Ident,
+                TokenKind::Eof,
             ]
         );
     }
@@ -920,11 +990,23 @@ component main {public [a]} = Multiplier(2);
 
     #[test]
     fn int_div_and_assign() {
-        assert_eq!(kinds("a \\ b")[..4], [
-            TokenKind::Ident, TokenKind::IntDiv, TokenKind::Ident, TokenKind::Eof
-        ]);
-        assert_eq!(kinds("a \\= b")[..4], [
-            TokenKind::Ident, TokenKind::IntDivAssign, TokenKind::Ident, TokenKind::Eof
-        ]);
+        assert_eq!(
+            kinds("a \\ b")[..4],
+            [
+                TokenKind::Ident,
+                TokenKind::IntDiv,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
+        );
+        assert_eq!(
+            kinds("a \\= b")[..4],
+            [
+                TokenKind::Ident,
+                TokenKind::IntDivAssign,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
+        );
     }
 }

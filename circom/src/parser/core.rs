@@ -53,11 +53,7 @@ impl Parser {
         } else {
             let tok = self.peek();
             Err(ParseError::new(
-                format!(
-                    "expected {}, found {}",
-                    kind_name(kind),
-                    tok_display(tok)
-                ),
+                format!("expected {}, found {}", kind_name(kind), tok_display(tok)),
                 tok.span.line_start,
                 tok.span.col_start,
             ))
@@ -296,7 +292,10 @@ impl Parser {
         let tok = self.peek();
         if tok.kind != TokenKind::StringLit {
             return Err(ParseError::new(
-                format!("expected string after `include`, found {}", tok_display(tok)),
+                format!(
+                    "expected string after `include`, found {}",
+                    tok_display(tok)
+                ),
                 tok.span.line_start,
                 tok.span.col_start,
             ));

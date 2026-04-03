@@ -146,11 +146,7 @@ pub enum Stmt {
         span: Span,
     },
     /// `expr === expr;`
-    ConstraintEq {
-        lhs: Expr,
-        rhs: Expr,
-        span: Span,
-    },
+    ConstraintEq { lhs: Expr, rhs: Expr, span: Span },
     /// `if (cond) { ... } [else { ... }]`
     IfElse {
         condition: Expr,
@@ -173,27 +169,15 @@ pub enum Stmt {
         span: Span,
     },
     /// `return expr;`
-    Return {
-        value: Expr,
-        span: Span,
-    },
+    Return { value: Expr, span: Span },
     /// `assert(expr);`
-    Assert {
-        arg: Expr,
-        span: Span,
-    },
+    Assert { arg: Expr, span: Span },
     /// `log(args...);`
-    Log {
-        args: Vec<LogArg>,
-        span: Span,
-    },
+    Log { args: Vec<LogArg>, span: Span },
     /// `{ stmts }` — bare block
     Block(Block),
     /// Bare expression statement (e.g., `i++`)
-    Expr {
-        expr: Expr,
-        span: Span,
-    },
+    Expr { expr: Expr, span: Span },
     /// Placeholder for error recovery.
     Error { span: Span },
 }
@@ -293,20 +277,11 @@ pub enum Expr {
         span: Span,
     },
     /// Array literal: `[e0, e1, ...]`
-    ArrayLit {
-        elements: Vec<Expr>,
-        span: Span,
-    },
+    ArrayLit { elements: Vec<Expr>, span: Span },
     /// Tuple: `(e0, e1, ...)`
-    Tuple {
-        elements: Vec<Expr>,
-        span: Span,
-    },
+    Tuple { elements: Vec<Expr>, span: Span },
     /// `parallel expr`
-    ParallelOp {
-        operand: Box<Expr>,
-        span: Span,
-    },
+    ParallelOp { operand: Box<Expr>, span: Span },
     /// Underscore `_` (signal discard).
     Underscore { span: Span },
     /// Placeholder for error recovery.
