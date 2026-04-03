@@ -1,0 +1,5 @@
+[inputs]
+in = 42
+
+[expected]
+constraints = 17

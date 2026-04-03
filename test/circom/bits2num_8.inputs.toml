@@ -1,0 +1,6 @@
+# 42 = 0b00101010 → bits [0, 1, 0, 1, 0, 1, 0, 0]
+[inputs]
+in = [0, 1, 0, 1, 0, 1, 0, 0]
+
+[expected]
+constraints = 1
