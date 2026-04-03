@@ -134,13 +134,31 @@ fn lower_stmt<'a>(
         Stmt::VarDecl { names, init, span } => {
             if let Some(value) = init {
                 if names.len() == 1 {
-                    let lowered = lower_expr(value, env, ctx)?;
-                    nodes.push(CircuitNode::Let {
-                        name: names[0].clone(),
-                        value: lowered,
-                        span: Some(SpanRange::from_span(span)),
-                    });
-                    env.locals.insert(names[0].clone());
+                    // Check for array literal: `var arr = [1, 2, 3]`
+                    // → expand into arr_0, arr_1, arr_2 individual let-bindings
+                    if let Expr::ArrayLit { elements, .. } = value {
+                        let base = &names[0];
+                        for (i, elem) in elements.iter().enumerate() {
+                            let elem_name = format!("{base}_{i}");
+                            let lowered = lower_expr(elem, env, ctx)?;
+                            nodes.push(CircuitNode::Let {
+                                name: elem_name.clone(),
+                                value: lowered,
+                                span: Some(SpanRange::from_span(span)),
+                            });
+                            env.locals.insert(elem_name);
+                        }
+                        // Register the base name too (for array indexing resolution)
+                        env.register_array(names[0].clone(), elements.len());
+                    } else {
+                        let lowered = lower_expr(value, env, ctx)?;
+                        nodes.push(CircuitNode::Let {
+                            name: names[0].clone(),
+                            value: lowered,
+                            span: Some(SpanRange::from_span(span)),
+                        });
+                        env.locals.insert(names[0].clone());
+                    }
                 } else {
                     // Tuple var decl: `var (a, b) = expr` — not directly
                     // expressible in ProveIR. For now, error.

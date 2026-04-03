@@ -700,4 +700,37 @@ mod tests {
 
         assert!(ir.captures.is_empty());
     }
+
+    // ── Array literal expansion ────────────────────────────────────
+
+    #[test]
+    fn array_literal_expands_to_individual_lets() {
+        let ir = parse_and_lower(
+            r#"
+            template T() {
+                signal input x;
+                signal output out;
+                var coeffs = [1, 2, 3];
+                out <== x * coeffs[1];
+            }
+            component main = T();
+            "#,
+        );
+
+        // coeffs = [1, 2, 3] → Let(coeffs_0=1), Let(coeffs_1=2), Let(coeffs_2=3)
+        // out <== x * coeffs[1] → Let(out) + AssertEq
+        // coeffs[1] should resolve to Var("coeffs_1")
+        let let_names: Vec<&str> = ir
+            .body
+            .iter()
+            .filter_map(|n| match n {
+                CircuitNode::Let { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(let_names.contains(&"coeffs_0"));
+        assert!(let_names.contains(&"coeffs_1"));
+        assert!(let_names.contains(&"coeffs_2"));
+        assert!(let_names.contains(&"out"));
+    }
 }

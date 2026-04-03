@@ -22,7 +22,7 @@ use crate::ast::{self, Expr};
 use super::context::LoweringContext;
 use super::env::{LoweringEnv, VarKind};
 use super::error::LoweringError;
-use super::utils::{binop_symbol, extract_ident_name};
+use super::utils::{binop_symbol, const_eval_u64, extract_ident_name};
 
 /// The default max bits for IntDiv/IntMod. Circom operates over BN254 (~254 bits).
 const DEFAULT_MAX_BITS: u32 = 253;
@@ -137,6 +137,14 @@ pub fn lower_expr(
                     span,
                 )
             })?;
+
+            // If index is a constant and array is tracked, resolve to `arr_N` directly
+            if let Some(idx_val) = const_eval_u64(index) {
+                if let Some(elem_name) = env.resolve_array_element(&array_name, idx_val as usize) {
+                    return Ok(CircuitExpr::Var(elem_name));
+                }
+            }
+
             let idx = lower_expr(index, env, ctx)?;
             Ok(CircuitExpr::ArrayIndex {
                 array: array_name,

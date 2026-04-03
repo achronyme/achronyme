@@ -4,7 +4,7 @@
 //! bindings, or template captures. It is shared across expression,
 //! statement, and template lowering.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Identifier resolution categories for lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,9 @@ pub struct LoweringEnv {
     pub locals: HashSet<String>,
     /// Template parameters — resolve to `CircuitExpr::Capture`.
     pub captures: HashSet<String>,
+    /// Arrays — maps base name to element count for index resolution.
+    /// When `arr` is registered with size 3, `arr[0]` resolves to `arr_0`.
+    pub arrays: HashMap<String, usize>,
 }
 
 impl LoweringEnv {
@@ -37,6 +40,7 @@ impl LoweringEnv {
             inputs: HashSet::new(),
             locals: HashSet::new(),
             captures: HashSet::new(),
+            arrays: HashMap::new(),
         }
     }
 
@@ -48,6 +52,22 @@ impl LoweringEnv {
             Some(VarKind::Local)
         } else if self.captures.contains(name) {
             Some(VarKind::Capture)
+        } else {
+            None
+        }
+    }
+
+    /// Register an array variable with its element count.
+    /// Individual element names (`name_0`, `name_1`, ...) are added as locals.
+    pub fn register_array(&mut self, name: String, len: usize) {
+        self.arrays.insert(name, len);
+    }
+
+    /// Resolve an array element access: `arr[idx]` → element name if idx is constant.
+    pub fn resolve_array_element(&self, name: &str, index: usize) -> Option<String> {
+        let len = self.arrays.get(name)?;
+        if index < *len {
+            Some(format!("{name}_{index}"))
         } else {
             None
         }
