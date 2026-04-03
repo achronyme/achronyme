@@ -35,6 +35,12 @@ pub fn compute_witness_hints_with_captures<F: FieldBackend>(
     captures: &HashMap<String, u64>,
 ) -> HashMap<String, FieldElement<F>> {
     let mut env: HashMap<String, FieldElement<F>> = inputs.clone();
+    // Seed env with capture values so expressions like `1 << n` can
+    // evaluate when `n` is a template parameter / capture.
+    for (name, val) in captures {
+        env.entry(name.clone())
+            .or_insert_with(|| FieldElement::<F>::from_u64(*val));
+    }
     collect_hints_recursive(&prove_ir.body, &mut env, captures);
     env
 }
@@ -341,12 +347,18 @@ fn eval_hint<F: FieldBackend>(
             }
         }
 
+        // Array element access: resolve `arr[i]` → lookup `arr_i` in env
+        CircuitExpr::ArrayIndex { array, index } => {
+            let idx = eval_hint_u64(index, env)?;
+            let elem_name = format!("{array}_{idx}");
+            env.get(&elem_name).copied()
+        }
+
         // Expressions we can't evaluate off-circuit
         CircuitExpr::PoseidonHash { .. }
         | CircuitExpr::PoseidonMany(_)
         | CircuitExpr::RangeCheck { .. }
         | CircuitExpr::MerkleVerify { .. }
-        | CircuitExpr::ArrayIndex { .. }
         | CircuitExpr::ArrayLen(_) => None,
     }
 }

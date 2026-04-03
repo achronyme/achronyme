@@ -909,7 +909,7 @@ mod tests {
             inputs.insert(name.to_string(), FieldElement::<Bn254Fr>::from_u64(*val));
         }
 
-        let all_signals = crate::witness::compute_witness_hints_with_captures(
+        let mut all_signals = crate::witness::compute_witness_hints_with_captures(
             &prove_ir,
             &inputs,
             &capture_values,
@@ -919,6 +919,12 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
             .collect();
+
+        // Captures with CaptureUsage::Both become witness inputs in the IR
+        // and need values in the input map for R1CS compilation.
+        for (name, fe) in &fe_captures {
+            all_signals.entry(name.clone()).or_insert(*fe);
+        }
 
         let mut program = prove_ir
             .instantiate(&fe_captures)
@@ -1104,5 +1110,60 @@ mod tests {
         );
         assert_proof_valid(&proof);
         eprintln!("IsZero(in=0) Groth16 proof verified!");
+    }
+
+    // ── LessThan E2E ─────────────────────────────────────────────
+
+    const LESSTHAN_SRC: &str = r#"
+        template Num2Bits(n) {
+            signal input in;
+            signal output out[n];
+            var lc1 = 0;
+            var e2 = 1;
+            for (var i = 0; i < n; i++) {
+                out[i] <-- (in >> i) & 1;
+                out[i] * (out[i] - 1) === 0;
+                lc1 += out[i] * e2;
+                e2 = e2 + e2;
+            }
+            lc1 === in;
+        }
+
+        template LessThan(n) {
+            signal input in[2];
+            signal output out;
+            component n2b = Num2Bits(n + 1);
+            n2b.in <== in[0] + (1 << n) - in[1];
+            out <== 1 - n2b.out[n];
+        }
+
+        component main {public [in]} = LessThan(8);
+    "#;
+
+    #[test]
+    fn real_lessthan_3_lt_10() {
+        // 3 < 10 → out = 1 (true)
+        let (_nc, _nv, _np, proof) =
+            circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 3), ("in_1", 10)]);
+        assert_proof_valid(&proof);
+        eprintln!("LessThan(8): 3 < 10 → verified!");
+    }
+
+    #[test]
+    fn real_lessthan_200_lt_100() {
+        // 200 < 100 → out = 0 (false)
+        let (_nc, _nv, _np, proof) =
+            circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 200), ("in_1", 100)]);
+        assert_proof_valid(&proof);
+        eprintln!("LessThan(8): 200 < 100 → verified!");
+    }
+
+    #[test]
+    fn real_lessthan_equal_values() {
+        // 42 < 42 → out = 0 (false, equal is not less than)
+        let (_nc, _nv, _np, proof) =
+            circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 42), ("in_1", 42)]);
+        assert_proof_valid(&proof);
+        eprintln!("LessThan(8): 42 < 42 → verified!");
     }
 }
