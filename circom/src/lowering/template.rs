@@ -38,8 +38,19 @@ pub fn lower_template(
         }
     }
 
-    // 1. Extract signal layout
-    let layout = extract_signal_layout(template, main)?;
+    // Pre-evaluate compile-time var declarations (e.g., `var nout = nbits(...)`)
+    // so that signal dimensions like `signal output out[nout]` resolve correctly.
+    let known_vars =
+        super::utils::precompute_vars(&template.body.stmts, &ctx.param_values, &ctx.functions);
+
+    // 1. Extract signal layout (with pre-computed vars for dimension resolution)
+    let layout = extract_signal_layout(template, main, &known_vars)?;
+
+    // Add pre-computed vars to param_values so they're available during body lowering
+    // (e.g., for loop bounds like `i < nout`)
+    for (name, val) in &known_vars {
+        ctx.param_values.insert(name.clone(), *val);
+    }
 
     // 2. Build lowering environment
     let mut env = LoweringEnv::new();

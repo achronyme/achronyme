@@ -52,6 +52,7 @@ pub struct IntermediateSignal {
 pub fn extract_signal_layout(
     template: &TemplateDef,
     main: Option<&MainComponent>,
+    known_vars: &HashMap<String, u64>,
 ) -> Result<SignalLayout, LoweringError> {
     let public_set: HashSet<&str> = main
         .map(|m| m.public_signals.iter().map(|s| s.as_str()).collect())
@@ -61,7 +62,7 @@ pub fn extract_signal_layout(
 
     // Build param values from main component template args (if available).
     // This allows evaluating expression dimensions like `n+1` eagerly.
-    let param_values: HashMap<String, u64> = template
+    let mut param_values: HashMap<String, u64> = template
         .params
         .iter()
         .enumerate()
@@ -71,6 +72,12 @@ pub fn extract_signal_layout(
                 .map(|val| (param.clone(), val))
         })
         .collect();
+
+    // Merge pre-computed vars (e.g., `var nout = nbits(...)`) so they
+    // are available for signal dimension resolution.
+    for (name, &val) in known_vars {
+        param_values.insert(name.clone(), val);
+    }
 
     let mut layout = SignalLayout {
         public_inputs: Vec::new(),
@@ -159,7 +166,7 @@ fn eval_dimensions(
         if let Some(n) = const_eval_u64(dim) {
             result.push(ResolvedDim::Literal(n));
         }
-        // 2. Simple template param identifier
+        // 2. Simple template param identifier or pre-computed var
         else if let Expr::Ident { name, .. } = dim {
             if template_params.contains(name) {
                 // If we have the value, resolve eagerly
@@ -168,6 +175,9 @@ fn eval_dimensions(
                 } else {
                     result.push(ResolvedDim::Capture(name.clone()));
                 }
+            } else if let Some(&val) = param_values.get(name.as_str()) {
+                // Pre-computed var (e.g., `var nb = nbits(...)`)
+                result.push(ResolvedDim::Literal(val));
             } else {
                 return Err(LoweringError::new(
                     format!(
@@ -421,7 +431,7 @@ mod tests {
     #[test]
     fn input_signals_without_public_are_witness() {
         let t = parse_template("template T() { signal input a; signal input b; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert!(layout.public_inputs.is_empty());
         assert_eq!(layout.witness_inputs.len(), 2);
         assert_eq!(layout.witness_inputs[0].name, "a");
@@ -436,7 +446,7 @@ mod tests {
         "#;
         let t = parse_template(src);
         let main = parse_main(src);
-        let layout = extract_signal_layout(&t, main.as_ref()).unwrap();
+        let layout = extract_signal_layout(&t, main.as_ref(), &HashMap::new()).unwrap();
         assert_eq!(layout.public_inputs.len(), 2);
         assert_eq!(layout.witness_inputs.len(), 1);
         assert_eq!(layout.public_inputs[0].name, "a");
@@ -447,7 +457,7 @@ mod tests {
     #[test]
     fn output_signals() {
         let t = parse_template("template T() { signal output out; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert_eq!(layout.outputs.len(), 1);
         assert_eq!(layout.outputs[0].name, "out");
     }
@@ -455,7 +465,7 @@ mod tests {
     #[test]
     fn intermediate_signals() {
         let t = parse_template("template T() { signal inv; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert_eq!(layout.intermediates.len(), 1);
         assert_eq!(layout.intermediates[0].name, "inv");
     }
@@ -463,7 +473,7 @@ mod tests {
     #[test]
     fn array_signal_single_dimension() {
         let t = parse_template("template T() { signal input x[4]; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert_eq!(layout.witness_inputs.len(), 1);
         assert_eq!(
             layout.witness_inputs[0].array_size,
@@ -474,7 +484,7 @@ mod tests {
     #[test]
     fn array_signal_multi_dimension() {
         let t = parse_template("template T() { signal input m[3][4]; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert_eq!(layout.witness_inputs.len(), 1);
         // 3*4 = 12 elements flattened
         assert_eq!(
@@ -486,14 +496,14 @@ mod tests {
     #[test]
     fn scalar_signal_has_no_array_size() {
         let t = parse_template("template T() { signal input x; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert!(layout.witness_inputs[0].array_size.is_none());
     }
 
     #[test]
     fn all_signals_are_field_type() {
         let t = parse_template("template T() { signal input a; signal output b; signal c; }");
-        let layout = extract_signal_layout(&t, None).unwrap();
+        let layout = extract_signal_layout(&t, None, &HashMap::new()).unwrap();
         assert_eq!(layout.witness_inputs[0].ir_type, IrType::Field);
     }
 
@@ -509,7 +519,7 @@ mod tests {
         "#;
         let t = parse_template(src);
         let main = parse_main(src);
-        let layout = extract_signal_layout(&t, main.as_ref()).unwrap();
+        let layout = extract_signal_layout(&t, main.as_ref(), &HashMap::new()).unwrap();
         assert_eq!(layout.public_inputs.len(), 1);
         assert_eq!(layout.public_inputs[0].name, "in");
         assert!(layout.witness_inputs.is_empty());

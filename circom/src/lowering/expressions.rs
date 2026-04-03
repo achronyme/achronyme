@@ -559,6 +559,23 @@ fn inline_function_call(
 
     ctx.inline_depth += 1;
 
+    // Try compile-time evaluation first (handles imperative functions like nbits).
+    // Merge param_values and known_constants for a complete evaluation context.
+    let mut eval_params = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        eval_params.insert(k.clone(), v);
+    }
+    if let Some(result) = super::utils::try_eval_function_call(
+        func,
+        args,
+        &eval_params,
+        &ctx.functions,
+        ctx.inline_depth,
+    ) {
+        ctx.inline_depth -= 1;
+        return Ok(CircuitExpr::Const(FieldConst::from_u64(result)));
+    }
+
     // Build a local env with parameters bound to lowered argument expressions.
     // The function body shares the outer env's inputs/captures, but parameters
     // shadow as locals.

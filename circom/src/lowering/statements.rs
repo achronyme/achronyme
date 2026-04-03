@@ -1156,10 +1156,16 @@ fn lower_for_loop<'a>(
             end_capture: name,
         },
         LoopBound::Expr(ast_expr) => {
-            let circuit_expr = lower_expr(&ast_expr, env, ctx)?;
-            ForRange::WithExpr {
-                start,
-                end_expr: Box::new(circuit_expr),
+            // Try to resolve the expression to a constant using known param values
+            // (e.g., `nb` from `var nb = nbits(n)` where n is known)
+            if let Some(end) = super::utils::const_eval_with_params(&ast_expr, &ctx.param_values) {
+                ForRange::Literal { start, end }
+            } else {
+                let circuit_expr = lower_expr(&ast_expr, env, ctx)?;
+                ForRange::WithExpr {
+                    start,
+                    end_expr: Box::new(circuit_expr),
+                }
             }
         }
     };
