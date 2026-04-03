@@ -81,8 +81,18 @@ fn lower_stmt<'a>(
     // flush pending components whose inputs were wired via indexed
     // assignments. Skip if this statement is itself a wiring of a pending
     // component (to avoid flushing before all array elements are wired).
-    if let Stmt::Substitution { target, .. } = stmt {
-        let is_pending_wiring = extract_component_wiring(target)
+    if let Stmt::Substitution {
+        target, op, value, ..
+    } = stmt
+    {
+        // For reverse operators (==>, -->), the actual assignment target
+        // is `value` (RHS), not `target` (LHS). Use the correct one to
+        // decide whether this statement is a component wiring.
+        let actual_target = match op {
+            AssignOp::RConstraintAssign | AssignOp::RSignalAssign => value,
+            _ => target,
+        };
+        let is_pending_wiring = extract_component_wiring(actual_target)
             .map(|(comp, _)| pending.contains_key(&comp))
             .unwrap_or(false);
         if !is_pending_wiring {
@@ -529,6 +539,14 @@ fn lower_substitution<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
+    // Desugar reverse operators: `expr ==> target` → `target <== expr`
+    //                            `expr --> target` → `target <-- expr`
+    let (target, op, value) = match op {
+        AssignOp::RConstraintAssign => (value, AssignOp::ConstraintAssign, target),
+        AssignOp::RSignalAssign => (value, AssignOp::SignalAssign, target),
+        other => (target, other, value),
+    };
+
     let sr = Some(SpanRange::from_span(span));
 
     match op {
@@ -578,28 +596,6 @@ fn lower_substitution<'a>(
             maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
 
-        // `expr ==> target` → same as `target <== expr`
-        AssignOp::RConstraintAssign => {
-            let name = extract_target_name(value).ok_or_else(|| {
-                LoweringError::new(
-                    "reverse constraint assignment target must be an identifier or component signal",
-                    span,
-                )
-            })?;
-            let lowered = lower_expr(target, env, ctx)?;
-            nodes.push(CircuitNode::Let {
-                name: name.clone(),
-                value: lowered.clone(),
-                span: sr.clone(),
-            });
-            nodes.push(CircuitNode::AssertEq {
-                lhs: CircuitExpr::Var(name),
-                rhs: lowered,
-                message: None,
-                span: sr,
-            });
-        }
-
         // `target <-- expr` → WitnessHint or WitnessHintIndexed
         AssignOp::SignalAssign => {
             let assign_target = extract_assign_target(target).ok_or_else(|| {
@@ -631,20 +627,10 @@ fn lower_substitution<'a>(
             maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
 
-        // `expr --> target` → same as `target <-- expr`
-        AssignOp::RSignalAssign => {
-            let name = extract_target_name(value).ok_or_else(|| {
-                LoweringError::new(
-                    "reverse signal assignment target must be an identifier or component signal",
-                    span,
-                )
-            })?;
-            let lowered = lower_expr(target, env, ctx)?;
-            nodes.push(CircuitNode::WitnessHint {
-                name,
-                hint: lowered,
-                span: sr,
-            });
+        // RConstraintAssign (==>) and RSignalAssign (-->) are desugared
+        // to ConstraintAssign (<==) and SignalAssign (<--) above.
+        AssignOp::RConstraintAssign | AssignOp::RSignalAssign => {
+            unreachable!("reverse operators desugared at function entry")
         }
 
         // `target = expr` → variable reassignment (SSA shadowing)
@@ -789,9 +775,24 @@ fn lower_for_loop<'a>(
             })?;
             (names[0].clone(), start)
         }
+        // `for (i = 0; ...)` where `i` is already declared via `var i;`
+        Stmt::Substitution {
+            target,
+            op: AssignOp::Assign,
+            value,
+            ..
+        } => {
+            let name = extract_target_name(target).ok_or_else(|| {
+                LoweringError::new("for loop init must assign to a simple variable", span)
+            })?;
+            let start = const_eval_u64(value).ok_or_else(|| {
+                LoweringError::new("for loop init must be a compile-time constant", span)
+            })?;
+            (name, start)
+        }
         _ => {
             return Err(LoweringError::new(
-                "for loop must use `var i = <const>` initialization",
+                "for loop must use `var i = <const>` or `i = <const>` initialization",
                 span,
             ));
         }
