@@ -101,10 +101,10 @@ pub fn lower_expr(
                     op: CircuitUnaryOp::Not,
                     operand: Box::new(inner),
                 }),
-                ast::UnaryOp::BitNot => Err(LoweringError::new(
-                    "bitwise NOT (`~`) is not supported in circuit context",
-                    span,
-                )),
+                ast::UnaryOp::BitNot => Ok(CircuitExpr::BitNot {
+                    operand: Box::new(inner),
+                    num_bits: DEFAULT_MAX_BITS,
+                }),
             }
         }
 
@@ -300,18 +300,47 @@ fn lower_binop(
             rhs: r,
         }),
 
-        ast::BinOp::BitAnd
-        | ast::BinOp::BitOr
-        | ast::BinOp::BitXor
-        | ast::BinOp::ShiftL
-        | ast::BinOp::ShiftR => Err(LoweringError::new(
-            format!(
-                "bitwise operator `{}` requires bit decomposition; \
-                     not yet supported in circuit lowering",
-                binop_symbol(op),
-            ),
-            span,
-        )),
+        ast::BinOp::BitAnd => Ok(CircuitExpr::BitAnd {
+            lhs: l,
+            rhs: r,
+            num_bits: DEFAULT_MAX_BITS,
+        }),
+        ast::BinOp::BitOr => Ok(CircuitExpr::BitOr {
+            lhs: l,
+            rhs: r,
+            num_bits: DEFAULT_MAX_BITS,
+        }),
+        ast::BinOp::BitXor => Ok(CircuitExpr::BitXor {
+            lhs: l,
+            rhs: r,
+            num_bits: DEFAULT_MAX_BITS,
+        }),
+        ast::BinOp::ShiftR => {
+            let shift = const_eval_circuit_expr(&r).ok_or_else(|| {
+                LoweringError::new(
+                    "right shift amount must be a compile-time constant",
+                    span,
+                )
+            })?;
+            Ok(CircuitExpr::ShiftR {
+                operand: l,
+                shift: shift as u32,
+                num_bits: DEFAULT_MAX_BITS,
+            })
+        }
+        ast::BinOp::ShiftL => {
+            let shift = const_eval_circuit_expr(&r).ok_or_else(|| {
+                LoweringError::new(
+                    "left shift amount must be a compile-time constant",
+                    span,
+                )
+            })?;
+            Ok(CircuitExpr::ShiftL {
+                operand: l,
+                shift: shift as u32,
+                num_bits: DEFAULT_MAX_BITS,
+            })
+        },
     }
 }
 
@@ -476,10 +505,10 @@ fn lower_expr_with_substitution(
                     op: CircuitUnaryOp::Not,
                     operand: Box::new(inner),
                 }),
-                ast::UnaryOp::BitNot => Err(LoweringError::new(
-                    "bitwise NOT (`~`) is not supported in circuit context",
-                    span,
-                )),
+                ast::UnaryOp::BitNot => Ok(CircuitExpr::BitNot {
+                    operand: Box::new(inner),
+                    num_bits: DEFAULT_MAX_BITS,
+                }),
             }
         }
         Expr::Ternary {
@@ -787,9 +816,10 @@ mod tests {
     }
 
     #[test]
-    fn lower_bitnot_is_error() {
+    fn lower_bitnot_via_unary() {
         let expr = parse_expr("~a");
-        assert!(lower_expr(&expr, &make_env(), &mut make_ctx()).is_err());
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        assert!(matches!(result, CircuitExpr::BitNot { num_bits: 253, .. }));
     }
 
     // ── Ternary → Mux ───────────────────────────────────────────────
@@ -837,20 +867,67 @@ mod tests {
         ));
     }
 
-    // ── Bitwise errors ──────────────────────────────────────────────
+    // ── Bitwise operations ────────────────────────────────────────
 
     #[test]
-    fn lower_bitwise_and_is_error() {
+    fn lower_bitwise_and() {
         let expr = parse_expr("a & b");
-        let result = lower_expr(&expr, &make_env(), &mut make_ctx());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("bitwise"));
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        assert!(matches!(result, CircuitExpr::BitAnd { num_bits: 253, .. }));
     }
 
     #[test]
-    fn lower_shift_is_error() {
+    fn lower_bitwise_or() {
+        let expr = parse_expr("a | b");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        assert!(matches!(result, CircuitExpr::BitOr { num_bits: 253, .. }));
+    }
+
+    #[test]
+    fn lower_bitwise_xor() {
+        let expr = parse_expr("a ^ b");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        assert!(matches!(result, CircuitExpr::BitXor { num_bits: 253, .. }));
+    }
+
+    #[test]
+    fn lower_bitwise_not() {
+        let expr = parse_expr("~a");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        assert!(matches!(result, CircuitExpr::BitNot { num_bits: 253, .. }));
+    }
+
+    #[test]
+    fn lower_shift_right() {
+        let expr = parse_expr("a >> 3");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        match result {
+            CircuitExpr::ShiftR { shift, num_bits, .. } => {
+                assert_eq!(shift, 3);
+                assert_eq!(num_bits, 253);
+            }
+            other => panic!("expected ShiftR, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lower_shift_left() {
         let expr = parse_expr("a << 1");
-        assert!(lower_expr(&expr, &make_env(), &mut make_ctx()).is_err());
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        match result {
+            CircuitExpr::ShiftL { shift, num_bits, .. } => {
+                assert_eq!(shift, 1);
+                assert_eq!(num_bits, 253);
+            }
+            other => panic!("expected ShiftL, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lower_shift_non_const_is_error() {
+        let expr = parse_expr("a >> b");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx());
+        assert!(result.is_err());
     }
 
     // ── Parallel is transparent ─────────────────────────────────────

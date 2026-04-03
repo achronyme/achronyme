@@ -400,6 +400,15 @@ fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
             validate_expr(lhs)?;
             validate_expr(rhs)
         }
+        CircuitExpr::BitAnd { lhs, rhs, .. }
+        | CircuitExpr::BitOr { lhs, rhs, .. }
+        | CircuitExpr::BitXor { lhs, rhs, .. } => {
+            validate_expr(lhs)?;
+            validate_expr(rhs)
+        }
+        CircuitExpr::BitNot { operand, .. }
+        | CircuitExpr::ShiftR { operand, .. }
+        | CircuitExpr::ShiftL { operand, .. } => validate_expr(operand),
         // Leaf nodes — no sub-expressions
         CircuitExpr::Const(_)
         | CircuitExpr::Input(_)
@@ -647,6 +656,42 @@ pub enum CircuitExpr {
         lhs: Box<CircuitExpr>,
         rhs: Box<CircuitExpr>,
         max_bits: u32,
+    },
+
+    /// Bitwise AND: decompose both operands, multiply each bit pair, recompose.
+    BitAnd {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Bitwise OR: decompose both, or = a + b - a*b per bit, recompose.
+    BitOr {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Bitwise XOR: decompose both, xor = a + b - 2*a*b per bit, recompose.
+    BitXor {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Bitwise NOT: decompose, flip each bit (1 - bit), recompose.
+    BitNot {
+        operand: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Right shift by constant amount: decompose, drop low bits, recompose.
+    ShiftR {
+        operand: Box<CircuitExpr>,
+        shift: u32,
+        num_bits: u32,
+    },
+    /// Left shift by constant amount: decompose, prepend zeros, recompose.
+    ShiftL {
+        operand: Box<CircuitExpr>,
+        shift: u32,
+        num_bits: u32,
     },
 }
 
@@ -906,6 +951,12 @@ impl fmt::Display for CircuitExpr {
             CircuitExpr::IntMod { lhs, rhs, max_bits } => {
                 write!(f, "int_mod({lhs}, {rhs}, {max_bits})")
             }
+            CircuitExpr::BitAnd { lhs, rhs, .. } => write!(f, "({lhs} & {rhs})"),
+            CircuitExpr::BitOr { lhs, rhs, .. } => write!(f, "({lhs} | {rhs})"),
+            CircuitExpr::BitXor { lhs, rhs, .. } => write!(f, "({lhs} ^ {rhs})"),
+            CircuitExpr::BitNot { operand, .. } => write!(f, "~{operand}"),
+            CircuitExpr::ShiftR { operand, shift, .. } => write!(f, "({operand} >> {shift})"),
+            CircuitExpr::ShiftL { operand, shift, .. } => write!(f, "({operand} << {shift})"),
         }
     }
 }

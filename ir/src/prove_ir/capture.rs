@@ -204,6 +204,17 @@ fn walk_expr(
             walk_expr(lhs, in_structural, structural, constraint);
             walk_expr(rhs, in_structural, structural, constraint);
         }
+        CircuitExpr::BitAnd { lhs, rhs, .. }
+        | CircuitExpr::BitOr { lhs, rhs, .. }
+        | CircuitExpr::BitXor { lhs, rhs, .. } => {
+            walk_expr(lhs, in_structural, structural, constraint);
+            walk_expr(rhs, in_structural, structural, constraint);
+        }
+        CircuitExpr::BitNot { operand, .. }
+        | CircuitExpr::ShiftR { operand, .. }
+        | CircuitExpr::ShiftL { operand, .. } => {
+            walk_expr(operand, in_structural, structural, constraint);
+        }
     }
 }
 

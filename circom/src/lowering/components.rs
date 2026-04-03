@@ -322,6 +322,45 @@ fn mangle_expr(
             rhs: Box::new(mangle_expr(rhs, prefix, param_subs)),
             max_bits: *max_bits,
         },
+
+        // Bitwise ops
+        CircuitExpr::BitAnd { lhs, rhs, num_bits } => CircuitExpr::BitAnd {
+            lhs: Box::new(mangle_expr(lhs, prefix, param_subs)),
+            rhs: Box::new(mangle_expr(rhs, prefix, param_subs)),
+            num_bits: *num_bits,
+        },
+        CircuitExpr::BitOr { lhs, rhs, num_bits } => CircuitExpr::BitOr {
+            lhs: Box::new(mangle_expr(lhs, prefix, param_subs)),
+            rhs: Box::new(mangle_expr(rhs, prefix, param_subs)),
+            num_bits: *num_bits,
+        },
+        CircuitExpr::BitXor { lhs, rhs, num_bits } => CircuitExpr::BitXor {
+            lhs: Box::new(mangle_expr(lhs, prefix, param_subs)),
+            rhs: Box::new(mangle_expr(rhs, prefix, param_subs)),
+            num_bits: *num_bits,
+        },
+        CircuitExpr::BitNot { operand, num_bits } => CircuitExpr::BitNot {
+            operand: Box::new(mangle_expr(operand, prefix, param_subs)),
+            num_bits: *num_bits,
+        },
+        CircuitExpr::ShiftR {
+            operand,
+            shift,
+            num_bits,
+        } => CircuitExpr::ShiftR {
+            operand: Box::new(mangle_expr(operand, prefix, param_subs)),
+            shift: *shift,
+            num_bits: *num_bits,
+        },
+        CircuitExpr::ShiftL {
+            operand,
+            shift,
+            num_bits,
+        } => CircuitExpr::ShiftL {
+            operand: Box::new(mangle_expr(operand, prefix, param_subs)),
+            shift: *shift,
+            num_bits: *num_bits,
+        },
     }
 }
 

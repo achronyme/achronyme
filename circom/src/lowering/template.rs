@@ -207,6 +207,17 @@ fn collect_expr_captures<'a>(expr: &'a CircuitExpr, captures: &mut HashSet<&'a s
         }
         CircuitExpr::ArrayIndex { index, .. } => collect_expr_captures(index, captures),
         CircuitExpr::Pow { base, .. } => collect_expr_captures(base, captures),
+        CircuitExpr::BitAnd { lhs, rhs, .. }
+        | CircuitExpr::BitOr { lhs, rhs, .. }
+        | CircuitExpr::BitXor { lhs, rhs, .. } => {
+            collect_expr_captures(lhs, captures);
+            collect_expr_captures(rhs, captures);
+        }
+        CircuitExpr::BitNot { operand, .. }
+        | CircuitExpr::ShiftR { operand, .. }
+        | CircuitExpr::ShiftL { operand, .. } => {
+            collect_expr_captures(operand, captures);
+        }
         // Leaf nodes with no captures
         CircuitExpr::Const(_)
         | CircuitExpr::Input(_)
