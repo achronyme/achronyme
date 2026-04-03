@@ -2,3 +2,5 @@
 //!
 //! - Constraint pairing: ensures every `<--` has a corresponding `===`.
 //! - Include resolution: resolves `include` directives.
+
+pub mod include_resolver;
