@@ -104,10 +104,10 @@ fn lower_stmt<'a>(
                         });
                     }
                     AssignOp::SignalAssign => {
-                        // `signal c <-- expr` → Let only (witness hint)
-                        nodes.push(CircuitNode::Let {
+                        // `signal c <-- expr` → WitnessHint (zero constraints)
+                        nodes.push(CircuitNode::WitnessHint {
                             name: decl.name.clone(),
-                            value: lowered_value,
+                            hint: lowered_value,
                             span: sr,
                         });
                     }
@@ -506,7 +506,7 @@ fn lower_substitution<'a>(
             });
         }
 
-        // `target <-- expr` → Let only (witness hint, no constraint)
+        // `target <-- expr` → WitnessHint (zero constraints, prover computes off-circuit)
         AssignOp::SignalAssign => {
             let name = extract_target_name(target).ok_or_else(|| {
                 LoweringError::new(
@@ -515,9 +515,9 @@ fn lower_substitution<'a>(
                 )
             })?;
             let lowered = lower_expr(value, env, ctx)?;
-            nodes.push(CircuitNode::Let {
+            nodes.push(CircuitNode::WitnessHint {
                 name,
-                value: lowered,
+                hint: lowered,
                 span: sr,
             });
             maybe_trigger_inline(target, nodes, ctx, pending, span)?;
@@ -532,9 +532,9 @@ fn lower_substitution<'a>(
                 )
             })?;
             let lowered = lower_expr(target, env, ctx)?;
-            nodes.push(CircuitNode::Let {
+            nodes.push(CircuitNode::WitnessHint {
                 name,
-                value: lowered,
+                hint: lowered,
                 span: sr,
             });
         }
@@ -866,10 +866,12 @@ mod tests {
     // ── Signal assignment (<--) ─────────────────────────────────────
 
     #[test]
-    fn signal_assign_produces_let_only() {
+    fn signal_assign_produces_witness_hint() {
         let nodes = lower_template("signal inv; inv <-- 1;").unwrap();
         assert_eq!(nodes.len(), 1);
-        assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "inv"));
+        assert!(
+            matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv")
+        );
     }
 
     // ── Constraint equality (===) ───────────────────────────────────
@@ -877,9 +879,9 @@ mod tests {
     #[test]
     fn constraint_eq_produces_assert_eq() {
         let nodes = lower_template("signal x; x <-- 1; a === x;").unwrap();
-        // x <-- 1 → Let, a === x → AssertEq
+        // x <-- 1 → WitnessHint, a === x → AssertEq
         assert_eq!(nodes.len(), 2);
-        assert!(matches!(&nodes[0], CircuitNode::Let { .. }));
+        assert!(matches!(&nodes[0], CircuitNode::WitnessHint { .. }));
         assert!(matches!(&nodes[1], CircuitNode::AssertEq { .. }));
     }
 
@@ -1036,7 +1038,9 @@ mod tests {
     fn reverse_signal_assign() {
         let nodes = lower_template("signal inv; a --> inv;").unwrap();
         assert_eq!(nodes.len(), 1);
-        assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "inv"));
+        assert!(
+            matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv")
+        );
     }
 
     // ── Postfix ops in expression statements ────────────────────────
@@ -1075,11 +1079,11 @@ mod tests {
             "#,
         )
         .unwrap();
-        // inv <-- 1 → Let
+        // inv <-- 1 → WitnessHint (no constraints)
         // out <== expr → Let + AssertEq
         // a * out === 0 → AssertEq
         assert_eq!(nodes.len(), 4);
-        assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "inv"));
+        assert!(matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv"));
         assert!(matches!(&nodes[1], CircuitNode::Let { name, .. } if name == "out"));
         assert!(matches!(&nodes[2], CircuitNode::AssertEq { .. }));
         assert!(matches!(&nodes[3], CircuitNode::AssertEq { .. }));

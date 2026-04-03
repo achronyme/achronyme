@@ -114,6 +114,11 @@ fn walk_node(
         CircuitNode::Decompose { value, .. } => {
             walk_expr(value, false, structural, constraint);
         }
+        CircuitNode::WitnessHint { hint, .. } => {
+            // Hint expression is evaluated off-circuit, but captures
+            // referenced in it still need to be provided as values.
+            walk_expr(hint, false, structural, constraint);
+        }
     }
 }
 

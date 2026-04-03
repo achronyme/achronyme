@@ -348,6 +348,7 @@ fn validate_node(
         }
         CircuitNode::Expr { expr, .. } => validate_expr(expr),
         CircuitNode::Decompose { value, .. } => validate_expr(value),
+        CircuitNode::WitnessHint { hint, .. } => validate_expr(hint),
     }
 }
 
@@ -537,6 +538,17 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// Witness hint: `signal <-- expr` in Circom.
+    ///
+    /// The signal becomes a witness input variable (zero constraints).
+    /// The hint expression is evaluated off-circuit by the prover to compute
+    /// the witness value. Only `===` constraints verify the value.
+    WitnessHint {
+        name: String,
+        hint: CircuitExpr,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
 }
 
 impl CircuitNode {
@@ -550,7 +562,8 @@ impl CircuitNode {
             | CircuitNode::For { span, .. }
             | CircuitNode::If { span, .. }
             | CircuitNode::Expr { span, .. }
-            | CircuitNode::Decompose { span, .. } => span.as_ref(),
+            | CircuitNode::Decompose { span, .. }
+            | CircuitNode::WitnessHint { span, .. } => span.as_ref(),
         }
     }
 }
@@ -892,6 +905,9 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
             ..
         } => {
             writeln!(f, "{pad}let {name} = decompose({value}, {num_bits})")
+        }
+        CircuitNode::WitnessHint { name, hint, .. } => {
+            writeln!(f, "{pad}{name} <-- {hint}")
         }
     }
 }

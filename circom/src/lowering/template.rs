@@ -164,6 +164,7 @@ fn collect_capture_usage<'a>(
         }
         CircuitNode::Expr { expr, .. } => collect_expr_captures(expr, circuit),
         CircuitNode::Decompose { value, .. } => collect_expr_captures(value, circuit),
+        CircuitNode::WitnessHint { hint, .. } => collect_expr_captures(hint, circuit),
     }
 }
 

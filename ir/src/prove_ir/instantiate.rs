@@ -400,6 +400,20 @@ impl<F: FieldBackend> Instantiator<F> {
                 });
                 self.env.insert(name.clone(), InstEnvValue::Array(bit_vars));
             }
+            CircuitNode::WitnessHint { name, .. } => {
+                // Witness hint: register as a witness input variable.
+                // The hint expression is NOT compiled to constraints.
+                // The actual value is provided externally by the prover
+                // (computed from the hint expression off-circuit).
+                let v = self.program.fresh_var();
+                self.program.set_name(v, name.clone());
+                self.push_inst(Instruction::Input {
+                    result: v,
+                    name: name.clone(),
+                    visibility: Visibility::Witness,
+                });
+                self.env.insert(name.clone(), InstEnvValue::Scalar(v));
+            }
         }
         Ok(())
     }

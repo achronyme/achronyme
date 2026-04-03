@@ -22,6 +22,7 @@ pub mod analysis;
 pub mod ast;
 pub mod lexer;
 mod lowering;
+pub mod witness;
 pub mod parser;
 pub mod token;
 

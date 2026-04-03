@@ -211,6 +211,11 @@ fn mangle_node(
             num_bits: *num_bits,
             span: span.clone(),
         },
+        CircuitNode::WitnessHint { name, hint, span } => CircuitNode::WitnessHint {
+            name: mangle_name(prefix, name),
+            hint: mangle_expr(hint, prefix, param_subs),
+            span: span.clone(),
+        },
     }
 }
 

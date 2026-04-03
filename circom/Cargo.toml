@@ -13,6 +13,7 @@ categories.workspace = true
 [dependencies]
 diagnostics = { path = "../diagnostics" }
 ir = { path = "../ir" }
+memory = { path = "../memory" }
 
 [dev-dependencies]
 tempfile = "3"

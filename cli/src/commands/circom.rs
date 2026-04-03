@@ -207,7 +207,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     circuit_stats: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
-    let resolved_inputs: Option<HashMap<String, FieldElement<F>>> = if let Some(raw) = inputs {
+    let mut resolved_inputs: Option<HashMap<String, FieldElement<F>>> = if let Some(raw) = inputs {
         Some(parse_inputs::<F>(raw)?)
     } else if let Some(toml_path) = input_file {
         Some(parse_inputs_toml::<F>(toml_path)?)
@@ -251,15 +251,22 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         );
     }
 
-    // 2. Instantiate ProveIR → SSA IR
-    let input_map_for_instantiate: HashMap<String, FieldElement<F>> =
+    // 2. Compute witness hints (off-circuit evaluation of `<--` expressions)
+    // The hints compute signal values from user inputs using off-circuit arithmetic.
+    let user_inputs: HashMap<String, FieldElement<F>> =
         resolved_inputs.clone().unwrap_or_default();
+    let witness_values =
+        circom::witness::compute_witness_hints::<F>(&prove_ir, &user_inputs);
 
-    // Convert FieldElement map to the format ProveIR expects
-    let scope_for_instantiate: HashMap<String, memory::FieldElement<F>> = input_map_for_instantiate;
+    // Merge user inputs + computed witness hints for R1CS
+    let mut all_inputs = resolved_inputs.clone().unwrap_or_default();
+    all_inputs.extend(witness_values);
+    resolved_inputs = Some(all_inputs);
 
+    // Instantiate ProveIR → SSA IR (no captures for now)
+    let empty_captures: HashMap<String, FieldElement<F>> = HashMap::new();
     let mut program = prove_ir
-        .instantiate(&scope_for_instantiate)
+        .instantiate(&empty_captures)
         .map_err(|e| anyhow::anyhow!("ProveIR instantiation error: {e}"))?;
 
     if verbose {
