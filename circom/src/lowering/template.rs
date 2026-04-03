@@ -1143,8 +1143,7 @@ mod tests {
     #[test]
     fn real_lessthan_3_lt_10() {
         // 3 < 10 → out = 1 (true)
-        let (_nc, _nv, _np, proof) =
-            circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 3), ("in_1", 10)]);
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 3), ("in_1", 10)]);
         assert_proof_valid(&proof);
         eprintln!("LessThan(8): 3 < 10 → verified!");
     }
@@ -1161,8 +1160,7 @@ mod tests {
     #[test]
     fn real_lessthan_equal_values() {
         // 42 < 42 → out = 0 (false, equal is not less than)
-        let (_nc, _nv, _np, proof) =
-            circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 42), ("in_1", 42)]);
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(LESSTHAN_SRC, &[("in_0", 42), ("in_1", 42)]);
         assert_proof_valid(&proof);
         eprintln!("LessThan(8): 42 < 42 → verified!");
     }

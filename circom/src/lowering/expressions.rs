@@ -141,8 +141,7 @@ pub fn lower_expr(
                         ..
                     } = object.as_ref()
                     {
-                        extract_ident_name(inner_obj)
-                            .map(|obj_name| format!("{obj_name}.{field}"))
+                        extract_ident_name(inner_obj).map(|obj_name| format!("{obj_name}.{field}"))
                     } else {
                         None
                     }

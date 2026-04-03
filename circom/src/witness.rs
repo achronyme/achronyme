@@ -367,10 +367,7 @@ fn eval_hint<F: FieldBackend>(
 ///
 /// Used for `ForRange::WithExpr` where the loop bound is a computed expression
 /// (e.g., `n + 1` from component instantiation `Num2Bits(n+1)`).
-fn eval_const_expr_u64(
-    expr: &CircuitExpr,
-    captures: &HashMap<String, u64>,
-) -> Option<u64> {
+fn eval_const_expr_u64(expr: &CircuitExpr, captures: &HashMap<String, u64>) -> Option<u64> {
     match expr {
         CircuitExpr::Const(fc) => fc.to_u64(),
         CircuitExpr::Capture(name) => captures.get(name).copied(),

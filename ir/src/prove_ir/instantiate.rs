@@ -524,21 +524,23 @@ impl<F: FieldBackend> Instantiator<F> {
 
     fn eval_const_expr(&self, expr: &CircuitExpr) -> Result<FieldElement<F>, ProveIrError> {
         match expr {
-            CircuitExpr::Const(fc) => fc.to_field::<F>().ok_or_else(|| {
-                ProveIrError::UnsupportedOperation {
-                    description: "constant out of field range".into(),
-                    span: None,
-                }
-            }),
+            CircuitExpr::Const(fc) => {
+                fc.to_field::<F>()
+                    .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                        description: "constant out of field range".into(),
+                        span: None,
+                    })
+            }
             CircuitExpr::Capture(name) => {
-                self.captures.get(name).copied().ok_or_else(|| {
-                    ProveIrError::UnsupportedOperation {
+                self.captures
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| ProveIrError::UnsupportedOperation {
                         description: format!(
                             "missing capture value `{name}` in loop bound expression"
                         ),
                         span: None,
-                    }
-                })
+                    })
             }
             CircuitExpr::BinOp { op, lhs, rhs } => {
                 let l = self.eval_const_expr(lhs)?;
@@ -547,18 +549,16 @@ impl<F: FieldBackend> Instantiator<F> {
                     CircuitBinOp::Add => Ok(l.add(&r)),
                     CircuitBinOp::Sub => Ok(l.sub(&r)),
                     CircuitBinOp::Mul => Ok(l.mul(&r)),
-                    CircuitBinOp::Div => l.div(&r).ok_or_else(|| {
-                        ProveIrError::UnsupportedOperation {
+                    CircuitBinOp::Div => {
+                        l.div(&r).ok_or_else(|| ProveIrError::UnsupportedOperation {
                             description: "division by zero in loop bound expression".into(),
                             span: None,
-                        }
-                    }),
+                        })
+                    }
                 }
             }
             _ => Err(ProveIrError::UnsupportedOperation {
-                description: format!(
-                    "unsupported expression in loop bound: {expr:?}"
-                ),
+                description: format!("unsupported expression in loop bound: {expr:?}"),
                 span: None,
             }),
         }
@@ -1408,7 +1408,11 @@ impl<F: FieldBackend> Instantiator<F> {
 
     /// Resolve a circuit expression to a u32 constant, trying eval_const_expr
     /// first (for captures) then falling back to emit + extract.
-    fn resolve_const_u32(&mut self, expr: &CircuitExpr, context: &str) -> Result<u32, ProveIrError> {
+    fn resolve_const_u32(
+        &mut self,
+        expr: &CircuitExpr,
+        context: &str,
+    ) -> Result<u32, ProveIrError> {
         // Try constant evaluation first (handles captures and arithmetic)
         if let Ok(fe) = self.eval_const_expr(expr) {
             let val = fe_to_u64(&fe, context)?;
