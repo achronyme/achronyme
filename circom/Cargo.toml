@@ -21,3 +21,4 @@ constraints = { path = "../constraints" }
 proving = { path = "../proving" }
 vm = { path = "../vm" }
 tempfile = "3"
+toml = "0.8"

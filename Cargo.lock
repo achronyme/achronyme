@@ -457,6 +457,7 @@ dependencies = [
  "memory",
  "proving",
  "tempfile",
+ "toml",
  "vm",
 ]
 
