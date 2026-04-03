@@ -349,6 +349,18 @@ fn validate_node(
         CircuitNode::Expr { expr, .. } => validate_expr(expr),
         CircuitNode::Decompose { value, .. } => validate_expr(value),
         CircuitNode::WitnessHint { hint, .. } => validate_expr(hint),
+        CircuitNode::LetIndexed {
+            index, value, ..
+        } => {
+            validate_expr(index)?;
+            validate_expr(value)
+        }
+        CircuitNode::WitnessHintIndexed {
+            index, hint, ..
+        } => {
+            validate_expr(index)?;
+            validate_expr(hint)
+        }
     }
 }
 
@@ -407,9 +419,12 @@ fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
             validate_expr(lhs)?;
             validate_expr(rhs)
         }
-        CircuitExpr::BitNot { operand, .. }
-        | CircuitExpr::ShiftR { operand, .. }
-        | CircuitExpr::ShiftL { operand, .. } => validate_expr(operand),
+        CircuitExpr::BitNot { operand, .. } => validate_expr(operand),
+        CircuitExpr::ShiftR { operand, shift, .. }
+        | CircuitExpr::ShiftL { operand, shift, .. } => {
+            validate_expr(operand)?;
+            validate_expr(shift)
+        }
         // Leaf nodes — no sub-expressions
         CircuitExpr::Const(_)
         | CircuitExpr::Input(_)
@@ -549,6 +564,28 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// Indexed let binding: `array[index] = value` inside a for loop.
+    ///
+    /// During instantiation, `index` resolves to a compile-time constant `i`,
+    /// and the node becomes a scalar `Let { name: "{array}_{i}", value }`.
+    /// Also updates the array's env entry so that later `ArrayIndex` reads work.
+    LetIndexed {
+        array: String,
+        index: CircuitExpr,
+        value: CircuitExpr,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
+    /// Indexed witness hint: `array[index] <-- hint` inside a for loop.
+    ///
+    /// During instantiation, resolves to a scalar `WitnessHint { name: "{array}_{i}" }`.
+    WitnessHintIndexed {
+        array: String,
+        index: CircuitExpr,
+        hint: CircuitExpr,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
 }
 
 impl CircuitNode {
@@ -563,7 +600,9 @@ impl CircuitNode {
             | CircuitNode::If { span, .. }
             | CircuitNode::Expr { span, .. }
             | CircuitNode::Decompose { span, .. }
-            | CircuitNode::WitnessHint { span, .. } => span.as_ref(),
+            | CircuitNode::WitnessHint { span, .. }
+            | CircuitNode::LetIndexed { span, .. }
+            | CircuitNode::WitnessHintIndexed { span, .. } => span.as_ref(),
         }
     }
 }
@@ -697,13 +736,13 @@ pub enum CircuitExpr {
     /// Right shift by constant amount: decompose, drop low bits, recompose.
     ShiftR {
         operand: Box<CircuitExpr>,
-        shift: u32,
+        shift: Box<CircuitExpr>,
         num_bits: u32,
     },
-    /// Left shift by constant amount: decompose, prepend zeros, recompose.
+    /// Left shift: decompose, prepend zeros, recompose.
     ShiftL {
         operand: Box<CircuitExpr>,
-        shift: u32,
+        shift: Box<CircuitExpr>,
         num_bits: u32,
     },
 }
@@ -908,6 +947,22 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
         }
         CircuitNode::WitnessHint { name, hint, .. } => {
             writeln!(f, "{pad}{name} <-- {hint}")
+        }
+        CircuitNode::LetIndexed {
+            array,
+            index,
+            value,
+            ..
+        } => {
+            writeln!(f, "{pad}let {array}[{index}] = {value}")
+        }
+        CircuitNode::WitnessHintIndexed {
+            array,
+            index,
+            hint,
+            ..
+        } => {
+            writeln!(f, "{pad}{array}[{index}] <-- {hint}")
         }
     }
 }

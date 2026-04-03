@@ -414,6 +414,64 @@ impl<F: FieldBackend> Instantiator<F> {
                 });
                 self.env.insert(name.clone(), InstEnvValue::Scalar(v));
             }
+            CircuitNode::LetIndexed {
+                array,
+                index,
+                value,
+                ..
+            } => {
+                // Evaluate index to a compile-time constant.
+                let idx_var = self.emit_expr(index)?;
+                let idx = self.extract_const_index(idx_var).ok_or_else(|| {
+                    ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "indexed assignment into `{array}` requires a compile-time constant index"
+                        ),
+                        span: None,
+                    }
+                })?;
+                let elem_name = format!("{array}_{idx}");
+                let v = self.emit_expr(value)?;
+                self.program.set_name(v, elem_name.clone());
+                self.env.insert(elem_name, InstEnvValue::Scalar(v));
+                // Update the array env entry if it exists.
+                if let Some(InstEnvValue::Array(arr)) = self.env.get_mut(array) {
+                    if idx < arr.len() {
+                        arr[idx] = v;
+                    }
+                }
+            }
+            CircuitNode::WitnessHintIndexed {
+                array,
+                index,
+                ..
+            } => {
+                // Witness hint with dynamic (but compile-time constant) index.
+                let idx_var = self.emit_expr(index)?;
+                let idx = self.extract_const_index(idx_var).ok_or_else(|| {
+                    ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "indexed witness hint into `{array}` requires a compile-time constant index"
+                        ),
+                        span: None,
+                    }
+                })?;
+                let elem_name = format!("{array}_{idx}");
+                let v = self.program.fresh_var();
+                self.program.set_name(v, elem_name.clone());
+                self.push_inst(Instruction::Input {
+                    result: v,
+                    name: elem_name.clone(),
+                    visibility: Visibility::Witness,
+                });
+                self.env.insert(elem_name, InstEnvValue::Scalar(v));
+                // Update the array env entry if it exists.
+                if let Some(InstEnvValue::Array(arr)) = self.env.get_mut(array) {
+                    if idx < arr.len() {
+                        arr[idx] = v;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -935,7 +993,9 @@ impl<F: FieldBackend> Instantiator<F> {
                 num_bits,
             } => {
                 let op = self.emit_expr(operand)?;
-                self.emit_shift_right(op, *shift, *num_bits)
+                let shift_var = self.emit_expr(shift)?;
+                let shift_val = self.extract_const_u32(shift_var, "shift right amount")?;
+                self.emit_shift_right(op, shift_val, *num_bits)
             }
             CircuitExpr::ShiftL {
                 operand,
@@ -943,7 +1003,9 @@ impl<F: FieldBackend> Instantiator<F> {
                 num_bits,
             } => {
                 let op = self.emit_expr(operand)?;
-                self.emit_shift_left(op, *shift, *num_bits)
+                let shift_var = self.emit_expr(shift)?;
+                let shift_val = self.extract_const_u32(shift_var, "shift left amount")?;
+                self.emit_shift_left(op, shift_val, *num_bits)
             }
         }
     }
@@ -1256,6 +1318,16 @@ impl<F: FieldBackend> Instantiator<F> {
             }
         }
         None
+    }
+
+    /// Extract a constant u32 from an emitted variable, with a descriptive error.
+    fn extract_const_u32(&self, var: SsaVar, context: &str) -> Result<u32, ProveIrError> {
+        self.extract_const_index(var)
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                description: format!("{context} must be a compile-time constant"),
+                span: None,
+            })
     }
 }
 

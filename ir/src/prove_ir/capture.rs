@@ -119,6 +119,18 @@ fn walk_node(
             // referenced in it still need to be provided as values.
             walk_expr(hint, false, structural, constraint);
         }
+        CircuitNode::LetIndexed {
+            index, value, ..
+        } => {
+            walk_expr(index, false, structural, constraint);
+            walk_expr(value, false, structural, constraint);
+        }
+        CircuitNode::WitnessHintIndexed {
+            index, hint, ..
+        } => {
+            walk_expr(index, false, structural, constraint);
+            walk_expr(hint, false, structural, constraint);
+        }
     }
 }
 
