@@ -313,13 +313,12 @@ fn lower_stmt<'a>(
         }
 
         // ── Assert ──────────────────────────────────────────────────
-        Stmt::Assert { arg, span } => {
-            let expr = lower_expr(arg, env, ctx)?;
-            nodes.push(CircuitNode::Assert {
-                expr,
-                message: None,
-                span: Some(SpanRange::from_span(span)),
-            });
+        // In Circom, assert() is a prover-side runtime check during witness
+        // computation — it does NOT generate R1CS constraints. Only `===`
+        // produces constraints. This differs from Achronyme where assert is
+        // a circuit constraint.
+        Stmt::Assert { .. } => {
+            // No-op in circuit context (same as log).
         }
 
         // ── Return ──────────────────────────────────────────────────
@@ -1566,10 +1565,10 @@ mod tests {
     // ── Assert ──────────────────────────────────────────────────────
 
     #[test]
-    fn assert_produces_assert_node() {
+    fn assert_is_noop() {
+        // In Circom, assert() is a prover-side runtime check, not a constraint.
         let nodes = lower_template("assert(a == 1);").unwrap();
-        assert_eq!(nodes.len(), 1);
-        assert!(matches!(&nodes[0], CircuitNode::Assert { .. }));
+        assert!(nodes.is_empty());
     }
 
     // ── Log is no-op ────────────────────────────────────────────────

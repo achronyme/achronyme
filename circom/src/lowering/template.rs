@@ -439,7 +439,8 @@ mod tests {
     // ── Assert template ─────────────────────────────────────────────
 
     #[test]
-    fn assert_in_template() {
+    fn assert_is_noop_in_template() {
+        // In Circom, assert() is a prover-side runtime check, not a constraint.
         let ir = parse_and_lower(
             r#"
             template CheckNonZero() {
@@ -450,8 +451,7 @@ mod tests {
             "#,
         );
 
-        assert_eq!(ir.body.len(), 1);
-        assert!(matches!(&ir.body[0], CircuitNode::Assert { .. }));
+        assert!(ir.body.is_empty());
     }
 
     // ── Empty template ──────────────────────────────────────────────
