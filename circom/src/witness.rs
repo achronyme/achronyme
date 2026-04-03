@@ -170,12 +170,12 @@ fn eval_hint<F: FieldBackend>(
             if_false,
         } => {
             let c = eval_hint(cond, env)?;
-            let t = eval_hint(if_true, env)?;
-            let f = eval_hint(if_false, env)?;
+            // Lazy: only evaluate the taken branch (e.g. `in != 0 ? 1/in : 0`
+            // must not evaluate 1/in when in == 0).
             if c != FieldElement::<F>::zero() {
-                Some(t)
+                eval_hint(if_true, env)
             } else {
-                Some(f)
+                eval_hint(if_false, env)
             }
         }
 
