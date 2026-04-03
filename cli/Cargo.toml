@@ -35,6 +35,7 @@ vm = { path = "../vm" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 ir = { path = "../ir" }
+circom = { path = "../circom" }
 achronyme-parser = { path = "../achronyme-parser" }
 achronyme-std = { path = "../std" }
 

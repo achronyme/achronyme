@@ -121,6 +121,32 @@ fn main() -> Result<()> {
             )
         }
 
+        Commands::Circom {
+            inputs,
+            input_file,
+            prove,
+            ..
+        } => {
+            let path = cfg.entry.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("no input file specified and no `entry` in achronyme.toml")
+            })?;
+            validate_prime_backend(prime_id, &cfg.backend)?;
+            cli::commands::circom::circom_command(
+                path,
+                &cfg.r1cs_path,
+                &cfg.wtns_path,
+                inputs.as_deref(),
+                input_file.as_deref(),
+                !cfg.optimize,
+                &cfg.backend,
+                prime_id,
+                *prove,
+                cfg.solidity_path.as_deref(),
+                cfg.circuit_stats,
+                ef,
+            )
+        }
+
         Commands::Circuit {
             inputs,
             input_file,
@@ -159,7 +185,8 @@ fn command_start_dir(cmd: &Commands) -> std::path::PathBuf {
         | Commands::Disassemble { path }
         | Commands::Compile { path, .. }
         | Commands::Inspect { path, .. }
-        | Commands::Circuit { path, .. } => path.as_deref(),
+        | Commands::Circuit { path, .. }
+        | Commands::Circom { path, .. } => path.as_deref(),
         Commands::Init { .. } => None,
     };
 
@@ -279,6 +306,32 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             stress_gc: false,
             gc_stats: false,
             circuit_stats: false,
+        },
+
+        Commands::Circom {
+            path,
+            backend,
+            no_optimize,
+            r1cs,
+            wtns,
+            solidity,
+            circuit_stats,
+            ..
+        } => CliOverrides {
+            path: path.clone(),
+            error_format: cli.error_format.clone(),
+            prime: cli.prime.clone(),
+            backend: backend.clone(),
+            prove_backend: None,
+            optimize: no_optimize.map(|no| !no),
+            r1cs_path: r1cs.clone(),
+            wtns_path: wtns.clone(),
+            solidity_path: solidity.clone(),
+            plonkish_json_path: None,
+            max_heap: None,
+            stress_gc: false,
+            gc_stats: false,
+            circuit_stats: *circuit_stats,
         },
 
         Commands::Init { .. } => unreachable!(),
