@@ -23,6 +23,9 @@ pub struct LoweringContext<'a> {
     pub functions: HashMap<&'a str, &'a FunctionDef>,
     /// Current inlining depth (incremented on each component/function inline).
     pub inline_depth: usize,
+    /// Template parameter values for the main template (e.g., n=3).
+    /// Used to resolve component array sizes and unroll loops at lowering time.
+    pub param_values: HashMap<String, u64>,
 }
 
 impl<'a> LoweringContext<'a> {
@@ -45,6 +48,7 @@ impl<'a> LoweringContext<'a> {
             templates,
             functions,
             inline_depth: 0,
+            param_values: HashMap::new(),
         }
     }
 }

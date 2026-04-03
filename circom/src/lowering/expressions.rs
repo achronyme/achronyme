@@ -72,15 +72,21 @@ pub fn lower_expr(
         }
 
         // ── Identifiers ─────────────────────────────────────────────
-        Expr::Ident { name, span } => match env.resolve(name) {
-            Some(VarKind::Input) => Ok(CircuitExpr::Input(name.clone())),
-            Some(VarKind::Local) => Ok(CircuitExpr::Var(name.clone())),
-            Some(VarKind::Capture) => Ok(CircuitExpr::Capture(name.clone())),
-            None => Err(LoweringError::new(
-                format!("undefined variable `{name}` in circuit context"),
-                span,
-            )),
-        },
+        Expr::Ident { name, span } => {
+            // Check known constants first (loop vars during manual unrolling)
+            if let Some(&val) = env.known_constants.get(name.as_str()) {
+                return Ok(CircuitExpr::Const(FieldConst::from_u64(val)));
+            }
+            match env.resolve(name) {
+                Some(VarKind::Input) => Ok(CircuitExpr::Input(name.clone())),
+                Some(VarKind::Local) => Ok(CircuitExpr::Var(name.clone())),
+                Some(VarKind::Capture) => Ok(CircuitExpr::Capture(name.clone())),
+                None => Err(LoweringError::new(
+                    format!("undefined variable `{name}` in circuit context"),
+                    span,
+                )),
+            }
+        }
 
         // ── Binary operations ───────────────────────────────────────
         Expr::BinOp { op, lhs, rhs, span } => {
@@ -218,9 +224,43 @@ pub fn lower_expr(
             field,
             span,
         } => {
-            let obj_name = extract_ident_name(object).ok_or_else(|| {
-                LoweringError::new("dot access target must be a simple identifier", span)
-            })?;
+            // Simple ident: comp.field
+            let obj_name = if let Some(name) = extract_ident_name(object) {
+                name
+            } else if let Expr::Index {
+                object: inner_obj,
+                index: inner_idx,
+                ..
+            } = object.as_ref()
+            {
+                // Indexed component array: muls[i].field → muls_{i}.field
+                if let Some(arr_name) = extract_ident_name(inner_obj) {
+                    if let Some(idx) = const_eval_u64(inner_idx).or_else(|| {
+                        if let Expr::Ident { name, .. } = inner_idx.as_ref() {
+                            env.known_constants.get(name.as_str()).copied()
+                        } else {
+                            None
+                        }
+                    }) {
+                        format!("{arr_name}_{idx}")
+                    } else {
+                        return Err(LoweringError::new(
+                            "component array index must be a compile-time constant",
+                            span,
+                        ));
+                    }
+                } else {
+                    return Err(LoweringError::new(
+                        "dot access target must be a simple identifier or indexed component array",
+                        span,
+                    ));
+                }
+            } else {
+                return Err(LoweringError::new(
+                    "dot access target must be a simple identifier or indexed component array",
+                    span,
+                ));
+            };
             let mangled = format!("{obj_name}.{field}");
             match env.resolve(&mangled) {
                 Some(VarKind::Input) => Ok(CircuitExpr::Input(mangled)),
@@ -676,6 +716,7 @@ mod tests {
             templates: std::collections::HashMap::new(),
             functions: std::collections::HashMap::new(),
             inline_depth: 0,
+            param_values: std::collections::HashMap::new(),
         }
     }
 

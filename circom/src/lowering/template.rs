@@ -26,6 +26,18 @@ pub fn lower_template(
     program: &CircomProgram,
 ) -> Result<ProveIR, LoweringError> {
     let mut ctx = LoweringContext::from_program(program);
+
+    // Compute param values from main component args (for component array sizes, etc.)
+    if let Some(main_comp) = main {
+        for (i, param) in template.params.iter().enumerate() {
+            if let Some(arg) = main_comp.template_args.get(i) {
+                if let Some(val) = super::utils::const_eval_u64(arg) {
+                    ctx.param_values.insert(param.clone(), val);
+                }
+            }
+        }
+    }
+
     // 1. Extract signal layout
     let layout = extract_signal_layout(template, main)?;
 

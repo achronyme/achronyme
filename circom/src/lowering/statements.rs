@@ -105,7 +105,7 @@ fn lower_stmt<'a>(
             AssignOp::RConstraintAssign | AssignOp::RSignalAssign => value,
             _ => target,
         };
-        let is_pending_wiring = extract_component_wiring(actual_target)
+        let is_pending_wiring = extract_component_wiring_with_env(actual_target, env)
             .map(|(comp, _)| pending.contains_key(&comp))
             .unwrap_or(false);
         if !is_pending_wiring {
@@ -343,6 +343,14 @@ fn lower_stmt<'a>(
         } => {
             for comp_name_decl in names {
                 let comp_name = &comp_name_decl.name;
+
+                // Component array: `component muls[n]` — register and skip init
+                if !comp_name_decl.dimensions.is_empty() {
+                    env.component_arrays.insert(comp_name.clone());
+                    env.locals.insert(comp_name.clone());
+                    continue;
+                }
+
                 env.locals.insert(comp_name.clone());
 
                 // If there's an initializer (`component c = Template(args)`),
@@ -477,10 +485,40 @@ enum AssignTarget {
 /// - `DotAccess { object: "c", field: "a" }` → `Scalar("c.a")`
 /// - `Index { object: "out", index: i }` → `Indexed { array: "out", index: i }`
 fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
+    extract_assign_target_with_constants(expr, &HashMap::new())
+}
+
+/// Extract an assignment target, resolving known constants for component array indices.
+fn extract_assign_target_with_constants(
+    expr: &Expr,
+    known_constants: &HashMap<String, u64>,
+) -> Option<AssignTarget> {
     match expr {
         Expr::Ident { name, .. } => Some(AssignTarget::Scalar(name.clone())),
         Expr::DotAccess { object, field, .. } => {
-            extract_ident_name(object).map(|obj| AssignTarget::Scalar(format!("{obj}.{field}")))
+            // Simple: comp.field
+            if let Some(obj) = extract_ident_name(object) {
+                return Some(AssignTarget::Scalar(format!("{obj}.{field}")));
+            }
+            // Component array: comp[i].field → comp_{i}.field
+            if let Expr::Index {
+                object: inner_obj,
+                index: inner_idx,
+                ..
+            } = object.as_ref()
+            {
+                if let Some(arr_name) = extract_ident_name(inner_obj) {
+                    let idx = const_eval_u64(inner_idx).or_else(|| {
+                        if let Expr::Ident { name, .. } = inner_idx.as_ref() {
+                            known_constants.get(name.as_str()).copied()
+                        } else {
+                            None
+                        }
+                    })?;
+                    return Some(AssignTarget::Scalar(format!("{arr_name}_{idx}.{field}")));
+                }
+            }
+            None
         }
         Expr::Index { object, index, .. } => {
             // Unwrap nested Index chains: arr[i][j][k] → base + [i, j, k]
@@ -544,13 +582,37 @@ fn extract_target_name(expr: &Expr) -> Option<String> {
 }
 
 /// Check if a substitution target is a component signal wiring.
-/// Handles both `comp.signal` and `comp.signal[i]`.
+/// Handles `comp.signal`, `comp.signal[i]`, and `comp[i].signal`.
 /// Returns `(component_name, signal_name)` if so.
-fn extract_component_wiring(target: &Expr) -> Option<(String, String)> {
+fn extract_component_wiring_with_env(target: &Expr, env: &LoweringEnv) -> Option<(String, String)> {
     match target {
-        // comp.signal <== expr
+        // comp.signal <== expr  OR  comp[i].signal <== expr
         Expr::DotAccess { object, field, .. } => {
-            extract_ident_name(object).map(|obj| (obj, field.clone()))
+            // Simple: comp.signal
+            if let Some(obj) = extract_ident_name(object) {
+                return Some((obj, field.clone()));
+            }
+            // Component array: comp[i].signal → comp_{i}.signal
+            if let Expr::Index {
+                object: inner_obj,
+                index: inner_idx,
+                ..
+            } = object.as_ref()
+            {
+                if let Some(arr_name) = extract_ident_name(inner_obj) {
+                    let idx = const_eval_u64(inner_idx).or_else(|| {
+                        if let Expr::Ident { name, .. } = inner_idx.as_ref() {
+                            env.known_constants.get(name.as_str()).copied()
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(idx) = idx {
+                        return Some((format!("{arr_name}_{idx}"), field.clone()));
+                    }
+                }
+            }
+            None
         }
         // comp.signal[i] <== expr or comp.signal[i][j] <== expr
         // Return the base signal name for tracking purposes.
@@ -594,7 +656,7 @@ fn lower_substitution<'a>(
     op: AssignOp,
     value: &Expr,
     span: &diagnostics::Span,
-    env: &LoweringEnv,
+    env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
@@ -612,13 +674,14 @@ fn lower_substitution<'a>(
     match op {
         // `target <== expr` → Let + AssertEq (or LetIndexed + AssertEq for arrays)
         AssignOp::ConstraintAssign => {
-            let assign_target = extract_assign_target(target).ok_or_else(|| {
-                LoweringError::new(
-                    "constraint assignment target must be an identifier, \
+            let assign_target = extract_assign_target_with_constants(target, &env.known_constants)
+                .ok_or_else(|| {
+                    LoweringError::new(
+                        "constraint assignment target must be an identifier, \
                      component signal, or array element",
-                    span,
-                )
-            })?;
+                        span,
+                    )
+                })?;
             let lowered = lower_expr(value, env, ctx)?;
             match assign_target {
                 AssignTarget::Scalar(name) => {
@@ -671,18 +734,19 @@ fn lower_substitution<'a>(
                     });
                 }
             }
-            maybe_trigger_inline(target, nodes, ctx, pending, span)?;
+            maybe_trigger_inline(target, nodes, ctx, pending, span, env)?;
         }
 
         // `target <-- expr` → WitnessHint or WitnessHintIndexed
         AssignOp::SignalAssign => {
-            let assign_target = extract_assign_target(target).ok_or_else(|| {
-                LoweringError::new(
-                    "signal assignment target must be an identifier, \
+            let assign_target = extract_assign_target_with_constants(target, &env.known_constants)
+                .ok_or_else(|| {
+                    LoweringError::new(
+                        "signal assignment target must be an identifier, \
                      component signal, or array element",
-                    span,
-                )
-            })?;
+                        span,
+                    )
+                })?;
             let lowered = lower_expr(value, env, ctx)?;
             match assign_target {
                 AssignTarget::Scalar(name) => {
@@ -711,7 +775,7 @@ fn lower_substitution<'a>(
                     });
                 }
             }
-            maybe_trigger_inline(target, nodes, ctx, pending, span)?;
+            maybe_trigger_inline(target, nodes, ctx, pending, span, env)?;
         }
 
         // RConstraintAssign (==>) and RSignalAssign (-->) are desugared
@@ -720,8 +784,74 @@ fn lower_substitution<'a>(
             unreachable!("reverse operators desugared at function entry")
         }
 
-        // `target = expr` → variable reassignment (SSA shadowing)
+        // `target = expr` → variable reassignment, component array instantiation, or SSA shadowing
         AssignOp::Assign => {
+            // Component array element instantiation: muls[i] = Template()
+            if let Expr::Index {
+                object: idx_obj,
+                index: idx_expr,
+                ..
+            } = target
+            {
+                if let Some(arr_name) = extract_ident_name(idx_obj) {
+                    if env.component_arrays.contains(&arr_name) {
+                        // Resolve index to constant
+                        let idx = const_eval_u64(idx_expr)
+                            .or_else(|| {
+                                if let Expr::Ident { name, .. } = idx_expr.as_ref() {
+                                    env.known_constants.get(name.as_str()).copied()
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or_else(|| {
+                                LoweringError::new(
+                                    "component array index must be a compile-time constant",
+                                    span,
+                                )
+                            })?;
+
+                        let comp_name = format!("{arr_name}_{idx}");
+                        env.locals.insert(comp_name.clone());
+
+                        if let Some((tmpl_name, tmpl_args)) =
+                            extract_component_call(value, env, ctx)?
+                        {
+                            if let Some(template) = ctx.templates.get(tmpl_name.as_str()) {
+                                let template = *template;
+                                register_component_locals(&comp_name, template, &tmpl_args, env);
+
+                                let signals = collect_signal_names(&template.body.stmts);
+                                let input_signals: HashSet<String> = signals
+                                    .iter()
+                                    .filter(|(_, st)| matches!(st, ast::SignalType::Input))
+                                    .map(|(n, _)| n.clone())
+                                    .collect();
+
+                                if input_signals.is_empty() {
+                                    let body = inline_component_body(
+                                        &comp_name, template, &tmpl_args, ctx, span,
+                                    )?;
+                                    nodes.extend(body);
+                                } else {
+                                    pending.insert(
+                                        comp_name,
+                                        PendingComponent {
+                                            template,
+                                            template_args: tmpl_args,
+                                            input_signals,
+                                            wired_signals: HashSet::new(),
+                                            has_indexed_wirings: false,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+
             let name = extract_target_name(target).ok_or_else(|| {
                 LoweringError::new(
                     "assignment target must be an identifier in circuit context",
@@ -847,9 +977,10 @@ fn maybe_trigger_inline<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
     span: &diagnostics::Span,
+    env: &LoweringEnv,
 ) -> Result<(), LoweringError> {
     let is_indexed = matches!(target, Expr::Index { .. });
-    if let Some((comp_name, signal_name)) = extract_component_wiring(target) {
+    if let Some((comp_name, signal_name)) = extract_component_wiring_with_env(target, env) {
         if let Some(comp) = pending.get_mut(&comp_name) {
             comp.wired_signals.insert(signal_name);
             if is_indexed {
@@ -967,6 +1098,46 @@ fn lower_for_loop<'a>(
     // Register loop variable
     env.locals.insert(var_name.clone());
 
+    // Check if body contains component array operations.
+    // If so, unroll the loop at lowering time (component inlining needs
+    // concrete names like muls_0, muls_1, etc.).
+    let has_component_array_ops = body_has_component_array_ops(&body.stmts, env);
+
+    if has_component_array_ops {
+        // Resolve bound to a concrete number
+        let end = match &bound {
+            LoopBound::Literal(n) => *n,
+            LoopBound::Capture(name) => ctx.param_values.get(name).copied().ok_or_else(|| {
+                LoweringError::new(
+                    format!(
+                        "component array loop bound `{name}` must be resolvable \
+                         at compile time"
+                    ),
+                    span,
+                )
+            })?,
+            LoopBound::Expr(expr) => super::utils::const_eval_with_params(expr, &ctx.param_values)
+                .ok_or_else(|| {
+                    LoweringError::new(
+                        "component array loop bound expression must be resolvable \
+                         at compile time",
+                        span,
+                    )
+                })?,
+        };
+
+        // Unroll: for each iteration, set loop var as known constant, lower body
+        for i in start..end {
+            env.known_constants.insert(var_name.clone(), i);
+            for stmt in &body.stmts {
+                lower_stmt(stmt, env, nodes, ctx, pending)?;
+            }
+        }
+        env.known_constants.remove(&var_name);
+
+        return Ok(());
+    }
+
     // Lower body — propagate pending so component wirings in loops
     // (like `mux.c[0][i] <== c[i]`) update the parent's pending map.
     // Don't flush remaining at end — that's the parent's job.
@@ -1001,6 +1172,36 @@ fn lower_for_loop<'a>(
     });
 
     Ok(())
+}
+
+/// Check if any statement in the body uses a component array operation.
+///
+/// Detects patterns like `muls[i] = Template()` or `muls[i].a <== expr`
+/// where `muls` is a declared component array.
+fn body_has_component_array_ops(stmts: &[Stmt], env: &LoweringEnv) -> bool {
+    for stmt in stmts {
+        if let Stmt::Substitution { target, .. } = stmt {
+            // muls[i] = Template() — component array element instantiation
+            if let Expr::Index { object, .. } = target {
+                if let Some(name) = extract_ident_name(object) {
+                    if env.component_arrays.contains(&name) {
+                        return true;
+                    }
+                }
+            }
+            // muls[i].a <== expr — component array element wiring
+            if let Expr::DotAccess { object, .. } = target {
+                if let Expr::Index { object: inner, .. } = object.as_ref() {
+                    if let Some(name) = extract_ident_name(inner) {
+                        if env.component_arrays.contains(&name) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// A loop bound: literal constant, template parameter, or AST expression.

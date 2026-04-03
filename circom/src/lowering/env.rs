@@ -35,6 +35,11 @@ pub struct LoweringEnv {
     /// Multi-dimensional array strides for linearization.
     /// For `signal c[n][2]`, strides["c"] = [2], so c[i][j] → c[i*2+j].
     pub strides: HashMap<String, Vec<usize>>,
+    /// Component array names — declared via `component muls[n]`.
+    pub component_arrays: HashSet<String>,
+    /// Known constants — loop variables during manual unrolling.
+    /// When set, `lower_expr` for `Ident("i")` emits `Const(val)`.
+    pub known_constants: HashMap<String, u64>,
 }
 
 impl LoweringEnv {
@@ -45,6 +50,8 @@ impl LoweringEnv {
             captures: HashSet::new(),
             arrays: HashMap::new(),
             strides: HashMap::new(),
+            component_arrays: HashSet::new(),
+            known_constants: HashMap::new(),
         }
     }
 
