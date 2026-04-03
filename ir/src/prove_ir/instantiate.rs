@@ -2369,4 +2369,46 @@ mod tests {
             );
         }
     }
+
+    // --- Indexed array assignment (LetIndexed from .ach) ---
+
+    #[test]
+    fn instantiate_indexed_assignment_constant() {
+        // mut arr = [0, 0, 0]; arr[1] = 42
+        let ir = compile_and_instantiate(
+            "public out\nmut arr = [0, 0, 0]\narr[1] = 42\nassert_eq(arr[1], out)",
+        );
+        // After instantiation, arr_1 should be set to 42 (constant)
+        let consts: Vec<_> = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Const { .. }))
+            .collect();
+        // Should have constants for 0, 0, 0, and 42
+        assert!(
+            consts.len() >= 4,
+            "expected at least 4 Const instructions, got {}",
+            consts.len()
+        );
+    }
+
+    #[test]
+    fn instantiate_indexed_assignment_in_loop() {
+        // mut arr = [0, 0, 0]; for i in 0..3 { arr[i] = i * 2 }
+        let ir = compile_and_instantiate(
+            "public out\nmut arr = [0, 0, 0]\nfor i in 0..3 { arr[i] = i * 2 }\nassert_eq(arr[2], out)",
+        );
+        // Loop should unroll, producing Let assignments for arr_0, arr_1, arr_2
+        // After unroll: arr_0 = 0*2 = 0, arr_1 = 1*2 = 2, arr_2 = 2*2 = 4
+        let muls: Vec<_> = ir
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Mul { .. }))
+            .collect();
+        assert_eq!(
+            muls.len(),
+            3,
+            "expected 3 Mul instructions from unrolled loop"
+        );
+    }
 }
