@@ -20,3 +20,5 @@ pub mod expressions;
 pub mod signals;
 #[allow(dead_code)]
 pub mod statements;
+#[allow(dead_code)]
+pub mod template;
