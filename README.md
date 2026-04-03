@@ -20,8 +20,8 @@ This installs the `ach` binary to `~/.local/bin`. Requires Linux or macOS (x86_6
 git clone https://github.com/achronyme/achronyme.git
 cd achronyme
 cargo build --release
-cargo test --workspace     # 2,000+ unit tests
-bash test/run_tests.sh     # 150+ integration tests
+cargo test --workspace     # 2,700+ unit tests
+bash test/run_tests.sh     # 162 integration tests
 ```
 
 ---
@@ -43,12 +43,9 @@ print(c())  // 2
 ### ZK circuit
 
 ```achronyme
-public root
-witness leaf
-witness path[3]
-witness indices[3]
-
-merkle_verify(root, leaf, path, indices)
+circuit merkle(root: Public, leaf: Witness, path: Witness Field[3], indices: Witness Field[3]) {
+    merkle_verify(root, leaf, path, indices)
+}
 ```
 
 ```bash
@@ -62,9 +59,7 @@ ach circuit merkle.ach --inputs "root=...,leaf=42,path_0=...,path_1=...,path_2=.
 let secret = 0p42
 let hash = 0p17159...  // poseidon(42, 0)
 
-let p = prove {
-    witness secret
-    public hash
+let p = prove(hash: Public) {
     assert_eq(poseidon(secret, 0), hash)
 }
 
@@ -187,10 +182,14 @@ let masked = a.bit_and(b)
 
 ### Declarations
 
+Circuit parameters declare visibility and type in the function signature:
+
 ```achronyme
-public output          // public input (instance)
-witness secret         // private input (witness)
-witness arr[4]         // witness array (arr_0, arr_1, arr_2, arr_3)
+circuit example(output: Public, secret: Witness, arr: Witness Field[4]) {
+    // output → public input (instance)
+    // secret → private input (witness)
+    // arr    → witness array (arr_0, arr_1, arr_2, arr_3)
+}
 ```
 
 ### Builtins
@@ -224,12 +223,10 @@ witness arr[4]         // witness array (arr_0, arr_1, arr_2, arr_3)
 Functions are inlined at each call site. No dynamic dispatch, no recursion.
 
 ```achronyme
-witness a, b
-public out
-
-fn hash_pair(x, y) { poseidon(x, y) }
-
-assert_eq(hash_pair(a, b), out)
+circuit main(out: Public, a: Witness, b: Witness) {
+    fn hash_pair(x, y) { poseidon(x, y) }
+    assert_eq(hash_pair(a, b), out)
+}
 ```
 
 ### Control Flow in Circuits
@@ -237,14 +234,13 @@ assert_eq(hash_pair(a, b), out)
 `if/else` compiles to `mux` (both branches are evaluated). `for` loops are statically unrolled. `while`, `break`, `continue` are rejected at compile time.
 
 ```achronyme
-witness vals[4]
-public total
-
-let sum = vals[0]
-let sum = sum + vals[1]
-let sum = sum + vals[2]
-let sum = sum + vals[3]
-assert_eq(sum, total)
+circuit sum_check(total: Public, vals: Witness Field[4]) {
+    let sum = vals[0]
+    let sum = sum + vals[1]
+    let sum = sum + vals[2]
+    let sum = sum + vals[3]
+    assert_eq(sum, total)
+}
 ```
 
 ---
@@ -299,15 +295,12 @@ let a = 0p6
 let b = 0p7
 let product = 0p42
 
-let p = prove {
-    witness a
-    witness b
-    public product
+let p = prove(product: Public) {
     assert_eq(a * b, product)
 }
 ```
 
-Variable names inside `public`/`witness` declarations must match `let` bindings in the outer scope. Integer values are automatically promoted to field elements.
+Variables listed in the parameter list (e.g. `product: Public`) become public inputs visible to the verifier. All other captured variables (`a`, `b`) are automatically inferred as witnesses. Integer values are automatically promoted to field elements.
 
 The result is a `Proof` object (Groth16 or PlonK depending on `--prove-backend`). Extract components with `proof_json(p)`, `proof_public(p)`, `proof_vkey(p)`. Verify with `verify_proof(p)`.
 
@@ -346,7 +339,7 @@ achronyme/
     ├── vm/             VM/interpreter integration tests
     ├── circuit/        Circuit compilation tests
     ├── prove/          Prove block tests
-    └── run_tests.sh    Integration test runner (158 tests)
+    └── run_tests.sh    Integration test runner (162 tests)
 ```
 
 ---
@@ -405,7 +398,7 @@ assert(2.pow(10) == 1024)
 
 ## Status
 
-- 2,125+ unit tests + 158 integration tests
+- 2,700+ unit tests + 162 integration tests
 - Cross-validated against snarkjs (independent constraint verification)
 - 2 ZK backends: R1CS/Groth16 + Plonkish/KZG-PlonK
 - Native in-process proof generation (no external tools)
