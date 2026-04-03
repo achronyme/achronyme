@@ -16,4 +16,8 @@ ir = { path = "../ir" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
+compiler = { path = "../compiler" }
+constraints = { path = "../constraints" }
+proving = { path = "../proving" }
+vm = { path = "../vm" }
 tempfile = "3"

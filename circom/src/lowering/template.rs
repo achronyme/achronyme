@@ -880,4 +880,170 @@ mod tests {
             program.instructions.len()
         );
     }
+
+    #[test]
+    fn real_num2bits_e2e_r1cs() {
+        use compiler::r1cs_backend::R1CSCompiler;
+        use memory::{Bn254Fr, FieldElement};
+        use std::collections::HashMap;
+
+        let src = r#"
+            template Num2Bits(n) {
+                signal input in;
+                signal output out[n];
+                var lc1 = 0;
+                var e2 = 1;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    out[i] * (out[i] - 1) === 0;
+                    lc1 += out[i] * e2;
+                    e2 = e2 + e2;
+                }
+                lc1 === in;
+            }
+            component main {public [in]} = Num2Bits(8);
+        "#;
+
+        // 1. Compile to ProveIR
+        let result = crate::compile_to_prove_ir(src).expect("compilation failed");
+        let prove_ir = result.prove_ir;
+        let capture_values = result.capture_values;
+
+        // 2. Compute witness hints (in = 13)
+        let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+        inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(13));
+
+        let all_signals = crate::witness::compute_witness_hints_with_captures(
+            &prove_ir,
+            &inputs,
+            &capture_values,
+        );
+
+        // 3. Instantiate ProveIR → IR
+        let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+            .iter()
+            .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect();
+
+        let mut program = prove_ir
+            .instantiate(&fe_captures)
+            .expect("instantiation failed");
+
+        // 4. Optimize
+        ir::passes::optimize(&mut program);
+
+        // 5. Compile to R1CS and generate witness
+        let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+        let witness = r1cs_compiler
+            .compile_ir_with_witness(&program, &all_signals)
+            .expect("R1CS compilation failed");
+
+        // 6. Verify constraints
+        r1cs_compiler
+            .cs
+            .verify(&witness)
+            .expect("R1CS verification failed");
+
+        // Sanity checks
+        assert!(
+            r1cs_compiler.cs.num_constraints() > 0,
+            "expected constraints, got 0"
+        );
+        assert!(
+            r1cs_compiler.cs.num_pub_inputs() >= 1,
+            "expected at least 1 public input"
+        );
+        eprintln!(
+            "Num2Bits(8) R1CS: {} constraints, {} variables, {} public inputs",
+            r1cs_compiler.cs.num_constraints(),
+            r1cs_compiler.cs.num_variables(),
+            r1cs_compiler.cs.num_pub_inputs()
+        );
+    }
+
+    #[test]
+    fn real_num2bits_e2e_groth16() {
+        use compiler::r1cs_backend::R1CSCompiler;
+        use memory::{Bn254Fr, FieldElement};
+        use std::collections::HashMap;
+
+        let src = r#"
+            template Num2Bits(n) {
+                signal input in;
+                signal output out[n];
+                var lc1 = 0;
+                var e2 = 1;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    out[i] * (out[i] - 1) === 0;
+                    lc1 += out[i] * e2;
+                    e2 = e2 + e2;
+                }
+                lc1 === in;
+            }
+            component main {public [in]} = Num2Bits(8);
+        "#;
+
+        // 1. Compile to ProveIR
+        let result = crate::compile_to_prove_ir(src).expect("compilation failed");
+        let prove_ir = result.prove_ir;
+        let capture_values = result.capture_values;
+
+        // 2. Compute witness hints (in = 13)
+        let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+        inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(13));
+
+        let all_signals = crate::witness::compute_witness_hints_with_captures(
+            &prove_ir,
+            &inputs,
+            &capture_values,
+        );
+
+        // 3. Instantiate ProveIR → IR
+        let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+            .iter()
+            .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect();
+
+        let mut program = prove_ir
+            .instantiate(&fe_captures)
+            .expect("instantiation failed");
+
+        // 4. Optimize
+        ir::passes::optimize(&mut program);
+
+        // 5. Compile to R1CS + witness
+        let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+        let witness = r1cs_compiler
+            .compile_ir_with_witness(&program, &all_signals)
+            .expect("R1CS compilation failed");
+
+        r1cs_compiler
+            .cs
+            .verify(&witness)
+            .expect("R1CS verification failed");
+
+        // 6. Generate Groth16 proof
+        let cache_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let proof_result =
+            proving::groth16_bn254::generate_proof(&r1cs_compiler.cs, &witness, cache_dir.path())
+                .expect("Groth16 proof generation failed");
+
+        // 7. Verify the proof
+        match &proof_result {
+            vm::ProveResult::Proof {
+                proof_json,
+                public_json,
+                vkey_json,
+            } => {
+                let verified =
+                    proving::groth16_bn254::verify_proof_from_json(proof_json, public_json, vkey_json)
+                        .expect("proof verification call failed");
+                assert!(verified, "Groth16 proof verification failed");
+                eprintln!("Num2Bits(8) Groth16 proof verified successfully!");
+                eprintln!("Public inputs: {public_json}");
+            }
+            _ => panic!("expected ProveResult::Proof"),
+        }
+    }
 }
