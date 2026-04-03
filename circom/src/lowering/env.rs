@@ -21,6 +21,7 @@ pub enum VarKind {
 ///
 /// Tracks which names are inputs, locals, or captures so that
 /// `lower_expr` can emit the correct `CircuitExpr` variant.
+#[derive(Clone)]
 pub struct LoweringEnv {
     /// Signal inputs (public + witness) — resolve to `CircuitExpr::Input`.
     pub inputs: HashSet<String>,

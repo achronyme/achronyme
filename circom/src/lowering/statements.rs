@@ -9,33 +9,69 @@
 //! - `if (...) { ... }`  → `If { cond, then_body, else_body }`
 //! - `assert(expr)`      → `Assert { expr }`
 
+use std::collections::{HashMap, HashSet};
+
 use diagnostics::SpanRange;
 use ir::prove_ir::types::{CircuitExpr, CircuitNode, ForRange};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
+use super::components::{inline_component_body, register_component_locals};
+use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
 use super::expressions::lower_expr;
+use super::signals::collect_signal_names;
 use super::utils::{const_eval_u64, extract_ident_name};
 
+/// A pending component whose input signals haven't all been wired yet.
+struct PendingComponent<'a> {
+    template: &'a ast::TemplateDef,
+    template_args: Vec<CircuitExpr>,
+    input_signals: HashSet<String>,
+    wired_signals: HashSet<String>,
+}
+
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
-pub fn lower_stmts(
-    stmts: &[Stmt],
+pub fn lower_stmts<'a>(
+    stmts: &'a [Stmt],
     env: &mut LoweringEnv,
+    ctx: &mut LoweringContext<'a>,
 ) -> Result<Vec<CircuitNode>, LoweringError> {
     let mut nodes = Vec::new();
+    let mut pending: HashMap<String, PendingComponent> = HashMap::new();
+
     for stmt in stmts {
-        lower_stmt(stmt, env, &mut nodes)?;
+        lower_stmt(stmt, env, &mut nodes, ctx, &mut pending)?;
     }
+
+    // Inline any components that weren't triggered by wiring completion
+    // (e.g., components with no input signals, or partial wiring).
+    let remaining: Vec<String> = pending.keys().cloned().collect();
+    for comp_name in remaining {
+        if let Some(comp) = pending.remove(&comp_name) {
+            let body = inline_component_body(
+                &comp_name,
+                comp.template,
+                &comp.template_args,
+                ctx,
+                &comp.template.span,
+            )?;
+            nodes.extend(body);
+        }
+    }
+
     Ok(nodes)
 }
 
 /// Lower a single Circom statement, appending results to `nodes`.
-fn lower_stmt(
-    stmt: &Stmt,
+#[allow(clippy::too_many_arguments)]
+fn lower_stmt<'a>(
+    stmt: &'a Stmt,
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
     match stmt {
         // ── Signal declarations ─────────────────────────────────────
@@ -49,7 +85,7 @@ fn lower_stmt(
             ..
         } => {
             for decl in declarations {
-                let lowered_value = lower_expr(value, env)?;
+                let lowered_value = lower_expr(value, env, ctx)?;
                 let sr = Some(SpanRange::from_span(span));
 
                 match op {
@@ -95,14 +131,10 @@ fn lower_stmt(
         }
 
         // ── Variable declarations ───────────────────────────────────
-        Stmt::VarDecl {
-            names,
-            init,
-            span,
-        } => {
+        Stmt::VarDecl { names, init, span } => {
             if let Some(value) = init {
                 if names.len() == 1 {
-                    let lowered = lower_expr(value, env)?;
+                    let lowered = lower_expr(value, env, ctx)?;
                     nodes.push(CircuitNode::Let {
                         name: names[0].clone(),
                         value: lowered,
@@ -132,13 +164,13 @@ fn lower_stmt(
             value,
             span,
         } => {
-            lower_substitution(target, *op, value, span, env, nodes)?;
+            lower_substitution(target, *op, value, span, env, nodes, ctx, pending)?;
         }
 
         // ── Constraint equality ─────────────────────────────────────
         Stmt::ConstraintEq { lhs, rhs, span } => {
-            let l = lower_expr(lhs, env)?;
-            let r = lower_expr(rhs, env)?;
+            let l = lower_expr(lhs, env, ctx)?;
+            let r = lower_expr(rhs, env, ctx)?;
             nodes.push(CircuitNode::AssertEq {
                 lhs: l,
                 rhs: r,
@@ -161,7 +193,7 @@ fn lower_stmt(
                 )
             })?;
             let current = CircuitExpr::Var(name.clone());
-            let rhs = lower_expr(value, env)?;
+            let rhs = lower_expr(value, env, ctx)?;
             let bin_op = compound_to_binop(*op, &current, rhs, span)?;
 
             // In circuit context, variables are SSA-like. We create a new
@@ -180,13 +212,13 @@ fn lower_stmt(
             else_body,
             span,
         } => {
-            let cond = lower_expr(condition, env)?;
-            let then_nodes = lower_stmts(&then_body.stmts, env)?;
+            let cond = lower_expr(condition, env, ctx)?;
+            let then_nodes = lower_stmts(&then_body.stmts, env, ctx)?;
             let else_nodes = match else_body {
-                Some(ElseBranch::Block(block)) => lower_stmts(&block.stmts, env)?,
+                Some(ElseBranch::Block(block)) => lower_stmts(&block.stmts, env, ctx)?,
                 Some(ElseBranch::IfElse(if_stmt)) => {
                     let mut sub = Vec::new();
-                    lower_stmt(if_stmt, env, &mut sub)?;
+                    lower_stmt(if_stmt, env, &mut sub, ctx, pending)?;
                     sub
                 }
                 None => Vec::new(),
@@ -207,7 +239,7 @@ fn lower_stmt(
             body,
             span,
         } => {
-            lower_for_loop(init, condition, step, body, span, env, nodes)?;
+            lower_for_loop(init, condition, step, body, span, env, nodes, ctx)?;
         }
 
         // ── While loop ──────────────────────────────────────────────
@@ -224,7 +256,7 @@ fn lower_stmt(
 
         // ── Assert ──────────────────────────────────────────────────
         Stmt::Assert { arg, span } => {
-            let expr = lower_expr(arg, env)?;
+            let expr = lower_expr(arg, env, ctx)?;
             nodes.push(CircuitNode::Assert {
                 expr,
                 message: None,
@@ -248,17 +280,63 @@ fn lower_stmt(
         }
 
         // ── Component declarations ──────────────────────────────────
-        // Component declarations are handled during component inlining (Fase 6).
-        Stmt::ComponentDecl { names, .. } => {
-            // Register component names as locals for now.
-            for name in names {
-                env.locals.insert(name.name.clone());
+        Stmt::ComponentDecl {
+            names, init, span, ..
+        } => {
+            for comp_name_decl in names {
+                let comp_name = &comp_name_decl.name;
+                env.locals.insert(comp_name.clone());
+
+                // If there's an initializer (`component c = Template(args)`),
+                // resolve the template and prepare for signal wiring.
+                if let Some(init_expr) = init {
+                    if let Some((tmpl_name, tmpl_args)) =
+                        extract_component_call(init_expr, env, ctx)?
+                    {
+                        if let Some(template) = ctx.templates.get(tmpl_name.as_str()) {
+                            let template = *template;
+                            // Register mangled output/intermediate locals
+                            register_component_locals(comp_name, template, env);
+
+                            // Collect input signal names for wiring tracking
+                            let signals = collect_signal_names(&template.body.stmts);
+                            let input_signals: HashSet<String> = signals
+                                .iter()
+                                .filter(|(_, st)| matches!(st, ast::SignalType::Input))
+                                .map(|(n, _)| n.clone())
+                                .collect();
+
+                            if input_signals.is_empty() {
+                                // No inputs to wire — inline immediately
+                                let body = inline_component_body(
+                                    comp_name, template, &tmpl_args, ctx, span,
+                                )?;
+                                nodes.extend(body);
+                            } else {
+                                pending.insert(
+                                    comp_name.clone(),
+                                    PendingComponent {
+                                        template,
+                                        template_args: tmpl_args,
+                                        input_signals,
+                                        wired_signals: HashSet::new(),
+                                    },
+                                );
+                            }
+                        } else {
+                            return Err(LoweringError::new(
+                                format!("undefined template `{tmpl_name}`"),
+                                span,
+                            ));
+                        }
+                    }
+                }
             }
         }
 
         // ── Bare block ──────────────────────────────────────────────
         Stmt::Block(block) => {
-            let inner = lower_stmts(&block.stmts, env)?;
+            let inner = lower_stmts(&block.stmts, env, ctx)?;
             nodes.extend(inner);
         }
 
@@ -323,27 +401,57 @@ fn lower_stmt(
     Ok(())
 }
 
+/// Extract a target name from either a simple identifier or a dot access.
+///
+/// - `Ident("x")` → `"x"`
+/// - `DotAccess { object: "c", field: "a" }` → `"c.a"` (mangled)
+fn extract_target_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident { name, .. } => Some(name.clone()),
+        Expr::DotAccess { object, field, .. } => {
+            extract_ident_name(object).map(|obj| format!("{obj}.{field}"))
+        }
+        _ => None,
+    }
+}
+
+/// Check if a substitution target is a component signal wiring (`comp.signal`).
+/// Returns `(component_name, signal_name)` if so.
+fn extract_component_wiring(target: &Expr) -> Option<(String, String)> {
+    if let Expr::DotAccess { object, field, .. } = target {
+        extract_ident_name(object).map(|obj| (obj, field.clone()))
+    } else {
+        None
+    }
+}
+
 /// Lower a substitution statement (`target op value`).
-fn lower_substitution(
+///
+/// Handles both simple identifiers and dot access targets (component
+/// signal wirings like `c.a <== expr`).
+#[allow(clippy::too_many_arguments)]
+fn lower_substitution<'a>(
     target: &Expr,
     op: AssignOp,
     value: &Expr,
     span: &diagnostics::Span,
     env: &LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
     let sr = Some(SpanRange::from_span(span));
 
     match op {
         // `target <== expr` → Let + AssertEq
         AssignOp::ConstraintAssign => {
-            let name = extract_ident_name(target).ok_or_else(|| {
+            let name = extract_target_name(target).ok_or_else(|| {
                 LoweringError::new(
-                    "constraint assignment target must be a simple identifier",
+                    "constraint assignment target must be an identifier or component signal",
                     span,
                 )
             })?;
-            let lowered = lower_expr(value, env)?;
+            let lowered = lower_expr(value, env, ctx)?;
             nodes.push(CircuitNode::Let {
                 name: name.clone(),
                 value: lowered.clone(),
@@ -355,17 +463,18 @@ fn lower_substitution(
                 message: None,
                 span: sr,
             });
+            maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
 
         // `expr ==> target` → same as `target <== expr`
         AssignOp::RConstraintAssign => {
-            let name = extract_ident_name(value).ok_or_else(|| {
+            let name = extract_target_name(value).ok_or_else(|| {
                 LoweringError::new(
-                    "reverse constraint assignment target must be a simple identifier",
+                    "reverse constraint assignment target must be an identifier or component signal",
                     span,
                 )
             })?;
-            let lowered = lower_expr(target, env)?;
+            let lowered = lower_expr(target, env, ctx)?;
             nodes.push(CircuitNode::Let {
                 name: name.clone(),
                 value: lowered.clone(),
@@ -381,29 +490,30 @@ fn lower_substitution(
 
         // `target <-- expr` → Let only (witness hint, no constraint)
         AssignOp::SignalAssign => {
-            let name = extract_ident_name(target).ok_or_else(|| {
+            let name = extract_target_name(target).ok_or_else(|| {
                 LoweringError::new(
-                    "signal assignment target must be a simple identifier",
+                    "signal assignment target must be an identifier or component signal",
                     span,
                 )
             })?;
-            let lowered = lower_expr(value, env)?;
+            let lowered = lower_expr(value, env, ctx)?;
             nodes.push(CircuitNode::Let {
                 name,
                 value: lowered,
                 span: sr,
             });
+            maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
 
         // `expr --> target` → same as `target <-- expr`
         AssignOp::RSignalAssign => {
-            let name = extract_ident_name(value).ok_or_else(|| {
+            let name = extract_target_name(value).ok_or_else(|| {
                 LoweringError::new(
-                    "reverse signal assignment target must be a simple identifier",
+                    "reverse signal assignment target must be an identifier or component signal",
                     span,
                 )
             })?;
-            let lowered = lower_expr(target, env)?;
+            let lowered = lower_expr(target, env, ctx)?;
             nodes.push(CircuitNode::Let {
                 name,
                 value: lowered,
@@ -413,13 +523,13 @@ fn lower_substitution(
 
         // `target = expr` → variable reassignment (SSA shadowing)
         AssignOp::Assign => {
-            let name = extract_ident_name(target).ok_or_else(|| {
+            let name = extract_target_name(target).ok_or_else(|| {
                 LoweringError::new(
-                    "assignment target must be a simple identifier in circuit context",
+                    "assignment target must be an identifier in circuit context",
                     span,
                 )
             })?;
-            let lowered = lower_expr(value, env)?;
+            let lowered = lower_expr(value, env, ctx)?;
             nodes.push(CircuitNode::Let {
                 name,
                 value: lowered,
@@ -431,18 +541,72 @@ fn lower_substitution(
     Ok(())
 }
 
+/// If this substitution wires a component input, mark it as wired.
+/// When all inputs are wired, inline the component body.
+fn maybe_trigger_inline<'a>(
+    target: &Expr,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
+    span: &diagnostics::Span,
+) -> Result<(), LoweringError> {
+    if let Some((comp_name, signal_name)) = extract_component_wiring(target) {
+        if let Some(comp) = pending.get_mut(&comp_name) {
+            comp.wired_signals.insert(signal_name);
+            if comp.wired_signals.is_superset(&comp.input_signals) {
+                let comp = pending.remove(&comp_name).unwrap();
+                let body = inline_component_body(
+                    &comp_name,
+                    comp.template,
+                    &comp.template_args,
+                    ctx,
+                    span,
+                )?;
+                nodes.extend(body);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract a template call from a component initializer expression.
+///
+/// `Template(arg1, arg2)` → `Some(("Template", [lowered_arg1, lowered_arg2]))`
+fn extract_component_call(
+    expr: &Expr,
+    env: &LoweringEnv,
+    ctx: &mut LoweringContext,
+) -> Result<Option<(String, Vec<CircuitExpr>)>, LoweringError> {
+    if let Expr::Call { callee, args, span } = expr {
+        if let Some(name) = extract_ident_name(callee) {
+            let mut lowered_args = Vec::new();
+            for arg in args {
+                lowered_args.push(lower_expr(arg, env, ctx)?);
+            }
+            return Ok(Some((name, lowered_args)));
+        }
+        return Err(LoweringError::new(
+            "component template call must use a simple name",
+            span,
+        ));
+    }
+    Ok(None)
+}
+
 /// Lower a C-style for loop to a ProveIR `For` node.
 ///
 /// Circom for loops must have deterministic bounds for circuit compilation.
 /// We try to extract `for (var i = start; i < end; i++)` patterns.
-fn lower_for_loop(
+#[allow(clippy::too_many_arguments)]
+fn lower_for_loop<'a>(
     init: &Stmt,
     condition: &Expr,
     step: &Stmt,
-    body: &ast::Block,
+    body: &'a ast::Block,
     span: &diagnostics::Span,
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
 ) -> Result<(), LoweringError> {
     // Extract loop variable and start value from init
     let (var_name, start) = match init {
@@ -452,10 +616,7 @@ fn lower_for_loop(
             ..
         } if names.len() == 1 => {
             let start = const_eval_u64(init_expr).ok_or_else(|| {
-                LoweringError::new(
-                    "for loop init must be a compile-time constant",
-                    span,
-                )
+                LoweringError::new("for loop init must be a compile-time constant", span)
             })?;
             (names[0].clone(), start)
         }
@@ -482,7 +643,7 @@ fn lower_for_loop(
     env.locals.insert(var_name.clone());
 
     // Lower body
-    let body_nodes = lower_stmts(&body.stmts, env)?;
+    let body_nodes = lower_stmts(&body.stmts, env, ctx)?;
 
     nodes.push(CircuitNode::For {
         var: var_name,
@@ -510,8 +671,8 @@ fn extract_loop_bound(condition: &Expr, var_name: &str) -> Option<u64> {
             let bound = const_eval_u64(rhs)?;
 
             match op {
-                ast::BinOp::Lt => Some(bound),       // i < N → end = N
-                ast::BinOp::Le => Some(bound + 1),   // i <= N → end = N+1
+                ast::BinOp::Lt => Some(bound),     // i < N → end = N
+                ast::BinOp::Le => Some(bound + 1), // i <= N → end = N+1
                 _ => None,
             }
         }
@@ -528,11 +689,12 @@ fn validate_loop_step(
     match step {
         // i++
         Stmt::Expr {
-            expr: Expr::PostfixOp {
-                op: ast::PostfixOp::Increment,
-                operand,
-                ..
-            },
+            expr:
+                Expr::PostfixOp {
+                    op: ast::PostfixOp::Increment,
+                    operand,
+                    ..
+                },
             ..
         } => {
             if let Expr::Ident { name, .. } = operand.as_ref() {
@@ -584,10 +746,26 @@ fn compound_to_binop(
     let r = Box::new(rhs);
 
     match op {
-        ast::CompoundOp::Add => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Add, lhs: l, rhs: r }),
-        ast::CompoundOp::Sub => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Sub, lhs: l, rhs: r }),
-        ast::CompoundOp::Mul => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Mul, lhs: l, rhs: r }),
-        ast::CompoundOp::Div => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Div, lhs: l, rhs: r }),
+        ast::CompoundOp::Add => Ok(CircuitExpr::BinOp {
+            op: CircuitBinOp::Add,
+            lhs: l,
+            rhs: r,
+        }),
+        ast::CompoundOp::Sub => Ok(CircuitExpr::BinOp {
+            op: CircuitBinOp::Sub,
+            lhs: l,
+            rhs: r,
+        }),
+        ast::CompoundOp::Mul => Ok(CircuitExpr::BinOp {
+            op: CircuitBinOp::Mul,
+            lhs: l,
+            rhs: r,
+        }),
+        ast::CompoundOp::Div => Ok(CircuitExpr::BinOp {
+            op: CircuitBinOp::Div,
+            lhs: l,
+            rhs: r,
+        }),
         ast::CompoundOp::IntDiv => Ok(CircuitExpr::IntDiv {
             lhs: l,
             rhs: r,
@@ -612,13 +790,14 @@ fn compound_to_binop(
             };
             Ok(CircuitExpr::Pow { base: l, exp })
         }
-        ast::CompoundOp::ShiftL | ast::CompoundOp::ShiftR
-        | ast::CompoundOp::BitAnd | ast::CompoundOp::BitOr | ast::CompoundOp::BitXor => {
-            Err(LoweringError::new(
-                "bitwise compound assignment is not supported in circuit context",
-                span,
-            ))
-        }
+        ast::CompoundOp::ShiftL
+        | ast::CompoundOp::ShiftR
+        | ast::CompoundOp::BitAnd
+        | ast::CompoundOp::BitOr
+        | ast::CompoundOp::BitXor => Err(LoweringError::new(
+            "bitwise compound assignment is not supported in circuit context",
+            span,
+        )),
     }
 }
 
@@ -643,7 +822,8 @@ mod tests {
         env.inputs.insert("in".to_string());
         env.inputs.insert("a".to_string());
         env.inputs.insert("b".to_string());
-        lower_stmts(&template.body.stmts, &mut env)
+        let mut ctx = LoweringContext::from_program(&prog);
+        lower_stmts(&template.body.stmts, &mut env, &mut ctx)
     }
 
     // ── Constraint assignment (<==) ─────────────────────────────────
@@ -726,7 +906,13 @@ mod tests {
         match &nodes[1] {
             CircuitNode::Let { name, value, .. } => {
                 assert_eq!(name, "x");
-                assert!(matches!(value, CircuitExpr::BinOp { op: ir::prove_ir::types::CircuitBinOp::Add, .. }));
+                assert!(matches!(
+                    value,
+                    CircuitExpr::BinOp {
+                        op: ir::prove_ir::types::CircuitBinOp::Add,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected Let with BinOp, got {:?}", other),
         }
@@ -736,10 +922,7 @@ mod tests {
 
     #[test]
     fn if_else_produces_if_node() {
-        let nodes = lower_template(
-            "signal x; if (a == 0) { x <-- 1; } else { x <-- 2; }",
-        )
-        .unwrap();
+        let nodes = lower_template("signal x; if (a == 0) { x <-- 1; } else { x <-- 2; }").unwrap();
         assert_eq!(nodes.len(), 1);
         match &nodes[0] {
             CircuitNode::If {
@@ -769,13 +952,12 @@ mod tests {
 
     #[test]
     fn for_loop_with_literal_bounds() {
-        let nodes = lower_template(
-            "signal x; for (var i = 0; i < 8; i++) { x <-- 1; }",
-        )
-        .unwrap();
+        let nodes = lower_template("signal x; for (var i = 0; i < 8; i++) { x <-- 1; }").unwrap();
         assert_eq!(nodes.len(), 1);
         match &nodes[0] {
-            CircuitNode::For { var, range, body, .. } => {
+            CircuitNode::For {
+                var, range, body, ..
+            } => {
                 assert_eq!(var, "i");
                 assert_eq!(*range, ForRange::Literal { start: 0, end: 8 });
                 assert_eq!(body.len(), 1);
@@ -786,10 +968,7 @@ mod tests {
 
     #[test]
     fn for_loop_le_condition() {
-        let nodes = lower_template(
-            "signal x; for (var i = 0; i <= 7; i++) { x <-- 1; }",
-        )
-        .unwrap();
+        let nodes = lower_template("signal x; for (var i = 0; i <= 7; i++) { x <-- 1; }").unwrap();
         match &nodes[0] {
             CircuitNode::For { range, .. } => {
                 // i <= 7 → end = 8
@@ -851,7 +1030,13 @@ mod tests {
         match &nodes[1] {
             CircuitNode::Let { name, value, .. } => {
                 assert_eq!(name, "i");
-                assert!(matches!(value, CircuitExpr::BinOp { op: ir::prove_ir::types::CircuitBinOp::Add, .. }));
+                assert!(matches!(
+                    value,
+                    CircuitExpr::BinOp {
+                        op: ir::prove_ir::types::CircuitBinOp::Add,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected Let, got {:?}", other),
         }
