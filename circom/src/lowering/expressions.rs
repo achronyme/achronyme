@@ -36,13 +36,19 @@ pub fn lower_expr(
     match expr {
         // ── Literals ────────────────────────────────────────────────
         Expr::Number { value, span } => {
-            let n: u64 = value.parse().map_err(|_| {
-                LoweringError::new(
-                    format!("number literal `{value}` is too large for u64, use field constant"),
-                    span,
-                )
-            })?;
-            Ok(CircuitExpr::Const(FieldConst::from_u64(n)))
+            // Try u64 first (common case), fall back to big decimal string
+            if let Ok(n) = value.parse::<u64>() {
+                Ok(CircuitExpr::Const(FieldConst::from_u64(n)))
+            } else {
+                FieldConst::from_decimal_str(value)
+                    .map(CircuitExpr::Const)
+                    .ok_or_else(|| {
+                        LoweringError::new(
+                            format!("number literal `{value}` exceeds 256-bit field range"),
+                            span,
+                        )
+                    })
+            }
         }
 
         Expr::HexNumber { value, span } => {
@@ -50,10 +56,19 @@ pub fn lower_expr(
                 .strip_prefix("0x")
                 .or_else(|| value.strip_prefix("0X"))
                 .unwrap_or(value);
-            let n = u64::from_str_radix(hex_str, 16).map_err(|_| {
-                LoweringError::new(format!("hex literal `{value}` is too large for u64"), span)
-            })?;
-            Ok(CircuitExpr::Const(FieldConst::from_u64(n)))
+            // Try u64 first, fall back to big hex string
+            if let Ok(n) = u64::from_str_radix(hex_str, 16) {
+                Ok(CircuitExpr::Const(FieldConst::from_u64(n)))
+            } else {
+                FieldConst::from_hex_str(value)
+                    .map(CircuitExpr::Const)
+                    .ok_or_else(|| {
+                        LoweringError::new(
+                            format!("hex literal `{value}` exceeds 256-bit field range"),
+                            span,
+                        )
+                    })
+            }
         }
 
         // ── Identifiers ─────────────────────────────────────────────
@@ -839,6 +854,37 @@ mod tests {
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
             CircuitExpr::Input("a".to_string())
         );
+    }
+
+    // ── Large number literals ────────────────────────────────────────
+
+    #[test]
+    fn lower_large_decimal_number() {
+        // BN254 field order - 1 (exceeds u64)
+        let expr =
+            parse_expr("21888242871839275222246405745257275088548364400416034343698204186575808495616");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        match result {
+            CircuitExpr::Const(fc) => {
+                assert!(fc.to_u64().is_none(), "should not fit in u64");
+                assert!(!fc.is_zero());
+            }
+            other => panic!("expected Const, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lower_large_hex_number() {
+        // 0x + 64 hex digits = 32 bytes
+        let expr =
+            parse_expr("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        match result {
+            CircuitExpr::Const(fc) => {
+                assert!(fc.to_u64().is_none());
+            }
+            other => panic!("expected Const, got {:?}", other),
+        }
     }
 
     // ── const_eval_u64 (moved to utils, verify still works) ─────────

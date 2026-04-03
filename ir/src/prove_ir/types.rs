@@ -94,9 +94,75 @@ impl FieldConst {
         self.0.iter().all(|&b| b == 0)
     }
 
+    /// Create from a decimal string (e.g., `"218882428718392752..."`).
+    ///
+    /// Stores the raw integer as LE bytes — no modular reduction.
+    /// Returns `None` if the string is invalid or the value exceeds 32 bytes.
+    pub fn from_decimal_str(s: &str) -> Option<Self> {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for &ch in s.as_bytes() {
+            let digit = (ch - b'0') as u16;
+            // Multiply current value by 10, then add digit
+            let mut carry = digit;
+            for byte in bytes.iter_mut() {
+                let v = (*byte as u16) * 10 + carry;
+                *byte = v as u8;
+                carry = v >> 8;
+            }
+            if carry != 0 {
+                return None; // overflow: value doesn't fit in 256 bits
+            }
+        }
+        Some(Self(bytes))
+    }
+
+    /// Create from a hex string (with or without `0x`/`0X` prefix).
+    ///
+    /// Stores the raw integer as LE bytes — no modular reduction.
+    /// Returns `None` if the string is invalid or exceeds 32 bytes (64 hex digits).
+    pub fn from_hex_str(s: &str) -> Option<Self> {
+        let hex = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .unwrap_or(s);
+        if hex.is_empty() || hex.len() > 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        let digits = hex.as_bytes();
+        let mut byte_idx = 0;
+        let mut i = digits.len();
+        while i > 0 {
+            let lo = fc_hex_val(digits[i - 1])?;
+            i -= 1;
+            let hi = if i > 0 {
+                i -= 1;
+                fc_hex_val(digits[i])?
+            } else {
+                0
+            };
+            bytes[byte_idx] = (hi << 4) | lo;
+            byte_idx += 1;
+        }
+        Some(Self(bytes))
+    }
+
     /// Raw bytes access.
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+/// Parse a single hex digit to its value.
+fn fc_hex_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -1492,5 +1558,89 @@ mod tests {
             err.contains("missing"),
             "should mention unknown capture: {err}"
         );
+    }
+
+    // =====================================================================
+    // FieldConst::from_decimal_str / from_hex_str tests
+    // =====================================================================
+
+    #[test]
+    fn field_const_from_decimal_small() {
+        let fc = FieldConst::from_decimal_str("42").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(42));
+    }
+
+    #[test]
+    fn field_const_from_decimal_zero() {
+        let fc = FieldConst::from_decimal_str("0").unwrap();
+        assert_eq!(fc, FieldConst::zero());
+    }
+
+    #[test]
+    fn field_const_from_decimal_large() {
+        // BN254 field order - 1 (a ~77 digit number)
+        let s = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+        let fc = FieldConst::from_decimal_str(s).unwrap();
+        // Should not be zero and should not fit in u64
+        assert!(!fc.is_zero());
+        assert!(fc.to_u64().is_none());
+    }
+
+    #[test]
+    fn field_const_from_decimal_max_u64() {
+        let fc = FieldConst::from_decimal_str("18446744073709551615").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(u64::MAX));
+    }
+
+    #[test]
+    fn field_const_from_decimal_just_above_u64() {
+        let fc = FieldConst::from_decimal_str("18446744073709551616").unwrap();
+        assert!(fc.to_u64().is_none());
+        // Verify byte 8 is 1 (2^64 = 1 in byte[8])
+        assert_eq!(fc.bytes()[8], 1);
+    }
+
+    #[test]
+    fn field_const_from_decimal_invalid() {
+        assert!(FieldConst::from_decimal_str("").is_none());
+        assert!(FieldConst::from_decimal_str("abc").is_none());
+        assert!(FieldConst::from_decimal_str("12x3").is_none());
+    }
+
+    #[test]
+    fn field_const_from_hex_small() {
+        let fc = FieldConst::from_hex_str("0xFF").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(255));
+    }
+
+    #[test]
+    fn field_const_from_hex_no_prefix() {
+        let fc = FieldConst::from_hex_str("ff").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(255));
+    }
+
+    #[test]
+    fn field_const_from_hex_large() {
+        // 64 hex digits = 32 bytes (max)
+        let hex = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000";
+        let fc = FieldConst::from_hex_str(hex).unwrap();
+        assert!(!fc.is_zero());
+        assert!(fc.to_u64().is_none());
+    }
+
+    #[test]
+    fn field_const_from_hex_with_0x_prefix() {
+        let fc = FieldConst::from_hex_str("0x1234").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(0x1234));
+    }
+
+    #[test]
+    fn field_const_from_hex_invalid() {
+        assert!(FieldConst::from_hex_str("").is_none());
+        assert!(FieldConst::from_hex_str("0x").is_none());
+        assert!(FieldConst::from_hex_str("0xGG").is_none());
+        // 65 hex digits = too large
+        let too_large = "1".to_string() + &"0".repeat(64);
+        assert!(FieldConst::from_hex_str(&too_large).is_none());
     }
 }
