@@ -3,10 +3,13 @@
 //! Orchestrates signal extraction, environment setup, and body lowering
 //! to produce a fully-formed `ProveIR` from a Circom `TemplateDef`.
 
-use ir::prove_ir::types::ProveIR;
+use std::collections::HashSet;
 
-use crate::ast::{MainComponent, TemplateDef};
+use ir::prove_ir::types::{CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, ForRange, ProveIR};
 
+use crate::ast::{CircomProgram, MainComponent, TemplateDef};
+
+use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
 use super::signals::extract_signal_layout;
@@ -14,13 +17,15 @@ use super::statements::lower_stmts;
 
 /// Lower a Circom template definition to a ProveIR circuit template.
 ///
-/// The `main_component` is needed to determine which input signals are
-/// public vs witness (from `component main {public [...]}`).
-/// Template parameters become captures.
+/// The `program` provides access to all template and function definitions
+/// for component inlining and function call resolution.
+/// The `main_component` determines which input signals are public vs witness.
 pub fn lower_template(
     template: &TemplateDef,
     main: Option<&MainComponent>,
+    program: &CircomProgram,
 ) -> Result<ProveIR, LoweringError> {
+    let mut ctx = LoweringContext::from_program(program);
     // 1. Extract signal layout
     let layout = extract_signal_layout(template, main)?;
 
@@ -51,39 +56,194 @@ pub fn lower_template(
     }
 
     // 3. Lower body statements
-    let body = lower_stmts(&template.body.stmts, &mut env)?;
+    let body = lower_stmts(&template.body.stmts, &mut env, &mut ctx)?;
 
-    // 4. Assemble ProveIR
-    //
-    // Captures are classified later (when we have usage analysis).
-    // For now, all template params are registered but capture classification
-    // (StructureOnly vs CircuitInput vs Both) will be done in a later phase.
+    // 4. Classify captures
+    let captures = classify_captures(&template.params, &body);
+
+    // 5. Assemble ProveIR
     Ok(ProveIR {
         name: Some(template.name.clone()),
         public_inputs: layout.public_inputs,
         witness_inputs: layout.witness_inputs,
-        captures: Vec::new(), // TODO: capture classification (Fase 6)
+        captures,
         body,
         capture_arrays: Vec::new(),
     })
+}
+
+/// Classify template parameter captures based on how they are used in the body.
+///
+/// - **StructureOnly**: only in loop bounds (`ForRange::WithCapture`) or
+///   `Pow` exponents — affects circuit shape, not constraint values.
+/// - **CircuitInput**: only in constraint expressions (`CircuitExpr::Capture`).
+/// - **Both**: used in both structural and constraint positions.
+fn classify_captures(params: &[String], body: &[CircuitNode]) -> Vec<CaptureDef> {
+    let mut structural: HashSet<&str> = HashSet::new();
+    let mut circuit: HashSet<&str> = HashSet::new();
+
+    for node in body {
+        collect_capture_usage(node, &mut structural, &mut circuit);
+    }
+
+    let param_set: HashSet<&str> = params.iter().map(|s| s.as_str()).collect();
+    let mut captures = Vec::new();
+
+    for param in params {
+        if !param_set.contains(param.as_str()) {
+            continue;
+        }
+        let in_struct = structural.contains(param.as_str());
+        let in_circuit = circuit.contains(param.as_str());
+
+        if !in_struct && !in_circuit {
+            // Capture is declared but never referenced — still include it
+            // as StructureOnly (no-op at instantiation).
+            captures.push(CaptureDef {
+                name: param.clone(),
+                usage: CaptureUsage::StructureOnly,
+            });
+        } else {
+            let usage = match (in_struct, in_circuit) {
+                (true, true) => CaptureUsage::Both,
+                (true, false) => CaptureUsage::StructureOnly,
+                (false, true) => CaptureUsage::CircuitInput,
+                (false, false) => unreachable!(),
+            };
+            captures.push(CaptureDef {
+                name: param.clone(),
+                usage,
+            });
+        }
+    }
+
+    captures
+}
+
+/// Walk a CircuitNode, recording which captures appear in structural vs
+/// circuit positions.
+fn collect_capture_usage<'a>(
+    node: &'a CircuitNode,
+    structural: &mut HashSet<&'a str>,
+    circuit: &mut HashSet<&'a str>,
+) {
+    match node {
+        CircuitNode::Let { value, .. } => collect_expr_captures(value, circuit),
+        CircuitNode::LetArray { elements, .. } => {
+            for e in elements {
+                collect_expr_captures(e, circuit);
+            }
+        }
+        CircuitNode::AssertEq { lhs, rhs, .. } => {
+            collect_expr_captures(lhs, circuit);
+            collect_expr_captures(rhs, circuit);
+        }
+        CircuitNode::Assert { expr, .. } => collect_expr_captures(expr, circuit),
+        CircuitNode::For { range, body, .. } => {
+            // Loop bound captures are structural
+            if let ForRange::WithCapture { end_capture, .. } = range {
+                structural.insert(end_capture.as_str());
+            }
+            for n in body {
+                collect_capture_usage(n, structural, circuit);
+            }
+        }
+        CircuitNode::If {
+            cond,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_expr_captures(cond, circuit);
+            for n in then_body {
+                collect_capture_usage(n, structural, circuit);
+            }
+            for n in else_body {
+                collect_capture_usage(n, structural, circuit);
+            }
+        }
+        CircuitNode::Expr { expr, .. } => collect_expr_captures(expr, circuit),
+        CircuitNode::Decompose { value, .. } => collect_expr_captures(value, circuit),
+    }
+}
+
+/// Collect all `Capture(name)` references in a circuit expression.
+fn collect_expr_captures<'a>(expr: &'a CircuitExpr, captures: &mut HashSet<&'a str>) {
+    match expr {
+        CircuitExpr::Capture(name) => {
+            captures.insert(name.as_str());
+        }
+        CircuitExpr::BinOp { lhs, rhs, .. }
+        | CircuitExpr::Comparison { lhs, rhs, .. }
+        | CircuitExpr::BoolOp { lhs, rhs, .. }
+        | CircuitExpr::IntDiv { lhs, rhs, .. }
+        | CircuitExpr::IntMod { lhs, rhs, .. } => {
+            collect_expr_captures(lhs, captures);
+            collect_expr_captures(rhs, captures);
+        }
+        CircuitExpr::UnaryOp { operand, .. } => collect_expr_captures(operand, captures),
+        CircuitExpr::Mux {
+            cond,
+            if_true,
+            if_false,
+        } => {
+            collect_expr_captures(cond, captures);
+            collect_expr_captures(if_true, captures);
+            collect_expr_captures(if_false, captures);
+        }
+        CircuitExpr::PoseidonHash { left, right } => {
+            collect_expr_captures(left, captures);
+            collect_expr_captures(right, captures);
+        }
+        CircuitExpr::PoseidonMany(args) => {
+            for a in args {
+                collect_expr_captures(a, captures);
+            }
+        }
+        CircuitExpr::RangeCheck { value, .. } => collect_expr_captures(value, captures),
+        CircuitExpr::MerkleVerify { root, leaf, .. } => {
+            collect_expr_captures(root, captures);
+            collect_expr_captures(leaf, captures);
+        }
+        CircuitExpr::ArrayIndex { index, .. } => collect_expr_captures(index, captures),
+        CircuitExpr::Pow { base, .. } => collect_expr_captures(base, captures),
+        // Leaf nodes with no captures
+        CircuitExpr::Const(_)
+        | CircuitExpr::Input(_)
+        | CircuitExpr::Var(_)
+        | CircuitExpr::ArrayLen(_) => {}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parser::parse_circom;
-    use ir::prove_ir::types::{CircuitNode, ForRange};
+    use ir::prove_ir::types::{CaptureUsage, CircuitNode, ForRange};
 
     fn parse_and_lower(src: &str) -> ProveIR {
         let (prog, errors) = parse_circom(src).expect("parse failed");
         assert!(errors.is_empty(), "parse errors: {:?}", errors);
 
-        let template = match &prog.definitions[0] {
-            crate::ast::Definition::Template(t) => t,
-            _ => panic!("expected template"),
-        };
+        // Find the template that matches the main component, or use the first one.
+        let main_name = prog
+            .main_component
+            .as_ref()
+            .map(|m| m.template_name.as_str());
+        let template = prog
+            .definitions
+            .iter()
+            .find_map(|d| match d {
+                crate::ast::Definition::Template(t)
+                    if main_name.is_none() || main_name == Some(t.name.as_str()) =>
+                {
+                    Some(t)
+                }
+                _ => None,
+            })
+            .expect("no matching template found");
 
-        lower_template(template, prog.main_component.as_ref()).unwrap()
+        lower_template(template, prog.main_component.as_ref(), &prog).unwrap()
     }
 
     // ── Basic template ──────────────────────────────────────────────
@@ -188,7 +348,9 @@ mod tests {
         // lc === in → AssertEq
         assert_eq!(ir.body.len(), 3);
         match &ir.body[1] {
-            CircuitNode::For { var, range, body, .. } => {
+            CircuitNode::For {
+                var, range, body, ..
+            } => {
                 assert_eq!(var, "i");
                 assert_eq!(*range, ForRange::Literal { start: 0, end: 8 });
                 // out <-- 1 → Let, lc += 1 → Let
@@ -303,5 +465,239 @@ mod tests {
         // xout <-- 1, yout <-- 1, xout === ..., yout === ...
         assert_eq!(ir.witness_inputs.len(), 2); // x1, y1
         assert_eq!(ir.body.len(), 4);
+    }
+
+    // ── Component inlining ─────────────────────────────────────────
+
+    #[test]
+    fn component_inlining_multiplier() {
+        let ir = parse_and_lower(
+            r#"
+            template Multiplier() {
+                signal input a;
+                signal input b;
+                signal output c;
+                c <== a * b;
+            }
+            template Main() {
+                signal input x;
+                signal input y;
+                signal output out;
+                component m = Multiplier();
+                m.a <== x;
+                m.b <== y;
+                out <== m.c;
+            }
+            component main = Main();
+            "#,
+        );
+
+        assert_eq!(ir.name, Some("Main".to_string()));
+        assert_eq!(ir.witness_inputs.len(), 2); // x, y
+
+        // Body should contain:
+        // m.a = x (wiring Let + AssertEq)
+        // m.b = y (wiring Let + AssertEq)
+        // [inlined Multiplier body: m.c = m.a * m.b (Let + AssertEq)]
+        // out = m.c (Let + AssertEq)
+        // Check that inlined body references mangled names
+        let has_mangled_let = ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::Let { name, .. } if name == "m.c"));
+        assert!(has_mangled_let, "should have Let for m.c from inlined body");
+    }
+
+    #[test]
+    fn component_no_inputs() {
+        let ir = parse_and_lower(
+            r#"
+            template Constant() {
+                signal output out;
+                out <== 42;
+            }
+            template Main() {
+                signal output result;
+                component c = Constant();
+                result <== c.out;
+            }
+            component main = Main();
+            "#,
+        );
+
+        // Constant has no inputs → inlined immediately at ComponentDecl
+        let has_mangled = ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::Let { name, .. } if name == "c.out"));
+        assert!(has_mangled, "should have Let for c.out from inlined body");
+    }
+
+    #[test]
+    fn component_with_template_args() {
+        let ir = parse_and_lower(
+            r#"
+            template Scale(factor) {
+                signal input in;
+                signal output out;
+                out <== in * factor;
+            }
+            template Main() {
+                signal input x;
+                signal output y;
+                component s = Scale(3);
+                s.in <== x;
+                y <== s.out;
+            }
+            component main = Main();
+            "#,
+        );
+
+        // The inlined body should have substituted `factor` with 3
+        let has_scale_out = ir
+            .body
+            .iter()
+            .any(|n| matches!(n, CircuitNode::Let { name, .. } if name == "s.out"));
+        assert!(has_scale_out, "should have Let for s.out");
+    }
+
+    // ── Function inlining ──────────────────────────────────────────
+
+    #[test]
+    fn function_inlining_simple() {
+        let ir = parse_and_lower(
+            r#"
+            function square(x) {
+                return x * x;
+            }
+            template Main() {
+                signal input a;
+                signal output b;
+                b <== square(a);
+            }
+            component main = Main();
+            "#,
+        );
+
+        assert_eq!(ir.witness_inputs.len(), 1);
+        // b <== square(a) should inline to b <== a * a
+        assert_eq!(ir.body.len(), 2); // Let + AssertEq
+    }
+
+    #[test]
+    fn function_inlining_with_two_args() {
+        let ir = parse_and_lower(
+            r#"
+            function add_mul(a, b) {
+                return (a + b) * a;
+            }
+            template Main() {
+                signal input x;
+                signal input y;
+                signal output z;
+                z <== add_mul(x, y);
+            }
+            component main = Main();
+            "#,
+        );
+
+        assert_eq!(ir.body.len(), 2); // Let + AssertEq
+    }
+
+    #[test]
+    fn function_inlining_nested_call() {
+        let ir = parse_and_lower(
+            r#"
+            function double(x) {
+                return x + x;
+            }
+            function quad(x) {
+                return double(double(x));
+            }
+            template Main() {
+                signal input a;
+                signal output b;
+                b <== quad(a);
+            }
+            component main = Main();
+            "#,
+        );
+
+        assert_eq!(ir.body.len(), 2); // Let + AssertEq
+    }
+
+    #[test]
+    fn function_undefined_errors() {
+        let src = r#"
+            template Main() {
+                signal input a;
+                signal output b;
+                b <== unknown_fn(a);
+            }
+            component main = Main();
+        "#;
+        let (prog, errors) = parse_circom(src).expect("parse failed");
+        assert!(errors.is_empty());
+        let template = match &prog.definitions[0] {
+            crate::ast::Definition::Template(t) => t,
+            _ => panic!("expected template"),
+        };
+        let result = lower_template(template, prog.main_component.as_ref(), &prog);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("undefined function"));
+    }
+
+    // ── Capture classification ─────────────────────────────────────
+
+    #[test]
+    fn capture_circuit_input() {
+        let ir = parse_and_lower(
+            r#"
+            template Scale(factor) {
+                signal input x;
+                signal output y;
+                y <== x * factor;
+            }
+            component main = Scale();
+            "#,
+        );
+
+        assert_eq!(ir.captures.len(), 1);
+        assert_eq!(ir.captures[0].name, "factor");
+        assert_eq!(ir.captures[0].usage, CaptureUsage::CircuitInput);
+    }
+
+    #[test]
+    fn capture_unused_is_structure_only() {
+        let ir = parse_and_lower(
+            r#"
+            template T(unused_param) {
+                signal input x;
+                signal output y;
+                y <== x;
+            }
+            component main = T();
+            "#,
+        );
+
+        assert_eq!(ir.captures.len(), 1);
+        assert_eq!(ir.captures[0].name, "unused_param");
+        assert_eq!(ir.captures[0].usage, CaptureUsage::StructureOnly);
+    }
+
+    #[test]
+    fn capture_no_params_no_captures() {
+        let ir = parse_and_lower(
+            r#"
+            template T() {
+                signal input x;
+                signal output y;
+                y <== x;
+            }
+            component main = T();
+            "#,
+        );
+
+        assert!(ir.captures.is_empty());
     }
 }
