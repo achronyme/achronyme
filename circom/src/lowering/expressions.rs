@@ -131,41 +131,75 @@ pub fn lower_expr(
             index,
             span,
         } => {
-            // Support both `arr[i]` and `comp.signal[i]`
-            let array_name = extract_ident_name(object)
-                .or_else(|| {
-                    // DotAccess: `comp.field[i]` → mangled name `comp.field`
-                    if let Expr::DotAccess {
-                        object: inner_obj,
-                        field,
-                        ..
-                    } = object.as_ref()
+            // Case 1: Simple ident `arr[i]` or DotAccess `comp.signal[i]`
+            if let Some(array_name) = extract_ident_name(object).or_else(|| {
+                if let Expr::DotAccess {
+                    object: inner_obj,
+                    field,
+                    ..
+                } = object.as_ref()
+                {
+                    extract_ident_name(inner_obj).map(|obj_name| format!("{obj_name}.{field}"))
+                } else {
+                    None
+                }
+            }) {
+                if let Some(idx_val) = const_eval_u64(index) {
+                    if let Some(elem_name) =
+                        env.resolve_array_element(&array_name, idx_val as usize)
                     {
-                        extract_ident_name(inner_obj).map(|obj_name| format!("{obj_name}.{field}"))
-                    } else {
-                        None
+                        return Ok(CircuitExpr::Var(elem_name));
                     }
-                })
-                .ok_or_else(|| {
-                    LoweringError::new(
-                        "array index target must be a simple identifier or \
-                         component signal in circuit context",
-                        span,
-                    )
-                })?;
+                }
 
-            // If index is a constant and array is tracked, resolve to `arr_N` directly
-            if let Some(idx_val) = const_eval_u64(index) {
-                if let Some(elem_name) = env.resolve_array_element(&array_name, idx_val as usize) {
-                    return Ok(CircuitExpr::Var(elem_name));
+                let idx = lower_expr(index, env, ctx)?;
+                return Ok(CircuitExpr::ArrayIndex {
+                    array: array_name,
+                    index: Box::new(idx),
+                });
+            }
+
+            // Case 2: Multi-dim index: arr[i][j]...[k] or comp.signal[i][j]...[k]
+            // Unwrap the Index chain, collect indices, find base name.
+            {
+                let mut indices: Vec<&Expr> = vec![index.as_ref()];
+                let mut current: &Expr = object.as_ref();
+                loop {
+                    match current {
+                        Expr::Ident { name, .. } => {
+                            indices.reverse();
+                            return lower_multi_index(name, &indices, env, ctx);
+                        }
+                        Expr::DotAccess {
+                            object: da_obj,
+                            field,
+                            ..
+                        } => {
+                            if let Some(obj) = extract_ident_name(da_obj) {
+                                let base = format!("{obj}.{field}");
+                                indices.reverse();
+                                return lower_multi_index(&base, &indices, env, ctx);
+                            }
+                            break;
+                        }
+                        Expr::Index {
+                            object: inner_obj,
+                            index: inner_idx,
+                            ..
+                        } => {
+                            indices.push(inner_idx.as_ref());
+                            current = inner_obj.as_ref();
+                        }
+                        _ => break,
+                    }
                 }
             }
 
-            let idx = lower_expr(index, env, ctx)?;
-            Ok(CircuitExpr::ArrayIndex {
-                array: array_name,
-                index: Box::new(idx),
-            })
+            Err(LoweringError::new(
+                "array index target must be a simple identifier or \
+                 component signal in circuit context",
+                span,
+            ))
         }
 
         // ── Function calls ──────────────────────────────────────────
@@ -221,6 +255,72 @@ pub fn lower_expr(
 
         Expr::Error { span } => Err(LoweringError::new("cannot lower an error expression", span)),
     }
+}
+
+/// Lower a multi-dimensional array index, linearizing with strides.
+///
+/// `arr[i][j]` with strides [2] → `ArrayIndex { array: "arr", index: i*2+j }`
+/// `arr[i][j][k]` with strides [8, 4] → `ArrayIndex { array: "arr", index: i*8+j*4+k }`
+fn lower_multi_index(
+    base_name: &str,
+    indices: &[&Expr],
+    env: &LoweringEnv,
+    ctx: &mut LoweringContext<'_>,
+) -> Result<CircuitExpr, LoweringError> {
+    let strides = env.strides.get(base_name);
+    let n = indices.len();
+
+    // Try full constant evaluation for direct resolution
+    let const_vals: Option<Vec<u64>> = indices.iter().map(|idx| const_eval_u64(idx)).collect();
+    if let Some(vals) = const_vals {
+        let mut linear: usize = 0;
+        for (dim, &val) in vals.iter().enumerate() {
+            let stride = if dim < n - 1 {
+                strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+            } else {
+                1
+            };
+            linear += val as usize * stride;
+        }
+        if let Some(elem_name) = env.resolve_array_element(base_name, linear) {
+            return Ok(CircuitExpr::Var(elem_name));
+        }
+    }
+
+    // Build symbolic linearized expression
+    let mut result: Option<CircuitExpr> = None;
+    for (dim, idx) in indices.iter().enumerate() {
+        let lowered = lower_expr(idx, env, ctx)?;
+        let stride = if dim < n - 1 {
+            strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+        } else {
+            1
+        };
+
+        let term = if stride == 1 {
+            lowered
+        } else {
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Mul,
+                lhs: Box::new(lowered),
+                rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(stride as u64))),
+            }
+        };
+
+        result = Some(match result {
+            None => term,
+            Some(acc) => CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(acc),
+                rhs: Box::new(term),
+            },
+        });
+    }
+
+    Ok(CircuitExpr::ArrayIndex {
+        array: base_name.to_string(),
+        index: Box::new(result.unwrap()),
+    })
 }
 
 /// Lower a Circom binary operator to a `CircuitExpr`.

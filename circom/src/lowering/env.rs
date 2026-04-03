@@ -32,6 +32,9 @@ pub struct LoweringEnv {
     /// Arrays — maps base name to element count for index resolution.
     /// When `arr` is registered with size 3, `arr[0]` resolves to `arr_0`.
     pub arrays: HashMap<String, usize>,
+    /// Multi-dimensional array strides for linearization.
+    /// For `signal c[n][2]`, strides["c"] = [2], so c[i][j] → c[i*2+j].
+    pub strides: HashMap<String, Vec<usize>>,
 }
 
 impl LoweringEnv {
@@ -41,6 +44,7 @@ impl LoweringEnv {
             locals: HashSet::new(),
             captures: HashSet::new(),
             arrays: HashMap::new(),
+            strides: HashMap::new(),
         }
     }
 

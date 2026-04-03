@@ -420,15 +420,21 @@ impl<F: FieldBackend> Instantiator<F> {
                 value,
                 ..
             } => {
-                let idx_var = self.emit_expr(index)?;
-                let idx = self.extract_const_index(idx_var).ok_or_else(|| {
-                    ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "indexed assignment into `{array}` requires a compile-time constant index"
-                        ),
-                        span: None,
-                    }
-                })?;
+                // Try evaluating the index as a constant expression first
+                // (handles linearized multi-dim indices like i*2+j after loop unroll)
+                let idx = if let Ok(fe) = self.eval_const_expr(index) {
+                    fe_to_usize(&fe, array)?
+                } else {
+                    let idx_var = self.emit_expr(index)?;
+                    self.extract_const_index(idx_var).ok_or_else(|| {
+                        ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "indexed assignment into `{array}` requires a compile-time constant index"
+                            ),
+                            span: None,
+                        }
+                    })?
+                };
                 let elem_name = format!("{array}_{idx}");
                 let v = self.emit_expr(value)?;
                 self.program.set_name(v, elem_name.clone());
@@ -436,15 +442,19 @@ impl<F: FieldBackend> Instantiator<F> {
                 self.ensure_array_slot(array, idx, v);
             }
             CircuitNode::WitnessHintIndexed { array, index, .. } => {
-                let idx_var = self.emit_expr(index)?;
-                let idx = self.extract_const_index(idx_var).ok_or_else(|| {
-                    ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "indexed witness hint into `{array}` requires a compile-time constant index"
-                        ),
-                        span: None,
-                    }
-                })?;
+                let idx = if let Ok(fe) = self.eval_const_expr(index) {
+                    fe_to_usize(&fe, array)?
+                } else {
+                    let idx_var = self.emit_expr(index)?;
+                    self.extract_const_index(idx_var).ok_or_else(|| {
+                        ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "indexed witness hint into `{array}` requires a compile-time constant index"
+                            ),
+                            span: None,
+                        }
+                    })?
+                };
                 let elem_name = format!("{array}_{idx}");
                 let v = self.program.fresh_var();
                 self.program.set_name(v, elem_name.clone());
@@ -557,8 +567,30 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                 }
             }
+            CircuitExpr::Var(name) | CircuitExpr::Input(name) => {
+                // Look up the variable in the env — if it's a scalar SSA var
+                // that was defined as a Const (e.g., loop variable after unroll),
+                // extract its value.
+                if let Some(InstEnvValue::Scalar(ssa)) = self.env.get(name) {
+                    let ssa = *ssa;
+                    for inst in self.program.instructions.iter().rev() {
+                        if inst.result_var() == ssa {
+                            if let Instruction::Const { value, .. } = inst {
+                                return Ok(*value);
+                            }
+                            break;
+                        }
+                    }
+                }
+                Err(ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "variable `{name}` is not a compile-time constant in this context"
+                    ),
+                    span: None,
+                })
+            }
             _ => Err(ProveIrError::UnsupportedOperation {
-                description: format!("unsupported expression in loop bound: {expr:?}"),
+                description: format!("unsupported expression in const eval: {expr:?}"),
                 span: None,
             }),
         }

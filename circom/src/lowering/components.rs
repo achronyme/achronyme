@@ -25,7 +25,7 @@ use crate::ast::TemplateDef;
 use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
-use super::signals::collect_signal_names;
+use super::signals::{collect_signal_names, extract_signal_array_sizes, extract_signal_strides};
 use super::statements::lower_stmts;
 
 /// Inline a component's template body with mangled names.
@@ -72,8 +72,6 @@ pub fn inline_component_body<'a>(
     for (name, sig_type) in &signals {
         match sig_type {
             crate::ast::SignalType::Input => {
-                // Input signals are wired from outside → they'll be Var references
-                // (the Let bindings from wirings use the mangled name)
                 env.inputs.insert(name.clone());
             }
             crate::ast::SignalType::Output | crate::ast::SignalType::Intermediate => {
@@ -83,6 +81,31 @@ pub fn inline_component_body<'a>(
     }
     for param in &template.params {
         env.captures.insert(param.clone());
+    }
+
+    // Extract param values from template args for stride computation
+    let param_values: HashMap<String, u64> = template
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, param)| {
+            template_args
+                .get(i)
+                .and_then(|arg| {
+                    if let CircuitExpr::Const(fc) = arg {
+                        fc.to_u64()
+                    } else {
+                        None
+                    }
+                })
+                .map(|val| (param.clone(), val))
+        })
+        .collect();
+
+    // Register multi-dimensional array strides for linearized indexing
+    let stride_map = extract_signal_strides(template, &param_values);
+    for (name, strides) in &stride_map {
+        env.strides.insert(name.clone(), strides.clone());
     }
 
     // Lower template body with original names
@@ -100,17 +123,54 @@ pub fn inline_component_body<'a>(
 pub fn register_component_locals(
     comp_name: &str,
     template: &TemplateDef,
+    template_args: &[CircuitExpr],
     parent_env: &mut LoweringEnv,
 ) {
     let signals = collect_signal_names(&template.body.stmts);
     for (name, sig_type) in &signals {
         match sig_type {
-            // Input signals are wired explicitly — they become locals too
             crate::ast::SignalType::Input
             | crate::ast::SignalType::Output
             | crate::ast::SignalType::Intermediate => {
                 parent_env.locals.insert(format!("{comp_name}.{name}"));
             }
+        }
+    }
+
+    // Propagate stride info for multi-dim arrays to parent env
+    let param_values: HashMap<String, u64> = template
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, param)| {
+            template_args
+                .get(i)
+                .and_then(|arg| {
+                    if let CircuitExpr::Const(fc) = arg {
+                        fc.to_u64()
+                    } else {
+                        None
+                    }
+                })
+                .map(|val| (param.clone(), val))
+        })
+        .collect();
+
+    let stride_map = extract_signal_strides(template, &param_values);
+    for (signal_name, strides) in stride_map {
+        parent_env
+            .strides
+            .insert(format!("{comp_name}.{signal_name}"), strides);
+    }
+
+    // Register array sizes and individual element names for component signals
+    let array_sizes = extract_signal_array_sizes(template, &param_values);
+    for (signal_name, total_size) in array_sizes {
+        let mangled_array = format!("{comp_name}.{signal_name}");
+        parent_env.arrays.insert(mangled_array.clone(), total_size);
+        // Register individual elements as locals: mux.out_0, mux.out_1, ...
+        for i in 0..total_size {
+            parent_env.locals.insert(format!("{mangled_array}_{i}"));
         }
     }
 }
