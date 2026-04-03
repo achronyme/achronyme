@@ -14,6 +14,6 @@
 pub mod token;
 pub mod lexer;
 pub mod ast;
-mod parser;
+pub mod parser;
 mod analysis;
 mod lowering;
