@@ -8,58 +8,77 @@ snarkjs for Groth16 proof generation, or native PlonK proofs via halo2.
 ## Pipeline
 
 ```
-Source (.ach)
-    │
-    ▼
-┌──────────┐    parse_program()
-│  Parser  │    achronyme-parser/src/parser.rs
-└────┬─────┘
-     │  Program (AST)
-     ▼
-┌──────────┐    IrLowering::lower_circuit()
-│ IR Lower │    ir/src/lower.rs
-└────┬─────┘
-     │  IrProgram (SSA)
+Source (.ach)                    Source (.circom)
+    │                                │
+    ▼                                ▼
+┌──────────┐  parse_program()   ┌──────────┐  parse_circom()
+│  Parser  │  achronyme-parser  │  Circom  │  circom/src/parser
+└────┬─────┘                    │  Parser  │
+     │  Program (AST)           └────┬─────┘
+     │                               │  CircomProgram (AST)
+     │                               ▼
+     │                          ┌──────────┐  check_constraints()
+     │                          │ Analysis │  circom/src/analysis
+     │                          └────┬─────┘  (<-- without === = error)
+     │                               │
+     │                               ▼
+     │                          ┌──────────┐  lower_template()
+     │                          │ Lowering │  circom/src/lowering
+     │                          └────┬─────┘
+     ▼                               │
+┌──────────┐  IrLowering             │
+│ IR Lower │  ir/src/lower.rs        │  ProveIR
+└────┬─────┘                         │
+     │  IrProgram (SSA)              ▼
+     │◄──────────────────── instantiate()
      ▼
 ┌──────────┐    optimize()
 │  Passes  │    ir/src/passes/mod.rs
-└────┬─────┘    ├─ const_fold
-     │          └─ dce
+└────┬─────┘
      ▼
-┌──────────┐    R1CSCompiler::compile_ir()
-│ Backend  │    compiler/src/r1cs_backend.rs
-└────┬─────┘    (or PlonkishCompiler)
+┌──────────┐    R1CSCompiler / PlonkishCompiler
+│ Backend  │    compiler/src/
+└────┬─────┘
      │  ConstraintSystem
      ▼
-┌──────────┐    write_r1cs() / write_wtns()
-│  Export  │    constraints/src/export.rs
+┌──────────┐    write_r1cs() / write_wtns() / prove()
+│  Export  │    constraints/ + proving/
 └──────────┘
-     │
-     ▼
-  .r1cs + .wtns  →  snarkjs groth16
 ```
 
 ## Crate Map
 
 | Crate | Path | Purpose | Key Types |
 |-------|------|---------|-----------|
+| `diagnostics` | `diagnostics/` | Shared diagnostic infrastructure (zero deps) | `Span`, `Diagnostic`, `SpanRange`, `DiagnosticRenderer` |
 | `memory` | `memory/` | Generic field arithmetic (`F: FieldBackend`), tagged values, heap/GC | `FieldElement<F>`, `FieldBackend`, `Value`, `Heap` |
 | `achronyme-parser` | `achronyme-parser/` | Recursive descent parser, AST types | `Program`, `Stmt`, `Expr`, `Block` |
 | `constraints` | `constraints/` | R1CS + Plonkish constraint systems, export | `ConstraintSystem`, `Variable`, `LinearCombination`, `PlonkishSystem` |
 | `ir` | `ir/` | SSA intermediate representation, lowering, optimization | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering` |
 | `compiler` | `compiler/` | Bytecode compiler + ZK backends | `R1CSCompiler`, `PlonkishCompiler`, `Compiler` |
 | `vm` | `vm/` | Virtual machine execution | `VM` |
+| `proving` | `proving/` | Groth16 (arkworks), PlonK (halo2-KZG), Solidity verifier | `groth16_prove`, `halo2_prove` |
+| `achronyme-std` | `std/` | Standard library via `NativeModule` trait | `StdModule` |
+| `ach-macros` | `ach-macros/` | Proc-macros: `#[ach_native]`, `#[ach_module]` | — |
+| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, ProveIR lowering | `parse_circom`, `lower_template`, `check_constraints` |
 | `cli` | `cli/` | Command-line interface, prove handler, project config | `DefaultProveHandler`, `AchronymeToml`, `ProjectConfig` |
 
 ### Dependency Graph
 
 ```
-cli → compiler → ir → achronyme-parser
- │       │        │
- │       │        └──→ constraints → memory
- │       │                  ↑
- │       └────────────────────
- └──→ vm → memory
+diagnostics (zero deps)
+  │
+  ├──→ achronyme-parser
+  │         │
+  ├──→ ir ──┘──→ memory, constraints
+  │    │
+  ├──→ circom ──→ ir
+  │
+  └──→ compiler → ir, achronyme-parser, memory, constraints
+          │
+          └──→ cli → compiler, vm, proving
+                      │
+                      └──→ vm → memory
 ```
 
 ## Field Architecture
@@ -259,18 +278,18 @@ witness vector:
 ## Diagnostic Pipeline
 
 All compilation phases produce errors and warnings through a unified `Diagnostic` type
-defined in `achronyme-parser/src/diagnostic.rs`. This ensures consistent formatting
-regardless of where an error originates.
+defined in the standalone `diagnostics` crate (zero external dependencies). This crate is
+shared by all frontends (`achronyme-parser`, `circom`, future `noir`) and by `ir` for
+lowering/optimization errors.
 
 ### Types
 
 ```
-achronyme-parser/src/diagnostic.rs
-├── SpanRange          Byte-range span with line/col start and end
-├── Severity           Error | Warning | Note | Help
-├── Label              Secondary span with message
-├── Suggestion         Code replacement (span + replacement text + message)
-└── Diagnostic         The unified diagnostic (severity, message, code, primary_span, labels, suggestions, notes)
+diagnostics/src/
+├── span.rs            Span (byte range + line/col)
+├── diagnostic.rs      SpanRange, Severity, Label, Suggestion, Diagnostic
+├── error.rs           ParseError (with Display, Error, From<ParseError> for Diagnostic)
+└── render.rs          DiagnosticRenderer, ColorMode, atty_stderr()
 ```
 
 `Diagnostic` uses a builder pattern:
@@ -297,10 +316,13 @@ Each crate's error type implements a `to_diagnostic()` method:
 ### Rendering
 
 ```
-achronyme-parser/src/render.rs
+diagnostics/src/render.rs
 ├── ColorMode          Always | Never | Auto (TTY detection via isatty(2))
 └── DiagnosticRenderer Renders source snippets with margin, line numbers, underline carets
 ```
+
+Note: `achronyme-parser` re-exports all types from `diagnostics` for backward
+compatibility. New code should import directly from `diagnostics`.
 
 The `DiagnosticRenderer` produces rustc-style output:
 
