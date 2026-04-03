@@ -236,7 +236,10 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     }
 
     // 1. Compile .circom to ProveIR via Circom frontend
-    let prove_ir = circom::compile_to_prove_ir(&source).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let compile_result =
+        circom::compile_to_prove_ir(&source).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let prove_ir = compile_result.prove_ir;
+    let capture_values = compile_result.capture_values;
 
     if verbose {
         let n_pub = prove_ir.public_inputs.len();
@@ -254,17 +257,24 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     // 2. Compute witness hints (off-circuit evaluation of `<--` expressions)
     // The hints compute signal values from user inputs using off-circuit arithmetic.
     let user_inputs: HashMap<String, FieldElement<F>> = resolved_inputs.clone().unwrap_or_default();
-    let witness_values = circom::witness::compute_witness_hints::<F>(&prove_ir, &user_inputs);
+    let witness_values = circom::witness::compute_witness_hints_with_captures::<F>(
+        &prove_ir,
+        &user_inputs,
+        &capture_values,
+    );
 
     // Merge user inputs + computed witness hints for R1CS
     let mut all_inputs = resolved_inputs.clone().unwrap_or_default();
     all_inputs.extend(witness_values);
     resolved_inputs = Some(all_inputs);
 
-    // Instantiate ProveIR → SSA IR (no captures for now)
-    let empty_captures: HashMap<String, FieldElement<F>> = HashMap::new();
+    // Instantiate ProveIR → SSA IR with captures from main component args
+    let fe_captures: HashMap<String, FieldElement<F>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<F>::from_u64(*v)))
+        .collect();
     let mut program = prove_ir
-        .instantiate(&empty_captures)
+        .instantiate(&fe_captures)
         .map_err(|e| anyhow::anyhow!("ProveIR instantiation error: {e}"))?;
 
     if verbose {

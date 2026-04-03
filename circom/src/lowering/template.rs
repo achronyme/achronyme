@@ -789,4 +789,95 @@ mod tests {
         let has_for = ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. }));
         assert!(has_for, "should have a For node for the loop");
     }
+
+    #[test]
+    fn real_num2bits_e2e_instantiate() {
+        use memory::{Bn254Fr, FieldElement};
+        use std::collections::HashMap;
+
+        let src = r#"
+            template Num2Bits(n) {
+                signal input in;
+                signal output out[n];
+                var lc1 = 0;
+                var e2 = 1;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    out[i] * (out[i] - 1) === 0;
+                    lc1 += out[i] * e2;
+                    e2 = e2 + e2;
+                }
+                lc1 === in;
+            }
+            component main {public [in]} = Num2Bits(8);
+        "#;
+
+        // 1. Compile to ProveIR
+        let result = crate::compile_to_prove_ir(src).expect("compilation failed");
+        let prove_ir = result.prove_ir;
+        let capture_values = result.capture_values;
+
+        assert_eq!(capture_values.get("n"), Some(&8));
+
+        // 2. Compute witness hints (in = 13 → bits = [1,0,1,1,0,0,0,0])
+        let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+        inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(13));
+
+        let witness = crate::witness::compute_witness_hints_with_captures(
+            &prove_ir,
+            &inputs,
+            &capture_values,
+        );
+
+        // Verify bit decomposition: 13 = 1101 in binary
+        assert_eq!(
+            witness.get("out_0"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(1))
+        ); // bit 0
+        assert_eq!(
+            witness.get("out_1"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(0))
+        ); // bit 1
+        assert_eq!(
+            witness.get("out_2"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(1))
+        ); // bit 2
+        assert_eq!(
+            witness.get("out_3"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(1))
+        ); // bit 3
+        assert_eq!(
+            witness.get("out_4"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(0))
+        ); // bit 4
+        assert_eq!(
+            witness.get("out_5"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(0))
+        ); // bit 5
+        assert_eq!(
+            witness.get("out_6"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(0))
+        ); // bit 6
+        assert_eq!(
+            witness.get("out_7"),
+            Some(&FieldElement::<Bn254Fr>::from_u64(0))
+        ); // bit 7
+
+        // 3. Instantiate ProveIR → IR
+        let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+            .iter()
+            .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect();
+
+        let program = prove_ir
+            .instantiate(&fe_captures)
+            .expect("instantiation failed");
+
+        // Verify the IR program has instructions (loop was unrolled)
+        assert!(
+            program.instructions.len() > 10,
+            "expected many instructions after unrolling, got {}",
+            program.instructions.len()
+        );
+    }
 }

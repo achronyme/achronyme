@@ -21,10 +21,13 @@
 pub mod analysis;
 pub mod ast;
 pub mod lexer;
-mod lowering;
+// pub(crate) so lib.rs can access lowering::utils::const_eval_u64
+pub(crate) mod lowering;
 pub mod parser;
 pub mod token;
 pub mod witness;
+
+use std::collections::HashMap;
 
 use diagnostics::Diagnostic;
 use ir::prove_ir::types::ProveIR;
@@ -74,6 +77,15 @@ impl std::fmt::Display for CircomError {
 
 impl std::error::Error for CircomError {}
 
+/// Result of Circom compilation: a ProveIR plus the capture values
+/// extracted from the main component's template arguments.
+pub struct CircomCompileResult {
+    pub prove_ir: ProveIR,
+    /// Template parameter values from `component main = Template(arg1, arg2, ...)`.
+    /// Maps parameter names to their constant values.
+    pub capture_values: HashMap<String, u64>,
+}
+
 /// Compile a `.circom` source file to ProveIR.
 ///
 /// Runs the full Circom frontend pipeline:
@@ -81,9 +93,9 @@ impl std::error::Error for CircomError {}
 /// 2. Constraint analysis (E100: under-constrained signals)
 /// 3. Lower main component's template → ProveIR
 ///
-/// The returned `ProveIR` can be instantiated with input values and
-/// fed into the standard Achronyme proof pipeline (optimize → R1CS → prove).
-pub fn compile_to_prove_ir(source: &str) -> Result<ProveIR, CircomError> {
+/// Returns the ProveIR and the capture values from the main component's
+/// template arguments, needed for instantiation.
+pub fn compile_to_prove_ir(source: &str) -> Result<CircomCompileResult, CircomError> {
     // 1. Parse
     let (program, parse_errors) = parser::parse_circom(source).map_err(|e| {
         CircomError::ParseError(vec![Diagnostic::error(
@@ -144,5 +156,18 @@ pub fn compile_to_prove_ir(source: &str) -> Result<ProveIR, CircomError> {
     let prove_ir = lowering::template::lower_template(template, Some(main), &program)
         .map_err(CircomError::LoweringError)?;
 
-    Ok(prove_ir)
+    // 5. Extract capture values from main component template args
+    let mut capture_values = HashMap::new();
+    for (i, param) in template.params.iter().enumerate() {
+        if let Some(arg_expr) = main.template_args.get(i) {
+            if let Some(val) = lowering::utils::const_eval_u64(arg_expr) {
+                capture_values.insert(param.clone(), val);
+            }
+        }
+    }
+
+    Ok(CircomCompileResult {
+        prove_ir,
+        capture_values,
+    })
 }

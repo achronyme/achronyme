@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, ProveIR};
+use ir::prove_ir::types::{CircuitExpr, CircuitNode, ForRange, ProveIR};
 use memory::{FieldBackend, FieldElement};
 
 /// Compute all witness hint values from a ProveIR body.
@@ -22,14 +22,27 @@ pub fn compute_witness_hints<F: FieldBackend>(
     prove_ir: &ProveIR,
     inputs: &HashMap<String, FieldElement<F>>,
 ) -> HashMap<String, FieldElement<F>> {
+    compute_witness_hints_with_captures(prove_ir, inputs, &HashMap::new())
+}
+
+/// Compute witness hints with capture values (template parameters).
+///
+/// Captures are needed to resolve For loop bounds like `for i < n`
+/// where `n` is a template parameter.
+pub fn compute_witness_hints_with_captures<F: FieldBackend>(
+    prove_ir: &ProveIR,
+    inputs: &HashMap<String, FieldElement<F>>,
+    captures: &HashMap<String, u64>,
+) -> HashMap<String, FieldElement<F>> {
     let mut env: HashMap<String, FieldElement<F>> = inputs.clone();
-    collect_hints_recursive(&prove_ir.body, &mut env);
+    collect_hints_recursive(&prove_ir.body, &mut env, captures);
     env
 }
 
 fn collect_hints_recursive<F: FieldBackend>(
     nodes: &[CircuitNode],
     env: &mut HashMap<String, FieldElement<F>>,
+    captures: &HashMap<String, u64>,
 ) {
     for node in nodes {
         match node {
@@ -38,27 +51,75 @@ fn collect_hints_recursive<F: FieldBackend>(
                     env.insert(name.clone(), val);
                 }
             }
+            CircuitNode::WitnessHintIndexed {
+                array, index, hint, ..
+            } => {
+                if let (Some(idx), Some(val)) = (eval_hint_u64(index, env), eval_hint(hint, env)) {
+                    let elem_name = format!("{array}_{idx}");
+                    env.insert(elem_name, val);
+                }
+            }
             CircuitNode::Let { name, value, .. } => {
-                // Let bindings also produce values that may be needed by later hints
                 if let Some(val) = eval_hint(value, env) {
                     env.insert(name.clone(), val);
                 }
             }
-            CircuitNode::For { body, .. } => {
-                // For now, don't recurse into loops (would need to unroll)
-                // Loop-body hints will be handled when we have proper unrolling
-                collect_hints_recursive(body, env);
+            CircuitNode::LetIndexed {
+                array,
+                index,
+                value,
+                ..
+            } => {
+                if let (Some(idx), Some(val)) = (eval_hint_u64(index, env), eval_hint(value, env)) {
+                    let elem_name = format!("{array}_{idx}");
+                    env.insert(elem_name, val);
+                }
+            }
+            CircuitNode::For {
+                var, range, body, ..
+            } => {
+                let (start, end) = match range {
+                    ForRange::Literal { start, end } => (Some(*start), Some(*end)),
+                    ForRange::WithCapture { start, end_capture } => {
+                        (Some(*start), captures.get(end_capture).copied())
+                    }
+                    ForRange::Array(_) => (None, None),
+                };
+                if let (Some(start), Some(end)) = (start, end) {
+                    // Unroll the loop: set loop var to each iteration value
+                    for i in start..end {
+                        env.insert(var.clone(), FieldElement::<F>::from_u64(i));
+                        collect_hints_recursive(body, env, captures);
+                    }
+                } else {
+                    // Can't determine bounds — recurse once as fallback
+                    collect_hints_recursive(body, env, captures);
+                }
             }
             CircuitNode::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                collect_hints_recursive(then_body, env);
-                collect_hints_recursive(else_body, env);
+                collect_hints_recursive(then_body, env, captures);
+                collect_hints_recursive(else_body, env, captures);
             }
             _ => {}
         }
+    }
+}
+
+/// Evaluate an expression and extract a u64 index value.
+fn eval_hint_u64<F: FieldBackend>(
+    expr: &CircuitExpr,
+    env: &HashMap<String, FieldElement<F>>,
+) -> Option<u64> {
+    let val = eval_hint(expr, env)?;
+    let limbs = val.to_canonical();
+    if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+        Some(limbs[0])
+    } else {
+        None
     }
 }
 

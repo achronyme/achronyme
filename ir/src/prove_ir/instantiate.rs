@@ -420,7 +420,6 @@ impl<F: FieldBackend> Instantiator<F> {
                 value,
                 ..
             } => {
-                // Evaluate index to a compile-time constant.
                 let idx_var = self.emit_expr(index)?;
                 let idx = self.extract_const_index(idx_var).ok_or_else(|| {
                     ProveIrError::UnsupportedOperation {
@@ -434,15 +433,9 @@ impl<F: FieldBackend> Instantiator<F> {
                 let v = self.emit_expr(value)?;
                 self.program.set_name(v, elem_name.clone());
                 self.env.insert(elem_name, InstEnvValue::Scalar(v));
-                // Update the array env entry if it exists.
-                if let Some(InstEnvValue::Array(arr)) = self.env.get_mut(array) {
-                    if idx < arr.len() {
-                        arr[idx] = v;
-                    }
-                }
+                self.ensure_array_slot(array, idx, v);
             }
             CircuitNode::WitnessHintIndexed { array, index, .. } => {
-                // Witness hint with dynamic (but compile-time constant) index.
                 let idx_var = self.emit_expr(index)?;
                 let idx = self.extract_const_index(idx_var).ok_or_else(|| {
                     ProveIrError::UnsupportedOperation {
@@ -461,12 +454,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     visibility: Visibility::Witness,
                 });
                 self.env.insert(elem_name, InstEnvValue::Scalar(v));
-                // Update the array env entry if it exists.
-                if let Some(InstEnvValue::Array(arr)) = self.env.get_mut(array) {
-                    if idx < arr.len() {
-                        arr[idx] = v;
-                    }
-                }
+                self.ensure_array_slot(array, idx, v);
             }
         }
         Ok(())
@@ -1314,6 +1302,35 @@ impl<F: FieldBackend> Instantiator<F> {
             }
         }
         None
+    }
+
+    /// Ensure an array exists in the env and has at least `idx + 1` slots.
+    /// Creates the array lazily if it doesn't exist, and extends it with
+    /// placeholder variables if needed.
+    fn ensure_array_slot(&mut self, array: &str, idx: usize, var: SsaVar) {
+        match self.env.get_mut(array) {
+            Some(InstEnvValue::Array(arr)) => {
+                // Extend if needed
+                while arr.len() <= idx {
+                    let placeholder = self.program.fresh_var();
+                    arr.push(placeholder);
+                }
+                arr[idx] = var;
+            }
+            Some(InstEnvValue::Scalar(_)) => {
+                // Name collision — don't overwrite scalar
+            }
+            None => {
+                // Create array lazily
+                let mut arr = Vec::with_capacity(idx + 1);
+                for _ in 0..idx {
+                    let placeholder = self.program.fresh_var();
+                    arr.push(placeholder);
+                }
+                arr.push(var);
+                self.env.insert(array.to_string(), InstEnvValue::Array(arr));
+            }
+        }
     }
 
     /// Extract a constant u32 from an emitted variable, with a descriptive error.
