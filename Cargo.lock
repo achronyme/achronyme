@@ -452,7 +452,6 @@ version = "0.1.0-beta.19"
 dependencies = [
  "diagnostics",
  "ir",
- "memory",
  "tempfile",
 ]
 
@@ -870,6 +869,7 @@ dependencies = [
  "achronyme-parser",
  "bincode",
  "constraints",
+ "diagnostics",
  "memory",
  "serde",
 ]

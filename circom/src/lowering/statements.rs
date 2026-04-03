@@ -14,8 +14,10 @@ use ir::prove_ir::types::{CircuitExpr, CircuitNode, ForRange};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
+use super::env::LoweringEnv;
 use super::error::LoweringError;
-use super::expressions::{const_eval_u64, extract_ident_name, lower_expr, LoweringEnv};
+use super::expressions::lower_expr;
+use super::utils::{const_eval_u64, extract_ident_name};
 
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
 pub fn lower_stmts(

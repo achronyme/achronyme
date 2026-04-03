@@ -15,7 +15,7 @@ use ir::types::IrType;
 use crate::ast::{Expr, MainComponent, SignalType, Stmt, TemplateDef};
 
 use super::error::LoweringError;
-use super::expressions::const_eval_u64;
+use super::utils::const_eval_u64;
 
 /// Collected signal declarations from a template, categorized by role.
 #[derive(Debug)]

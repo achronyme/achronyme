@@ -13,62 +13,18 @@
 //! - Array index → `CircuitExpr::ArrayIndex`
 //! - Unary `-`, `!` → `CircuitExpr::UnaryOp`
 
-use std::collections::HashSet;
-
 use ir::prove_ir::types::{
     CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitUnaryOp, FieldConst,
 };
 
 use crate::ast::{self, Expr};
 
+use super::env::{LoweringEnv, VarKind};
 use super::error::LoweringError;
+use super::utils::{binop_symbol, extract_ident_name};
 
 /// The default max bits for IntDiv/IntMod. Circom operates over BN254 (~254 bits).
 const DEFAULT_MAX_BITS: u32 = 253;
-
-/// Identifier resolution categories for lowering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VarKind {
-    /// A public or witness input signal.
-    Input,
-    /// A local let-binding (intermediate signal, variable, output signal).
-    Local,
-    /// A template parameter captured from the outer scope.
-    Capture,
-}
-
-/// Environment for resolving identifiers during expression lowering.
-pub struct LoweringEnv {
-    /// Signal inputs (public + witness) — resolve to `CircuitExpr::Input`.
-    pub inputs: HashSet<String>,
-    /// Local bindings (intermediates, outputs, vars) — resolve to `CircuitExpr::Var`.
-    pub locals: HashSet<String>,
-    /// Template parameters — resolve to `CircuitExpr::Capture`.
-    pub captures: HashSet<String>,
-}
-
-impl LoweringEnv {
-    pub fn new() -> Self {
-        Self {
-            inputs: HashSet::new(),
-            locals: HashSet::new(),
-            captures: HashSet::new(),
-        }
-    }
-
-    /// Resolve an identifier to its kind, or None if unknown.
-    pub fn resolve(&self, name: &str) -> Option<VarKind> {
-        if self.inputs.contains(name) {
-            Some(VarKind::Input)
-        } else if self.locals.contains(name) {
-            Some(VarKind::Local)
-        } else if self.captures.contains(name) {
-            Some(VarKind::Capture)
-        } else {
-            None
-        }
-    }
-}
 
 /// Lower a Circom expression to a ProveIR `CircuitExpr`.
 pub fn lower_expr(
@@ -88,7 +44,6 @@ pub fn lower_expr(
         }
 
         Expr::HexNumber { value, span } => {
-            // value is "0x..." — parse the hex part
             let hex_str = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
             let n = u64::from_str_radix(hex_str, 16).map_err(|_| {
                 LoweringError::new(
@@ -155,7 +110,6 @@ pub fn lower_expr(
 
         // ── Array index ─────────────────────────────────────────────
         Expr::Index { object, index, span } => {
-            // The object must resolve to a named array variable/input.
             let array_name = extract_ident_name(object).ok_or_else(|| {
                 LoweringError::new(
                     "array index target must be a simple identifier in circuit context",
@@ -173,8 +127,6 @@ pub fn lower_expr(
         Expr::Call { callee, args, span } => lower_call(callee, args, env, span),
 
         // ── Array literals ──────────────────────────────────────────
-        // Array literals in expressions are not directly representable in
-        // CircuitExpr — they should appear in LetArray context (statement level).
         Expr::ArrayLit { span, .. } => Err(LoweringError::new(
             "array literal is not supported as a circuit expression; \
              use signal array declarations instead",
@@ -183,9 +135,6 @@ pub fn lower_expr(
 
         // ── Dot access (component output) ───────────────────────────
         Expr::DotAccess { object, field, span } => {
-            // Component outputs like `c.out` — for now, resolve as a mangled
-            // variable name `component_signal` that will be created during
-            // component inlining (Fase 6).
             let obj_name = extract_ident_name(object).ok_or_else(|| {
                 LoweringError::new(
                     "dot access target must be a simple identifier",
@@ -193,8 +142,6 @@ pub fn lower_expr(
                 )
             })?;
             let mangled = format!("{obj_name}_{field}");
-            // Try to resolve the mangled name; if not found, return it as Var
-            // (it will be created during component inlining).
             match env.resolve(&mangled) {
                 Some(VarKind::Input) => Ok(CircuitExpr::Input(mangled)),
                 Some(VarKind::Local) => Ok(CircuitExpr::Var(mangled)),
@@ -220,8 +167,6 @@ pub fn lower_expr(
         )),
 
         Expr::ParallelOp { operand, .. } => {
-            // `parallel` modifier doesn't affect constraint semantics — just lower
-            // the inner expression.
             lower_expr(operand, env)
         }
 
@@ -248,27 +193,19 @@ fn lower_binop(
     let r = Box::new(rhs);
 
     match op {
-        // Arithmetic → CircuitBinOp
         ast::BinOp::Add => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Add, lhs: l, rhs: r }),
         ast::BinOp::Sub => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Sub, lhs: l, rhs: r }),
         ast::BinOp::Mul => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Mul, lhs: l, rhs: r }),
         ast::BinOp::Div => Ok(CircuitExpr::BinOp { op: CircuitBinOp::Div, lhs: l, rhs: r }),
 
-        // Integer division / modulo → dedicated nodes
         ast::BinOp::IntDiv => Ok(CircuitExpr::IntDiv {
-            lhs: l,
-            rhs: r,
-            max_bits: DEFAULT_MAX_BITS,
+            lhs: l, rhs: r, max_bits: DEFAULT_MAX_BITS,
         }),
         ast::BinOp::Mod => Ok(CircuitExpr::IntMod {
-            lhs: l,
-            rhs: r,
-            max_bits: DEFAULT_MAX_BITS,
+            lhs: l, rhs: r, max_bits: DEFAULT_MAX_BITS,
         }),
 
-        // Power → Pow (exponent must be const, validated later)
         ast::BinOp::Pow => {
-            // Try to extract constant exponent
             match const_eval_circuit_expr(&r) {
                 Some(exp) => Ok(CircuitExpr::Pow { base: l, exp }),
                 None => Err(LoweringError::new(
@@ -278,7 +215,6 @@ fn lower_binop(
             }
         }
 
-        // Comparisons → CircuitCmpOp
         ast::BinOp::Eq  => Ok(CircuitExpr::Comparison { op: CircuitCmpOp::Eq, lhs: l, rhs: r }),
         ast::BinOp::Neq => Ok(CircuitExpr::Comparison { op: CircuitCmpOp::Neq, lhs: l, rhs: r }),
         ast::BinOp::Lt  => Ok(CircuitExpr::Comparison { op: CircuitCmpOp::Lt, lhs: l, rhs: r }),
@@ -286,12 +222,9 @@ fn lower_binop(
         ast::BinOp::Gt  => Ok(CircuitExpr::Comparison { op: CircuitCmpOp::Gt, lhs: l, rhs: r }),
         ast::BinOp::Ge  => Ok(CircuitExpr::Comparison { op: CircuitCmpOp::Ge, lhs: l, rhs: r }),
 
-        // Boolean → CircuitBoolOp
         ast::BinOp::And => Ok(CircuitExpr::BoolOp { op: CircuitBoolOp::And, lhs: l, rhs: r }),
         ast::BinOp::Or  => Ok(CircuitExpr::BoolOp { op: CircuitBoolOp::Or, lhs: l, rhs: r }),
 
-        // Bitwise ops — not directly supported in ProveIR.
-        // These require decomposition to bit-level constraints (Fase 8).
         ast::BinOp::BitAnd | ast::BinOp::BitOr | ast::BinOp::BitXor
         | ast::BinOp::ShiftL | ast::BinOp::ShiftR => {
             Err(LoweringError::new(
@@ -320,19 +253,12 @@ fn lower_call(
         )
     })?;
 
-    // Recognize well-known Circom helper functions that map to ProveIR builtins.
     match name.as_str() {
-        // log() is a no-op in circuit context (debug only, no constraints).
         "log" => Ok(CircuitExpr::Const(FieldConst::zero())),
-
-        // assert() will be handled at statement level, but if used as expression:
         "assert" => Err(LoweringError::new(
             "`assert` is a statement, not an expression in circuit context",
             span,
         )),
-
-        // Generic function call — will be resolved during function inlining (Fase 6).
-        // For now, return an error since we don't have inlining yet.
         _ => Err(LoweringError::new(
             format!(
                 "function call `{name}(...)` cannot be lowered yet; \
@@ -340,29 +266,6 @@ fn lower_call(
             ),
             span,
         )),
-    }
-}
-
-/// Extract a simple identifier name from an expression.
-pub fn extract_ident_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident { name, .. } => Some(name.clone()),
-        _ => None,
-    }
-}
-
-/// Try to evaluate a Circom AST expression as a constant u64.
-///
-/// Used for array dimensions, loop bounds, and power exponents that must
-/// be compile-time constants.
-pub fn const_eval_u64(expr: &Expr) -> Option<u64> {
-    match expr {
-        Expr::Number { value, .. } => value.parse().ok(),
-        Expr::HexNumber { value, .. } => {
-            let hex = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
-            u64::from_str_radix(hex, 16).ok()
-        }
-        _ => None,
     }
 }
 
@@ -374,36 +277,11 @@ fn const_eval_circuit_expr(expr: &CircuitExpr) -> Option<u64> {
     }
 }
 
-/// Display symbol for a binary operator (for error messages).
-fn binop_symbol(op: ast::BinOp) -> &'static str {
-    match op {
-        ast::BinOp::Add => "+",
-        ast::BinOp::Sub => "-",
-        ast::BinOp::Mul => "*",
-        ast::BinOp::Div => "/",
-        ast::BinOp::IntDiv => "\\",
-        ast::BinOp::Mod => "%",
-        ast::BinOp::Pow => "**",
-        ast::BinOp::Eq => "==",
-        ast::BinOp::Neq => "!=",
-        ast::BinOp::Lt => "<",
-        ast::BinOp::Le => "<=",
-        ast::BinOp::Gt => ">",
-        ast::BinOp::Ge => ">=",
-        ast::BinOp::And => "&&",
-        ast::BinOp::Or => "||",
-        ast::BinOp::BitAnd => "&",
-        ast::BinOp::BitOr => "|",
-        ast::BinOp::BitXor => "^",
-        ast::BinOp::ShiftL => "<<",
-        ast::BinOp::ShiftR => ">>",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parser::parse_circom;
+    use super::super::utils::const_eval_u64;
 
     /// Parse a Circom expression inside a template var init.
     fn parse_expr(expr_src: &str) -> Expr {
@@ -493,40 +371,28 @@ mod tests {
     fn lower_addition() {
         let expr = parse_expr("a + b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BinOp { op: CircuitBinOp::Add, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::BinOp { op: CircuitBinOp::Add, .. }));
     }
 
     #[test]
     fn lower_subtraction() {
         let expr = parse_expr("a - b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BinOp { op: CircuitBinOp::Sub, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::BinOp { op: CircuitBinOp::Sub, .. }));
     }
 
     #[test]
     fn lower_multiplication() {
         let expr = parse_expr("a * b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BinOp { op: CircuitBinOp::Mul, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::BinOp { op: CircuitBinOp::Mul, .. }));
     }
 
     #[test]
     fn lower_division() {
         let expr = parse_expr("a / b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BinOp { op: CircuitBinOp::Div, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::BinOp { op: CircuitBinOp::Div, .. }));
     }
 
     #[test]
@@ -566,30 +432,21 @@ mod tests {
     fn lower_equality() {
         let expr = parse_expr("a == b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::Comparison { op: CircuitCmpOp::Eq, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::Comparison { op: CircuitCmpOp::Eq, .. }));
     }
 
     #[test]
     fn lower_neq() {
         let expr = parse_expr("a != b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::Comparison { op: CircuitCmpOp::Neq, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::Comparison { op: CircuitCmpOp::Neq, .. }));
     }
 
     #[test]
     fn lower_less_than() {
         let expr = parse_expr("a < b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::Comparison { op: CircuitCmpOp::Lt, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::Comparison { op: CircuitCmpOp::Lt, .. }));
     }
 
     // ── Boolean ─────────────────────────────────────────────────────
@@ -598,20 +455,14 @@ mod tests {
     fn lower_and() {
         let expr = parse_expr("a && b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BoolOp { op: CircuitBoolOp::And, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::BoolOp { op: CircuitBoolOp::And, .. }));
     }
 
     #[test]
     fn lower_or() {
         let expr = parse_expr("a || b");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BoolOp { op: CircuitBoolOp::Or, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::BoolOp { op: CircuitBoolOp::Or, .. }));
     }
 
     // ── Unary ───────────────────────────────────────────────────────
@@ -620,27 +471,20 @@ mod tests {
     fn lower_negation() {
         let expr = parse_expr("-a");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::UnaryOp { op: CircuitUnaryOp::Neg, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::UnaryOp { op: CircuitUnaryOp::Neg, .. }));
     }
 
     #[test]
     fn lower_not() {
         let expr = parse_expr("!a");
         let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::UnaryOp { op: CircuitUnaryOp::Not, .. }
-        ));
+        assert!(matches!(result, CircuitExpr::UnaryOp { op: CircuitUnaryOp::Not, .. }));
     }
 
     #[test]
     fn lower_bitnot_is_error() {
         let expr = parse_expr("~a");
-        let result = lower_expr(&expr, &make_env());
-        assert!(result.is_err());
+        assert!(lower_expr(&expr, &make_env()).is_err());
     }
 
     // ── Ternary → Mux ───────────────────────────────────────────────
@@ -648,8 +492,7 @@ mod tests {
     #[test]
     fn lower_ternary_to_mux() {
         let expr = parse_expr("a == 0 ? 1 : 0");
-        let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(result, CircuitExpr::Mux { .. }));
+        assert!(matches!(lower_expr(&expr, &make_env()).unwrap(), CircuitExpr::Mux { .. }));
     }
 
     // ── Array index ─────────────────────────────────────────────────
@@ -657,8 +500,7 @@ mod tests {
     #[test]
     fn lower_array_index() {
         let expr = parse_expr("bits[0]");
-        let result = lower_expr(&expr, &make_env()).unwrap();
-        match result {
+        match lower_expr(&expr, &make_env()).unwrap() {
             CircuitExpr::ArrayIndex { array, .. } => assert_eq!(array, "bits"),
             other => panic!("expected ArrayIndex, got {:?}", other),
         }
@@ -668,22 +510,14 @@ mod tests {
 
     #[test]
     fn lower_nested_arithmetic() {
-        // (a + b) * (a - b)
         let expr = parse_expr("(a + b) * (a - b)");
-        let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(
-            result,
-            CircuitExpr::BinOp { op: CircuitBinOp::Mul, .. }
-        ));
+        assert!(matches!(lower_expr(&expr, &make_env()).unwrap(), CircuitExpr::BinOp { op: CircuitBinOp::Mul, .. }));
     }
 
     #[test]
     fn lower_complex_iszero_pattern() {
-        // in != 0 ? 1 / in : 0 — the IsZero witness hint
-        // We can't lower `1 / in` with `in` as an input because `/` is field div
         let expr = parse_expr("a != 0 ? 1 : 0");
-        let result = lower_expr(&expr, &make_env()).unwrap();
-        assert!(matches!(result, CircuitExpr::Mux { .. }));
+        assert!(matches!(lower_expr(&expr, &make_env()).unwrap(), CircuitExpr::Mux { .. }));
     }
 
     // ── Bitwise errors ──────────────────────────────────────────────
@@ -699,8 +533,7 @@ mod tests {
     #[test]
     fn lower_shift_is_error() {
         let expr = parse_expr("a << 1");
-        let result = lower_expr(&expr, &make_env());
-        assert!(result.is_err());
+        assert!(lower_expr(&expr, &make_env()).is_err());
     }
 
     // ── Parallel is transparent ─────────────────────────────────────
@@ -708,27 +541,23 @@ mod tests {
     #[test]
     fn lower_parallel_is_transparent() {
         let expr = parse_expr("parallel a");
-        let result = lower_expr(&expr, &make_env()).unwrap();
-        assert_eq!(result, CircuitExpr::Input("a".to_string()));
+        assert_eq!(lower_expr(&expr, &make_env()).unwrap(), CircuitExpr::Input("a".to_string()));
     }
 
-    // ── const_eval_u64 ──────────────────────────────────────────────
+    // ── const_eval_u64 (moved to utils, verify still works) ─────────
 
     #[test]
     fn const_eval_decimal() {
-        let expr = parse_expr("42");
-        assert_eq!(const_eval_u64(&expr), Some(42));
+        assert_eq!(const_eval_u64(&parse_expr("42")), Some(42));
     }
 
     #[test]
     fn const_eval_hex() {
-        let expr = parse_expr("0x10");
-        assert_eq!(const_eval_u64(&expr), Some(16));
+        assert_eq!(const_eval_u64(&parse_expr("0x10")), Some(16));
     }
 
     #[test]
     fn const_eval_non_const() {
-        let expr = parse_expr("a + 1");
-        assert_eq!(const_eval_u64(&expr), None);
+        assert_eq!(const_eval_u64(&parse_expr("a + 1")), None);
     }
 }

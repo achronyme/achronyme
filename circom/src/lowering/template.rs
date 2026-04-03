@@ -7,8 +7,8 @@ use ir::prove_ir::types::ProveIR;
 
 use crate::ast::{MainComponent, TemplateDef};
 
+use super::env::LoweringEnv;
 use super::error::LoweringError;
-use super::expressions::LoweringEnv;
 use super::signals::extract_signal_layout;
 use super::statements::lower_stmts;
 
