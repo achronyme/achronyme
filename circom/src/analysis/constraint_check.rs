@@ -133,6 +133,29 @@ impl ConstraintCollector {
                 collect_signal_refs(lhs, &mut self.constrained_signals);
                 collect_signal_refs(rhs, &mut self.constrained_signals);
             }
+            Stmt::Substitution {
+                op: AssignOp::ConstraintAssign,
+                value,
+                ..
+            } => {
+                // `signal <== expr` — the expr side constrains all referenced signals
+                collect_signal_refs(value, &mut self.constrained_signals);
+            }
+            Stmt::Substitution {
+                op: AssignOp::RConstraintAssign,
+                target,
+                ..
+            } => {
+                // `expr ==> signal` — the expr side constrains all referenced signals
+                collect_signal_refs(target, &mut self.constrained_signals);
+            }
+            Stmt::SignalDecl {
+                init: Some((AssignOp::ConstraintAssign, value)),
+                ..
+            } => {
+                // `signal c <== expr` — constrains referenced signals
+                collect_signal_refs(value, &mut self.constrained_signals);
+            }
             // Recurse into nested blocks
             Stmt::IfElse {
                 then_body,

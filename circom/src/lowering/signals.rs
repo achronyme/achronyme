@@ -57,6 +57,8 @@ pub fn extract_signal_layout(
         .map(|m| m.public_signals.iter().map(|s| s.as_str()).collect())
         .unwrap_or_default();
 
+    let template_params: HashSet<String> = template.params.iter().cloned().collect();
+
     let mut layout = SignalLayout {
         public_inputs: Vec::new(),
         witness_inputs: Vec::new(),
@@ -73,11 +75,11 @@ pub fn extract_signal_layout(
         } = stmt
         {
             for decl in declarations {
-                let dimensions = eval_dimensions(&decl.dimensions, span)?;
+                let dimensions = eval_dimensions(&decl.dimensions, &template_params, span)?;
 
                 match signal_type {
                     SignalType::Input => {
-                        let input_decl = make_input_decl(&decl.name, &dimensions)?;
+                        let input_decl = make_input_decl(&decl.name, &dimensions);
                         if public_set.contains(decl.name.as_str()) {
                             layout.public_inputs.push(input_decl);
                         } else {
@@ -85,15 +87,29 @@ pub fn extract_signal_layout(
                         }
                     }
                     SignalType::Output => {
+                        let dim_literals: Vec<u64> = dimensions
+                            .iter()
+                            .filter_map(|d| match d {
+                                ResolvedDim::Literal(n) => Some(*n),
+                                ResolvedDim::Capture(_) => None,
+                            })
+                            .collect();
                         layout.outputs.push(OutputSignal {
                             name: decl.name.clone(),
-                            dimensions,
+                            dimensions: dim_literals,
                         });
                     }
                     SignalType::Intermediate => {
+                        let dim_literals: Vec<u64> = dimensions
+                            .iter()
+                            .filter_map(|d| match d {
+                                ResolvedDim::Literal(n) => Some(*n),
+                                ResolvedDim::Capture(_) => None,
+                            })
+                            .collect();
                         layout.intermediates.push(IntermediateSignal {
                             name: decl.name.clone(),
-                            dimensions,
+                            dimensions: dim_literals,
                         });
                     }
                 }
@@ -104,47 +120,79 @@ pub fn extract_signal_layout(
     Ok(layout)
 }
 
-/// Evaluate signal dimension expressions to constant u64 values.
+/// A resolved dimension: either a literal or a template parameter name.
+#[derive(Debug)]
+enum ResolvedDim {
+    Literal(u64),
+    Capture(String),
+}
+
+/// Evaluate signal dimension expressions.
 ///
-/// In Circom, signal array dimensions must be compile-time constants
-/// (literal numbers or template parameters that are known at lowering time).
+/// Dimensions can be literal numbers or template parameter identifiers
+/// (which become `ArraySize::Capture` in ProveIR, resolved at instantiation).
 fn eval_dimensions(
     dims: &[Expr],
+    template_params: &HashSet<String>,
     parent_span: &diagnostics::Span,
-) -> Result<Vec<u64>, LoweringError> {
+) -> Result<Vec<ResolvedDim>, LoweringError> {
     let mut result = Vec::with_capacity(dims.len());
     for dim in dims {
-        match const_eval_u64(dim) {
-            Some(n) => result.push(n),
-            None => {
+        if let Some(n) = const_eval_u64(dim) {
+            result.push(ResolvedDim::Literal(n));
+        } else if let Expr::Ident { name, .. } = dim {
+            if template_params.contains(name) {
+                result.push(ResolvedDim::Capture(name.clone()));
+            } else {
                 return Err(LoweringError::new(
-                    "signal array dimension must be a compile-time constant",
+                    format!(
+                        "signal array dimension `{name}` is not a compile-time constant \
+                         or template parameter"
+                    ),
                     parent_span,
                 ));
             }
+        } else {
+            return Err(LoweringError::new(
+                "signal array dimension must be a compile-time constant or template parameter",
+                parent_span,
+            ));
         }
     }
     Ok(result)
 }
 
-/// Create a `ProveInputDecl` from a signal name and its evaluated dimensions.
-fn make_input_decl(name: &str, dimensions: &[u64]) -> Result<ProveInputDecl, LoweringError> {
-    let array_size = match dimensions.len() {
+/// Convert resolved dimensions to an `ArraySize`.
+fn dims_to_array_size(dims: &[ResolvedDim]) -> Option<ArraySize> {
+    match dims.len() {
         0 => None,
-        1 => Some(ArraySize::Literal(dimensions[0] as usize)),
+        1 => match &dims[0] {
+            ResolvedDim::Literal(n) => Some(ArraySize::Literal(*n as usize)),
+            ResolvedDim::Capture(name) => Some(ArraySize::Capture(name.clone())),
+        },
         _ => {
-            // Multi-dimensional arrays: flatten to total size.
-            // e.g., signal input x[3][4] → array of 12 elements.
-            let total: u64 = dimensions.iter().product();
+            // Multi-dimensional: flatten if all literal.
+            let mut total: u64 = 1;
+            for d in dims {
+                match d {
+                    ResolvedDim::Literal(n) => total *= n,
+                    ResolvedDim::Capture(name) => {
+                        return Some(ArraySize::Capture(name.clone()));
+                    }
+                }
+            }
             Some(ArraySize::Literal(total as usize))
         }
-    };
+    }
+}
 
-    Ok(ProveInputDecl {
+/// Create a `ProveInputDecl` from a signal name and resolved dimensions.
+fn make_input_decl(name: &str, dims: &[ResolvedDim]) -> ProveInputDecl {
+    ProveInputDecl {
         name: name.to_string(),
-        array_size,
-        ir_type: IrType::Field, // Circom signals are always field elements
-    })
+        array_size: dims_to_array_size(dims),
+        ir_type: IrType::Field,
+    }
 }
 
 /// Collect all signal names declared in a template body (non-recursive, top-level only).
