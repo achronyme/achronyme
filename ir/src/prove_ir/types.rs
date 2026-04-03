@@ -326,6 +326,8 @@ fn validate_node(
                     ));
                 }
             }
+            // WithExpr end bounds are validated at instantiation time
+            // when capture values are resolved.
             for n in body {
                 validate_node(n, capture_names)?;
             }
@@ -613,6 +615,15 @@ pub enum ForRange {
     Literal { start: u64, end: u64 },
     /// End bound is a captured value: `0..n`
     WithCapture { start: u64, end_capture: String },
+    /// End bound is a computed expression over captures: `0..(n+1)`
+    ///
+    /// Used when a component passes a computed template argument as a loop
+    /// bound (e.g., `Num2Bits(n+1)` inside LessThan). The expression is
+    /// evaluated at instantiation time when capture values are known.
+    WithExpr {
+        start: u64,
+        end_expr: Box<CircuitExpr>,
+    },
     /// Iterate over a named array variable
     Array(String),
 }
@@ -903,6 +914,9 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
                 ForRange::Literal { start, end } => writeln!(f, "{start}..{end} {{")?,
                 ForRange::WithCapture { start, end_capture } => {
                     writeln!(f, "{start}..{end_capture} {{")?
+                }
+                ForRange::WithExpr { start, end_expr } => {
+                    writeln!(f, "{start}..({end_expr:?}) {{")?
                 }
                 ForRange::Array(name) => writeln!(f, "{name} {{")?,
             }

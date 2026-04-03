@@ -402,17 +402,35 @@ fn mangle_range(
             end: *end,
         },
         ForRange::WithCapture { start, end_capture } => {
-            // If the capture is substituted with a constant, convert to Literal
-            if let Some(CircuitExpr::Const(fc)) = param_subs.get(end_capture) {
-                if let Some(end) = fc.to_u64() {
-                    return ForRange::Literal { start: *start, end };
+            match param_subs.get(end_capture) {
+                // Substitution is a constant → fold to Literal
+                Some(CircuitExpr::Const(fc)) => {
+                    if let Some(end) = fc.to_u64() {
+                        return ForRange::Literal { start: *start, end };
+                    }
+                    ForRange::WithCapture {
+                        start: *start,
+                        end_capture: mangle_name(prefix, end_capture),
+                    }
                 }
-            }
-            ForRange::WithCapture {
-                start: *start,
-                end_capture: mangle_name(prefix, end_capture),
+                // Substitution is an expression (e.g., Capture("n") + Const(1)
+                // from `Num2Bits(n+1)`) → use WithExpr so the instantiator
+                // can evaluate it when capture values are known
+                Some(expr) => ForRange::WithExpr {
+                    start: *start,
+                    end_expr: Box::new(expr.clone()),
+                },
+                // No substitution → mangle capture name
+                None => ForRange::WithCapture {
+                    start: *start,
+                    end_capture: mangle_name(prefix, end_capture),
+                },
             }
         }
+        ForRange::WithExpr { start, end_expr } => ForRange::WithExpr {
+            start: *start,
+            end_expr: Box::new(mangle_expr(end_expr, prefix, param_subs)),
+        },
         ForRange::Array(name) => ForRange::Array(mangle_name(prefix, name)),
     }
 }

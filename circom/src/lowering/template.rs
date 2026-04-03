@@ -141,8 +141,15 @@ fn collect_capture_usage<'a>(
         CircuitNode::Assert { expr, .. } => collect_expr_captures(expr, circuit),
         CircuitNode::For { range, body, .. } => {
             // Loop bound captures are structural
-            if let ForRange::WithCapture { end_capture, .. } = range {
-                structural.insert(end_capture.as_str());
+            match range {
+                ForRange::WithCapture { end_capture, .. } => {
+                    structural.insert(end_capture.as_str());
+                }
+                ForRange::WithExpr { end_expr, .. } => {
+                    // Captures in loop bound expressions are structural
+                    collect_expr_captures(end_expr, structural);
+                }
+                ForRange::Literal { .. } | ForRange::Array(_) => {}
             }
             for n in body {
                 collect_capture_usage(n, structural, circuit);

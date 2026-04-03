@@ -83,6 +83,10 @@ fn collect_hints_recursive<F: FieldBackend>(
                     ForRange::WithCapture { start, end_capture } => {
                         (Some(*start), captures.get(end_capture).copied())
                     }
+                    ForRange::WithExpr { start, end_expr } => {
+                        let end_val = eval_const_expr_u64(end_expr, captures);
+                        (Some(*start), end_val)
+                    }
                     ForRange::Array(_) => (None, None),
                 };
                 if let (Some(start), Some(end)) = (start, end) {
@@ -344,6 +348,38 @@ fn eval_hint<F: FieldBackend>(
         | CircuitExpr::MerkleVerify { .. }
         | CircuitExpr::ArrayIndex { .. }
         | CircuitExpr::ArrayLen(_) => None,
+    }
+}
+
+/// Evaluate a circuit expression to a u64 using capture values (template params).
+///
+/// Used for `ForRange::WithExpr` where the loop bound is a computed expression
+/// (e.g., `n + 1` from component instantiation `Num2Bits(n+1)`).
+fn eval_const_expr_u64(
+    expr: &CircuitExpr,
+    captures: &HashMap<String, u64>,
+) -> Option<u64> {
+    match expr {
+        CircuitExpr::Const(fc) => fc.to_u64(),
+        CircuitExpr::Capture(name) => captures.get(name).copied(),
+        CircuitExpr::BinOp { op, lhs, rhs } => {
+            let l = eval_const_expr_u64(lhs, captures)?;
+            let r = eval_const_expr_u64(rhs, captures)?;
+            use ir::prove_ir::types::CircuitBinOp;
+            match op {
+                CircuitBinOp::Add => Some(l.wrapping_add(r)),
+                CircuitBinOp::Sub => Some(l.wrapping_sub(r)),
+                CircuitBinOp::Mul => Some(l.wrapping_mul(r)),
+                CircuitBinOp::Div => {
+                    if r != 0 {
+                        Some(l / r)
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+        _ => None,
     }
 }
 

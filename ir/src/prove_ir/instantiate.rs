@@ -484,6 +484,10 @@ impl<F: FieldBackend> Instantiator<F> {
                 let end = fe_to_u64(end_fe, end_capture)?;
                 self.emit_range_loop(var, *start, end, body)
             }
+            ForRange::WithExpr { start, end_expr } => {
+                let end = self.eval_const_expr_u64(end_expr)?;
+                self.emit_range_loop(var, *start, end, body)
+            }
             ForRange::Array(arr_name) => {
                 let elems = match self.env.get(arr_name) {
                     Some(InstEnvValue::Array(elems)) => elems.clone(),
@@ -506,6 +510,57 @@ impl<F: FieldBackend> Instantiator<F> {
                     Ok(())
                 })
             }
+        }
+    }
+
+    /// Evaluate a circuit expression to a u64 using capture values.
+    ///
+    /// Used for `ForRange::WithExpr` where the loop bound is a computed
+    /// expression over captures (e.g., `n + 1` from `Num2Bits(n+1)`).
+    fn eval_const_expr_u64(&self, expr: &CircuitExpr) -> Result<u64, ProveIrError> {
+        let fe = self.eval_const_expr(expr)?;
+        fe_to_u64(&fe, "<expr>")
+    }
+
+    fn eval_const_expr(&self, expr: &CircuitExpr) -> Result<FieldElement<F>, ProveIrError> {
+        match expr {
+            CircuitExpr::Const(fc) => fc.to_field::<F>().ok_or_else(|| {
+                ProveIrError::UnsupportedOperation {
+                    description: "constant out of field range".into(),
+                    span: None,
+                }
+            }),
+            CircuitExpr::Capture(name) => {
+                self.captures.get(name).copied().ok_or_else(|| {
+                    ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "missing capture value `{name}` in loop bound expression"
+                        ),
+                        span: None,
+                    }
+                })
+            }
+            CircuitExpr::BinOp { op, lhs, rhs } => {
+                let l = self.eval_const_expr(lhs)?;
+                let r = self.eval_const_expr(rhs)?;
+                match op {
+                    CircuitBinOp::Add => Ok(l.add(&r)),
+                    CircuitBinOp::Sub => Ok(l.sub(&r)),
+                    CircuitBinOp::Mul => Ok(l.mul(&r)),
+                    CircuitBinOp::Div => l.div(&r).ok_or_else(|| {
+                        ProveIrError::UnsupportedOperation {
+                            description: "division by zero in loop bound expression".into(),
+                            span: None,
+                        }
+                    }),
+                }
+            }
+            _ => Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "unsupported expression in loop bound: {expr:?}"
+                ),
+                span: None,
+            }),
         }
     }
 
@@ -871,21 +926,31 @@ impl<F: FieldBackend> Instantiator<F> {
                 Ok(v)
             }
             CircuitExpr::ArrayIndex { array, index } => {
-                // The index must resolve to a constant (structural captures are
-                // already resolved). For dynamic indices, we'd need a MUX tree,
-                // but the current ProveIR compiler only emits ArrayIndex for
-                // cases that can be statically resolved.
-                let idx_var = self.emit_expr(index)?;
-
-                // Try to extract the constant value from the instruction we just emitted
-                let idx = self.extract_const_index(idx_var).ok_or_else(|| {
-                    ProveIrError::UnsupportedOperation {
+                // The index must resolve to a constant. Try evaluating as a
+                // constant expression first (handles captures like `n` that are
+                // known at instantiation time), then fall back to emitting and
+                // extracting from the instruction stream.
+                let idx = self
+                    .eval_const_expr(index)
+                    .ok()
+                    .and_then(|fe| {
+                        let limbs = fe.to_canonical();
+                        if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+                            usize::try_from(limbs[0]).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        let idx_var = self.emit_expr(index).ok()?;
+                        self.extract_const_index(idx_var)
+                    })
+                    .ok_or_else(|| ProveIrError::UnsupportedOperation {
                         description: format!(
                             "array index into `{array}` must be a compile-time constant"
                         ),
                         span: None,
-                    }
-                })?;
+                    })?;
 
                 match self.env.get(array) {
                     Some(InstEnvValue::Array(elems)) => {
@@ -977,8 +1042,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 num_bits,
             } => {
                 let op = self.emit_expr(operand)?;
-                let shift_var = self.emit_expr(shift)?;
-                let shift_val = self.extract_const_u32(shift_var, "shift right amount")?;
+                let shift_val = self.resolve_const_u32(shift, "shift right amount")?;
                 self.emit_shift_right(op, shift_val, *num_bits)
             }
             CircuitExpr::ShiftL {
@@ -987,8 +1051,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 num_bits,
             } => {
                 let op = self.emit_expr(operand)?;
-                let shift_var = self.emit_expr(shift)?;
-                let shift_val = self.extract_const_u32(shift_var, "shift left amount")?;
+                let shift_val = self.resolve_const_u32(shift, "shift left amount")?;
                 self.emit_shift_left(op, shift_val, *num_bits)
             }
         }
@@ -1341,6 +1404,22 @@ impl<F: FieldBackend> Instantiator<F> {
                 description: format!("{context} must be a compile-time constant"),
                 span: None,
             })
+    }
+
+    /// Resolve a circuit expression to a u32 constant, trying eval_const_expr
+    /// first (for captures) then falling back to emit + extract.
+    fn resolve_const_u32(&mut self, expr: &CircuitExpr, context: &str) -> Result<u32, ProveIrError> {
+        // Try constant evaluation first (handles captures and arithmetic)
+        if let Ok(fe) = self.eval_const_expr(expr) {
+            let val = fe_to_u64(&fe, context)?;
+            return u32::try_from(val).map_err(|_| ProveIrError::UnsupportedOperation {
+                description: format!("{context} too large for u32"),
+                span: None,
+            });
+        }
+        // Fall back to emit + extract
+        let var = self.emit_expr(expr)?;
+        self.extract_const_u32(var, context)
     }
 }
 

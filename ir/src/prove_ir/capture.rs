@@ -91,6 +91,10 @@ fn walk_node(
                 ForRange::WithCapture { end_capture, .. } => {
                     structural.insert(end_capture.clone());
                 }
+                ForRange::WithExpr { end_expr, .. } => {
+                    // All captures in a loop bound expression are structural
+                    walk_expr(end_expr, true, structural, constraint);
+                }
                 ForRange::Array(name) => {
                     // Iterating over an array is structural (determines loop count)
                     structural.insert(name.clone());

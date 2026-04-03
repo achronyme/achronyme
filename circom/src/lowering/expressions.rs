@@ -131,12 +131,29 @@ pub fn lower_expr(
             index,
             span,
         } => {
-            let array_name = extract_ident_name(object).ok_or_else(|| {
-                LoweringError::new(
-                    "array index target must be a simple identifier in circuit context",
-                    span,
-                )
-            })?;
+            // Support both `arr[i]` and `comp.signal[i]`
+            let array_name = extract_ident_name(object)
+                .or_else(|| {
+                    // DotAccess: `comp.field[i]` → mangled name `comp.field`
+                    if let Expr::DotAccess {
+                        object: inner_obj,
+                        field,
+                        ..
+                    } = object.as_ref()
+                    {
+                        extract_ident_name(inner_obj)
+                            .map(|obj_name| format!("{obj_name}.{field}"))
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    LoweringError::new(
+                        "array index target must be a simple identifier or \
+                         component signal in circuit context",
+                        span,
+                    )
+                })?;
 
             // If index is a constant and array is tracked, resolve to `arr_N` directly
             if let Some(idx_val) = const_eval_u64(index) {
