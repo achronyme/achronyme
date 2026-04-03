@@ -253,10 +253,8 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
 
     // 2. Compute witness hints (off-circuit evaluation of `<--` expressions)
     // The hints compute signal values from user inputs using off-circuit arithmetic.
-    let user_inputs: HashMap<String, FieldElement<F>> =
-        resolved_inputs.clone().unwrap_or_default();
-    let witness_values =
-        circom::witness::compute_witness_hints::<F>(&prove_ir, &user_inputs);
+    let user_inputs: HashMap<String, FieldElement<F>> = resolved_inputs.clone().unwrap_or_default();
+    let witness_values = circom::witness::compute_witness_hints::<F>(&prove_ir, &user_inputs);
 
     // Merge user inputs + computed witness hints for R1CS
     let mut all_inputs = resolved_inputs.clone().unwrap_or_default();

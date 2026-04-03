@@ -441,11 +441,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                 }
             }
-            CircuitNode::WitnessHintIndexed {
-                array,
-                index,
-                ..
-            } => {
+            CircuitNode::WitnessHintIndexed { array, index, .. } => {
                 // Witness hint with dynamic (but compile-time constant) index.
                 let idx_var = self.emit_expr(index)?;
                 let idx = self.extract_const_index(idx_var).ok_or_else(|| {

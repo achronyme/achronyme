@@ -886,7 +886,9 @@ mod tests {
         let expr = parse_expr("a >> 3");
         let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
         match result {
-            CircuitExpr::ShiftR { shift, num_bits, .. } => {
+            CircuitExpr::ShiftR {
+                shift, num_bits, ..
+            } => {
                 assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(3)));
                 assert_eq!(num_bits, 253);
             }
@@ -899,7 +901,9 @@ mod tests {
         let expr = parse_expr("a << 1");
         let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
         match result {
-            CircuitExpr::ShiftL { shift, num_bits, .. } => {
+            CircuitExpr::ShiftL {
+                shift, num_bits, ..
+            } => {
                 assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(1)));
                 assert_eq!(num_bits, 253);
             }
@@ -939,8 +943,9 @@ mod tests {
     #[test]
     fn lower_large_decimal_number() {
         // BN254 field order - 1 (exceeds u64)
-        let expr =
-            parse_expr("21888242871839275222246405745257275088548364400416034343698204186575808495616");
+        let expr = parse_expr(
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+        );
         let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
         match result {
             CircuitExpr::Const(fc) => {
@@ -954,8 +959,7 @@ mod tests {
     #[test]
     fn lower_large_hex_number() {
         // 0x + 64 hex digits = 32 bytes
-        let expr =
-            parse_expr("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
+        let expr = parse_expr("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
         let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
         match result {
             CircuitExpr::Const(fc) => {

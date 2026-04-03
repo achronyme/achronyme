@@ -22,9 +22,9 @@ pub mod analysis;
 pub mod ast;
 pub mod lexer;
 mod lowering;
-pub mod witness;
 pub mod parser;
 pub mod token;
+pub mod witness;
 
 use diagnostics::Diagnostic;
 use ir::prove_ir::types::ProveIR;

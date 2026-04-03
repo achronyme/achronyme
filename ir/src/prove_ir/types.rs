@@ -349,15 +349,11 @@ fn validate_node(
         CircuitNode::Expr { expr, .. } => validate_expr(expr),
         CircuitNode::Decompose { value, .. } => validate_expr(value),
         CircuitNode::WitnessHint { hint, .. } => validate_expr(hint),
-        CircuitNode::LetIndexed {
-            index, value, ..
-        } => {
+        CircuitNode::LetIndexed { index, value, .. } => {
             validate_expr(index)?;
             validate_expr(value)
         }
-        CircuitNode::WitnessHintIndexed {
-            index, hint, ..
-        } => {
+        CircuitNode::WitnessHintIndexed { index, hint, .. } => {
             validate_expr(index)?;
             validate_expr(hint)
         }
@@ -420,8 +416,7 @@ fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
             validate_expr(rhs)
         }
         CircuitExpr::BitNot { operand, .. } => validate_expr(operand),
-        CircuitExpr::ShiftR { operand, shift, .. }
-        | CircuitExpr::ShiftL { operand, shift, .. } => {
+        CircuitExpr::ShiftR { operand, shift, .. } | CircuitExpr::ShiftL { operand, shift, .. } => {
             validate_expr(operand)?;
             validate_expr(shift)
         }
@@ -957,10 +952,7 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
             writeln!(f, "{pad}let {array}[{index}] = {value}")
         }
         CircuitNode::WitnessHintIndexed {
-            array,
-            index,
-            hint,
-            ..
+            array, index, hint, ..
         } => {
             writeln!(f, "{pad}{array}[{index}] <-- {hint}")
         }

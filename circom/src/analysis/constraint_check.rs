@@ -100,9 +100,7 @@ fn check_template(template: &TemplateDef) -> ConstraintReport {
                         SignalType::Intermediate => "intermediate",
                     };
                     let diag = Diagnostic::warning(
-                        format!(
-                            "{kind} signal `{name}` is not referenced in any constraint"
-                        ),
+                        format!("{kind} signal `{name}` is not referenced in any constraint"),
                         span_range,
                     )
                     .with_code("W101")
@@ -132,12 +130,9 @@ fn check_template(template: &TemplateDef) -> ConstraintReport {
             span_to_range(hint_span),
         )
         .with_code("W102")
+        .with_note("`<--` only computes the witness value without adding a constraint".to_string())
         .with_note(
-            "`<--` only computes the witness value without adding a constraint".to_string(),
-        )
-        .with_note(
-            "if the expression is representable as an R1CS constraint, `<==` is safer"
-                .to_string(),
+            "if the expression is representable as an R1CS constraint, `<==` is safer".to_string(),
         );
         diagnostics.push(diag);
     }
@@ -158,9 +153,7 @@ fn check_template(template: &TemplateDef) -> ConstraintReport {
              where A, B, C are linear combinations of signals"
                 .to_string(),
         )
-        .with_note(
-            "split the expression into intermediate signals to reduce degree".to_string(),
-        );
+        .with_note("split the expression into intermediate signals to reduce degree".to_string());
         diagnostics.push(diag);
     }
 
@@ -258,13 +251,11 @@ impl ConstraintCollector {
                 collect_signal_refs(lhs, &mut self.constrained_signals);
                 collect_signal_refs(rhs, &mut self.constrained_signals);
                 // E102: check that constraint degree ≤ 2
-                let signal_set: HashSet<String> =
-                    self.declared_signals.keys().cloned().collect();
-                let degree = expr_signal_degree(lhs, &signal_set)
-                    .max(expr_signal_degree(rhs, &signal_set));
+                let signal_set: HashSet<String> = self.declared_signals.keys().cloned().collect();
+                let degree =
+                    expr_signal_degree(lhs, &signal_set).max(expr_signal_degree(rhs, &signal_set));
                 if degree > 2 {
-                    self.non_quadratic_constraints
-                        .push((span.clone(), degree));
+                    self.non_quadratic_constraints.push((span.clone(), degree));
                 }
             }
             Stmt::Substitution {
@@ -284,12 +275,10 @@ impl ConstraintCollector {
                         .push(span.clone());
                 }
                 // E102: check that constraint degree ≤ 2
-                let signal_set: HashSet<String> =
-                    self.declared_signals.keys().cloned().collect();
+                let signal_set: HashSet<String> = self.declared_signals.keys().cloned().collect();
                 let degree = expr_signal_degree(value, &signal_set);
                 if degree > 2 {
-                    self.non_quadratic_constraints
-                        .push((span.clone(), degree));
+                    self.non_quadratic_constraints.push((span.clone(), degree));
                 }
             }
             Stmt::Substitution {
@@ -333,12 +322,10 @@ impl ConstraintCollector {
                         .push(span.clone());
                 }
                 // E102: check that constraint degree ≤ 2
-                let signal_set: HashSet<String> =
-                    self.declared_signals.keys().cloned().collect();
+                let signal_set: HashSet<String> = self.declared_signals.keys().cloned().collect();
                 let degree = expr_signal_degree(value, &signal_set);
                 if degree > 2 {
-                    self.non_quadratic_constraints
-                        .push((span.clone(), degree));
+                    self.non_quadratic_constraints.push((span.clone(), degree));
                 }
             }
             Stmt::SignalDecl {
@@ -538,7 +525,10 @@ fn is_quadratic_safe(expr: &Expr) -> bool {
 /// R1CS constraints require degree ≤ 2.
 fn expr_signal_degree(expr: &Expr, signal_names: &HashSet<String>) -> u32 {
     match expr {
-        Expr::Number { .. } | Expr::HexNumber { .. } | Expr::Underscore { .. } | Expr::Error { .. } => 0,
+        Expr::Number { .. }
+        | Expr::HexNumber { .. }
+        | Expr::Underscore { .. }
+        | Expr::Error { .. } => 0,
         Expr::Ident { name, .. } => {
             if signal_names.contains(name) {
                 1
@@ -555,7 +545,11 @@ fn expr_signal_degree(expr: &Expr, signal_names: &HashSet<String>) -> u32 {
                 BinOp::Div | BinOp::IntDiv | BinOp::Mod => {
                     // Division by a known value doesn't increase degree.
                     // Division by a signal is non-standard but treat conservatively.
-                    if dr == 0 { dl } else { dl + 1 }
+                    if dr == 0 {
+                        dl
+                    } else {
+                        dl + 1
+                    }
                 }
                 BinOp::Pow => {
                     // x^n: if base has signals, degree grows multiplicatively.
@@ -599,13 +593,11 @@ fn expr_signal_degree(expr: &Expr, signal_names: &HashSet<String>) -> u32 {
         }
         Expr::Index { object, .. } => expr_signal_degree(object, signal_names),
         Expr::DotAccess { object, .. } => expr_signal_degree(object, signal_names),
-        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
-            elements
-                .iter()
-                .map(|e| expr_signal_degree(e, signal_names))
-                .max()
-                .unwrap_or(0)
-        }
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => elements
+            .iter()
+            .map(|e| expr_signal_degree(e, signal_names))
+            .max()
+            .unwrap_or(0),
         Expr::ParallelOp { operand, .. } => expr_signal_degree(operand, signal_names),
         Expr::AnonComponent { .. } => 0,
     }
@@ -951,9 +943,9 @@ mod tests {
 
     fn has_e101(reports: &[ConstraintReport], signal: &str) -> bool {
         reports.iter().any(|r| {
-            r.diagnostics.iter().any(|d| {
-                d.code.as_deref() == Some("E101") && d.message.contains(signal)
-            })
+            r.diagnostics
+                .iter()
+                .any(|d| d.code.as_deref() == Some("E101") && d.message.contains(signal))
         })
     }
 

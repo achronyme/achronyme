@@ -243,8 +243,12 @@ fn eval_hint<F: FieldBackend>(
             let l_limbs = l.to_canonical();
             let r_limbs = r.to_canonical();
             // Simple integer division for small values (fits in u64)
-            if l_limbs[1] == 0 && l_limbs[2] == 0 && l_limbs[3] == 0
-                && r_limbs[1] == 0 && r_limbs[2] == 0 && r_limbs[3] == 0
+            if l_limbs[1] == 0
+                && l_limbs[2] == 0
+                && l_limbs[3] == 0
+                && r_limbs[1] == 0
+                && r_limbs[2] == 0
+                && r_limbs[3] == 0
                 && r_limbs[0] != 0
             {
                 Some(FieldElement::<F>::from_u64(l_limbs[0] / r_limbs[0]))
@@ -258,8 +262,12 @@ fn eval_hint<F: FieldBackend>(
             let r = eval_hint(rhs, env)?;
             let l_limbs = l.to_canonical();
             let r_limbs = r.to_canonical();
-            if l_limbs[1] == 0 && l_limbs[2] == 0 && l_limbs[3] == 0
-                && r_limbs[1] == 0 && r_limbs[2] == 0 && r_limbs[3] == 0
+            if l_limbs[1] == 0
+                && l_limbs[2] == 0
+                && l_limbs[3] == 0
+                && r_limbs[1] == 0
+                && r_limbs[2] == 0
+                && r_limbs[3] == 0
                 && r_limbs[0] != 0
             {
                 Some(FieldElement::<F>::from_u64(l_limbs[0] % r_limbs[0]))

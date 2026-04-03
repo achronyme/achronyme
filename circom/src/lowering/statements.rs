@@ -961,9 +961,7 @@ mod tests {
     fn signal_assign_produces_witness_hint() {
         let nodes = lower_template("signal inv; inv <-- 1;").unwrap();
         assert_eq!(nodes.len(), 1);
-        assert!(
-            matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv")
-        );
+        assert!(matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv"));
     }
 
     // ── Constraint equality (===) ───────────────────────────────────
@@ -1130,9 +1128,7 @@ mod tests {
     fn reverse_signal_assign() {
         let nodes = lower_template("signal inv; a --> inv;").unwrap();
         assert_eq!(nodes.len(), 1);
-        assert!(
-            matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv")
-        );
+        assert!(matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv"));
     }
 
     // ── Postfix ops in expression statements ────────────────────────
