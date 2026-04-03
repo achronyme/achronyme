@@ -315,32 +315,16 @@ fn lower_binop(
             rhs: r,
             num_bits: DEFAULT_MAX_BITS,
         }),
-        ast::BinOp::ShiftR => {
-            let shift = const_eval_circuit_expr(&r).ok_or_else(|| {
-                LoweringError::new(
-                    "right shift amount must be a compile-time constant",
-                    span,
-                )
-            })?;
-            Ok(CircuitExpr::ShiftR {
-                operand: l,
-                shift: shift as u32,
-                num_bits: DEFAULT_MAX_BITS,
-            })
-        }
-        ast::BinOp::ShiftL => {
-            let shift = const_eval_circuit_expr(&r).ok_or_else(|| {
-                LoweringError::new(
-                    "left shift amount must be a compile-time constant",
-                    span,
-                )
-            })?;
-            Ok(CircuitExpr::ShiftL {
-                operand: l,
-                shift: shift as u32,
-                num_bits: DEFAULT_MAX_BITS,
-            })
-        },
+        ast::BinOp::ShiftR => Ok(CircuitExpr::ShiftR {
+            operand: l,
+            shift: r,
+            num_bits: DEFAULT_MAX_BITS,
+        }),
+        ast::BinOp::ShiftL => Ok(CircuitExpr::ShiftL {
+            operand: l,
+            shift: r,
+            num_bits: DEFAULT_MAX_BITS,
+        }),
     }
 }
 
@@ -903,7 +887,7 @@ mod tests {
         let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
         match result {
             CircuitExpr::ShiftR { shift, num_bits, .. } => {
-                assert_eq!(shift, 3);
+                assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(3)));
                 assert_eq!(num_bits, 253);
             }
             other => panic!("expected ShiftR, got {:?}", other),
@@ -916,7 +900,7 @@ mod tests {
         let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
         match result {
             CircuitExpr::ShiftL { shift, num_bits, .. } => {
-                assert_eq!(shift, 1);
+                assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(1)));
                 assert_eq!(num_bits, 253);
             }
             other => panic!("expected ShiftL, got {:?}", other),
@@ -924,10 +908,19 @@ mod tests {
     }
 
     #[test]
-    fn lower_shift_non_const_is_error() {
+    fn lower_shift_variable_amount() {
+        // Shift by a variable (e.g., loop variable) should now work
+        let expr = parse_expr("a >> b");
+        let result = lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap();
+        assert!(matches!(result, CircuitExpr::ShiftR { .. }));
+    }
+
+    #[test]
+    fn lower_shift_non_const_is_now_ok() {
+        // Variable shift amounts are now supported (needed for Circom `in >> i` in loops)
         let expr = parse_expr("a >> b");
         let result = lower_expr(&expr, &make_env(), &mut make_ctx());
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     // ── Parallel is transparent ─────────────────────────────────────

@@ -216,6 +216,28 @@ fn mangle_node(
             hint: mangle_expr(hint, prefix, param_subs),
             span: span.clone(),
         },
+        CircuitNode::LetIndexed {
+            array,
+            index,
+            value,
+            span,
+        } => CircuitNode::LetIndexed {
+            array: mangle_name(prefix, array),
+            index: mangle_expr(index, prefix, param_subs),
+            value: mangle_expr(value, prefix, param_subs),
+            span: span.clone(),
+        },
+        CircuitNode::WitnessHintIndexed {
+            array,
+            index,
+            hint,
+            span,
+        } => CircuitNode::WitnessHintIndexed {
+            array: mangle_name(prefix, array),
+            index: mangle_expr(index, prefix, param_subs),
+            hint: mangle_expr(hint, prefix, param_subs),
+            span: span.clone(),
+        },
     }
 }
 
@@ -354,7 +376,7 @@ fn mangle_expr(
             num_bits,
         } => CircuitExpr::ShiftR {
             operand: Box::new(mangle_expr(operand, prefix, param_subs)),
-            shift: *shift,
+            shift: Box::new(mangle_expr(shift, prefix, param_subs)),
             num_bits: *num_bits,
         },
         CircuitExpr::ShiftL {
@@ -363,7 +385,7 @@ fn mangle_expr(
             num_bits,
         } => CircuitExpr::ShiftL {
             operand: Box::new(mangle_expr(operand, prefix, param_subs)),
-            shift: *shift,
+            shift: Box::new(mangle_expr(shift, prefix, param_subs)),
             num_bits: *num_bits,
         },
     }

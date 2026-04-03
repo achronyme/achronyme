@@ -173,14 +173,20 @@ fn eval_hint<F: FieldBackend>(
         }
         CircuitExpr::ShiftR { operand, shift, .. } => {
             let v = eval_hint(operand, env)?;
+            let s = eval_hint(shift, env)?;
+            let s_limbs = s.to_canonical();
+            let shift_val = s_limbs[0] as u32;
             let limbs = v.to_canonical();
-            let shifted = shift_right_limbs(limbs, *shift);
+            let shifted = shift_right_limbs(limbs, shift_val);
             Some(FieldElement::<F>::from_canonical(shifted))
         }
         CircuitExpr::ShiftL { operand, shift, .. } => {
             let v = eval_hint(operand, env)?;
+            let s = eval_hint(shift, env)?;
+            let s_limbs = s.to_canonical();
+            let shift_val = s_limbs[0] as u32;
             let limbs = v.to_canonical();
-            let shifted = shift_left_limbs(limbs, *shift);
+            let shifted = shift_left_limbs(limbs, shift_val);
             Some(FieldElement::<F>::from_canonical(shifted))
         }
 
@@ -335,6 +341,7 @@ fn bit_mask_limbs(num_bits: u32) -> [u64; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ir::prove_ir::types::FieldConst;
     use memory::Bn254Fr;
 
     type Fe = FieldElement<Bn254Fr>;
@@ -367,7 +374,7 @@ mod tests {
         // x >> 1 = 6 (13 = 1101, >> 1 = 110 = 6)
         let expr = CircuitExpr::ShiftR {
             operand: Box::new(CircuitExpr::Input("x".to_string())),
-            shift: 1,
+            shift: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
             num_bits: 253,
         };
         assert_eq!(eval_hint(&expr, &env), Some(fe(6)));
@@ -392,7 +399,7 @@ mod tests {
         let expr = CircuitExpr::BitAnd {
             lhs: Box::new(CircuitExpr::ShiftR {
                 operand: Box::new(CircuitExpr::Input("in".to_string())),
-                shift: 3,
+                shift: Box::new(CircuitExpr::Const(FieldConst::from_u64(3))),
                 num_bits: 253,
             }),
             rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
@@ -404,7 +411,7 @@ mod tests {
         let expr2 = CircuitExpr::BitAnd {
             lhs: Box::new(CircuitExpr::ShiftR {
                 operand: Box::new(CircuitExpr::Input("in".to_string())),
-                shift: 1,
+                shift: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
                 num_bits: 253,
             }),
             rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),

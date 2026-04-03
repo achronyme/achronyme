@@ -165,6 +165,14 @@ fn collect_capture_usage<'a>(
         CircuitNode::Expr { expr, .. } => collect_expr_captures(expr, circuit),
         CircuitNode::Decompose { value, .. } => collect_expr_captures(value, circuit),
         CircuitNode::WitnessHint { hint, .. } => collect_expr_captures(hint, circuit),
+        CircuitNode::LetIndexed { index, value, .. } => {
+            collect_expr_captures(index, circuit);
+            collect_expr_captures(value, circuit);
+        }
+        CircuitNode::WitnessHintIndexed { index, hint, .. } => {
+            collect_expr_captures(index, circuit);
+            collect_expr_captures(hint, circuit);
+        }
     }
 }
 
@@ -744,5 +752,41 @@ mod tests {
         assert!(let_names.contains(&"coeffs_1"));
         assert!(let_names.contains(&"coeffs_2"));
         assert!(let_names.contains(&"out"));
+    }
+
+    // ── Real circomlib Num2Bits ────────────────────────────────────
+
+    #[test]
+    fn real_num2bits_lowering() {
+        let ir = parse_and_lower(
+            r#"
+            template Num2Bits(n) {
+                signal input in;
+                signal output out[n];
+                var lc1 = 0;
+                var e2 = 1;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    out[i] * (out[i] - 1) === 0;
+                    lc1 += out[i] * e2;
+                    e2 = e2 + e2;
+                }
+                lc1 === in;
+            }
+            component main {public [in]} = Num2Bits(8);
+            "#,
+        );
+
+        assert_eq!(ir.name, Some("Num2Bits".to_string()));
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.public_inputs[0].name, "in");
+        // n is a capture (template parameter)
+        assert!(!ir.captures.is_empty());
+        assert_eq!(ir.captures[0].name, "n");
+        // Body should have: Let(lc1), Let(e2), For { ... }, AssertEq(lc1 === in)
+        assert!(ir.body.len() >= 3, "body has {} nodes", ir.body.len());
+        // Verify the For node exists
+        let has_for = ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. }));
+        assert!(has_for, "should have a For node for the loop");
     }
 }

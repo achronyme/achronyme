@@ -419,17 +419,40 @@ fn lower_stmt<'a>(
     Ok(())
 }
 
-/// Extract a target name from either a simple identifier or a dot access.
+/// Describes the target of a signal assignment: either scalar or indexed.
+enum AssignTarget {
+    /// Simple identifier: `x`
+    Scalar(String),
+    /// Indexed array element: `out[i]`
+    Indexed { array: String, index: Box<Expr> },
+}
+
+/// Extract a target from either a simple identifier, dot access, or array index.
 ///
-/// - `Ident("x")` → `"x"`
-/// - `DotAccess { object: "c", field: "a" }` → `"c.a"` (mangled)
-fn extract_target_name(expr: &Expr) -> Option<String> {
+/// - `Ident("x")` → `Scalar("x")`
+/// - `DotAccess { object: "c", field: "a" }` → `Scalar("c.a")`
+/// - `Index { object: "out", index: i }` → `Indexed { array: "out", index: i }`
+fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
     match expr {
-        Expr::Ident { name, .. } => Some(name.clone()),
+        Expr::Ident { name, .. } => Some(AssignTarget::Scalar(name.clone())),
         Expr::DotAccess { object, field, .. } => {
-            extract_ident_name(object).map(|obj| format!("{obj}.{field}"))
+            extract_ident_name(object).map(|obj| AssignTarget::Scalar(format!("{obj}.{field}")))
+        }
+        Expr::Index { object, index, .. } => {
+            extract_ident_name(object).map(|arr| AssignTarget::Indexed {
+                array: arr,
+                index: index.clone(),
+            })
         }
         _ => None,
+    }
+}
+
+/// Extract a simple scalar target name (for backwards compatibility).
+fn extract_target_name(expr: &Expr) -> Option<String> {
+    match extract_assign_target(expr)? {
+        AssignTarget::Scalar(name) => Some(name),
+        AssignTarget::Indexed { .. } => None,
     }
 }
 
@@ -461,26 +484,49 @@ fn lower_substitution<'a>(
     let sr = Some(SpanRange::from_span(span));
 
     match op {
-        // `target <== expr` → Let + AssertEq
+        // `target <== expr` → Let + AssertEq (or LetIndexed + AssertEq for arrays)
         AssignOp::ConstraintAssign => {
-            let name = extract_target_name(target).ok_or_else(|| {
+            let assign_target = extract_assign_target(target).ok_or_else(|| {
                 LoweringError::new(
-                    "constraint assignment target must be an identifier or component signal",
+                    "constraint assignment target must be an identifier, \
+                     component signal, or array element",
                     span,
                 )
             })?;
             let lowered = lower_expr(value, env, ctx)?;
-            nodes.push(CircuitNode::Let {
-                name: name.clone(),
-                value: lowered.clone(),
-                span: sr.clone(),
-            });
-            nodes.push(CircuitNode::AssertEq {
-                lhs: CircuitExpr::Var(name),
-                rhs: lowered,
-                message: None,
-                span: sr,
-            });
+            match assign_target {
+                AssignTarget::Scalar(name) => {
+                    nodes.push(CircuitNode::Let {
+                        name: name.clone(),
+                        value: lowered.clone(),
+                        span: sr.clone(),
+                    });
+                    nodes.push(CircuitNode::AssertEq {
+                        lhs: CircuitExpr::Var(name),
+                        rhs: lowered,
+                        message: None,
+                        span: sr,
+                    });
+                }
+                AssignTarget::Indexed { array, index } => {
+                    let idx_expr = lower_expr(&index, env, ctx)?;
+                    nodes.push(CircuitNode::LetIndexed {
+                        array: array.clone(),
+                        index: idx_expr.clone(),
+                        value: lowered.clone(),
+                        span: sr.clone(),
+                    });
+                    nodes.push(CircuitNode::AssertEq {
+                        lhs: CircuitExpr::ArrayIndex {
+                            array,
+                            index: Box::new(idx_expr),
+                        },
+                        rhs: lowered,
+                        message: None,
+                        span: sr,
+                    });
+                }
+            }
             maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
 
@@ -506,20 +552,34 @@ fn lower_substitution<'a>(
             });
         }
 
-        // `target <-- expr` → WitnessHint (zero constraints, prover computes off-circuit)
+        // `target <-- expr` → WitnessHint or WitnessHintIndexed
         AssignOp::SignalAssign => {
-            let name = extract_target_name(target).ok_or_else(|| {
+            let assign_target = extract_assign_target(target).ok_or_else(|| {
                 LoweringError::new(
-                    "signal assignment target must be an identifier or component signal",
+                    "signal assignment target must be an identifier, \
+                     component signal, or array element",
                     span,
                 )
             })?;
             let lowered = lower_expr(value, env, ctx)?;
-            nodes.push(CircuitNode::WitnessHint {
-                name,
-                hint: lowered,
-                span: sr,
-            });
+            match assign_target {
+                AssignTarget::Scalar(name) => {
+                    nodes.push(CircuitNode::WitnessHint {
+                        name,
+                        hint: lowered,
+                        span: sr,
+                    });
+                }
+                AssignTarget::Indexed { array, index } => {
+                    let idx_expr = lower_expr(&index, env, ctx)?;
+                    nodes.push(CircuitNode::WitnessHintIndexed {
+                        array,
+                        index: idx_expr,
+                        hint: lowered,
+                        span: sr,
+                    });
+                }
+            }
             maybe_trigger_inline(target, nodes, ctx, pending, span)?;
         }
 
@@ -647,9 +707,10 @@ fn lower_for_loop<'a>(
     };
 
     // Extract end bound from condition: `i < end` or `i <= end`
-    let end = extract_loop_bound(condition, &var_name).ok_or_else(|| {
+    let bound = extract_loop_bound(condition, &var_name, env).ok_or_else(|| {
         LoweringError::new(
-            "for loop condition must be `i < <const>` or `i <= <const>`",
+            "for loop condition must be `i < <bound>` or `i <= <bound>` \
+             where <bound> is a constant or template parameter",
             span,
         )
     })?;
@@ -663,9 +724,17 @@ fn lower_for_loop<'a>(
     // Lower body
     let body_nodes = lower_stmts(&body.stmts, env, ctx)?;
 
+    let range = match bound {
+        LoopBound::Literal(end) => ForRange::Literal { start, end },
+        LoopBound::Capture(name) => ForRange::WithCapture {
+            start,
+            end_capture: name,
+        },
+    };
+
     nodes.push(CircuitNode::For {
         var: var_name,
-        range: ForRange::Literal { start, end },
+        range,
         body: body_nodes,
         span: Some(SpanRange::from_span(span)),
     });
@@ -673,8 +742,16 @@ fn lower_for_loop<'a>(
     Ok(())
 }
 
+/// A loop bound: either a literal constant or a template parameter (capture).
+enum LoopBound {
+    Literal(u64),
+    Capture(String),
+}
+
 /// Extract the upper bound from a loop condition like `i < N` or `i <= N`.
-fn extract_loop_bound(condition: &Expr, var_name: &str) -> Option<u64> {
+///
+/// `N` can be a numeric literal or a template parameter (capture).
+fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Option<LoopBound> {
     match condition {
         Expr::BinOp { op, lhs, rhs, .. } => {
             // Check that LHS is the loop variable
@@ -686,13 +763,28 @@ fn extract_loop_bound(condition: &Expr, var_name: &str) -> Option<u64> {
                 return None;
             }
 
-            let bound = const_eval_u64(rhs)?;
-
-            match op {
-                ast::BinOp::Lt => Some(bound),     // i < N → end = N
-                ast::BinOp::Le => Some(bound + 1), // i <= N → end = N+1
-                _ => None,
+            // Try literal constant first
+            if let Some(bound) = const_eval_u64(rhs) {
+                return match op {
+                    ast::BinOp::Lt => Some(LoopBound::Literal(bound)),
+                    ast::BinOp::Le => Some(LoopBound::Literal(bound + 1)),
+                    _ => None,
+                };
             }
+
+            // Try template parameter (capture)
+            if let Expr::Ident { name, .. } = rhs.as_ref() {
+                if env.captures.contains(name) {
+                    return match op {
+                        ast::BinOp::Lt => Some(LoopBound::Capture(name.clone())),
+                        // i <= capture: not directly representable as WithCapture
+                        // (would need capture + 1). For now, only support <.
+                        _ => None,
+                    };
+                }
+            }
+
+            None
         }
         _ => None,
     }
