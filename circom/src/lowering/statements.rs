@@ -30,6 +30,10 @@ struct PendingComponent<'a> {
     template_args: Vec<CircuitExpr>,
     input_signals: HashSet<String>,
     wired_signals: HashSet<String>,
+    /// True if any input was wired via indexed assignment (comp.signal[i]).
+    /// Such components can't trigger inline from wiring completion alone —
+    /// they need explicit flushing before their outputs are referenced.
+    has_indexed_wirings: bool,
 }
 
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
@@ -73,6 +77,19 @@ fn lower_stmt<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
+    // Before processing a substitution that references a component output,
+    // flush pending components whose inputs were wired via indexed
+    // assignments. Skip if this statement is itself a wiring of a pending
+    // component (to avoid flushing before all array elements are wired).
+    if let Stmt::Substitution { target, .. } = stmt {
+        let is_pending_wiring = extract_component_wiring(target)
+            .map(|(comp, _)| pending.contains_key(&comp))
+            .unwrap_or(false);
+        if !is_pending_wiring {
+            flush_indexed_pending(nodes, ctx, pending)?;
+        }
+    }
+
     match stmt {
         // ── Signal declarations ─────────────────────────────────────
         // Signal declarations themselves don't produce CircuitNodes directly;
@@ -338,6 +355,7 @@ fn lower_stmt<'a>(
                                         template_args: tmpl_args,
                                         input_signals,
                                         wired_signals: HashSet::new(),
+                                        has_indexed_wirings: false,
                                     },
                                 );
                             }
@@ -439,8 +457,21 @@ fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
             extract_ident_name(object).map(|obj| AssignTarget::Scalar(format!("{obj}.{field}")))
         }
         Expr::Index { object, index, .. } => {
-            extract_ident_name(object).map(|arr| AssignTarget::Indexed {
-                array: arr,
+            // Support both `arr[i]` and `comp.signal[i]`
+            let array = extract_ident_name(object).or_else(|| {
+                if let Expr::DotAccess {
+                    object: inner,
+                    field,
+                    ..
+                } = object.as_ref()
+                {
+                    extract_ident_name(inner).map(|obj| format!("{obj}.{field}"))
+                } else {
+                    None
+                }
+            })?;
+            Some(AssignTarget::Indexed {
+                array,
                 index: index.clone(),
             })
         }
@@ -456,13 +487,30 @@ fn extract_target_name(expr: &Expr) -> Option<String> {
     }
 }
 
-/// Check if a substitution target is a component signal wiring (`comp.signal`).
+/// Check if a substitution target is a component signal wiring.
+/// Handles both `comp.signal` and `comp.signal[i]`.
 /// Returns `(component_name, signal_name)` if so.
 fn extract_component_wiring(target: &Expr) -> Option<(String, String)> {
-    if let Expr::DotAccess { object, field, .. } = target {
-        extract_ident_name(object).map(|obj| (obj, field.clone()))
-    } else {
-        None
+    match target {
+        // comp.signal <== expr
+        Expr::DotAccess { object, field, .. } => {
+            extract_ident_name(object).map(|obj| (obj, field.clone()))
+        }
+        // comp.signal[i] <== expr (array signal wiring)
+        // Return the base signal name for tracking purposes.
+        Expr::Index { object, .. } => {
+            if let Expr::DotAccess {
+                object: inner,
+                field,
+                ..
+            } = object.as_ref()
+            {
+                extract_ident_name(inner).map(|obj| (obj, field.clone()))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -619,8 +667,41 @@ fn lower_substitution<'a>(
     Ok(())
 }
 
+/// Flush pending components whose inputs were wired via indexed
+/// assignments (`comp.signal[i]`). These can't trigger eagerly because
+/// we don't know when the array is fully wired, so we flush before
+/// the next substitution statement (which might reference their outputs).
+fn flush_indexed_pending<'a>(
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
+) -> Result<(), LoweringError> {
+    let to_flush: Vec<String> = pending
+        .iter()
+        .filter(|(_, c)| c.has_indexed_wirings)
+        .map(|(name, _)| name.clone())
+        .collect();
+    for comp_name in to_flush {
+        if let Some(comp) = pending.remove(&comp_name) {
+            let body = inline_component_body(
+                &comp_name,
+                comp.template,
+                &comp.template_args,
+                ctx,
+                &comp.template.span,
+            )?;
+            nodes.extend(body);
+        }
+    }
+    Ok(())
+}
+
 /// If this substitution wires a component input, mark it as wired.
 /// When all inputs are wired, inline the component body.
+///
+/// For indexed wirings (`comp.signal[i] <== expr`), the wiring is
+/// tracked but the base signal name counts as wired (since the array
+/// will be fully wired across multiple indexed assignments).
 fn maybe_trigger_inline<'a>(
     target: &Expr,
     nodes: &mut Vec<CircuitNode>,
@@ -628,9 +709,19 @@ fn maybe_trigger_inline<'a>(
     pending: &mut HashMap<String, PendingComponent<'a>>,
     span: &diagnostics::Span,
 ) -> Result<(), LoweringError> {
+    let is_indexed = matches!(target, Expr::Index { .. });
     if let Some((comp_name, signal_name)) = extract_component_wiring(target) {
         if let Some(comp) = pending.get_mut(&comp_name) {
             comp.wired_signals.insert(signal_name);
+            if is_indexed {
+                comp.has_indexed_wirings = true;
+            }
+            // Don't trigger inline from the first indexed wiring to an
+            // array — wait until the next non-wiring statement forces a
+            // flush, or until all non-array inputs are also wired.
+            if comp.has_indexed_wirings {
+                return Ok(());
+            }
             if comp.wired_signals.is_superset(&comp.input_signals) {
                 let comp = pending.remove(&comp_name).unwrap();
                 let body = inline_component_body(

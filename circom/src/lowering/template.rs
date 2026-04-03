@@ -1164,4 +1164,120 @@ mod tests {
         assert_proof_valid(&proof);
         eprintln!("LessThan(8): 42 < 42 → verified!");
     }
+
+    // ── Mux1 E2E ────────────────────────────────────────────────
+
+    #[test]
+    fn real_mux1_select_first() {
+        // s=0 → out = c[0] = 10
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(
+            r#"
+            template Mux1() {
+                signal input c[2];
+                signal input s;
+                signal output out;
+                out <== (c[1] - c[0]) * s + c[0];
+            }
+            component main {public [c, s]} = Mux1();
+            "#,
+            &[("c_0", 10), ("c_1", 20), ("s", 0)],
+        );
+        assert_proof_valid(&proof);
+        eprintln!("Mux1: s=0, c=[10,20] → verified!");
+    }
+
+    #[test]
+    fn real_mux1_select_second() {
+        // s=1 → out = c[1] = 20
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(
+            r#"
+            template Mux1() {
+                signal input c[2];
+                signal input s;
+                signal output out;
+                out <== (c[1] - c[0]) * s + c[0];
+            }
+            component main {public [c, s]} = Mux1();
+            "#,
+            &[("c_0", 10), ("c_1", 20), ("s", 1)],
+        );
+        assert_proof_valid(&proof);
+        eprintln!("Mux1: s=1, c=[10,20] → verified!");
+    }
+
+    // ── Composed circuit: IsZero + LessThan + Mux1 ──────────────
+
+    const COMPOSED_SRC: &str = r#"
+        template Num2Bits(n) {
+            signal input in;
+            signal output out[n];
+            var lc1 = 0;
+            var e2 = 1;
+            for (var i = 0; i < n; i++) {
+                out[i] <-- (in >> i) & 1;
+                out[i] * (out[i] - 1) === 0;
+                lc1 += out[i] * e2;
+                e2 = e2 + e2;
+            }
+            lc1 === in;
+        }
+
+        template IsZero() {
+            signal input in;
+            signal output out;
+            signal inv;
+            inv <-- in != 0 ? 1/in : 0;
+            out <== -in * inv + 1;
+            in * out === 0;
+        }
+
+        template LessThan(n) {
+            signal input in[2];
+            signal output out;
+            component n2b = Num2Bits(n + 1);
+            n2b.in <== in[0] + (1 << n) - in[1];
+            out <== 1 - n2b.out[n];
+        }
+
+        // Main: if a < b then output a, else output b (min function)
+        template Min(n) {
+            signal input a;
+            signal input b;
+            signal output out;
+
+            component lt = LessThan(n);
+            lt.in[0] <== a;
+            lt.in[1] <== b;
+
+            // out = lt.out * a + (1 - lt.out) * b
+            //     = lt.out * (a - b) + b
+            out <== lt.out * (a - b) + b;
+        }
+
+        component main {public [a, b]} = Min(8);
+    "#;
+
+    #[test]
+    fn real_min_a_smaller() {
+        // min(3, 10) = 3
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(COMPOSED_SRC, &[("a", 3), ("b", 10)]);
+        assert_proof_valid(&proof);
+        eprintln!("Min(8): min(3, 10) → verified!");
+    }
+
+    #[test]
+    fn real_min_b_smaller() {
+        // min(200, 50) = 50
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(COMPOSED_SRC, &[("a", 200), ("b", 50)]);
+        assert_proof_valid(&proof);
+        eprintln!("Min(8): min(200, 50) → verified!");
+    }
+
+    #[test]
+    fn real_min_equal() {
+        // min(42, 42) = 42
+        let (_nc, _nv, _np, proof) = circom_prove_e2e(COMPOSED_SRC, &[("a", 42), ("b", 42)]);
+        assert_proof_valid(&proof);
+        eprintln!("Min(8): min(42, 42) → verified!");
+    }
 }
