@@ -3,7 +3,7 @@
 //! Represents the parsed structure of a Circom 2.x program. Every node
 //! carries a [`Span`] for precise source location tracking in diagnostics.
 
-use achronyme_parser::ast::Span;
+use diagnostics::Span;
 
 // ---------------------------------------------------------------------------
 // Top-level program

@@ -7,8 +7,7 @@ mod exprs;
 mod stmts;
 mod tables;
 
-use achronyme_parser::diagnostic::Diagnostic;
-use achronyme_parser::error::ParseError;
+use diagnostics::{Diagnostic, ParseError};
 
 use crate::ast::CircomProgram;
 use crate::lexer::Lexer;

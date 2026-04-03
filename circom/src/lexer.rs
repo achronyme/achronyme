@@ -1,7 +1,6 @@
 //! Single-pass O(n) lexer for Circom 2.x syntax.
 
-use achronyme_parser::ast::Span;
-use achronyme_parser::error::ParseError;
+use diagnostics::{ParseError, Span};
 
 use crate::token::{lookup_keyword, Token, TokenKind};
 

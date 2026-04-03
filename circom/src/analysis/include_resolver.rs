@@ -11,8 +11,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use achronyme_parser::diagnostic::Diagnostic;
-use achronyme_parser::error::ParseError;
+use diagnostics::{Diagnostic, ParseError};
 
 use crate::ast::{CircomProgram, Definition, MainComponent, Version};
 use crate::parser::parse_circom;

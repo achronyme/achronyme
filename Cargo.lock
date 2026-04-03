@@ -14,6 +14,9 @@ dependencies = [
 [[package]]
 name = "achronyme-parser"
 version = "0.1.0-beta.19"
+dependencies = [
+ "diagnostics",
+]
 
 [[package]]
 name = "achronyme-std"
@@ -447,7 +450,7 @@ checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 name = "circom"
 version = "0.1.0-beta.19"
 dependencies = [
- "achronyme-parser",
+ "diagnostics",
  "ir",
  "memory",
  "tempfile",
@@ -609,6 +612,10 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "diagnostics"
+version = "0.1.0-beta.19"
 
 [[package]]
 name = "digest"

@@ -1,6 +1,4 @@
-use achronyme_parser::ast::Span;
-use achronyme_parser::diagnostic::{Diagnostic, SpanRange};
-use achronyme_parser::error::ParseError;
+use diagnostics::{Diagnostic, ParseError, Span, SpanRange};
 
 use crate::ast::*;
 use crate::token::{Token, TokenKind};

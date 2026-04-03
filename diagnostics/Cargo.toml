@@ -1,6 +1,6 @@
 [package]
-name = "achronyme-parser"
-description = "Hand-written Pratt lexer and recursive-descent parser for the Achronyme language."
+name = "diagnostics"
+description = "Shared diagnostic infrastructure: spans, errors, and rendering for Achronyme frontends."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,4 +11,3 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-diagnostics = { path = "../diagnostics" }

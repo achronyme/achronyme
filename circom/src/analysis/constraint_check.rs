@@ -17,8 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use achronyme_parser::ast::Span;
-use achronyme_parser::diagnostic::{Diagnostic, SpanRange};
+use diagnostics::{Diagnostic, Span, SpanRange};
 
 use crate::ast::*;
 
@@ -248,14 +247,7 @@ fn collect_signal_refs(expr: &Expr, signals: &mut HashSet<String>) {
 
 /// Convert a parser `Span` to a diagnostic `SpanRange`.
 fn span_to_range(span: &Span) -> SpanRange {
-    SpanRange::new(
-        span.byte_start,
-        span.byte_end,
-        span.line_start,
-        span.col_start,
-        span.line_end,
-        span.col_end,
-    )
+    SpanRange::from_span(span)
 }
 
 #[cfg(test)]

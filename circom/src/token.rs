@@ -1,6 +1,6 @@
 //! Token types for the Circom lexer.
 
-use achronyme_parser::ast::Span;
+use diagnostics::Span;
 
 /// A single token produced by the Circom lexer.
 #[derive(Clone, Debug)]

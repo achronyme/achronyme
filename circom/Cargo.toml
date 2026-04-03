@@ -11,7 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-achronyme-parser = { path = "../achronyme-parser" }
+diagnostics = { path = "../diagnostics" }
 ir = { path = "../ir" }
 memory = { path = "../memory" }
 
