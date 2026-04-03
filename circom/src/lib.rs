@@ -104,8 +104,23 @@ pub fn compile_to_prove_ir(source: &str) -> Result<ProveIR, CircomError> {
 
     // 2. Constraint analysis
     let reports = analysis::constraint_check::check_constraints(&program.definitions);
-    let constraint_errors: Vec<Diagnostic> =
-        reports.into_iter().flat_map(|r| r.diagnostics).collect();
+    let all_diags: Vec<Diagnostic> = reports.into_iter().flat_map(|r| r.diagnostics).collect();
+
+    // Print warnings to stderr but don't block compilation
+    for diag in &all_diags {
+        if diag.severity == diagnostics::Severity::Warning {
+            eprintln!("warning: {}", diag.message);
+            for note in &diag.notes {
+                eprintln!("  note: {note}");
+            }
+        }
+    }
+
+    // Only errors block compilation
+    let constraint_errors: Vec<Diagnostic> = all_diags
+        .into_iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .collect();
     if !constraint_errors.is_empty() {
         return Err(CircomError::ConstraintError(constraint_errors));
     }

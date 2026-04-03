@@ -69,6 +69,39 @@ fn check_template(template: &TemplateDef) -> ConstraintReport {
         }
     }
 
+    // W101: input/output signals that don't appear in any constraint.
+    // This is a strong indicator of an under-constrained circuit.
+    for (name, (sig_type, decl_span)) in &collector.declared_signals {
+        match sig_type {
+            SignalType::Input | SignalType::Output => {
+                if !collector.constrained_signals.contains(name) {
+                    let span_range = span_to_range(decl_span);
+                    let kind = match sig_type {
+                        SignalType::Input => "input",
+                        SignalType::Output => "output",
+                        SignalType::Intermediate => "intermediate",
+                    };
+                    let diag = Diagnostic::warning(
+                        format!(
+                            "{kind} signal `{name}` is not referenced in any constraint"
+                        ),
+                        span_range,
+                    )
+                    .with_code("W101")
+                    .with_note(format!(
+                        "a {kind} signal that doesn't participate in constraints \
+                         cannot be verified — a malicious prover can set it to any value"
+                    ));
+                    diagnostics.push(diag);
+                }
+            }
+            SignalType::Intermediate => {
+                // Intermediates not in constraints are less concerning
+                // (they might be used only in <-- hints)
+            }
+        }
+    }
+
     ConstraintReport {
         template_name: template.name.clone(),
         diagnostics,
@@ -84,6 +117,8 @@ struct ConstraintCollector {
     unconstrained_assigns: HashMap<String, Span>,
     /// Signals that appear in `===` constraint expressions.
     constrained_signals: HashSet<String>,
+    /// Input/output signal declarations with their spans (for W101).
+    declared_signals: HashMap<String, (SignalType, Span)>,
 }
 
 impl ConstraintCollector {
@@ -91,6 +126,7 @@ impl ConstraintCollector {
         Self {
             unconstrained_assigns: HashMap::new(),
             constrained_signals: HashSet::new(),
+            declared_signals: HashMap::new(),
         }
     }
 
@@ -135,26 +171,55 @@ impl ConstraintCollector {
             }
             Stmt::Substitution {
                 op: AssignOp::ConstraintAssign,
+                target,
                 value,
                 ..
             } => {
-                // `signal <== expr` — the expr side constrains all referenced signals
+                // `target <== expr` — both target and expr are in constraints
+                collect_signal_refs(target, &mut self.constrained_signals);
                 collect_signal_refs(value, &mut self.constrained_signals);
             }
             Stmt::Substitution {
                 op: AssignOp::RConstraintAssign,
                 target,
+                value,
                 ..
             } => {
-                // `expr ==> signal` — the expr side constrains all referenced signals
+                // `expr ==> target` — both sides are in constraints
                 collect_signal_refs(target, &mut self.constrained_signals);
+                collect_signal_refs(value, &mut self.constrained_signals);
             }
             Stmt::SignalDecl {
+                signal_type,
+                declarations,
                 init: Some((AssignOp::ConstraintAssign, value)),
+                span,
                 ..
             } => {
-                // `signal c <== expr` — constrains referenced signals
+                // `signal c <== expr` — constrains the signal and all refs in expr
+                for decl in declarations {
+                    self.constrained_signals.insert(decl.name.clone());
+                }
                 collect_signal_refs(value, &mut self.constrained_signals);
+                // Also track the signal declaration
+                for decl in declarations {
+                    self.declared_signals
+                        .entry(decl.name.clone())
+                        .or_insert((*signal_type, span.clone()));
+                }
+            }
+            Stmt::SignalDecl {
+                signal_type,
+                declarations,
+                span,
+                ..
+            } => {
+                // Track all signal declarations for W101
+                for decl in declarations {
+                    self.declared_signals
+                        .entry(decl.name.clone())
+                        .or_insert((*signal_type, span.clone()));
+                }
             }
             // Recurse into nested blocks
             Stmt::IfElse {
@@ -518,5 +583,58 @@ mod tests {
         let (prog, _) = parse_circom(src).unwrap();
         let reports = check_constraints(&prog.definitions);
         assert!(reports.is_empty());
+    }
+
+    // ── W101: unconstrained input/output signals ────────────────────
+
+    fn has_warning(reports: &[ConstraintReport], signal: &str) -> bool {
+        reports.iter().any(|r| {
+            r.diagnostics.iter().any(|d| {
+                d.severity == diagnostics::Severity::Warning
+                    && d.message.contains(signal)
+                    && d.code.as_deref() == Some("W101")
+            })
+        })
+    }
+
+    #[test]
+    fn w101_input_not_in_constraint() {
+        // input `in` doesn't appear in any constraint — W101
+        let reports = check(
+            r#"
+            signal input in;
+            signal output out;
+            out <-- in;
+            out * (out - 1) === 0;
+            "#,
+        );
+        assert!(has_warning(&reports, "in"));
+    }
+
+    #[test]
+    fn w101_input_in_constraint_is_fine() {
+        let reports = check(
+            r#"
+            signal input in;
+            signal output out;
+            out <== in * 2;
+            "#,
+        );
+        assert!(!has_warning(&reports, "in"));
+        assert!(!has_warning(&reports, "out"));
+    }
+
+    #[test]
+    fn w101_output_not_in_constraint() {
+        let reports = check(
+            r#"
+            signal output out;
+            out <-- 42;
+            "#,
+        );
+        // out assigned via <-- but no === → E100 fires
+        // out not in any constraint → W101 also fires
+        assert!(has_error(&reports, "out"));
+        assert!(has_warning(&reports, "out"));
     }
 }
