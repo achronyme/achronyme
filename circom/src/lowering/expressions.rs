@@ -22,7 +22,7 @@ use crate::ast::{self, Expr};
 use super::context::LoweringContext;
 use super::env::{LoweringEnv, VarKind};
 use super::error::LoweringError;
-use super::utils::{binop_symbol, const_eval_u64, extract_ident_name};
+use super::utils::{const_eval_u64, extract_ident_name};
 
 /// The default max bits for IntDiv/IntMod. Circom operates over BN254 (~254 bits).
 const DEFAULT_MAX_BITS: u32 = 253;
@@ -90,7 +90,7 @@ pub fn lower_expr(
         }
 
         // ── Unary operations ────────────────────────────────────────
-        Expr::UnaryOp { op, operand, span } => {
+        Expr::UnaryOp { op, operand, .. } => {
             let inner = lower_expr(operand, env, ctx)?;
             match op {
                 ast::UnaryOp::Neg => Ok(CircuitExpr::UnaryOp {
@@ -494,7 +494,7 @@ fn lower_expr_with_substitution(
             let r = lower_expr_with_substitution(rhs, env, ctx, subs)?;
             lower_binop(*op, l, r, span)
         }
-        Expr::UnaryOp { op, operand, span } => {
+        Expr::UnaryOp { op, operand, .. } => {
             let inner = lower_expr_with_substitution(operand, env, ctx, subs)?;
             match op {
                 ast::UnaryOp::Neg => Ok(CircuitExpr::UnaryOp {
