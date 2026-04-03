@@ -18,3 +18,5 @@ pub mod error;
 pub mod expressions;
 #[allow(dead_code)]
 pub mod signals;
+#[allow(dead_code)]
+pub mod statements;
