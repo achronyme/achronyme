@@ -1,0 +1,16 @@
+[package]
+name = "circom"
+description = "Circom frontend: parser, analysis, and ProveIR lowering for .circom files."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+achronyme-parser = { path = "../achronyme-parser" }
+ir = { path = "../ir" }
+memory = { path = "../memory" }

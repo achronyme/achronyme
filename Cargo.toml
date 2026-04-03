@@ -10,6 +10,7 @@ members = [
     "std",
     "ach-macros",
     "proving",
+    "circom",
 ]
 exclude = ["wasm"]
 resolver = "2"
