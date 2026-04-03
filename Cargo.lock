@@ -452,6 +452,7 @@ version = "0.1.0-beta.19"
 dependencies = [
  "diagnostics",
  "ir",
+ "memory",
  "tempfile",
 ]
 
@@ -503,6 +504,7 @@ dependencies = [
  "achronyme-std",
  "anyhow",
  "byteorder",
+ "circom",
  "clap",
  "compiler",
  "constraints",
