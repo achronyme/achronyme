@@ -640,3 +640,22 @@ fn babyjub_real_circomlib() {
     );
     assert!(n > 0, "expected at least 1 constraint");
 }
+
+// ── EscalarMulFix (real circomlib) ─────────────────────────────
+
+/// EscalarMulFix(3, BASE8): scalar multiplication on BabyJubjub.
+///
+/// Tests: WindowMulFix (MultiMux3 + MontgomeryDouble/Add),
+/// SegmentMulFix orchestration, Edwards↔Montgomery conversion,
+/// component arrays, 2D signal wiring.
+#[test]
+#[ignore] // TODO: deep name mangling bug — mulFix.segments_0.windows_0.out8_0 undeclared
+fn escalarmulfix_real_circomlib() {
+    // 3-bit scalar = 5 (bits: 1,0,1)
+    let n = circomlib_e2e_verify(
+        "EscalarMulFix(3, BASE8)",
+        "test/circomlib/escalarmulfix_test.circom",
+        &[("e_0", 1), ("e_1", 0), ("e_2", 1)],
+    );
+    eprintln!("  Constraints: {n}");
+}

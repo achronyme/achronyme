@@ -58,9 +58,12 @@ pub(super) fn lower_for_loop<'a>(
             let name = extract_target_name(target).ok_or_else(|| {
                 LoweringError::with_code("for loop init must assign to a simple variable", "E208", span)
             })?;
-            let start = const_eval_u64(value).ok_or_else(|| {
-                LoweringError::with_code("for loop init must be a compile-time constant", "E208", span)
-            })?;
+            let all = ctx.all_constants(env);
+            let start = const_eval_u64(value)
+                .or_else(|| super::super::utils::const_eval_with_params(value, &all))
+                .ok_or_else(|| {
+                    LoweringError::with_code("for loop init must be a compile-time constant", "E208", span)
+                })?;
             (name, start)
         }
         _ => {
@@ -98,23 +101,29 @@ pub(super) fn lower_for_loop<'a>(
         // Resolve bound to a concrete number
         let end = match &bound {
             LoopBound::Literal(n) => *n,
-            LoopBound::Capture(name) => ctx.param_values.get(name).copied().ok_or_else(|| {
-                LoweringError::new(
-                    format!(
-                        "component array loop bound `{name}` must be resolvable \
-                         at compile time"
-                    ),
-                    span,
-                )
-            })?,
-            LoopBound::Expr(expr) => super::super::utils::const_eval_with_params(expr, &ctx.param_values)
-                .ok_or_else(|| {
+            LoopBound::Capture(name) => {
+                let all = ctx.all_constants(env);
+                all.get(name).copied().ok_or_else(|| {
                     LoweringError::new(
-                        "component array loop bound expression must be resolvable \
-                         at compile time",
+                        format!(
+                            "component array loop bound `{name}` must be resolvable \
+                             at compile time"
+                        ),
                         span,
                     )
-                })?,
+                })?
+            }
+            LoopBound::Expr(expr) => {
+                let all = ctx.all_constants(env);
+                super::super::utils::const_eval_with_params(expr, &all)
+                    .ok_or_else(|| {
+                        LoweringError::new(
+                            "component array loop bound expression must be resolvable \
+                             at compile time",
+                            span,
+                        )
+                    })?
+            }
         };
 
         // Unroll: for each iteration, set loop var as known constant, lower body

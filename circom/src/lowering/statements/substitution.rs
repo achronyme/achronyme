@@ -268,6 +268,16 @@ fn lower_var_assign<'a>(
             span,
         )
     })?;
+
+    // Track compile-time var assignments so loop bounds and array indices
+    // can reference them (e.g., `var nseg = (s < n-1) ? 249 : last;`).
+    // Use param_values (not known_constants) to avoid affecting Ident
+    // resolution in lower_expr — vars like `lc1` may be modified later.
+    let all = ctx.all_constants(env);
+    if let Some(val) = super::super::utils::const_eval_with_params(value, &all) {
+        ctx.param_values.insert(name.clone(), val);
+    }
+
     let lowered = lower_expr(value, env, ctx)?;
     nodes.push(CircuitNode::Let {
         name,
