@@ -2,6 +2,29 @@
 //!
 //! Tracks pending components whose input signals haven't been fully wired yet.
 //! When all inputs are wired, the component body is inlined into the circuit.
+//!
+//! ## Protocol
+//!
+//! 1. **Declaration**: `component c = Template(args)` creates a `PendingComponent`
+//!    with the set of expected input signals (extracted from the template definition).
+//!    If the template has no inputs, it's inlined immediately — no pending entry.
+//!
+//! 2. **Wiring**: Each `c.signal <== expr` marks that signal as wired.
+//!    - Scalar wiring (`c.in <== x`): signal name added to `wired_signals`.
+//!    - Indexed wiring (`c.in[i] <== x`): sets `has_indexed_wirings = true`.
+//!      These can't trigger inline because we don't know when the array is
+//!      fully wired.
+//!
+//! 3. **Trigger**: When `wired_signals ⊇ input_signals` (all inputs wired),
+//!    the component body is inlined via `inline_component_body_with_arrays`.
+//!    Indexed wirings skip this check — they're flushed instead.
+//!
+//! 4. **Flush**: Before any substitution that reads a component output,
+//!    `flush_indexed_pending` inlines all components with `has_indexed_wirings`.
+//!    This ensures outputs are available before they're referenced.
+//!
+//! 5. **Cleanup**: At the end of a statement block, `lower_stmts_with_pending`
+//!    inlines any remaining pending components (partial wiring or no-input).
 
 use std::collections::{HashMap, HashSet};
 
