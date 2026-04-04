@@ -44,7 +44,7 @@ pub fn find_similar<'a>(
             continue;
         }
         let dist = levenshtein(name, candidate);
-        if dist <= threshold && best.as_ref().map_or(true, |(_, d)| dist < *d) {
+        if dist <= threshold && best.as_ref().is_none_or(|(_, d)| dist < *d) {
             best = Some((candidate, dist));
         }
     }

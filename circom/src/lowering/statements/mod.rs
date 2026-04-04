@@ -541,12 +541,11 @@ fn lower_component_decl<'a>(
                         &call.template_name,
                         tmpl_names.into_iter(),
                     ) {
-                        err.diagnostic = err.diagnostic
-                            .with_suggestion(
-                                diagnostics::SpanRange::from_span(span),
-                                similar,
-                                "a similar template exists",
-                            );
+                        err.add_suggestion(
+                            diagnostics::SpanRange::from_span(span),
+                            similar,
+                            "a similar template exists",
+                        );
                     }
                     return Err(err);
                 }

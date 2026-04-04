@@ -103,7 +103,7 @@ impl CircomError {
                 )
                 .with_code("E211")]
             }
-            CircomError::LoweringError(e) => vec![e.diagnostic.clone()],
+            CircomError::LoweringError(e) => vec![(*e.diagnostic).clone()],
             CircomError::IncludeError(e) => vec![e.to_diagnostic()],
         }
     }

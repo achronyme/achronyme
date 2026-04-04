@@ -67,12 +67,11 @@ fn inline_function_call(
             );
             let fn_names: Vec<&str> = ctx.functions.keys().copied().collect();
             if let Some(similar) = find_similar(name, fn_names.into_iter()) {
-                err.diagnostic = err.diagnostic
-                    .with_suggestion(
-                        diagnostics::SpanRange::from_span(span),
-                        similar,
-                        "a similar function exists",
-                    );
+                err.add_suggestion(
+                    diagnostics::SpanRange::from_span(span),
+                    similar,
+                    "a similar function exists",
+                );
             }
             return Err(err);
         }

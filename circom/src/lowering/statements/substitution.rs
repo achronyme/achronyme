@@ -376,12 +376,11 @@ fn lower_anon_component_tuple(
         );
         let tmpl_names: Vec<&str> = ctx.templates.keys().copied().collect();
         if let Some(similar) = crate::lowering::suggest::find_similar(&tmpl_name, tmpl_names.into_iter()) {
-            err.diagnostic = err.diagnostic
-                .with_suggestion(
-                    diagnostics::SpanRange::from_span(span),
-                    similar,
-                    "a similar template exists",
-                );
+            err.add_suggestion(
+                diagnostics::SpanRange::from_span(span),
+                similar,
+                "a similar template exists",
+            );
         }
         err
     })?;

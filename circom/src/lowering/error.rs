@@ -4,40 +4,55 @@
 //! phase carry structured information (code, span, labels, notes) and
 //! render identically to the rest of Achronyme's diagnostic output.
 
-use diagnostics::{Diagnostic, Span, SpanRange};
+use diagnostics::{Diagnostic, Span, SpanRange, Suggestion};
 
 /// Errors that can occur during Circom → ProveIR lowering.
 #[derive(Debug)]
 pub struct LoweringError {
-    pub diagnostic: Diagnostic,
+    pub diagnostic: Box<Diagnostic>,
 }
 
 impl LoweringError {
     /// Create a lowering error with a span.
     pub fn new(message: impl Into<String>, span: &Span) -> Self {
         Self {
-            diagnostic: Diagnostic::error(message, SpanRange::from_span(span)),
+            diagnostic: Box::new(Diagnostic::error(message, SpanRange::from_span(span))),
         }
     }
 
     /// Create a lowering error without a span (for truly spanless errors).
     pub fn without_span(message: impl Into<String>) -> Self {
         Self {
-            diagnostic: Diagnostic::error(message, SpanRange::point(0, 0, 0)),
+            diagnostic: Box::new(Diagnostic::error(message, SpanRange::point(0, 0, 0))),
         }
     }
 
     /// Create a lowering error with a specific error code.
     pub fn with_code(message: impl Into<String>, code: &str, span: &Span) -> Self {
         Self {
-            diagnostic: Diagnostic::error(message, SpanRange::from_span(span))
-                .with_code(code),
+            diagnostic: Box::new(
+                Diagnostic::error(message, SpanRange::from_span(span)).with_code(code),
+            ),
         }
+    }
+
+    /// Add a "did you mean?" suggestion in place.
+    pub fn add_suggestion(
+        &mut self,
+        span: SpanRange,
+        replacement: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        self.diagnostic.suggestions.push(Suggestion {
+            span,
+            replacement: replacement.into(),
+            message: message.into(),
+        });
     }
 
     /// Access the underlying diagnostic (for adding labels, notes, etc).
     pub fn into_diagnostic(self) -> Diagnostic {
-        self.diagnostic
+        *self.diagnostic
     }
 }
 

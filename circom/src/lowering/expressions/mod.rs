@@ -97,7 +97,7 @@ pub fn lower_expr(
                     if let Some(similar) =
                         find_similar(name, candidates.iter().map(|s| s.as_str()))
                     {
-                        err.diagnostic = err.diagnostic.with_suggestion(
+                        err.add_suggestion(
                             diagnostics::SpanRange::from_span(span),
                             similar,
                             "a similar name exists in scope",
@@ -222,8 +222,8 @@ pub fn lower_expr(
 
 /// Lower an array index expression.
 fn lower_index(
-    object: &Box<Expr>,
-    index: &Box<Expr>,
+    object: &Expr,
+    index: &Expr,
     span: &diagnostics::Span,
     env: &LoweringEnv,
     ctx: &mut LoweringContext,
@@ -240,7 +240,7 @@ fn lower_index(
             object: inner_obj,
             field,
             ..
-        } = object.as_ref()
+        } = object
         {
             extract_ident_name(inner_obj)
                 .or_else(|| resolve_component_array_expr_full(inner_obj, env, ctx))
@@ -265,7 +265,7 @@ fn lower_index(
     // Case 2: Multi-dim index: arr[i][j]...[k]
     {
         let mut indices: Vec<&Expr> = vec![index];
-        let mut current: &Expr = object.as_ref();
+        let mut current: &Expr = object;
         loop {
             match current {
                 Expr::Ident { name, .. } => {
