@@ -537,3 +537,106 @@ fn mimcsponge_real_circomlib() {
     eprintln!();
     eprintln!("  MiMCSponge(2, 220, 1) — {num_constraints} constraints — VERIFIED ✓");
 }
+
+// ── Shared E2E helper ──────────────────────────────────────────
+
+/// Compile a circomlib test file → ProveIR → instantiate → R1CS → verify.
+///
+/// Returns the number of constraints on success.
+fn circomlib_e2e_verify(
+    test_name: &str,
+    circom_file: &str,
+    inputs: &[(&str, u64)],
+) -> usize {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join(circom_file);
+
+    if !path.exists() {
+        panic!("{test_name}: file not found: {path:?}");
+    }
+
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    eprintln!("Compiling {test_name}...");
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("{test_name} compilation failed: {e}"));
+
+    let prove_ir = &compile_result.prove_ir;
+    eprintln!("  ✓ Compiled: {} body nodes", prove_ir.body.len());
+
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate(&fe_captures)
+        .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
+
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  ✓ Instantiated + optimized: {} instructions",
+        program.instructions.len()
+    );
+
+    let mut user_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    for &(name, val) in inputs {
+        user_inputs.insert(name.to_string(), FieldElement::<Bn254Fr>::from_u64(val));
+    }
+
+    let mut all_signals = circom::witness::compute_witness_hints_with_captures(
+        prove_ir,
+        &user_inputs,
+        capture_values,
+    )
+    .unwrap_or_else(|e| panic!("{test_name} witness computation failed: {e}"));
+
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    let witness = r1cs_compiler
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("{test_name} R1CS compilation failed: {e}"));
+
+    let num_constraints = r1cs_compiler.cs.num_constraints();
+    eprintln!("  ✓ R1CS compiled: {num_constraints} constraints");
+
+    r1cs_compiler
+        .cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("{test_name} R1CS verification failed: {e}"));
+
+    eprintln!("  ✓ R1CS verified!");
+    eprintln!();
+    eprintln!("  {test_name} — {num_constraints} constraints — VERIFIED ✓");
+
+    num_constraints
+}
+
+// ── BabyJubjub (real circomlib) ────────────────────────────────
+
+/// BabyAdd + BabyDbl + BabyCheck from iden3/circomlib.
+///
+/// Tests: Edwards curve point addition with witness hints (division),
+/// reverse constraint assign (`==>`), `===` constraints with var
+/// coefficients, and component composition (BabyDbl wraps BabyAdd).
+#[test]
+fn babyjub_real_circomlib() {
+    // Generator point G = (Gx, Gy) of BabyJubjub
+    // We use the base point from circomlib:
+    // Gx = 5299619240641551281634865583518297030282874472190772894086521144482721001553
+    // Gy = 16950150798460657717958625567821834550301663161624707787222815936182638968203
+    // These are large field elements — for witness hints with division,
+    // we need the actual field values. Use small test points instead:
+    // The identity point (0, 1) is always on the curve.
+    // BabyAdd(0, 1, 0, 1) should give BabyDbl(0, 1) = (0, 1) (identity doubled).
+    let n = circomlib_e2e_verify(
+        "BabyJub (Add+Dbl+Check)",
+        "test/circomlib/babyjub_test.circom",
+        &[("x1", 0), ("y1", 1), ("x2", 0), ("y2", 1)],
+    );
+    assert!(n > 0, "expected at least 1 constraint");
+}
