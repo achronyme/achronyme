@@ -205,6 +205,9 @@ fn lower_stmt<'a>(
 
         // ── Constraint equality ─────────────────────────────────────
         Stmt::ConstraintEq { lhs, rhs, span } => {
+            // Flush indexed pending: the constraint may reference component
+            // outputs (e.g., `compConstant.out*enabled === 0`).
+            flush_indexed_pending(nodes, ctx, pending)?;
             let l = lower_expr(lhs, env, ctx)?;
             let r = lower_expr(rhs, env, ctx)?;
             nodes.push(CircuitNode::AssertEq {

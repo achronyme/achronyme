@@ -654,3 +654,82 @@ fn escalarmulfix_real_circomlib() {
     );
     eprintln!("  Constraints: {n}");
 }
+
+/// EscalarMulAny(149): 2 segments, tests deep nesting + segment chaining.
+#[test]
+#[ignore] // TODO: segments[s].out ==> adders[s-1].x2 — value-scan doesn't flush segments_1 via ==> with loop vars
+fn escalarmulany_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/escalarmulany_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    eprintln!("Compiling EscalarMulAny(149)...");
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("EscalarMulAny compilation failed: {e}"));
+
+    let prove_ir = &compile_result.prove_ir;
+    eprintln!("  ✓ Compiled: {} body nodes", prove_ir.body.len());
+
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate(&fe_captures)
+        .unwrap_or_else(|e| panic!("EscalarMulAny instantiation failed: {e}"));
+
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  ✓ Instantiated: {} instructions",
+        program.instructions.len()
+    );
+}
+
+/// EdDSAPoseidon: the "boss final" — full signature verification.
+/// Depends on: Num2Bits(253), CompConstant, Poseidon(5), Num2Bits_strict,
+/// BabyDbl, IsZero, EscalarMulAny(254), BabyAdd, EscalarMulFix(253),
+/// ForceEqualIfEnabled.
+#[test]
+#[ignore] // TODO: blocked by EscalarMulAny segment chaining (same ==> flush gap)
+fn eddsaposeidon_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/eddsaposeidon_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    eprintln!("Compiling EdDSAPoseidonVerifier...");
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("EdDSAPoseidon compilation failed: {e}"));
+
+    let prove_ir = &compile_result.prove_ir;
+    eprintln!(
+        "  ✓ Compiled: {} body nodes, {} public, {} witness",
+        prove_ir.body.len(),
+        prove_ir.public_inputs.len(),
+        prove_ir.witness_inputs.len(),
+    );
+
+    // Instantiate to verify the node ordering is correct
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate(&fe_captures)
+        .unwrap_or_else(|e| panic!("EdDSAPoseidon instantiation failed: {e}"));
+
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  ✓ Instantiated + optimized: {} instructions",
+        program.instructions.len()
+    );
+
+    eprintln!(
+        "\n  EdDSAPoseidonVerifier — {} nodes → {} instructions — INSTANTIATED ✓",
+        prove_ir.body.len(),
+        program.instructions.len()
+    );
+}
