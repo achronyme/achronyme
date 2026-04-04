@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use achronyme_parser::diagnostic::SpanRange;
+use diagnostics::SpanRange;
 
 use memory::FieldBackend;
 

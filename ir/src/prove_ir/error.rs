@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use achronyme_parser::{Diagnostic, SpanRange};
+use diagnostics::{Diagnostic, SpanRange};
 
 use crate::error::OptSpan;
 

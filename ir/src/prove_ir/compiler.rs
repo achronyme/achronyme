@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use achronyme_parser::ast::*;
-use achronyme_parser::diagnostic::SpanRange;
+use diagnostics::SpanRange;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 use super::error::ProveIrError;
@@ -272,9 +272,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                                 "circuit parameter `{}` has no type annotation",
                                 param.name
                             ),
-                            span: crate::error::span_box(Some(
-                                achronyme_parser::diagnostic::SpanRange::from(span),
-                            )),
+                            span: crate::error::span_box(Some(diagnostics::SpanRange::from(span))),
                         })?;
                 let vis = ta
                     .visibility
@@ -283,9 +281,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             "circuit parameter `{}` requires Public or Witness",
                             param.name
                         ),
-                        span: crate::error::span_box(Some(
-                            achronyme_parser::diagnostic::SpanRange::from(span),
-                        )),
+                        span: crate::error::span_box(Some(diagnostics::SpanRange::from(span))),
                     })?;
                 let decl = InputDecl {
                     name: param.name.clone(),
@@ -345,7 +341,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         let (program, errors) = achronyme_parser::parse_program(source);
         if let Some(err) = errors
             .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
+            .find(|d| d.severity == diagnostics::Severity::Error)
         {
             return Err(ProveIrError::ParseError(Box::new(err.clone())));
         }
@@ -976,6 +972,39 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
+        // Array literal → mutable LetArray
+        if let Expr::Array {
+            elements,
+            span: arr_span,
+        } = value
+        {
+            if elements.is_empty() {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: "empty arrays are not allowed in circuits".into(),
+                    span: to_span(arr_span),
+                });
+            }
+            let compiled: Result<Vec<_>, _> =
+                elements.iter().map(|e| self.compile_expr(e)).collect();
+            let compiled = compiled?;
+            let elem_names: Vec<String> =
+                (0..compiled.len()).map(|i| format!("{name}_{i}")).collect();
+            self.body.push(CircuitNode::LetArray {
+                name: name.to_string(),
+                elements: compiled,
+                span: Some(SpanRange::from(span)),
+            });
+            for ename in &elem_names {
+                self.env
+                    .insert(ename.clone(), CompEnvValue::Scalar(ename.clone()));
+            }
+            self.env
+                .insert(name.to_string(), CompEnvValue::Array(elem_names));
+            // Mark as mutable so arr[i] = expr is allowed
+            self.ssa_versions.insert(name.to_string(), 0);
+            return Ok(());
+        }
+
         // Type annotations intentionally ignored (see compile_let).
         // Compile value and emit Let node (same as immutable let for v0)
         let compiled = self.compile_expr(value)?;
@@ -1002,13 +1031,23 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
-        // Only support simple ident assignment: x = expr
+        // Array element assignment: arr[i] = expr → LetIndexed
+        if let Expr::Index {
+            object,
+            index,
+            span: idx_span,
+        } = target
+        {
+            return self.compile_indexed_assignment(object, index, value, idx_span);
+        }
+
+        // Simple ident assignment: x = expr
         let name = match target {
             Expr::Ident { name, .. } => name.clone(),
             _ => {
                 return Err(ProveIrError::UnsupportedOperation {
-                    description: "only simple variable assignment is supported in circuits \
-                         (no array element or field assignment)"
+                    description: "only simple variable or array element assignment \
+                         is supported in circuits"
                         .into(),
                     span: to_span(span),
                 });
@@ -1051,6 +1090,62 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
         // Update env to point to the new SSA name
         self.env.insert(name, CompEnvValue::Scalar(ssa_name));
+        Ok(())
+    }
+
+    /// Compile `arr[i] = expr` → `LetIndexed { array, index, value }`.
+    fn compile_indexed_assignment(
+        &mut self,
+        object: &Expr,
+        index: &Expr,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
+        let array_name = match object {
+            Expr::Ident { name, .. } => name.clone(),
+            _ => {
+                return Err(ProveIrError::UnsupportedOperation {
+                    description: "indexed assignment requires an array identifier \
+                         (e.g., arr[i] = expr)"
+                        .into(),
+                    span: to_span(span),
+                });
+            }
+        };
+
+        // Check the array exists and is an array
+        if !matches!(
+            self.env.get(array_name.as_str()),
+            Some(CompEnvValue::Array(_))
+        ) {
+            return Err(ProveIrError::TypeMismatch {
+                expected: "mutable array".into(),
+                got: "scalar or undeclared".into(),
+                span: to_span(span),
+            });
+        }
+
+        // Check the array was declared with mut
+        if !self.ssa_versions.contains_key(&array_name) {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "cannot assign to `{array_name}[..]` — array was not declared with `mut` \
+                     (use `mut {array_name} = [...]` to declare a mutable array)"
+                ),
+                span: to_span(span),
+            });
+        }
+
+        let compiled_index = self.compile_expr(index)?;
+        let compiled_value = self.compile_expr(value)?;
+
+        self.body.push(CircuitNode::LetIndexed {
+            array: array_name,
+            index: compiled_index,
+            value: compiled_value,
+            span: Some(SpanRange::from(span)),
+        });
+
         Ok(())
     }
 
@@ -1913,6 +2008,34 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     end: *end,
                 }
             }
+            ForIterable::ExprRange { start, end } => {
+                // Dynamic end bound: compile to WithCapture or WithExpr.
+                // Simple capture name → WithCapture; expression → WithExpr.
+                if let Expr::Ident { name, .. } = end.as_ref() {
+                    if matches!(self.env.get(name.as_str()), Some(CompEnvValue::Capture(_))) {
+                        self.captured_names.insert(name.clone());
+                        ForRange::WithCapture {
+                            start: *start,
+                            end_capture: name.clone(),
+                        }
+                    } else {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "dynamic loop bound `{name}` must be a captured variable \
+                                 (from outer scope)"
+                            ),
+                            span: to_span(span),
+                        });
+                    }
+                } else {
+                    // Compile the end expression to a CircuitExpr
+                    let end_circuit = self.compile_expr(end)?;
+                    ForRange::WithExpr {
+                        start: *start,
+                        end_expr: Box::new(end_circuit),
+                    }
+                }
+            }
             ForIterable::Expr(expr) => {
                 // Must be an array identifier
                 if let Expr::Ident { name, .. } = expr.as_ref() {
@@ -1934,7 +2057,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 } else {
                     return Err(ProveIrError::UnsupportedOperation {
                         description: "for loops in circuits require a literal range \
-                                      (e.g., 0..5) or an array identifier"
+                                      (e.g., 0..5), a dynamic range (0..n), or an array"
                             .into(),
                         span: to_span(span),
                     });
@@ -4213,5 +4336,143 @@ mod tests {
         .unwrap();
         // Should compile without error — the local double (x*3) is used
         assert_eq!(ir.public_inputs.len(), 1);
+    }
+
+    // ── Dynamic loop bounds ─────────────────────────────────────
+
+    #[test]
+    fn dynamic_loop_bound_capture() {
+        // `for i in 0..n` where n is a capture from outer scope
+        let outer = OuterScope {
+            values: [("n", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            functions: vec![],
+        };
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
+            "public result\nmut sum = 0\nfor i in 0..n { sum = sum + i }\nassert_eq(sum, result)",
+            &outer,
+        )
+        .unwrap();
+        assert!(!ir.captures.is_empty(), "n should be a capture");
+        // Should have a For node with WithCapture range
+        assert!(
+            ir.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::For {
+                    range: ForRange::WithCapture { start: 0, .. },
+                    ..
+                }
+            )),
+            "expected For with WithCapture range"
+        );
+    }
+
+    #[test]
+    fn dynamic_loop_bound_expr() {
+        // `for i in 0..n+1` where n is a capture
+        let outer = OuterScope {
+            values: [("n", OuterScopeEntry::Scalar)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            functions: vec![],
+        };
+        let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
+            "public result\nmut sum = 0\nfor i in 0..n+1 { sum = sum + i }\nassert_eq(sum, result)",
+            &outer,
+        )
+        .unwrap();
+        // Should have a For node with WithExpr range (n+1 is an expression)
+        assert!(
+            ir.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::For {
+                    range: ForRange::WithExpr { start: 0, .. },
+                    ..
+                }
+            )),
+            "expected For with WithExpr range"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Indexed array assignment: arr[i] = expr → LetIndexed
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mut_array_decl() {
+        let ir =
+            compile_circuit("public out\nmut arr = [1, 2, 3]\nassert_eq(arr[0], out)").unwrap();
+        // Should have a LetArray node
+        assert!(
+            ir.body
+                .iter()
+                .any(|n| matches!(n, CircuitNode::LetArray { name, .. } if name == "arr")),
+            "expected LetArray for mut arr, body: {:#?}",
+            ir.body
+        );
+    }
+
+    #[test]
+    fn indexed_assignment_constant() {
+        let ir =
+            compile_circuit("public out\nmut arr = [0, 0, 0]\narr[1] = 42\nassert_eq(arr[1], out)")
+                .unwrap();
+        // Should have a LetIndexed node
+        assert!(
+            ir.body
+                .iter()
+                .any(|n| matches!(n, CircuitNode::LetIndexed { array, .. } if array == "arr")),
+            "expected LetIndexed for arr[1] = 42, body: {:#?}",
+            ir.body
+        );
+    }
+
+    #[test]
+    fn indexed_assignment_in_loop() {
+        let ir = compile_circuit(
+            "public out\n\
+             mut arr = [0, 0, 0]\n\
+             for i in 0..3 {\n\
+                 arr[i] = i * 2\n\
+             }\n\
+             assert_eq(arr[2], out)",
+        )
+        .unwrap();
+        // For node body should contain LetIndexed
+        let for_node = ir
+            .body
+            .iter()
+            .find(|n| matches!(n, CircuitNode::For { .. }));
+        assert!(for_node.is_some(), "expected For node");
+        if let CircuitNode::For { body, .. } = for_node.unwrap() {
+            assert!(
+                body.iter()
+                    .any(|n| matches!(n, CircuitNode::LetIndexed { array, .. } if array == "arr")),
+                "expected LetIndexed inside for loop body, got: {body:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_assignment_immutable_array_rejected() {
+        let err =
+            compile_circuit("public out\nlet arr = [1, 2, 3]\narr[0] = 99\nassert_eq(arr[0], out)")
+                .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("mut"), "error should mention mut, got: {msg}");
+    }
+
+    #[test]
+    fn indexed_assignment_scalar_rejected() {
+        let err =
+            compile_circuit("public out\nmut x = 5\nx[0] = 10\nassert_eq(x, out)").unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("array") || msg.contains("scalar"),
+            "error should mention type mismatch, got: {msg}"
+        );
     }
 }

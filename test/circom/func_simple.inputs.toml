@@ -1,0 +1,6 @@
+[inputs]
+a = 7
+b = 35
+
+[expected]
+constraints = 2

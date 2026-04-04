@@ -86,6 +86,41 @@ pub enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// Compile a .circom file and optionally generate a proof
+    Circom {
+        /// Path to the .circom file
+        path: Option<String>,
+        /// Input values as name=value pairs (comma-separated, decimal or 0x hex)
+        #[arg(long)]
+        inputs: Option<String>,
+        /// Input values from a TOML file
+        #[arg(long)]
+        input_file: Option<String>,
+        /// Disable IR optimization passes
+        #[arg(long)]
+        no_optimize: Option<bool>,
+        /// Backend: "r1cs" (default) or "plonkish"
+        #[arg(long)]
+        backend: Option<String>,
+        /// Generate a cryptographic proof (requires --inputs)
+        #[arg(long)]
+        prove: bool,
+        /// Output .r1cs file path
+        #[arg(long)]
+        r1cs: Option<String>,
+        /// Output .wtns file path
+        #[arg(long)]
+        wtns: Option<String>,
+        /// Generate a Solidity Groth16 verifier contract at the given path
+        #[arg(long)]
+        solidity: Option<String>,
+        /// Print circuit constraint stats breakdown
+        #[arg(long)]
+        circuit_stats: bool,
+        /// Library directories for include resolution (like Circom -l flag)
+        #[arg(short = 'l', long = "lib")]
+        lib_dirs: Vec<String>,
+    },
     /// Compile a circuit to .r1cs (and optionally generate .wtns)
     Circuit {
         /// Path to the source file (.ach). If omitted, uses [project].entry from achronyme.toml

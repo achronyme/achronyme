@@ -1,0 +1,17 @@
+# Tree:        root
+#            /      \
+#       h(1,2)    sibling1=10
+#       /    \
+#    leaf=1  sib=2
+#
+# h(a,b) = a*b + a + b
+# h(1,2) = 1*2 + 1 + 2 = 5
+# h(5,10) = 5*10 + 5 + 10 = 65
+# root = 65
+[inputs]
+leaf = 1
+sibling0 = 2
+side0 = 0
+sibling1 = 10
+side1 = 0
+root = 65

@@ -38,6 +38,12 @@ pub(super) fn compile_for(
 ) -> Result<u8, CompilerError> {
     let iter_src_reg = match iterable {
         ForIterable::Expr(expr) => compiler.compile_expr(expr)?,
+        ForIterable::ExprRange { .. } => {
+            return Err(CompilerError::CompilerLimitation(
+                "dynamic range bounds (e.g., 0..n) are only supported in prove {} blocks".into(),
+                compiler.cur_span(),
+            ));
+        }
         ForIterable::Range { start, end } => {
             // Build a list [start, start+1, ..., end-1] for the VM iterator
             let count = if *end >= *start {

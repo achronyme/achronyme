@@ -1,0 +1,5 @@
+# sel=1 → outL=R=7, outR=L=3
+[inputs]
+sel = 1
+L = 3
+R = 7

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "diagnostics",
     "memory",
     "vm",
     "compiler",
@@ -10,6 +11,7 @@ members = [
     "std",
     "ach-macros",
     "proving",
+    "circom",
 ]
 exclude = ["wasm"]
 resolver = "2"

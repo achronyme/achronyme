@@ -1,0 +1,13 @@
+[package]
+name = "diagnostics"
+description = "Shared diagnostic infrastructure: spans, errors, and rendering for Achronyme frontends."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]

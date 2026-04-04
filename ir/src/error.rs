@@ -1,6 +1,6 @@
 use std::fmt;
 
-use achronyme_parser::{Diagnostic, SpanRange};
+use diagnostics::{Diagnostic, SpanRange};
 
 /// Boxed span to keep error enum small.
 pub type OptSpan = Option<Box<SpanRange>>;
@@ -56,7 +56,7 @@ pub enum IrError {
     /// A type annotation does not match the inferred type.
     ///
     /// ```
-    /// use achronyme_parser::SpanRange;
+    /// use diagnostics::SpanRange;
     /// use ir::error::IrError;
     ///
     /// let err = IrError::AnnotationMismatch {

@@ -11,3 +11,4 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+diagnostics = { path = "../diagnostics" }

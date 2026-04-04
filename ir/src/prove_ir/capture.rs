@@ -91,6 +91,10 @@ fn walk_node(
                 ForRange::WithCapture { end_capture, .. } => {
                     structural.insert(end_capture.clone());
                 }
+                ForRange::WithExpr { end_expr, .. } => {
+                    // All captures in a loop bound expression are structural
+                    walk_expr(end_expr, true, structural, constraint);
+                }
                 ForRange::Array(name) => {
                     // Iterating over an array is structural (determines loop count)
                     structural.insert(name.clone());
@@ -113,6 +117,19 @@ fn walk_node(
         }
         CircuitNode::Decompose { value, .. } => {
             walk_expr(value, false, structural, constraint);
+        }
+        CircuitNode::WitnessHint { hint, .. } => {
+            // Hint expression is evaluated off-circuit, but captures
+            // referenced in it still need to be provided as values.
+            walk_expr(hint, false, structural, constraint);
+        }
+        CircuitNode::LetIndexed { index, value, .. } => {
+            walk_expr(index, false, structural, constraint);
+            walk_expr(value, false, structural, constraint);
+        }
+        CircuitNode::WitnessHintIndexed { index, hint, .. } => {
+            walk_expr(index, false, structural, constraint);
+            walk_expr(hint, false, structural, constraint);
         }
     }
 }
@@ -203,6 +220,17 @@ fn walk_expr(
         CircuitExpr::IntDiv { lhs, rhs, .. } | CircuitExpr::IntMod { lhs, rhs, .. } => {
             walk_expr(lhs, in_structural, structural, constraint);
             walk_expr(rhs, in_structural, structural, constraint);
+        }
+        CircuitExpr::BitAnd { lhs, rhs, .. }
+        | CircuitExpr::BitOr { lhs, rhs, .. }
+        | CircuitExpr::BitXor { lhs, rhs, .. } => {
+            walk_expr(lhs, in_structural, structural, constraint);
+            walk_expr(rhs, in_structural, structural, constraint);
+        }
+        CircuitExpr::BitNot { operand, .. }
+        | CircuitExpr::ShiftR { operand, .. }
+        | CircuitExpr::ShiftL { operand, .. } => {
+            walk_expr(operand, in_structural, structural, constraint);
         }
     }
 }

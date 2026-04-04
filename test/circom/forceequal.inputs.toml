@@ -1,0 +1,4 @@
+# enabled=1, in=[5,5] → constraint satisfied (equal values)
+[inputs]
+enabled = 1
+in = [5, 5]

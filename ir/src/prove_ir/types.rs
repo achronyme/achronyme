@@ -9,8 +9,8 @@
 //! bytecode files. Spans are skipped during serialization since they are
 //! only useful at compile time.
 
-use achronyme_parser::diagnostic::SpanRange;
 use bincode::Options;
+use diagnostics::SpanRange;
 use memory::field::PrimeId;
 use memory::{FieldBackend, FieldElement};
 use serde::{Deserialize, Serialize};
@@ -94,9 +94,75 @@ impl FieldConst {
         self.0.iter().all(|&b| b == 0)
     }
 
+    /// Create from a decimal string (e.g., `"218882428718392752..."`).
+    ///
+    /// Stores the raw integer as LE bytes — no modular reduction.
+    /// Returns `None` if the string is invalid or the value exceeds 32 bytes.
+    pub fn from_decimal_str(s: &str) -> Option<Self> {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for &ch in s.as_bytes() {
+            let digit = (ch - b'0') as u16;
+            // Multiply current value by 10, then add digit
+            let mut carry = digit;
+            for byte in bytes.iter_mut() {
+                let v = (*byte as u16) * 10 + carry;
+                *byte = v as u8;
+                carry = v >> 8;
+            }
+            if carry != 0 {
+                return None; // overflow: value doesn't fit in 256 bits
+            }
+        }
+        Some(Self(bytes))
+    }
+
+    /// Create from a hex string (with or without `0x`/`0X` prefix).
+    ///
+    /// Stores the raw integer as LE bytes — no modular reduction.
+    /// Returns `None` if the string is invalid or exceeds 32 bytes (64 hex digits).
+    pub fn from_hex_str(s: &str) -> Option<Self> {
+        let hex = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .unwrap_or(s);
+        if hex.is_empty() || hex.len() > 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        let digits = hex.as_bytes();
+        let mut byte_idx = 0;
+        let mut i = digits.len();
+        while i > 0 {
+            let lo = fc_hex_val(digits[i - 1])?;
+            i -= 1;
+            let hi = if i > 0 {
+                i -= 1;
+                fc_hex_val(digits[i])?
+            } else {
+                0
+            };
+            bytes[byte_idx] = (hi << 4) | lo;
+            byte_idx += 1;
+        }
+        Some(Self(bytes))
+    }
+
     /// Raw bytes access.
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+/// Parse a single hex digit to its value.
+fn fc_hex_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -260,6 +326,8 @@ fn validate_node(
                     ));
                 }
             }
+            // WithExpr end bounds are validated at instantiation time
+            // when capture values are resolved.
             for n in body {
                 validate_node(n, capture_names)?;
             }
@@ -282,6 +350,15 @@ fn validate_node(
         }
         CircuitNode::Expr { expr, .. } => validate_expr(expr),
         CircuitNode::Decompose { value, .. } => validate_expr(value),
+        CircuitNode::WitnessHint { hint, .. } => validate_expr(hint),
+        CircuitNode::LetIndexed { index, value, .. } => {
+            validate_expr(index)?;
+            validate_expr(value)
+        }
+        CircuitNode::WitnessHintIndexed { index, hint, .. } => {
+            validate_expr(index)?;
+            validate_expr(hint)
+        }
     }
 }
 
@@ -333,6 +410,17 @@ fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
         CircuitExpr::IntDiv { lhs, rhs, .. } | CircuitExpr::IntMod { lhs, rhs, .. } => {
             validate_expr(lhs)?;
             validate_expr(rhs)
+        }
+        CircuitExpr::BitAnd { lhs, rhs, .. }
+        | CircuitExpr::BitOr { lhs, rhs, .. }
+        | CircuitExpr::BitXor { lhs, rhs, .. } => {
+            validate_expr(lhs)?;
+            validate_expr(rhs)
+        }
+        CircuitExpr::BitNot { operand, .. } => validate_expr(operand),
+        CircuitExpr::ShiftR { operand, shift, .. } | CircuitExpr::ShiftL { operand, shift, .. } => {
+            validate_expr(operand)?;
+            validate_expr(shift)
         }
         // Leaf nodes — no sub-expressions
         CircuitExpr::Const(_)
@@ -462,6 +550,39 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// Witness hint: `signal <-- expr` in Circom.
+    ///
+    /// The signal becomes a witness input variable (zero constraints).
+    /// The hint expression is evaluated off-circuit by the prover to compute
+    /// the witness value. Only `===` constraints verify the value.
+    WitnessHint {
+        name: String,
+        hint: CircuitExpr,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
+    /// Indexed let binding: `array[index] = value` inside a for loop.
+    ///
+    /// During instantiation, `index` resolves to a compile-time constant `i`,
+    /// and the node becomes a scalar `Let { name: "{array}_{i}", value }`.
+    /// Also updates the array's env entry so that later `ArrayIndex` reads work.
+    LetIndexed {
+        array: String,
+        index: CircuitExpr,
+        value: CircuitExpr,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
+    /// Indexed witness hint: `array[index] <-- hint` inside a for loop.
+    ///
+    /// During instantiation, resolves to a scalar `WitnessHint { name: "{array}_{i}" }`.
+    WitnessHintIndexed {
+        array: String,
+        index: CircuitExpr,
+        hint: CircuitExpr,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
 }
 
 impl CircuitNode {
@@ -475,7 +596,10 @@ impl CircuitNode {
             | CircuitNode::For { span, .. }
             | CircuitNode::If { span, .. }
             | CircuitNode::Expr { span, .. }
-            | CircuitNode::Decompose { span, .. } => span.as_ref(),
+            | CircuitNode::Decompose { span, .. }
+            | CircuitNode::WitnessHint { span, .. }
+            | CircuitNode::LetIndexed { span, .. }
+            | CircuitNode::WitnessHintIndexed { span, .. } => span.as_ref(),
         }
     }
 }
@@ -491,6 +615,15 @@ pub enum ForRange {
     Literal { start: u64, end: u64 },
     /// End bound is a captured value: `0..n`
     WithCapture { start: u64, end_capture: String },
+    /// End bound is a computed expression over captures: `0..(n+1)`
+    ///
+    /// Used when a component passes a computed template argument as a loop
+    /// bound (e.g., `Num2Bits(n+1)` inside LessThan). The expression is
+    /// evaluated at instantiation time when capture values are known.
+    WithExpr {
+        start: u64,
+        end_expr: Box<CircuitExpr>,
+    },
     /// Iterate over a named array variable
     Array(String),
 }
@@ -581,6 +714,42 @@ pub enum CircuitExpr {
         lhs: Box<CircuitExpr>,
         rhs: Box<CircuitExpr>,
         max_bits: u32,
+    },
+
+    /// Bitwise AND: decompose both operands, multiply each bit pair, recompose.
+    BitAnd {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Bitwise OR: decompose both, or = a + b - a*b per bit, recompose.
+    BitOr {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Bitwise XOR: decompose both, xor = a + b - 2*a*b per bit, recompose.
+    BitXor {
+        lhs: Box<CircuitExpr>,
+        rhs: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Bitwise NOT: decompose, flip each bit (1 - bit), recompose.
+    BitNot {
+        operand: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Right shift by constant amount: decompose, drop low bits, recompose.
+    ShiftR {
+        operand: Box<CircuitExpr>,
+        shift: Box<CircuitExpr>,
+        num_bits: u32,
+    },
+    /// Left shift: decompose, prepend zeros, recompose.
+    ShiftL {
+        operand: Box<CircuitExpr>,
+        shift: Box<CircuitExpr>,
+        num_bits: u32,
     },
 }
 
@@ -746,6 +915,9 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
                 ForRange::WithCapture { start, end_capture } => {
                     writeln!(f, "{start}..{end_capture} {{")?
                 }
+                ForRange::WithExpr { start, end_expr } => {
+                    writeln!(f, "{start}..({end_expr:?}) {{")?
+                }
                 ForRange::Array(name) => writeln!(f, "{name} {{")?,
             }
             for n in body {
@@ -781,6 +953,22 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
             ..
         } => {
             writeln!(f, "{pad}let {name} = decompose({value}, {num_bits})")
+        }
+        CircuitNode::WitnessHint { name, hint, .. } => {
+            writeln!(f, "{pad}{name} <-- {hint}")
+        }
+        CircuitNode::LetIndexed {
+            array,
+            index,
+            value,
+            ..
+        } => {
+            writeln!(f, "{pad}let {array}[{index}] = {value}")
+        }
+        CircuitNode::WitnessHintIndexed {
+            array, index, hint, ..
+        } => {
+            writeln!(f, "{pad}{array}[{index}] <-- {hint}")
         }
     }
 }
@@ -840,6 +1028,12 @@ impl fmt::Display for CircuitExpr {
             CircuitExpr::IntMod { lhs, rhs, max_bits } => {
                 write!(f, "int_mod({lhs}, {rhs}, {max_bits})")
             }
+            CircuitExpr::BitAnd { lhs, rhs, .. } => write!(f, "({lhs} & {rhs})"),
+            CircuitExpr::BitOr { lhs, rhs, .. } => write!(f, "({lhs} | {rhs})"),
+            CircuitExpr::BitXor { lhs, rhs, .. } => write!(f, "({lhs} ^ {rhs})"),
+            CircuitExpr::BitNot { operand, .. } => write!(f, "~{operand}"),
+            CircuitExpr::ShiftR { operand, shift, .. } => write!(f, "({operand} >> {shift})"),
+            CircuitExpr::ShiftL { operand, shift, .. } => write!(f, "({operand} << {shift})"),
         }
     }
 }
@@ -1492,5 +1686,89 @@ mod tests {
             err.contains("missing"),
             "should mention unknown capture: {err}"
         );
+    }
+
+    // =====================================================================
+    // FieldConst::from_decimal_str / from_hex_str tests
+    // =====================================================================
+
+    #[test]
+    fn field_const_from_decimal_small() {
+        let fc = FieldConst::from_decimal_str("42").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(42));
+    }
+
+    #[test]
+    fn field_const_from_decimal_zero() {
+        let fc = FieldConst::from_decimal_str("0").unwrap();
+        assert_eq!(fc, FieldConst::zero());
+    }
+
+    #[test]
+    fn field_const_from_decimal_large() {
+        // BN254 field order - 1 (a ~77 digit number)
+        let s = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+        let fc = FieldConst::from_decimal_str(s).unwrap();
+        // Should not be zero and should not fit in u64
+        assert!(!fc.is_zero());
+        assert!(fc.to_u64().is_none());
+    }
+
+    #[test]
+    fn field_const_from_decimal_max_u64() {
+        let fc = FieldConst::from_decimal_str("18446744073709551615").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(u64::MAX));
+    }
+
+    #[test]
+    fn field_const_from_decimal_just_above_u64() {
+        let fc = FieldConst::from_decimal_str("18446744073709551616").unwrap();
+        assert!(fc.to_u64().is_none());
+        // Verify byte 8 is 1 (2^64 = 1 in byte[8])
+        assert_eq!(fc.bytes()[8], 1);
+    }
+
+    #[test]
+    fn field_const_from_decimal_invalid() {
+        assert!(FieldConst::from_decimal_str("").is_none());
+        assert!(FieldConst::from_decimal_str("abc").is_none());
+        assert!(FieldConst::from_decimal_str("12x3").is_none());
+    }
+
+    #[test]
+    fn field_const_from_hex_small() {
+        let fc = FieldConst::from_hex_str("0xFF").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(255));
+    }
+
+    #[test]
+    fn field_const_from_hex_no_prefix() {
+        let fc = FieldConst::from_hex_str("ff").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(255));
+    }
+
+    #[test]
+    fn field_const_from_hex_large() {
+        // 64 hex digits = 32 bytes (max)
+        let hex = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000";
+        let fc = FieldConst::from_hex_str(hex).unwrap();
+        assert!(!fc.is_zero());
+        assert!(fc.to_u64().is_none());
+    }
+
+    #[test]
+    fn field_const_from_hex_with_0x_prefix() {
+        let fc = FieldConst::from_hex_str("0x1234").unwrap();
+        assert_eq!(fc, FieldConst::from_u64(0x1234));
+    }
+
+    #[test]
+    fn field_const_from_hex_invalid() {
+        assert!(FieldConst::from_hex_str("").is_none());
+        assert!(FieldConst::from_hex_str("0x").is_none());
+        assert!(FieldConst::from_hex_str("0xGG").is_none());
+        // 65 hex digits = too large
+        let too_large = "1".to_string() + &"0".repeat(64);
+        assert!(FieldConst::from_hex_str(&too_large).is_none());
     }
 }
