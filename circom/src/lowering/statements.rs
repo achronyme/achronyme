@@ -16,18 +16,22 @@ use ir::prove_ir::types::{CircuitBinOp, CircuitExpr, CircuitNode, FieldConst, Fo
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
-use super::components::{inline_component_body, register_component_locals};
+use super::components::{
+    inline_component_body, inline_component_body_with_arrays, register_component_locals,
+};
 use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
 use super::expressions::lower_expr;
 use super::signals::collect_signal_names;
-use super::utils::{const_eval_u64, extract_ident_name};
+use super::utils::{const_eval_u64, extract_ident_name, EvalValue};
 
 /// A pending component whose input signals haven't all been wired yet.
 struct PendingComponent<'a> {
     template: &'a ast::TemplateDef,
     template_args: Vec<CircuitExpr>,
+    /// Array template args (param_name → compile-time array value).
+    array_args: HashMap<String, EvalValue>,
     input_signals: HashSet<String>,
     wired_signals: HashSet<String>,
     /// True if any input was wired via indexed assignment (comp.signal[i]).
@@ -67,10 +71,11 @@ fn lower_stmts_with_pending<'a>(
     let remaining: Vec<String> = pending.keys().cloned().collect();
     for comp_name in remaining {
         if let Some(comp) = pending.remove(&comp_name) {
-            let body = inline_component_body(
+            let body = inline_component_body_with_arrays(
                 &comp_name,
                 comp.template,
                 &comp.template_args,
+                &comp.array_args,
                 ctx,
                 &comp.template.span,
             )?;
@@ -105,7 +110,7 @@ fn lower_stmt<'a>(
             AssignOp::RConstraintAssign | AssignOp::RSignalAssign => value,
             _ => target,
         };
-        let is_pending_wiring = extract_component_wiring_with_env(actual_target, env)
+        let is_pending_wiring = extract_component_wiring_with_env(actual_target, env, ctx)
             .map(|(comp, _)| pending.contains_key(&comp))
             .unwrap_or(false);
         if !is_pending_wiring {
@@ -190,6 +195,19 @@ fn lower_stmt<'a>(
                         }
                         // Register the base name too (for array indexing resolution)
                         env.register_array(names[0].clone(), elements.len());
+                    } else if let Some(eval_val) = try_eval_array_init(value, env, ctx) {
+                        // Function call or expression that evaluates to an array
+                        // at compile time (e.g. `var C[n] = POSEIDON_C(t)`).
+                        // Expand into individual Const let-bindings.
+                        let base = &names[0];
+                        expand_eval_value_to_nodes(
+                            base,
+                            &eval_val,
+                            nodes,
+                            env,
+                            &Some(SpanRange::from_span(span)),
+                        );
+                        env.known_array_values.insert(base.clone(), eval_val);
                     } else {
                         let lowered = lower_expr(value, env, ctx)?;
                         nodes.push(CircuitNode::Let {
@@ -200,12 +218,33 @@ fn lower_stmt<'a>(
                         env.locals.insert(names[0].clone());
                     }
                 } else {
-                    // Tuple var decl: `var (a, b) = expr` — not directly
-                    // expressible in ProveIR. For now, error.
-                    return Err(LoweringError::new(
-                        "tuple variable declarations are not supported in circuit context",
-                        span,
-                    ));
+                    // Tuple var decl: `var (a, b) = (expr1, expr2)` — element-wise
+                    if let Expr::Tuple { elements, .. } = value {
+                        if elements.len() != names.len() {
+                            return Err(LoweringError::new(
+                                format!(
+                                    "tuple length mismatch: {} names but {} values",
+                                    names.len(),
+                                    elements.len()
+                                ),
+                                span,
+                            ));
+                        }
+                        for (name, elem) in names.iter().zip(elements.iter()) {
+                            let lowered = lower_expr(elem, env, ctx)?;
+                            nodes.push(CircuitNode::Let {
+                                name: name.clone(),
+                                value: lowered,
+                                span: Some(SpanRange::from_span(span)),
+                            });
+                            env.locals.insert(name.clone());
+                        }
+                    } else {
+                        return Err(LoweringError::new(
+                            "tuple variable declaration requires a tuple on the right side",
+                            span,
+                        ));
+                    }
                 }
             } else {
                 // Uninitialized var — just register name, will be assigned later.
@@ -270,23 +309,54 @@ fn lower_stmt<'a>(
             else_body,
             span,
         } => {
-            let cond = lower_expr(condition, env, ctx)?;
-            let then_nodes = lower_stmts(&then_body.stmts, env, ctx)?;
-            let else_nodes = match else_body {
-                Some(ElseBranch::Block(block)) => lower_stmts(&block.stmts, env, ctx)?,
-                Some(ElseBranch::IfElse(if_stmt)) => {
-                    let mut sub = Vec::new();
-                    lower_stmt(if_stmt, env, &mut sub, ctx, pending)?;
-                    sub
+            // Try compile-time branch selection: if the condition resolves
+            // to a known constant, only lower the taken branch.  This avoids
+            // lowering invalid expressions in dead branches (e.g., mix[r-1]
+            // when r==0 inside `if (r==0) { ... } else { ... mix[r-1] ... }`).
+            let mut params = ctx.param_values.clone();
+            for (k, &v) in &env.known_constants {
+                params.insert(k.clone(), v);
+            }
+            if let Some(cond_val) = super::utils::const_eval_with_params(condition, &params) {
+                if cond_val != 0 {
+                    // Condition is true — only lower then_body
+                    for stmt in &then_body.stmts {
+                        lower_stmt(stmt, env, nodes, ctx, pending)?;
+                    }
+                } else {
+                    // Condition is false — only lower else_body
+                    match else_body {
+                        Some(ElseBranch::Block(block)) => {
+                            for stmt in &block.stmts {
+                                lower_stmt(stmt, env, nodes, ctx, pending)?;
+                            }
+                        }
+                        Some(ElseBranch::IfElse(if_stmt)) => {
+                            lower_stmt(if_stmt, env, nodes, ctx, pending)?;
+                        }
+                        None => {}
+                    }
                 }
-                None => Vec::new(),
-            };
-            nodes.push(CircuitNode::If {
-                cond,
-                then_body: then_nodes,
-                else_body: else_nodes,
-                span: Some(SpanRange::from_span(span)),
-            });
+            } else {
+                // Condition not resolvable — lower both branches as CircuitNode::If
+                let cond = lower_expr(condition, env, ctx)?;
+                let then_nodes = lower_stmts(&then_body.stmts, env, ctx)?;
+                let else_nodes = match else_body {
+                    Some(ElseBranch::Block(block)) => lower_stmts(&block.stmts, env, ctx)?,
+                    Some(ElseBranch::IfElse(if_stmt)) => {
+                        let mut sub = Vec::new();
+                        lower_stmt(if_stmt, env, &mut sub, ctx, pending)?;
+                        sub
+                    }
+                    None => Vec::new(),
+                };
+                nodes.push(CircuitNode::If {
+                    cond,
+                    then_body: then_nodes,
+                    else_body: else_nodes,
+                    span: Some(SpanRange::from_span(span)),
+                });
+            }
         }
 
         // ── For loop ────────────────────────────────────────────────
@@ -301,24 +371,52 @@ fn lower_stmt<'a>(
         }
 
         // ── While loop ──────────────────────────────────────────────
-        // While loops are not directly supported in ProveIR because they
-        // require dynamic termination. Circom while loops should be
-        // compile-time deterministic.
-        Stmt::While { span, .. } => {
-            return Err(LoweringError::new(
-                "while loops are not supported in circuit context; \
-                 use for loops with known bounds",
-                span,
-            ));
+        // While loops can't produce structural circuit nodes (no static
+        // bounds). However, Circom allows them when they only touch vars
+        // (not signals/components). In that case we evaluate them at
+        // compile time, like function bodies.
+        Stmt::While {
+            condition,
+            body,
+            span,
+        } => {
+            if !stmts_are_var_only(&body.stmts) {
+                return Err(LoweringError::new(
+                    "while loops that touch signals or components are not supported \
+                     in circuit context; use for loops with known bounds",
+                    span,
+                ));
+            }
+            eval_while_compile_time(condition, &body.stmts, false, env, ctx, span)?;
+        }
+
+        Stmt::DoWhile {
+            condition,
+            body,
+            span,
+        } => {
+            if !stmts_are_var_only(&body.stmts) {
+                return Err(LoweringError::new(
+                    "do-while loops that touch signals or components are not supported \
+                     in circuit context; use for loops with known bounds",
+                    span,
+                ));
+            }
+            eval_while_compile_time(condition, &body.stmts, true, env, ctx, span)?;
         }
 
         // ── Assert ──────────────────────────────────────────────────
         // In Circom, assert() is a prover-side runtime check during witness
         // computation — it does NOT generate R1CS constraints. Only `===`
-        // produces constraints. This differs from Achronyme where assert is
-        // a circuit constraint.
-        Stmt::Assert { .. } => {
-            // No-op in circuit context (same as log).
+        // produces constraints. We emit an Assert node so the witness
+        // evaluator can check it, but the instantiator ignores it.
+        Stmt::Assert { arg, span } => {
+            let lowered = lower_expr(arg, env, ctx)?;
+            nodes.push(CircuitNode::Assert {
+                expr: lowered,
+                message: Some("circom assert() failed during witness computation".to_string()),
+                span: Some(SpanRange::from_span(span)),
+            });
         }
 
         // ── Return ──────────────────────────────────────────────────
@@ -355,13 +453,11 @@ fn lower_stmt<'a>(
                 // If there's an initializer (`component c = Template(args)`),
                 // resolve the template and prepare for signal wiring.
                 if let Some(init_expr) = init {
-                    if let Some((tmpl_name, tmpl_args)) =
-                        extract_component_call(init_expr, env, ctx)?
-                    {
-                        if let Some(template) = ctx.templates.get(tmpl_name.as_str()) {
+                    if let Some(call) = extract_component_call(init_expr, env, ctx)? {
+                        if let Some(template) = ctx.templates.get(call.template_name.as_str()) {
                             let template = *template;
                             // Register mangled output/intermediate locals
-                            register_component_locals(comp_name, template, &tmpl_args, env);
+                            register_component_locals(comp_name, template, &call.scalar_args, env);
 
                             // Collect input signal names for wiring tracking
                             let signals = collect_signal_names(&template.body.stmts);
@@ -373,8 +469,13 @@ fn lower_stmt<'a>(
 
                             if input_signals.is_empty() {
                                 // No inputs to wire — inline immediately
-                                let body = inline_component_body(
-                                    comp_name, template, &tmpl_args, ctx, span,
+                                let body = inline_component_body_with_arrays(
+                                    comp_name,
+                                    template,
+                                    &call.scalar_args,
+                                    &call.array_args,
+                                    ctx,
+                                    span,
                                 )?;
                                 nodes.extend(body);
                             } else {
@@ -382,7 +483,8 @@ fn lower_stmt<'a>(
                                     comp_name.clone(),
                                     PendingComponent {
                                         template,
-                                        template_args: tmpl_args,
+                                        template_args: call.scalar_args,
+                                        array_args: call.array_args,
                                         input_signals,
                                         wired_signals: HashSet::new(),
                                         has_indexed_wirings: false,
@@ -391,7 +493,7 @@ fn lower_stmt<'a>(
                             }
                         } else {
                             return Err(LoweringError::new(
-                                format!("undefined template `{tmpl_name}`"),
+                                format!("undefined template `{}`", call.template_name),
                                 span,
                             ));
                         }
@@ -415,6 +517,11 @@ fn lower_stmt<'a>(
                     op: ast::PostfixOp::Increment,
                     operand,
                     ..
+                }
+                | Expr::PrefixOp {
+                    op: ast::PostfixOp::Increment,
+                    operand,
+                    ..
                 } => {
                     let name = extract_ident_name(operand).ok_or_else(|| {
                         LoweringError::new("increment target must be an identifier", span)
@@ -431,6 +538,11 @@ fn lower_stmt<'a>(
                     });
                 }
                 Expr::PostfixOp {
+                    op: ast::PostfixOp::Decrement,
+                    operand,
+                    ..
+                }
+                | Expr::PrefixOp {
                     op: ast::PostfixOp::Decrement,
                     operand,
                     ..
@@ -500,22 +612,9 @@ fn extract_assign_target_with_constants(
                 return Some(AssignTarget::Scalar(format!("{obj}.{field}")));
             }
             // Component array: comp[i].field → comp_{i}.field
-            if let Expr::Index {
-                object: inner_obj,
-                index: inner_idx,
-                ..
-            } = object.as_ref()
-            {
-                if let Some(arr_name) = extract_ident_name(inner_obj) {
-                    let idx = const_eval_u64(inner_idx).or_else(|| {
-                        if let Expr::Ident { name, .. } = inner_idx.as_ref() {
-                            known_constants.get(name.as_str()).copied()
-                        } else {
-                            None
-                        }
-                    })?;
-                    return Some(AssignTarget::Scalar(format!("{arr_name}_{idx}.{field}")));
-                }
+            // Also handles 2D: comp[i][j].field → comp_{i}_{j}.field
+            if let Some(comp_name) = resolve_component_array_name(object, known_constants) {
+                return Some(AssignTarget::Scalar(format!("{comp_name}.{field}")));
             }
             None
         }
@@ -544,16 +643,27 @@ fn extract_assign_target_with_constants(
                         field,
                         ..
                     } => {
-                        let obj = extract_ident_name(inner)?;
-                        let array = format!("{obj}.{field}");
+                        // comp.signal[j] or comp[i].signal[j]
+                        let base = if let Some(obj) = extract_ident_name(inner) {
+                            format!("{obj}.{field}")
+                        } else if let Some(comp) =
+                            resolve_component_array_name(inner, known_constants)
+                        {
+                            format!("{comp}.{field}")
+                        } else {
+                            return None;
+                        };
                         indices.reverse();
                         return if indices.len() == 1 {
                             Some(AssignTarget::Indexed {
-                                array,
+                                array: base,
                                 index: Box::new(indices.remove(0)),
                             })
                         } else {
-                            Some(AssignTarget::MultiIndexed { array, indices })
+                            Some(AssignTarget::MultiIndexed {
+                                array: base,
+                                indices,
+                            })
                         };
                     }
                     Expr::Index {
@@ -572,6 +682,75 @@ fn extract_assign_target_with_constants(
     }
 }
 
+/// Resolve a component array expression like `comp[i]` or `comp[i][j]` to
+/// a mangled component name (`comp_0`, `comp_0_1`).
+///
+/// Returns `None` if indices cannot be resolved at compile time.
+fn resolve_component_array_name(
+    expr: &Expr,
+    known_constants: &HashMap<String, u64>,
+) -> Option<String> {
+    match expr {
+        Expr::Index { object, index, .. } => {
+            let idx = resolve_const_index(index, known_constants)?;
+            if let Some(arr_name) = extract_ident_name(object) {
+                // 1D: comp[i] → comp_{i}
+                Some(format!("{arr_name}_{idx}"))
+            } else {
+                // Multi-dim: recurse on inner
+                let inner = resolve_component_array_name(object, known_constants)?;
+                Some(format!("{inner}_{idx}"))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Resolve an index expression to a constant u64 using literals + known_constants.
+fn resolve_const_index(expr: &Expr, known_constants: &HashMap<String, u64>) -> Option<u64> {
+    const_eval_u64(expr).or_else(|| super::utils::const_eval_with_params(expr, known_constants))
+}
+
+/// Try to resolve a component array target (1D or multi-dim) to a component name.
+///
+/// `muls[i]` → `Some("muls_0")`, `sigmaF[r][j]` → `Some("sigmaF_0_1")`
+/// Returns `None` if the target isn't a component array access.
+fn try_resolve_component_array_target(
+    target: &Expr,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<String> {
+    // Combine known_constants + param_values for full resolution
+    let mut all_constants = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        all_constants.insert(k.clone(), v);
+    }
+    // Unwrap Index chain to find base name and indices
+    let mut indices: Vec<&Expr> = Vec::new();
+    let mut current = target;
+    loop {
+        match current {
+            Expr::Index { object, index, .. } => {
+                indices.push(index.as_ref());
+                current = object.as_ref();
+            }
+            Expr::Ident { name, .. } => {
+                if !env.component_arrays.contains(name) {
+                    return None;
+                }
+                indices.reverse();
+                let mut comp_name = name.clone();
+                for idx_expr in &indices {
+                    let idx = resolve_const_index(idx_expr, &all_constants)?;
+                    comp_name = format!("{comp_name}_{idx}");
+                }
+                return Some(comp_name);
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Extract a simple scalar target name (for backwards compatibility).
 fn extract_target_name(expr: &Expr) -> Option<String> {
     match extract_assign_target(expr)? {
@@ -581,65 +760,58 @@ fn extract_target_name(expr: &Expr) -> Option<String> {
 }
 
 /// Check if a substitution target is a component signal wiring.
-/// Handles `comp.signal`, `comp.signal[i]`, and `comp[i].signal`.
+/// Handles `comp.signal`, `comp.signal[i]`, `comp[i].signal`,
+/// and `comp[i][j].signal` (2D component arrays).
 /// Returns `(component_name, signal_name)` if so.
-fn extract_component_wiring_with_env(target: &Expr, env: &LoweringEnv) -> Option<(String, String)> {
+fn extract_component_wiring_with_env(
+    target: &Expr,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<(String, String)> {
+    // Build combined constants for index resolution
+    let mut all_constants = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        all_constants.insert(k.clone(), v);
+    }
+
     match target {
-        // comp.signal <== expr  OR  comp[i].signal <== expr
+        // comp.signal <== expr  OR  comp[i].signal <== expr  OR  comp[i][j].signal <== expr
         Expr::DotAccess { object, field, .. } => {
             // Simple: comp.signal
             if let Some(obj) = extract_ident_name(object) {
                 return Some((obj, field.clone()));
             }
-            // Component array: comp[i].signal → comp_{i}.signal
-            if let Expr::Index {
-                object: inner_obj,
-                index: inner_idx,
-                ..
-            } = object.as_ref()
-            {
-                if let Some(arr_name) = extract_ident_name(inner_obj) {
-                    let idx = const_eval_u64(inner_idx).or_else(|| {
-                        if let Expr::Ident { name, .. } = inner_idx.as_ref() {
-                            env.known_constants.get(name.as_str()).copied()
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(idx) = idx {
-                        return Some((format!("{arr_name}_{idx}"), field.clone()));
-                    }
-                }
+            // Component array (1D or multi-dim): comp[i].signal, comp[i][j].signal
+            if let Some(comp_name) = resolve_component_array_name(object, &all_constants) {
+                return Some((comp_name, field.clone()));
             }
             None
         }
-        // comp.signal[i] <== expr or comp.signal[i][j] <== expr
-        // Return the base signal name for tracking purposes.
+        // Index patterns: comp.signal[i], comp.signal[i][j], comp[i].signal[j]
         Expr::Index { object, .. } => {
-            // Single index: comp.signal[i]
-            if let Expr::DotAccess {
-                object: inner,
-                field,
-                ..
-            } = object.as_ref()
-            {
-                return extract_ident_name(inner).map(|obj| (obj, field.clone()));
-            }
-            // Double index: comp.signal[i][j]
-            if let Expr::Index {
-                object: inner_obj, ..
-            } = object.as_ref()
-            {
-                if let Expr::DotAccess {
-                    object: da_obj,
-                    field,
-                    ..
-                } = inner_obj.as_ref()
-                {
-                    return extract_ident_name(da_obj).map(|obj| (obj, field.clone()));
+            // Unwrap Index chain to find the DotAccess inside
+            let mut cur = object.as_ref();
+            loop {
+                match cur {
+                    Expr::DotAccess {
+                        object: da_obj,
+                        field,
+                        ..
+                    } => {
+                        if let Some(obj) = extract_ident_name(da_obj) {
+                            return Some((obj, field.clone()));
+                        }
+                        if let Some(comp) = resolve_component_array_name(da_obj, &all_constants) {
+                            return Some((comp, field.clone()));
+                        }
+                        return None;
+                    }
+                    Expr::Index { object: inner, .. } => {
+                        cur = inner.as_ref();
+                    }
+                    _ => return None,
                 }
             }
-            None
         }
         _ => None,
     }
@@ -660,6 +832,12 @@ fn lower_substitution<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
+    // Build combined constants map (known_constants + param_values) for target resolution
+    let mut all_constants = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        all_constants.insert(k.clone(), v);
+    }
+
     // Desugar reverse operators: `expr ==> target` → `target <== expr`
     //                            `expr --> target` → `target <-- expr`
     let (target, op, value) = match op {
@@ -670,10 +848,181 @@ fn lower_substitution<'a>(
 
     let sr = Some(SpanRange::from_span(span));
 
+    // ── Tuple destructuring ────────────────────────────────────────
+    // (a, b, ...) <== (expr1, expr2, ...)   — element-wise
+    // (a, b, ...) <== Template(n)(inputs)   — anonymous component multi-output
+    // (a, b, ...) = (expr1, expr2, ...)     — variable-level element-wise
+    if let Expr::Tuple {
+        elements: targets, ..
+    } = target
+    {
+        // RHS must be a tuple with same arity, or an anonymous component
+        if let Expr::Tuple {
+            elements: values, ..
+        } = value
+        {
+            if values.len() != targets.len() {
+                return Err(LoweringError::new(
+                    format!(
+                        "tuple length mismatch: {} targets but {} values",
+                        targets.len(),
+                        values.len()
+                    ),
+                    span,
+                ));
+            }
+            for (t, v) in targets.iter().zip(values.iter()) {
+                // Skip underscore targets
+                if matches!(t, Expr::Underscore { .. }) {
+                    continue;
+                }
+                lower_substitution(t, op, v, span, env, nodes, ctx, pending)?;
+            }
+            return Ok(());
+        }
+
+        // RHS is an anonymous component — inline it, then wire its outputs
+        // to the tuple targets in declaration order.
+        if let Expr::AnonComponent {
+            callee,
+            template_args,
+            signal_args,
+            ..
+        } = value
+        {
+            let tmpl_name = match callee.as_ref() {
+                Expr::Ident { name, .. } => name.clone(),
+                _ => {
+                    return Err(LoweringError::new(
+                        "anonymous component callee must be an identifier",
+                        span,
+                    ))
+                }
+            };
+            let template = *ctx.templates.get(tmpl_name.as_str()).ok_or_else(|| {
+                LoweringError::new(format!("template `{tmpl_name}` not found"), span)
+            })?;
+
+            // Lower template arguments
+            let lowered_args: Vec<CircuitExpr> = template_args
+                .iter()
+                .map(|a| lower_expr(a, env, ctx))
+                .collect::<Result<_, _>>()?;
+
+            // Generate a unique internal name for the anonymous component
+            let anon_name = format!("_anon_{}", ctx.next_anon_id());
+
+            // Register component locals (output/intermediate signals)
+            register_component_locals(&anon_name, template, &lowered_args, env);
+
+            // Collect output signal names in declaration order
+            let signals = collect_signal_names(&template.body.stmts);
+            let output_names: Vec<String> = signals
+                .iter()
+                .filter(|(_, st)| matches!(st, ast::SignalType::Output))
+                .map(|(n, _)| n.clone())
+                .collect();
+
+            let input_names: Vec<String> = signals
+                .iter()
+                .filter(|(_, st)| matches!(st, ast::SignalType::Input))
+                .map(|(n, _)| n.clone())
+                .collect();
+
+            // Wire input signals from signal_args
+            for (i, arg) in signal_args.iter().enumerate() {
+                let sig_name = if let Some(name) = &arg.name {
+                    name.clone()
+                } else if i < input_names.len() {
+                    input_names[i].clone()
+                } else {
+                    return Err(LoweringError::new(
+                        "too many signal arguments for anonymous component",
+                        span,
+                    ));
+                };
+                let wired_name = format!("{anon_name}.{sig_name}");
+                let lowered_val = lower_expr(&arg.value, env, ctx)?;
+                nodes.push(CircuitNode::Let {
+                    name: wired_name,
+                    value: lowered_val,
+                    span: sr.clone(),
+                });
+            }
+
+            // Inline the component body
+            let body = inline_component_body(&anon_name, template, &lowered_args, ctx, span)?;
+            nodes.extend(body);
+
+            // Wire output signals to tuple targets
+            if targets.len() > output_names.len() {
+                return Err(LoweringError::new(
+                    format!(
+                        "tuple has {} targets but template `{tmpl_name}` has {} outputs",
+                        targets.len(),
+                        output_names.len()
+                    ),
+                    span,
+                ));
+            }
+            for (t, out_name) in targets.iter().zip(output_names.iter()) {
+                if matches!(t, Expr::Underscore { .. }) {
+                    continue;
+                }
+                let target_name = match t {
+                    Expr::Ident { name, .. } => name.clone(),
+                    _ => {
+                        return Err(LoweringError::new(
+                            "tuple target must be an identifier or underscore",
+                            span,
+                        ))
+                    }
+                };
+                let comp_output = CircuitExpr::Var(format!("{anon_name}.{out_name}"));
+                match op {
+                    AssignOp::ConstraintAssign => {
+                        nodes.push(CircuitNode::Let {
+                            name: target_name.clone(),
+                            value: comp_output.clone(),
+                            span: sr.clone(),
+                        });
+                        nodes.push(CircuitNode::AssertEq {
+                            lhs: CircuitExpr::Var(target_name),
+                            rhs: comp_output,
+                            message: None,
+                            span: sr.clone(),
+                        });
+                    }
+                    AssignOp::SignalAssign => {
+                        nodes.push(CircuitNode::WitnessHint {
+                            name: target_name,
+                            hint: comp_output,
+                            span: sr.clone(),
+                        });
+                    }
+                    AssignOp::Assign => {
+                        nodes.push(CircuitNode::Let {
+                            name: target_name,
+                            value: comp_output,
+                            span: sr.clone(),
+                        });
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            return Ok(());
+        }
+
+        return Err(LoweringError::new(
+            "tuple destructuring requires a tuple or anonymous component on the right side",
+            span,
+        ));
+    }
+
     match op {
         // `target <== expr` → Let + AssertEq (or LetIndexed + AssertEq for arrays)
         AssignOp::ConstraintAssign => {
-            let assign_target = extract_assign_target_with_constants(target, &env.known_constants)
+            let assign_target = extract_assign_target_with_constants(target, &all_constants)
                 .ok_or_else(|| {
                     LoweringError::new(
                         "constraint assignment target must be an identifier, \
@@ -738,7 +1087,7 @@ fn lower_substitution<'a>(
 
         // `target <-- expr` → WitnessHint or WitnessHintIndexed
         AssignOp::SignalAssign => {
-            let assign_target = extract_assign_target_with_constants(target, &env.known_constants)
+            let assign_target = extract_assign_target_with_constants(target, &all_constants)
                 .ok_or_else(|| {
                     LoweringError::new(
                         "signal assignment target must be an identifier, \
@@ -785,70 +1134,68 @@ fn lower_substitution<'a>(
 
         // `target = expr` → variable reassignment, component array instantiation, or SSA shadowing
         AssignOp::Assign => {
-            // Component array element instantiation: muls[i] = Template()
-            if let Expr::Index {
-                object: idx_obj,
-                index: idx_expr,
-                ..
-            } = target
-            {
-                if let Some(arr_name) = extract_ident_name(idx_obj) {
-                    if env.component_arrays.contains(&arr_name) {
-                        // Resolve index to constant
-                        let idx = const_eval_u64(idx_expr)
-                            .or_else(|| {
-                                if let Expr::Ident { name, .. } = idx_expr.as_ref() {
-                                    env.known_constants.get(name.as_str()).copied()
-                                } else {
-                                    None
-                                }
-                            })
-                            .ok_or_else(|| {
-                                LoweringError::new(
-                                    "component array index must be a compile-time constant",
-                                    span,
-                                )
-                            })?;
-
-                        let comp_name = format!("{arr_name}_{idx}");
-                        env.locals.insert(comp_name.clone());
-
-                        if let Some((tmpl_name, tmpl_args)) =
-                            extract_component_call(value, env, ctx)?
-                        {
-                            if let Some(template) = ctx.templates.get(tmpl_name.as_str()) {
-                                let template = *template;
-                                register_component_locals(&comp_name, template, &tmpl_args, env);
-
-                                let signals = collect_signal_names(&template.body.stmts);
-                                let input_signals: HashSet<String> = signals
-                                    .iter()
-                                    .filter(|(_, st)| matches!(st, ast::SignalType::Input))
-                                    .map(|(n, _)| n.clone())
-                                    .collect();
-
-                                if input_signals.is_empty() {
-                                    let body = inline_component_body(
-                                        &comp_name, template, &tmpl_args, ctx, span,
-                                    )?;
-                                    nodes.extend(body);
-                                } else {
-                                    pending.insert(
-                                        comp_name,
-                                        PendingComponent {
-                                            template,
-                                            template_args: tmpl_args,
-                                            input_signals,
-                                            wired_signals: HashSet::new(),
-                                            has_indexed_wirings: false,
-                                        },
-                                    );
-                                }
-                            }
-                        }
+            // Tag value assignment: signal.tag = expr
+            // In Circom, tags are metadata that don't produce circuit nodes.
+            // Detect: if target is `x.field` and `x` is an input/local signal
+            // but `x.field` is NOT a known component output, this is a tag assignment.
+            if let Expr::DotAccess { object, field, .. } = target {
+                if let Some(obj_name) = extract_ident_name(object) {
+                    let mangled = format!("{obj_name}.{field}");
+                    let is_component_signal = env.locals.contains(&mangled)
+                        || env.inputs.contains(&mangled)
+                        || pending.contains_key(&obj_name);
+                    if !is_component_signal
+                        && (env.inputs.contains(&obj_name) || env.locals.contains(&obj_name))
+                    {
+                        // This is a signal tag assignment — no circuit semantics.
                         return Ok(());
                     }
                 }
+            }
+
+            // Component array element instantiation: muls[i] = Template()
+            // Also handles 2D: sigmaF[r][j] = Sigma()
+            if let Some(comp_name) = try_resolve_component_array_target(target, env, ctx) {
+                env.locals.insert(comp_name.clone());
+
+                if let Some(call) = extract_component_call(value, env, ctx)? {
+                    if let Some(template) = ctx.templates.get(call.template_name.as_str()) {
+                        let template = *template;
+                        register_component_locals(&comp_name, template, &call.scalar_args, env);
+
+                        let signals = collect_signal_names(&template.body.stmts);
+                        let input_signals: HashSet<String> = signals
+                            .iter()
+                            .filter(|(_, st)| matches!(st, ast::SignalType::Input))
+                            .map(|(n, _)| n.clone())
+                            .collect();
+
+                        if input_signals.is_empty() {
+                            let body = inline_component_body_with_arrays(
+                                &comp_name,
+                                template,
+                                &call.scalar_args,
+                                &call.array_args,
+                                ctx,
+                                span,
+                            )?;
+                            nodes.extend(body);
+                        } else {
+                            pending.insert(
+                                comp_name,
+                                PendingComponent {
+                                    template,
+                                    template_args: call.scalar_args,
+                                    array_args: call.array_args,
+                                    input_signals,
+                                    wired_signals: HashSet::new(),
+                                    has_indexed_wirings: false,
+                                },
+                            );
+                        }
+                    }
+                }
+                return Ok(());
             }
 
             let name = extract_target_name(target).ok_or_else(|| {
@@ -951,10 +1298,11 @@ fn flush_indexed_pending<'a>(
         .collect();
     for comp_name in &to_flush {
         if let Some(comp) = pending.remove(comp_name) {
-            let body = inline_component_body(
+            let body = inline_component_body_with_arrays(
                 comp_name,
                 comp.template,
                 &comp.template_args,
+                &comp.array_args,
                 ctx,
                 &comp.template.span,
             )?;
@@ -979,7 +1327,7 @@ fn maybe_trigger_inline<'a>(
     env: &LoweringEnv,
 ) -> Result<(), LoweringError> {
     let is_indexed = matches!(target, Expr::Index { .. });
-    if let Some((comp_name, signal_name)) = extract_component_wiring_with_env(target, env) {
+    if let Some((comp_name, signal_name)) = extract_component_wiring_with_env(target, env, ctx) {
         if let Some(comp) = pending.get_mut(&comp_name) {
             comp.wired_signals.insert(signal_name);
             if is_indexed {
@@ -993,10 +1341,11 @@ fn maybe_trigger_inline<'a>(
             }
             if comp.wired_signals.is_superset(&comp.input_signals) {
                 let comp = pending.remove(&comp_name).unwrap();
-                let body = inline_component_body(
+                let body = inline_component_body_with_arrays(
                     &comp_name,
                     comp.template,
                     &comp.template_args,
+                    &comp.array_args,
                     ctx,
                     span,
                 )?;
@@ -1007,21 +1356,72 @@ fn maybe_trigger_inline<'a>(
     Ok(())
 }
 
+/// Parsed component call with scalar and array template arguments.
+struct ComponentCall {
+    template_name: String,
+    scalar_args: Vec<CircuitExpr>,
+    array_args: HashMap<String, EvalValue>,
+}
+
 /// Extract a template call from a component initializer expression.
 ///
-/// `Template(arg1, arg2)` → `Some(("Template", [lowered_arg1, lowered_arg2]))`
+/// `Template(arg1, arg2)` → `Some(ComponentCall { ... })`
+///
+/// Arguments that refer to known compile-time arrays (from `env.known_array_values`)
+/// are stored in `array_args` instead of being lowered to `CircuitExpr`.
 fn extract_component_call(
     expr: &Expr,
     env: &LoweringEnv,
     ctx: &mut LoweringContext,
-) -> Result<Option<(String, Vec<CircuitExpr>)>, LoweringError> {
+) -> Result<Option<ComponentCall>, LoweringError> {
     if let Expr::Call { callee, args, span } = expr {
         if let Some(name) = extract_ident_name(callee) {
-            let mut lowered_args = Vec::new();
-            for arg in args {
-                lowered_args.push(lower_expr(arg, env, ctx)?);
+            // Check if this is a bus type being used as a component
+            if ctx.bus_names.contains(name.as_str()) {
+                return Err(LoweringError::new(
+                    format!(
+                        "`{name}` is a bus type, not a template; bus types require \
+                         Circom ≥2.2.0 bus compilation support which is not yet implemented"
+                    ),
+                    span,
+                ));
             }
-            return Ok(Some((name, lowered_args)));
+
+            // Collect array arg indices before lowering (avoids borrow conflicts)
+            let mut array_arg_indices: Vec<(usize, String, EvalValue)> = Vec::new();
+            for (i, arg) in args.iter().enumerate() {
+                if let Some(arg_name) = extract_ident_name(arg) {
+                    if let Some(arr_val) = env.known_array_values.get(&arg_name) {
+                        array_arg_indices.push((i, arg_name, arr_val.clone()));
+                    }
+                }
+            }
+
+            let mut lowered_args = Vec::new();
+            let array_indices: HashSet<usize> =
+                array_arg_indices.iter().map(|(i, _, _)| *i).collect();
+            for (i, arg) in args.iter().enumerate() {
+                if array_indices.contains(&i) {
+                    lowered_args.push(CircuitExpr::Const(FieldConst::zero()));
+                } else {
+                    lowered_args.push(lower_expr(arg, env, ctx)?);
+                }
+            }
+
+            // Map template param names → array values
+            let mut array_args = HashMap::new();
+            if let Some(template) = ctx.templates.get(name.as_str()) {
+                for (i, _arg_name, arr_val) in &array_arg_indices {
+                    if let Some(param_name) = template.params.get(*i) {
+                        array_args.insert(param_name.clone(), arr_val.clone());
+                    }
+                }
+            }
+            return Ok(Some(ComponentCall {
+                template_name: name,
+                scalar_args: lowered_args,
+                array_args,
+            }));
         }
         return Err(LoweringError::new(
             "component template call must use a simple name",
@@ -1097,12 +1497,13 @@ fn lower_for_loop<'a>(
     // Register loop variable
     env.locals.insert(var_name.clone());
 
-    // Check if body contains component array operations.
-    // If so, unroll the loop at lowering time (component inlining needs
-    // concrete names like muls_0, muls_1, etc.).
+    // Check if body requires lowering-time unrolling:
+    // 1. Component array operations (inlining needs concrete names)
+    // 2. Known array references (C[i] needs i resolved at lowering time)
     let has_component_array_ops = body_has_component_array_ops(&body.stmts, env);
+    let has_known_array_refs = body_references_known_arrays(&body.stmts, env);
 
-    if has_component_array_ops {
+    if has_component_array_ops || has_known_array_refs {
         // Resolve bound to a concrete number
         let end = match &bound {
             LoopBound::Literal(n) => *n,
@@ -1179,34 +1580,269 @@ fn lower_for_loop<'a>(
     Ok(())
 }
 
-/// Check if any statement in the body uses a component array operation.
+/// Check if a list of statements only touches variables (no signals, components,
+/// or constraint operations). Used to determine if a while loop can be evaluated
+/// at compile time.
+fn stmts_are_var_only(stmts: &[Stmt]) -> bool {
+    stmts.iter().all(stmt_is_var_only)
+}
+
+fn stmt_is_var_only(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::VarDecl { .. } => true,
+        Stmt::CompoundAssign { .. } => true,
+        Stmt::Expr { .. } => true,
+        Stmt::Substitution {
+            op: AssignOp::Assign,
+            ..
+        } => true,
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            stmts_are_var_only(&then_body.stmts)
+                && match else_body {
+                    Some(ElseBranch::Block(b)) => stmts_are_var_only(&b.stmts),
+                    Some(ElseBranch::IfElse(s)) => stmt_is_var_only(s),
+                    None => true,
+                }
+        }
+        Stmt::For { body, .. } => stmts_are_var_only(&body.stmts),
+        Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => stmts_are_var_only(&body.stmts),
+        Stmt::Block(b) => stmts_are_var_only(&b.stmts),
+        Stmt::Return { .. } => true,
+        Stmt::Assert { .. } => true,
+        Stmt::Log { .. } => true,
+        Stmt::Error { .. } => false,
+        // Signal ops, component decls, constraint ops → not var-only
+        Stmt::SignalDecl { .. } | Stmt::ComponentDecl { .. } | Stmt::ConstraintEq { .. } => false,
+        Stmt::Substitution { .. } => false, // <==, <--, ==>, --> ops
+    }
+}
+
+/// Evaluate a while or do-while loop at compile time.
 ///
-/// Detects patterns like `muls[i] = Template()` or `muls[i].a <== expr`
-/// where `muls` is a declared component array.
-fn body_has_component_array_ops(stmts: &[Stmt], env: &LoweringEnv) -> bool {
-    for stmt in stmts {
-        if let Stmt::Substitution { target, .. } = stmt {
-            // muls[i] = Template() — component array element instantiation
-            if let Expr::Index { object, .. } = target {
-                if let Some(name) = extract_ident_name(object) {
-                    if env.component_arrays.contains(&name) {
-                        return true;
-                    }
+/// All variables referenced must be in `env.known_constants` or
+/// `ctx.param_values`. Results are written back to `env.known_constants`.
+fn eval_while_compile_time(
+    condition: &Expr,
+    body_stmts: &[Stmt],
+    do_while: bool,
+    env: &mut LoweringEnv,
+    ctx: &LoweringContext,
+    span: &diagnostics::Span,
+) -> Result<(), LoweringError> {
+    // Build evaluation environment from known constants + param values
+    let mut vars: HashMap<String, i64> = HashMap::new();
+    for (k, v) in &env.known_constants {
+        vars.insert(k.clone(), *v as i64);
+    }
+    for (k, v) in &ctx.param_values {
+        vars.insert(k.clone(), *v as i64);
+    }
+
+    let functions: HashMap<&str, &ast::FunctionDef> =
+        ctx.functions.iter().map(|(k, v)| (*k, *v)).collect();
+
+    const MAX_WHILE_ITERS: usize = 10_000;
+
+    if do_while {
+        for _ in 0..MAX_WHILE_ITERS {
+            for stmt in body_stmts {
+                if super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions).is_none() {
+                    return Err(LoweringError::new(
+                        "do-while loop body could not be evaluated at compile time; \
+                         all variables must be known constants",
+                        span,
+                    ));
                 }
             }
-            // muls[i].a <== expr — component array element wiring
-            if let Expr::DotAccess { object, .. } = target {
-                if let Expr::Index { object: inner, .. } = object.as_ref() {
-                    if let Some(name) = extract_ident_name(inner) {
-                        if env.component_arrays.contains(&name) {
-                            return true;
-                        }
+            let cond =
+                super::utils::try_eval_expr_i64(condition, &vars, &functions).ok_or_else(|| {
+                    LoweringError::new(
+                        "do-while loop condition could not be evaluated at compile time",
+                        span,
+                    )
+                })?;
+            if cond == 0 {
+                // Write back computed vars
+                for (k, v) in &vars {
+                    if *v >= 0 {
+                        env.known_constants.insert(k.clone(), *v as u64);
                     }
+                }
+                return Ok(());
+            }
+        }
+    } else {
+        for _ in 0..MAX_WHILE_ITERS {
+            let cond =
+                super::utils::try_eval_expr_i64(condition, &vars, &functions).ok_or_else(|| {
+                    LoweringError::new(
+                        "while loop condition could not be evaluated at compile time",
+                        span,
+                    )
+                })?;
+            if cond == 0 {
+                // Write back computed vars
+                for (k, v) in &vars {
+                    if *v >= 0 {
+                        env.known_constants.insert(k.clone(), *v as u64);
+                    }
+                }
+                return Ok(());
+            }
+            for stmt in body_stmts {
+                if super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions).is_none() {
+                    return Err(LoweringError::new(
+                        "while loop body could not be evaluated at compile time; \
+                         all variables must be known constants",
+                        span,
+                    ));
                 }
             }
         }
     }
-    false
+
+    Err(LoweringError::new(
+        format!(
+            "while loop did not terminate within {MAX_WHILE_ITERS} iterations \
+             during compile-time evaluation"
+        ),
+        span,
+    ))
+}
+
+/// Check if any statement in the body references a component array.
+///
+/// Uses a conservative approach: scans ALL expressions (not just direct
+/// patterns) for any identifier matching a declared component array name.
+/// This catches indirect access via functions, complex indices like
+/// `muls[i*n+j]`, and nested expressions.
+fn body_has_component_array_ops(stmts: &[Stmt], env: &LoweringEnv) -> bool {
+    if env.component_arrays.is_empty() {
+        return false;
+    }
+    stmts_reference_component_arrays(stmts, &env.component_arrays)
+}
+
+/// Check if any statement in the body references a known compile-time array.
+///
+/// If so, the enclosing for loop must be unrolled so that array indices
+/// resolve to constants at lowering time.
+fn body_references_known_arrays(stmts: &[Stmt], env: &LoweringEnv) -> bool {
+    if env.known_array_values.is_empty() {
+        return false;
+    }
+    let array_names: HashSet<String> = env.known_array_values.keys().cloned().collect();
+    stmts_reference_component_arrays(stmts, &array_names)
+}
+
+fn stmts_reference_component_arrays(stmts: &[Stmt], arrays: &HashSet<String>) -> bool {
+    stmts
+        .iter()
+        .any(|s| stmt_references_component_arrays(s, arrays))
+}
+
+fn stmt_references_component_arrays(stmt: &Stmt, arrays: &HashSet<String>) -> bool {
+    match stmt {
+        Stmt::Substitution { target, value, .. } => {
+            expr_references_component_arrays(target, arrays)
+                || expr_references_component_arrays(value, arrays)
+        }
+        Stmt::CompoundAssign { target, value, .. } => {
+            expr_references_component_arrays(target, arrays)
+                || expr_references_component_arrays(value, arrays)
+        }
+        Stmt::ConstraintEq { lhs, rhs, .. } => {
+            expr_references_component_arrays(lhs, arrays)
+                || expr_references_component_arrays(rhs, arrays)
+        }
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_references_component_arrays(condition, arrays)
+                || stmts_reference_component_arrays(&then_body.stmts, arrays)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => {
+                        stmts_reference_component_arrays(&b.stmts, arrays)
+                    }
+                    Some(ElseBranch::IfElse(s)) => stmt_references_component_arrays(s, arrays),
+                    None => false,
+                }
+        }
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            stmts_reference_component_arrays(&body.stmts, arrays)
+        }
+        Stmt::Block(b) => stmts_reference_component_arrays(&b.stmts, arrays),
+        Stmt::ComponentDecl { init, .. } => init
+            .as_ref()
+            .map(|e| expr_references_component_arrays(e, arrays))
+            .unwrap_or(false),
+        Stmt::Expr { expr, .. } => expr_references_component_arrays(expr, arrays),
+        Stmt::VarDecl { init, .. } => init
+            .as_ref()
+            .map(|e| expr_references_component_arrays(e, arrays))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn expr_references_component_arrays(expr: &Expr, arrays: &HashSet<String>) -> bool {
+    match expr {
+        Expr::Ident { name, .. } => arrays.contains(name),
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_references_component_arrays(lhs, arrays)
+                || expr_references_component_arrays(rhs, arrays)
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_references_component_arrays(operand, arrays),
+        Expr::Index { object, index, .. } => {
+            expr_references_component_arrays(object, arrays)
+                || expr_references_component_arrays(index, arrays)
+        }
+        Expr::DotAccess { object, .. } => expr_references_component_arrays(object, arrays),
+        Expr::Call { callee, args, .. } => {
+            expr_references_component_arrays(callee, arrays)
+                || args
+                    .iter()
+                    .any(|a| expr_references_component_arrays(a, arrays))
+        }
+        Expr::AnonComponent {
+            callee,
+            template_args,
+            signal_args,
+            ..
+        } => {
+            expr_references_component_arrays(callee, arrays)
+                || template_args
+                    .iter()
+                    .any(|a| expr_references_component_arrays(a, arrays))
+                || signal_args
+                    .iter()
+                    .any(|a| expr_references_component_arrays(&a.value, arrays))
+        }
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_references_component_arrays(condition, arrays)
+                || expr_references_component_arrays(if_true, arrays)
+                || expr_references_component_arrays(if_false, arrays)
+        }
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => elements
+            .iter()
+            .any(|e| expr_references_component_arrays(e, arrays)),
+        _ => false,
+    }
 }
 
 /// A loop bound: literal constant, template parameter, or AST expression.
@@ -1385,6 +2021,145 @@ fn compound_to_binop(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Array evaluation helpers
+// ---------------------------------------------------------------------------
+
+/// Try to evaluate a var initializer to a compile-time array.
+///
+/// Attempts compile-time evaluation for function calls that return arrays
+/// (e.g. `POSEIDON_C(t)`) and for array literals whose elements are all
+/// compile-time constants.  Returns `None` if the expression cannot be
+/// fully evaluated.
+fn try_eval_array_init(expr: &Expr, env: &LoweringEnv, ctx: &LoweringContext) -> Option<EvalValue> {
+    // Build a combined params map from ctx.param_values + env.known_constants
+    let mut params: HashMap<String, u64> = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        params.insert(k.clone(), v);
+    }
+
+    match expr {
+        Expr::Call { callee, args, .. } => {
+            let fn_name = extract_ident_name(callee)?;
+            let func = *ctx.functions.get(fn_name.as_str())?;
+            let val = super::utils::try_eval_function_call_to_value(
+                func,
+                args,
+                &params,
+                &ctx.functions,
+                ctx.inline_depth,
+            )?;
+            // Only return array values — scalars are handled by the normal path
+            if matches!(val, EvalValue::Array(_)) {
+                Some(val)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Expand an [`EvalValue`] into `CircuitNode::Let` bindings.
+///
+/// For a 1-D array `EvalValue::Array([S(1), Expr(0xabc), …])` with base `C`:
+///   → `Let { name: "C_0", value: Const(1) }`
+///   → `Let { name: "C_1", value: Const(from_hex("0xabc")) }`
+///   → registers `C` as an array of length N
+///
+/// For 2-D arrays, flattens with strides.
+fn expand_eval_value_to_nodes(
+    base: &str,
+    val: &EvalValue,
+    nodes: &mut Vec<CircuitNode>,
+    env: &mut LoweringEnv,
+    span: &Option<SpanRange>,
+) {
+    match val {
+        EvalValue::Scalar(v) => {
+            nodes.push(CircuitNode::Let {
+                name: base.to_string(),
+                value: CircuitExpr::Const(FieldConst::from_u64(*v as u64)),
+                span: span.clone(),
+            });
+            env.locals.insert(base.to_string());
+        }
+        EvalValue::Expr(expr) => {
+            if let Some(fc) = expr_to_field_const(expr) {
+                nodes.push(CircuitNode::Let {
+                    name: base.to_string(),
+                    value: CircuitExpr::Const(fc),
+                    span: span.clone(),
+                });
+                env.locals.insert(base.to_string());
+            }
+        }
+        EvalValue::Array(elems) => {
+            // Check if this is a 2-D array (elements are arrays)
+            let is_2d = elems
+                .first()
+                .is_some_and(|e| matches!(e, EvalValue::Array(_)));
+            if is_2d {
+                // 2-D: flatten with linearized indexing
+                let mut flat_idx = 0;
+                let row_len = elems.first().and_then(|e| e.len()).unwrap_or(0);
+                for row_val in elems.iter() {
+                    if let EvalValue::Array(cols) = row_val {
+                        for col_val in cols.iter() {
+                            let elem_name = format!("{base}_{flat_idx}");
+                            emit_eval_leaf(&elem_name, col_val, nodes, env, span);
+                            flat_idx += 1;
+                        }
+                    }
+                }
+                let total = elems.len() * row_len;
+                env.register_array(base.to_string(), total);
+                // Strides for 2-D: arr[i][j] → arr[i*cols+j]
+                env.strides.insert(base.to_string(), vec![row_len]);
+            } else {
+                // 1-D: simple element naming
+                for (i, elem) in elems.iter().enumerate() {
+                    let elem_name = format!("{base}_{i}");
+                    emit_eval_leaf(&elem_name, elem, nodes, env, span);
+                }
+                env.register_array(base.to_string(), elems.len());
+            }
+        }
+    }
+}
+
+/// Emit a single Let node for a leaf EvalValue (Scalar or Expr).
+fn emit_eval_leaf(
+    name: &str,
+    val: &EvalValue,
+    nodes: &mut Vec<CircuitNode>,
+    env: &mut LoweringEnv,
+    span: &Option<SpanRange>,
+) {
+    let fc = match val {
+        EvalValue::Scalar(v) => Some(FieldConst::from_u64(*v as u64)),
+        EvalValue::Expr(expr) => expr_to_field_const(expr),
+        EvalValue::Array(_) => None, // shouldn't happen at leaf level
+    };
+    if let Some(fc) = fc {
+        nodes.push(CircuitNode::Let {
+            name: name.to_string(),
+            value: CircuitExpr::Const(fc),
+            span: span.clone(),
+        });
+        env.locals.insert(name.to_string());
+    }
+}
+
+/// Convert an AST expression (number or hex literal) to a `FieldConst`.
+fn expr_to_field_const(expr: &Expr) -> Option<FieldConst> {
+    match expr {
+        Expr::Number { value, .. } => FieldConst::from_decimal_str(value),
+        Expr::HexNumber { value, .. } => FieldConst::from_hex_str(value),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1407,6 +2182,15 @@ mod tests {
         env.inputs.insert("a".to_string());
         env.inputs.insert("b".to_string());
         let mut ctx = LoweringContext::from_program(&prog);
+        // Pre-evaluate compile-time vars (like lower_template does in the real pipeline)
+        let known_vars = crate::lowering::utils::precompute_vars(
+            &template.body.stmts,
+            &ctx.param_values,
+            &ctx.functions,
+        );
+        for (name, val) in known_vars {
+            ctx.param_values.insert(name, val);
+        }
         lower_stmts(&template.body.stmts, &mut env, &mut ctx)
     }
 
@@ -1565,10 +2349,13 @@ mod tests {
     // ── Assert ──────────────────────────────────────────────────────
 
     #[test]
-    fn assert_is_noop() {
-        // In Circom, assert() is a prover-side runtime check, not a constraint.
+    fn assert_emits_witness_check() {
+        // In Circom, assert() is a prover-side runtime check during witness
+        // computation. We emit an Assert node so the witness evaluator can
+        // verify it, but the instantiator treats it as a no-op (no R1CS constraints).
         let nodes = lower_template("assert(a == 1);").unwrap();
-        assert!(nodes.is_empty());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(nodes[0], CircuitNode::Assert { .. }));
     }
 
     // ── Log is no-op ────────────────────────────────────────────────
@@ -1579,13 +2366,34 @@ mod tests {
         assert!(nodes.is_empty());
     }
 
-    // ── While is error ──────────────────────────────────────────────
+    // ── Tag value assignment ──────────────────────────────────────
 
     #[test]
-    fn while_is_error() {
-        let result = lower_template("var i = 0; while (i < 5) { i += 1; }");
+    fn tag_value_assignment_is_noop() {
+        // signal.tag = expr is metadata, produces no circuit nodes.
+        let nodes = lower_template("signal input {maxbit} a; a.maxbit = 8;").unwrap();
+        // Only the signal decl registers the name, no circuit nodes.
+        assert!(nodes.is_empty());
+    }
+
+    // ── While loops ────────────────────────────────────────────────
+
+    #[test]
+    fn while_var_only_succeeds() {
+        // While loops that only touch vars are evaluated at compile time.
+        let nodes = lower_template("var i = 0; while (i < 5) { i += 1; }").unwrap();
+        // Only the initial VarDecl produces a Let node; the while loop is
+        // fully evaluated at compile time and produces no circuit nodes.
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "i"));
+    }
+
+    #[test]
+    fn while_with_signals_is_error() {
+        // While loops that touch signals must fail.
+        let result =
+            lower_template("signal output x; var i = 0; while (i < 5) { x <== i; i += 1; }");
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("while loops"));
     }
 
     // ── Reverse operators ───────────────────────────────────────────
