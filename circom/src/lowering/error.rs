@@ -27,7 +27,11 @@ impl LoweringError {
 
 impl std::fmt::Display for LoweringError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        write!(f, "{}", self.message)?;
+        if let Some(span) = &self.span {
+            write!(f, "\n  --> {}:{}", span.line_start, span.col_start)?;
+        }
+        Ok(())
     }
 }
 

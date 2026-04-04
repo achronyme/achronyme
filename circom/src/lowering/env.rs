@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::utils::EvalValue;
+
 /// Identifier resolution categories for lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VarKind {
@@ -40,6 +42,10 @@ pub struct LoweringEnv {
     /// Known constants — loop variables during manual unrolling.
     /// When set, `lower_expr` for `Ident("i")` emits `Const(val)`.
     pub known_constants: HashMap<String, u64>,
+    /// Known array constants — compile-time arrays from function calls
+    /// like `var C[n] = POSEIDON_C(t)`.  Used to resolve `C[expr]`
+    /// to a field constant during lowering.
+    pub known_array_values: HashMap<String, EvalValue>,
 }
 
 impl LoweringEnv {
@@ -52,6 +58,7 @@ impl LoweringEnv {
             strides: HashMap::new(),
             component_arrays: HashSet::new(),
             known_constants: HashMap::new(),
+            known_array_values: HashMap::new(),
         }
     }
 
