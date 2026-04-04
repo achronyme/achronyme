@@ -657,7 +657,6 @@ fn escalarmulfix_real_circomlib() {
 
 /// EscalarMulAny(149): 2 segments, tests deep nesting + segment chaining.
 #[test]
-#[ignore] // TODO: segments[s].out ==> adders[s-1].x2 — value-scan doesn't flush segments_1 via ==> with loop vars
 fn escalarmulany_compile() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/escalarmulany_test.circom");
@@ -692,7 +691,6 @@ fn escalarmulany_compile() {
 /// BabyDbl, IsZero, EscalarMulAny(254), BabyAdd, EscalarMulFix(253),
 /// ForceEqualIfEnabled.
 #[test]
-#[ignore] // TODO: blocked by EscalarMulAny segment chaining (same ==> flush gap)
 fn eddsaposeidon_compile() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/eddsaposeidon_test.circom");
