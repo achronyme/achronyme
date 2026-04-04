@@ -29,7 +29,8 @@ use super::utils::{const_eval_u64, extract_ident_name};
 
 use calls::lower_call;
 use indexing::{
-    lower_multi_index, resolve_component_array_expr_full, try_resolve_known_array_index,
+    eval_index_expr, lower_multi_index, resolve_component_array_expr_full,
+    try_resolve_known_array_index,
 };
 use operators::lower_binop;
 
@@ -141,6 +142,17 @@ pub fn lower_expr(
             if_false,
             ..
         } => {
+            // Constant-fold: if the condition is a compile-time constant,
+            // select the branch directly (avoids lowering dead branches
+            // that may contain invalid array accesses like xL[-1]).
+            let all = ctx.all_constants(env);
+            if let Some(cond_val) = super::utils::const_eval_with_params(condition, &all) {
+                return if cond_val != 0 {
+                    lower_expr(if_true, env, ctx)
+                } else {
+                    lower_expr(if_false, env, ctx)
+                };
+            }
             let cond = lower_expr(condition, env, ctx)?;
             let t = lower_expr(if_true, env, ctx)?;
             let f = lower_expr(if_false, env, ctx)?;
@@ -249,8 +261,11 @@ fn lower_index(
             None
         }
     }) {
-        if let Some(idx_val) = const_eval_u64(index) {
-            if let Some(elem_name) = env.resolve_array_element(&array_name, idx_val as usize) {
+        if let Some(idx_val) = const_eval_u64(index)
+            .map(|v| v as usize)
+            .or_else(|| eval_index_expr(index, env, ctx))
+        {
+            if let Some(elem_name) = env.resolve_array_element(&array_name, idx_val) {
                 return Ok(CircuitExpr::Var(elem_name));
             }
         }

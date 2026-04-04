@@ -35,8 +35,15 @@ pub(super) fn lower_multi_index(
     let strides = env.strides.get(base_name);
     let n = indices.len();
 
-    // Try full constant evaluation for direct resolution
-    let const_vals: Option<Vec<u64>> = indices.iter().map(|idx| const_eval_u64(idx)).collect();
+    // Try full constant evaluation for direct resolution (using known_constants for loop vars)
+    let const_vals: Option<Vec<usize>> = indices
+        .iter()
+        .map(|idx| {
+            const_eval_u64(idx)
+                .map(|v| v as usize)
+                .or_else(|| eval_index_expr(idx, env, ctx))
+        })
+        .collect();
     if let Some(vals) = const_vals {
         let mut linear: usize = 0;
         for (dim, &val) in vals.iter().enumerate() {
@@ -45,7 +52,7 @@ pub(super) fn lower_multi_index(
             } else {
                 1
             };
-            linear += val as usize * stride;
+            linear += val * stride;
         }
         if let Some(elem_name) = env.resolve_array_element(base_name, linear) {
             return Ok(CircuitExpr::Var(elem_name));
@@ -156,7 +163,7 @@ pub(super) fn resolve_multi_dim_array(
 }
 
 /// Evaluate an index expression to a usize using all available compile-time context.
-fn eval_index_expr(expr: &Expr, env: &LoweringEnv, ctx: &LoweringContext) -> Option<usize> {
+pub(super) fn eval_index_expr(expr: &Expr, env: &LoweringEnv, ctx: &LoweringContext) -> Option<usize> {
     let params = ctx.all_constants(env);
     super::super::utils::const_eval_with_params(expr, &params).map(|v| v as usize)
 }

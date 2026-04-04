@@ -176,6 +176,16 @@ pub fn inline_component_body_with_arrays<'a>(
         env.strides.insert(name.clone(), strides.clone());
     }
 
+    // Register signal array sizes so that resolve_array_element works
+    // (e.g., `xL[i-1]` resolves to `xL_4` during loop unrolling)
+    let array_sizes = extract_signal_array_sizes(template, &ctx.param_values);
+    for (signal_name, total_size) in array_sizes {
+        env.arrays.insert(signal_name.clone(), total_size);
+        for i in 0..total_size {
+            env.locals.insert(format!("{signal_name}_{i}"));
+        }
+    }
+
     // Lower template body with original names
     let nodes = lower_stmts(&template.body.stmts, &mut env, ctx)?;
 
