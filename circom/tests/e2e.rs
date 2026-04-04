@@ -451,3 +451,89 @@ fn poseidon_real_circomlib() {
     eprintln!();
     eprintln!("  Poseidon(2) — {num_constraints} constraints — VERIFIED ✓");
 }
+
+// ── MiMCSponge (real circomlib) ────────────────────────────────
+
+/// MiMCSponge(2, 220, 1) from iden3/circomlib: 220 rounds of MiMC-Feistel.
+///
+/// Tests: 218-element constant array, computed component array bounds,
+/// compile-time ternary in loops, signal arrays with loop-dependent indexing.
+#[test]
+fn mimcsponge_real_circomlib() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let mimc_path = manifest_dir.join("test/circomlib/mimcsponge_test.circom");
+
+    if !mimc_path.exists() {
+        eprintln!("Skipping MiMCSponge test: {mimc_path:?} not found");
+        return;
+    }
+
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    // ── Step 1: Compile ──
+    eprintln!("Compiling MiMCSponge(2, 220, 1) from real circomlib...");
+    let compile_result = match circom::compile_file(&mimc_path, &lib_dirs) {
+        Ok(r) => r,
+        Err(e) => {
+            panic!("MiMCSponge compilation failed: {e}");
+        }
+    };
+
+    let prove_ir = &compile_result.prove_ir;
+    eprintln!("  ✓ Compiled: {} body nodes", prove_ir.body.len());
+
+    // ── Step 2: Instantiate ──
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = match prove_ir.instantiate(&fe_captures) {
+        Ok(p) => p,
+        Err(e) => panic!("MiMCSponge instantiation failed: {e}"),
+    };
+
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  ✓ Instantiated + optimized: {} instructions",
+        program.instructions.len()
+    );
+
+    // ── Step 3: R1CS compile ──
+    // Witness: ins[0]=1, ins[1]=2, k=0
+    let mut user_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    user_inputs.insert("ins_0".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    user_inputs.insert("ins_1".to_string(), FieldElement::<Bn254Fr>::from_u64(2));
+    user_inputs.insert("k".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+
+    let mut all_signals = match circom::witness::compute_witness_hints_with_captures(
+        prove_ir,
+        &user_inputs,
+        capture_values,
+    ) {
+        Ok(s) => s,
+        Err(e) => panic!("MiMCSponge witness computation failed: {e}"),
+    };
+
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    let witness = match r1cs_compiler.compile_ir_with_witness(&program, &all_signals) {
+        Ok(w) => w,
+        Err(e) => panic!("MiMCSponge R1CS compilation failed: {e}"),
+    };
+
+    let num_constraints = r1cs_compiler.cs.num_constraints();
+    eprintln!("  ✓ R1CS compiled: {num_constraints} constraints");
+
+    match r1cs_compiler.cs.verify(&witness) {
+        Ok(()) => eprintln!("  ✓ R1CS verified!"),
+        Err(e) => panic!("MiMCSponge R1CS verification failed: {e}"),
+    }
+
+    eprintln!();
+    eprintln!("  MiMCSponge(2, 220, 1) — {num_constraints} constraints — VERIFIED ✓");
+}
