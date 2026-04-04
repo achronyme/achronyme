@@ -27,6 +27,7 @@ use super::env::LoweringEnv;
 use super::error::LoweringError;
 use super::signals::{collect_signal_names, extract_signal_array_sizes, extract_signal_strides};
 use super::statements::lower_stmts;
+use super::utils::EvalValue;
 
 /// Inline a component's template body with mangled names.
 ///
@@ -43,6 +44,41 @@ pub fn inline_component_body<'a>(
     ctx: &mut LoweringContext<'a>,
     span: &diagnostics::Span,
 ) -> Result<Vec<CircuitNode>, LoweringError> {
+    inline_component_body_with_arrays(
+        comp_name,
+        template,
+        template_args,
+        &HashMap::new(),
+        ctx,
+        span,
+    )
+}
+
+/// Inline a component body, passing both scalar and array template arguments.
+///
+/// `array_args` maps parameter names to their compile-time array values
+/// (e.g. `"C" → POSEIDON_C(t)` result).  These are injected into the
+/// sub-template's `known_array_values` so that `C[expr]` resolves.
+pub fn inline_component_body_with_arrays<'a>(
+    comp_name: &str,
+    template: &'a TemplateDef,
+    template_args: &[CircuitExpr],
+    array_args: &HashMap<String, EvalValue>,
+    ctx: &mut LoweringContext<'a>,
+    span: &diagnostics::Span,
+) -> Result<Vec<CircuitNode>, LoweringError> {
+    // Custom templates generate Plonk custom gates, not R1CS constraints.
+    if template.modifiers.custom {
+        return Err(LoweringError::new(
+            format!(
+                "template `{}` is declared as `custom` which generates Plonk custom gates; \
+                 custom templates are not supported in R1CS mode — use a standard template instead",
+                template.name
+            ),
+            span,
+        ));
+    }
+
     // Check recursion depth
     if ctx.inline_depth >= super::context::MAX_INLINE_DEPTH {
         return Err(LoweringError::new(
@@ -80,36 +116,70 @@ pub fn inline_component_body<'a>(
         }
     }
     for param in &template.params {
-        env.captures.insert(param.clone());
+        // Don't add array params as captures — they're resolved via known_array_values
+        if !array_args.contains_key(param) {
+            env.captures.insert(param.clone());
+        }
     }
 
-    // Extract param values from template args for stride computation
-    let param_values: HashMap<String, u64> = template
-        .params
-        .iter()
-        .enumerate()
-        .filter_map(|(i, param)| {
-            template_args
-                .get(i)
-                .and_then(|arg| {
-                    if let CircuitExpr::Const(fc) = arg {
-                        fc.to_u64()
-                    } else {
-                        None
+    // Inject array args into the sub-template's known_array_values
+    for (name, val) in array_args {
+        env.known_array_values.insert(name.clone(), val.clone());
+    }
+
+    // Extract param values from template args for stride computation.
+    // For Const args, use the literal value directly.
+    // For Capture/Var args, resolve from the parent's param_values
+    // (e.g., Capture("t") → 2, or Var("t") → 2 when t is a precomputed var).
+    let mut param_values: HashMap<String, u64> = HashMap::new();
+    for (i, param) in template.params.iter().enumerate() {
+        if let Some(arg) = template_args.get(i) {
+            match arg {
+                CircuitExpr::Const(fc) => {
+                    if let Some(val) = fc.to_u64() {
+                        param_values.insert(param.clone(), val);
                     }
-                })
-                .map(|val| (param.clone(), val))
-        })
-        .collect();
+                }
+                CircuitExpr::Capture(name) | CircuitExpr::Var(name) => {
+                    if let Some(&val) = ctx.param_values.get(name) {
+                        param_values.insert(param.clone(), val);
+                    }
+                }
+                other => {
+                    // Try to evaluate expression args (e.g. `(r+1)*t`) to constants
+                    if let Some(val) = try_eval_circuit_expr_u64(other, &ctx.param_values) {
+                        param_values.insert(param.clone(), val);
+                    }
+                }
+            }
+        }
+    }
+
+    // Save parent param_values and inject sub-template values
+    let saved_params = ctx.param_values.clone();
+    ctx.param_values = param_values.clone();
+
+    // Pre-evaluate compile-time var declarations (single pass, arrays + scalars)
+    let precomputed =
+        super::utils::precompute_all(&template.body.stmts, &ctx.param_values, &ctx.functions);
+    for (name, val) in &precomputed.scalars {
+        ctx.param_values.insert(name.clone(), *val);
+    }
+    for (name, val) in precomputed.arrays {
+        env.known_array_values.insert(name, val);
+    }
 
     // Register multi-dimensional array strides for linearized indexing
-    let stride_map = extract_signal_strides(template, &param_values);
+    let stride_map = extract_signal_strides(template, &ctx.param_values);
     for (name, strides) in &stride_map {
         env.strides.insert(name.clone(), strides.clone());
     }
 
     // Lower template body with original names
     let nodes = lower_stmts(&template.body.stmts, &mut env, ctx)?;
+
+    // Restore parent param_values
+    ctx.param_values = saved_params;
 
     // Mangle all names and substitute captures
     let mangled = mangle_nodes(&nodes, comp_name, &param_subs);
@@ -172,6 +242,46 @@ pub fn register_component_locals(
         for i in 0..total_size {
             parent_env.locals.insert(format!("{mangled_array}_{i}"));
         }
+    }
+}
+
+/// Try to evaluate a `CircuitExpr` to a u64 using a context of known values.
+///
+/// Handles `Const`, `Var`/`Capture` lookups, and basic arithmetic (`Add`, `Sub`, `Mul`, `Div`).
+/// Used to resolve expression-valued template args like `(r+1)*t`.
+fn try_eval_circuit_expr_u64(expr: &CircuitExpr, context: &HashMap<String, u64>) -> Option<u64> {
+    match expr {
+        CircuitExpr::Const(fc) => fc.to_u64(),
+        CircuitExpr::Var(name) | CircuitExpr::Capture(name) => context.get(name).copied(),
+        CircuitExpr::BinOp { op, lhs, rhs } => {
+            let l = try_eval_circuit_expr_u64(lhs, context)?;
+            let r = try_eval_circuit_expr_u64(rhs, context)?;
+            match op {
+                CircuitBinOp::Add => l.checked_add(r),
+                CircuitBinOp::Sub => l.checked_sub(r),
+                CircuitBinOp::Mul => l.checked_mul(r),
+                _ => None,
+            }
+        }
+        CircuitExpr::IntDiv { lhs, rhs, .. } => {
+            let l = try_eval_circuit_expr_u64(lhs, context)?;
+            let r = try_eval_circuit_expr_u64(rhs, context)?;
+            if r != 0 {
+                Some(l / r)
+            } else {
+                None
+            }
+        }
+        CircuitExpr::IntMod { lhs, rhs, .. } => {
+            let l = try_eval_circuit_expr_u64(lhs, context)?;
+            let r = try_eval_circuit_expr_u64(rhs, context)?;
+            if r != 0 {
+                Some(l % r)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
