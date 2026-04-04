@@ -118,14 +118,11 @@ struct Resolver {
 
 impl Resolver {
     fn resolve_file(&mut self, canonical_path: &Path) -> Result<(), IncludeError> {
-        // Already resolved — skip
-        if self.visited.contains(canonical_path) {
+        // Already resolved or currently being resolved — skip.
+        // Circom allows mutual includes (e.g., bitify ↔ comparators) which
+        // are resolved by deduplication, not treated as errors.
+        if self.visited.contains(canonical_path) || self.in_progress.contains(canonical_path) {
             return Ok(());
-        }
-
-        // Cycle detection
-        if self.in_progress.contains(canonical_path) {
-            return Err(IncludeError::Cycle(canonical_path.to_path_buf()));
         }
 
         self.in_progress.insert(canonical_path.to_path_buf());
@@ -349,17 +346,27 @@ mod tests {
     }
 
     #[test]
-    fn detect_cycle() {
+    fn mutual_includes_deduplicated() {
+        // Circom allows mutual includes (e.g., bitify ↔ comparators).
+        // They are resolved by deduplication, not treated as errors.
         let dir = make_temp_dir();
         let a = dir.path().join("a.circom");
         let b = dir.path().join("b.circom");
-        fs::write(&a, r#"include "b.circom";"#).unwrap();
-        fs::write(&b, r#"include "a.circom";"#).unwrap();
+        fs::write(
+            &a,
+            r#"include "b.circom"; template A() { signal input x; }"#,
+        )
+        .unwrap();
+        fs::write(
+            &b,
+            r#"include "a.circom"; template B() { signal input y; }"#,
+        )
+        .unwrap();
 
         let result = resolve_includes(&a, &[]);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, IncludeError::Cycle(_)));
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert_eq!(resolved.definitions.len(), 2); // A + B
     }
 
     #[test]
