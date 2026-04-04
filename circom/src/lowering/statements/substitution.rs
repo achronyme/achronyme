@@ -559,11 +559,27 @@ pub(super) fn extract_component_call(
             let mut lowered_args = Vec::new();
             let array_indices: HashSet<usize> =
                 array_arg_indices.iter().map(|(i, _, _)| *i).collect();
+            let all_constants = ctx.all_constants(env);
             for (i, arg) in args.iter().enumerate() {
                 if array_indices.contains(&i) {
                     lowered_args.push(CircuitExpr::Const(FieldConst::zero()));
                 } else {
-                    lowered_args.push(lower_expr(arg, env, ctx)?);
+                    let lowered = lower_expr(arg, env, ctx)?;
+                    // Resolve Var/Capture to Const when the value is known.
+                    // This is critical for pending components created inside
+                    // loops: if we store Var("nseg"), the flush at a later
+                    // iteration would pick up the wrong value.
+                    let resolved = match &lowered {
+                        CircuitExpr::Var(name) | CircuitExpr::Capture(name) => {
+                            if let Some(&val) = all_constants.get(name) {
+                                CircuitExpr::Const(FieldConst::from_u64(val))
+                            } else {
+                                lowered
+                            }
+                        }
+                        _ => lowered,
+                    };
+                    lowered_args.push(resolved);
                 }
             }
 
