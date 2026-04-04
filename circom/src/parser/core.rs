@@ -319,7 +319,7 @@ impl Parser {
 
         let mut modifiers = TemplateModifiers::default();
 
-        // Parse optional modifiers: custom, parallel (in any order)
+        // Parse optional modifiers: custom, parallel, extern_c (in any order)
         loop {
             match self.peek_kind() {
                 TokenKind::Custom => {
@@ -329,6 +329,11 @@ impl Parser {
                 TokenKind::Parallel => {
                     self.advance();
                     modifiers.parallel = true;
+                }
+                // `extern_c` is not a keyword — it's an identifier (v2.2.3+)
+                TokenKind::Ident if self.peek().lexeme == "extern_c" => {
+                    self.advance();
+                    modifiers.extern_c = true;
                 }
                 _ => break,
             }

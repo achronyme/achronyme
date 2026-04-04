@@ -508,7 +508,7 @@ impl<'a> Lexer<'a> {
 
     fn lex_string(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         self.advance(); // consume opening "
-        let content_start = self.pos;
+        let mut buf = String::new();
         loop {
             match self.peek() {
                 None | Some(b'\n') => {
@@ -519,18 +519,59 @@ impl<'a> Lexer<'a> {
                     ));
                 }
                 Some(b'"') => {
-                    let lexeme = std::str::from_utf8(&self.source[content_start..self.pos])
-                        .map_err(|_| ParseError::new("invalid UTF-8 in string", start.1, start.2))?
-                        .to_string();
                     self.advance(); // consume closing "
                     return Ok(Token {
                         kind: TokenKind::StringLit,
                         span: self.make_span(start),
-                        lexeme,
+                        lexeme: buf,
                     });
                 }
-                _ => {
+                Some(b'\\') => {
+                    self.advance(); // consume backslash
+                    match self.peek() {
+                        Some(b'n') => {
+                            self.advance();
+                            buf.push('\n');
+                        }
+                        Some(b't') => {
+                            self.advance();
+                            buf.push('\t');
+                        }
+                        Some(b'r') => {
+                            self.advance();
+                            buf.push('\r');
+                        }
+                        Some(b'\\') => {
+                            self.advance();
+                            buf.push('\\');
+                        }
+                        Some(b'"') => {
+                            self.advance();
+                            buf.push('"');
+                        }
+                        Some(b'0') => {
+                            self.advance();
+                            buf.push('\0');
+                        }
+                        Some(ch) => {
+                            return Err(ParseError::new(
+                                format!("invalid escape sequence `\\{}`", ch as char),
+                                self.line,
+                                self.col,
+                            ));
+                        }
+                        None => {
+                            return Err(ParseError::new(
+                                "unterminated string literal",
+                                start.1,
+                                start.2,
+                            ));
+                        }
+                    }
+                }
+                Some(ch) => {
                     self.advance();
+                    buf.push(ch as char);
                 }
             }
         }
@@ -857,6 +898,27 @@ mod tests {
     #[test]
     fn string_no_newline() {
         assert!(Lexer::tokenize("\"hello\nworld\"").is_err());
+    }
+
+    #[test]
+    fn string_escape_sequences() {
+        let tokens = Lexer::tokenize(r#""hello\nworld""#).unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].lexeme, "hello\nworld");
+
+        let tokens = Lexer::tokenize(r#""tab\there""#).unwrap();
+        assert_eq!(tokens[0].lexeme, "tab\there");
+
+        let tokens = Lexer::tokenize(r#""escaped\\backslash""#).unwrap();
+        assert_eq!(tokens[0].lexeme, "escaped\\backslash");
+
+        let tokens = Lexer::tokenize(r#""escaped\"quote""#).unwrap();
+        assert_eq!(tokens[0].lexeme, "escaped\"quote");
+    }
+
+    #[test]
+    fn string_invalid_escape() {
+        assert!(Lexer::tokenize(r#""bad\xescape""#).is_err());
     }
 
     // ── Comments ─────────────────────────────────────────────────────

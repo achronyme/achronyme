@@ -69,19 +69,20 @@ fn check_template(template: &TemplateDef) -> ConstraintReport {
         }
     }
 
-    // E101: signal assigned more than once.
+    // W103: signal assigned more than once (warning, not error).
+    // This can be a false positive for signals assigned in different
+    // branches of an if-else (e.g., `out <== a` in if, `out <== b` in else).
+    // Circom's official compiler allows this pattern.
     for (name, spans) in &collector.signal_assignments {
         if spans.len() > 1 {
-            let diag = Diagnostic::error(
+            let diag = Diagnostic::warning(
                 format!("signal `{name}` is assigned more than once"),
                 span_to_range(&spans[1]),
             )
-            .with_code("E101")
+            .with_code("W103")
             .with_note("first assignment was here".to_string())
             .with_note(
-                "each signal must be assigned exactly once — \
-                 use a single `<==` or `<--` per signal"
-                    .to_string(),
+                "this is valid if assignments are in different branches of an if-else".to_string(),
             );
             diagnostics.push(diag);
         }
@@ -384,7 +385,7 @@ impl ConstraintCollector {
                 }
             }
             Stmt::For { body, .. } => self.walk_stmts(&body.stmts),
-            Stmt::While { body, .. } => self.walk_stmts(&body.stmts),
+            Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => self.walk_stmts(&body.stmts),
             Stmt::Block(block) => self.walk_stmts(&block.stmts),
             // All other statements don't affect constraint tracking
             _ => {}
@@ -466,6 +467,9 @@ fn collect_signal_refs(expr: &Expr, signals: &mut HashSet<String>) {
             for arg in signal_args {
                 collect_signal_refs(&arg.value, signals);
             }
+        }
+        Expr::PrefixOp { operand, .. } => {
+            collect_signal_refs(operand, signals);
         }
         // Leaf nodes with no sub-expressions
         Expr::Number { .. }
@@ -572,7 +576,9 @@ fn expr_signal_degree(expr: &Expr, signal_names: &HashSet<String>) -> u32 {
             }
         }
         Expr::UnaryOp { operand, .. } => expr_signal_degree(operand, signal_names),
-        Expr::PostfixOp { operand, .. } => expr_signal_degree(operand, signal_names),
+        Expr::PostfixOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
+            expr_signal_degree(operand, signal_names)
+        }
         Expr::Ternary {
             condition,
             if_true,
@@ -939,18 +945,18 @@ mod tests {
         assert!(!has_error(&reports, "inv"));
     }
 
-    // ── E101: double signal assignment ──────────────────────────────────
+    // ── W103: double signal assignment (warning) ──────────────────────
 
-    fn has_e101(reports: &[ConstraintReport], signal: &str) -> bool {
+    fn has_w103(reports: &[ConstraintReport], signal: &str) -> bool {
         reports.iter().any(|r| {
             r.diagnostics
                 .iter()
-                .any(|d| d.code.as_deref() == Some("E101") && d.message.contains(signal))
+                .any(|d| d.code.as_deref() == Some("W103") && d.message.contains(signal))
         })
     }
 
     #[test]
-    fn e101_double_constrained_assign() {
+    fn w103_double_constrained_assign() {
         let reports = check(
             r#"
             signal input a;
@@ -959,11 +965,11 @@ mod tests {
             c <== a + 1;
             "#,
         );
-        assert!(has_e101(&reports, "c"));
+        assert!(has_w103(&reports, "c"));
     }
 
     #[test]
-    fn e101_hint_then_constrained() {
+    fn w103_hint_then_constrained() {
         let reports = check(
             r#"
             signal input a;
@@ -973,11 +979,11 @@ mod tests {
             x === a;
             "#,
         );
-        assert!(has_e101(&reports, "x"));
+        assert!(has_w103(&reports, "x"));
     }
 
     #[test]
-    fn e101_single_assignment_is_fine() {
+    fn w103_single_assignment_is_fine() {
         let reports = check(
             r#"
             signal input a;
@@ -985,11 +991,11 @@ mod tests {
             c <== a * 2;
             "#,
         );
-        assert!(!has_e101(&reports, "c"));
+        assert!(!has_w103(&reports, "c"));
     }
 
     #[test]
-    fn e101_inline_init_plus_reassign() {
+    fn w103_inline_init_plus_reassign() {
         let reports = check(
             r#"
             signal input a;
@@ -997,7 +1003,7 @@ mod tests {
             c <== a + 1;
             "#,
         );
-        assert!(has_e101(&reports, "c"));
+        assert!(has_w103(&reports, "c"));
     }
 
     // ── W102: <-- with quadratic expression ────���────────────────────────

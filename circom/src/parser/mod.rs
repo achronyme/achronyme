@@ -97,6 +97,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parse_template_extern_c() {
+        let prog = parse("template custom extern_c MyGate() { signal input a; }");
+        if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
+            assert!(t.modifiers.custom);
+            assert!(t.modifiers.extern_c);
+            assert!(!t.modifiers.parallel);
+        } else {
+            panic!("expected template");
+        }
+    }
+
     // ── Function ─────────────────────────────────────────────────────
 
     #[test]
@@ -437,6 +449,34 @@ component main = IsZero();
     }
 
     // ── Error recovery ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_signal_tag_value_assignment() {
+        // signal.tag = expr parses as Substitution with DotAccess target
+        let prog = parse("template T() { signal output {maxbit} x; x.maxbit = 8; }");
+        if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
+            assert_eq!(t.body.stmts.len(), 2);
+            // Second stmt is a substitution: x.maxbit = 8
+            if let crate::ast::Stmt::Substitution { target, op, .. } = &t.body.stmts[1] {
+                assert!(matches!(op, crate::ast::AssignOp::Assign));
+                assert!(
+                    matches!(target, crate::ast::Expr::DotAccess { field, .. } if field == "maxbit")
+                );
+            } else {
+                panic!("expected Substitution for tag value assignment");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_signal_multiple_tags() {
+        let prog = parse("template T() { signal input {binary, maxbit} x; }");
+        if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
+            if let crate::ast::Stmt::SignalDecl { tags, .. } = &t.body.stmts[0] {
+                assert_eq!(tags, &["binary", "maxbit"]);
+            }
+        }
+    }
 
     #[test]
     fn error_recovery_continues() {

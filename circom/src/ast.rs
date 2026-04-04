@@ -57,6 +57,8 @@ pub enum Definition {
 pub struct TemplateModifiers {
     pub custom: bool,
     pub parallel: bool,
+    /// `extern_c` — custom template implemented as external C function (v2.2.3+).
+    pub extern_c: bool,
 }
 
 /// `template [custom] [parallel] Name(params) { body }`
@@ -168,6 +170,12 @@ pub enum Stmt {
         body: Block,
         span: Span,
     },
+    /// `do { body } while (cond);`
+    DoWhile {
+        body: Block,
+        condition: Expr,
+        span: Span,
+    },
     /// `return expr;`
     Return { value: Expr, span: Span },
     /// `assert(expr);`
@@ -244,6 +252,12 @@ pub enum Expr {
         operand: Box<Expr>,
         span: Span,
     },
+    /// Prefix increment/decrement.
+    PrefixOp {
+        op: PostfixOp,
+        operand: Box<Expr>,
+        span: Span,
+    },
     /// Ternary conditional: `cond ? if_true : if_false`
     Ternary {
         condition: Box<Expr>,
@@ -298,6 +312,7 @@ impl Expr {
             | Self::BinOp { span, .. }
             | Self::UnaryOp { span, .. }
             | Self::PostfixOp { span, .. }
+            | Self::PrefixOp { span, .. }
             | Self::Ternary { span, .. }
             | Self::Call { span, .. }
             | Self::AnonComponent { span, .. }

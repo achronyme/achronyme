@@ -208,6 +208,29 @@ impl Parser {
                     span,
                 })
             }
+            // Prefix increment/decrement: ++i, --i
+            TokenKind::Increment => {
+                let sp = self.span();
+                self.advance();
+                let operand = self.parse_expr_bp(PREFIX_BP)?;
+                let span = Span::from_to(&sp, operand.span());
+                Ok(Expr::PrefixOp {
+                    op: PostfixOp::Increment,
+                    operand: Box::new(operand),
+                    span,
+                })
+            }
+            TokenKind::Decrement => {
+                let sp = self.span();
+                self.advance();
+                let operand = self.parse_expr_bp(PREFIX_BP)?;
+                let span = Span::from_to(&sp, operand.span());
+                Ok(Expr::PrefixOp {
+                    op: PostfixOp::Decrement,
+                    operand: Box::new(operand),
+                    span,
+                })
+            }
             // `parallel expr`
             TokenKind::Parallel => {
                 let sp = self.span();

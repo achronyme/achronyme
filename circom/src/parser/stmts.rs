@@ -17,6 +17,7 @@ impl Parser {
             TokenKind::If => self.parse_if_else(),
             TokenKind::For => self.parse_for(),
             TokenKind::While => self.parse_while(),
+            TokenKind::Do => self.parse_do_while(),
             TokenKind::Return => self.parse_return(),
             TokenKind::Assert => self.parse_assert(),
             TokenKind::Log => self.parse_log(),
@@ -273,6 +274,22 @@ impl Parser {
     // Control flow
     // ====================================================================
 
+    /// Parse a block `{ stmts }` or a single bare statement.
+    ///
+    /// Circom allows both `for (...) { body }` and `for (...) stmt;`.
+    fn parse_block_or_stmt(&mut self) -> Result<Block, ParseError> {
+        if self.at(&TokenKind::LBrace) {
+            self.parse_block()
+        } else {
+            let sp = self.span();
+            let stmt = self.parse_stmt()?;
+            Ok(Block {
+                stmts: vec![stmt],
+                span: self.span_to_prev(&sp),
+            })
+        }
+    }
+
     fn parse_if_else(&mut self) -> Result<Stmt, ParseError> {
         let sp = self.span();
         self.expect(&TokenKind::If)?;
@@ -280,13 +297,13 @@ impl Parser {
         let condition = self.parse_expr()?;
         self.expect(&TokenKind::RParen)?;
 
-        let then_body = self.parse_block()?;
+        let then_body = self.parse_block_or_stmt()?;
 
         let else_body = if self.eat(&TokenKind::Else) {
             if self.at(&TokenKind::If) {
                 Some(ElseBranch::IfElse(Box::new(self.parse_if_else()?)))
             } else {
-                Some(ElseBranch::Block(self.parse_block()?))
+                Some(ElseBranch::Block(self.parse_block_or_stmt()?))
             }
         } else {
             None
@@ -300,7 +317,7 @@ impl Parser {
         })
     }
 
-    /// `for (init; cond; step) { body }` — C-style for loop
+    /// `for (init; cond; step) { body }` or `for (init; cond; step) stmt;`
     fn parse_for(&mut self) -> Result<Stmt, ParseError> {
         let sp = self.span();
         self.expect(&TokenKind::For)?;
@@ -315,7 +332,7 @@ impl Parser {
         let step = self.parse_for_step()?;
 
         self.expect(&TokenKind::RParen)?;
-        let body = self.parse_block()?;
+        let body = self.parse_block_or_stmt()?;
 
         Ok(Stmt::For {
             init: Box::new(init),
@@ -359,11 +376,29 @@ impl Parser {
         self.expect(&TokenKind::LParen)?;
         let condition = self.parse_expr()?;
         self.expect(&TokenKind::RParen)?;
-        let body = self.parse_block()?;
+        let body = self.parse_block_or_stmt()?;
 
         Ok(Stmt::While {
             condition,
             body,
+            span: self.span_to_prev(&sp),
+        })
+    }
+
+    /// `do { body } while (cond);`
+    fn parse_do_while(&mut self) -> Result<Stmt, ParseError> {
+        let sp = self.span();
+        self.expect(&TokenKind::Do)?;
+        let body = self.parse_block_or_stmt()?;
+        self.expect(&TokenKind::While)?;
+        self.expect(&TokenKind::LParen)?;
+        let condition = self.parse_expr()?;
+        self.expect(&TokenKind::RParen)?;
+        self.expect(&TokenKind::Semicolon)?;
+
+        Ok(Stmt::DoWhile {
+            body,
+            condition,
             span: self.span_to_prev(&sp),
         })
     }
