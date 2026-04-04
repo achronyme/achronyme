@@ -38,17 +38,18 @@ pub fn lower_template(
         }
     }
 
-    // Pre-evaluate compile-time var declarations (e.g., `var nout = nbits(...)`)
-    // so that signal dimensions like `signal output out[nout]` resolve correctly.
-    let known_vars =
-        super::utils::precompute_vars(&template.body.stmts, &ctx.param_values, &ctx.functions);
+    // Pre-evaluate compile-time var declarations in a single pass.
+    // Scalars (e.g., `var nout = nbits(...)`) and arrays (e.g., `var C[n] = POSEIDON_C(t)`)
+    // are computed together so that later vars can reference earlier ones
+    // (e.g., `var nRoundsP = N_ROUNDS_P[t - 2]`).
+    let precomputed =
+        super::utils::precompute_all(&template.body.stmts, &ctx.param_values, &ctx.functions);
 
     // 1. Extract signal layout (with pre-computed vars for dimension resolution)
-    let layout = extract_signal_layout(template, main, &known_vars)?;
+    let layout = extract_signal_layout(template, main, &precomputed.scalars)?;
 
     // Add pre-computed vars to param_values so they're available during body lowering
-    // (e.g., for loop bounds like `i < nout`)
-    for (name, val) in &known_vars {
+    for (name, val) in &precomputed.scalars {
         ctx.param_values.insert(name.clone(), *val);
     }
 
@@ -76,6 +77,11 @@ pub fn lower_template(
     // Template parameters → env.captures
     for param in &template.params {
         env.captures.insert(param.clone());
+    }
+
+    // Inject pre-computed array vars into the environment
+    for (name, val) in precomputed.arrays {
+        env.known_array_values.insert(name, val);
     }
 
     // 3. Lower body statements
@@ -439,8 +445,9 @@ mod tests {
     // ── Assert template ─────────────────────────────────────────────
 
     #[test]
-    fn assert_is_noop_in_template() {
-        // In Circom, assert() is a prover-side runtime check, not a constraint.
+    fn assert_emits_witness_check_in_template() {
+        // In Circom, assert() is a prover-side runtime check during witness
+        // computation. We emit Assert nodes for the witness evaluator.
         let ir = parse_and_lower(
             r#"
             template CheckNonZero() {
@@ -451,7 +458,8 @@ mod tests {
             "#,
         );
 
-        assert!(ir.body.is_empty());
+        assert_eq!(ir.body.len(), 1);
+        assert!(matches!(&ir.body[0], CircuitNode::Assert { .. }));
     }
 
     // ── Empty template ──────────────────────────────────────────────
@@ -857,7 +865,8 @@ mod tests {
             &prove_ir,
             &inputs,
             &capture_values,
-        );
+        )
+        .unwrap();
 
         // Verify bit decomposition: 13 = 1101 in binary
         assert_eq!(
@@ -936,7 +945,8 @@ mod tests {
             &prove_ir,
             &inputs,
             &capture_values,
-        );
+        )
+        .unwrap();
 
         let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
             .iter()
@@ -1031,7 +1041,8 @@ mod tests {
             &prove_ir,
             &inputs,
             &capture_values,
-        );
+        )
+        .unwrap();
 
         let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
             .iter()
