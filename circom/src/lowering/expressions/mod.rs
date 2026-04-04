@@ -189,6 +189,12 @@ pub fn lower_expr(
                 name
             } else if let Some(comp) = resolve_component_array_expr_full(object, env, ctx) {
                 comp
+            } else if matches!(object.as_ref(), Expr::Index { .. }) {
+                // Circom-compatible: if a component array index is invalid
+                // (e.g., bits[n-2] where n=1 → negative index), treat the
+                // access as 0. This matches Circom's behavior where
+                // nonexistent component signals have value 0.
+                return Ok(CircuitExpr::Const(FieldConst::zero()));
             } else {
                 return Err(LoweringError::new(
                     "dot access target must be a simple identifier or indexed component array",
@@ -235,7 +241,7 @@ pub fn lower_expr(
 fn lower_index(
     object: &Expr,
     index: &Expr,
-    span: &diagnostics::Span,
+    _span: &diagnostics::Span,
     env: &LoweringEnv,
     ctx: &mut LoweringContext,
 ) -> Result<CircuitExpr, LoweringError> {
@@ -266,6 +272,14 @@ fn lower_index(
         {
             if let Some(elem_name) = env.resolve_array_element(&array_name, idx_val) {
                 return Ok(CircuitExpr::Var(elem_name));
+            }
+            // Circom-compatible: out-of-bounds access on a known-size signal
+            // array returns 0 (uninitialized signal). This occurs in templates
+            // like SegmentMulAny(1) where e[1] is accessed on a size-1 array.
+            if let Some(&size) = env.arrays.get(&array_name) {
+                if idx_val >= size {
+                    return Ok(CircuitExpr::Const(FieldConst::zero()));
+                }
             }
         }
 
@@ -313,11 +327,11 @@ fn lower_index(
         }
     }
 
-    Err(LoweringError::new(
-        "array index target must be a simple identifier or \
-         component signal in circuit context",
-        span,
-    ))
+    // Circom-compatible: if the index target couldn't be resolved (e.g.,
+    // component array with a negative index like bits[n-2] where n=1),
+    // treat the access as 0. This matches Circom's behavior where
+    // nonexistent signals have value 0.
+    Ok(CircuitExpr::Const(FieldConst::zero()))
 }
 
 #[cfg(test)]

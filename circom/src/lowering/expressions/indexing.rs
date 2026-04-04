@@ -111,14 +111,29 @@ pub(super) fn resolve_component_array_expr_full(
 }
 
 /// Resolve a component array expression with explicit known constants.
+///
+/// Returns `None` for negative indices (e.g., `bits[n-2]` where `n=1`),
+/// which prevents generating invalid component names.
 fn resolve_component_array_expr_with_constants(
     expr: &Expr,
     known_constants: &HashMap<String, u64>,
 ) -> Option<String> {
     match expr {
         Expr::Index { object, index, .. } => {
-            let idx = super::super::utils::const_eval_u64(index)
-                .or_else(|| super::super::utils::const_eval_with_params(index, known_constants))?;
+            let idx = const_eval_u64(index).or_else(|| {
+                // Evaluate as i64 first to detect negative values
+                let vars: HashMap<String, i64> = known_constants
+                    .iter()
+                    .map(|(k, &v)| (k.clone(), v as i64))
+                    .collect();
+                let empty_fns = HashMap::new();
+                let result = super::super::utils::eval_expr_i64_raw(index, &vars, &empty_fns, 0)?;
+                if result < 0 {
+                    None
+                } else {
+                    Some(result as u64)
+                }
+            })?;
             if let Some(arr_name) = extract_ident_name(object) {
                 Some(format!("{arr_name}_{idx}"))
             } else {

@@ -14,7 +14,7 @@ use crate::ast::Expr;
 
 // Re-export public API — some are used by sibling lowering modules, some by lib.rs/template.rs
 #[allow(unused_imports)]
-pub use eval::{eval_function, eval_function_to_value};
+pub use eval::{eval_expr_i64 as eval_expr_i64_raw, eval_function, eval_function_to_value};
 #[allow(unused_imports)]
 pub use eval_value::{EvalValue, PrecomputeResult};
 #[allow(unused_imports)]

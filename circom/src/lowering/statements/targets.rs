@@ -144,12 +144,29 @@ pub(super) fn resolve_component_array_name(
 }
 
 /// Resolve an index expression to a constant u64 using literals + known_constants.
+///
+/// Returns `None` for negative values (e.g., `n-2` where `n=1`), which
+/// indicate out-of-bounds component array access. This prevents wrapping
+/// to u64::MAX and generating invalid component names like `bits_18446744073709551615`.
 pub(super) fn resolve_const_index(
     expr: &Expr,
     known_constants: &HashMap<String, u64>,
 ) -> Option<u64> {
-    const_eval_u64(expr)
-        .or_else(|| super::super::utils::const_eval_with_params(expr, known_constants))
+    if let Some(v) = const_eval_u64(expr) {
+        return Some(v);
+    }
+    // Evaluate as i64 to detect negative values before converting to u64
+    let vars: HashMap<String, i64> = known_constants
+        .iter()
+        .map(|(k, &v)| (k.clone(), v as i64))
+        .collect();
+    let empty_fns = HashMap::new();
+    let result = super::super::utils::eval_expr_i64_raw(expr, &vars, &empty_fns, 0)?;
+    if result < 0 {
+        None
+    } else {
+        Some(result as u64)
+    }
 }
 
 /// Try to resolve a component array target (1D or multi-dim) to a component name.
