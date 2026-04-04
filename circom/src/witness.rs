@@ -193,7 +193,9 @@ fn eval_hint<F: FieldBackend>(
                 CircuitBinOp::Add => Some(l.add(&r)),
                 CircuitBinOp::Sub => Some(l.sub(&r)),
                 CircuitBinOp::Mul => Some(l.mul(&r)),
-                CircuitBinOp::Div => l.div(&r),
+                // Circom-compatible: division by zero in witness hints
+                // produces 0 (the official witness calculator treats 0/0 = 0).
+                CircuitBinOp::Div => Some(l.div(&r).unwrap_or_else(FieldElement::<F>::zero)),
             }
         }
 

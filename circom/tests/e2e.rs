@@ -655,16 +655,19 @@ fn escalarmulfix_real_circomlib() {
     eprintln!("  Constraints: {n}");
 }
 
-/// EscalarMulAny(149): 2 segments, tests deep nesting + segment chaining.
-#[test]
-fn escalarmulany_compile() {
+/// Full E2E verify with FieldElement inputs (supports large field values).
+fn circomlib_e2e_verify_fe(
+    test_name: &str,
+    circom_file: &str,
+    inputs: &HashMap<String, FieldElement<Bn254Fr>>,
+) -> usize {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let path = manifest_dir.join("test/circomlib/escalarmulany_test.circom");
+    let path = manifest_dir.join(circom_file);
     let lib_dirs = vec![manifest_dir.join("test/circomlib")];
 
-    eprintln!("Compiling EscalarMulAny(149)...");
+    eprintln!("Compiling {test_name}...");
     let compile_result = circom::compile_file(&path, &lib_dirs)
-        .unwrap_or_else(|e| panic!("EscalarMulAny compilation failed: {e}"));
+        .unwrap_or_else(|e| panic!("{test_name} compilation failed: {e}"));
 
     let prove_ir = &compile_result.prove_ir;
     eprintln!("  ✓ Compiled: {} body nodes", prove_ir.body.len());
@@ -677,13 +680,137 @@ fn escalarmulany_compile() {
 
     let mut program = prove_ir
         .instantiate(&fe_captures)
-        .unwrap_or_else(|e| panic!("EscalarMulAny instantiation failed: {e}"));
+        .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
     eprintln!(
-        "  ✓ Instantiated: {} instructions",
+        "  ✓ Instantiated + optimized: {} instructions",
         program.instructions.len()
     );
+
+    let mut all_signals =
+        circom::witness::compute_witness_hints_with_captures(prove_ir, inputs, capture_values)
+            .unwrap_or_else(|e| panic!("{test_name} witness computation failed: {e}"));
+
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    let witness = r1cs_compiler
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("{test_name} R1CS compilation failed: {e}"));
+
+    let num_constraints = r1cs_compiler.cs.num_constraints();
+    eprintln!("  ✓ R1CS compiled: {num_constraints} constraints");
+
+    r1cs_compiler
+        .cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("{test_name} R1CS verification failed: {e}"));
+
+    eprintln!("  ✓ R1CS verified!");
+    eprintln!("  {test_name} — {num_constraints} constraints — VERIFIED ✓");
+
+    num_constraints
+}
+
+/// EscalarMulAny(254): full R1CS verify with identity point.
+///
+/// Uses n=254 (real-world EdDSA scalar size). Official circom produces
+/// 2,312 constraints for this circuit (2,310 non-linear + 2 linear).
+#[test]
+fn escalarmulany_r1cs() {
+    let mut inputs = HashMap::new();
+    // 254 bits of scalar, all zero
+    for i in 0..254 {
+        inputs.insert(format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    // Identity point (0, 1) — zeropoint guard forces G8
+    inputs.insert("p_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("p_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+
+    let n = circomlib_e2e_verify_fe(
+        "EscalarMulAny(254) R1CS",
+        "test/circomlib/escalarmulany254_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    eprintln!("  Official circom: 2312 constraints");
+    assert!(n > 2000, "expected >2000 constraints, got {n}");
+}
+
+/// EscalarMulAny(254): full Groth16 proof generation and verification.
+#[test]
+fn escalarmulany_groth16() {
+    let mut inputs = HashMap::new();
+    for i in 0..254 {
+        inputs.insert(format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    inputs.insert("p_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("p_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/escalarmulany254_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("compilation failed: {e}"));
+
+    let prove_ir = &compile_result.prove_ir;
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate(&fe_captures)
+        .unwrap_or_else(|e| panic!("instantiation failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    let mut all_signals =
+        circom::witness::compute_witness_hints_with_captures(prove_ir, &inputs, capture_values)
+            .unwrap_or_else(|e| panic!("witness failed: {e}"));
+    for (k, v) in &fe_captures {
+        all_signals.entry(k.clone()).or_insert(*v);
+    }
+
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
+    let witness = r1cs
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("R1CS failed: {e}"));
+
+    r1cs.cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("R1CS verify failed: {e}"));
+
+    let n = r1cs.cs.num_constraints();
+    eprintln!("  ✓ R1CS: {n} constraints");
+
+    // Groth16 proof
+    let cache_dir = std::env::temp_dir().join("achronyme_test_keys");
+    let result = proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &cache_dir)
+        .unwrap_or_else(|e| panic!("Groth16 proof generation failed: {e}"));
+
+    match &result {
+        vm::ProveResult::Proof {
+            proof_json,
+            public_json,
+            vkey_json,
+        } => {
+            eprintln!("  ✓ Groth16 proof generated ({} bytes)", proof_json.len());
+
+            let valid =
+                proving::groth16_bn254::verify_proof_from_json(proof_json, public_json, vkey_json)
+                    .unwrap_or_else(|e| panic!("Groth16 verification failed: {e}"));
+
+            assert!(valid, "Groth16 proof did not verify!");
+            eprintln!("  ✓ Groth16 proof VERIFIED!");
+            eprintln!("\n  EscalarMulAny(149) — {n} constraints — GROTH16 VERIFIED ✓");
+        }
+        _ => panic!("expected Proof variant from Groth16"),
+    }
 }
 
 /// EdDSAPoseidon: the "boss final" — full signature verification.
@@ -730,4 +857,52 @@ fn eddsaposeidon_compile() {
         prove_ir.body.len(),
         program.instructions.len()
     );
+}
+
+/// EdDSaPoseidon R1CS verification with enabled=0.
+///
+/// With enabled=0, ForceEqualIfEnabled doesn't check the signature,
+/// so any input values satisfy the constraints. This validates that
+/// the entire constraint system is well-formed and satisfiable.
+///
+/// BLOCKED: CompConstant uses `var b = (1 << 128) - 1` which overflows
+/// the i64 compile-time evaluator. Needs field-element var evaluation.
+#[test]
+#[ignore] // TODO: compile-time var overflow — needs field-element eval for (1 << 128)
+fn eddsaposeidon_r1cs() {
+    // BabyJubjub base point (Base8) — a valid curve point.
+    // Even with enabled=0, intermediate values must be valid for Num2Bits.
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert(
+        "Ax".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "Ay".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("S".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    // R8 = same base point (arbitrary valid point for enabled=0)
+    inputs.insert(
+        "R8x".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "R8y".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("M".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+
+    let n = circomlib_e2e_verify_fe(
+        "EdDSAPoseidon R1CS (enabled=0)",
+        "test/circomlib/eddsaposeidon_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 10000, "expected >10000 constraints, got {n}");
 }
