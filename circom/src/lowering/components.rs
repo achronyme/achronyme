@@ -69,12 +69,13 @@ pub fn inline_component_body_with_arrays<'a>(
 ) -> Result<Vec<CircuitNode>, LoweringError> {
     // Custom templates generate Plonk custom gates, not R1CS constraints.
     if template.modifiers.custom {
-        return Err(LoweringError::new(
+        return Err(LoweringError::with_code(
             format!(
                 "template `{}` is declared as `custom` which generates Plonk custom gates; \
                  custom templates are not supported in R1CS mode — use a standard template instead",
                 template.name
             ),
+            "E205",
             span,
         ));
     }

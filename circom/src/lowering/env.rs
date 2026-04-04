@@ -81,6 +81,17 @@ impl LoweringEnv {
         self.arrays.insert(name, len);
     }
 
+    /// Collect all known names in scope (inputs, locals, captures, known constants).
+    /// Used for "did you mean?" suggestions.
+    pub fn all_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        names.extend(self.inputs.iter().cloned());
+        names.extend(self.locals.iter().cloned());
+        names.extend(self.captures.iter().cloned());
+        names.extend(self.known_constants.keys().cloned());
+        names
+    }
+
     /// Resolve an array element access: `arr[idx]` → element name if idx is constant.
     pub fn resolve_array_element(&self, name: &str, index: usize) -> Option<String> {
         let len = self.arrays.get(name)?;

@@ -32,6 +32,8 @@ pub mod signals;
 #[allow(dead_code)]
 pub mod statements;
 #[allow(dead_code)]
+pub mod suggest;
+#[allow(dead_code)]
 pub mod template;
 #[allow(dead_code)]
 pub mod utils;

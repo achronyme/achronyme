@@ -534,10 +534,24 @@ fn lower_component_decl<'a>(
                         );
                     }
                 } else {
-                    return Err(LoweringError::new(
+                    let mut err = LoweringError::with_code(
                         format!("undefined template `{}`", call.template_name),
+                        "E202",
                         span,
-                    ));
+                    );
+                    let tmpl_names: Vec<&str> = ctx.templates.keys().copied().collect();
+                    if let Some(similar) = crate::lowering::suggest::find_similar(
+                        &call.template_name,
+                        tmpl_names.into_iter(),
+                    ) {
+                        err.diagnostic = err.diagnostic
+                            .with_suggestion(
+                                diagnostics::SpanRange::from_span(span),
+                                similar,
+                                "a similar template exists",
+                            );
+                    }
+                    return Err(err);
                 }
             }
         }

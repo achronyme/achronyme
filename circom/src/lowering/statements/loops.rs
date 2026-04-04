@@ -44,7 +44,7 @@ pub(super) fn lower_for_loop<'a>(
             ..
         } if names.len() == 1 => {
             let start = const_eval_u64(init_expr).ok_or_else(|| {
-                LoweringError::new("for loop init must be a compile-time constant", span)
+                LoweringError::with_code("for loop init must be a compile-time constant", "E208", span)
             })?;
             (names[0].clone(), start)
         }
@@ -56,16 +56,17 @@ pub(super) fn lower_for_loop<'a>(
             ..
         } => {
             let name = extract_target_name(target).ok_or_else(|| {
-                LoweringError::new("for loop init must assign to a simple variable", span)
+                LoweringError::with_code("for loop init must assign to a simple variable", "E208", span)
             })?;
             let start = const_eval_u64(value).ok_or_else(|| {
-                LoweringError::new("for loop init must be a compile-time constant", span)
+                LoweringError::with_code("for loop init must be a compile-time constant", "E208", span)
             })?;
             (name, start)
         }
         _ => {
-            return Err(LoweringError::new(
+            return Err(LoweringError::with_code(
                 "for loop must use `var i = <const>` or `i = <const>` initialization",
+                "E208",
                 span,
             ));
         }
@@ -73,9 +74,10 @@ pub(super) fn lower_for_loop<'a>(
 
     // Extract end bound from condition: `i < end` or `i <= end`
     let bound = extract_loop_bound(condition, &var_name, env).ok_or_else(|| {
-        LoweringError::new(
+        LoweringError::with_code(
             "for loop condition must be `i < <bound>` or `i <= <bound>` \
              where <bound> is a constant or template parameter",
+            "E208",
             span,
         )
     })?;
@@ -240,17 +242,19 @@ pub(super) fn eval_while_compile_time(
         for _ in 0..MAX_WHILE_ITERS {
             for stmt in body_stmts {
                 if super::super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions).is_none() {
-                    return Err(LoweringError::new(
+                    return Err(LoweringError::with_code(
                         "do-while loop body could not be evaluated at compile time; \
                          all variables must be known constants",
+                        "E209",
                         span,
                     ));
                 }
             }
             let cond =
                 super::super::utils::try_eval_expr_i64(condition, &vars, &functions).ok_or_else(|| {
-                    LoweringError::new(
+                    LoweringError::with_code(
                         "do-while loop condition could not be evaluated at compile time",
+                        "E209",
                         span,
                     )
                 })?;
@@ -268,8 +272,9 @@ pub(super) fn eval_while_compile_time(
         for _ in 0..MAX_WHILE_ITERS {
             let cond =
                 super::super::utils::try_eval_expr_i64(condition, &vars, &functions).ok_or_else(|| {
-                    LoweringError::new(
+                    LoweringError::with_code(
                         "while loop condition could not be evaluated at compile time",
+                        "E209",
                         span,
                     )
                 })?;
@@ -284,9 +289,10 @@ pub(super) fn eval_while_compile_time(
             }
             for stmt in body_stmts {
                 if super::super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions).is_none() {
-                    return Err(LoweringError::new(
+                    return Err(LoweringError::with_code(
                         "while loop body could not be evaluated at compile time; \
                          all variables must be known constants",
+                        "E209",
                         span,
                     ));
                 }
@@ -294,11 +300,12 @@ pub(super) fn eval_while_compile_time(
         }
     }
 
-    Err(LoweringError::new(
+    Err(LoweringError::with_code(
         format!(
             "while loop did not terminate within {MAX_WHILE_ITERS} iterations \
              during compile-time evaluation"
         ),
+        "E209",
         span,
     ))
 }

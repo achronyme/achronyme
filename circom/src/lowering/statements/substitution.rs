@@ -372,7 +372,21 @@ fn lower_anon_component_tuple(
         }
     };
     let template = *ctx.templates.get(tmpl_name.as_str()).ok_or_else(|| {
-        LoweringError::new(format!("template `{tmpl_name}` not found"), span)
+        let mut err = LoweringError::with_code(
+            format!("template `{tmpl_name}` not found"),
+            "E202",
+            span,
+        );
+        let tmpl_names: Vec<&str> = ctx.templates.keys().copied().collect();
+        if let Some(similar) = crate::lowering::suggest::find_similar(&tmpl_name, tmpl_names.into_iter()) {
+            err.diagnostic = err.diagnostic
+                .with_suggestion(
+                    diagnostics::SpanRange::from_span(span),
+                    similar,
+                    "a similar template exists",
+                );
+        }
+        err
     })?;
 
     // Lower template arguments
@@ -507,11 +521,12 @@ pub(super) fn extract_component_call(
         if let Some(name) = extract_ident_name(callee) {
             // Check if this is a bus type being used as a component
             if ctx.bus_names.contains(name.as_str()) {
-                return Err(LoweringError::new(
+                return Err(LoweringError::with_code(
                     format!(
                         "`{name}` is a bus type, not a template; bus types require \
                          Circom ≥2.2.0 bus compilation support which is not yet implemented"
                     ),
+                    "E205",
                     span,
                 ));
             }

@@ -22,6 +22,7 @@ use crate::ast::{self, Expr};
 use super::context::LoweringContext;
 use super::env::{LoweringEnv, VarKind};
 use super::error::LoweringError;
+use super::suggest::find_similar;
 use super::utils::{const_eval_u64, extract_ident_name, EvalValue};
 
 /// The default max bits for IntDiv/IntMod. Circom operates over BN254 (~254 bits).
@@ -81,10 +82,23 @@ pub fn lower_expr(
                 Some(VarKind::Input) => Ok(CircuitExpr::Input(name.clone())),
                 Some(VarKind::Local) => Ok(CircuitExpr::Var(name.clone())),
                 Some(VarKind::Capture) => Ok(CircuitExpr::Capture(name.clone())),
-                None => Err(LoweringError::new(
-                    format!("undefined variable `{name}` in circuit context"),
-                    span,
-                )),
+                None => {
+                    let candidates = env.all_names();
+                    let mut err = LoweringError::with_code(
+                        format!("undefined variable `{name}` in circuit context"),
+                        "E200",
+                        span,
+                    );
+                    if let Some(similar) = find_similar(name, candidates.iter().map(|s| s.as_str())) {
+                        err.diagnostic = err.diagnostic
+                            .with_suggestion(
+                                diagnostics::SpanRange::from_span(span),
+                                similar,
+                                "a similar name exists in scope",
+                            );
+                    }
+                    Err(err)
+                }
             }
         }
 
@@ -522,10 +536,21 @@ fn inline_function_call(
     let func = match ctx.functions.get(name) {
         Some(f) => *f,
         None => {
-            return Err(LoweringError::new(
+            let mut err = LoweringError::with_code(
                 format!("undefined function `{name}` in circuit context"),
+                "E201",
                 span,
-            ));
+            );
+            let fn_names: Vec<&str> = ctx.functions.keys().copied().collect();
+            if let Some(similar) = find_similar(name, fn_names.into_iter()) {
+                err.diagnostic = err.diagnostic
+                    .with_suggestion(
+                        diagnostics::SpanRange::from_span(span),
+                        similar,
+                        "a similar function exists",
+                    );
+            }
+            return Err(err);
         }
     };
 
@@ -541,12 +566,13 @@ fn inline_function_call(
     }
 
     if args.len() != func.params.len() {
-        return Err(LoweringError::new(
+        return Err(LoweringError::with_code(
             format!(
-                "function `{name}` expects {} arguments, got {}",
+                "function `{name}` expects {} argument(s), got {}",
                 func.params.len(),
                 args.len(),
             ),
+            "E206",
             span,
         ));
     }
