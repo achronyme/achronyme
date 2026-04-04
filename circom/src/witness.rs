@@ -18,10 +18,12 @@ use memory::{FieldBackend, FieldElement};
 /// Takes user-provided inputs and evaluates `WitnessHint` expressions
 /// in order, building up a map of signal_name → FieldElement.
 /// Later hints can reference earlier-computed values.
+///
+/// Returns `Err` if a Circom `assert()` fails during witness computation.
 pub fn compute_witness_hints<F: FieldBackend>(
     prove_ir: &ProveIR,
     inputs: &HashMap<String, FieldElement<F>>,
-) -> HashMap<String, FieldElement<F>> {
+) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
     compute_witness_hints_with_captures(prove_ir, inputs, &HashMap::new())
 }
 
@@ -29,11 +31,13 @@ pub fn compute_witness_hints<F: FieldBackend>(
 ///
 /// Captures are needed to resolve For loop bounds like `for i < n`
 /// where `n` is a template parameter.
+///
+/// Returns `Err` if a Circom `assert()` fails during witness computation.
 pub fn compute_witness_hints_with_captures<F: FieldBackend>(
     prove_ir: &ProveIR,
     inputs: &HashMap<String, FieldElement<F>>,
     captures: &HashMap<String, u64>,
-) -> HashMap<String, FieldElement<F>> {
+) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
     let mut env: HashMap<String, FieldElement<F>> = inputs.clone();
     // Seed env with capture values so expressions like `1 << n` can
     // evaluate when `n` is a template parameter / capture.
@@ -41,15 +45,29 @@ pub fn compute_witness_hints_with_captures<F: FieldBackend>(
         env.entry(name.clone())
             .or_insert_with(|| FieldElement::<F>::from_u64(*val));
     }
-    collect_hints_recursive(&prove_ir.body, &mut env, captures);
-    env
+    collect_hints_recursive(&prove_ir.body, &mut env, captures)?;
+    Ok(env)
 }
+
+/// Error during witness computation.
+#[derive(Debug)]
+pub struct WitnessError {
+    pub message: String,
+}
+
+impl std::fmt::Display for WitnessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for WitnessError {}
 
 fn collect_hints_recursive<F: FieldBackend>(
     nodes: &[CircuitNode],
     env: &mut HashMap<String, FieldElement<F>>,
     captures: &HashMap<String, u64>,
-) {
+) -> Result<(), WitnessError> {
     for node in nodes {
         match node {
             CircuitNode::WitnessHint { name, hint, .. } => {
@@ -96,27 +114,47 @@ fn collect_hints_recursive<F: FieldBackend>(
                     ForRange::Array(_) => (None, None),
                 };
                 if let (Some(start), Some(end)) = (start, end) {
-                    // Unroll the loop: set loop var to each iteration value
                     for i in start..end {
                         env.insert(var.clone(), FieldElement::<F>::from_u64(i));
-                        collect_hints_recursive(body, env, captures);
+                        collect_hints_recursive(body, env, captures)?;
                     }
                 } else {
-                    // Can't determine bounds — recurse once as fallback
-                    collect_hints_recursive(body, env, captures);
+                    collect_hints_recursive(body, env, captures)?;
                 }
             }
             CircuitNode::If {
+                cond,
                 then_body,
                 else_body,
                 ..
             } => {
-                collect_hints_recursive(then_body, env, captures);
-                collect_hints_recursive(else_body, env, captures);
+                if let Some(val) = eval_hint(cond, env) {
+                    if val != FieldElement::<F>::zero() {
+                        collect_hints_recursive(then_body, env, captures)?;
+                    } else {
+                        collect_hints_recursive(else_body, env, captures)?;
+                    }
+                } else {
+                    collect_hints_recursive(then_body, env, captures)?;
+                    collect_hints_recursive(else_body, env, captures)?;
+                }
+            }
+            CircuitNode::Assert { expr, message, .. } => {
+                if let Some(val) = eval_hint(expr, env) {
+                    if val == FieldElement::<F>::zero() {
+                        let msg = message
+                            .as_deref()
+                            .unwrap_or("circom assert() failed during witness computation");
+                        return Err(WitnessError {
+                            message: msg.to_string(),
+                        });
+                    }
+                }
             }
             _ => {}
         }
     }
+    Ok(())
 }
 
 /// Evaluate an expression and extract a u64 index value.

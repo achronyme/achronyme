@@ -4,7 +4,7 @@
 //! parsed `CircomProgram`, enabling component instantiation (template
 //! inlining) and function call inlining during lowering.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{CircomProgram, Definition, FunctionDef, TemplateDef};
 
@@ -26,6 +26,10 @@ pub struct LoweringContext<'a> {
     /// Template parameter values for the main template (e.g., n=3).
     /// Used to resolve component array sizes and unroll loops at lowering time.
     pub param_values: HashMap<String, u64>,
+    /// Bus type names declared in the program (for error detection).
+    pub bus_names: HashSet<&'a str>,
+    /// Counter for generating unique anonymous component names.
+    anon_counter: usize,
 }
 
 impl<'a> LoweringContext<'a> {
@@ -33,6 +37,7 @@ impl<'a> LoweringContext<'a> {
     pub fn from_program(program: &'a CircomProgram) -> Self {
         let mut templates = HashMap::new();
         let mut functions = HashMap::new();
+        let mut bus_names = HashSet::new();
         for def in &program.definitions {
             match def {
                 Definition::Template(t) => {
@@ -41,7 +46,9 @@ impl<'a> LoweringContext<'a> {
                 Definition::Function(f) => {
                     functions.insert(f.name.as_str(), f);
                 }
-                Definition::Bus(_) => {} // Not yet supported
+                Definition::Bus(b) => {
+                    bus_names.insert(b.name.as_str());
+                }
             }
         }
         Self {
@@ -49,6 +56,28 @@ impl<'a> LoweringContext<'a> {
             functions,
             inline_depth: 0,
             param_values: HashMap::new(),
+            bus_names,
+            anon_counter: 0,
+        }
+    }
+
+    /// Generate a unique ID for an anonymous component.
+    pub fn next_anon_id(&mut self) -> usize {
+        let id = self.anon_counter;
+        self.anon_counter += 1;
+        id
+    }
+
+    /// Create an empty context (for testing).
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self {
+            templates: HashMap::new(),
+            functions: HashMap::new(),
+            inline_depth: 0,
+            param_values: HashMap::new(),
+            bus_names: HashSet::new(),
+            anon_counter: 0,
         }
     }
 }
