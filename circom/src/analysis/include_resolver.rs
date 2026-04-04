@@ -53,10 +53,12 @@ pub fn resolve_includes(
     resolver.resolve_file(&root_path)?;
 
     // Build merged program: root file first, then includes in order
+    // SAFETY: resolve_file(&root_path) returned Ok above, which means root_path
+    // was successfully parsed and inserted into parsed_cache.
     let root_prog = resolver
         .parsed_cache
         .remove(&root_path)
-        .expect("root file must be in cache");
+        .expect("root file must be in cache after successful resolve_file");
 
     let mut definitions = Vec::new();
     let mut custom_templates = root_prog.custom_templates;

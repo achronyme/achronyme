@@ -349,9 +349,11 @@ fn lower_multi_index(
         });
     }
 
+    // SAFETY: `indices` is non-empty (caller unwraps a chain of Index AST nodes),
+    // so the loop runs at least once and `result` is always Some.
     Ok(CircuitExpr::ArrayIndex {
         array: base_name.to_string(),
-        index: Box::new(result.unwrap()),
+        index: Box::new(result.expect("lower_multi_index called with empty indices")),
     })
 }
 

@@ -479,7 +479,7 @@ fn lower_anon_component_tuple(
                     span: sr.clone(),
                 });
             }
-            _ => unreachable!(),
+            _ => unreachable!("reverse operators desugared before tuple handling"),
         }
     }
     Ok(())

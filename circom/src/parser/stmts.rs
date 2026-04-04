@@ -107,7 +107,7 @@ impl Parser {
                 self.advance();
                 SignalType::Output
             }
-            _ => unreachable!(),
+            _ => unreachable!("parse_input_output_signal_decl called without Input/Output token"),
         };
         self.expect(&TokenKind::Signal)?;
 

@@ -137,7 +137,7 @@ fn classify_captures(params: &[String], body: &[CircuitNode]) -> Vec<CaptureDef>
                 (true, true) => CaptureUsage::Both,
                 (true, false) => CaptureUsage::StructureOnly,
                 (false, true) => CaptureUsage::CircuitInput,
-                (false, false) => unreachable!(),
+                (false, false) => unreachable!("capture appears in scan but is used in neither structure nor circuit"),
             };
             captures.push(CaptureDef {
                 name: param.clone(),
