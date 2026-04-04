@@ -33,7 +33,10 @@ use super::utils::extract_ident_name;
 use arrays::{expand_eval_value_to_nodes, try_eval_array_init};
 use loops::{eval_while_compile_time, lower_for_loop, stmts_are_var_only};
 use substitution::{compound_to_binop, extract_component_call, lower_substitution};
-use wiring::{extract_component_wiring_with_env, flush_indexed_pending, PendingComponent};
+use wiring::{
+    collect_value_component_refs, extract_component_wiring_with_env, flush_indexed_pending,
+    flush_specific_component, PendingComponent,
+};
 
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
 pub fn lower_stmts<'a>(
@@ -91,9 +94,16 @@ fn lower_stmt<'a>(
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
     // Before processing a substitution that references a component output,
-    // flush pending components whose inputs were wired via indexed
-    // assignments. Skip if this statement is itself a wiring of a pending
-    // component (to avoid flushing before all array elements are wired).
+    // ensure the referenced component has been inlined so its output `Let`
+    // bindings exist before the `Var` reference.
+    //
+    // Two cases:
+    // 1. Target is NOT a pending wiring → flush all indexed pending
+    //    (original behavior: any non-wiring statement triggers bulk flush).
+    // 2. Target IS a pending wiring → only flush components whose outputs
+    //    are referenced in the VALUE expression (demand-driven flush).
+    //    We can't do a bulk flush here because it might prematurely inline
+    //    partially-wired components.
     if let Stmt::Substitution {
         target, op, value, ..
     } = stmt
@@ -108,7 +118,18 @@ fn lower_stmt<'a>(
         let is_pending_wiring = extract_component_wiring_with_env(actual_target, env, ctx)
             .map(|(comp, _)| pending.contains_key(&comp))
             .unwrap_or(false);
-        if !is_pending_wiring {
+        if is_pending_wiring {
+            // Scan the VALUE expression for references to pending components.
+            // For reverse operators, the "value" in semantics is `target`.
+            let actual_value = match op {
+                AssignOp::RConstraintAssign | AssignOp::RSignalAssign => target,
+                _ => value,
+            };
+            let refs = collect_value_component_refs(actual_value, pending, env, ctx);
+            for comp_name in refs {
+                flush_specific_component(&comp_name, nodes, ctx, pending)?;
+            }
+        } else {
             flush_indexed_pending(nodes, ctx, pending)?;
         }
     }
@@ -227,7 +248,16 @@ fn lower_stmt<'a>(
             else_body,
             span,
         } => {
-            lower_if_else(condition, then_body, else_body.as_ref(), span, env, nodes, ctx, pending)?;
+            lower_if_else(
+                condition,
+                then_body,
+                else_body.as_ref(),
+                span,
+                env,
+                nodes,
+                ctx,
+                pending,
+            )?;
         }
 
         // ── For loop ────────────────────────────────────────────────

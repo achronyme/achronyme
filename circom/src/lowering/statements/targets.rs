@@ -148,7 +148,8 @@ pub(super) fn resolve_const_index(
     expr: &Expr,
     known_constants: &HashMap<String, u64>,
 ) -> Option<u64> {
-    const_eval_u64(expr).or_else(|| super::super::utils::const_eval_with_params(expr, known_constants))
+    const_eval_u64(expr)
+        .or_else(|| super::super::utils::const_eval_with_params(expr, known_constants))
 }
 
 /// Try to resolve a component array target (1D or multi-dim) to a component name.
@@ -211,7 +212,10 @@ pub(super) fn linearize_multi_index(
     let strides = env.strides.get(array_name);
     let n = indices.len();
 
-    // Try full constant evaluation first
+    // Try full constant evaluation first — return a constant index value.
+    // Note: we return Const(linear), NOT Var(element_name), because this
+    // function is used for LetIndexed/WitnessHintIndexed where the index
+    // must be a constant, not a variable reference to the element itself.
     let const_indices: Option<Vec<u64>> = indices.iter().map(const_eval_u64).collect();
     if let Some(vals) = const_indices {
         let mut linear: usize = 0;
@@ -222,9 +226,6 @@ pub(super) fn linearize_multi_index(
                 1
             };
             linear += val as usize * stride;
-        }
-        if let Some(elem_name) = env.resolve_array_element(array_name, linear) {
-            return Ok(CircuitExpr::Var(elem_name));
         }
         return Ok(CircuitExpr::Const(FieldConst::from_u64(linear as u64)));
     }

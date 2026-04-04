@@ -84,6 +84,107 @@ pub(super) fn flush_indexed_pending<'a>(
     Ok(())
 }
 
+/// Inline a specific pending component by name.
+///
+/// Used by the value-scan flush: when a substitution's value expression
+/// references a pending component's output (e.g., `windows[0].out8[0]`),
+/// that component must be inlined first so its output `Let` bindings
+/// exist before the `Var` reference.
+pub(super) fn flush_specific_component<'a>(
+    comp_name: &str,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
+) -> Result<(), LoweringError> {
+    if let Some(comp) = pending.remove(comp_name) {
+        let body = inline_component_body_with_arrays(
+            comp_name,
+            comp.template,
+            &comp.template_args,
+            &comp.array_args,
+            ctx,
+            &comp.template.span,
+        )?;
+        nodes.extend(body);
+    }
+    Ok(())
+}
+
+/// Scan a value expression for references to pending component outputs.
+///
+/// Walks the AST recursively looking for `DotAccess` patterns whose object
+/// resolves to a pending component name. Returns the names of referenced
+/// pending components (deduplicated).
+///
+/// This enables demand-driven flushing: a component is inlined only when
+/// its output is actually needed, not based on heuristic "fully wired" checks.
+pub(super) fn collect_value_component_refs(
+    expr: &Expr,
+    pending: &HashMap<String, PendingComponent>,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Vec<String> {
+    let mut refs = Vec::new();
+    let all_constants = ctx.all_constants(env);
+    collect_refs_recursive(expr, pending, &all_constants, &mut refs);
+    refs
+}
+
+fn collect_refs_recursive(
+    expr: &Expr,
+    pending: &HashMap<String, PendingComponent>,
+    constants: &HashMap<String, u64>,
+    refs: &mut Vec<String>,
+) {
+    match expr {
+        Expr::DotAccess { object, .. } => {
+            // comp.signal or comp[i].signal
+            let comp_name = extract_ident_name(object)
+                .or_else(|| resolve_component_array_name(object, constants));
+            if let Some(name) = comp_name {
+                if pending.contains_key(&name) && !refs.contains(&name) {
+                    refs.push(name);
+                }
+            }
+            // Also recurse into the object (handles nested Index chains)
+            collect_refs_recursive(object, pending, constants, refs);
+        }
+        Expr::Index { object, index, .. } => {
+            collect_refs_recursive(object, pending, constants, refs);
+            collect_refs_recursive(index, pending, constants, refs);
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_refs_recursive(lhs, pending, constants, refs);
+            collect_refs_recursive(rhs, pending, constants, refs);
+        }
+        Expr::UnaryOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
+            collect_refs_recursive(operand, pending, constants, refs);
+        }
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            collect_refs_recursive(condition, pending, constants, refs);
+            collect_refs_recursive(if_true, pending, constants, refs);
+            collect_refs_recursive(if_false, pending, constants, refs);
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                collect_refs_recursive(arg, pending, constants, refs);
+            }
+        }
+        Expr::Tuple { elements, .. } => {
+            for elem in elements {
+                collect_refs_recursive(elem, pending, constants, refs);
+            }
+        }
+        // Leaf nodes: Ident, Number, HexNumber, etc. — no component references
+        _ => {}
+    }
+}
+
 /// If this substitution wires a component input, mark it as wired.
 /// When all inputs are wired, inline the component body.
 ///

@@ -543,11 +543,7 @@ fn mimcsponge_real_circomlib() {
 /// Compile a circomlib test file → ProveIR → instantiate → R1CS → verify.
 ///
 /// Returns the number of constraints on success.
-fn circomlib_e2e_verify(
-    test_name: &str,
-    circom_file: &str,
-    inputs: &[(&str, u64)],
-) -> usize {
+fn circomlib_e2e_verify(test_name: &str, circom_file: &str, inputs: &[(&str, u64)]) -> usize {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join(circom_file);
 
@@ -649,7 +645,6 @@ fn babyjub_real_circomlib() {
 /// SegmentMulFix orchestration, Edwards↔Montgomery conversion,
 /// component arrays, 2D signal wiring.
 #[test]
-#[ignore] // TODO: deep name mangling bug — mulFix.segments_0.windows_0.out8_0 undeclared
 fn escalarmulfix_real_circomlib() {
     // 3-bit scalar = 5 (bits: 1,0,1)
     let n = circomlib_e2e_verify(
