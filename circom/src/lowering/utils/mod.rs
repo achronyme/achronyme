@@ -67,37 +67,8 @@ pub fn const_eval_with_params(expr: &Expr, params: &HashMap<String, u64>) -> Opt
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::{extract_functions, parse_expr, parse_program};
     use super::*;
-    use crate::parser::parse_circom;
-
-    fn parse_expr(expr_src: &str) -> Expr {
-        let src = format!("template T() {{ var _x = {expr_src}; }}");
-        let (prog, errors) = parse_circom(&src).expect("parse failed");
-        assert!(errors.is_empty(), "parse errors: {:?}", errors);
-        match &prog.definitions[0] {
-            crate::ast::Definition::Template(t) => match &t.body.stmts[0] {
-                crate::ast::Stmt::VarDecl { init: Some(e), .. } => e.clone(),
-                other => panic!("expected VarDecl, got {:?}", other),
-            },
-            _ => panic!("expected template"),
-        }
-    }
-
-    fn parse_program(src: &str) -> crate::ast::CircomProgram {
-        let (prog, errors) = parse_circom(src).expect("parse failed");
-        assert!(errors.is_empty(), "parse errors: {:?}", errors);
-        prog
-    }
-
-    fn extract_functions(prog: &crate::ast::CircomProgram) -> HashMap<&str, &crate::ast::FunctionDef> {
-        let mut fns = HashMap::new();
-        for def in &prog.definitions {
-            if let crate::ast::Definition::Function(f) = def {
-                fns.insert(f.name.as_str(), f);
-            }
-        }
-        fns
-    }
 
     #[test]
     fn const_eval_decimal() {

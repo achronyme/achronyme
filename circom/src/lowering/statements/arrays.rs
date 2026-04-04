@@ -5,7 +5,7 @@
 //! whether a loop body references component arrays or known array values (requiring
 //! lowering-time unrolling).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use diagnostics::SpanRange;
 use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
@@ -32,10 +32,7 @@ pub(super) fn try_eval_array_init(
     ctx: &LoweringContext,
 ) -> Option<EvalValue> {
     // Build a combined params map from ctx.param_values + env.known_constants
-    let mut params: HashMap<String, u64> = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        params.insert(k.clone(), v);
-    }
+    let params = ctx.all_constants(env);
 
     match expr {
         Expr::Call { callee, args, .. } => {

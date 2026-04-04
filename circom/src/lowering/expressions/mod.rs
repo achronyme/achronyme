@@ -308,40 +308,10 @@ fn lower_index(
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::{make_ctx, make_env, parse_expr};
     use super::super::utils::const_eval_u64;
     use super::*;
-    use crate::parser::parse_circom;
     use ir::prove_ir::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp};
-
-    /// Parse a Circom expression inside a template var init.
-    fn parse_expr(expr_src: &str) -> Expr {
-        let src = format!("template T() {{ var _x = {expr_src}; }}");
-        let (prog, errors) = parse_circom(&src).expect("parse failed");
-        assert!(errors.is_empty(), "parse errors: {:?}", errors);
-        match &prog.definitions[0] {
-            crate::ast::Definition::Template(t) => match &t.body.stmts[0] {
-                crate::ast::Stmt::VarDecl { init: Some(e), .. } => e.clone(),
-                other => panic!("expected VarDecl, got {:?}", other),
-            },
-            _ => panic!("expected template"),
-        }
-    }
-
-    fn make_env() -> LoweringEnv {
-        let mut env = LoweringEnv::new();
-        env.inputs.insert("in".to_string());
-        env.inputs.insert("a".to_string());
-        env.inputs.insert("b".to_string());
-        env.locals.insert("x".to_string());
-        env.locals.insert("out".to_string());
-        env.locals.insert("bits".to_string());
-        env.captures.insert("n".to_string());
-        env
-    }
-
-    fn make_ctx() -> LoweringContext<'static> {
-        LoweringContext::empty()
-    }
 
     // ── Literals ────────────────────────────────────────────────────
 

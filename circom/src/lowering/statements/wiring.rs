@@ -141,10 +141,7 @@ pub(super) fn extract_component_wiring_with_env(
     ctx: &LoweringContext,
 ) -> Option<(String, String)> {
     // Build combined constants for index resolution
-    let mut all_constants = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        all_constants.insert(k.clone(), v);
-    }
+    let all_constants = ctx.all_constants(env);
 
     match target {
         // comp.signal <== expr  OR  comp[i].signal <== expr  OR  comp[i][j].signal <== expr

@@ -161,10 +161,7 @@ pub(super) fn try_resolve_component_array_target(
     ctx: &LoweringContext,
 ) -> Option<String> {
     // Combine known_constants + param_values for full resolution
-    let mut all_constants = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        all_constants.insert(k.clone(), v);
-    }
+    let all_constants = ctx.all_constants(env);
     // Unwrap Index chain to find base name and indices
     let mut indices: Vec<&Expr> = Vec::new();
     let mut current = target;

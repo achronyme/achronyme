@@ -33,6 +33,8 @@ pub mod signals;
 pub mod statements;
 #[allow(dead_code)]
 pub mod suggest;
+#[cfg(test)]
+pub(crate) mod test_helpers;
 #[allow(dead_code)]
 pub mod template;
 #[allow(dead_code)]

@@ -68,6 +68,18 @@ impl<'a> LoweringContext<'a> {
         id
     }
 
+    /// Build a combined constants map from `param_values` and `env.known_constants`.
+    ///
+    /// Used by many lowering functions that need to resolve identifiers to
+    /// compile-time constants (target resolution, loop bounds, array indexing).
+    pub fn all_constants(&self, env: &super::env::LoweringEnv) -> HashMap<String, u64> {
+        let mut all = self.param_values.clone();
+        for (k, &v) in &env.known_constants {
+            all.insert(k.clone(), v);
+        }
+        all
+    }
+
     /// Create an empty context (for testing).
     #[cfg(test)]
     pub fn empty() -> Self {

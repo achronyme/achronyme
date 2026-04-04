@@ -99,10 +99,7 @@ pub(super) fn resolve_component_array_expr_full(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<String> {
-    let mut all = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        all.insert(k.clone(), v);
-    }
+    let all = ctx.all_constants(env);
     resolve_component_array_expr_with_constants(expr, &all)
 }
 
@@ -160,10 +157,7 @@ pub(super) fn resolve_multi_dim_array(
 
 /// Evaluate an index expression to a usize using all available compile-time context.
 fn eval_index_expr(expr: &Expr, env: &LoweringEnv, ctx: &LoweringContext) -> Option<usize> {
-    let mut params: HashMap<String, u64> = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        params.insert(k.clone(), v);
-    }
+    let params = ctx.all_constants(env);
     super::super::utils::const_eval_with_params(expr, &params).map(|v| v as usize)
 }
 

@@ -424,10 +424,7 @@ fn lower_if_else<'a>(
 ) -> Result<(), LoweringError> {
     // Try compile-time branch selection: if the condition resolves
     // to a known constant, only lower the taken branch.
-    let mut params = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        params.insert(k.clone(), v);
-    }
+    let params = ctx.all_constants(env);
     if let Some(cond_val) = super::utils::const_eval_with_params(condition, &params) {
         if cond_val != 0 {
             for stmt in &then_body.stmts {

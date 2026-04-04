@@ -45,10 +45,7 @@ pub(super) fn lower_substitution<'a>(
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
     // Build combined constants map (known_constants + param_values) for target resolution
-    let mut all_constants = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        all_constants.insert(k.clone(), v);
-    }
+    let all_constants = ctx.all_constants(env);
 
     // Desugar reverse operators: `expr ==> target` → `target <== expr`
     //                            `expr --> target` → `target <-- expr`

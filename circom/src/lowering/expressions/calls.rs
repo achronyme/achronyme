@@ -104,10 +104,7 @@ fn inline_function_call(
     ctx.inline_depth += 1;
 
     // Try compile-time evaluation first (handles imperative functions like nbits).
-    let mut eval_params = ctx.param_values.clone();
-    for (k, &v) in &env.known_constants {
-        eval_params.insert(k.clone(), v);
-    }
+    let eval_params = ctx.all_constants(env);
     if let Some(result) = super::super::utils::try_eval_function_call(
         func,
         args,
