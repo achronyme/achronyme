@@ -117,6 +117,9 @@ pub enum Commands {
         /// Print circuit constraint stats breakdown
         #[arg(long)]
         circuit_stats: bool,
+        /// Library directories for include resolution (like Circom -l flag)
+        #[arg(short = 'l', long = "lib")]
+        lib_dirs: Vec<String>,
     },
     /// Compile a circuit to .r1cs (and optionally generate .wtns)
     Circuit {

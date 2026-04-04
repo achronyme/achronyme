@@ -142,6 +142,7 @@ pub fn circom_command(
     prove: bool,
     solidity_path: Option<&str>,
     circuit_stats: bool,
+    lib_dirs: &[String],
     error_format: ErrorFormat,
 ) -> Result<()> {
     if !matches!(backend, "r1cs" | "plonkish") {
@@ -169,6 +170,7 @@ pub fn circom_command(
             prove,
             solidity_path,
             circuit_stats,
+            lib_dirs,
             error_format,
         ),
         PrimeId::Bls12_381 => circom_command_inner::<memory::Bls12_381Fr>(
@@ -183,6 +185,7 @@ pub fn circom_command(
             prove,
             solidity_path,
             circuit_stats,
+            lib_dirs,
             error_format,
         ),
         other => Err(anyhow::anyhow!(
@@ -205,6 +208,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     prove: bool,
     solidity_path: Option<&str>,
     circuit_stats: bool,
+    lib_dirs: &[String],
     error_format: ErrorFormat,
 ) -> Result<()> {
     let mut resolved_inputs: Option<HashMap<String, FieldElement<F>>> = if let Some(raw) = inputs {
@@ -218,10 +222,8 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     let style = Styler::from_env(&error_format);
     let verbose = style.is_verbose(&error_format);
 
-    let source =
-        fs::read_to_string(path).with_context(|| format!("cannot read source file: {path}"))?;
-
-    let file_name = std::path::Path::new(path)
+    let file_path = std::path::Path::new(path);
+    let file_name = file_path
         .file_name()
         .unwrap_or(std::ffi::OsStr::new(path))
         .to_string_lossy();
@@ -235,9 +237,11 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         );
     }
 
-    // 1. Compile .circom to ProveIR via Circom frontend
+    // 1. Compile .circom to ProveIR via Circom frontend (with include resolution)
+    let lib_paths: Vec<std::path::PathBuf> =
+        lib_dirs.iter().map(std::path::PathBuf::from).collect();
     let compile_result =
-        circom::compile_to_prove_ir(&source).map_err(|e| anyhow::anyhow!("{e}"))?;
+        circom::compile_file(file_path, &lib_paths).map_err(|e| anyhow::anyhow!("{e}"))?;
     let prove_ir = compile_result.prove_ir;
     let capture_values = compile_result.capture_values;
 
@@ -261,7 +265,8 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         &prove_ir,
         &user_inputs,
         &capture_values,
-    );
+    )
+    .map_err(|e| anyhow::anyhow!("witness computation failed: {e}"))?;
 
     // Merge user inputs + computed witness hints for R1CS
     let mut all_inputs = resolved_inputs.clone().unwrap_or_default();

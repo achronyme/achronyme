@@ -125,6 +125,7 @@ fn main() -> Result<()> {
             inputs,
             input_file,
             prove,
+            lib_dirs,
             ..
         } => {
             let path = cfg.entry.as_deref().ok_or_else(|| {
@@ -143,6 +144,7 @@ fn main() -> Result<()> {
                 *prove,
                 cfg.solidity_path.as_deref(),
                 cfg.circuit_stats,
+                lib_dirs,
                 ef,
             )
         }
