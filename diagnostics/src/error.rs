@@ -8,6 +8,7 @@ pub struct ParseError {
     pub message: String,
     pub line: usize,
     pub col: usize,
+    pub code: Option<String>,
 }
 
 impl ParseError {
@@ -16,6 +17,16 @@ impl ParseError {
             message: message.into(),
             line,
             col,
+            code: None,
+        }
+    }
+
+    pub fn with_code(message: impl Into<String>, code: &str, line: usize, col: usize) -> Self {
+        Self {
+            message: message.into(),
+            line,
+            col,
+            code: Some(code.to_string()),
         }
     }
 }
@@ -34,6 +45,11 @@ impl std::error::Error for ParseError {}
 
 impl From<ParseError> for Diagnostic {
     fn from(err: ParseError) -> Self {
-        Diagnostic::error(err.message, SpanRange::point(err.line, err.col, 0))
+        let diag = Diagnostic::error(err.message, SpanRange::point(err.line, err.col, 0));
+        if let Some(code) = err.code {
+            diag.with_code(code)
+        } else {
+            diag
+        }
     }
 }

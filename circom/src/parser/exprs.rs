@@ -281,8 +281,9 @@ impl Parser {
             TokenKind::LParen => self.parse_paren_or_tuple(),
             // Array literal
             TokenKind::LBracket => self.parse_array_lit(),
-            _ => Err(ParseError::new(
+            _ => Err(ParseError::with_code(
                 format!("expected expression, found {}", tok_display(tok)),
+                "E300",
                 tok.span.line_start,
                 tok.span.col_start,
             )),

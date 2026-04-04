@@ -639,11 +639,12 @@ impl Parser {
 
         let op = self.try_parse_assign_op().ok_or_else(|| {
             let tok = self.peek();
-            ParseError::new(
+            ParseError::with_code(
                 format!(
                     "expected assignment operator after tuple, found {}",
                     tok_display(tok)
                 ),
+                "E300",
                 tok.span.line_start,
                 tok.span.col_start,
             )

@@ -52,8 +52,9 @@ impl Parser {
             Ok(self.advance())
         } else {
             let tok = self.peek();
-            Err(ParseError::new(
+            Err(ParseError::with_code(
                 format!("expected {}, found {}", kind_name(kind), tok_display(tok)),
+                "E300",
                 tok.span.line_start,
                 tok.span.col_start,
             ))
@@ -99,7 +100,11 @@ impl Parser {
     // ====================================================================
 
     pub(super) fn record_error(&mut self, err: &ParseError) -> bool {
-        let diag = Diagnostic::error(err.message.clone(), SpanRange::point(err.line, err.col, 0));
+        let mut diag =
+            Diagnostic::error(err.message.clone(), SpanRange::point(err.line, err.col, 0));
+        if let Some(code) = &err.code {
+            diag = diag.with_code(code.clone());
+        }
         self.errors.push(diag);
         self.errors.len() >= MAX_ERRORS
     }
@@ -178,8 +183,9 @@ impl Parser {
                         main_component = Some(self.parse_main_component()?);
                     } else {
                         // Unexpected top-level component — error recovery
-                        let err = ParseError::new(
+                        let err = ParseError::with_code(
                             "unexpected `component` at top level (did you mean `component main`?)",
+                            "E306",
                             self.peek().span.line_start,
                             self.peek().span.col_start,
                         );
@@ -192,11 +198,12 @@ impl Parser {
                 }
                 _ => {
                     let tok = self.peek();
-                    let err = ParseError::new(
+                    let err = ParseError::with_code(
                         format!(
                             "expected `template`, `function`, `bus`, or `component main`, found {}",
                             tok_display(tok)
                         ),
+                        "E306",
                         tok.span.line_start,
                         tok.span.col_start,
                     );
@@ -239,8 +246,9 @@ impl Parser {
                 self.expect(&TokenKind::Semicolon)?;
                 Ok(Pragma::CustomTemplates)
             }
-            _ => Err(ParseError::new(
+            _ => Err(ParseError::with_code(
                 format!("unknown pragma `{}`", tok.lexeme),
+                "E304",
                 tok.span.line_start,
                 tok.span.col_start,
             )),
@@ -265,8 +273,9 @@ impl Parser {
         let tok = self.peek();
         if tok.kind == TokenKind::DecNumber {
             let val = tok.lexeme.parse::<u32>().map_err(|_| {
-                ParseError::new(
+                ParseError::with_code(
                     format!("invalid version number `{}`", tok.lexeme),
+                    "E305",
                     tok.span.line_start,
                     tok.span.col_start,
                 )
@@ -274,8 +283,9 @@ impl Parser {
             self.advance();
             Ok(val)
         } else {
-            Err(ParseError::new(
+            Err(ParseError::with_code(
                 format!("expected version number, found {}", tok_display(tok)),
+                "E305",
                 tok.span.line_start,
                 tok.span.col_start,
             ))
@@ -291,11 +301,12 @@ impl Parser {
         self.expect(&TokenKind::Include)?;
         let tok = self.peek();
         if tok.kind != TokenKind::StringLit {
-            return Err(ParseError::new(
+            return Err(ParseError::with_code(
                 format!(
                     "expected string after `include`, found {}",
                     tok_display(tok)
                 ),
+                "E300",
                 tok.span.line_start,
                 tok.span.col_start,
             ));
@@ -459,8 +470,9 @@ impl Parser {
             self.advance();
             Ok(name)
         } else {
-            Err(ParseError::new(
+            Err(ParseError::with_code(
                 format!("expected identifier, found {}", tok_display(tok)),
+                "E300",
                 tok.span.line_start,
                 tok.span.col_start,
             ))

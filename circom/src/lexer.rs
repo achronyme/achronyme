@@ -113,8 +113,9 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         if !closed {
-                            return Err(ParseError::new(
+                            return Err(ParseError::with_code(
                                 "unterminated block comment",
+                                "E301",
                                 comment_line,
                                 comment_col,
                             ));
@@ -186,8 +187,9 @@ impl<'a> Lexer<'a> {
                             self.advance();
                             Ok(self.make_token(TokenKind::SignalAssign, start, "<--"))
                         } else {
-                            Err(ParseError::new(
+                            Err(ParseError::with_code(
                                 "unexpected `<-`, did you mean `<--`?",
+                                "E302",
                                 start.1,
                                 start.2,
                             ))
@@ -419,8 +421,9 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Ok(self.make_token(TokenKind::Dot, start, "."))
             }
-            _ => Err(ParseError::new(
+            _ => Err(ParseError::with_code(
                 format!("unexpected character `{}`", ch as char),
+                "E302",
                 start.1,
                 start.2,
             )),
@@ -441,14 +444,15 @@ impl<'a> Lexer<'a> {
                 }
             }
             if self.pos == digit_start {
-                return Err(ParseError::new(
+                return Err(ParseError::with_code(
                     "expected hex digits after `0x`",
+                    "E302",
                     start.1,
                     start.2,
                 ));
             }
             let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
-                .map_err(|_| ParseError::new("invalid UTF-8", start.1, start.2))?
+                .map_err(|_| ParseError::with_code("invalid UTF-8", "E302", start.1, start.2))?
                 .to_string();
             return Ok(Token {
                 kind: TokenKind::HexNumber,
@@ -466,7 +470,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
-            .map_err(|_| ParseError::new("invalid UTF-8", start.1, start.2))?
+            .map_err(|_| ParseError::with_code("invalid UTF-8", "E302", start.1, start.2))?
             .to_string();
         Ok(Token {
             kind: TokenKind::DecNumber,
@@ -486,7 +490,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let lexeme = std::str::from_utf8(&self.source[start.0..self.pos])
-            .map_err(|_| ParseError::new("invalid UTF-8", start.1, start.2))?
+            .map_err(|_| ParseError::with_code("invalid UTF-8", "E302", start.1, start.2))?
             .to_string();
 
         // Check for underscore-only identifier → Underscore token
@@ -512,8 +516,9 @@ impl<'a> Lexer<'a> {
         loop {
             match self.peek() {
                 None | Some(b'\n') => {
-                    return Err(ParseError::new(
+                    return Err(ParseError::with_code(
                         "unterminated string literal",
+                        "E301",
                         start.1,
                         start.2,
                     ));
@@ -554,15 +559,17 @@ impl<'a> Lexer<'a> {
                             buf.push('\0');
                         }
                         Some(ch) => {
-                            return Err(ParseError::new(
+                            return Err(ParseError::with_code(
                                 format!("invalid escape sequence `\\{}`", ch as char),
+                                "E303",
                                 self.line,
                                 self.col,
                             ));
                         }
                         None => {
-                            return Err(ParseError::new(
+                            return Err(ParseError::with_code(
                                 "unterminated string literal",
+                                "E301",
                                 start.1,
                                 start.2,
                             ));
@@ -878,7 +885,8 @@ mod tests {
 
     #[test]
     fn hex_no_digits_error() {
-        assert!(Lexer::tokenize("0x").is_err());
+        let err = Lexer::tokenize("0x").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E302"));
     }
 
     // ── Strings ──────────────────────────────────────────────────────
@@ -892,12 +900,14 @@ mod tests {
 
     #[test]
     fn unterminated_string() {
-        assert!(Lexer::tokenize(r#""unterminated"#).is_err());
+        let err = Lexer::tokenize(r#""unterminated"#).unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E301"));
     }
 
     #[test]
     fn string_no_newline() {
-        assert!(Lexer::tokenize("\"hello\nworld\"").is_err());
+        let err = Lexer::tokenize("\"hello\nworld\"").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E301"));
     }
 
     #[test]
@@ -918,7 +928,8 @@ mod tests {
 
     #[test]
     fn string_invalid_escape() {
-        assert!(Lexer::tokenize(r#""bad\xescape""#).is_err());
+        let err = Lexer::tokenize(r#""bad\xescape""#).unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E303"));
     }
 
     // ── Comments ─────────────────────────────────────────────────────
@@ -941,7 +952,8 @@ mod tests {
 
     #[test]
     fn unterminated_block_comment() {
-        assert!(Lexer::tokenize("/* unterminated").is_err());
+        let err = Lexer::tokenize("/* unterminated").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E301"));
     }
 
     // ── Delimiters ───────────────────────────────────────────────────
@@ -1045,7 +1057,49 @@ component main {public [a]} = Multiplier(2);
     #[test]
     fn partial_signal_assign_error() {
         // `<-` without the third `-` is an error
-        assert!(Lexer::tokenize("a <- b").is_err());
+        let err = Lexer::tokenize("a <- b").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E302"));
+    }
+
+    // ── Malformed input error codes ──────────────────────────────────
+
+    #[test]
+    fn unexpected_character_error() {
+        let err = Lexer::tokenize("signal input #x;").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E302"));
+        assert!(err.message.contains("unexpected character"));
+    }
+
+    #[test]
+    fn unterminated_string_at_eof() {
+        let err = Lexer::tokenize(r#"include "path/to/file"#).unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E301"));
+    }
+
+    #[test]
+    fn unterminated_block_comment_multiline() {
+        let err = Lexer::tokenize("/* starts here\nbut never\nends").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E301"));
+    }
+
+    #[test]
+    fn invalid_escape_backslash_b() {
+        let err = Lexer::tokenize(r#""\b""#).unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E303"));
+        assert!(err.message.contains("\\b"));
+    }
+
+    #[test]
+    fn hex_prefix_only() {
+        let err = Lexer::tokenize("var x = 0x;").unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E302"));
+        assert!(err.message.contains("hex digits"));
+    }
+
+    #[test]
+    fn string_with_escape_at_eof() {
+        let err = Lexer::tokenize(r#""hello\"#).unwrap_err();
+        assert_eq!(err.code.as_deref(), Some("E301"));
     }
 
     // ── Integer division ─────────────────────────────────────────────
