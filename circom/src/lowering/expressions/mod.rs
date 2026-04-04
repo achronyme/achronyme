@@ -95,8 +95,7 @@ pub fn lower_expr(
                         "E200",
                         span,
                     );
-                    if let Some(similar) =
-                        find_similar(name, candidates.iter().map(|s| s.as_str()))
+                    if let Some(similar) = find_similar(name, candidates.iter().map(|s| s.as_str()))
                     {
                         err.add_suggestion(
                             diagnostics::SpanRange::from_span(span),
@@ -399,7 +398,10 @@ mod tests {
         let expr = parse_expr("a + b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BinOp { op: CircuitBinOp::Add, .. }
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                ..
+            }
         ));
     }
 
@@ -408,7 +410,10 @@ mod tests {
         let expr = parse_expr("a - b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BinOp { op: CircuitBinOp::Sub, .. }
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Sub,
+                ..
+            }
         ));
     }
 
@@ -417,7 +422,10 @@ mod tests {
         let expr = parse_expr("a * b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BinOp { op: CircuitBinOp::Mul, .. }
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Mul,
+                ..
+            }
         ));
     }
 
@@ -426,7 +434,10 @@ mod tests {
         let expr = parse_expr("a / b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BinOp { op: CircuitBinOp::Div, .. }
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Div,
+                ..
+            }
         ));
     }
 
@@ -470,7 +481,10 @@ mod tests {
         let expr = parse_expr("a == b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::Comparison { op: CircuitCmpOp::Eq, .. }
+            CircuitExpr::Comparison {
+                op: CircuitCmpOp::Eq,
+                ..
+            }
         ));
     }
 
@@ -479,7 +493,10 @@ mod tests {
         let expr = parse_expr("a != b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::Comparison { op: CircuitCmpOp::Neq, .. }
+            CircuitExpr::Comparison {
+                op: CircuitCmpOp::Neq,
+                ..
+            }
         ));
     }
 
@@ -488,7 +505,10 @@ mod tests {
         let expr = parse_expr("a < b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::Comparison { op: CircuitCmpOp::Lt, .. }
+            CircuitExpr::Comparison {
+                op: CircuitCmpOp::Lt,
+                ..
+            }
         ));
     }
 
@@ -499,7 +519,10 @@ mod tests {
         let expr = parse_expr("a && b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BoolOp { op: CircuitBoolOp::And, .. }
+            CircuitExpr::BoolOp {
+                op: CircuitBoolOp::And,
+                ..
+            }
         ));
     }
 
@@ -508,7 +531,10 @@ mod tests {
         let expr = parse_expr("a || b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BoolOp { op: CircuitBoolOp::Or, .. }
+            CircuitExpr::BoolOp {
+                op: CircuitBoolOp::Or,
+                ..
+            }
         ));
     }
 
@@ -519,7 +545,10 @@ mod tests {
         let expr = parse_expr("-a");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::UnaryOp { op: CircuitUnaryOp::Neg, .. }
+            CircuitExpr::UnaryOp {
+                op: CircuitUnaryOp::Neg,
+                ..
+            }
         ));
     }
 
@@ -528,7 +557,10 @@ mod tests {
         let expr = parse_expr("!a");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::UnaryOp { op: CircuitUnaryOp::Not, .. }
+            CircuitExpr::UnaryOp {
+                op: CircuitUnaryOp::Not,
+                ..
+            }
         ));
     }
 
@@ -570,7 +602,10 @@ mod tests {
         let expr = parse_expr("(a + b) * (a - b)");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BinOp { op: CircuitBinOp::Mul, .. }
+            CircuitExpr::BinOp {
+                op: CircuitBinOp::Mul,
+                ..
+            }
         ));
     }
 
@@ -625,7 +660,9 @@ mod tests {
     fn lower_shift_right() {
         let expr = parse_expr("a >> 3");
         match lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap() {
-            CircuitExpr::ShiftR { shift, num_bits, .. } => {
+            CircuitExpr::ShiftR {
+                shift, num_bits, ..
+            } => {
                 assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(3)));
                 assert_eq!(num_bits, 253);
             }
@@ -637,7 +674,9 @@ mod tests {
     fn lower_shift_left() {
         let expr = parse_expr("a << 1");
         match lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap() {
-            CircuitExpr::ShiftL { shift, num_bits, .. } => {
+            CircuitExpr::ShiftL {
+                shift, num_bits, ..
+            } => {
                 assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(1)));
                 assert_eq!(num_bits, 253);
             }
@@ -689,8 +728,7 @@ mod tests {
 
     #[test]
     fn lower_large_hex_number() {
-        let expr =
-            parse_expr("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
+        let expr = parse_expr("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
         match lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap() {
             CircuitExpr::Const(fc) => assert!(fc.to_u64().is_none()),
             other => panic!("expected Const, got {:?}", other),

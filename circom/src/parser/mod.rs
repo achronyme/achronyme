@@ -575,7 +575,11 @@ component main = IsZero();
             }
         "#;
         let (_, errors) = parse_circom(src).unwrap();
-        assert!(errors.len() >= 2, "expected multiple errors, got {}", errors.len());
+        assert!(
+            errors.len() >= 2,
+            "expected multiple errors, got {}",
+            errors.len()
+        );
         for err in &errors {
             assert!(err.code.is_some(), "error without code: {:?}", err);
         }
@@ -596,8 +600,16 @@ component main = IsZero();
         assert!(errors.len() >= 2);
         if let crate::ast::Definition::Template(t) = &prog.definitions[0] {
             // Should have recovered some valid stmts
-            let valid_count = t.body.stmts.iter().filter(|s| !matches!(s, crate::ast::Stmt::Error { .. })).count();
-            assert!(valid_count >= 2, "expected at least 2 valid stmts after recovery");
+            let valid_count = t
+                .body
+                .stmts
+                .iter()
+                .filter(|s| !matches!(s, crate::ast::Stmt::Error { .. }))
+                .count();
+            assert!(
+                valid_count >= 2,
+                "expected at least 2 valid stmts after recovery"
+            );
         }
     }
 

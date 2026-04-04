@@ -15,8 +15,8 @@ use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::suggest::find_similar;
 use super::super::utils::extract_ident_name;
-use super::operators::lower_binop;
 use super::lower_expr;
+use super::operators::lower_binop;
 use super::DEFAULT_MAX_BITS;
 
 /// Lower a function call expression.

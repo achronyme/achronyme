@@ -335,10 +335,18 @@ fn eval_binop_i64(l: i64, op: ast::BinOp, r: i64) -> Option<i64> {
         ast::BinOp::Sub => Some(l.wrapping_sub(r)),
         ast::BinOp::Mul => Some(l.wrapping_mul(r)),
         ast::BinOp::Div | ast::BinOp::IntDiv => {
-            if r != 0 { Some(l / r) } else { None }
+            if r != 0 {
+                Some(l / r)
+            } else {
+                None
+            }
         }
         ast::BinOp::Mod => {
-            if r != 0 { Some(l % r) } else { None }
+            if r != 0 {
+                Some(l % r)
+            } else {
+                None
+            }
         }
         ast::BinOp::Pow => Some(l.pow(r as u32)),
         ast::BinOp::Eq => Some(if l == r { 1 } else { 0 }),
@@ -363,10 +371,18 @@ fn apply_compound_op(current: i64, op: CompoundOp, rhs: i64) -> Option<i64> {
         CompoundOp::Sub => Some(current.wrapping_sub(rhs)),
         CompoundOp::Mul => Some(current.wrapping_mul(rhs)),
         CompoundOp::Div | CompoundOp::IntDiv => {
-            if rhs != 0 { Some(current / rhs) } else { None }
+            if rhs != 0 {
+                Some(current / rhs)
+            } else {
+                None
+            }
         }
         CompoundOp::Mod => {
-            if rhs != 0 { Some(current % rhs) } else { None }
+            if rhs != 0 {
+                Some(current % rhs)
+            } else {
+                None
+            }
         }
         CompoundOp::Pow => Some(current.pow(rhs as u32)),
         CompoundOp::ShiftL => Some(current << (rhs & 63)),

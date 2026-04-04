@@ -137,7 +137,9 @@ fn classify_captures(params: &[String], body: &[CircuitNode]) -> Vec<CaptureDef>
                 (true, true) => CaptureUsage::Both,
                 (true, false) => CaptureUsage::StructureOnly,
                 (false, true) => CaptureUsage::CircuitInput,
-                (false, false) => unreachable!("capture appears in scan but is used in neither structure nor circuit"),
+                (false, false) => unreachable!(
+                    "capture appears in scan but is used in neither structure nor circuit"
+                ),
             };
             captures.push(CaptureDef {
                 name: param.clone(),
@@ -702,7 +704,11 @@ mod tests {
         };
         let result = lower_template(template, prog.main_component.as_ref(), &prog);
         assert!(result.is_err());
-        assert!(result.unwrap_err().diagnostic.message.contains("undefined function"));
+        assert!(result
+            .unwrap_err()
+            .diagnostic
+            .message
+            .contains("undefined function"));
     }
 
     // ── Capture classification ─────────────────────────────────────

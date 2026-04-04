@@ -44,7 +44,11 @@ pub(super) fn lower_for_loop<'a>(
             ..
         } if names.len() == 1 => {
             let start = const_eval_u64(init_expr).ok_or_else(|| {
-                LoweringError::with_code("for loop init must be a compile-time constant", "E208", span)
+                LoweringError::with_code(
+                    "for loop init must be a compile-time constant",
+                    "E208",
+                    span,
+                )
             })?;
             (names[0].clone(), start)
         }
@@ -56,13 +60,21 @@ pub(super) fn lower_for_loop<'a>(
             ..
         } => {
             let name = extract_target_name(target).ok_or_else(|| {
-                LoweringError::with_code("for loop init must assign to a simple variable", "E208", span)
+                LoweringError::with_code(
+                    "for loop init must assign to a simple variable",
+                    "E208",
+                    span,
+                )
             })?;
             let all = ctx.all_constants(env);
             let start = const_eval_u64(value)
                 .or_else(|| super::super::utils::const_eval_with_params(value, &all))
                 .ok_or_else(|| {
-                    LoweringError::with_code("for loop init must be a compile-time constant", "E208", span)
+                    LoweringError::with_code(
+                        "for loop init must be a compile-time constant",
+                        "E208",
+                        span,
+                    )
                 })?;
             (name, start)
         }
@@ -115,14 +127,13 @@ pub(super) fn lower_for_loop<'a>(
             }
             LoopBound::Expr(expr) => {
                 let all = ctx.all_constants(env);
-                super::super::utils::const_eval_with_params(expr, &all)
-                    .ok_or_else(|| {
-                        LoweringError::new(
-                            "component array loop bound expression must be resolvable \
+                super::super::utils::const_eval_with_params(expr, &all).ok_or_else(|| {
+                    LoweringError::new(
+                        "component array loop bound expression must be resolvable \
                              at compile time",
-                            span,
-                        )
-                    })?
+                        span,
+                    )
+                })?
             }
         };
 
@@ -158,7 +169,9 @@ pub(super) fn lower_for_loop<'a>(
         LoopBound::Expr(ast_expr) => {
             // Try to resolve the expression to a constant using known param values
             // (e.g., `nb` from `var nb = nbits(n)` where n is known)
-            if let Some(end) = super::super::utils::const_eval_with_params(&ast_expr, &ctx.param_values) {
+            if let Some(end) =
+                super::super::utils::const_eval_with_params(&ast_expr, &ctx.param_values)
+            {
                 ForRange::Literal { start, end }
             } else {
                 let circuit_expr = lower_expr(&ast_expr, env, ctx)?;
@@ -250,7 +263,9 @@ pub(super) fn eval_while_compile_time(
     if do_while {
         for _ in 0..MAX_WHILE_ITERS {
             for stmt in body_stmts {
-                if super::super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions).is_none() {
+                if super::super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions)
+                    .is_none()
+                {
                     return Err(LoweringError::with_code(
                         "do-while loop body could not be evaluated at compile time; \
                          all variables must be known constants",
@@ -259,8 +274,8 @@ pub(super) fn eval_while_compile_time(
                     ));
                 }
             }
-            let cond =
-                super::super::utils::try_eval_expr_i64(condition, &vars, &functions).ok_or_else(|| {
+            let cond = super::super::utils::try_eval_expr_i64(condition, &vars, &functions)
+                .ok_or_else(|| {
                     LoweringError::with_code(
                         "do-while loop condition could not be evaluated at compile time",
                         "E209",
@@ -279,8 +294,8 @@ pub(super) fn eval_while_compile_time(
         }
     } else {
         for _ in 0..MAX_WHILE_ITERS {
-            let cond =
-                super::super::utils::try_eval_expr_i64(condition, &vars, &functions).ok_or_else(|| {
+            let cond = super::super::utils::try_eval_expr_i64(condition, &vars, &functions)
+                .ok_or_else(|| {
                     LoweringError::with_code(
                         "while loop condition could not be evaluated at compile time",
                         "E209",
@@ -297,7 +312,9 @@ pub(super) fn eval_while_compile_time(
                 return Ok(());
             }
             for stmt in body_stmts {
-                if super::super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions).is_none() {
+                if super::super::utils::try_eval_stmt_in_place(stmt, &mut vars, &functions)
+                    .is_none()
+                {
                     return Err(LoweringError::with_code(
                         "while loop body could not be evaluated at compile time; \
                          all variables must be known constants",

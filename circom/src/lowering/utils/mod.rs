@@ -64,7 +64,6 @@ pub fn const_eval_with_params(expr: &Expr, params: &HashMap<String, u64>) -> Opt
     eval::eval_expr_i64(expr, &vars, &empty_fns, 0).map(|v| v as u64)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::{extract_functions, parse_expr, parse_program};
@@ -196,7 +195,10 @@ mod tests {
             crate::ast::Definition::Template(t) => t,
             _ => panic!("expected template"),
         };
-        assert_eq!(precompute_vars(&t.body.stmts, &params, &fns).get("nb"), Some(&8u64));
+        assert_eq!(
+            precompute_vars(&t.body.stmts, &params, &fns).get("nb"),
+            Some(&8u64)
+        );
     }
 
     #[test]
@@ -301,8 +303,10 @@ mod tests {
         arrays.insert(
             "ROUNDS".to_string(),
             EvalValue::Array(vec![
-                EvalValue::Scalar(56), EvalValue::Scalar(57),
-                EvalValue::Scalar(56), EvalValue::Scalar(60),
+                EvalValue::Scalar(56),
+                EvalValue::Scalar(57),
+                EvalValue::Scalar(56),
+                EvalValue::Scalar(60),
             ]),
         );
         let expr = parse_expr("ROUNDS[t - 2]");

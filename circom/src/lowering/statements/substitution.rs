@@ -180,7 +180,17 @@ pub(super) fn lower_substitution<'a>(
 
         // `target = expr` → variable reassignment, component array instantiation, or SSA shadowing
         AssignOp::Assign => {
-            lower_var_assign(target, value, span, &sr, &all_constants, env, nodes, ctx, pending)?;
+            lower_var_assign(
+                target,
+                value,
+                span,
+                &sr,
+                &all_constants,
+                env,
+                nodes,
+                ctx,
+                pending,
+            )?;
         }
     }
 
@@ -379,13 +389,12 @@ fn lower_anon_component_tuple(
         }
     };
     let template = *ctx.templates.get(tmpl_name.as_str()).ok_or_else(|| {
-        let mut err = LoweringError::with_code(
-            format!("template `{tmpl_name}` not found"),
-            "E202",
-            span,
-        );
+        let mut err =
+            LoweringError::with_code(format!("template `{tmpl_name}` not found"), "E202", span);
         let tmpl_names: Vec<&str> = ctx.templates.keys().copied().collect();
-        if let Some(similar) = crate::lowering::suggest::find_similar(&tmpl_name, tmpl_names.into_iter()) {
+        if let Some(similar) =
+            crate::lowering::suggest::find_similar(&tmpl_name, tmpl_names.into_iter())
+        {
             err.add_suggestion(
                 diagnostics::SpanRange::from_span(span),
                 similar,

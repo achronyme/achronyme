@@ -249,11 +249,10 @@ impl IncludeError {
                 span,
             )
             .with_code("E203"),
-            Self::Parse(path, _err) => diagnostics::Diagnostic::error(
-                format!("parse error in `{}`", path.display()),
-                span,
-            )
-            .with_code("E203"),
+            Self::Parse(path, _err) => {
+                diagnostics::Diagnostic::error(format!("parse error in `{}`", path.display()), span)
+                    .with_code("E203")
+            }
             Self::Cycle(path) => diagnostics::Diagnostic::error(
                 format!("circular include detected: `{}`", path.display()),
                 span,
@@ -264,12 +263,9 @@ impl IncludeError {
                 searched,
             } => {
                 let dirs: Vec<String> = searched.iter().map(|d| d.display().to_string()).collect();
-                diagnostics::Diagnostic::error(
-                    format!("include `{include_path}` not found"),
-                    span,
-                )
-                .with_code("E203")
-                .with_note(format!("searched directories: {}", dirs.join(", ")))
+                diagnostics::Diagnostic::error(format!("include `{include_path}` not found"), span)
+                    .with_code("E203")
+                    .with_note(format!("searched directories: {}", dirs.join(", ")))
             }
             Self::IncludeInSource(path) => diagnostics::Diagnostic::error(
                 format!("cannot resolve include `{path}` in source-only compilation mode"),

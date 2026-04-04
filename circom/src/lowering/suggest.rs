@@ -33,10 +33,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
 ///
 /// For names <= 3 chars, allows at most 1 edit to avoid spurious matches.
 /// Skips exact matches and `_`-prefixed names.
-pub fn find_similar<'a>(
-    name: &str,
-    candidates: impl Iterator<Item = &'a str>,
-) -> Option<&'a str> {
+pub fn find_similar<'a>(name: &str, candidates: impl Iterator<Item = &'a str>) -> Option<&'a str> {
     let threshold = if name.len() <= 3 { 1 } else { 2 };
     let mut best: Option<(&str, usize)> = None;
     for candidate in candidates {

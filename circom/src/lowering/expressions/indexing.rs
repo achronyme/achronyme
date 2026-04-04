@@ -163,7 +163,11 @@ pub(super) fn resolve_multi_dim_array(
 }
 
 /// Evaluate an index expression to a usize using all available compile-time context.
-pub(super) fn eval_index_expr(expr: &Expr, env: &LoweringEnv, ctx: &LoweringContext) -> Option<usize> {
+pub(super) fn eval_index_expr(
+    expr: &Expr,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<usize> {
     let params = ctx.all_constants(env);
     super::super::utils::const_eval_with_params(expr, &params).map(|v| v as usize)
 }
