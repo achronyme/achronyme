@@ -239,6 +239,48 @@ impl std::fmt::Display for IncludeError {
 
 impl std::error::Error for IncludeError {}
 
+impl IncludeError {
+    /// Convert this include error into a structured diagnostic.
+    pub fn to_diagnostic(&self) -> diagnostics::Diagnostic {
+        let span = diagnostics::SpanRange::point(0, 0, 0);
+        match self {
+            Self::Io(path, err) => diagnostics::Diagnostic::error(
+                format!("I/O error reading `{}`: {}", path.display(), err),
+                span,
+            )
+            .with_code("E203"),
+            Self::Parse(path, _err) => diagnostics::Diagnostic::error(
+                format!("parse error in `{}`", path.display()),
+                span,
+            )
+            .with_code("E203"),
+            Self::Cycle(path) => diagnostics::Diagnostic::error(
+                format!("circular include detected: `{}`", path.display()),
+                span,
+            )
+            .with_code("E204"),
+            Self::NotFound {
+                include_path,
+                searched,
+            } => {
+                let dirs: Vec<String> = searched.iter().map(|d| d.display().to_string()).collect();
+                diagnostics::Diagnostic::error(
+                    format!("include `{include_path}` not found"),
+                    span,
+                )
+                .with_code("E203")
+                .with_note(format!("searched directories: {}", dirs.join(", ")))
+            }
+            Self::IncludeInSource(path) => diagnostics::Diagnostic::error(
+                format!("cannot resolve include `{path}` in source-only compilation mode"),
+                span,
+            )
+            .with_code("E203")
+            .with_note("use compile_file() instead of compile_to_prove_ir() for include support"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

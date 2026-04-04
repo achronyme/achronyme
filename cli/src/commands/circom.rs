@@ -240,8 +240,21 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     // 1. Compile .circom to ProveIR via Circom frontend (with include resolution)
     let lib_paths: Vec<std::path::PathBuf> =
         lib_dirs.iter().map(std::path::PathBuf::from).collect();
-    let compile_result =
-        circom::compile_file(file_path, &lib_paths).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Read source for diagnostic rendering (best-effort; needed for both errors and warnings)
+    let source = std::fs::read_to_string(file_path).unwrap_or_default();
+    let compile_result = circom::compile_file(file_path, &lib_paths).map_err(|e| {
+        let diags = e.to_diagnostics();
+        for diag in &diags {
+            super::emit_diagnostic(diag, &source, error_format);
+        }
+        anyhow::anyhow!("circom compilation failed with {} error(s)", diags.len())
+    })?;
+
+    // Render warnings with the same diagnostic renderer used for the rest of Achronyme
+    for warning in &compile_result.warnings {
+        super::emit_diagnostic(warning, &source, error_format);
+    }
+
     let prove_ir = compile_result.prove_ir;
     let capture_values = compile_result.capture_values;
 

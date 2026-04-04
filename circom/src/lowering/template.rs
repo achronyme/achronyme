@@ -702,7 +702,7 @@ mod tests {
         };
         let result = lower_template(template, prog.main_component.as_ref(), &prog);
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("undefined function"));
+        assert!(result.unwrap_err().diagnostic.message.contains("undefined function"));
     }
 
     // ── Capture classification ─────────────────────────────────────

@@ -877,7 +877,7 @@ mod tests {
         let expr = parse_expr("unknown");
         let result = lower_expr(&expr, &make_env(), &mut make_ctx());
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("undefined variable"));
+        assert!(result.unwrap_err().diagnostic.message.contains("undefined variable"));
     }
 
     // ── Arithmetic ──────────────────────────────────────────────────
@@ -1258,7 +1258,7 @@ mod tests {
         let mut ctx = make_ctx();
         let result = lower_expr(&expr, &env, &mut ctx);
         assert!(result.is_err());
-        let msg = result.unwrap_err().message;
+        let msg = result.unwrap_err().diagnostic.message;
         assert!(
             msg.contains("dot access target"),
             "expected dot access error, got: {msg}"

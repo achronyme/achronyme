@@ -81,6 +81,34 @@ impl std::fmt::Display for CircomError {
 
 impl std::error::Error for CircomError {}
 
+impl CircomError {
+    /// Convert this error into structured diagnostics for rendering.
+    ///
+    /// All error variants produce at least one `Diagnostic` with proper
+    /// severity, message, and (where available) span information.
+    pub fn to_diagnostics(&self) -> Vec<Diagnostic> {
+        match self {
+            CircomError::ParseError(diags) | CircomError::ConstraintError(diags) => diags.clone(),
+            CircomError::NoMainComponent => {
+                vec![Diagnostic::error(
+                    "no `component main` declaration found in source",
+                    diagnostics::SpanRange::point(0, 0, 0),
+                )
+                .with_code("E210")]
+            }
+            CircomError::MainTemplateNotFound(name) => {
+                vec![Diagnostic::error(
+                    format!("main component references undefined template `{name}`"),
+                    diagnostics::SpanRange::point(0, 0, 0),
+                )
+                .with_code("E211")]
+            }
+            CircomError::LoweringError(e) => vec![e.diagnostic.clone()],
+            CircomError::IncludeError(e) => vec![e.to_diagnostic()],
+        }
+    }
+}
+
 /// Result of Circom compilation: a ProveIR plus the capture values
 /// extracted from the main component's template arguments.
 pub struct CircomCompileResult {
@@ -88,6 +116,9 @@ pub struct CircomCompileResult {
     /// Template parameter values from `component main = Template(arg1, arg2, ...)`.
     /// Maps parameter names to their constant values.
     pub capture_values: HashMap<String, u64>,
+    /// Warnings emitted during compilation (constraint analysis, version checks).
+    /// The caller is responsible for rendering these via `DiagnosticRenderer`.
+    pub warnings: Vec<Diagnostic>,
 }
 
 /// Check if the declared pragma version is consistent with features used.
@@ -203,21 +234,16 @@ fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, 
     let reports = analysis::constraint_check::check_constraints(&program.definitions);
     let all_diags: Vec<Diagnostic> = reports.into_iter().flat_map(|r| r.diagnostics).collect();
 
-    // Print warnings to stderr but don't block compilation
-    for diag in &all_diags {
-        if diag.severity == diagnostics::Severity::Warning {
-            eprintln!("warning: {}", diag.message);
-            for note in &diag.notes {
-                eprintln!("  note: {note}");
-            }
+    // Separate warnings (returned to caller for rendering) from errors (block compilation)
+    let mut warnings = Vec::new();
+    let mut constraint_errors = Vec::new();
+    for diag in all_diags {
+        if diag.severity == diagnostics::Severity::Error {
+            constraint_errors.push(diag);
+        } else {
+            warnings.push(diag);
         }
     }
-
-    // Only errors block compilation
-    let constraint_errors: Vec<Diagnostic> = all_diags
-        .into_iter()
-        .filter(|d| d.severity == diagnostics::Severity::Error)
-        .collect();
     if !constraint_errors.is_empty() {
         return Err(CircomError::ConstraintError(constraint_errors));
     }
@@ -267,5 +293,6 @@ fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, 
     Ok(CircomCompileResult {
         prove_ir,
         capture_values,
+        warnings,
     })
 }
