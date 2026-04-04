@@ -10,7 +10,7 @@ mod precompute;
 
 use std::collections::HashMap;
 
-use crate::ast::{self, Expr};
+use crate::ast::Expr;
 
 // Re-export public API — some are used by sibling lowering modules, some by lib.rs/template.rs
 #[allow(unused_imports)]
@@ -55,84 +55,15 @@ pub fn const_eval_u64(expr: &Expr) -> Option<u64> {
 
 /// Evaluate a Circom expression as u64 by substituting known parameter values.
 ///
-/// Like `const_eval_u64` but also resolves identifiers from the param map.
+/// Like `const_eval_u64` but also resolves identifiers from the param map
+/// and handles binary/unary operations, ternaries, and function calls.
+/// Delegates to `eval_expr_i64` to avoid duplicating operator logic.
 pub fn const_eval_with_params(expr: &Expr, params: &HashMap<String, u64>) -> Option<u64> {
-    match expr {
-        Expr::Number { value, .. } => value.parse().ok(),
-        Expr::HexNumber { value, .. } => {
-            let hex = value
-                .strip_prefix("0x")
-                .or_else(|| value.strip_prefix("0X"))
-                .unwrap_or(value);
-            u64::from_str_radix(hex, 16).ok()
-        }
-        Expr::Ident { name, .. } => params.get(name.as_str()).copied(),
-        Expr::BinOp { op, lhs, rhs, .. } => {
-            let l = const_eval_with_params(lhs, params)?;
-            let r = const_eval_with_params(rhs, params)?;
-            match op {
-                ast::BinOp::Add => l.checked_add(r),
-                ast::BinOp::Sub => l.checked_sub(r),
-                ast::BinOp::Mul => l.checked_mul(r),
-                ast::BinOp::Div | ast::BinOp::IntDiv => {
-                    if r != 0 { Some(l / r) } else { None }
-                }
-                ast::BinOp::Mod => {
-                    if r != 0 { Some(l % r) } else { None }
-                }
-                ast::BinOp::ShiftL => Some(l << (r & 63)),
-                ast::BinOp::ShiftR => Some(l >> (r & 63)),
-                ast::BinOp::Pow => Some(l.pow(r as u32)),
-                ast::BinOp::Eq => Some(if l == r { 1 } else { 0 }),
-                ast::BinOp::Neq => Some(if l != r { 1 } else { 0 }),
-                ast::BinOp::Lt => Some(if l < r { 1 } else { 0 }),
-                ast::BinOp::Le => Some(if l <= r { 1 } else { 0 }),
-                ast::BinOp::Gt => Some(if l > r { 1 } else { 0 }),
-                ast::BinOp::Ge => Some(if l >= r { 1 } else { 0 }),
-                ast::BinOp::And => Some(if l != 0 && r != 0 { 1 } else { 0 }),
-                ast::BinOp::Or => Some(if l != 0 || r != 0 { 1 } else { 0 }),
-                ast::BinOp::BitAnd => Some(l & r),
-                ast::BinOp::BitOr => Some(l | r),
-                ast::BinOp::BitXor => Some(l ^ r),
-            }
-        }
-        Expr::UnaryOp { op, operand, .. } => {
-            let val = const_eval_with_params(operand, params)?;
-            match op {
-                ast::UnaryOp::Neg => Some(val.wrapping_neg()),
-                ast::UnaryOp::Not => Some(if val == 0 { 1 } else { 0 }),
-                ast::UnaryOp::BitNot => Some(!val),
-            }
-        }
-        _ => const_eval_u64(expr),
-    }
+    let vars: HashMap<String, i64> = params.iter().map(|(k, &v)| (k.clone(), v as i64)).collect();
+    let empty_fns = HashMap::new();
+    eval::eval_expr_i64(expr, &vars, &empty_fns, 0).map(|v| v as u64)
 }
 
-/// Display symbol for a binary operator (for error messages).
-pub fn binop_symbol(op: ast::BinOp) -> &'static str {
-    match op {
-        ast::BinOp::Add => "+",
-        ast::BinOp::Sub => "-",
-        ast::BinOp::Mul => "*",
-        ast::BinOp::Div => "/",
-        ast::BinOp::IntDiv => "\\",
-        ast::BinOp::Mod => "%",
-        ast::BinOp::Pow => "**",
-        ast::BinOp::Eq => "==",
-        ast::BinOp::Neq => "!=",
-        ast::BinOp::Lt => "<",
-        ast::BinOp::Le => "<=",
-        ast::BinOp::Gt => ">",
-        ast::BinOp::Ge => ">=",
-        ast::BinOp::And => "&&",
-        ast::BinOp::Or => "||",
-        ast::BinOp::BitAnd => "&",
-        ast::BinOp::BitOr => "|",
-        ast::BinOp::BitXor => "^",
-        ast::BinOp::ShiftL => "<<",
-        ast::BinOp::ShiftR => ">>",
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -158,7 +89,7 @@ mod tests {
         prog
     }
 
-    fn extract_functions(prog: &crate::ast::CircomProgram) -> HashMap<&str, &ast::FunctionDef> {
+    fn extract_functions(prog: &crate::ast::CircomProgram) -> HashMap<&str, &crate::ast::FunctionDef> {
         let mut fns = HashMap::new();
         for def in &prog.definitions {
             if let crate::ast::Definition::Function(f) = def {
