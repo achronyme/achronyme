@@ -22,7 +22,7 @@ use crate::ast::{self, Expr};
 use super::context::LoweringContext;
 use super::env::{LoweringEnv, VarKind};
 use super::error::LoweringError;
-use super::utils::{const_eval_u64, extract_ident_name};
+use super::utils::{const_eval_u64, extract_ident_name, EvalValue};
 
 /// The default max bits for IntDiv/IntMod. Circom operates over BN254 (~254 bits).
 const DEFAULT_MAX_BITS: u32 = 253;
@@ -137,7 +137,13 @@ pub fn lower_expr(
             index,
             span,
         } => {
-            // Case 1: Simple ident `arr[i]` or DotAccess `comp.signal[i]`
+            // Case 0: Known compile-time array (e.g. `C[i+r]` where C = POSEIDON_C(t))
+            if let Some(fc) = try_resolve_known_array_index(object, index, env, ctx) {
+                return Ok(CircuitExpr::Const(fc));
+            }
+
+            // Case 1: Simple ident `arr[i]`, DotAccess `comp.signal[i]`,
+            // or component array signal `comp[i].signal[j]`
             if let Some(array_name) = extract_ident_name(object).or_else(|| {
                 if let Expr::DotAccess {
                     object: inner_obj,
@@ -145,7 +151,10 @@ pub fn lower_expr(
                     ..
                 } = object.as_ref()
                 {
-                    extract_ident_name(inner_obj).map(|obj_name| format!("{obj_name}.{field}"))
+                    // Simple comp.signal or comp[i].signal or comp[i][j].signal
+                    extract_ident_name(inner_obj)
+                        .or_else(|| resolve_component_array_expr_full(inner_obj, env, ctx))
+                        .map(|obj_name| format!("{obj_name}.{field}"))
                 } else {
                     None
                 }
@@ -181,7 +190,9 @@ pub fn lower_expr(
                             field,
                             ..
                         } => {
-                            if let Some(obj) = extract_ident_name(da_obj) {
+                            if let Some(obj) = extract_ident_name(da_obj)
+                                .or_else(|| resolve_component_array_expr_full(da_obj, env, ctx))
+                            {
                                 let base = format!("{obj}.{field}");
                                 indices.reverse();
                                 return lower_multi_index(&base, &indices, env, ctx);
@@ -224,37 +235,11 @@ pub fn lower_expr(
             field,
             span,
         } => {
-            // Simple ident: comp.field
+            // Resolve the component name: simple ident, 1D array, or multi-dim array
             let obj_name = if let Some(name) = extract_ident_name(object) {
                 name
-            } else if let Expr::Index {
-                object: inner_obj,
-                index: inner_idx,
-                ..
-            } = object.as_ref()
-            {
-                // Indexed component array: muls[i].field → muls_{i}.field
-                if let Some(arr_name) = extract_ident_name(inner_obj) {
-                    if let Some(idx) = const_eval_u64(inner_idx).or_else(|| {
-                        if let Expr::Ident { name, .. } = inner_idx.as_ref() {
-                            env.known_constants.get(name.as_str()).copied()
-                        } else {
-                            None
-                        }
-                    }) {
-                        format!("{arr_name}_{idx}")
-                    } else {
-                        return Err(LoweringError::new(
-                            "component array index must be a compile-time constant",
-                            span,
-                        ));
-                    }
-                } else {
-                    return Err(LoweringError::new(
-                        "dot access target must be a simple identifier or indexed component array",
-                        span,
-                    ));
-                }
+            } else if let Some(comp) = resolve_component_array_expr_full(object, env, ctx) {
+                comp
             } else {
                 return Err(LoweringError::new(
                     "dot access target must be a simple identifier or indexed component array",
@@ -271,8 +256,8 @@ pub fn lower_expr(
         }
 
         // ── Unsupported in circuit context ──────────────────────────
-        Expr::PostfixOp { span, .. } => Err(LoweringError::new(
-            "postfix increment/decrement is not supported in circuit expressions",
+        Expr::PostfixOp { span, .. } | Expr::PrefixOp { span, .. } => Err(LoweringError::new(
+            "increment/decrement is not supported in circuit expressions",
             span,
         )),
 
@@ -307,6 +292,13 @@ fn lower_multi_index(
     env: &LoweringEnv,
     ctx: &mut LoweringContext<'_>,
 ) -> Result<CircuitExpr, LoweringError> {
+    // Check known compile-time arrays first (e.g. M[j][i] where M = POSEIDON_M(t))
+    if let Some(arr_val) = env.known_array_values.get(base_name) {
+        if let Some(fc) = resolve_multi_dim_array(arr_val, indices, env, ctx) {
+            return Ok(CircuitExpr::Const(fc));
+        }
+    }
+
     let strides = env.strides.get(base_name);
     let n = indices.len();
 
@@ -689,10 +681,110 @@ fn lower_expr_with_substitution(
 }
 
 /// Try to extract a constant u64 from a lowered `CircuitExpr`.
+/// Resolve a component array expression to a mangled name.
+///
+/// Handles 1D (`comp[i]` → `comp_0`) and multi-dim (`comp[i][j]` → `comp_0_1`).
+/// Merges `env.known_constants` + `ctx.param_values` for full resolution.
+fn resolve_component_array_expr_full(
+    expr: &Expr,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<String> {
+    let mut all = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        all.insert(k.clone(), v);
+    }
+    resolve_component_array_expr_with_constants(expr, &all)
+}
+
+/// Resolve a component array expression with explicit known constants.
+fn resolve_component_array_expr_with_constants(
+    expr: &Expr,
+    known_constants: &std::collections::HashMap<String, u64>,
+) -> Option<String> {
+    match expr {
+        Expr::Index { object, index, .. } => {
+            let idx = super::utils::const_eval_u64(index)
+                .or_else(|| super::utils::const_eval_with_params(index, known_constants))?;
+            if let Some(arr_name) = extract_ident_name(object) {
+                Some(format!("{arr_name}_{idx}"))
+            } else {
+                let inner = resolve_component_array_expr_with_constants(object, known_constants)?;
+                Some(format!("{inner}_{idx}"))
+            }
+        }
+        _ => None,
+    }
+}
+
 fn const_eval_circuit_expr(expr: &CircuitExpr) -> Option<u64> {
     match expr {
         CircuitExpr::Const(fc) => fc.to_u64(),
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Known array resolution helpers
+// ---------------------------------------------------------------------------
+
+/// Try to resolve a 1-D known array index `arr[expr]` to a `FieldConst`.
+///
+/// Checks `env.known_array_values` for the base name, evaluates the index
+/// expression at compile time (using known_constants + param_values), and
+/// returns the element as a `FieldConst` if everything resolves.
+fn try_resolve_known_array_index(
+    object: &Expr,
+    index: &Expr,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<FieldConst> {
+    // Extract the base name (simple ident only)
+    let base_name = extract_ident_name(object)?;
+    let arr_val = env.known_array_values.get(&base_name)?;
+
+    // Evaluate the index expression at compile time
+    let idx = eval_index_expr(index, env, ctx)?;
+
+    // Index into the known array
+    eval_value_to_field_const(arr_val.index(idx)?)
+}
+
+/// Resolve a multi-dimensional known array access `M[i][j]…` to a `FieldConst`.
+fn resolve_multi_dim_array(
+    val: &EvalValue,
+    indices: &[&Expr],
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<FieldConst> {
+    let mut current = val;
+    for idx_expr in indices {
+        let idx = eval_index_expr(idx_expr, env, ctx)?;
+        current = current.index(idx)?;
+    }
+    eval_value_to_field_const(current)
+}
+
+/// Evaluate an index expression to a usize using all available compile-time context.
+fn eval_index_expr(expr: &Expr, env: &LoweringEnv, ctx: &LoweringContext) -> Option<usize> {
+    // Build combined params from all sources
+    let mut params: std::collections::HashMap<String, u64> = ctx.param_values.clone();
+    for (k, &v) in &env.known_constants {
+        params.insert(k.clone(), v);
+    }
+    super::utils::const_eval_with_params(expr, &params).map(|v| v as usize)
+}
+
+/// Convert an [`EvalValue`] leaf to a `FieldConst`.
+fn eval_value_to_field_const(val: &EvalValue) -> Option<FieldConst> {
+    match val {
+        EvalValue::Scalar(v) => Some(FieldConst::from_u64(*v as u64)),
+        EvalValue::Expr(expr) => match expr.as_ref() {
+            Expr::Number { value, .. } => FieldConst::from_decimal_str(value),
+            Expr::HexNumber { value, .. } => FieldConst::from_hex_str(value),
+            _ => None,
+        },
+        EvalValue::Array(_) => None, // not a leaf
     }
 }
 
@@ -729,12 +821,7 @@ mod tests {
     }
 
     fn make_ctx() -> LoweringContext<'static> {
-        LoweringContext {
-            templates: std::collections::HashMap::new(),
-            functions: std::collections::HashMap::new(),
-            inline_depth: 0,
-            param_values: std::collections::HashMap::new(),
-        }
+        LoweringContext::empty()
     }
 
     // ── Literals ────────────────────────────────────────────────────
@@ -1158,5 +1245,21 @@ mod tests {
     #[test]
     fn const_eval_non_const() {
         assert_eq!(const_eval_u64(&parse_expr("a + 1")), None);
+    }
+
+    #[test]
+    fn nested_dot_access_error() {
+        // c.sub.x is forbidden in Circom — nested component signal access.
+        let expr = parse_expr("c.sub.x");
+        let mut env = make_env();
+        env.locals.insert("c.sub".to_string());
+        let mut ctx = make_ctx();
+        let result = lower_expr(&expr, &env, &mut ctx);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().message;
+        assert!(
+            msg.contains("dot access target"),
+            "expected dot access error, got: {msg}"
+        );
     }
 }
