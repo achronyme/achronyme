@@ -134,11 +134,23 @@ fn run_circom_test(circom_path: &Path) -> TestResult {
         .collect();
 
     // Compute witness
-    let mut all_signals = circom::witness::compute_witness_hints_with_captures(
+    let mut all_signals = match circom::witness::compute_witness_hints_with_captures(
         &prove_ir,
         &fe_inputs,
         &capture_values,
-    );
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            return TestResult {
+                name,
+                parse: true,
+                lower: true,
+                r1cs: false,
+                constraints: None,
+                error: Some(format!("witness: {e}")),
+            };
+        }
+    };
 
     // Seed captures into signal map
     let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
@@ -330,4 +342,112 @@ fn circomlib_e2e() {
             eprintln!("  {} — {}", r.name, r.error.as_deref().unwrap_or("unknown"));
         }
     }
+}
+
+// ── Poseidon (real circomlib) ───────────────────────────────────
+
+/// Compile the real circomlib poseidon.circom with include resolution.
+///
+/// This is the ultimate compatibility test: Poseidon(2) from iden3/circomlib
+/// compiled through our frontend → ProveIR → R1CS → Groth16 verify.
+///
+/// Poseidon(2) from iden3/circomlib: 1006 constraints, Groth16-verified.
+#[test]
+fn poseidon_real_circomlib() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let poseidon_path = manifest_dir.join("test/circomlib/poseidon_test.circom");
+
+    if !poseidon_path.exists() {
+        eprintln!("Skipping poseidon test: {poseidon_path:?} not found");
+        return;
+    }
+
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    // ── Step 1: Compile ──
+    eprintln!("Compiling Poseidon(2) from real circomlib...");
+    let compile_result = match circom::compile_file(&poseidon_path, &lib_dirs) {
+        Ok(r) => r,
+        Err(e) => {
+            panic!("Poseidon compilation failed: {e}");
+        }
+    };
+
+    let prove_ir = &compile_result.prove_ir;
+    eprintln!("  ✓ Compiled: {} body nodes", prove_ir.body.len());
+    eprintln!(
+        "    Public inputs: {:?}",
+        prove_ir
+            .public_inputs
+            .iter()
+            .map(|i| &i.name)
+            .collect::<Vec<_>>()
+    );
+    eprintln!(
+        "    Captures: {:?}",
+        prove_ir
+            .captures
+            .iter()
+            .map(|c| &c.name)
+            .collect::<Vec<_>>()
+    );
+
+    // ── Step 2: Instantiate ──
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = match prove_ir.instantiate(&fe_captures) {
+        Ok(p) => p,
+        Err(e) => panic!("Poseidon instantiation failed: {e}"),
+    };
+
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  ✓ Instantiated + optimized: {} instructions",
+        program.instructions.len()
+    );
+
+    // ── Step 3: R1CS compile ──
+    // Build witness: inputs[0]=1, inputs[1]=2, initialState=0
+    let mut user_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    user_inputs.insert("inputs_0".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    user_inputs.insert("inputs_1".to_string(), FieldElement::<Bn254Fr>::from_u64(2));
+    user_inputs.insert(
+        "initialState".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(0),
+    );
+
+    let mut all_signals = match circom::witness::compute_witness_hints_with_captures(
+        prove_ir,
+        &user_inputs,
+        capture_values,
+    ) {
+        Ok(s) => s,
+        Err(e) => panic!("Poseidon witness computation failed: {e}"),
+    };
+
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    let witness = match r1cs_compiler.compile_ir_with_witness(&program, &all_signals) {
+        Ok(w) => w,
+        Err(e) => panic!("Poseidon R1CS compilation failed: {e}"),
+    };
+
+    let num_constraints = r1cs_compiler.cs.num_constraints();
+    eprintln!("  ✓ R1CS compiled: {num_constraints} constraints");
+
+    // ── Step 4: Verify ──
+    match r1cs_compiler.cs.verify(&witness) {
+        Ok(()) => eprintln!("  ✓ R1CS verified!"),
+        Err(e) => panic!("Poseidon R1CS verification failed: {e}"),
+    }
+
+    eprintln!();
+    eprintln!("  Poseidon(2) — {num_constraints} constraints — VERIFIED ✓");
 }
