@@ -76,14 +76,25 @@ pub fn const_eval_with_params(expr: &Expr, params: &HashMap<String, u64>) -> Opt
                 ast::BinOp::ShiftL => Some(l << (r & 63)),
                 ast::BinOp::ShiftR => Some(l >> (r & 63)),
                 ast::BinOp::Pow => Some(l.pow(r as u32)),
-                _ => None,
+                ast::BinOp::Eq => Some(if l == r { 1 } else { 0 }),
+                ast::BinOp::Neq => Some(if l != r { 1 } else { 0 }),
+                ast::BinOp::Lt => Some(if l < r { 1 } else { 0 }),
+                ast::BinOp::Le => Some(if l <= r { 1 } else { 0 }),
+                ast::BinOp::Gt => Some(if l > r { 1 } else { 0 }),
+                ast::BinOp::Ge => Some(if l >= r { 1 } else { 0 }),
+                ast::BinOp::And => Some(if l != 0 && r != 0 { 1 } else { 0 }),
+                ast::BinOp::Or => Some(if l != 0 || r != 0 { 1 } else { 0 }),
+                ast::BinOp::BitAnd => Some(l & r),
+                ast::BinOp::BitOr => Some(l | r),
+                ast::BinOp::BitXor => Some(l ^ r),
             }
         }
         Expr::UnaryOp { op, operand, .. } => {
             let val = const_eval_with_params(operand, params)?;
             match op {
                 ast::UnaryOp::Neg => Some(val.wrapping_neg()),
-                _ => None,
+                ast::UnaryOp::Not => Some(if val == 0 { 1 } else { 0 }),
+                ast::UnaryOp::BitNot => Some(!val),
             }
         }
         // Fall back to const_eval for literals
@@ -127,12 +138,69 @@ const MAX_EVAL_ITERATIONS: usize = 10_000;
 /// Maximum recursion depth for compile-time evaluation.
 const MAX_EVAL_DEPTH: usize = 64;
 
+// ---------------------------------------------------------------------------
+// EvalValue — compile-time value (scalar or array)
+// ---------------------------------------------------------------------------
+
+/// A value produced by compile-time evaluation of Circom functions.
+///
+/// Functions like `POSEIDON_C(t)` return arrays of field constants selected
+/// by an if-else chain.  `EvalValue` lets the evaluator propagate both
+/// scalar results (`return 42`) and array results (`return [a, b, c]`)
+/// through control flow and up the call stack.
+///
+/// Array elements that are large field-element constants (e.g. 256-bit hex
+/// values) cannot be represented as `i64`.  These are preserved as raw AST
+/// [`Expr`] nodes and lowered to `CircuitExpr` when the array is expanded
+/// into `Let` bindings.
+#[derive(Clone, Debug)]
+pub enum EvalValue {
+    /// A single integer (fits in i64 — later promoted to a field element).
+    Scalar(i64),
+    /// An array of values (may nest for 2-D arrays like `POSEIDON_M`).
+    Array(Vec<EvalValue>),
+    /// An unevaluated expression preserved from the function body.
+    /// Used for constants too large for i64 (256-bit field elements).
+    Expr(Box<Expr>),
+}
+
+impl EvalValue {
+    /// Extract as a scalar, returning `None` for arrays and raw expressions.
+    pub fn as_scalar(&self) -> Option<i64> {
+        match self {
+            EvalValue::Scalar(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Index into this value: only arrays support indexing.
+    pub fn index(&self, idx: usize) -> Option<&EvalValue> {
+        match self {
+            EvalValue::Array(elems) => elems.get(idx),
+            _ => None,
+        }
+    }
+
+    /// Length for arrays, None for scalars/exprs.
+    pub fn len(&self) -> Option<usize> {
+        match self {
+            EvalValue::Array(elems) => Some(elems.len()),
+            _ => None,
+        }
+    }
+
+    /// True if this is an array value.
+    pub fn is_array(&self) -> bool {
+        matches!(self, EvalValue::Array(_))
+    }
+}
+
 /// Result of evaluating a single statement.
 enum StmtResult {
     /// Statement completed normally.
     Continue,
     /// A `return` statement was reached with the given value.
-    Return(i64),
+    Return(EvalValue),
 }
 
 /// Evaluate a Circom function body at compile time with concrete i64 arguments.
@@ -146,6 +214,20 @@ pub fn eval_function(
     functions: &HashMap<&str, &FunctionDef>,
     depth: usize,
 ) -> Option<i64> {
+    eval_function_to_value(func, args, functions, depth)?.as_scalar()
+}
+
+/// Evaluate a Circom function body at compile time, returning scalar or array.
+///
+/// This is the array-aware version of [`eval_function`].  Functions like
+/// `POSEIDON_C(t)` return arrays selected by an if-else chain — this
+/// function propagates those array returns through the evaluator.
+pub fn eval_function_to_value(
+    func: &FunctionDef,
+    args: &[i64],
+    functions: &HashMap<&str, &FunctionDef>,
+    depth: usize,
+) -> Option<EvalValue> {
     if depth > MAX_EVAL_DEPTH {
         return None;
     }
@@ -183,6 +265,25 @@ pub fn try_eval_function_call(
     eval_function(func, &arg_vals, functions, depth).map(|v| v as u64)
 }
 
+/// Try to evaluate a function call at compile time, returning scalar or array.
+///
+/// Like [`try_eval_function_call`] but returns the full [`EvalValue`] so
+/// callers can handle array-returning functions (e.g. `POSEIDON_C`).
+pub fn try_eval_function_call_to_value(
+    func: &FunctionDef,
+    args: &[Expr],
+    params: &HashMap<String, u64>,
+    functions: &HashMap<&str, &FunctionDef>,
+    depth: usize,
+) -> Option<EvalValue> {
+    let vars: HashMap<String, i64> = params.iter().map(|(k, &v)| (k.clone(), v as i64)).collect();
+    let arg_vals: Vec<i64> = args
+        .iter()
+        .map(|a| eval_expr_i64(a, &vars, functions, depth))
+        .collect::<Option<_>>()?;
+    eval_function_to_value(func, &arg_vals, functions, depth)
+}
+
 /// Evaluate a Circom expression as u64 with parameter substitution and
 /// function call support.
 ///
@@ -207,7 +308,47 @@ pub fn precompute_vars(
     params: &HashMap<String, u64>,
     functions: &HashMap<&str, &FunctionDef>,
 ) -> HashMap<String, u64> {
-    let mut known = params.clone();
+    let result = precompute_all(stmts, params, functions);
+    result.scalars
+}
+
+/// Pre-evaluate compile-time `var` declarations that produce arrays.
+///
+/// Scans statements for `var C[n] = func(args)` where the function returns
+/// an array (e.g. `POSEIDON_C(t)`).  Returns a map of variable name to the
+/// evaluated [`EvalValue`].  Scalar results are excluded (handled by
+/// [`precompute_vars`]).
+pub fn precompute_array_vars(
+    stmts: &[Stmt],
+    params: &HashMap<String, u64>,
+    functions: &HashMap<&str, &FunctionDef>,
+) -> HashMap<String, EvalValue> {
+    let result = precompute_all(stmts, params, functions);
+    result.arrays
+}
+
+/// Result of the unified compile-time precomputation pass.
+pub struct PrecomputeResult {
+    /// Scalar vars (e.g. `var nRoundsP = 56`).  Excludes original params.
+    pub scalars: HashMap<String, u64>,
+    /// Array vars (e.g. `var C[n] = POSEIDON_C(t)`).
+    pub arrays: HashMap<String, EvalValue>,
+}
+
+/// Unified single-pass precomputation of both scalar and array vars.
+///
+/// Processes `var` declarations in order, maintaining both scalar and array
+/// maps.  This allows later declarations to reference earlier ones — e.g.
+/// `var nRoundsP = N_ROUNDS_P[t - 2]` can index into the array
+/// `N_ROUNDS_P` that was computed earlier in the same pass.
+pub fn precompute_all(
+    stmts: &[Stmt],
+    params: &HashMap<String, u64>,
+    functions: &HashMap<&str, &FunctionDef>,
+) -> PrecomputeResult {
+    let mut scalars = params.clone();
+    let mut arrays: HashMap<String, EvalValue> = HashMap::new();
+
     for stmt in stmts {
         if let Stmt::VarDecl {
             names,
@@ -215,18 +356,106 @@ pub fn precompute_vars(
             ..
         } = stmt
         {
-            if names.len() == 1 {
-                if let Some(val) = const_eval_with_functions(expr, &known, functions) {
-                    known.insert(names[0].clone(), val);
+            if names.len() != 1 {
+                continue;
+            }
+            let name = &names[0];
+
+            // 1. Try scalar eval (with array-index support)
+            if let Some(val) = const_eval_with_arrays(expr, &scalars, &arrays, functions) {
+                scalars.insert(name.clone(), val);
+                continue;
+            }
+
+            // 2. Try array-returning function call
+            if let Expr::Call { callee, args, .. } = expr {
+                if let Some(fn_name) = extract_ident_name(callee) {
+                    if let Some(func) = functions.get(fn_name.as_str()) {
+                        if let Some(val) =
+                            try_eval_function_call_to_value(func, args, &scalars, functions, 0)
+                        {
+                            if val.is_array() {
+                                arrays.insert(name.clone(), val);
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Try array literal
+            if let Expr::ArrayLit { elements, .. } = expr {
+                let vars: HashMap<String, i64> = scalars
+                    .iter()
+                    .map(|(k, &v)| (k.clone(), v as i64))
+                    .collect();
+                let vals: Option<Vec<EvalValue>> = elements
+                    .iter()
+                    .map(|e| eval_expr_value(e, &vars, functions, 0))
+                    .collect();
+                if let Some(vals) = vals {
+                    arrays.insert(name.clone(), EvalValue::Array(vals));
                 }
             }
         }
     }
-    // Return only the NEW vars (exclude original params)
-    known
-        .into_iter()
-        .filter(|(k, _)| !params.contains_key(k))
-        .collect()
+
+    PrecomputeResult {
+        scalars: scalars
+            .into_iter()
+            .filter(|(k, _)| !params.contains_key(k))
+            .collect(),
+        arrays,
+    }
+}
+
+/// Evaluate an expression to u64 with support for indexing into known arrays.
+///
+/// Extends [`const_eval_with_functions`] with `Expr::Index` support so that
+/// `N_ROUNDS_P[t - 2]` resolves when `N_ROUNDS_P` is a known array.
+fn const_eval_with_arrays(
+    expr: &Expr,
+    params: &HashMap<String, u64>,
+    arrays: &HashMap<String, EvalValue>,
+    functions: &HashMap<&str, &FunctionDef>,
+) -> Option<u64> {
+    match expr {
+        // Array index: arr[expr] — resolve from known arrays
+        Expr::Index { object, index, .. } => {
+            let base_name = extract_ident_name(object)?;
+            let arr = arrays.get(&base_name)?;
+            let idx = const_eval_with_arrays(index, params, arrays, functions)? as usize;
+            let elem = arr.index(idx)?;
+            elem.as_scalar().map(|v| v as u64)
+        }
+        // Everything else — delegate to existing evaluator
+        _ => const_eval_with_functions(expr, params, functions),
+    }
+}
+
+/// Evaluate a single statement in-place, updating `vars`.
+///
+/// Returns `Some(())` if evaluation succeeded, `None` if the statement
+/// couldn't be evaluated (e.g., references unknown variables or signal ops).
+pub fn try_eval_stmt_in_place(
+    stmt: &Stmt,
+    vars: &mut HashMap<String, i64>,
+    functions: &HashMap<&str, &FunctionDef>,
+) -> Option<()> {
+    eval_stmt(stmt, vars, functions, 0)?;
+    Some(())
+}
+
+/// Evaluate an expression to an i64 value.
+///
+/// Returns `None` if the expression references unknown variables or
+/// contains constructs that can't be evaluated at compile time.
+pub fn try_eval_expr_i64(
+    expr: &Expr,
+    vars: &HashMap<String, i64>,
+    functions: &HashMap<&str, &FunctionDef>,
+) -> Option<i64> {
+    eval_expr_i64(expr, vars, functions, 0)
 }
 
 // ── Internal helpers ────────────────────────────────────────────
@@ -294,7 +523,7 @@ fn eval_stmt(
         }
 
         Stmt::Expr { expr, .. } => {
-            if let Expr::PostfixOp { op, operand, .. } = expr {
+            if let Expr::PostfixOp { op, operand, .. } | Expr::PrefixOp { op, operand, .. } = expr {
                 if let Expr::Ident { name, .. } = operand.as_ref() {
                     let current = *vars.get(name.as_str())?;
                     match op {
@@ -324,6 +553,22 @@ fn eval_stmt(
                 match eval_stmts(&body.stmts, vars, functions, depth)? {
                     StmtResult::Continue => {}
                     ret @ StmtResult::Return(_) => return Some(ret),
+                }
+            }
+            None // non-terminating
+        }
+
+        Stmt::DoWhile {
+            condition, body, ..
+        } => {
+            for _ in 0..MAX_EVAL_ITERATIONS {
+                match eval_stmts(&body.stmts, vars, functions, depth)? {
+                    StmtResult::Continue => {}
+                    ret @ StmtResult::Return(_) => return Some(ret),
+                }
+                let cond = eval_expr_i64(condition, vars, functions, depth)?;
+                if cond == 0 {
+                    return Some(StmtResult::Continue);
                 }
             }
             None // non-terminating
@@ -371,7 +616,7 @@ fn eval_stmt(
         }
 
         Stmt::Return { value, .. } => {
-            let val = eval_expr_i64(value, vars, functions, depth)?;
+            let val = eval_expr_value(value, vars, functions, depth)?;
             Some(StmtResult::Return(val))
         }
 
@@ -381,6 +626,61 @@ fn eval_stmt(
 
         // Signal decls, component decls, constraint eqs — not evaluable
         _ => None,
+    }
+}
+
+/// Evaluate an expression to an [`EvalValue`] (scalar, array, or raw expr).
+///
+/// Handles `ArrayLit` for array construction and delegates to
+/// [`eval_expr_i64`] for scalar expressions.  If an array element can't
+/// be evaluated to i64 (e.g. a 256-bit hex literal), it is preserved as
+/// `EvalValue::Expr`.
+fn eval_expr_value(
+    expr: &Expr,
+    vars: &HashMap<String, i64>,
+    functions: &HashMap<&str, &FunctionDef>,
+    depth: usize,
+) -> Option<EvalValue> {
+    match expr {
+        // Array literal: [e0, e1, ...] — elements may be scalars, nested arrays, or raw exprs
+        Expr::ArrayLit { elements, .. } => {
+            let vals: Vec<EvalValue> = elements
+                .iter()
+                .map(|e| {
+                    // Try full evaluation first; if that fails, preserve as raw expr.
+                    // This allows large hex constants to survive as Expr nodes.
+                    eval_expr_value(e, vars, functions, depth)
+                        .or_else(|| Some(EvalValue::Expr(Box::new(e.clone()))))
+                })
+                .collect::<Option<_>>()?;
+            Some(EvalValue::Array(vals))
+        }
+        // Function call — may return scalar or array
+        Expr::Call { callee, args, .. } => {
+            let name = extract_ident_name(callee)?;
+            let func = *functions.get(name.as_str())?;
+            let arg_vals: Vec<i64> = args
+                .iter()
+                .map(|a| eval_expr_i64(a, vars, functions, depth))
+                .collect::<Option<_>>()?;
+            eval_function_to_value(func, &arg_vals, functions, depth + 1)
+        }
+        // Index into an array: arr[idx]
+        Expr::Index { object, index, .. } => {
+            let arr = eval_expr_value(object, vars, functions, depth)?;
+            let idx = eval_expr_i64(index, vars, functions, depth)?;
+            arr.index(idx as usize).cloned()
+        }
+        // Number/hex literals: try i64, fall back to raw Expr for large values
+        Expr::Number { .. } | Expr::HexNumber { .. } => {
+            if let Some(v) = eval_expr_i64(expr, vars, functions, depth) {
+                Some(EvalValue::Scalar(v))
+            } else {
+                Some(EvalValue::Expr(Box::new(expr.clone())))
+            }
+        }
+        // Everything else — try scalar evaluation
+        _ => eval_expr_i64(expr, vars, functions, depth).map(EvalValue::Scalar),
     }
 }
 
@@ -413,9 +713,9 @@ fn eval_expr_i64(
                 ast::UnaryOp::BitNot => Some(!val),
             }
         }
-        Expr::PostfixOp { operand, .. } => {
+        Expr::PostfixOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
             // In expression context, return the current value (side effect
-            // is handled by eval_stmt for statement-level postfix ops)
+            // is handled by eval_stmt for statement-level postfix/prefix ops)
             if let Expr::Ident { name, .. } = operand.as_ref() {
                 vars.get(name.as_str()).copied()
             } else {
@@ -702,5 +1002,203 @@ mod tests {
         };
         let vars = precompute_vars(&t.body.stmts, &params, &fns);
         assert_eq!(vars.get("nb"), Some(&8u64));
+    }
+
+    // ── eval_function_to_value (array) tests ──────────────────────
+
+    #[test]
+    fn eval_array_return() {
+        let prog = parse_program(
+            r#"
+            function get_constants() {
+                return [10, 20, 30];
+            }
+            "#,
+        );
+        let fns = extract_functions(&prog);
+        let f = fns["get_constants"];
+        let val = eval_function_to_value(f, &[], &fns, 0).unwrap();
+        assert!(val.is_array());
+        assert_eq!(val.len(), Some(3));
+        assert_eq!(val.index(0).unwrap().as_scalar(), Some(10));
+        assert_eq!(val.index(1).unwrap().as_scalar(), Some(20));
+        assert_eq!(val.index(2).unwrap().as_scalar(), Some(30));
+    }
+
+    #[test]
+    fn eval_array_return_in_if_else() {
+        let prog = parse_program(
+            r#"
+            function select(t) {
+                if (t == 1) {
+                    return [100, 200];
+                } else if (t == 2) {
+                    return [300, 400, 500];
+                } else {
+                    return [0];
+                }
+            }
+            "#,
+        );
+        let fns = extract_functions(&prog);
+        let f = fns["select"];
+
+        let v1 = eval_function_to_value(f, &[1], &fns, 0).unwrap();
+        assert_eq!(v1.len(), Some(2));
+        assert_eq!(v1.index(0).unwrap().as_scalar(), Some(100));
+        assert_eq!(v1.index(1).unwrap().as_scalar(), Some(200));
+
+        let v2 = eval_function_to_value(f, &[2], &fns, 0).unwrap();
+        assert_eq!(v2.len(), Some(3));
+        assert_eq!(v2.index(0).unwrap().as_scalar(), Some(300));
+
+        let v0 = eval_function_to_value(f, &[99], &fns, 0).unwrap();
+        assert_eq!(v0.len(), Some(1));
+        assert_eq!(v0.index(0).unwrap().as_scalar(), Some(0));
+    }
+
+    #[test]
+    fn eval_2d_array_return() {
+        let prog = parse_program(
+            r#"
+            function get_matrix() {
+                return [[1, 2], [3, 4]];
+            }
+            "#,
+        );
+        let fns = extract_functions(&prog);
+        let f = fns["get_matrix"];
+        let val = eval_function_to_value(f, &[], &fns, 0).unwrap();
+        assert_eq!(val.len(), Some(2));
+        let row0 = val.index(0).unwrap();
+        assert_eq!(row0.index(0).unwrap().as_scalar(), Some(1));
+        assert_eq!(row0.index(1).unwrap().as_scalar(), Some(2));
+        let row1 = val.index(1).unwrap();
+        assert_eq!(row1.index(0).unwrap().as_scalar(), Some(3));
+        assert_eq!(row1.index(1).unwrap().as_scalar(), Some(4));
+    }
+
+    #[test]
+    fn eval_scalar_still_works_after_refactor() {
+        // Verify eval_function (scalar) still delegates correctly
+        let prog = parse_program("function double(x) { return x * 2; }");
+        let fns = extract_functions(&prog);
+        let f = fns["double"];
+        assert_eq!(eval_function(f, &[7], &fns, 0), Some(14));
+    }
+
+    #[test]
+    fn eval_hex_in_array_preserved_as_expr() {
+        // Large hex numbers that don't fit in i64 should be preserved as Expr
+        let prog = parse_program(
+            r#"
+            function get_hex() {
+                return [0x1, 0xFFFFFFFFFFFFFFFF];
+            }
+            "#,
+        );
+        let fns = extract_functions(&prog);
+        let f = fns["get_hex"];
+        let val = eval_function_to_value(f, &[], &fns, 0).unwrap();
+        assert_eq!(val.len(), Some(2));
+        // 0x1 fits in i64
+        assert_eq!(val.index(0).unwrap().as_scalar(), Some(1));
+        // 0xFFFFFFFFFFFFFFFF = u64::MAX, overflows i64 → preserved as Expr
+        let elem1 = val.index(1).unwrap();
+        assert!(
+            matches!(elem1, EvalValue::Expr(_)),
+            "large hex should be Expr, got {:?}",
+            elem1
+        );
+    }
+
+    #[test]
+    fn precompute_array_vars_basic() {
+        let prog = parse_program(
+            r#"
+            function constants(t) {
+                if (t == 1) { return [10, 20]; }
+                else { return [30, 40]; }
+            }
+            template T(n) {
+                var C[2] = constants(n);
+                signal input in;
+                signal output out;
+            }
+            component main {public [in]} = T(1);
+            "#,
+        );
+        let fns = extract_functions(&prog);
+        let mut params = HashMap::new();
+        params.insert("n".to_string(), 1u64);
+
+        let t = match &prog.definitions[1] {
+            crate::ast::Definition::Template(t) => t,
+            _ => panic!("expected template"),
+        };
+        let arrays = precompute_array_vars(&t.body.stmts, &params, &fns);
+        assert!(arrays.contains_key("C"));
+        let c = &arrays["C"];
+        assert_eq!(c.len(), Some(2));
+        assert_eq!(c.index(0).unwrap().as_scalar(), Some(10));
+        assert_eq!(c.index(1).unwrap().as_scalar(), Some(20));
+    }
+
+    #[test]
+    fn precompute_all_indexed_array_as_scalar() {
+        // Poseidon pattern: var ROUNDS[4] = [...]; var nRoundsP = ROUNDS[t - 2];
+        let prog = parse_program(
+            r#"
+            template T(nInputs) {
+                var t = nInputs + 1;
+                var ROUNDS[4] = [56, 57, 56, 60];
+                var nRoundsP = ROUNDS[t - 2];
+                signal input in;
+                signal output out;
+            }
+            component main {public [in]} = T(2);
+            "#,
+        );
+        let fns = extract_functions(&prog);
+        let mut params = HashMap::new();
+        params.insert("nInputs".to_string(), 2u64);
+
+        let t = match &prog.definitions[0] {
+            crate::ast::Definition::Template(t) => t,
+            _ => panic!("expected template"),
+        };
+        let result = precompute_all(&t.body.stmts, &params, &fns);
+
+        // t = nInputs + 1 = 3
+        assert_eq!(result.scalars.get("t"), Some(&3u64));
+        // ROUNDS is an array
+        assert!(result.arrays.contains_key("ROUNDS"));
+        // nRoundsP = ROUNDS[3 - 2] = ROUNDS[1] = 57
+        assert_eq!(result.scalars.get("nRoundsP"), Some(&57u64));
+    }
+
+    #[test]
+    fn const_eval_with_arrays_index() {
+        let mut params = HashMap::new();
+        params.insert("t".to_string(), 3u64);
+
+        let mut arrays = HashMap::new();
+        arrays.insert(
+            "ROUNDS".to_string(),
+            EvalValue::Array(vec![
+                EvalValue::Scalar(56),
+                EvalValue::Scalar(57),
+                EvalValue::Scalar(56),
+                EvalValue::Scalar(60),
+            ]),
+        );
+
+        // ROUNDS[t - 2] with t=3 → ROUNDS[1] = 57
+        let expr = parse_expr("ROUNDS[t - 2]");
+        let fns = HashMap::new();
+        assert_eq!(
+            const_eval_with_arrays(&expr, &params, &arrays, &fns),
+            Some(57)
+        );
     }
 }
