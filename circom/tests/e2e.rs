@@ -865,10 +865,9 @@ fn eddsaposeidon_compile() {
 /// so any input values satisfy the constraints. This validates that
 /// the entire constraint system is well-formed and satisfiable.
 ///
-/// BLOCKED: CompConstant uses `var b = (1 << 128) - 1` which overflows
-/// the i64 compile-time evaluator. Needs field-element var evaluation.
+/// Unblocked by BigVal 256-bit evaluator (2026-04-04): CompConstant's
+/// `var b = (1 << 128) - 1` now evaluates correctly.
 #[test]
-#[ignore] // TODO: compile-time var overflow — needs field-element eval for (1 << 128)
 fn eddsaposeidon_r1cs() {
     // BabyJubjub base point (Base8) — a valid curve point.
     // Even with enabled=0, intermediate values must be valid for Num2Bits.
@@ -905,4 +904,18 @@ fn eddsaposeidon_r1cs() {
     );
     eprintln!("  Constraints: {n}");
     assert!(n > 10000, "expected >10000 constraints, got {n}");
+}
+
+/// CompConstant standalone R1CS verify — isolates the 1<<128 BigVal fix.
+#[test]
+fn compconstant_standalone() {
+    let mut inputs = HashMap::new();
+    inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+
+    let n = circomlib_e2e_verify_fe(
+        "CompConstant standalone",
+        "test/circomlib/compconstant_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
 }
