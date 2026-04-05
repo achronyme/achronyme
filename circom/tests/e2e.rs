@@ -1074,26 +1074,29 @@ fn sign_circomlib() {
     eprintln!("  Constraints: {n}");
 }
 
-/// Pedersen(8): compile-only test.
+/// Pedersen(8): hash 8 bits using BabyJubjub curve.
 ///
-/// TODO: Pedersen uses array literal base points in the circuit body
-/// (`var BASE[10][2][4]`), which the Circom lowering doesn't support yet.
-/// Needs array literal → Const node expansion in the lowering.
+/// Tests: Window4, MontgomeryAdd/Double, Edwards2Montgomery,
+/// Montgomery2Edwards, BabyAdd, Mux3 — completely different hash
+/// construction from Poseidon/MiMC. Uses hardcoded base points
+/// via 2D array literal (`var BASE[10][2] = [[...], ...]`).
 #[test]
-fn pedersen_circomlib_compile() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let path = manifest_dir.join("test/circomlib/pedersen_test.circom");
-    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
-
-    // Currently fails at compilation due to array literals in circuit body.
-    // This test documents the known limitation and will pass once supported.
-    let result = circom::compile_file(&path, &lib_dirs);
-    if let Ok(r) = result {
-        eprintln!(
-            "  Pedersen(8) — {} nodes — COMPILED ✓",
-            r.prove_ir.body.len()
-        );
-    } else {
-        eprintln!("  Pedersen(8) — compile not yet supported (array literal in circuit body)");
-    }
+fn pedersen_circomlib() {
+    // Hash input: 0b10110010 (bits LSB-first)
+    let n = circomlib_e2e_verify(
+        "Pedersen(8)",
+        "test/circomlib/pedersen_test.circom",
+        &[
+            ("in_0", 0),
+            ("in_1", 1),
+            ("in_2", 0),
+            ("in_3", 0),
+            ("in_4", 1),
+            ("in_5", 1),
+            ("in_6", 0),
+            ("in_7", 1),
+        ],
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for Pedersen hash");
 }

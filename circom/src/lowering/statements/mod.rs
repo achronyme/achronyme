@@ -365,6 +365,19 @@ fn lower_var_decl(
 ) -> Result<(), LoweringError> {
     if let Some(value) = init {
         if names.len() == 1 {
+            // Skip nested (2D+) array literals already resolved by precompute_all
+            // (e.g., `var BASE[10][2] = [[...], ...]` in Pedersen). These can't be
+            // lowered via lower_expr (ArrayLit unsupported), but their values resolve
+            // from known_array_values at compile time. Flat 1D array literals are
+            // expanded to Let nodes below for use in circuit expressions.
+            if env.known_array_values.contains_key(&names[0]) {
+                if let Expr::ArrayLit { elements, .. } = value {
+                    if elements.iter().any(|e| matches!(e, Expr::ArrayLit { .. })) {
+                        return Ok(());
+                    }
+                }
+            }
+
             // Check for array literal: `var arr = [1, 2, 3]`
             if let Expr::ArrayLit { elements, .. } = value {
                 let base = &names[0];
