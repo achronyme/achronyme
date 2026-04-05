@@ -194,11 +194,11 @@ impl CircuitStats {
                     (ConstraintCategory::Comparison, cost)
                 }
                 Instruction::IsLtBounded { bitwidth, .. } => {
-                    // compile_is_lt_via_bits(diff, bitwidth+1) = bitwidth+1 boolean + 1 sum
-                    (ConstraintCategory::Comparison, (*bitwidth as usize) + 2)
+                    // 1 materialize + (bitwidth+1) boolean + 1 sum
+                    (ConstraintCategory::Comparison, (*bitwidth as usize) + 3)
                 }
                 Instruction::IsLeBounded { bitwidth, .. } => {
-                    (ConstraintCategory::Comparison, (*bitwidth as usize) + 2)
+                    (ConstraintCategory::Comparison, (*bitwidth as usize) + 3)
                 }
 
                 // S-box: full=8*3*3=72, partial=57*1*3=171, subtotal=243
@@ -266,8 +266,11 @@ impl CircuitStats {
 
 /// Compute R1CS cost for IsLt/IsLe based on range bounds.
 ///
-/// If both operands have prior RangeCheck bounds, uses `max(bound_a, bound_b) + 2`.
-/// Otherwise, adds 253 per missing bound + 254 for the decomposition.
+/// If both operands have prior RangeCheck bounds, uses `max(bound_a, bound_b) + 3`.
+/// Otherwise, adds 253 per missing bound + 255 for the decomposition.
+///
+/// The +1 vs prior formula comes from compile_is_lt_via_bits materializing
+/// the diff LC before the bit loop (prevents O(bits) clones of multi-term LCs).
 fn is_lt_cost(range_bounds: &HashMap<SsaVar, u32>, lhs: &SsaVar, rhs: &SsaVar) -> usize {
     let bound_a = range_bounds.get(lhs).copied();
     let bound_b = range_bounds.get(rhs).copied();
@@ -275,8 +278,8 @@ fn is_lt_cost(range_bounds: &HashMap<SsaVar, u32>, lhs: &SsaVar, rhs: &SsaVar) -
     match (bound_a, bound_b) {
         (Some(ba), Some(bb)) => {
             let effective = ba.max(bb);
-            // compile_is_lt_via_bits(diff, effective+1) = (effective+1) boolean + 1 sum
-            (effective as usize) + 2
+            // 1 materialize + (effective+1) boolean + 1 sum
+            (effective as usize) + 3
         }
         _ => {
             let mut cost = 0usize;
@@ -287,8 +290,8 @@ fn is_lt_cost(range_bounds: &HashMap<SsaVar, u32>, lhs: &SsaVar, rhs: &SsaVar) -
             if bound_b.is_none() {
                 cost += 253;
             }
-            // compile_is_lt_via_bits(diff, 253) = 253 boolean + 1 sum = 254
-            cost += 254;
+            // 1 materialize + 253 boolean + 1 sum = 255
+            cost += 255;
             cost
         }
     }
@@ -600,8 +603,8 @@ mod tests {
         });
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
-        // compile_is_lt_via_bits(diff, 9) = 9 boolean + 1 sum = 10
-        assert_eq!(stats.total_constraints, 10);
+        // 1 materialize + 9 boolean + 1 sum = 11
+        assert_eq!(stats.total_constraints, 11);
     }
 
     #[test]
@@ -627,8 +630,8 @@ mod tests {
         });
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
-        // Both unbounded: 253 + 253 + 254 = 760
-        assert_eq!(stats.total_constraints, 760);
+        // Both unbounded: 253 + 253 + 255 = 761
+        assert_eq!(stats.total_constraints, 761);
     }
 
     #[test]
@@ -668,9 +671,9 @@ mod tests {
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
         // 2x RangeCheck(8) = 2*(8+1) = 18
-        // IsLt with bounds max(8,8) = 8+2 = 10
-        // Total = 28
-        assert_eq!(stats.total_constraints, 28);
+        // IsLt with bounds max(8,8) = 8+3 = 11
+        // Total = 29
+        assert_eq!(stats.total_constraints, 29);
     }
 
     #[test]
@@ -979,8 +982,8 @@ mod tests {
 
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
         // RangeCheck(8) = 9
-        // IsLt: bound_a=Some(8), bound_b=None → 253 + 254 = 507
-        // Total = 9 + 507 = 516
-        assert_eq!(stats.total_constraints, 516);
+        // IsLt: bound_a=Some(8), bound_b=None → 253 + 255 = 508
+        // Total = 9 + 508 = 517
+        assert_eq!(stats.total_constraints, 517);
     }
 }

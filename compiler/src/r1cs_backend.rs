@@ -20,6 +20,13 @@ pub struct ConstraintOrigin {
     pub result_var: SsaVar,
 }
 
+/// Maximum LC term count before auto-materialization.
+///
+/// Without this, chains of Add/Sub (e.g. MDS in Poseidon partial rounds)
+/// cause exponential LC growth: f(n) = 2·f(n-1)+1 ≈ 2^n terms.
+/// Materializing keeps each LC bounded and prevents OOM on large circuits.
+const LC_AUTO_MATERIALIZE_THRESHOLD: usize = 8;
+
 /// Compiles an Achronyme SSA IR program into an R1CS constraint system.
 ///
 /// The R1CSCompiler walks IR instructions and emits R1CS constraints.
@@ -102,6 +109,20 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         var
     }
 
+    /// Materialize an LC if it exceeds the auto-materialization threshold.
+    ///
+    /// Prevents exponential LC term growth in long chains of Add/Sub
+    /// (e.g. MDS matrix multiplication in Poseidon partial rounds).
+    /// Adds at most 1 constraint per materialization.
+    fn auto_materialize(&mut self, lc: LinearCombination<F>) -> LinearCombination<F> {
+        if lc.terms.len() > LC_AUTO_MATERIALIZE_THRESHOLD {
+            let var = self.materialize_lc(&lc);
+            LinearCombination::from_variable(var)
+        } else {
+            lc
+        }
+    }
+
     /// Look up a previously declared variable by name.
     pub fn lookup(&self, name: &str) -> Result<Variable, R1CSError> {
         self.bindings
@@ -179,12 +200,14 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                 IrInstruction::Add { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    lc_map.insert(*result, a + b);
+                    let out = self.auto_materialize(a + b);
+                    lc_map.insert(*result, out);
                 }
                 IrInstruction::Sub { result, lhs, rhs } => {
                     let a = lookup(&lc_map, lhs)?;
                     let b = lookup(&lc_map, rhs)?;
-                    lc_map.insert(*result, a - b);
+                    let out = self.auto_materialize(a - b);
+                    lc_map.insert(*result, out);
                 }
                 IrInstruction::Neg { result, operand } => {
                     let lc = lookup(&lc_map, operand)?;
@@ -504,6 +527,10 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     num_bits,
                 } => {
                     let lc = lookup(&lc_map, operand)?;
+                    // Materialize source to avoid cloning large LC num_bits times.
+                    let src_var = self.materialize_lc(&lc);
+                    let src_lc = LinearCombination::from_variable(src_var);
+
                     // Same as RangeCheck but also registers each bit in lc_map.
                     let mut sum = LinearCombination::zero();
                     for (i, bit_ssa) in bit_results.iter().enumerate() {
@@ -519,13 +546,13 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                         sum = sum + LinearCombination::from_variable(bit_var) * coeff;
                         self.witness_ops.push(WitnessOp::BitExtract {
                             target: bit_var,
-                            source: lc.clone(),
+                            source: src_lc.clone(),
                             bit_index: i as u32,
                         });
                         // Register each bit in lc_map so subsequent instructions can use it
                         lc_map.insert(*bit_ssa, LinearCombination::from_variable(bit_var));
                     }
-                    self.cs.enforce_equal(lc.clone(), sum);
+                    self.cs.enforce_equal(src_lc, sum);
                     range_bounds.insert(*operand, *num_bits);
                     lc_map.insert(*result, lc);
                 }

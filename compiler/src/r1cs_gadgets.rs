@@ -101,7 +101,15 @@ impl<F: FieldBackend> R1CSCompiler<F> {
 
     /// Enforce that `val` fits in `num_bits` bits: `val ∈ [0, 2^num_bits)`.
     /// Decomposes into `num_bits` boolean-enforced bits and checks sum == val.
+    ///
+    /// Materializes `val` first to avoid cloning a multi-term LC `num_bits` times
+    /// into WitnessOp::BitExtract (e.g. 252 clones for BN254 range checks).
     pub(crate) fn enforce_n_range(&mut self, val: &LinearCombination<F>, num_bits: u32) {
+        // Materialize to a single variable — avoids O(num_bits) clones of a large LC.
+        // If val is already a single variable, materialize_lc returns it at zero cost.
+        let src_var = self.materialize_lc(val);
+        let src_lc = LinearCombination::from_variable(src_var);
+
         let mut sum = LinearCombination::zero();
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
@@ -115,11 +123,11 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
             self.witness_ops.push(WitnessOp::BitExtract {
                 target: bit_var,
-                source: val.clone(),
+                source: src_lc.clone(),
                 bit_index: i,
             });
         }
-        self.cs.enforce_equal(val.clone(), sum);
+        self.cs.enforce_equal(src_lc, sum);
     }
 
     /// Default range bit width: `modulus_bit_size - 2`.
@@ -137,11 +145,16 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// Compile an IsLt check via `num_bits`-bit decomposition.
     /// Input: an LC representing `diff = b - a + offset`.
     /// Returns an LC that is 1 if a < b, 0 otherwise (bit `num_bits - 1`).
+    ///
+    /// Materializes `diff` first to avoid cloning a multi-term LC `num_bits` times.
     pub(crate) fn compile_is_lt_via_bits(
         &mut self,
         diff: &LinearCombination<F>,
         num_bits: u32,
     ) -> LinearCombination<F> {
+        let src_var = self.materialize_lc(diff);
+        let src_lc = LinearCombination::from_variable(src_var);
+
         let mut sum = LinearCombination::zero();
         let mut top_bit_lc = LinearCombination::zero();
         let top_index = num_bits - 1;
@@ -159,14 +172,14 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
             self.witness_ops.push(WitnessOp::BitExtract {
                 target: bit_var,
-                source: diff.clone(),
+                source: src_lc.clone(),
                 bit_index: i,
             });
             if i == top_index {
                 top_bit_lc = LinearCombination::from_variable(bit_var);
             }
         }
-        self.cs.enforce_equal(diff.clone(), sum);
+        self.cs.enforce_equal(src_lc, sum);
         top_bit_lc
     }
 }
