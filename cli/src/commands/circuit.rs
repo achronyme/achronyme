@@ -386,6 +386,16 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
             }
         }
 
+        // Show bit-pattern detection info
+        if verbose && stats.bit_pattern_bounds > 0 {
+            eprintln!(
+                "    {}: {} bound(s) inferred from bit patterns ({} boolean vars detected)",
+                style.cyan("BitPattern"),
+                stats.bit_pattern_bounds,
+                stats.bit_pattern_booleans,
+            );
+        }
+
         // Show bound inference optimization info
         if verbose && stats.bound_inference.rewritten > 0 {
             eprintln!(

@@ -28,7 +28,14 @@ pub struct BoundInferenceResult {
 ///
 /// Scans for RangeCheck instructions to build a bounds map, then rewrites
 /// IsLt → IsLtBounded and IsLe → IsLeBounded when both operands have bounds.
-pub fn bound_inference<F: FieldBackend>(program: &mut IrProgram<F>) -> BoundInferenceResult {
+///
+/// `extra_bounds` are additional bitwidth bounds inferred by other passes
+/// (e.g., bit-pattern detection from Num2Bits inlining). They are merged
+/// with RangeCheck bounds, keeping the tightest bound per variable.
+pub fn bound_inference<F: FieldBackend>(
+    program: &mut IrProgram<F>,
+    extra_bounds: &HashMap<SsaVar, u32>,
+) -> BoundInferenceResult {
     // Phase 1: collect proven bounds from RangeCheck instructions.
     // RangeCheck { result, operand, bits } proves that `operand` fits in `bits` bits.
     // We track the tightest (smallest) bound per variable.
@@ -41,6 +48,14 @@ pub fn bound_inference<F: FieldBackend>(program: &mut IrProgram<F>) -> BoundInfe
             if *bits < *entry {
                 *entry = *bits;
             }
+        }
+    }
+
+    // Merge extra bounds from bit-pattern detection
+    for (&var, &bits) in extra_bounds {
+        let entry = bounds.entry(var).or_insert(bits);
+        if bits < *entry {
+            *entry = bits;
         }
     }
 
@@ -149,7 +164,7 @@ mod tests {
     #[test]
     fn rewrites_islt_when_both_bounded() {
         let mut p = make_program_with_rangecheck_and_islt();
-        let result = bound_inference(&mut p);
+        let result = bound_inference(&mut p, &HashMap::new());
         assert_eq!(result.rewritten, 1);
         match &p.instructions[4] {
             Instruction::IsLtBounded {
@@ -193,7 +208,7 @@ mod tests {
             rhs: b,
         });
 
-        let result = bound_inference(&mut p);
+        let result = bound_inference(&mut p, &HashMap::new());
         assert_eq!(result.rewritten, 0);
         assert!(matches!(p.instructions[3], Instruction::IsLt { .. }));
     }
@@ -233,7 +248,7 @@ mod tests {
             rhs: b,
         });
 
-        let result = bound_inference(&mut p);
+        let result = bound_inference(&mut p, &HashMap::new());
         assert_eq!(result.rewritten, 1);
         match &p.instructions[4] {
             Instruction::IsLtBounded { bitwidth, .. } => {
@@ -278,7 +293,7 @@ mod tests {
             rhs: b,
         });
 
-        let result = bound_inference(&mut p);
+        let result = bound_inference(&mut p, &HashMap::new());
         assert_eq!(result.rewritten, 1);
         match &p.instructions[4] {
             Instruction::IsLeBounded { bitwidth, .. } => {
@@ -311,7 +326,7 @@ mod tests {
             rhs: b,
         });
 
-        let result = bound_inference(&mut p);
+        let result = bound_inference(&mut p, &HashMap::new());
         assert_eq!(result.rewritten, 0);
     }
 }

@@ -1,3 +1,4 @@
+pub mod bit_pattern;
 pub mod bool_prop;
 pub mod bound_inference;
 pub mod const_fold;
@@ -23,6 +24,10 @@ pub struct OptimizeStats {
     pub total_after: usize,
     /// Bound inference results (comparisons optimized + those remaining unbounded).
     pub bound_inference: bound_inference::BoundInferenceResult,
+    /// Number of bitwidth bounds inferred from Num2Bits-style patterns.
+    pub bit_pattern_bounds: usize,
+    /// Number of boolean-enforced variables detected via `v*(v-1)=0`.
+    pub bit_pattern_booleans: usize,
 }
 
 /// Run all optimization passes on the IR program.
@@ -55,7 +60,9 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
         .count();
 
     const_fold::constant_fold(program);
-    let bi_result = bound_inference::bound_inference(program);
+    let proven_booleans = bool_prop::compute_proven_boolean(program);
+    let bp_result = bit_pattern::detect_bit_patterns(program, &proven_booleans);
+    let bi_result = bound_inference::bound_inference(program, &bp_result.bounds);
 
     // Count Const instructions after folding — difference = folded
     let consts_after = program
@@ -80,6 +87,8 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
         dce_eliminated,
         total_after,
         bound_inference: bi_result,
+        bit_pattern_bounds: bp_result.bounds.len(),
+        bit_pattern_booleans: bp_result.booleans_detected,
     }
 }
 
