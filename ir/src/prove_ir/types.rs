@@ -150,6 +150,11 @@ impl FieldConst {
         Some(Self(bytes))
     }
 
+    /// Create from raw little-endian bytes.
+    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// Raw bytes access.
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
