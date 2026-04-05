@@ -39,7 +39,7 @@ pub(super) fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
 /// Extract an assignment target, resolving known constants for component array indices.
 pub(super) fn extract_assign_target_with_constants(
     expr: &Expr,
-    known_constants: &HashMap<String, u64>,
+    known_constants: &HashMap<String, FieldConst>,
 ) -> Option<AssignTarget> {
     match expr {
         Expr::Ident { name, .. } => Some(AssignTarget::Scalar(name.clone())),
@@ -125,7 +125,7 @@ pub(super) fn extract_assign_target_with_constants(
 /// Returns `None` if indices cannot be resolved at compile time.
 pub(super) fn resolve_component_array_name(
     expr: &Expr,
-    known_constants: &HashMap<String, u64>,
+    known_constants: &HashMap<String, FieldConst>,
 ) -> Option<String> {
     match expr {
         Expr::Index { object, index, .. } => {
@@ -150,22 +150,19 @@ pub(super) fn resolve_component_array_name(
 /// to u64::MAX and generating invalid component names like `bits_18446744073709551615`.
 pub(super) fn resolve_const_index(
     expr: &Expr,
-    known_constants: &HashMap<String, u64>,
+    known_constants: &HashMap<String, FieldConst>,
 ) -> Option<u64> {
     if let Some(v) = const_eval_u64(expr) {
         return Some(v);
     }
-    // Evaluate as i64 to detect negative values before converting to u64
-    let vars: HashMap<String, i64> = known_constants
-        .iter()
-        .map(|(k, &v)| (k.clone(), v as i64))
-        .collect();
+    // Evaluate using BigVal to detect negative values
+    let vars = super::super::utils::fc_map_to_bigval(known_constants);
     let empty_fns = HashMap::new();
-    let result = super::super::utils::eval_expr_i64_raw(expr, &vars, &empty_fns, 0)?;
-    if result < 0 {
+    let result = super::super::utils::eval_expr(expr, &vars, &empty_fns, 0)?;
+    if result.is_negative() {
         None
     } else {
-        Some(result as u64)
+        result.to_u64()
     }
 }
 

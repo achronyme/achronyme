@@ -28,7 +28,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::CircuitExpr;
+use ir::prove_ir::types::{CircuitExpr, FieldConst};
 
 use crate::ast::{self, Expr};
 
@@ -133,7 +133,7 @@ pub(super) fn collect_value_component_refs(
 fn collect_refs_recursive(
     expr: &Expr,
     pending: &HashMap<String, PendingComponent>,
-    constants: &HashMap<String, u64>,
+    constants: &HashMap<String, FieldConst>,
     refs: &mut Vec<String>,
 ) {
     match expr {

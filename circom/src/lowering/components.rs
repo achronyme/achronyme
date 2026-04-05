@@ -17,7 +17,8 @@
 use std::collections::HashMap;
 
 use ir::prove_ir::types::{
-    CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp, ForRange,
+    CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp,
+    FieldConst, ForRange,
 };
 
 use crate::ast::TemplateDef;
@@ -132,14 +133,12 @@ pub fn inline_component_body_with_arrays<'a>(
     // For Const args, use the literal value directly.
     // For Capture/Var args, resolve from the parent's param_values
     // (e.g., Capture("t") → 2, or Var("t") → 2 when t is a precomputed var).
-    let mut param_values: HashMap<String, u64> = HashMap::new();
+    let mut param_values: HashMap<String, FieldConst> = HashMap::new();
     for (i, param) in template.params.iter().enumerate() {
         if let Some(arg) = template_args.get(i) {
             match arg {
                 CircuitExpr::Const(fc) => {
-                    if let Some(val) = fc.to_u64() {
-                        param_values.insert(param.clone(), val);
-                    }
+                    param_values.insert(param.clone(), *fc);
                 }
                 CircuitExpr::Capture(name) | CircuitExpr::Var(name) => {
                     if let Some(&val) = ctx.param_values.get(name) {
@@ -148,7 +147,7 @@ pub fn inline_component_body_with_arrays<'a>(
                 }
                 other => {
                     // Try to evaluate expression args (e.g. `(r+1)*t`) to constants
-                    if let Some(val) = try_eval_circuit_expr_u64(other, &ctx.param_values) {
+                    if let Some(val) = try_eval_circuit_expr_fc(other, &ctx.param_values) {
                         param_values.insert(param.clone(), val);
                     }
                 }
@@ -219,7 +218,7 @@ pub fn register_component_locals(
     }
 
     // Propagate stride info for multi-dim arrays to parent env
-    let param_values: HashMap<String, u64> = template
+    let param_values: HashMap<String, FieldConst> = template
         .params
         .iter()
         .enumerate()
@@ -228,7 +227,7 @@ pub fn register_component_locals(
                 .get(i)
                 .and_then(|arg| {
                     if let CircuitExpr::Const(fc) = arg {
-                        fc.to_u64()
+                        Some(*fc)
                     } else {
                         None
                     }
@@ -256,41 +255,38 @@ pub fn register_component_locals(
     }
 }
 
-/// Try to evaluate a `CircuitExpr` to a u64 using a context of known values.
+/// Try to evaluate a `CircuitExpr` to a `FieldConst` using a context of known values.
 ///
 /// Handles `Const`, `Var`/`Capture` lookups, and basic arithmetic (`Add`, `Sub`, `Mul`, `Div`).
 /// Used to resolve expression-valued template args like `(r+1)*t`.
-fn try_eval_circuit_expr_u64(expr: &CircuitExpr, context: &HashMap<String, u64>) -> Option<u64> {
+fn try_eval_circuit_expr_fc(
+    expr: &CircuitExpr,
+    context: &HashMap<String, FieldConst>,
+) -> Option<FieldConst> {
+    use super::utils::BigVal;
     match expr {
-        CircuitExpr::Const(fc) => fc.to_u64(),
+        CircuitExpr::Const(fc) => Some(*fc),
         CircuitExpr::Var(name) | CircuitExpr::Capture(name) => context.get(name).copied(),
         CircuitExpr::BinOp { op, lhs, rhs } => {
-            let l = try_eval_circuit_expr_u64(lhs, context)?;
-            let r = try_eval_circuit_expr_u64(rhs, context)?;
-            match op {
-                CircuitBinOp::Add => l.checked_add(r),
-                CircuitBinOp::Sub => l.checked_sub(r),
-                CircuitBinOp::Mul => l.checked_mul(r),
-                _ => None,
-            }
+            let l = BigVal::from_field_const(try_eval_circuit_expr_fc(lhs, context)?);
+            let r = BigVal::from_field_const(try_eval_circuit_expr_fc(rhs, context)?);
+            let result = match op {
+                CircuitBinOp::Add => l.add(r),
+                CircuitBinOp::Sub => l.sub(r),
+                CircuitBinOp::Mul => l.mul(r),
+                _ => return None,
+            };
+            Some(result.to_field_const())
         }
         CircuitExpr::IntDiv { lhs, rhs, .. } => {
-            let l = try_eval_circuit_expr_u64(lhs, context)?;
-            let r = try_eval_circuit_expr_u64(rhs, context)?;
-            if r != 0 {
-                Some(l / r)
-            } else {
-                None
-            }
+            let l = BigVal::from_field_const(try_eval_circuit_expr_fc(lhs, context)?);
+            let r = BigVal::from_field_const(try_eval_circuit_expr_fc(rhs, context)?);
+            Some(l.div(r)?.to_field_const())
         }
         CircuitExpr::IntMod { lhs, rhs, .. } => {
-            let l = try_eval_circuit_expr_u64(lhs, context)?;
-            let r = try_eval_circuit_expr_u64(rhs, context)?;
-            if r != 0 {
-                Some(l % r)
-            } else {
-                None
-            }
+            let l = BigVal::from_field_const(try_eval_circuit_expr_fc(lhs, context)?);
+            let r = BigVal::from_field_const(try_eval_circuit_expr_fc(rhs, context)?);
+            Some(l.rem(r)?.to_field_const())
         }
         _ => None,
     }

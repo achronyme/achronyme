@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{ArraySize, ProveInputDecl};
+use ir::prove_ir::types::{ArraySize, FieldConst, ProveInputDecl};
 use ir::types::IrType;
 
 use crate::ast::{Expr, MainComponent, SignalType, Stmt, TemplateDef};
@@ -52,7 +52,7 @@ pub struct IntermediateSignal {
 pub fn extract_signal_layout(
     template: &TemplateDef,
     main: Option<&MainComponent>,
-    known_vars: &HashMap<String, u64>,
+    known_vars: &HashMap<String, FieldConst>,
 ) -> Result<SignalLayout, LoweringError> {
     let public_set: HashSet<&str> = main
         .map(|m| m.public_signals.iter().map(|s| s.as_str()).collect())
@@ -62,14 +62,14 @@ pub fn extract_signal_layout(
 
     // Build param values from main component template args (if available).
     // This allows evaluating expression dimensions like `n+1` eagerly.
-    let mut param_values: HashMap<String, u64> = template
+    let mut param_values: HashMap<String, FieldConst> = template
         .params
         .iter()
         .enumerate()
         .filter_map(|(i, param)| {
             main.and_then(|m| m.template_args.get(i))
                 .and_then(const_eval_u64)
-                .map(|val| (param.clone(), val))
+                .map(|val| (param.clone(), FieldConst::from_u64(val)))
         })
         .collect();
 
@@ -157,7 +157,7 @@ enum ResolvedDim {
 fn eval_dimensions(
     dims: &[Expr],
     template_params: &HashSet<String>,
-    param_values: &HashMap<String, u64>,
+    param_values: &HashMap<String, FieldConst>,
     parent_span: &diagnostics::Span,
 ) -> Result<Vec<ResolvedDim>, LoweringError> {
     let mut result = Vec::with_capacity(dims.len());
@@ -170,12 +170,18 @@ fn eval_dimensions(
         else if let Expr::Ident { name, .. } = dim {
             if template_params.contains(name) {
                 // If we have the value, resolve eagerly
-                if let Some(&val) = param_values.get(name) {
+                if let Some(val) = param_values.get(name).and_then(|fc| fc.to_u64()) {
                     result.push(ResolvedDim::Literal(val));
+                } else if param_values.contains_key(name) {
+                    // Value exists but doesn't fit u64 — invalid for dimensions
+                    return Err(LoweringError::new(
+                        format!("signal array dimension `{name}` value exceeds u64 range"),
+                        parent_span,
+                    ));
                 } else {
                     result.push(ResolvedDim::Capture(name.clone()));
                 }
-            } else if let Some(&val) = param_values.get(name.as_str()) {
+            } else if let Some(val) = param_values.get(name.as_str()).and_then(|fc| fc.to_u64()) {
                 // Pre-computed var (e.g., `var nb = nbits(...)`)
                 result.push(ResolvedDim::Literal(val));
             } else {
@@ -189,7 +195,8 @@ fn eval_dimensions(
             }
         }
         // 3. Expression involving params (e.g., n+1, n*2)
-        else if let Some(n) = const_eval_with_params(dim, param_values) {
+        else if let Some(n) = const_eval_with_params(dim, param_values).and_then(|fc| fc.to_u64())
+        {
             result.push(ResolvedDim::Literal(n));
         }
         // 4. Expression with unknown params — check if all vars are params
@@ -280,7 +287,7 @@ fn make_input_decl(name: &str, dims: &[ResolvedDim]) -> ProveInputDecl {
 /// `param_values` maps template param names to their concrete values.
 pub fn extract_signal_strides(
     template: &TemplateDef,
-    param_values: &HashMap<String, u64>,
+    param_values: &HashMap<String, FieldConst>,
 ) -> HashMap<String, Vec<usize>> {
     let mut strides = HashMap::new();
 
@@ -293,8 +300,9 @@ pub fn extract_signal_strides(
                         .dimensions
                         .iter()
                         .map(|dim| {
-                            const_eval_u64(dim)
-                                .or_else(|| const_eval_with_params(dim, param_values))
+                            const_eval_u64(dim).or_else(|| {
+                                const_eval_with_params(dim, param_values).and_then(|fc| fc.to_u64())
+                            })
                         })
                         .collect();
 
@@ -330,7 +338,7 @@ pub fn extract_signal_strides(
 /// Used during component inlining to register arrays in the env.
 pub fn extract_signal_array_sizes(
     template: &TemplateDef,
-    param_values: &HashMap<String, u64>,
+    param_values: &HashMap<String, FieldConst>,
 ) -> HashMap<String, usize> {
     let mut sizes = HashMap::new();
 
@@ -341,9 +349,9 @@ pub fn extract_signal_array_sizes(
                     let mut total: usize = 1;
                     let mut resolved = true;
                     for dim in &decl.dimensions {
-                        if let Some(n) = const_eval_u64(dim)
-                            .or_else(|| const_eval_with_params(dim, param_values))
-                        {
+                        if let Some(n) = const_eval_u64(dim).or_else(|| {
+                            const_eval_with_params(dim, param_values).and_then(|fc| fc.to_u64())
+                        }) {
                             total *= n as usize;
                         } else {
                             resolved = false;

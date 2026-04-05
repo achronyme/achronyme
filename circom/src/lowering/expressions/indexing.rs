@@ -116,22 +116,19 @@ pub(super) fn resolve_component_array_expr_full(
 /// which prevents generating invalid component names.
 fn resolve_component_array_expr_with_constants(
     expr: &Expr,
-    known_constants: &HashMap<String, u64>,
+    known_constants: &HashMap<String, FieldConst>,
 ) -> Option<String> {
     match expr {
         Expr::Index { object, index, .. } => {
             let idx = const_eval_u64(index).or_else(|| {
-                // Evaluate as i64 first to detect negative values
-                let vars: HashMap<String, i64> = known_constants
-                    .iter()
-                    .map(|(k, &v)| (k.clone(), v as i64))
-                    .collect();
+                // Evaluate using BigVal to detect negative values
+                let vars = super::super::utils::fc_map_to_bigval(known_constants);
                 let empty_fns = HashMap::new();
-                let result = super::super::utils::eval_expr_i64_raw(index, &vars, &empty_fns, 0)?;
-                if result < 0 {
+                let result = super::super::utils::eval_expr(index, &vars, &empty_fns, 0)?;
+                if result.is_negative() {
                     None
                 } else {
-                    Some(result as u64)
+                    result.to_u64()
                 }
             })?;
             if let Some(arr_name) = extract_ident_name(object) {
@@ -184,13 +181,14 @@ pub(super) fn eval_index_expr(
     ctx: &LoweringContext,
 ) -> Option<usize> {
     let params = ctx.all_constants(env);
-    super::super::utils::const_eval_with_params(expr, &params).map(|v| v as usize)
+    let fc = super::super::utils::const_eval_with_params(expr, &params)?;
+    Some(fc.to_u64()? as usize)
 }
 
 /// Convert an [`EvalValue`] leaf to a `FieldConst`.
 fn eval_value_to_field_const(val: &EvalValue) -> Option<FieldConst> {
     match val {
-        EvalValue::Scalar(v) => Some(FieldConst::from_u64(*v as u64)),
+        EvalValue::Scalar(v) => Some(v.to_field_const()),
         EvalValue::Expr(expr) => match expr.as_ref() {
             Expr::Number { value, .. } => FieldConst::from_decimal_str(value),
             Expr::HexNumber { value, .. } => FieldConst::from_hex_str(value),

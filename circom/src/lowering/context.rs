@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use ir::prove_ir::types::FieldConst;
+
 use crate::ast::{CircomProgram, Definition, FunctionDef, TemplateDef};
 
 /// Maximum inlining depth to prevent infinite recursion from mutually
@@ -25,7 +27,7 @@ pub struct LoweringContext<'a> {
     pub inline_depth: usize,
     /// Template parameter values for the main template (e.g., n=3).
     /// Used to resolve component array sizes and unroll loops at lowering time.
-    pub param_values: HashMap<String, u64>,
+    pub param_values: HashMap<String, FieldConst>,
     /// Bus type names declared in the program (for error detection).
     pub bus_names: HashSet<&'a str>,
     /// Counter for generating unique anonymous component names.
@@ -72,7 +74,7 @@ impl<'a> LoweringContext<'a> {
     ///
     /// Used by many lowering functions that need to resolve identifiers to
     /// compile-time constants (target resolution, loop bounds, array indexing).
-    pub fn all_constants(&self, env: &super::env::LoweringEnv) -> HashMap<String, u64> {
+    pub fn all_constants(&self, env: &super::env::LoweringEnv) -> HashMap<String, FieldConst> {
         let mut all = self.param_values.clone();
         for (k, &v) in &env.known_constants {
             all.insert(k.clone(), v);

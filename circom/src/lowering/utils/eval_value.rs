@@ -1,5 +1,8 @@
 //! Compile-time value types for Circom function evaluation.
 
+use ir::prove_ir::types::FieldConst;
+
+use super::bigval::BigVal;
 use crate::ast::Expr;
 
 /// A value produced by compile-time evaluation of Circom functions.
@@ -10,23 +13,23 @@ use crate::ast::Expr;
 /// through control flow and up the call stack.
 ///
 /// Array elements that are large field-element constants (e.g. 256-bit hex
-/// values) cannot be represented as `i64`.  These are preserved as raw AST
-/// [`Expr`] nodes and lowered to `CircuitExpr` when the array is expanded
-/// into `Let` bindings.
+/// values) cannot always be represented as `BigVal`.  These are preserved as
+/// raw AST [`Expr`] nodes and lowered to `CircuitExpr` when the array is
+/// expanded into `Let` bindings.
 #[derive(Clone, Debug)]
 pub enum EvalValue {
-    /// A single integer (fits in i64 — later promoted to a field element).
-    Scalar(i64),
+    /// A single integer (256-bit — later promoted to a field element).
+    Scalar(BigVal),
     /// An array of values (may nest for 2-D arrays like `POSEIDON_M`).
     Array(Vec<EvalValue>),
     /// An unevaluated expression preserved from the function body.
-    /// Used for constants too large for i64 (256-bit field elements).
+    /// Used for constants too large for representation (e.g., if parsing fails).
     Expr(Box<Expr>),
 }
 
 impl EvalValue {
     /// Extract as a scalar, returning `None` for arrays and raw expressions.
-    pub fn as_scalar(&self) -> Option<i64> {
+    pub fn as_scalar(&self) -> Option<BigVal> {
         match self {
             EvalValue::Scalar(v) => Some(*v),
             _ => None,
@@ -66,7 +69,7 @@ pub(super) enum StmtResult {
 /// Result of the unified compile-time precomputation pass.
 pub struct PrecomputeResult {
     /// Scalar vars (e.g. `var nRoundsP = 56`).  Excludes original params.
-    pub scalars: std::collections::HashMap<String, u64>,
+    pub scalars: std::collections::HashMap<String, FieldConst>,
     /// Array vars (e.g. `var C[n] = POSEIDON_C(t)`).
     pub arrays: std::collections::HashMap<String, EvalValue>,
 }

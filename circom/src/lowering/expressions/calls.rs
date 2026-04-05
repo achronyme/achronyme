@@ -112,7 +112,7 @@ fn inline_function_call(
         ctx.inline_depth,
     ) {
         ctx.inline_depth -= 1;
-        return Ok(CircuitExpr::Const(FieldConst::from_u64(result)));
+        return Ok(CircuitExpr::Const(result));
     }
 
     // Build a local env with parameters bound to lowered argument expressions.

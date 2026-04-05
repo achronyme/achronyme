@@ -32,7 +32,10 @@ pub fn lower_template(
         for (i, param) in template.params.iter().enumerate() {
             if let Some(arg) = main_comp.template_args.get(i) {
                 if let Some(val) = super::utils::const_eval_u64(arg) {
-                    ctx.param_values.insert(param.clone(), val);
+                    ctx.param_values.insert(
+                        param.clone(),
+                        ir::prove_ir::types::FieldConst::from_u64(val),
+                    );
                 }
             }
         }

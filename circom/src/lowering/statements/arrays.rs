@@ -75,7 +75,7 @@ pub(super) fn expand_eval_value_to_nodes(
         EvalValue::Scalar(v) => {
             nodes.push(CircuitNode::Let {
                 name: base.to_string(),
-                value: CircuitExpr::Const(FieldConst::from_u64(*v as u64)),
+                value: CircuitExpr::Const(v.to_field_const()),
                 span: span.clone(),
             });
             env.locals.insert(base.to_string());
@@ -133,7 +133,7 @@ fn emit_eval_leaf(
     span: &Option<SpanRange>,
 ) {
     let fc = match val {
-        EvalValue::Scalar(v) => Some(FieldConst::from_u64(*v as u64)),
+        EvalValue::Scalar(v) => Some(v.to_field_const()),
         EvalValue::Expr(expr) => expr_to_field_const(expr),
         EvalValue::Array(_) => None, // shouldn't happen at leaf level
     };

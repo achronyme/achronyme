@@ -35,7 +35,8 @@ use indexing::{
 use operators::lower_binop;
 
 /// The default max bits for IntDiv/IntMod. Circom operates over BN254 (~254 bits).
-const DEFAULT_MAX_BITS: u32 = 253;
+/// BN254 scalar field prime is ~2^253.85, requiring 254 bits for full range.
+const DEFAULT_MAX_BITS: u32 = 254;
 
 /// Lower a Circom expression to a ProveIR `CircuitExpr`.
 pub fn lower_expr(
@@ -82,7 +83,7 @@ pub fn lower_expr(
         // ── Identifiers ─────────────────────────────────────────────
         Expr::Ident { name, span } => {
             if let Some(&val) = env.known_constants.get(name.as_str()) {
-                return Ok(CircuitExpr::Const(FieldConst::from_u64(val)));
+                return Ok(CircuitExpr::Const(val));
             }
             match env.resolve(name) {
                 Some(VarKind::Input) => Ok(CircuitExpr::Input(name.clone())),
@@ -146,7 +147,7 @@ pub fn lower_expr(
             // that may contain invalid array accesses like xL[-1]).
             let all = ctx.all_constants(env);
             if let Some(cond_val) = super::utils::const_eval_with_params(condition, &all) {
-                return if cond_val != 0 {
+                return if !cond_val.is_zero() {
                     lower_expr(if_true, env, ctx)
                 } else {
                     lower_expr(if_false, env, ctx)
@@ -583,7 +584,7 @@ mod tests {
         let expr = parse_expr("~a");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BitNot { num_bits: 253, .. }
+            CircuitExpr::BitNot { num_bits: 254, .. }
         ));
     }
 
@@ -639,7 +640,7 @@ mod tests {
         let expr = parse_expr("a & b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BitAnd { num_bits: 253, .. }
+            CircuitExpr::BitAnd { num_bits: 254, .. }
         ));
     }
 
@@ -648,7 +649,7 @@ mod tests {
         let expr = parse_expr("a | b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BitOr { num_bits: 253, .. }
+            CircuitExpr::BitOr { num_bits: 254, .. }
         ));
     }
 
@@ -657,7 +658,7 @@ mod tests {
         let expr = parse_expr("a ^ b");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BitXor { num_bits: 253, .. }
+            CircuitExpr::BitXor { num_bits: 254, .. }
         ));
     }
 
@@ -666,7 +667,7 @@ mod tests {
         let expr = parse_expr("~a");
         assert!(matches!(
             lower_expr(&expr, &make_env(), &mut make_ctx()).unwrap(),
-            CircuitExpr::BitNot { num_bits: 253, .. }
+            CircuitExpr::BitNot { num_bits: 254, .. }
         ));
     }
 
@@ -678,7 +679,7 @@ mod tests {
                 shift, num_bits, ..
             } => {
                 assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(3)));
-                assert_eq!(num_bits, 253);
+                assert_eq!(num_bits, 254);
             }
             other => panic!("expected ShiftR, got {:?}", other),
         }
@@ -692,7 +693,7 @@ mod tests {
                 shift, num_bits, ..
             } => {
                 assert_eq!(*shift, CircuitExpr::Const(FieldConst::from_u64(1)));
-                assert_eq!(num_bits, 253);
+                assert_eq!(num_bits, 254);
             }
             other => panic!("expected ShiftL, got {:?}", other),
         }

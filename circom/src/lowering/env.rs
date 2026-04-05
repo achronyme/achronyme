@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use ir::prove_ir::types::FieldConst;
+
 use super::utils::EvalValue;
 
 /// Identifier resolution categories for lowering.
@@ -41,7 +43,7 @@ pub struct LoweringEnv {
     pub component_arrays: HashSet<String>,
     /// Known constants — loop variables during manual unrolling.
     /// When set, `lower_expr` for `Ident("i")` emits `Const(val)`.
-    pub known_constants: HashMap<String, u64>,
+    pub known_constants: HashMap<String, FieldConst>,
     /// Known array constants — compile-time arrays from function calls
     /// like `var C[n] = POSEIDON_C(t)`.  Used to resolve `C[expr]`
     /// to a field constant during lowering.

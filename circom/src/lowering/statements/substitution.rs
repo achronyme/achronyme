@@ -204,7 +204,7 @@ fn lower_var_assign<'a>(
     value: &Expr,
     span: &diagnostics::Span,
     sr: &Option<SpanRange>,
-    _all_constants: &HashMap<String, u64>,
+    _all_constants: &HashMap<String, FieldConst>,
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'a>,
@@ -572,7 +572,7 @@ pub(super) fn extract_component_call(
                     let resolved = match &lowered {
                         CircuitExpr::Var(name) | CircuitExpr::Capture(name) => {
                             if let Some(&val) = all_constants.get(name) {
-                                CircuitExpr::Const(FieldConst::from_u64(val))
+                                CircuitExpr::Const(val)
                             } else {
                                 lowered
                             }

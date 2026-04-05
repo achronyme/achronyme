@@ -392,7 +392,18 @@ fn lower_var_decl(
                 );
                 env.known_array_values.insert(base.clone(), eval_val);
             } else {
-                let lowered = lower_expr(value, env, ctx)?;
+                // Try compile-time evaluation for var inits that are pure
+                // constant expressions. This is critical for patterns like
+                // `var b = (1 << 128) - 1` in CompConstant — without this,
+                // the expression becomes a circuit-level ShiftL that fails
+                // range checks during R1CS compilation.
+                let all = ctx.all_constants(env);
+                let lowered =
+                    if let Some(fc) = crate::lowering::utils::const_eval_with_params(value, &all) {
+                        CircuitExpr::Const(fc)
+                    } else {
+                        lower_expr(value, env, ctx)?
+                    };
                 nodes.push(CircuitNode::Let {
                     name: names[0].clone(),
                     value: lowered,
@@ -454,7 +465,7 @@ fn lower_if_else<'a>(
     // to a known constant, only lower the taken branch.
     let params = ctx.all_constants(env);
     if let Some(cond_val) = super::utils::const_eval_with_params(condition, &params) {
-        if cond_val != 0 {
+        if !cond_val.is_zero() {
             for stmt in &then_body.stmts {
                 lower_stmt(stmt, env, nodes, ctx, pending)?;
             }

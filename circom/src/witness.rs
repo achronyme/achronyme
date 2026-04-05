@@ -529,7 +529,7 @@ mod tests {
         let expr = CircuitExpr::ShiftR {
             operand: Box::new(CircuitExpr::Input("x".to_string())),
             shift: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
-            num_bits: 253,
+            num_bits: 254,
         };
         assert_eq!(eval_hint(&expr, &env), Some(fe(6)));
     }
@@ -541,7 +541,7 @@ mod tests {
         let expr = CircuitExpr::BitAnd {
             lhs: Box::new(CircuitExpr::Input("x".to_string())),
             rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
-            num_bits: 253,
+            num_bits: 254,
         };
         assert_eq!(eval_hint(&expr, &env), Some(fe(1)));
     }
@@ -554,10 +554,10 @@ mod tests {
             lhs: Box::new(CircuitExpr::ShiftR {
                 operand: Box::new(CircuitExpr::Input("in".to_string())),
                 shift: Box::new(CircuitExpr::Const(FieldConst::from_u64(3))),
-                num_bits: 253,
+                num_bits: 254,
             }),
             rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
-            num_bits: 253,
+            num_bits: 254,
         };
         assert_eq!(eval_hint(&expr, &env), Some(fe(1)));
 
@@ -566,10 +566,10 @@ mod tests {
             lhs: Box::new(CircuitExpr::ShiftR {
                 operand: Box::new(CircuitExpr::Input("in".to_string())),
                 shift: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
-                num_bits: 253,
+                num_bits: 254,
             }),
             rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(1))),
-            num_bits: 253,
+            num_bits: 254,
         };
         assert_eq!(eval_hint(&expr2, &env), Some(fe(0)));
     }
