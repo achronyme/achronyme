@@ -397,6 +397,28 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         &self.constraints
     }
 
+    /// Mutable access to the constraint list (for optimization passes).
+    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint<F>> {
+        &mut self.constraints
+    }
+
+    /// Run linear constraint elimination on this constraint system.
+    ///
+    /// Identifies constraints where one side is a constant (i.e., linear
+    /// constraints like `1 * LC = wire`) and substitutes the wire with the
+    /// LC, eliminating the constraint. Runs to fixpoint.
+    ///
+    /// Returns the substitution map (needed for witness generation fixup)
+    /// and optimization statistics.
+    pub fn optimize_linear(
+        &mut self,
+    ) -> (
+        crate::r1cs_optimize::SubstitutionMap<F>,
+        crate::r1cs_optimize::R1CSOptimizeResult,
+    ) {
+        crate::r1cs_optimize::optimize_linear(&mut self.constraints, self.num_pub_inputs)
+    }
+
     // --- Verification ---
 
     /// Verify that a witness satisfies all constraints.
