@@ -455,6 +455,7 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
             solidity_path,
             &style,
             verbose,
+            no_optimize,
             &proven,
         ),
         "plonkish" => run_plonkish_pipeline(
@@ -482,6 +483,7 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
     solidity_path: Option<&str>,
     style: &Styler,
     verbose: bool,
+    no_optimize: bool,
     proven: &std::collections::HashSet<ir::SsaVar>,
 ) -> Result<()> {
     let mut compiler = R1CSCompiler::<F>::new();
@@ -518,9 +520,31 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
 
     if let Some(input_map) = inputs {
         // Unified: compile + witness in one pass (with early IR evaluation)
-        let witness_vec = compiler
+        let mut witness_vec = compiler
             .compile_ir_with_witness(program, input_map)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
+
+        // R1CS linear constraint elimination
+        if !no_optimize {
+            let r1cs_stats = compiler.optimize_r1cs();
+            if verbose && r1cs_stats.variables_eliminated > 0 {
+                eprintln!(
+                    "    {}: {} → {} constraints ({} linear eliminated)",
+                    style.cyan("R1CS opt"),
+                    r1cs_stats.constraints_before,
+                    r1cs_stats.constraints_after,
+                    r1cs_stats.variables_eliminated,
+                );
+            }
+            // Re-fill substituted wires in the witness
+            if let Some(subs) = &compiler.substitution_map {
+                for (var_idx, lc) in subs {
+                    witness_vec[*var_idx] = lc
+                        .evaluate(&witness_vec)
+                        .map_err(|e| anyhow::anyhow!("witness fixup failed: {e}"))?;
+                }
+            }
+        }
 
         if let Err(e) = compiler.cs.verify(&witness_vec) {
             let mut msg = format!("witness verification failed: {e}");
@@ -615,6 +639,20 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         compiler
             .compile_ir(program)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
+
+        // R1CS linear constraint elimination
+        if !no_optimize {
+            let r1cs_stats = compiler.optimize_r1cs();
+            if verbose && r1cs_stats.variables_eliminated > 0 {
+                eprintln!(
+                    "    {}: {} → {} constraints ({} linear eliminated)",
+                    style.cyan("R1CS opt"),
+                    r1cs_stats.constraints_before,
+                    r1cs_stats.constraints_after,
+                    r1cs_stats.variables_eliminated,
+                );
+            }
+        }
 
         let r1cs_data = write_r1cs(&compiler.cs, prime_id);
         fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
