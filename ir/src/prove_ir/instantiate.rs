@@ -589,6 +589,18 @@ impl<F: FieldBackend> Instantiator<F> {
                     span: None,
                 })
             }
+            CircuitExpr::ShiftL { operand, shift, .. } => {
+                let op_val = self.eval_const_expr_u64(operand)?;
+                let shift_val = self.eval_const_expr_u64(shift)?;
+                let result = op_val.checked_shl(shift_val as u32).unwrap_or(0);
+                Ok(FieldElement::<F>::from_u64(result))
+            }
+            CircuitExpr::ShiftR { operand, shift, .. } => {
+                let op_val = self.eval_const_expr_u64(operand)?;
+                let shift_val = self.eval_const_expr_u64(shift)?;
+                let result = op_val.checked_shr(shift_val as u32).unwrap_or(0);
+                Ok(FieldElement::<F>::from_u64(result))
+            }
             _ => Err(ProveIrError::UnsupportedOperation {
                 description: format!("unsupported expression in const eval: {expr:?}"),
                 span: None,
@@ -1073,6 +1085,15 @@ impl<F: FieldBackend> Instantiator<F> {
                 shift,
                 num_bits,
             } => {
+                // If both operand and shift are compile-time constants, fold entirely
+                if let Ok(fe) = self.eval_const_expr(expr) {
+                    let v = self.program.fresh_var();
+                    self.push_inst(Instruction::Const {
+                        result: v,
+                        value: fe,
+                    });
+                    return Ok(v);
+                }
                 let op = self.emit_expr(operand)?;
                 let shift_val = self.resolve_const_u32(shift, "shift right amount")?;
                 self.emit_shift_right(op, shift_val, *num_bits)
@@ -1082,6 +1103,15 @@ impl<F: FieldBackend> Instantiator<F> {
                 shift,
                 num_bits,
             } => {
+                // If both operand and shift are compile-time constants, fold entirely
+                if let Ok(fe) = self.eval_const_expr(expr) {
+                    let v = self.program.fresh_var();
+                    self.push_inst(Instruction::Const {
+                        result: v,
+                        value: fe,
+                    });
+                    return Ok(v);
+                }
                 let op = self.emit_expr(operand)?;
                 let shift_val = self.resolve_const_u32(shift, "shift left amount")?;
                 self.emit_shift_left(op, shift_val, *num_bits)

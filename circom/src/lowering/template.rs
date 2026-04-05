@@ -263,10 +263,12 @@ fn collect_expr_captures<'a>(expr: &'a CircuitExpr, captures: &mut HashSet<&'a s
             collect_expr_captures(lhs, captures);
             collect_expr_captures(rhs, captures);
         }
-        CircuitExpr::BitNot { operand, .. }
-        | CircuitExpr::ShiftR { operand, .. }
-        | CircuitExpr::ShiftL { operand, .. } => {
+        CircuitExpr::BitNot { operand, .. } => {
             collect_expr_captures(operand, captures);
+        }
+        CircuitExpr::ShiftR { operand, shift, .. } | CircuitExpr::ShiftL { operand, shift, .. } => {
+            collect_expr_captures(operand, captures);
+            collect_expr_captures(shift, captures);
         }
         // Leaf nodes with no captures
         CircuitExpr::Const(_)
