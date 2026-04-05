@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use diagnostics::SpanRange;
-use ir::prove_ir::types::{CircuitNode, ForRange};
+use ir::prove_ir::types::{CircuitNode, FieldConst, ForRange};
 
 use crate::ast::{self, AssignOp, BinOp, CompoundOp, ElseBranch, Expr, PostfixOp, Stmt};
 
@@ -15,7 +15,7 @@ use super::super::context::LoweringContext;
 use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::expressions::lower_expr;
-use super::super::utils::const_eval_u64;
+use super::super::utils::{const_eval_u64, BigVal};
 use super::arrays::{body_has_component_array_ops, body_references_known_arrays};
 use super::targets::extract_target_name;
 use super::wiring::PendingComponent;
@@ -68,7 +68,7 @@ pub(super) fn lower_for_loop<'a>(
             })?;
             let all = ctx.all_constants(env);
             let start = const_eval_u64(value)
-                .or_else(|| super::super::utils::const_eval_with_params(value, &all))
+                .or_else(|| super::super::utils::const_eval_with_params(value, &all)?.to_u64())
                 .ok_or_else(|| {
                     LoweringError::with_code(
                         "for loop init must be a compile-time constant",
@@ -109,17 +109,23 @@ pub(super) fn lower_for_loop<'a>(
     let has_component_array_ops = body_has_component_array_ops(&body.stmts, env);
     let has_known_array_refs = body_references_known_arrays(&body.stmts, env);
 
-    if has_component_array_ops || has_known_array_refs {
+    // 3. Mixed signal+var loops: body has signal ops AND var mutations.
+    //    Vars like `b`, `a`, `e` in CompConstant change each iteration
+    //    and are used as coefficients in signal expressions. These must
+    //    be concrete constants, not circuit variables, for valid R1CS.
+    let has_mixed_signal_var = body_mixes_signals_and_vars(&body.stmts);
+
+    if has_component_array_ops || has_known_array_refs || has_mixed_signal_var {
         // Resolve bound to a concrete number
         let end = match &bound {
             LoopBound::Literal(n) => *n,
             LoopBound::Capture(name) => {
                 let all = ctx.all_constants(env);
-                all.get(name).copied().ok_or_else(|| {
+                all.get(name).and_then(|fc| fc.to_u64()).ok_or_else(|| {
                     LoweringError::new(
                         format!(
                             "component array loop bound `{name}` must be resolvable \
-                             at compile time"
+                                 at compile time"
                         ),
                         span,
                     )
@@ -127,24 +133,71 @@ pub(super) fn lower_for_loop<'a>(
             }
             LoopBound::Expr(expr) => {
                 let all = ctx.all_constants(env);
-                super::super::utils::const_eval_with_params(expr, &all).ok_or_else(|| {
-                    LoweringError::new(
-                        "component array loop bound expression must be resolvable \
-                             at compile time",
-                        span,
-                    )
-                })?
+                super::super::utils::const_eval_with_params(expr, &all)
+                    .and_then(|fc| fc.to_u64())
+                    .ok_or_else(|| {
+                        LoweringError::new(
+                            "component array loop bound expression must be resolvable \
+                                 at compile time",
+                            span,
+                        )
+                    })?
             }
         };
 
-        // Unroll: for each iteration, set loop var as known constant, lower body
+        // Unroll: for each iteration, set loop var as known constant, lower body.
+        // For mixed signal+var loops (e.g. CompConstant), evaluate var-only
+        // statements at compile time so vars like `b`, `a`, `e` become concrete
+        // constants usable as coefficients in signal expressions.
+        let mut eval_vars: HashMap<String, BigVal> = HashMap::new();
+        if has_mixed_signal_var {
+            // Seed evaluator with all known compile-time values
+            for (k, v) in &ctx.param_values {
+                eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
+            }
+            for (k, v) in &env.known_constants {
+                eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
+            }
+        }
         for i in start..end {
-            env.known_constants.insert(var_name.clone(), i);
+            env.known_constants
+                .insert(var_name.clone(), FieldConst::from_u64(i));
+            if has_mixed_signal_var {
+                eval_vars.insert(var_name.clone(), BigVal::from_u64(i));
+            }
             for stmt in &body.stmts {
+                if has_mixed_signal_var && stmt_is_var_only(stmt) {
+                    // Evaluate var-only statements at compile time
+                    let functions: HashMap<&str, &crate::ast::FunctionDef> =
+                        ctx.functions.iter().map(|(k, v)| (*k, *v)).collect();
+                    if super::super::utils::try_eval_stmt_in_place(stmt, &mut eval_vars, &functions)
+                        .is_some()
+                    {
+                        // Write back evaluated vars to param_values AND
+                        // known_constants so lower_expr emits Const(val)
+                        // instead of Var(name) for compile-time vars.
+                        for (k, v) in &eval_vars {
+                            if !v.is_negative() {
+                                let fc = v.to_field_const();
+                                ctx.param_values.insert(k.clone(), fc);
+                                env.known_constants.insert(k.clone(), fc);
+                            }
+                        }
+                        continue;
+                    }
+                }
                 super::lower_stmt(stmt, env, nodes, ctx, pending)?;
             }
         }
         env.known_constants.remove(&var_name);
+        // Clean up vars injected during mixed-loop unrolling
+        if has_mixed_signal_var {
+            for k in eval_vars.keys() {
+                if k != &var_name {
+                    env.known_constants.remove(k);
+                }
+            }
+        }
 
         return Ok(());
     }
@@ -171,6 +224,7 @@ pub(super) fn lower_for_loop<'a>(
             // (e.g., `nb` from `var nb = nbits(n)` where n is known)
             if let Some(end) =
                 super::super::utils::const_eval_with_params(&ast_expr, &ctx.param_values)
+                    .and_then(|fc| fc.to_u64())
             {
                 ForRange::Literal { start, end }
             } else {
@@ -234,6 +288,83 @@ fn stmt_is_var_only(stmt: &Stmt) -> bool {
     }
 }
 
+/// Check if a loop body contains if/else branches with signal operations
+/// inside AND var mutations outside those branches.
+///
+/// This detects the CompConstant pattern:
+/// ```circom
+/// if ((cmsb==0)&&(clsb==0)) {
+///     parts[i] <== -b*smsb*slsb + b*smsb + b*slsb;  // signal op inside if
+/// } ...
+/// b = b - e;  // var mutation outside if
+/// ```
+///
+/// These loops MUST be unrolled because:
+/// 1. The if/else condition depends on compile-time vars → needs constant folding
+/// 2. The vars used as coefficients must be concrete constants for valid R1CS
+///
+/// Does NOT match simple loops like Num2Bits where `lc1 += out[i] * 2**i`
+/// is a direct var mutation (no if-branched signal ops).
+fn body_mixes_signals_and_vars(stmts: &[Stmt]) -> bool {
+    // Pattern: if/else containing signal ops + var mutations at the same level
+    let has_branched_signal_ops = stmts.iter().any(|s| match s {
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            let then_has = then_body.stmts.iter().any(stmt_has_signal_ops);
+            let else_has = match else_body {
+                Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_signal_ops),
+                Some(ElseBranch::IfElse(s)) => stmt_has_signal_ops(s),
+                None => false,
+            };
+            then_has || else_has
+        }
+        _ => false,
+    });
+    let has_var_mutations = stmts.iter().any(|s| {
+        matches!(
+            s,
+            Stmt::CompoundAssign { .. }
+                | Stmt::Substitution {
+                    op: AssignOp::Assign,
+                    target: Expr::Ident { .. },
+                    ..
+                }
+        )
+    });
+    has_branched_signal_ops && has_var_mutations
+}
+
+fn stmt_has_signal_ops(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Substitution {
+            op:
+                AssignOp::ConstraintAssign
+                | AssignOp::SignalAssign
+                | AssignOp::RConstraintAssign
+                | AssignOp::RSignalAssign,
+            ..
+        } => true,
+        Stmt::ConstraintEq { .. } => true,
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body.stmts.iter().any(stmt_has_signal_ops)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_signal_ops),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_signal_ops(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_signal_ops),
+        _ => false,
+    }
+}
+
 /// Evaluate a while or do-while loop at compile time.
 ///
 /// All variables referenced must be in `env.known_constants` or
@@ -247,12 +378,12 @@ pub(super) fn eval_while_compile_time(
     span: &diagnostics::Span,
 ) -> Result<(), LoweringError> {
     // Build evaluation environment from known constants + param values
-    let mut vars: HashMap<String, i64> = HashMap::new();
+    let mut vars: HashMap<String, BigVal> = HashMap::new();
     for (k, v) in &env.known_constants {
-        vars.insert(k.clone(), *v as i64);
+        vars.insert(k.clone(), BigVal::from_field_const(*v));
     }
     for (k, v) in &ctx.param_values {
-        vars.insert(k.clone(), *v as i64);
+        vars.insert(k.clone(), BigVal::from_field_const(*v));
     }
 
     let functions: HashMap<&str, &ast::FunctionDef> =
@@ -274,7 +405,7 @@ pub(super) fn eval_while_compile_time(
                     ));
                 }
             }
-            let cond = super::super::utils::try_eval_expr_i64(condition, &vars, &functions)
+            let cond = super::super::utils::try_eval_expr(condition, &vars, &functions)
                 .ok_or_else(|| {
                     LoweringError::with_code(
                         "do-while loop condition could not be evaluated at compile time",
@@ -282,11 +413,11 @@ pub(super) fn eval_while_compile_time(
                         span,
                     )
                 })?;
-            if cond == 0 {
+            if cond.is_zero() {
                 // Write back computed vars
                 for (k, v) in &vars {
-                    if *v >= 0 {
-                        env.known_constants.insert(k.clone(), *v as u64);
+                    if !v.is_negative() {
+                        env.known_constants.insert(k.clone(), v.to_field_const());
                     }
                 }
                 return Ok(());
@@ -294,7 +425,7 @@ pub(super) fn eval_while_compile_time(
         }
     } else {
         for _ in 0..MAX_WHILE_ITERS {
-            let cond = super::super::utils::try_eval_expr_i64(condition, &vars, &functions)
+            let cond = super::super::utils::try_eval_expr(condition, &vars, &functions)
                 .ok_or_else(|| {
                     LoweringError::with_code(
                         "while loop condition could not be evaluated at compile time",
@@ -302,11 +433,11 @@ pub(super) fn eval_while_compile_time(
                         span,
                     )
                 })?;
-            if cond == 0 {
+            if cond.is_zero() {
                 // Write back computed vars
                 for (k, v) in &vars {
-                    if *v >= 0 {
-                        env.known_constants.insert(k.clone(), *v as u64);
+                    if !v.is_negative() {
+                        env.known_constants.insert(k.clone(), v.to_field_const());
                     }
                 }
                 return Ok(());
