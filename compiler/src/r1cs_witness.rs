@@ -69,7 +69,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             witness[self.bindings[name].index()] = inputs[name];
         }
 
-        // 3b. Replay witness ops
+        // 3b. Replay witness ops (which may have been filtered by optimize_r1cs)
         for op in &self.witness_ops {
             match op {
                 WitnessOp::AssignLC { target, lc } => {
@@ -155,6 +155,18 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     )
                     .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
                 }
+            }
+        }
+
+        // 3c. Post-fixup: fill substituted-away wires from substitution map.
+        // After optimize_r1cs(), some wires are defined by LCs of other wires.
+        // Since substitutions are fully composed (fixpoint), each LC only
+        // references non-substituted wires that are already computed.
+        if let Some(subs) = &self.substitution_map {
+            for (var_idx, lc) in subs {
+                witness[*var_idx] = lc
+                    .evaluate(&witness)
+                    .map_err(|e| R1CSError::EvalError(e.to_string()))?;
             }
         }
 

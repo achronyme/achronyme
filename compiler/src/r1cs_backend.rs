@@ -1,5 +1,6 @@
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
+use constraints::r1cs_optimize::{R1CSOptimizeResult, SubstitutionMap};
 use constraints::PoseidonParamsProvider;
 use memory::field::PrimeId;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
@@ -59,6 +60,10 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// Maps each R1CS constraint index to the IR instruction that generated it.
     /// Built during `compile_ir`, parallel to `cs.constraints()`.
     pub constraint_origins: Vec<ConstraintOrigin>,
+    /// Variable substitution map from R1CS linear constraint elimination.
+    /// Set by `optimize_r1cs()`. Used by witness generation to compute
+    /// values for substituted-away wires.
+    pub substitution_map: Option<SubstitutionMap<F>>,
 }
 
 impl<F: FieldBackend> Default for R1CSCompiler<F> {
@@ -81,6 +86,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             proven_boolean: std::collections::HashSet::new(),
             bool_enforced: std::collections::HashSet::new(),
             constraint_origins: Vec::new(),
+            substitution_map: None,
         }
     }
 
@@ -88,6 +94,40 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// Variables in this set skip redundant boolean enforcement constraints.
     pub fn set_proven_boolean(&mut self, set: std::collections::HashSet<ir::types::SsaVar>) {
         self.proven_boolean = set;
+    }
+
+    /// Run linear constraint elimination on the compiled R1CS.
+    ///
+    /// Must be called after `compile_ir()` / `compile_ir_with_witness()`.
+    /// Identifies constraints of the form `k * LC = LC` (linear, no real
+    /// multiplication) and substitutes one wire with the LC, eliminating
+    /// the constraint. Runs to fixpoint.
+    ///
+    /// Also updates `witness_ops` (removes ops for substituted targets,
+    /// applies substitutions to source LCs) and `constraint_origins`.
+    ///
+    /// The substitution map is stored for witness post-fixup.
+    pub fn optimize_r1cs(&mut self) -> R1CSOptimizeResult {
+        let (subs, stats) = self.cs.optimize_linear();
+
+        if !subs.is_empty() {
+            // Update witness ops
+            crate::witness_gen::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
+
+            // Filter constraint_origins to match the new constraint list.
+            // We need to rebuild it: the optimization removed some constraints
+            // and the remaining ones shifted indices. Since optimize_linear
+            // operates on the Vec<Constraint> directly, we rebuild origins
+            // by keeping only entries whose constraint index survived.
+            // However, optimize_linear replaces the constraint vec entirely,
+            // so the old indices are gone. We clear origins for now —
+            // the inspector can still work without them.
+            self.constraint_origins.clear();
+
+            self.substitution_map = Some(subs);
+        }
+
+        stats
     }
 
     /// Declare a public input variable and bind it to `name`.

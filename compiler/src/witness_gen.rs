@@ -3,6 +3,7 @@ use std::fmt;
 
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{LinearCombination, Variable};
+use constraints::r1cs_optimize::SubstitutionMap;
 use constraints::PoseidonParamsProvider;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
@@ -68,6 +69,85 @@ pub enum WitnessOp<F: FieldBackend = Bn254Fr> {
     },
 }
 
+impl<F: FieldBackend> WitnessOp<F> {
+    /// Return all target variables produced by this operation.
+    ///
+    /// Used to identify ops whose targets have been substituted away
+    /// by the R1CS linear constraint elimination pass.
+    pub fn target_variables(&self) -> Vec<Variable> {
+        match self {
+            WitnessOp::AssignLC { target, .. }
+            | WitnessOp::Multiply { target, .. }
+            | WitnessOp::Inverse { target, .. }
+            | WitnessOp::BitExtract { target, .. } => vec![*target],
+            WitnessOp::IsZero {
+                target_inv,
+                target_result,
+                ..
+            } => vec![*target_inv, *target_result],
+            WitnessOp::IntDivMod { q, r, .. } => vec![*q, *r],
+            WitnessOp::PoseidonHash { .. } => {
+                // Poseidon fills a range of internal wires — never substituted
+                vec![]
+            }
+        }
+    }
+
+    /// Apply variable substitutions to all LinearCombination fields in this op.
+    ///
+    /// Does NOT change target variables — only updates source LCs that reference
+    /// substituted wires.
+    pub fn apply_substitutions(&mut self, subs: &SubstitutionMap<F>) {
+        fn apply_sub<F2: FieldBackend>(lc: &mut LinearCombination<F2>, subs: &SubstitutionMap<F2>) {
+            if lc.terms.iter().any(|(v, _)| subs.contains_key(&v.index())) {
+                let mut result = LinearCombination::<F2>::zero();
+                for (var, coeff) in &lc.terms {
+                    if let Some(replacement) = subs.get(&var.index()) {
+                        result = result + replacement.clone() * *coeff;
+                    } else {
+                        result.add_term(*var, *coeff);
+                    }
+                }
+                *lc = result.simplify();
+            }
+        }
+
+        match self {
+            WitnessOp::AssignLC { lc, .. } => apply_sub(lc, subs),
+            WitnessOp::Multiply { a, b, .. } => {
+                apply_sub(a, subs);
+                apply_sub(b, subs);
+            }
+            WitnessOp::Inverse { operand, .. } => apply_sub(operand, subs),
+            WitnessOp::BitExtract { source, .. } => apply_sub(source, subs),
+            WitnessOp::IsZero { diff, .. } => apply_sub(diff, subs),
+            WitnessOp::IntDivMod { .. } | WitnessOp::PoseidonHash { .. } => {
+                // These reference Variables directly, not LCs — substitution
+                // doesn't apply (and Poseidon internal wires are never substituted).
+            }
+        }
+    }
+}
+
+/// Remove witness ops whose targets have been substituted away, and apply
+/// substitutions to LCs in the remaining ops.
+pub fn apply_substitutions_to_witness_ops<F: FieldBackend>(
+    ops: &mut Vec<WitnessOp<F>>,
+    subs: &SubstitutionMap<F>,
+) {
+    // Remove ops that produce only substituted variables
+    ops.retain(|op| {
+        let targets = op.target_variables();
+        // Keep if: no targets (Poseidon), or at least one target is NOT substituted
+        targets.is_empty() || targets.iter().any(|t| !subs.contains_key(&t.index()))
+    });
+
+    // Apply substitutions to source LCs in remaining ops
+    for op in ops.iter_mut() {
+        op.apply_substitutions(subs);
+    }
+}
+
 // ============================================================================
 // WitnessError
 // ============================================================================
@@ -114,6 +194,8 @@ pub struct WitnessGenerator<F: FieldBackend = Bn254Fr> {
     public_inputs: Vec<(String, Variable)>,
     witnesses: Vec<(String, Variable)>,
     poseidon_params: Option<PoseidonParams<F>>,
+    /// Substitution map from R1CS optimization (if optimize_r1cs was called).
+    substitution_map: Option<SubstitutionMap<F>>,
 }
 
 impl<F: FieldBackend> WitnessGenerator<F> {
@@ -140,6 +222,7 @@ impl<F: FieldBackend> WitnessGenerator<F> {
             public_inputs,
             witnesses,
             poseidon_params: compiler.poseidon_params.clone(),
+            substitution_map: compiler.substitution_map.clone(),
         }
     }
 
@@ -177,6 +260,15 @@ impl<F: FieldBackend> WitnessGenerator<F> {
         // Replay ops to compute all intermediate wires
         for op in &self.ops {
             self.execute_op(op, &mut witness)?;
+        }
+
+        // Post-fixup: fill substituted-away wires from substitution map
+        if let Some(subs) = &self.substitution_map {
+            for (var_idx, lc) in subs {
+                witness[*var_idx] = lc
+                    .evaluate(&witness)
+                    .map_err(|e| WitnessError::MissingInput(e.to_string()))?;
+            }
         }
 
         Ok(witness)
