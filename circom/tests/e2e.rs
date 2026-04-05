@@ -1100,3 +1100,366 @@ fn pedersen_circomlib() {
     eprintln!("  Constraints: {n}");
     assert!(n > 0, "expected constraints for Pedersen hash");
 }
+
+// ── R1CS optimization diagnostic ─────────────────────────────────
+
+/// Diagnostic: dump all constraints for Num2Bits(8) before and after
+/// optimization to verify soundness.
+#[test]
+fn num2bits_optimization_diagnostic() {
+    use constraints::r1cs::Variable;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circom/num2bits_8.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs).unwrap();
+    let prove_ir = &compile_result.prove_ir;
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir.instantiate(&fe_captures).unwrap();
+    ir::passes::optimize(&mut program);
+
+    // Print IR instructions to understand wire names
+    eprintln!("\n=== IR Instructions ===");
+    for (i, inst) in program.instructions.iter().enumerate() {
+        eprintln!("  [{i:3}] {inst}");
+    }
+
+    let inputs: HashMap<String, FieldElement<Bn254Fr>> = [("in", 13u64)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut all_signals =
+        circom::witness::compute_witness_hints_with_captures(prove_ir, &inputs, capture_values)
+            .unwrap();
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
+    let mut witness = compiler
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap();
+
+    // Print constraints BEFORE optimization
+    eprintln!(
+        "\n=== Constraints BEFORE optimization ({}) ===",
+        compiler.cs.num_constraints()
+    );
+    for (i, c) in compiler.cs.constraints().iter().enumerate() {
+        let a_val = c.a.evaluate(&witness).unwrap();
+        let b_val = c.b.evaluate(&witness).unwrap();
+        let c_val = c.c.evaluate(&witness).unwrap();
+
+        let fmt_lc = |lc: &constraints::LinearCombination| -> String {
+            let simplified = lc.simplify();
+            if simplified.terms.is_empty() {
+                return "0".to_string();
+            }
+            simplified
+                .terms
+                .iter()
+                .map(|(v, coeff)| {
+                    let coeff_u64 = coeff.to_canonical()[0];
+                    if *v == Variable::ONE {
+                        format!("{coeff_u64}")
+                    } else if coeff_u64 == 1 {
+                        format!("w{}", v.index())
+                    } else {
+                        format!("{coeff_u64}·w{}", v.index())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" + ")
+        };
+
+        eprintln!(
+            "  [{i:2}] ({}) * ({}) = ({})   | A={}, B={}, C={}",
+            fmt_lc(&c.a),
+            fmt_lc(&c.b),
+            fmt_lc(&c.c),
+            a_val.to_canonical()[0],
+            b_val.to_canonical()[0],
+            c_val.to_canonical()[0],
+        );
+    }
+
+    // Print which variables are public
+    eprintln!("\n=== Variable layout ===");
+    eprintln!(
+        "  Public inputs: {} (indices 1..={})",
+        compiler.cs.num_pub_inputs(),
+        compiler.cs.num_pub_inputs()
+    );
+    eprintln!("  Total variables: {}", compiler.cs.num_variables());
+    for (name, var) in &compiler.bindings {
+        eprintln!(
+            "  w{} = {name} = {}",
+            var.index(),
+            witness[var.index()].to_canonical()[0]
+        );
+    }
+
+    // Optimize
+    let stats = compiler.optimize_r1cs();
+    if let Some(subs) = &compiler.substitution_map {
+        for (var_idx, lc) in subs {
+            witness[*var_idx] = lc.evaluate(&witness).unwrap();
+        }
+    }
+
+    // Print what was substituted
+    eprintln!(
+        "\n=== Substitutions ({} variables eliminated) ===",
+        stats.variables_eliminated
+    );
+    if let Some(subs) = &compiler.substitution_map {
+        for (var_idx, lc) in subs {
+            let fmt_lc = |lc: &constraints::LinearCombination| -> String {
+                let simplified = lc.simplify();
+                if simplified.terms.is_empty() {
+                    return "0".to_string();
+                }
+                simplified
+                    .terms
+                    .iter()
+                    .map(|(v, coeff)| {
+                        let coeff_u64 = coeff.to_canonical()[0];
+                        if *v == Variable::ONE {
+                            format!("{coeff_u64}")
+                        } else if coeff_u64 == 1 {
+                            format!("w{}", v.index())
+                        } else {
+                            format!("{coeff_u64}·w{}", v.index())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            };
+            eprintln!("  w{var_idx} → {}", fmt_lc(lc));
+        }
+    }
+
+    // Print constraints AFTER optimization
+    eprintln!(
+        "\n=== Constraints AFTER optimization ({}) ===",
+        compiler.cs.num_constraints()
+    );
+    for (i, c) in compiler.cs.constraints().iter().enumerate() {
+        let a_val = c.a.evaluate(&witness).unwrap();
+        let b_val = c.b.evaluate(&witness).unwrap();
+        let c_val = c.c.evaluate(&witness).unwrap();
+
+        let fmt_lc = |lc: &constraints::LinearCombination| -> String {
+            let simplified = lc.simplify();
+            if simplified.terms.is_empty() {
+                return "0".to_string();
+            }
+            simplified
+                .terms
+                .iter()
+                .map(|(v, coeff)| {
+                    let coeff_u64 = coeff.to_canonical()[0];
+                    if *v == Variable::ONE {
+                        format!("{coeff_u64}")
+                    } else if coeff_u64 == 1 {
+                        format!("w{}", v.index())
+                    } else {
+                        format!("{coeff_u64}·w{}", v.index())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" + ")
+        };
+
+        eprintln!(
+            "  [{i:2}] ({}) * ({}) = ({})   | A·B={}, C={}",
+            fmt_lc(&c.a),
+            fmt_lc(&c.b),
+            fmt_lc(&c.c),
+            a_val.mul(&b_val).to_canonical()[0],
+            c_val.to_canonical()[0],
+        );
+    }
+
+    // Verify
+    compiler.cs.verify(&witness).unwrap();
+    eprintln!("\n  ✓ Optimized system VERIFIED with witness (in=13)");
+}
+
+// ── R1CS optimization benchmark ──────────────────────────────────
+
+/// Benchmark: compare constraint counts before/after R1CS linear
+/// constraint elimination for key circomlib circuits.
+#[test]
+fn r1cs_optimization_benchmark() {
+    /// Compile a circom circuit and return (before_opt, after_opt) constraint counts.
+    fn compile_and_measure(
+        name: &str,
+        circom_file: &str,
+        inputs: &HashMap<String, FieldElement<Bn254Fr>>,
+    ) -> (usize, usize) {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let path = manifest_dir.join(circom_file);
+        let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+        let compile_result = circom::compile_file(&path, &lib_dirs)
+            .unwrap_or_else(|e| panic!("{name} compilation failed: {e}"));
+
+        let prove_ir = &compile_result.prove_ir;
+        let capture_values = &compile_result.capture_values;
+        let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+            .iter()
+            .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect();
+
+        let mut program = prove_ir
+            .instantiate(&fe_captures)
+            .unwrap_or_else(|e| panic!("{name} instantiation failed: {e}"));
+        ir::passes::optimize(&mut program);
+
+        let mut all_signals =
+            circom::witness::compute_witness_hints_with_captures(prove_ir, inputs, capture_values)
+                .unwrap_or_else(|e| panic!("{name} witness failed: {e}"));
+        for (cname, fe) in &fe_captures {
+            all_signals.entry(cname.clone()).or_insert(*fe);
+        }
+
+        let mut compiler = R1CSCompiler::<Bn254Fr>::new();
+        let mut witness = compiler
+            .compile_ir_with_witness(&program, &all_signals)
+            .unwrap_or_else(|e| panic!("{name} R1CS failed: {e}"));
+
+        let before = compiler.cs.num_constraints();
+
+        // Optimize R1CS
+        let stats = compiler.optimize_r1cs();
+        let after = stats.constraints_after;
+
+        // Re-fill substituted wires
+        if let Some(subs) = &compiler.substitution_map {
+            for (var_idx, lc) in subs {
+                witness[*var_idx] = lc.evaluate(&witness).unwrap();
+            }
+        }
+
+        // Verify optimized system
+        compiler
+            .cs
+            .verify(&witness)
+            .unwrap_or_else(|e| panic!("{name} verification FAILED after optimization: {e}"));
+
+        (before, after)
+    }
+
+    eprintln!("\n╔══════════════════════════════════════════════════════════════════╗");
+    eprintln!("║         R1CS Linear Constraint Elimination Benchmark           ║");
+    eprintln!("╠══════════════════════════════════════════════════════════════════╣");
+    eprintln!(
+        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+        "Circuit", "Before", "After", "Elim", "circom"
+    );
+    eprintln!("╠══════════════════════════════════════════════════════════════════╣");
+
+    // Num2Bits(8)
+    let (b, a) = compile_and_measure(
+        "Num2Bits(8)",
+        "test/circom/num2bits_8.circom",
+        &[("in", 13)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    eprintln!(
+        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+        "Num2Bits(8)",
+        b,
+        a,
+        b - a,
+        17
+    );
+
+    // IsZero
+    let (b, a) = compile_and_measure(
+        "IsZero",
+        "test/circom/iszero.circom",
+        &[("in", 0)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    eprintln!(
+        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+        "IsZero",
+        b,
+        a,
+        b - a,
+        2
+    );
+
+    // LessThan(8)
+    let (b, a) = compile_and_measure(
+        "LessThan(8)",
+        "test/circom/lessthan_8.circom",
+        &[("in_0", 3), ("in_1", 10)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    eprintln!(
+        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+        "LessThan(8)",
+        b,
+        a,
+        b - a,
+        "~20"
+    );
+
+    // EscalarMulAny(254)
+    let mut ema_inputs = HashMap::new();
+    for i in 0..254 {
+        ema_inputs.insert(format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    ema_inputs.insert("p_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    ema_inputs.insert("p_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    let (b, a) = compile_and_measure(
+        "EscalarMulAny(254)",
+        "test/circomlib/escalarmulany254_test.circom",
+        &ema_inputs,
+    );
+    eprintln!(
+        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+        "EscalarMulAny(254)",
+        b,
+        a,
+        b - a,
+        2312
+    );
+
+    // Poseidon(2)
+    let (b, a) = compile_and_measure(
+        "Poseidon(2)",
+        "test/circomlib/poseidon_test.circom",
+        &[("inputs_0", 1), ("inputs_1", 2)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    eprintln!(
+        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+        "Poseidon(2)",
+        b,
+        a,
+        b - a,
+        1006
+    );
+
+    eprintln!("╚══════════════════════════════════════════════════════════════════╝");
+    eprintln!();
+}
