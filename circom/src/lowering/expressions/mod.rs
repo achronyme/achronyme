@@ -120,10 +120,15 @@ pub fn lower_expr(
         Expr::UnaryOp { op, operand, .. } => {
             let inner = lower_expr(operand, env, ctx)?;
             match op {
-                ast::UnaryOp::Neg => Ok(CircuitExpr::UnaryOp {
-                    op: CircuitUnaryOp::Neg,
-                    operand: Box::new(inner),
-                }),
+                ast::UnaryOp::Neg => {
+                    let expr = CircuitExpr::UnaryOp {
+                        op: CircuitUnaryOp::Neg,
+                        operand: Box::new(inner),
+                    };
+                    Ok(super::const_fold::try_fold_const(&expr)
+                        .map(CircuitExpr::Const)
+                        .unwrap_or(expr))
+                }
                 ast::UnaryOp::Not => Ok(CircuitExpr::UnaryOp {
                     op: CircuitUnaryOp::Not,
                     operand: Box::new(inner),
@@ -272,6 +277,11 @@ fn lower_index(
             .or_else(|| eval_index_expr(index, env, ctx))
         {
             if let Some(elem_name) = env.resolve_array_element(&array_name, idx_val) {
+                // Check if the element is a known constant (e.g., base[0]
+                // where base_0 was injected via constant propagation).
+                if let Some(&fc) = env.known_constants.get(&elem_name) {
+                    return Ok(CircuitExpr::Const(fc));
+                }
                 return Ok(CircuitExpr::Var(elem_name));
             }
             // Circom-compatible: out-of-bounds access on a known-size signal

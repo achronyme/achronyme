@@ -7,10 +7,14 @@ use ir::prove_ir::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr
 
 use crate::ast;
 
+use super::super::const_fold::try_fold_const;
 use super::super::error::LoweringError;
 use super::DEFAULT_MAX_BITS;
 
 /// Lower a Circom binary operator to a `CircuitExpr`.
+///
+/// When both operands are compile-time constants, field operations
+/// (Add, Sub, Mul, Div) are folded using BN254 modular arithmetic.
 pub(super) fn lower_binop(
     op: ast::BinOp,
     lhs: CircuitExpr,
@@ -21,26 +25,46 @@ pub(super) fn lower_binop(
     let r = Box::new(rhs);
 
     match op {
-        ast::BinOp::Add => Ok(CircuitExpr::BinOp {
-            op: CircuitBinOp::Add,
-            lhs: l,
-            rhs: r,
-        }),
-        ast::BinOp::Sub => Ok(CircuitExpr::BinOp {
-            op: CircuitBinOp::Sub,
-            lhs: l,
-            rhs: r,
-        }),
-        ast::BinOp::Mul => Ok(CircuitExpr::BinOp {
-            op: CircuitBinOp::Mul,
-            lhs: l,
-            rhs: r,
-        }),
-        ast::BinOp::Div => Ok(CircuitExpr::BinOp {
-            op: CircuitBinOp::Div,
-            lhs: l,
-            rhs: r,
-        }),
+        ast::BinOp::Add => {
+            let expr = CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: l,
+                rhs: r,
+            };
+            Ok(try_fold_const(&expr)
+                .map(CircuitExpr::Const)
+                .unwrap_or(expr))
+        }
+        ast::BinOp::Sub => {
+            let expr = CircuitExpr::BinOp {
+                op: CircuitBinOp::Sub,
+                lhs: l,
+                rhs: r,
+            };
+            Ok(try_fold_const(&expr)
+                .map(CircuitExpr::Const)
+                .unwrap_or(expr))
+        }
+        ast::BinOp::Mul => {
+            let expr = CircuitExpr::BinOp {
+                op: CircuitBinOp::Mul,
+                lhs: l,
+                rhs: r,
+            };
+            Ok(try_fold_const(&expr)
+                .map(CircuitExpr::Const)
+                .unwrap_or(expr))
+        }
+        ast::BinOp::Div => {
+            let expr = CircuitExpr::BinOp {
+                op: CircuitBinOp::Div,
+                lhs: l,
+                rhs: r,
+            };
+            Ok(try_fold_const(&expr)
+                .map(CircuitExpr::Const)
+                .unwrap_or(expr))
+        }
 
         ast::BinOp::IntDiv => Ok(CircuitExpr::IntDiv {
             lhs: l,
