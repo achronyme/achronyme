@@ -772,9 +772,10 @@ fn circomlib_e2e_optimized(
 
     let post_opt = r1cs_compiler.cs.num_constraints();
     eprintln!(
-        "  {test_name}: {pre_opt} → {post_opt} ({} linear elim, {} dedup, {} vars subst)",
-        stats.constraints_before - stats.constraints_after - stats.duplicates_removed,
+        "  {test_name}: {pre_opt} → {post_opt} ({} linear elim, {} dedup, {} trivial, {} vars subst)",
+        stats.constraints_before - stats.constraints_after - stats.duplicates_removed - stats.trivial_removed,
         stats.duplicates_removed,
+        stats.trivial_removed,
         stats.variables_eliminated,
     );
 

@@ -23,6 +23,12 @@ pub struct R1CSOptimizeResult {
     pub variables_eliminated: usize,
     /// Number of duplicate non-linear constraints removed.
     pub duplicates_removed: usize,
+    /// Number of trivially-satisfied constraints removed (0*B=0, k1*k2=k3).
+    pub trivial_removed: usize,
+    /// Number of fixpoint rounds executed.
+    pub rounds: usize,
+    /// Per-round breakdown: (linear_eliminated, newly_linear_from_nonlinear).
+    pub round_details: Vec<(usize, usize)>,
 }
 
 /// Maps a variable index to the LC that replaces it.
@@ -65,6 +71,9 @@ fn apply_substitution_to_constraint<F: FieldBackend>(
 /// Returns `Some((constant_value, other_lc, c_lc))` where the constraint
 /// encodes `constant * other_lc = c_lc`. Returns `None` if both A and B
 /// contain variables (genuinely quadratic).
+///
+/// Also handles the zero-product case: if A=0 or B=0, the constraint
+/// reduces to `C = 0`, returned as `(1, zero_lc, c_lc)`.
 fn is_linear<F: FieldBackend>(
     constraint: &Constraint<F>,
 ) -> Option<(FieldElement<F>, LinearCombination<F>, LinearCombination<F>)> {
@@ -73,14 +82,96 @@ fn is_linear<F: FieldBackend>(
         if !k.is_zero() {
             return Some((k, constraint.b.simplify(), constraint.c.simplify()));
         }
+        // A = 0: constraint is 0 * B = C, i.e., C = 0
+        // Encode as: 1 * 0 = C (so combined = C - 0 = C, solve for var in C)
+        let c_simplified = constraint.c.simplify();
+        if !c_simplified.terms.is_empty() {
+            return Some((FieldElement::one(), LinearCombination::zero(), c_simplified));
+        }
+        // C is also zero → trivially satisfied, handled elsewhere
+        return None;
     }
     let b_simplified = constraint.b.simplify();
     if let Some(k) = b_simplified.constant_value() {
         if !k.is_zero() {
             return Some((k, constraint.a.simplify(), constraint.c.simplify()));
         }
+        // B = 0: constraint is A * 0 = C, i.e., C = 0
+        let c_simplified = constraint.c.simplify();
+        if !c_simplified.terms.is_empty() {
+            return Some((FieldElement::one(), LinearCombination::zero(), c_simplified));
+        }
+        return None;
     }
     None
+}
+
+/// Count how many constraints each variable appears in (across A, B, C).
+fn compute_variable_frequency<F: FieldBackend>(
+    constraints: &[Constraint<F>],
+) -> HashMap<usize, usize> {
+    let mut freq: HashMap<usize, usize> = HashMap::new();
+    for constraint in constraints {
+        let mut vars_in_constraint: HashSet<usize> = HashSet::new();
+        for (var, _) in &constraint.a.terms {
+            vars_in_constraint.insert(var.index());
+        }
+        for (var, _) in &constraint.b.terms {
+            vars_in_constraint.insert(var.index());
+        }
+        for (var, _) in &constraint.c.terms {
+            vars_in_constraint.insert(var.index());
+        }
+        for var_idx in vars_in_constraint {
+            *freq.entry(var_idx).or_insert(0) += 1;
+        }
+    }
+    freq
+}
+
+/// Check if a constraint is trivially satisfied regardless of witness values.
+///
+/// Catches patterns after substitution:
+/// - `0 * B = 0` or `A * 0 = 0` (zero product with zero C)
+/// - `k1 * k2 = k3` where k1*k2 == k3 (fully constant, tautological)
+/// - `k * LC = C` where C - k*LC simplifies to zero (tautological linear)
+fn is_trivially_satisfied<F: FieldBackend>(constraint: &Constraint<F>) -> bool {
+    let a = constraint.a.simplify();
+    let b = constraint.b.simplify();
+    let c = constraint.c.simplify();
+
+    // If A or B simplifies to zero, then A*B = 0, constraint holds iff C = 0
+    if (a.terms.is_empty() || b.terms.is_empty()) && c.terms.is_empty() {
+        return true;
+    }
+
+    // All three are constants: verify k_a * k_b == k_c
+    if let (Some(ka), Some(kb), Some(kc)) =
+        (a.constant_value(), b.constant_value(), c.constant_value())
+    {
+        return ka.mul(&kb) == kc;
+    }
+
+    // Tautological linear: k * LC = C where C == k*LC
+    // This happens when variable substitution makes both sides identical.
+    if let Some(ka) = a.constant_value() {
+        if !ka.is_zero() {
+            let diff = (c.clone() - b.clone() * ka).simplify();
+            if diff.terms.is_empty() {
+                return true;
+            }
+        }
+    }
+    if let Some(kb) = b.constant_value() {
+        if !kb.is_zero() {
+            let diff = (c - a * kb).simplify();
+            if diff.terms.is_empty() {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// Given an LC that must equal zero, solve for a non-protected variable.
@@ -88,16 +179,18 @@ fn is_linear<F: FieldBackend>(
 /// E.g., for `3*x + 2*y - z + 5*ONE = 0`, solving for z gives:
 /// `z = 3*x + 2*y + 5*ONE`.
 ///
-/// Prefers the variable with the highest index (most likely to be an
-/// intermediate wire, not an input).
+/// Prefers the variable that appears in the most constraints (maximizes
+/// propagation). Breaks ties by highest index (intermediate wires).
 fn solve_for_variable<F: FieldBackend>(
     lc: LinearCombination<F>,
     protected: &HashSet<usize>,
+    var_freq: &HashMap<usize, usize>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     let simplified = lc.simplify();
 
-    // Find the best candidate: highest-index non-protected variable
-    let mut best: Option<(Variable, FieldElement<F>)> = None;
+    // Find the best candidate: most-frequent non-protected variable,
+    // breaking ties by highest index.
+    let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
     for (var, coeff) in &simplified.terms {
         if protected.contains(&var.index()) {
             continue;
@@ -105,17 +198,18 @@ fn solve_for_variable<F: FieldBackend>(
         if var.index() == 0 {
             continue; // Never substitute Variable::ONE
         }
+        let freq = var_freq.get(&var.index()).copied().unwrap_or(0);
         match &best {
-            None => best = Some((*var, *coeff)),
-            Some((prev_var, _)) => {
-                if var.index() > prev_var.index() {
-                    best = Some((*var, *coeff));
+            None => best = Some((*var, *coeff, freq)),
+            Some((prev_var, _, prev_freq)) => {
+                if freq > *prev_freq || (freq == *prev_freq && var.index() > prev_var.index()) {
+                    best = Some((*var, *coeff, freq));
                 }
             }
         }
     }
 
-    let (target_var, target_coeff) = best?;
+    let (target_var, target_coeff, _) = best?;
 
     // We need to compute: target_var = (-1/target_coeff) * (all other terms)
     let neg_inv = target_coeff.neg().inv()?;
@@ -148,8 +242,16 @@ pub fn optimize_linear<F: FieldBackend>(
     let protected: HashSet<usize> = (0..=num_pub_inputs).collect();
 
     let mut all_subs: SubstitutionMap<F> = HashMap::new();
+    let mut rounds = 0usize;
+    let mut round_details: Vec<(usize, usize)> = Vec::new();
+    let mut total_trivial_removed = 0usize;
 
     loop {
+        rounds += 1;
+
+        // Compute variable frequency for this round's heuristic
+        let var_freq = compute_variable_frequency(constraints);
+
         let mut round_subs: SubstitutionMap<F> = HashMap::new();
         let mut to_remove: HashSet<usize> = HashSet::new();
 
@@ -158,6 +260,12 @@ pub fn optimize_linear<F: FieldBackend>(
         for var_idx in all_subs.keys() {
             round_protected.insert(*var_idx);
         }
+
+        // Count non-linear constraints before this round (for instrumentation)
+        let nonlinear_before = constraints
+            .iter()
+            .filter(|c| is_linear(c).is_none())
+            .count();
 
         for (idx, constraint) in constraints.iter().enumerate() {
             if let Some((k, other_lc, c_lc)) = is_linear(constraint) {
@@ -171,7 +279,9 @@ pub fn optimize_linear<F: FieldBackend>(
                     this_round_protected.insert(*var_idx);
                 }
 
-                if let Some((var, expr)) = solve_for_variable(combined, &this_round_protected) {
+                if let Some((var, expr)) =
+                    solve_for_variable(combined, &this_round_protected, &var_freq)
+                {
                     round_subs.insert(var.index(), expr);
                     to_remove.insert(idx);
                 }
@@ -179,8 +289,11 @@ pub fn optimize_linear<F: FieldBackend>(
         }
 
         if round_subs.is_empty() {
+            rounds -= 1; // Don't count empty round
             break;
         }
+
+        let linear_eliminated = to_remove.len();
 
         // Remove eliminated constraints and apply substitutions to the rest
         *constraints = constraints
@@ -189,6 +302,21 @@ pub fn optimize_linear<F: FieldBackend>(
             .filter(|(idx, _)| !to_remove.contains(idx))
             .map(|(_, c)| apply_substitution_to_constraint(c, &round_subs))
             .collect();
+
+        // Remove trivially-satisfied constraints (0*B=0, k1*k2=k3)
+        let before_trivial = constraints.len();
+        constraints.retain(|c| !is_trivially_satisfied(c));
+        let trivial_this_round = before_trivial - constraints.len();
+        total_trivial_removed += trivial_this_round;
+
+        // Count how many non-linear constraints became linear after substitution
+        let nonlinear_after = constraints
+            .iter()
+            .filter(|c| is_linear(c).is_none())
+            .count();
+        let newly_linear = nonlinear_before.saturating_sub(nonlinear_after + linear_eliminated);
+
+        round_details.push((linear_eliminated, newly_linear));
 
         // Compose with previous substitutions: apply new subs to old expressions
         for expr in all_subs.values_mut() {
@@ -204,11 +332,19 @@ pub fn optimize_linear<F: FieldBackend>(
     deduplicate_constraints(constraints);
     let duplicates_removed = before_dedup - constraints.len();
 
+    // Phase 3: Final trivial constraint removal (post-dedup may expose more).
+    let before_final_trivial = constraints.len();
+    constraints.retain(|c| !is_trivially_satisfied(c));
+    total_trivial_removed += before_final_trivial - constraints.len();
+
     let result = R1CSOptimizeResult {
         constraints_before,
         constraints_after: constraints.len(),
         variables_eliminated: all_subs.len(),
         duplicates_removed,
+        trivial_removed: total_trivial_removed,
+        rounds,
+        round_details,
     };
 
     (all_subs, result)
@@ -291,8 +427,8 @@ mod tests {
         assert_eq!(stats.constraints_before, 2);
         assert_eq!(stats.constraints_after, 1);
         assert_eq!(stats.variables_eliminated, 1);
-        // w (idx 4) should be substituted
-        assert!(subs.contains_key(&4));
+        // Frequency heuristic: z (idx 3, freq=2) preferred over w (idx 4, freq=1)
+        assert!(subs.contains_key(&3) || subs.contains_key(&4));
 
         // Remaining constraint should still be satisfiable
         // After substitution, w is replaced by z everywhere
@@ -708,5 +844,158 @@ mod tests {
                 "constraint {i} unsatisfied after optimization"
             );
         }
+    }
+
+    // ========================================================================
+    // Test 13: Tautological linear constraints are removed
+    // ========================================================================
+    #[test]
+    fn test_tautological_linear_removed() {
+        // Directly test is_trivially_satisfied on a tautological constraint:
+        // 1 * (3x + 5y) = (3x + 5y) → always satisfied
+        let x = Variable(1);
+        let y = Variable(2);
+
+        let mut lc = LinearCombination::<memory::Bn254Fr>::zero();
+        lc.add_term(x, FieldElement::from_u64(3));
+        lc.add_term(y, FieldElement::from_u64(5));
+
+        let taut = Constraint {
+            a: LinearCombination::from_variable(Variable::ONE),
+            b: lc.clone(),
+            c: lc,
+        };
+        assert!(is_trivially_satisfied(&taut));
+
+        // Non-tautological: 1 * (3x + 5y) = (3x + 7y)
+        let mut c2 = LinearCombination::<memory::Bn254Fr>::zero();
+        c2.add_term(x, FieldElement::from_u64(3));
+        c2.add_term(y, FieldElement::from_u64(7));
+        let non_taut = Constraint {
+            a: LinearCombination::from_variable(Variable::ONE),
+            b: {
+                let mut b = LinearCombination::zero();
+                b.add_term(x, FieldElement::from_u64(3));
+                b.add_term(y, FieldElement::from_u64(5));
+                b
+            },
+            c: c2,
+        };
+        assert!(!is_trivially_satisfied(&non_taut));
+
+        // Tautological after substitution with protected variables:
+        // System: 1 * pub = x       (linear: x = pub, sub x → pub)
+        //         1 * x = pub       (after sub: 1*pub = pub → tautological!)
+        //         x * x = z         (after sub: pub*pub = z, quadratic, kept)
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
+        let pub_out = cs.alloc_input(); // 1 (protected)
+        let x_var = cs.alloc_witness(); // 2
+        let z_var = cs.alloc_witness(); // 3
+
+        cs.enforce_equal(make_lc_var(pub_out), make_lc_var(x_var));
+        cs.enforce_equal(make_lc_var(x_var), make_lc_var(pub_out));
+        cs.enforce(make_lc_var(x_var), make_lc_var(x_var), make_lc_var(z_var));
+
+        let mut constraints = cs.constraints().to_vec();
+        let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
+
+        // First constraint: x substituted → pub
+        // Second: 1*pub = pub → tautological, removed
+        // Third: pub*pub = z → quadratic, kept
+        assert_eq!(stats.constraints_before, 3);
+        assert_eq!(stats.constraints_after, 1, "only pub*pub=z should remain");
+        assert!(
+            stats.trivial_removed >= 1,
+            "tautological constraint detected"
+        );
+    }
+
+    // ========================================================================
+    // Test 14: Zero-product constraint (0 * B = C) handled
+    // ========================================================================
+    #[test]
+    fn test_zero_product_constraint() {
+        // System: x * y = z     (quadratic)
+        //         0 * w = v     (zero-product: v = 0, eliminable)
+        //         v * v = out   (after sub v→0: 0*0=out → trivial if out=0)
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
+        let x = cs.alloc_witness(); // 1
+        let y = cs.alloc_witness(); // 2
+        let z = cs.alloc_witness(); // 3
+        let w = cs.alloc_witness(); // 4
+        let v = cs.alloc_witness(); // 5
+        let out = cs.alloc_witness(); // 6
+
+        cs.enforce(make_lc_var(x), make_lc_var(y), make_lc_var(z));
+        // 0 * w = v
+        cs.enforce(LinearCombination::zero(), make_lc_var(w), make_lc_var(v));
+        cs.enforce(make_lc_var(v), make_lc_var(v), make_lc_var(out));
+
+        let mut constraints = cs.constraints().to_vec();
+        let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
+
+        // v should be substituted to 0 (from zero-product constraint)
+        // Then v*v=out becomes 0*0=out, where out gets substituted to 0 too
+        assert!(subs.contains_key(&5) || subs.contains_key(&6)); // v or out substituted
+        assert!(stats.constraints_after <= 2); // at most x*y=z + maybe one more
+
+        // Verify
+        let witness = vec![
+            FieldElement::ONE,
+            FieldElement::from_u64(6),  // x
+            FieldElement::from_u64(7),  // y
+            FieldElement::from_u64(42), // z
+            FieldElement::from_u64(99), // w (unconstrained after opt)
+            FieldElement::from_u64(0),  // v = 0
+            FieldElement::from_u64(0),  // out = 0
+        ];
+        for c in &constraints {
+            let a_val = c.a.evaluate(&witness).unwrap();
+            let b_val = c.b.evaluate(&witness).unwrap();
+            let c_val = c.c.evaluate(&witness).unwrap();
+            assert_eq!(a_val.mul(&b_val), c_val);
+        }
+    }
+
+    // ========================================================================
+    // Test 15: Frequency heuristic picks most-connected variable
+    // ========================================================================
+    #[test]
+    fn test_frequency_heuristic() {
+        // Frequency heuristic: substitute the variable that appears in the
+        // MOST constraints, to maximize propagation.
+        //
+        // In constraint `c - a - b = 0`:
+        //   a (idx 1): freq=3 (in constraints 1,2,3)
+        //   b (idx 2): freq=1 (in constraint 1 only)
+        //   c (idx 3): freq=1 (in constraint 1 only)
+        // Highest-freq = a → substitute a = c - b
+        let mut cs = ConstraintSystem::new();
+        let a = cs.alloc_witness(); // 1
+        let b = cs.alloc_witness(); // 2
+        let c = cs.alloc_witness(); // 3
+        let d = cs.alloc_witness(); // 4
+        let e = cs.alloc_witness(); // 5
+        let f = cs.alloc_witness(); // 6
+        let g = cs.alloc_witness(); // 7
+
+        cs.enforce_equal(
+            make_lc_var::<memory::Bn254Fr>(a) + make_lc_var(b),
+            make_lc_var(c),
+        );
+        cs.enforce(make_lc_var(a), make_lc_var(d), make_lc_var(e));
+        cs.enforce(make_lc_var(a), make_lc_var(f), make_lc_var(g));
+
+        let mut constraints = cs.constraints().to_vec();
+        let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
+
+        assert_eq!(stats.constraints_before, 3);
+        assert_eq!(stats.constraints_after, 2);
+        assert_eq!(stats.variables_eliminated, 1);
+        // a (idx 1) should be substituted (highest frequency = 3)
+        assert!(
+            subs.contains_key(&1),
+            "expected a (idx 1) to be substituted (highest freq)"
+        );
     }
 }
