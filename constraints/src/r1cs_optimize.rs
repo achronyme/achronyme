@@ -630,6 +630,7 @@ pub fn optimize_o2<F: FieldBackend>(
     // Phase 2: DEDUCE + O1 loop (usually 1-2 iterations)
     for _outer in 0..50 {
         let count_before = constraints.len();
+        let saved = constraints.clone();
 
         // DEDUCE: find linear constraints implied by quadratic constraints
         let deduced = deduce_linear_from_quadratic(constraints);
@@ -650,15 +651,17 @@ pub fn optimize_o2<F: FieldBackend>(
         // Run O1 to process the new linear constraints
         let (new_subs, stats) = optimize_linear(constraints, num_pub_inputs);
 
+        if new_subs.is_empty() || constraints.len() >= count_before {
+            // Deduction didn't reduce constraint count — roll back
+            *constraints = saved;
+            break;
+        }
+
         total_vars_eliminated += stats.variables_eliminated;
         total_trivial_removed += stats.trivial_removed;
         total_duplicates_removed += stats.duplicates_removed;
         total_rounds += stats.rounds;
         all_round_details.extend(stats.round_details);
-
-        if new_subs.is_empty() || constraints.len() >= count_before {
-            break;
-        }
 
         // Compose substitutions
         for expr in all_subs.values_mut() {

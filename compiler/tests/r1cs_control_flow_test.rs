@@ -124,14 +124,14 @@ fn test_for_non_literal_rejected() {
 
 #[test]
 fn test_if_else_two_constraints() {
-    // if flag { a } else { b } with assert_eq → 1 boolean + 1 MUX + 1 assert_eq = 3
+    // if flag { a } else { b } with assert_eq → 1 bool + 1 materialize(a-b) + 1 mux mul + 1 assert_eq = 4
     let rc = ir_compile(
         "let r = if flag { a } else { b }; assert_eq(r, out)",
         &["out"],
         &["flag", "a", "b"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
@@ -152,8 +152,8 @@ fn test_if_else_integration_flag_one() {
     let source = "let result = if flag { a } else { b }; assert_eq(result, out)";
 
     let rc = ir_compile(source, &["out"], &["flag", "a", "b"]).unwrap();
-    // 2 (if/mux) + 1 (assert_eq) = 3
-    assert_eq!(rc.cs.num_constraints(), 3);
+    // 1 bool + 1 materialize(a-b) + 1 mux mul + 1 assert_eq = 4
+    assert_eq!(rc.cs.num_constraints(), 4);
 
     // flag=1, a=42, b=99 -> result = a = 42
     ir_compile_and_verify(source, &[("out", 42)], &[("flag", 1), ("a", 42), ("b", 99)]);
@@ -211,40 +211,40 @@ fn test_if_else_boolean_enforcement() {
 #[test]
 fn test_if_nested_mux() {
     // if c1 { a } else { if c2 { b } else { c } } with assert_eq
-    // Inner: 2, outer: 2, assert_eq: 1 → 5 total
+    // Inner: 1 bool + 1 materialize + 1 mul = 3, outer: 1 bool + 1 materialize + 1 mul = 3, assert_eq: 1 → 7
     let rc = ir_compile(
         "let r = if c1 { a } else { if c2 { b } else { c } }; assert_eq(r, out)",
         &["out"],
         &["c1", "c2", "a", "b", "c"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 5);
+    assert_eq!(rc.cs.num_constraints(), 7);
 }
 
 #[test]
 fn test_if_with_arithmetic_branches() {
     // if flag { a * b } else { c + d } with assert_eq
-    // a*b = 1 mul, MUX = 2, assert_eq = 1 → Total = 4
+    // 1 mul(a*b) + 1 bool + 1 materialize(diff) + 1 mux mul + 1 assert_eq = 5
     let rc = ir_compile(
         "let r = if flag { a * b } else { c + d }; assert_eq(r, out)",
         &["out"],
         &["flag", "a", "b", "c", "d"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 4);
+    assert_eq!(rc.cs.num_constraints(), 5);
 }
 
 #[test]
 fn test_if_else_if_chain() {
     // if c1 { a } else if c2 { b } else { c } with assert_eq
-    // Two mux levels = 4 + 1 assert_eq = 5
+    // Two mux levels (3 each) + 1 assert_eq = 7
     let rc = ir_compile(
         "let r = if c1 { a } else if c2 { b } else { c }; assert_eq(r, out)",
         &["out"],
         &["c1", "c2", "a", "b", "c"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 5);
+    assert_eq!(rc.cs.num_constraints(), 7);
 }
 
 // ====================================================================
@@ -287,14 +287,14 @@ fn test_break_rejected() {
 #[test]
 fn test_for_with_if_inside() {
     // for i in 0..2 { let r = if flag { a * b } else { c }; assert_eq(r, out) }
-    // CSE deduplicates across iterations: 1 mul + 1 bool_enforce + 1 mux + 2 assert_eq = 5
+    // CSE deduplicates across iterations: 1 mul + 1 bool + 1 materialize(diff) + 1 mux mul + 2 assert_eq = 6
     let rc = ir_compile(
         "for i in 0..2 { let r = if flag { a * b } else { c }; assert_eq(r, out) }",
         &["out"],
         &["flag", "a", "b", "c"],
     )
     .unwrap();
-    assert_eq!(rc.cs.num_constraints(), 5);
+    assert_eq!(rc.cs.num_constraints(), 6);
 }
 
 #[test]
@@ -310,10 +310,10 @@ fn test_full_circuit_with_control_flow() {
     let rc = ir_compile(source, &["out"], &["x", "flag"]).unwrap();
 
     // Loop body eliminated by DCE (step unused)
-    // If: 1 (x*x in then) + 2 (boolean + MUX) = 3 constraints
+    // If: 1 (x*x) + 1 bool + 1 materialize(diff) + 1 mux mul = 4 constraints
     // assert_eq: 1 constraint
-    // Total: 3 + 1 = 4
-    assert_eq!(rc.cs.num_constraints(), 4);
+    // Total: 4 + 1 = 5
+    assert_eq!(rc.cs.num_constraints(), 5);
 
     // flag=1, x=5: result = x*x = 25
     ir_compile_and_verify(source, &[("out", 25)], &[("x", 5), ("flag", 1)]);

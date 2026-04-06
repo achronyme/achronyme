@@ -1239,9 +1239,12 @@ fn pedersen_o2() {
     );
 
     r1cs_compiler.cs.verify(&witness).unwrap();
+    // O1 gives 90 for Pedersen(8) with pre-multiply materialization.
+    // O2/DEDUCE finds no additional reductions because O1 substitutes
+    // materialization wires back, re-expanding LCs before DEDUCE runs.
     assert!(
-        post_opt <= 89,
-        "O2 should not regress vs O1 (89): got {post_opt}"
+        post_opt <= 90,
+        "O2 should not regress vs O1 (90): got {post_opt}"
     );
 }
 

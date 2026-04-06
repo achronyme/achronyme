@@ -58,12 +58,37 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         if let Some(scalar) = b.constant_value() {
             return a.clone() * scalar;
         }
+        // Materialize multi-term operands before multiplying.
+        //
+        // Without this, (n-term LC) × (m-term LC) produces n×m quadratic
+        // monomials in the R1CS constraint, making O2/DEDUCE ineffective
+        // (the monomial matrix becomes sparse with few shared entries).
+        //
+        // By materializing first, we get: w_a × w_b = w_out (1 monomial)
+        // plus 1-2 linear constraints (w_a = LC_a, w_b = LC_b) that O1
+        // can substitute or O2 can exploit for algebraic deduction.
+        let (a_mat, b_mat) = if a.terms.len() > 1 || b.terms.len() > 1 {
+            let a_clean = if a.terms.len() > 1 {
+                LinearCombination::from_variable(self.materialize_lc(a))
+            } else {
+                a.clone()
+            };
+            let b_clean = if b.terms.len() > 1 {
+                LinearCombination::from_variable(self.materialize_lc(b))
+            } else {
+                b.clone()
+            };
+            (a_clean, b_clean)
+        } else {
+            (a.clone(), b.clone())
+        };
+
         // General case: allocate witness for product (1 constraint)
-        let out = self.cs.mul_lc(a, b);
+        let out = self.cs.mul_lc(&a_mat, &b_mat);
         self.witness_ops.push(WitnessOp::Multiply {
             target: out,
-            a: a.clone(),
-            b: b.clone(),
+            a: a_mat,
+            b: b_mat,
         });
         LinearCombination::from_variable(out)
     }

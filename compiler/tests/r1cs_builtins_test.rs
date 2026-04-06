@@ -197,7 +197,7 @@ fn test_poseidon_expression_evaluating_to_zero_r1cs() {
 
 #[test]
 fn test_mux_constraint_count() {
-    // mux(flag, a, b) with assert_eq → 1 boolean check + 1 MUX mul + 1 assert_eq = 3
+    // mux(flag, a, b) with assert_eq → 1 boolean + 1 materialize(a-b) + 1 MUX mul + 1 assert_eq = 4
     let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a, b), out)",
         &["out"],
@@ -208,7 +208,7 @@ fn test_mux_constraint_count() {
 
     let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 3);
+    assert_eq!(rc.cs.num_constraints(), 4);
 }
 
 #[test]
@@ -230,8 +230,8 @@ fn test_mux_selects_first_when_flag_one() {
     inputs.insert("b".to_string(), FieldElement::from_u64(99));
     let witness = rc.compile_ir_with_witness(&program, &inputs).unwrap();
 
-    // 2 (mux) + 1 (assert_eq) = 3
-    assert_eq!(rc.cs.num_constraints(), 3);
+    // 1 bool + 1 materialize(a-b) + 1 mux mul + 1 assert_eq = 4
+    assert_eq!(rc.cs.num_constraints(), 4);
     assert!(rc.cs.verify(&witness).is_ok());
 }
 
@@ -301,7 +301,7 @@ fn test_mux_boolean_enforcement() {
 
 #[test]
 fn test_mux_with_complex_branches() {
-    // mux(flag, a * b, c + d) with assert_eq → 1 mul (a*b) + 2 mux + 1 assert_eq = 4
+    // mux(flag, a * b, c + d) with assert_eq → 1 mul + 1 bool + 1 materialize(diff) + 1 mux mul + 1 assert_eq = 5
     let mut program = IrLowering::<Bn254Fr>::lower_circuit(
         "assert_eq(mux(flag, a * b, c + d), out)",
         &["out"],
@@ -312,7 +312,7 @@ fn test_mux_with_complex_branches() {
 
     let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
-    assert_eq!(rc.cs.num_constraints(), 4);
+    assert_eq!(rc.cs.num_constraints(), 5);
 }
 
 #[test]
@@ -399,11 +399,11 @@ fn test_merkle_path_composition() {
     let mut rc = R1CSCompiler::<Bn254Fr>::new();
     rc.compile_ir(&program).unwrap();
 
-    // 2 (mux left: boolean enforcement + mul)
-    // 1 (mux right: mul only — boolean enforcement deduped with left)
+    // 1 (boolean enforcement, deduped across both muxes)
+    // 2×(1 materialize(diff) + 1 mux mul) = 4 (left + right mux)
     // 2 (materialization of each mux result for poseidon inputs)
     // 361 (poseidon: 360 permutation + 1 capacity)
     // 1 (assert_eq)
-    // Total: 367
-    assert_eq!(rc.cs.num_constraints(), 367);
+    // Total: 369
+    assert_eq!(rc.cs.num_constraints(), 369);
 }

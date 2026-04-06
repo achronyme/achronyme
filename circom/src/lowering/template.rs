@@ -1142,8 +1142,8 @@ mod tests {
             "#,
             &[("in", 13)],
         );
-        // 17 constraints: 8 boolean + 1 sum + 8 output tie
-        assert_eq!(nc, 17);
+        // 25 constraints: 8×2 boolean (materialize + mul) + 1 sum + 8 output tie
+        assert_eq!(nc, 25);
         // 2 public: "in" (input) + "out" (output array counted as 1 decl, but 8 elements + 1 input = 9)
         assert_eq!(np, 9);
         assert_proof_valid(&proof);

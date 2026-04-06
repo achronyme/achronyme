@@ -175,7 +175,8 @@ impl CircuitStats {
 
                 Instruction::Mux { result, cond, .. } => {
                     non_single.insert(*result);
-                    let mut cost = 1; // multiply for selection
+                    // 1 materialize(then - else) + 1 multiply for selection
+                    let mut cost = 2;
                     if !proven_boolean.contains(cond) && bool_enforced.insert(*cond) {
                         cost += 1;
                     }
@@ -755,15 +756,15 @@ mod tests {
             if_false: v2,
         });
 
-        // Without proven: 1 mul + 1 bool = 2
+        // Without proven: 1 materialize(diff) + 1 mul + 1 bool = 3
         let stats = CircuitStats::from_program(&prog, &empty_proven(), None);
-        assert_eq!(stats.total_constraints, 2);
+        assert_eq!(stats.total_constraints, 3);
 
-        // With proven cond: 1 mul only
+        // With proven cond: 1 materialize(diff) + 1 mul = 2
         let mut proven = HashSet::new();
         proven.insert(v0);
         let stats = CircuitStats::from_program(&prog, &proven, None);
-        assert_eq!(stats.total_constraints, 1);
+        assert_eq!(stats.total_constraints, 2);
     }
 
     #[test]
