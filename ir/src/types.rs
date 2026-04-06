@@ -751,11 +751,17 @@ mod tests {
             value: FieldElement::from_u64(42),
         });
 
+        // v2: non-tautological AssertEq (survives DCE)
         let v2 = p.fresh_var();
+        let v3 = p.fresh_var();
+        p.push(Instruction::Const {
+            result: v3,
+            value: FieldElement::from_u64(0),
+        });
         p.push(Instruction::AssertEq {
             result: v2,
             lhs: v0,
-            rhs: v0,
+            rhs: v3,
             message: None,
         });
         let span2 = SpanRange::new(20, 30, 2, 1, 2, 10);
@@ -764,8 +770,8 @@ mod tests {
         // Simulate DCE: remove unused instructions
         crate::passes::dce::dead_code_elimination(&mut p);
 
-        // v1 instruction should be gone, but spans are still accessible by SsaVar
-        assert_eq!(p.instructions.len(), 2);
+        // v1 (unused Const) should be gone; Input + Const(0) + AssertEq remain
+        assert_eq!(p.instructions.len(), 3);
         assert_eq!(p.get_span(v0), Some(&span));
         assert_eq!(p.get_span(v2), Some(&span2));
     }

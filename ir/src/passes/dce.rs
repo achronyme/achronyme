@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use memory::FieldBackend;
 
-use crate::types::{IrProgram, SsaVar};
+use crate::types::{Instruction, IrProgram, SsaVar};
 
 /// Dead code elimination pass.
 ///
@@ -11,9 +11,16 @@ use crate::types::{IrProgram, SsaVar};
 /// and that are safe to eliminate.
 ///
 /// Side-effect instructions (`AssertEq`, `Assert`, `Input`, `RangeCheck`)
-/// are never eliminated. All other instructions are eliminated if their
-/// result variable is unused by any retained instruction.
+/// are never eliminated, except for tautological `AssertEq(x, x)` which
+/// carry zero information and are always safe to remove.
 pub fn dead_code_elimination<F: FieldBackend>(program: &mut IrProgram<F>) {
+    // Pre-pass: eliminate tautological AssertEq(x, x).
+    // These arise during Circom component inlining when an output signal
+    // is wired to an input that already refers to the same SSA variable.
+    program.instructions.retain(|inst| {
+        !matches!(inst, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs)
+    });
+
     loop {
         let before = program.instructions.len();
 

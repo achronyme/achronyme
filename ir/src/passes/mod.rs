@@ -20,6 +20,8 @@ pub struct OptimizeStats {
     pub cse_eliminated: usize,
     /// Instructions eliminated by dead code elimination.
     pub dce_eliminated: usize,
+    /// Tautological `AssertEq(x, x)` eliminated.
+    pub tautological_asserts_eliminated: usize,
     /// Total instructions after optimization.
     pub total_after: usize,
     /// Bound inference results (comparisons optimized + those remaining unbounded).
@@ -74,9 +76,18 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
 
     let cse_eliminated = cse::common_subexpression_elimination(program);
 
+    // Count tautological AssertEq(x, x) before DCE removes them
+    let tautological_before = program
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs))
+        .count();
+
     let before_dce = program.instructions.len();
     dce::dead_code_elimination(program);
-    let dce_eliminated = before_dce.saturating_sub(program.instructions.len());
+    let dce_eliminated = before_dce
+        .saturating_sub(program.instructions.len())
+        .saturating_sub(tautological_before);
 
     let total_after = program.instructions.len();
 
@@ -85,6 +96,7 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
         const_fold_converted,
         cse_eliminated,
         dce_eliminated,
+        tautological_asserts_eliminated: tautological_before,
         total_after,
         bound_inference: bi_result,
         bit_pattern_bounds: bp_result.bounds.len(),

@@ -418,7 +418,35 @@ fn dce_keeps_assert_eq() {
         name: "x".into(),
         visibility: ir::Visibility::Witness,
     });
-    // AssertEq has side effects — never removed
+    let y = p.fresh_var();
+    p.push(Instruction::Const {
+        result: y,
+        value: FieldElement::from_u64(0),
+    });
+    // Non-tautological AssertEq has side effects — never removed
+    let c = p.fresh_var();
+    p.push(Instruction::AssertEq {
+        result: c,
+        lhs: x,
+        rhs: y,
+        message: None,
+    });
+
+    dce::dead_code_elimination(&mut p);
+
+    assert_eq!(p.instructions.len(), 3);
+}
+
+#[test]
+fn dce_eliminates_tautological_assert_eq() {
+    let mut p: IrProgram = IrProgram::new();
+    let x = p.fresh_var();
+    p.push(Instruction::Input {
+        result: x,
+        name: "x".into(),
+        visibility: ir::Visibility::Witness,
+    });
+    // Tautological AssertEq(x, x) carries zero information — removed
     let c = p.fresh_var();
     p.push(Instruction::AssertEq {
         result: c,
@@ -429,7 +457,7 @@ fn dce_keeps_assert_eq() {
 
     dce::dead_code_elimination(&mut p);
 
-    assert_eq!(p.instructions.len(), 2);
+    assert_eq!(p.instructions.len(), 1);
 }
 
 #[test]
