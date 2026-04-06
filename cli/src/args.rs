@@ -114,6 +114,12 @@ pub enum Commands {
         /// Generate a Solidity Groth16 verifier contract at the given path
         #[arg(long)]
         solidity: Option<String>,
+        /// Export Plonkish circuit to JSON (includes witness if --inputs is provided)
+        #[arg(long)]
+        plonkish_json: Option<String>,
+        /// Dump the SSA IR (after optimization) and exit without compiling to constraints
+        #[arg(long)]
+        dump_ir: bool,
         /// Print circuit constraint stats breakdown
         #[arg(long)]
         circuit_stats: bool,

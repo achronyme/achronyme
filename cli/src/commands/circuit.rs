@@ -349,7 +349,9 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
     // 2. Optimize (unless --no-optimize)
     if !no_optimize {
         let stats = ir::passes::optimize(&mut program);
-        let eliminated = stats.const_fold_converted + stats.dce_eliminated;
+        let eliminated = stats.const_fold_converted
+            + stats.dce_eliminated
+            + stats.tautological_asserts_eliminated;
         if verbose && eliminated > 0 {
             let mut parts = Vec::new();
             if stats.const_fold_converted > 0 {
@@ -357,6 +359,12 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
             }
             if stats.dce_eliminated > 0 {
                 parts.push("DCE");
+            }
+            let taut_msg;
+            if stats.tautological_asserts_eliminated > 0 {
+                taut_msg =
+                    format!("{} tautological asserts", stats.tautological_asserts_eliminated);
+                parts.push(&taut_msg);
             }
             eprintln!(
                 "    {}: {} eliminated ({})",

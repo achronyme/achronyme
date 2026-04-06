@@ -14,6 +14,7 @@ use std::fs;
 
 use anyhow::{Context, Result};
 
+use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use constraints::PoseidonParamsProvider;
 use constraints::{write_r1cs, write_wtns};
@@ -24,16 +25,7 @@ use super::ErrorFormat;
 use crate::style::{format_number, Styler};
 
 // ---------------------------------------------------------------------------
-// BN254-specific operations (same trait as circuit.rs)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// No trait-based proof dispatch needed: proof generation uses the concrete
-// BN254 functions directly (BLS12-381 proof support deferred).
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Input parsing (reused from circuit.rs patterns)
+// Input parsing
 // ---------------------------------------------------------------------------
 
 fn parse_inputs<F: FieldBackend>(raw: &str) -> Result<HashMap<String, FieldElement<F>>> {
@@ -141,10 +133,31 @@ pub fn circom_command(
     prime_id: PrimeId,
     prove: bool,
     solidity_path: Option<&str>,
+    plonkish_json_path: Option<&str>,
+    dump_ir: bool,
     circuit_stats: bool,
     lib_dirs: &[String],
     error_format: ErrorFormat,
 ) -> Result<()> {
+    // Validate flag combinations early
+    if solidity_path.is_some() && backend != "r1cs" {
+        return Err(anyhow::anyhow!(
+            "--solidity is only supported with the r1cs backend"
+        ));
+    }
+
+    if solidity_path.is_some() && prime_id != PrimeId::Bn254 {
+        return Err(anyhow::anyhow!(
+            "--solidity is only supported with BN254 (EVM precompiles require alt_bn128)"
+        ));
+    }
+
+    if plonkish_json_path.is_some() && backend != "plonkish" {
+        return Err(anyhow::anyhow!(
+            "--plonkish-json is only supported with the plonkish backend"
+        ));
+    }
+
     if !matches!(backend, "r1cs" | "plonkish") {
         return Err(anyhow::anyhow!(
             "unknown backend `{backend}` (use \"r1cs\" or \"plonkish\")"
@@ -169,6 +182,8 @@ pub fn circom_command(
             prime_id,
             prove,
             solidity_path,
+            plonkish_json_path,
+            dump_ir,
             circuit_stats,
             lib_dirs,
             error_format,
@@ -184,6 +199,8 @@ pub fn circom_command(
             prime_id,
             prove,
             solidity_path,
+            plonkish_json_path,
+            dump_ir,
             circuit_stats,
             lib_dirs,
             error_format,
@@ -207,6 +224,8 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     prime_id: PrimeId,
     prove: bool,
     solidity_path: Option<&str>,
+    plonkish_json_path: Option<&str>,
+    dump_ir: bool,
     circuit_stats: bool,
     lib_dirs: &[String],
     error_format: ErrorFormat,
@@ -272,7 +291,6 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     }
 
     // 2. Compute witness hints (off-circuit evaluation of `<--` expressions)
-    // The hints compute signal values from user inputs using off-circuit arithmetic.
     let user_inputs: HashMap<String, FieldElement<F>> = resolved_inputs.clone().unwrap_or_default();
     let witness_values = circom::witness::compute_witness_hints_with_captures::<F>(
         &prove_ir,
@@ -306,21 +324,112 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     // 3. Optimize
     if !no_optimize {
         let stats = ir::passes::optimize(&mut program);
-        let eliminated = stats.const_fold_converted + stats.dce_eliminated;
+        let eliminated = stats.const_fold_converted
+            + stats.dce_eliminated
+            + stats.tautological_asserts_eliminated;
         if verbose && eliminated > 0 {
-            eprintln!("    {}: {} eliminated", style.cyan("Optimized"), eliminated,);
+            let mut parts = Vec::new();
+            if stats.const_fold_converted > 0 {
+                parts.push("constant folding");
+            }
+            if stats.dce_eliminated > 0 {
+                parts.push("DCE");
+            }
+            let taut_msg;
+            if stats.tautological_asserts_eliminated > 0 {
+                taut_msg =
+                    format!("{} tautological asserts", stats.tautological_asserts_eliminated);
+                parts.push(&taut_msg);
+            }
+            eprintln!(
+                "    {}: {} eliminated ({})",
+                style.cyan("Optimized"),
+                eliminated,
+                parts.join(" + ")
+            );
+        }
+
+        // W003: warn about unbounded comparisons (~761 constraints each)
+        if !stats.bound_inference.unbounded.is_empty() {
+            for &(_, lhs, rhs) in &stats.bound_inference.unbounded {
+                let lhs_name = program.get_name(lhs).unwrap_or("%?");
+                let rhs_name = program.get_name(rhs).unwrap_or("%?");
+                eprintln!(
+                    "{}: unbounded comparison between `{}` and `{}` uses ~761 constraints",
+                    style.warning("warning[W003]"),
+                    lhs_name,
+                    rhs_name,
+                );
+                eprintln!(
+                    "  {} add range_check({}, 64) and range_check({}, 64) to reduce to ~67",
+                    style.cyan("help:"),
+                    lhs_name,
+                    rhs_name,
+                );
+            }
+        }
+
+        // Show bit-pattern detection info
+        if verbose && stats.bit_pattern_bounds > 0 {
+            eprintln!(
+                "    {}: {} bound(s) inferred from bit patterns ({} boolean vars detected)",
+                style.cyan("BitPattern"),
+                stats.bit_pattern_bounds,
+                stats.bit_pattern_booleans,
+            );
+        }
+
+        // Show bound inference optimization info
+        if verbose && stats.bound_inference.rewritten > 0 {
+            eprintln!(
+                "    {}: {} comparison(s) optimized via IsLtBounded",
+                style.cyan("Bounds"),
+                stats.bound_inference.rewritten,
+            );
         }
     }
 
-    // 4. Analysis
-    let warnings = ir::passes::analyze(&program);
-    for w in &warnings {
-        eprintln!("warning: {w}");
+    // 4. If --dump-ir, print the IR and exit
+    if dump_ir {
+        println!("== Circuit IR for {} ==\n", path);
+        print!("{program}");
+        let n = program.instructions.len();
+        let n_inputs = program
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, ir::Instruction::Input { .. }))
+            .count();
+        let n_constraints = program
+            .instructions
+            .iter()
+            .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
+            .count();
+        eprintln!("{n} instructions, {n_inputs} inputs, {n_constraints} constraints");
+        return Ok(());
     }
 
-    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    // 5. Analyze for under-constrained inputs
+    let warnings = ir::passes::analyze(&program);
+    for w in &warnings {
+        let span = w
+            .span()
+            .cloned()
+            .unwrap_or_else(|| compiler::diagnostic::SpanRange::point(0, 0, 0));
+        let diag = compiler::Diagnostic::warning(w.to_string(), span);
+        super::emit_diagnostic(&diag, &source, error_format);
+    }
 
-    // Circuit stats
+    // Bool propagation
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    if verbose && !proven.is_empty() {
+        eprintln!(
+            "    {}: {} proven",
+            style.cyan("Boolean propagation"),
+            proven.len()
+        );
+    }
+
+    // Circuit stats profiler
     if circuit_stats {
         let name = std::path::Path::new(path)
             .file_stem()
@@ -329,7 +438,12 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         eprintln!("{stats}");
     }
 
-    // 5. Backend compilation
+    // 6. Backend compilation
+    let source_dir = file_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+
     match backend {
         "r1cs" => run_r1cs_pipeline(
             &program,
@@ -344,10 +458,16 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
             no_optimize,
             &proven,
         ),
-        "plonkish" => {
-            eprintln!("plonkish backend for Circom: not yet implemented");
-            Ok(())
-        }
+        "plonkish" => run_plonkish_pipeline(
+            &program,
+            resolved_inputs.as_ref(),
+            prove,
+            plonkish_json_path,
+            &source_dir,
+            &style,
+            verbose,
+            &proven,
+        ),
         _ => unreachable!(),
     }
 }
@@ -369,6 +489,34 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
     let mut compiler = R1CSCompiler::<F>::new();
     compiler.prime_id = prime_id;
     compiler.set_proven_boolean(proven.clone());
+
+    // Count public/witness inputs from IR
+    let n_public = program
+        .instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                ir::Instruction::Input {
+                    visibility: ir::Visibility::Public,
+                    ..
+                }
+            )
+        })
+        .count();
+    let n_witness = program
+        .instructions
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                ir::Instruction::Input {
+                    visibility: ir::Visibility::Witness,
+                    ..
+                }
+            )
+        })
+        .count();
 
     if let Some(input_map) = inputs {
         let mut witness_vec = compiler
@@ -398,7 +546,39 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
         }
 
         if let Err(e) = compiler.cs.verify(&witness_vec) {
-            return Err(anyhow::anyhow!("witness verification failed: {e}"));
+            let mut msg = format!("witness verification failed: {e}");
+            if let constraints::r1cs::ConstraintError::ConstraintUnsatisfied(idx) = &e {
+                if let Some(origin) = compiler.constraint_origins.get(*idx) {
+                    let inst = &program.instructions[origin.ir_index];
+                    msg = format!("constraint {idx} unsatisfied in: {inst}");
+                    if let Some(name) = program.get_name(origin.result_var) {
+                        msg.push_str(&format!("  (variable: {name})"));
+                    }
+                    if let Some(span) = program.get_span(origin.result_var) {
+                        let file = span
+                            .file
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        msg.push_str(&format!(
+                            "\n    --> {}:{}:{}",
+                            file, span.line_start, span.col_start
+                        ));
+                    }
+                    match inst {
+                        ir::Instruction::AssertEq {
+                            message: Some(m), ..
+                        }
+                        | ir::Instruction::Assert {
+                            message: Some(m), ..
+                        } => {
+                            msg.push_str(&format!("\n    message: {m}"));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return Err(anyhow::anyhow!("{msg}"));
         }
 
         let r1cs_data = write_r1cs(&compiler.cs, prime_id);
@@ -411,24 +591,34 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
             let nc = compiler.cs.num_constraints();
             eprintln!();
             eprintln!("{}:", style.success("R1CS generated"));
-            eprintln!("    Constraints: {}", style.bold(&format_number(nc)));
+            eprintln!("    Constraints:    {}", style.bold(&format_number(nc)));
+            eprintln!("    Public inputs:  {}", n_public);
+            eprintln!("    Private inputs: {}", n_witness);
             eprintln!(
                 "    Wrote {} ({} bytes)",
                 style.bold(r1cs_path),
                 format_number(r1cs_data.len())
             );
             eprintln!(
-                "    Wrote {} ({} bytes) — {}",
+                "    Wrote {} ({} bytes) {} {}",
                 style.bold(wtns_path),
                 format_number(wtns_data.len()),
+                style.dim("—"),
                 style.green("verified OK")
             );
         } else {
             eprintln!(
-                "wrote {} ({} constraints), {} — verified OK",
+                "wrote {} ({} constraints, {} wires, {} bytes)",
                 r1cs_path,
                 compiler.cs.num_constraints(),
+                compiler.cs.num_variables(),
+                r1cs_data.len(),
+            );
+            eprintln!(
+                "wrote {} ({} values, {} bytes) — verified OK",
                 wtns_path,
+                witness_vec.len(),
+                wtns_data.len(),
             );
         }
 
@@ -520,9 +710,11 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
             eprintln!();
             eprintln!("{}:", style.success("R1CS generated"));
             eprintln!(
-                "    Constraints: {}",
+                "    Constraints:    {}",
                 style.bold(&format_number(compiler.cs.num_constraints()))
             );
+            eprintln!("    Public inputs:  {}", n_public);
+            eprintln!("    Private inputs: {}", n_witness);
             eprintln!(
                 "    Wrote {} ({} bytes)",
                 style.bold(r1cs_path),
@@ -530,9 +722,11 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
             );
         } else {
             eprintln!(
-                "wrote {} ({} constraints)",
+                "wrote {} ({} constraints, {} wires, {} bytes)",
                 r1cs_path,
                 compiler.cs.num_constraints(),
+                compiler.cs.num_variables(),
+                r1cs_data.len(),
             );
         }
     }
@@ -557,6 +751,187 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
                 style.bold(sol_path),
                 style.dim("(Solidity Groth16 verifier)")
             );
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider>(
+    program: &ir::IrProgram<F>,
+    inputs: Option<&HashMap<String, FieldElement<F>>>,
+    prove: bool,
+    plonkish_json_path: Option<&str>,
+    source_dir: &std::path::Path,
+    style: &Styler,
+    verbose: bool,
+    proven: &std::collections::HashSet<ir::SsaVar>,
+) -> Result<()> {
+    let mut compiler = PlonkishCompiler::<F>::new();
+    compiler.set_proven_boolean(proven.clone());
+
+    if let Some(input_map) = inputs {
+        compiler
+            .compile_ir_with_witness(program, input_map)
+            .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
+
+        compiler
+            .system
+            .verify()
+            .map_err(|e| anyhow::anyhow!("Plonkish verification error: {e}"))?;
+
+        if verbose {
+            eprintln!();
+            eprintln!("{}:", style.success("Plonkish generated"));
+            eprintln!(
+                "    Rows:    {}",
+                style.bold(&format_number(compiler.num_circuit_rows()))
+            );
+            eprintln!(
+                "    Copies:  {}",
+                format_number(compiler.system.copies.len())
+            );
+            eprintln!(
+                "    Lookups: {}",
+                format_number(compiler.system.lookups.len())
+            );
+            eprintln!("    Verification: {}", style.green("OK"));
+        } else {
+            eprintln!(
+                "plonkish: {} rows, {} copies, {} lookups",
+                compiler.num_circuit_rows(),
+                compiler.system.copies.len(),
+                compiler.system.lookups.len(),
+            );
+            eprintln!("plonkish verification: OK");
+        }
+
+        // Export Plonkish circuit + witness to JSON if requested
+        if let Some(json_path) = plonkish_json_path {
+            let json = constraints::write_plonkish_json(&compiler.system);
+            fs::write(json_path, &json).with_context(|| format!("cannot write {json_path}"))?;
+            if verbose {
+                eprintln!(
+                    "    Wrote {} {}",
+                    style.bold(json_path),
+                    style.dim("(Plonkish JSON export)")
+                );
+            } else {
+                eprintln!("wrote {} (Plonkish JSON export)", json_path);
+            }
+        }
+
+        if prove {
+            if F::PRIME_ID != PrimeId::Bn254 {
+                return Err(anyhow::anyhow!(
+                    "--prove with plonkish backend is only supported with BN254"
+                ));
+            }
+            let cache_dir = crate::cache_dir();
+            // Safe cast: validated F == Bn254Fr above
+            let compiler_bn254 = unsafe {
+                std::mem::transmute::<PlonkishCompiler<F>, PlonkishCompiler<memory::Bn254Fr>>(
+                    compiler,
+                )
+            };
+            let result =
+                proving::halo2_proof::generate_plonkish_proof(compiler_bn254, &cache_dir)
+                    .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
+
+            match result {
+                vm::ProveResult::Proof {
+                    proof_json,
+                    public_json,
+                    vkey_json,
+                } => {
+                    let proof_path = source_dir.join("proof.json");
+                    let public_path = source_dir.join("public.json");
+                    let vkey_path = source_dir.join("vkey.json");
+                    fs::write(&proof_path, &proof_json)
+                        .with_context(|| format!("cannot write {}", proof_path.display()))?;
+                    fs::write(&public_path, &public_json)
+                        .with_context(|| format!("cannot write {}", public_path.display()))?;
+                    fs::write(&vkey_path, &vkey_json)
+                        .with_context(|| format!("cannot write {}", vkey_path.display()))?;
+                    if verbose {
+                        eprintln!(
+                            "\n{} {}",
+                            style.success("Proof generated"),
+                            style.dim("(PlonK/halo2)")
+                        );
+                        eprintln!(
+                            "    Wrote {}",
+                            style.bold(&proof_path.display().to_string())
+                        );
+                        eprintln!(
+                            "    Wrote {}",
+                            style.bold(&public_path.display().to_string())
+                        );
+                        eprintln!("    Wrote {}", style.bold(&vkey_path.display().to_string()));
+                    } else {
+                        eprintln!(
+                            "wrote {}, {}, {}",
+                            proof_path.display(),
+                            public_path.display(),
+                            vkey_path.display()
+                        );
+                    }
+                }
+                vm::ProveResult::VerifiedOnly => {
+                    if verbose {
+                        eprintln!("\n{}", style.green("Proof verified (no proof output)"));
+                    } else {
+                        eprintln!("plonkish proof generation: verified only (no proof output)");
+                    }
+                }
+            }
+        }
+    } else {
+        if prove {
+            return Err(anyhow::anyhow!("--prove requires --inputs or --input-file"));
+        }
+
+        compiler
+            .compile_ir(program)
+            .map_err(|e| anyhow::anyhow!("Plonkish compilation error: {e}"))?;
+
+        if verbose {
+            eprintln!();
+            eprintln!("{}:", style.success("Plonkish generated"));
+            eprintln!(
+                "    Rows:    {}",
+                style.bold(&format_number(compiler.num_circuit_rows()))
+            );
+            eprintln!(
+                "    Copies:  {}",
+                format_number(compiler.system.copies.len())
+            );
+            eprintln!(
+                "    Lookups: {}",
+                format_number(compiler.system.lookups.len())
+            );
+        } else {
+            eprintln!(
+                "plonkish: {} rows, {} copies, {} lookups",
+                compiler.num_circuit_rows(),
+                compiler.system.copies.len(),
+                compiler.system.lookups.len(),
+            );
+        }
+
+        if let Some(json_path) = plonkish_json_path {
+            let json = constraints::write_plonkish_json(&compiler.system);
+            fs::write(json_path, &json).with_context(|| format!("cannot write {json_path}"))?;
+            if verbose {
+                eprintln!(
+                    "    Wrote {} {}",
+                    style.bold(json_path),
+                    style.dim("(Plonkish JSON export)")
+                );
+            } else {
+                eprintln!("wrote {} (Plonkish JSON export)", json_path);
+            }
         }
     }
 

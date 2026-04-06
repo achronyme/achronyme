@@ -125,6 +125,7 @@ fn main() -> Result<()> {
             inputs,
             input_file,
             prove,
+            dump_ir,
             lib_dirs,
             ..
         } => {
@@ -143,6 +144,8 @@ fn main() -> Result<()> {
                 prime_id,
                 *prove,
                 cfg.solidity_path.as_deref(),
+                cfg.plonkish_json_path.as_deref(),
+                *dump_ir,
                 cfg.circuit_stats,
                 lib_dirs,
                 ef,
@@ -317,6 +320,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             r1cs,
             wtns,
             solidity,
+            plonkish_json,
             circuit_stats,
             ..
         } => CliOverrides {
@@ -329,7 +333,7 @@ fn build_overrides(cli: &Cli) -> CliOverrides {
             r1cs_path: r1cs.clone(),
             wtns_path: wtns.clone(),
             solidity_path: solidity.clone(),
-            plonkish_json_path: None,
+            plonkish_json_path: plonkish_json.clone(),
             max_heap: None,
             stress_gc: false,
             gc_stats: false,
