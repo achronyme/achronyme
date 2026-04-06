@@ -78,52 +78,36 @@ pub(super) fn lower_substitution<'a>(
                 })?;
             let lowered = lower_expr(value, env, ctx)?;
             match assign_target {
+                // `<==` only needs a Let (or LetIndexed). The expression's Mul
+                // instructions generate R1CS constraints, and the Let binds the
+                // result in the env. No separate AssertEq is needed because:
+                // - For Mul: the R1CS constraint comes from the Mul instruction
+                // - For Add/Sub: the signal is an LC alias, no wire to constrain
+                // - For outputs: the Let handler emits AssertEq(pub_wire, value)
+                // Emitting AssertEq here would re-emit the entire expression tree
+                // a second time, creating duplicate Mul constraints.
                 AssignTarget::Scalar(name) => {
                     nodes.push(CircuitNode::Let {
-                        name: name.clone(),
-                        value: lowered.clone(),
-                        span: sr.clone(),
-                    });
-                    nodes.push(CircuitNode::AssertEq {
-                        lhs: CircuitExpr::Var(name),
-                        rhs: lowered,
-                        message: None,
+                        name,
+                        value: lowered,
                         span: sr,
                     });
                 }
                 AssignTarget::Indexed { array, index } => {
                     let idx_expr = lower_expr(&index, env, ctx)?;
                     nodes.push(CircuitNode::LetIndexed {
-                        array: array.clone(),
-                        index: idx_expr.clone(),
-                        value: lowered.clone(),
-                        span: sr.clone(),
-                    });
-                    nodes.push(CircuitNode::AssertEq {
-                        lhs: CircuitExpr::ArrayIndex {
-                            array,
-                            index: Box::new(idx_expr),
-                        },
-                        rhs: lowered,
-                        message: None,
+                        array,
+                        index: idx_expr,
+                        value: lowered,
                         span: sr,
                     });
                 }
                 AssignTarget::MultiIndexed { array, indices } => {
                     let idx_expr = linearize_multi_index(&array, &indices, env, ctx)?;
                     nodes.push(CircuitNode::LetIndexed {
-                        array: array.clone(),
-                        index: idx_expr.clone(),
-                        value: lowered.clone(),
-                        span: sr.clone(),
-                    });
-                    nodes.push(CircuitNode::AssertEq {
-                        lhs: CircuitExpr::ArrayIndex {
-                            array,
-                            index: Box::new(idx_expr),
-                        },
-                        rhs: lowered,
-                        message: None,
+                        array,
+                        index: idx_expr,
+                        value: lowered,
                         span: sr,
                     });
                 }

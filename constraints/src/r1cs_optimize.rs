@@ -236,10 +236,22 @@ pub fn optimize_linear<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
+    optimize_linear_with_protected(constraints, num_pub_inputs, &HashSet::new())
+}
+
+/// Like `optimize_linear`, but also protects additional variable indices
+/// from substitution. Used by O2 to shield decomposition wires during
+/// DEDUCE processing so they remain available as simple monomials.
+fn optimize_linear_with_protected<F: FieldBackend>(
+    constraints: &mut Vec<Constraint<F>>,
+    num_pub_inputs: usize,
+    extra_protected: &HashSet<usize>,
+) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
     let constraints_before = constraints.len();
 
-    // Protected: ONE (0) + public inputs (1..=num_pub_inputs)
-    let protected: HashSet<usize> = (0..=num_pub_inputs).collect();
+    // Protected: ONE (0) + public inputs (1..=num_pub_inputs) + extra
+    let mut protected: HashSet<usize> = (0..=num_pub_inputs).collect();
+    protected.extend(extra_protected);
 
     let mut all_subs: SubstitutionMap<F> = HashMap::new();
     let mut rounds = 0usize;
@@ -595,23 +607,121 @@ fn deduce_linear_from_quadratic<F: FieldBackend>(
     deduced
 }
 
-/// O2 optimization: O1 fixpoint + DEDUCE (algebraic constraint deduction).
+/// Decompose quadratic constraints with multi-term A/B into simple form.
 ///
-/// Runs O1 (linear constraint elimination) to fixpoint first. Then runs
-/// DEDUCE (Gaussian elimination on the quadratic monomial matrix) to find
-/// linear constraints implied by the quadratic constraints. These are added
-/// to the system and O1 is re-run. Repeats until no more deductions are found.
+/// For each constraint `A × B = C` where A or B has >1 variable term,
+/// introduces an auxiliary wire `w` such that `w = multi_term_LC` (as a
+/// new linear constraint) and replaces the multi-term operand with `w`.
 ///
-/// The DEDUCE step operates on the post-O1 constraints. Currently this yields
-/// modest improvements (1-3 constraints) because our R1CS pipeline inlines
-/// linear combinations aggressively, creating complex A/B in quadratic
-/// constraints with few shared monomials. For circuits lowered from circom
-/// (which preserves intermediate signals as separate wires), the improvement
-/// would be larger.
+/// This transforms `(a+b+c) × d = e` into `w × d = e` + `1×(a+b+c-w)=0`,
+/// reducing the quadratic monomial count from N×M to 1 per constraint.
+/// DEDUCE can then find algebraic dependencies between the simplified
+/// monomials more effectively.
+fn decompose_for_deduce_tracked<F: FieldBackend>(
+    constraints: &mut Vec<Constraint<F>>,
+    aux_wire_indices: &mut HashSet<usize>,
+) {
+    // Find max variable index to allocate beyond it
+    let mut max_var: usize = 0;
+    for c in constraints.iter() {
+        for &(var, _) in
+            c.a.terms
+                .iter()
+                .chain(c.b.terms.iter())
+                .chain(c.c.terms.iter())
+        {
+            max_var = max_var.max(var.index());
+        }
+    }
+
+    // Map from LC fingerprint → shared auxiliary wire.
+    // If the same sub-expression appears in multiple constraints,
+    // they share the same wire so DEDUCE sees shared monomials.
+    let mut lc_cache: HashMap<Vec<u8>, Variable> = HashMap::new();
+    let mut new_linear: Vec<Constraint<F>> = Vec::new();
+
+    for constraint in constraints.iter_mut() {
+        let a_simplified = constraint.a.simplify();
+        let b_simplified = constraint.b.simplify();
+
+        // Skip linear constraints (one side is constant)
+        if a_simplified.constant_value().is_some() || b_simplified.constant_value().is_some() {
+            continue;
+        }
+
+        // Count non-constant variable terms
+        let a_var_count = a_simplified
+            .terms
+            .iter()
+            .filter(|(v, _)| v.index() > 0)
+            .count();
+        let b_var_count = b_simplified
+            .terms
+            .iter()
+            .filter(|(v, _)| v.index() > 0)
+            .count();
+
+        // Decompose A if it has >1 variable term
+        if a_var_count > 1 {
+            let fp = lc_fingerprint(&a_simplified);
+            let cache_len = lc_cache.len();
+            let w = *lc_cache.entry(fp).or_insert_with(|| {
+                max_var += 1;
+                let w = Variable(max_var);
+                let mut diff = a_simplified.clone();
+                diff.add_term(w, FieldElement::<F>::one().neg());
+                new_linear.push(Constraint {
+                    a: LinearCombination::from_constant(FieldElement::one()),
+                    b: diff,
+                    c: LinearCombination::zero(),
+                });
+                w
+            });
+            if lc_cache.len() > cache_len {
+                aux_wire_indices.insert(w.index());
+            }
+            constraint.a = LinearCombination::from_variable(w);
+        }
+
+        // Decompose B if it has >1 variable term
+        if b_var_count > 1 {
+            let fp = lc_fingerprint(&b_simplified);
+            let cache_len = lc_cache.len();
+            let w = *lc_cache.entry(fp).or_insert_with(|| {
+                max_var += 1;
+                let w = Variable(max_var);
+                let mut diff = b_simplified.clone();
+                diff.add_term(w, FieldElement::<F>::one().neg());
+                new_linear.push(Constraint {
+                    a: LinearCombination::from_constant(FieldElement::one()),
+                    b: diff,
+                    c: LinearCombination::zero(),
+                });
+                w
+            });
+            if lc_cache.len() > cache_len {
+                aux_wire_indices.insert(w.index());
+            }
+            constraint.b = LinearCombination::from_variable(w);
+        }
+    }
+
+    constraints.extend(new_linear);
+}
+
+/// O2 optimization: O1 fixpoint + decompose + DEDUCE + O1.
 ///
-/// To achieve circom-level O2 reduction (e.g., Pedersen 89→13), the constraint
-/// generation pipeline would need to preserve more intermediate wires
-/// instead of inlining LCs. This is tracked as a future improvement.
+/// 1. **O1 fixpoint**: Standard linear constraint elimination.
+/// 2. **Decompose**: Introduces auxiliary wires to break multi-term A/B in
+///    quadratic constraints into single-variable form. This reduces each
+///    constraint's monomial count from N×M to 1, making the monomial matrix
+///    for DEDUCE small and dense.
+/// 3. **DEDUCE**: Gaussian elimination on the monomial matrix finds linear
+///    constraints implied by the quadratic constraints.
+/// 4. **O1 again**: Processes deduced constraints and eliminates auxiliary
+///    wires introduced by the decomposition.
+///
+/// Repeats steps 2-4 until convergence. Rolls back if no improvement.
 pub fn optimize_o2<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
@@ -627,19 +737,58 @@ pub fn optimize_o2<F: FieldBackend>(
     let mut total_rounds = o1_stats.rounds;
     let mut all_round_details: Vec<(usize, usize)> = o1_stats.round_details;
 
-    // Phase 2: DEDUCE + O1 loop (usually 1-2 iterations)
+    // Phase 2: Decompose + DEDUCE + protected O1 + cleanup O1
+    //
+    // 1. Decompose multi-term A/B in quadratic constraints into auxiliary wires
+    // 2. DEDUCE finds linear constraints from the simplified monomials
+    // 3. O1 runs with auxiliary wires PROTECTED (so DEDUCE structure is preserved)
+    //    → this only eliminates variables from deduced + existing constraints
+    // 4. Second O1 run WITHOUT protection eliminates auxiliary wires
+    // 5. Repeat until no improvement
     for _outer in 0..50 {
         let count_before = constraints.len();
         let saved = constraints.clone();
 
-        // DEDUCE: find linear constraints implied by quadratic constraints
+        // Step 1: Decompose + record aux wire definitions
+        let mut aux_wire_indices: HashSet<usize> = HashSet::new();
+        let mut aux_definitions: HashMap<usize, LinearCombination<F>> = HashMap::new();
+        {
+            // Capture definitions before decomposition modifies constraints
+            let pre_count = constraints.len();
+            decompose_for_deduce_tracked(constraints, &mut aux_wire_indices);
+            // Extract definitions from new linear constraints: 1 × (LC - w) = 0 → w = LC
+            for c in &constraints[pre_count..] {
+                let b = c.b.simplify();
+                // Find the aux wire term (negative coefficient, index in aux_wire_indices)
+                for (var, coeff) in &b.terms {
+                    if aux_wire_indices.contains(&var.index()) {
+                        // w = (remaining terms) / (-coeff)
+                        let inv = match coeff.neg().inv() {
+                            Some(inv) => inv,
+                            None => continue,
+                        };
+                        let mut def = LinearCombination::zero();
+                        for (v2, c2) in &b.terms {
+                            if v2 != var {
+                                def.add_term(*v2, c2.mul(&inv));
+                            }
+                        }
+                        aux_definitions.insert(var.index(), def.simplify());
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Step 2: DEDUCE on decomposed system
         let deduced = deduce_linear_from_quadratic(constraints);
 
         if deduced.is_empty() {
+            *constraints = saved;
             break;
         }
 
-        // Add deduced constraints as "1 × lc = 0"
+        // Add deduced constraints
         for lc in &deduced {
             constraints.push(Constraint {
                 a: LinearCombination::from_constant(FieldElement::one()),
@@ -648,14 +797,10 @@ pub fn optimize_o2<F: FieldBackend>(
             });
         }
 
-        // Run O1 to process the new linear constraints
-        let (new_subs, stats) = optimize_linear(constraints, num_pub_inputs);
-
-        if new_subs.is_empty() || constraints.len() >= count_before {
-            // Deduction didn't reduce constraint count — roll back
-            *constraints = saved;
-            break;
-        }
+        // Step 3: O1 with auxiliary wires PROTECTED — processes deductions
+        // without destroying the decomposition wire structure
+        let (new_subs, stats) =
+            optimize_linear_with_protected(constraints, num_pub_inputs, &aux_wire_indices);
 
         total_vars_eliminated += stats.variables_eliminated;
         total_trivial_removed += stats.trivial_removed;
@@ -663,11 +808,41 @@ pub fn optimize_o2<F: FieldBackend>(
         total_rounds += stats.rounds;
         all_round_details.extend(stats.round_details);
 
-        // Compose substitutions
         for expr in all_subs.values_mut() {
             *expr = apply_substitution(expr, &new_subs);
         }
         all_subs.extend(new_subs);
+
+        // Step 4: O1 WITHOUT protection — eliminates auxiliary wires
+        let (cleanup_subs, cleanup_stats) = optimize_linear(constraints, num_pub_inputs);
+
+        total_vars_eliminated += cleanup_stats.variables_eliminated;
+        total_trivial_removed += cleanup_stats.trivial_removed;
+        total_duplicates_removed += cleanup_stats.duplicates_removed;
+        total_rounds += cleanup_stats.rounds;
+        all_round_details.extend(cleanup_stats.round_details);
+
+        for expr in all_subs.values_mut() {
+            *expr = apply_substitution(expr, &cleanup_subs);
+        }
+        all_subs.extend(cleanup_subs);
+
+        // Resolve any remaining auxiliary wire references in substitution map.
+        // Protected O1 may have used deduced constraints containing aux wires,
+        // and cleanup O1 may not have eliminated all of them.
+        let aux_subs: SubstitutionMap<F> = aux_definitions.clone();
+        for expr in all_subs.values_mut() {
+            *expr = apply_substitution(expr, &aux_subs);
+        }
+        // Remove aux wire entries from the substitution map (they don't exist
+        // in the original witness vector)
+        all_subs.retain(|k, _| !aux_wire_indices.contains(k));
+
+        if constraints.len() >= count_before {
+            // No improvement — revert
+            *constraints = saved;
+            break;
+        }
     }
 
     let result = R1CSOptimizeResult {

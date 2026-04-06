@@ -360,10 +360,9 @@ mod tests {
         assert_eq!(ir.witness_inputs[0].name, "a");
         assert_eq!(ir.witness_inputs[1].name, "b");
 
-        // c <== a * b → Let(c) + AssertEq(c, a*b)
-        assert_eq!(ir.body.len(), 2);
+        // c <== a * b → Let(c) only (no AssertEq)
+        assert_eq!(ir.body.len(), 1);
         assert!(matches!(&ir.body[0], CircuitNode::Let { name, .. } if name == "c"));
-        assert!(matches!(&ir.body[1], CircuitNode::AssertEq { .. }));
     }
 
     #[test]
@@ -413,10 +412,10 @@ mod tests {
         assert_eq!(ir.witness_inputs.len(), 1);
         assert_eq!(ir.witness_inputs[0].name, "in");
 
-        // inv <-- 1 → Let
-        // out <== ... → Let + AssertEq
+        // inv <-- 1 → WitnessHint
+        // out <== ... → Let (no AssertEq)
         // in * out === 0 → AssertEq
-        assert_eq!(ir.body.len(), 4);
+        assert_eq!(ir.body.len(), 3);
     }
 
     // ── For loop template ───────────────────────────────────────────
@@ -679,7 +678,7 @@ mod tests {
 
         assert_eq!(ir.witness_inputs.len(), 1);
         // b <== square(a) should inline to b <== a * a
-        assert_eq!(ir.body.len(), 2); // Let + AssertEq
+        assert_eq!(ir.body.len(), 1); // Let only (no AssertEq)
     }
 
     #[test]
@@ -699,7 +698,7 @@ mod tests {
             "#,
         );
 
-        assert_eq!(ir.body.len(), 2); // Let + AssertEq
+        assert_eq!(ir.body.len(), 1); // Let only (no AssertEq)
     }
 
     #[test]
@@ -721,7 +720,7 @@ mod tests {
             "#,
         );
 
-        assert_eq!(ir.body.len(), 2); // Let + AssertEq
+        assert_eq!(ir.body.len(), 1); // Let only (no AssertEq)
     }
 
     #[test]

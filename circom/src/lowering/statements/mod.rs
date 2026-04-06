@@ -1,7 +1,8 @@
 //! Statement lowering: Circom statements → ProveIR `CircuitNode` sequences.
 //!
 //! Key mappings:
-//! - `signal <== expr`  → `Let { name, value }` + `AssertEq { lhs: Var(name), rhs: value }`
+//! - `signal <== expr`  → `Let { name, value }` (constraint is implicit — the R1CS backend
+//!   constrains the wire via its definition, no separate `AssertEq` needed)
 //! - `signal <-- expr`  → `Let { name, value }` (witness hint only, `===` handled separately)
 //! - `lhs === rhs`      → `AssertEq { lhs, rhs }`
 //! - `var x = expr`     → `Let { name, value }` (compile-time only, no constraint)
@@ -134,16 +135,12 @@ fn lower_stmt<'a>(
 
                 match op {
                     AssignOp::ConstraintAssign => {
-                        // `signal c <== expr` → Let + AssertEq
+                        // `signal c <== expr` → Let only. The expression's Mul
+                        // instructions produce R1CS constraints; no separate
+                        // AssertEq needed (see substitution.rs for rationale).
                         nodes.push(CircuitNode::Let {
                             name: decl.name.clone(),
-                            value: lowered_value.clone(),
-                            span: sr.clone(),
-                        });
-                        nodes.push(CircuitNode::AssertEq {
-                            lhs: CircuitExpr::Var(decl.name.clone()),
-                            rhs: lowered_value,
-                            message: None,
+                            value: lowered_value,
                             span: sr,
                         });
                     }
@@ -706,20 +703,18 @@ mod tests {
     // ── Constraint assignment (<==) ─────────────────────────────────
 
     #[test]
-    fn constraint_assign_produces_let_and_assert_eq() {
+    fn constraint_assign_produces_let() {
         let nodes = lower_template("signal output c; c <== a + b;").unwrap();
-        // signal decl doesn't produce nodes, substitution produces Let + AssertEq
-        assert_eq!(nodes.len(), 2);
+        // signal decl doesn't produce nodes, <== produces only a Let (no AssertEq)
+        assert_eq!(nodes.len(), 1);
         assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "c"));
-        assert!(matches!(&nodes[1], CircuitNode::AssertEq { .. }));
     }
 
     #[test]
     fn inline_constraint_assign_signal_decl() {
         let nodes = lower_template("signal output c <== 42;").unwrap();
-        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes.len(), 1);
         assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "c"));
-        assert!(matches!(&nodes[1], CircuitNode::AssertEq { .. }));
     }
 
     // ── Signal assignment (<--) ─────────────────────────────────────
@@ -901,9 +896,9 @@ mod tests {
     #[test]
     fn reverse_constraint_assign() {
         let nodes = lower_template("signal output c; a ==> c;").unwrap();
-        assert_eq!(nodes.len(), 2);
+        // ==> is reverse <==, produces only a Let (no AssertEq)
+        assert_eq!(nodes.len(), 1);
         assert!(matches!(&nodes[0], CircuitNode::Let { name, .. } if name == "c"));
-        assert!(matches!(&nodes[1], CircuitNode::AssertEq { .. }));
     }
 
     #[test]
@@ -948,10 +943,10 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(nodes.len(), 4);
+        // inv <-- 1 → WitnessHint, out <== ... → Let (no AssertEq), a * out === 0 → AssertEq
+        assert_eq!(nodes.len(), 3);
         assert!(matches!(&nodes[0], CircuitNode::WitnessHint { name, .. } if name == "inv"));
         assert!(matches!(&nodes[1], CircuitNode::Let { name, .. } if name == "out"));
         assert!(matches!(&nodes[2], CircuitNode::AssertEq { .. }));
-        assert!(matches!(&nodes[3], CircuitNode::AssertEq { .. }));
     }
 }
