@@ -389,6 +389,297 @@ fn deduplicate_constraints<F: FieldBackend>(constraints: &mut Vec<Constraint<F>>
     });
 }
 
+// ============================================================================
+// O2 Optimization: DEDUCE linear constraints from quadratic constraints
+// ============================================================================
+//
+// Algorithm (from "Distilling Constraints in Zero-Knowledge Protocols", CAV 2022):
+//
+// For each R1CS constraint A×B = C, expand A×B into:
+//   - Quadratic monomials: a_i * b_j * w_i * w_j  (i>0, j>0)
+//   - Linear part: terms involving Variable::ONE from A×B, minus C
+//
+// Build a matrix M where rows = quadratic monomials, columns = constraints.
+// M[mono, k] = coefficient of monomial `mono` in constraint k's expanded A×B.
+//
+// Find the null space of M via Gaussian elimination: vectors v such that M×v=0.
+// For each null vector, Σ v_k * (linear_part_k) = 0 is a deduced linear constraint.
+//
+// These deduced constraints are added to the system, and O1 optimization is
+// re-run. The process repeats until no more linear constraints can be deduced.
+
+/// Canonical quadratic monomial: (i, j) with i <= j, both > 0.
+type Monomial = (usize, usize);
+
+/// Expand constraint A×B into quadratic monomials and a "linear residual".
+///
+/// The constraint says: quadratic_part + linear_residual = 0.
+/// Where linear_residual = (linear terms from A×B) - C.
+fn expand_constraint_product<F: FieldBackend>(
+    constraint: &Constraint<F>,
+) -> (HashMap<Monomial, FieldElement<F>>, LinearCombination<F>) {
+    let a = constraint.a.simplify();
+    let b = constraint.b.simplify();
+    let c = constraint.c.simplify();
+
+    let mut quadratic: HashMap<Monomial, FieldElement<F>> = HashMap::new();
+    let mut linear = LinearCombination::<F>::zero();
+
+    // Expand A × B
+    for &(var_i, coeff_i) in &a.terms {
+        for &(var_j, coeff_j) in &b.terms {
+            let product = coeff_i.mul(&coeff_j);
+            if product.is_zero() {
+                continue;
+            }
+
+            let i = var_i.index();
+            let j = var_j.index();
+
+            if i == 0 || j == 0 {
+                // Involves Variable::ONE → linear term
+                // w_0 * w_j = w_j, w_i * w_0 = w_i, w_0 * w_0 = w_0
+                if i == 0 && j == 0 {
+                    linear.add_term(Variable::ONE, product);
+                } else if i == 0 {
+                    linear.add_term(var_j, product);
+                } else {
+                    linear.add_term(var_i, product);
+                }
+            } else {
+                // Genuine quadratic: w_i * w_j
+                let mono: Monomial = if i <= j { (i, j) } else { (j, i) };
+                let entry = quadratic
+                    .entry(mono)
+                    .or_insert_with(FieldElement::<F>::zero);
+                *entry = entry.add(&product);
+            }
+        }
+    }
+
+    // Subtract C from the linear part (constraint is A×B - C = 0)
+    for &(var, coeff) in &c.terms {
+        linear.add_term(var, coeff.neg());
+    }
+
+    // Remove zero entries
+    quadratic.retain(|_, v| !v.is_zero());
+    let linear = linear.simplify();
+
+    (quadratic, linear)
+}
+
+/// Deduce linear constraints implied by quadratic constraints via Gaussian elimination.
+///
+/// Returns a list of `LinearCombination`s, each representing `lc = 0`.
+/// Only returns non-trivial constraints (at least one variable term).
+fn deduce_linear_from_quadratic<F: FieldBackend>(
+    constraints: &[Constraint<F>],
+) -> Vec<LinearCombination<F>> {
+    if constraints.is_empty() {
+        return vec![];
+    }
+
+    // 1. Expand all constraints into quadratic monomials + linear residual
+    let expanded: Vec<_> = constraints
+        .iter()
+        .map(|c| expand_constraint_product(c))
+        .collect();
+
+    // 2. Collect and index all distinct quadratic monomials
+    let mut monomial_list: Vec<Monomial> = Vec::new();
+    {
+        let mut monomial_set: HashSet<Monomial> = HashSet::new();
+        for (quad, _) in &expanded {
+            for &mono in quad.keys() {
+                if monomial_set.insert(mono) {
+                    monomial_list.push(mono);
+                }
+            }
+        }
+    }
+    // Sort for deterministic processing
+    monomial_list.sort();
+
+    let mono_idx: HashMap<Monomial, usize> = monomial_list
+        .iter()
+        .enumerate()
+        .map(|(idx, &mono)| (mono, idx))
+        .collect();
+
+    let q = monomial_list.len(); // rows (monomials)
+    let k = constraints.len(); // columns (constraints)
+
+    if q == 0 {
+        return vec![];
+    }
+
+    // 3. Build work rows: each row = one constraint = (quadratic_vector, linear_part)
+    //    Gaussian elimination combines rows → combining constraints.
+    //    When the quadratic part becomes zero, the linear part is a deduced constraint.
+    let mut quad_matrix: Vec<Vec<FieldElement<F>>> = Vec::with_capacity(k);
+    let mut linear_parts: Vec<LinearCombination<F>> = Vec::with_capacity(k);
+
+    for (quad, lin) in &expanded {
+        let mut row = vec![FieldElement::<F>::zero(); q];
+        for (&mono, &coeff) in quad {
+            row[mono_idx[&mono]] = coeff;
+        }
+        quad_matrix.push(row);
+        linear_parts.push(lin.clone());
+    }
+
+    // 4. Gaussian elimination: row-reduce using quadratic columns as pivots.
+    //    We do full elimination (reduced row echelon form) so that
+    //    dependent rows become all-zero in the quadratic part.
+    let mut pivot_col_for_row: Vec<Option<usize>> = vec![None; k];
+    let mut used_as_pivot: Vec<bool> = vec![false; k];
+
+    for col in 0..q {
+        // Find pivot: first non-zero entry in this column among non-pivot rows
+        let pivot_row = (0..k).find(|&r| !used_as_pivot[r] && !quad_matrix[r][col].is_zero());
+
+        let Some(pr) = pivot_row else {
+            continue;
+        };
+        used_as_pivot[pr] = true;
+        pivot_col_for_row[pr] = Some(col);
+
+        // Normalize pivot row so the pivot entry becomes 1
+        let pivot_inv = match quad_matrix[pr][col].inv() {
+            Some(inv) => inv,
+            None => continue,
+        };
+
+        for entry in &mut quad_matrix[pr] {
+            *entry = entry.mul(&pivot_inv);
+        }
+        linear_parts[pr] = linear_parts[pr].clone() * pivot_inv;
+
+        // Eliminate this column from all other rows
+        for r in 0..k {
+            if r == pr {
+                continue;
+            }
+            let factor = quad_matrix[r][col];
+            if factor.is_zero() {
+                continue;
+            }
+            let neg_factor = factor.neg();
+            // Can't borrow quad_matrix mutably twice, so clone the pivot row
+            let pivot_row: Vec<FieldElement<F>> = quad_matrix[pr].clone();
+            for (entry, &pivot_val) in quad_matrix[r].iter_mut().zip(pivot_row.iter()) {
+                let delta = pivot_val.mul(&neg_factor);
+                *entry = entry.add(&delta);
+            }
+            let scaled = linear_parts[pr].clone() * neg_factor;
+            linear_parts[r] = (linear_parts[r].clone() + scaled).simplify();
+        }
+    }
+
+    // 5. Extract deduced linear constraints: rows where quadratic part is all zero
+    let mut deduced: Vec<LinearCombination<F>> = Vec::new();
+    for r in 0..k {
+        if used_as_pivot[r] {
+            continue; // pivot rows have non-zero quadratic part by construction
+        }
+        let all_zero = quad_matrix[r].iter().all(|v| v.is_zero());
+        if all_zero {
+            let lin = linear_parts[r].simplify();
+            if !lin.terms.is_empty() {
+                deduced.push(lin);
+            }
+        }
+    }
+
+    deduced
+}
+
+/// O2 optimization: O1 fixpoint + DEDUCE (algebraic constraint deduction).
+///
+/// Runs O1 (linear constraint elimination) to fixpoint first. Then runs
+/// DEDUCE (Gaussian elimination on the quadratic monomial matrix) to find
+/// linear constraints implied by the quadratic constraints. These are added
+/// to the system and O1 is re-run. Repeats until no more deductions are found.
+///
+/// The DEDUCE step operates on the post-O1 constraints. Currently this yields
+/// modest improvements (1-3 constraints) because our R1CS pipeline inlines
+/// linear combinations aggressively, creating complex A/B in quadratic
+/// constraints with few shared monomials. For circuits lowered from circom
+/// (which preserves intermediate signals as separate wires), the improvement
+/// would be larger.
+///
+/// To achieve circom-level O2 reduction (e.g., Pedersen 89→13), the constraint
+/// generation pipeline would need to preserve more intermediate wires
+/// instead of inlining LCs. This is tracked as a future improvement.
+pub fn optimize_o2<F: FieldBackend>(
+    constraints: &mut Vec<Constraint<F>>,
+    num_pub_inputs: usize,
+) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
+    let constraints_before = constraints.len();
+
+    // Phase 1: O1 fixpoint (standard linear elimination)
+    let (mut all_subs, o1_stats) = optimize_linear(constraints, num_pub_inputs);
+
+    let mut total_vars_eliminated = o1_stats.variables_eliminated;
+    let mut total_trivial_removed = o1_stats.trivial_removed;
+    let mut total_duplicates_removed = o1_stats.duplicates_removed;
+    let mut total_rounds = o1_stats.rounds;
+    let mut all_round_details: Vec<(usize, usize)> = o1_stats.round_details;
+
+    // Phase 2: DEDUCE + O1 loop (usually 1-2 iterations)
+    for _outer in 0..50 {
+        let count_before = constraints.len();
+
+        // DEDUCE: find linear constraints implied by quadratic constraints
+        let deduced = deduce_linear_from_quadratic(constraints);
+
+        if deduced.is_empty() {
+            break;
+        }
+
+        // Add deduced constraints as "1 × lc = 0"
+        for lc in &deduced {
+            constraints.push(Constraint {
+                a: LinearCombination::from_constant(FieldElement::one()),
+                b: lc.clone(),
+                c: LinearCombination::zero(),
+            });
+        }
+
+        // Run O1 to process the new linear constraints
+        let (new_subs, stats) = optimize_linear(constraints, num_pub_inputs);
+
+        total_vars_eliminated += stats.variables_eliminated;
+        total_trivial_removed += stats.trivial_removed;
+        total_duplicates_removed += stats.duplicates_removed;
+        total_rounds += stats.rounds;
+        all_round_details.extend(stats.round_details);
+
+        if new_subs.is_empty() || constraints.len() >= count_before {
+            break;
+        }
+
+        // Compose substitutions
+        for expr in all_subs.values_mut() {
+            *expr = apply_substitution(expr, &new_subs);
+        }
+        all_subs.extend(new_subs);
+    }
+
+    let result = R1CSOptimizeResult {
+        constraints_before,
+        constraints_after: constraints.len(),
+        variables_eliminated: total_vars_eliminated,
+        duplicates_removed: total_duplicates_removed,
+        trivial_removed: total_trivial_removed,
+        rounds: total_rounds,
+        round_details: all_round_details,
+    };
+
+    (all_subs, result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

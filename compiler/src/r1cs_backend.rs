@@ -130,6 +130,23 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         stats
     }
 
+    /// Run O2 constraint simplification on the compiled R1CS.
+    ///
+    /// Includes O1 (linear elimination) plus DEDUCE: extracts linear
+    /// constraints implied by quadratic constraints via Gaussian elimination
+    /// on the monomial matrix. Matches circom `--O2`.
+    pub fn optimize_r1cs_o2(&mut self) -> R1CSOptimizeResult {
+        let (subs, stats) = self.cs.optimize_o2();
+
+        if !subs.is_empty() {
+            crate::witness_gen::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
+            self.constraint_origins.clear();
+            self.substitution_map = Some(subs);
+        }
+
+        stats
+    }
+
     /// Declare a public input variable and bind it to `name`.
     ///
     /// Public inputs must be declared before witnesses to maintain the

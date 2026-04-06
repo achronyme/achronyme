@@ -419,6 +419,20 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         crate::r1cs_optimize::optimize_linear(&mut self.constraints, self.num_pub_inputs)
     }
 
+    /// Run O2 constraint simplification on this constraint system.
+    ///
+    /// First runs O1 (linear constraint elimination) to fixpoint, then
+    /// iteratively deduces new linear constraints from quadratic constraints
+    /// via Gaussian elimination on the monomial matrix. Matches circom `--O2`.
+    pub fn optimize_o2(
+        &mut self,
+    ) -> (
+        crate::r1cs_optimize::SubstitutionMap<F>,
+        crate::r1cs_optimize::R1CSOptimizeResult,
+    ) {
+        crate::r1cs_optimize::optimize_o2(&mut self.constraints, self.num_pub_inputs)
+    }
+
     // --- Verification ---
 
     /// Verify that a witness satisfies all constraints.

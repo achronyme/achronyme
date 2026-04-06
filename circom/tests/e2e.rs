@@ -1185,6 +1185,66 @@ fn pedersen_circomlib() {
     assert!(n > 0, "expected constraints for Pedersen hash");
 }
 
+#[test]
+fn pedersen_o2() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/pedersen_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs).unwrap();
+    let prove_ir = &compile_result.prove_ir;
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .unwrap();
+    ir::passes::optimize(&mut program);
+
+    let mut inputs = HashMap::new();
+    for (i, bit) in [0u64, 1, 0, 0, 1, 1, 0, 1].iter().enumerate() {
+        inputs.insert(format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(*bit));
+    }
+
+    let mut all_signals =
+        circom::witness::compute_witness_hints_with_captures(prove_ir, &inputs, capture_values)
+            .unwrap();
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    r1cs_compiler.set_proven_boolean(proven);
+    let mut witness = r1cs_compiler
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap();
+
+    let pre_opt = r1cs_compiler.cs.num_constraints();
+    let stats = r1cs_compiler.optimize_r1cs_o2();
+    if let Some(subs) = &r1cs_compiler.substitution_map {
+        for (var_idx, lc) in subs {
+            witness[*var_idx] = lc.evaluate(&witness).unwrap();
+        }
+    }
+    let post_opt = r1cs_compiler.cs.num_constraints();
+
+    eprintln!("  Pedersen(8) O2: {pre_opt} → {post_opt}");
+    eprintln!(
+        "  vars_elim={} dedup={} trivial={}",
+        stats.variables_eliminated, stats.duplicates_removed, stats.trivial_removed
+    );
+
+    r1cs_compiler.cs.verify(&witness).unwrap();
+    assert!(
+        post_opt <= 89,
+        "O2 should not regress vs O1 (89): got {post_opt}"
+    );
+}
+
 // ── R1CS optimization diagnostic ─────────────────────────────────
 
 /// Diagnostic: dump all constraints for Num2Bits(8) before and after
