@@ -362,8 +362,10 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
             }
             let taut_msg;
             if stats.tautological_asserts_eliminated > 0 {
-                taut_msg =
-                    format!("{} tautological asserts", stats.tautological_asserts_eliminated);
+                taut_msg = format!(
+                    "{} tautological asserts",
+                    stats.tautological_asserts_eliminated
+                );
                 parts.push(&taut_msg);
             }
             eprintln!(

@@ -17,9 +17,9 @@ pub fn dead_code_elimination<F: FieldBackend>(program: &mut IrProgram<F>) {
     // Pre-pass: eliminate tautological AssertEq(x, x).
     // These arise during Circom component inlining when an output signal
     // is wired to an input that already refers to the same SSA variable.
-    program.instructions.retain(|inst| {
-        !matches!(inst, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs)
-    });
+    program
+        .instructions
+        .retain(|inst| !matches!(inst, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs));
 
     loop {
         let before = program.instructions.len();

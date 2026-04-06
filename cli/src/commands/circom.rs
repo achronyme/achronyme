@@ -337,8 +337,10 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
             }
             let taut_msg;
             if stats.tautological_asserts_eliminated > 0 {
-                taut_msg =
-                    format!("{} tautological asserts", stats.tautological_asserts_eliminated);
+                taut_msg = format!(
+                    "{} tautological asserts",
+                    stats.tautological_asserts_eliminated
+                );
                 parts.push(&taut_msg);
             }
             eprintln!(
@@ -835,9 +837,8 @@ fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider>(
                     compiler,
                 )
             };
-            let result =
-                proving::halo2_proof::generate_plonkish_proof(compiler_bn254, &cache_dir)
-                    .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
+            let result = proving::halo2_proof::generate_plonkish_proof(compiler_bn254, &cache_dir)
+                .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
 
             match result {
                 vm::ProveResult::Proof {

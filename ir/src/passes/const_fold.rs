@@ -427,7 +427,10 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
                     let nb = *num_bits as usize;
                     let r = *result;
                     let bits: Vec<SsaVar> = bit_results.clone();
-                    *inst = Instruction::Const { result: r, value: val };
+                    *inst = Instruction::Const {
+                        result: r,
+                        value: val,
+                    };
                     decompose_expansions.push((r, val, bits, nb));
                 }
             }
@@ -439,7 +442,11 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
     // Expand constant Decompose: insert Const instructions for each bit.
     if !decompose_expansions.is_empty() {
         let mut new_instructions = Vec::with_capacity(
-            program.instructions.len() + decompose_expansions.iter().map(|(_, _, b, _)| b.len()).sum::<usize>(),
+            program.instructions.len()
+                + decompose_expansions
+                    .iter()
+                    .map(|(_, _, b, _)| b.len())
+                    .sum::<usize>(),
         );
         let folded_results: std::collections::HashSet<SsaVar> =
             decompose_expansions.iter().map(|(r, _, _, _)| *r).collect();
@@ -451,7 +458,10 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
                 // Emit the original Const (alias for operand value)...
                 new_instructions.push(inst);
                 // ...then emit Const for each bit.
-                if let Some(pos) = decompose_expansions.iter().position(|(r, _, _, _)| *r == result) {
+                if let Some(pos) = decompose_expansions
+                    .iter()
+                    .position(|(r, _, _, _)| *r == result)
+                {
                     let (_, val, bits, _nb) = &decompose_expansions[pos];
                     let limbs = val.to_canonical();
                     for (i, bit_var) in bits.iter().enumerate() {
