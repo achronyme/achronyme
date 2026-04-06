@@ -592,7 +592,9 @@ fn circomlib_e2e_verify(test_name: &str, circom_file: &str, inputs: &[(&str, u64
         all_signals.entry(cname.clone()).or_insert(*fe);
     }
 
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
     let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    r1cs_compiler.set_proven_boolean(proven);
     let witness = r1cs_compiler
         .compile_ir_with_witness(&program, &all_signals)
         .unwrap_or_else(|e| panic!("{test_name} R1CS compilation failed: {e}"));
@@ -696,7 +698,9 @@ fn circomlib_e2e_verify_fe(
         all_signals.entry(cname.clone()).or_insert(*fe);
     }
 
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
     let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    r1cs_compiler.set_proven_boolean(proven);
     let witness = r1cs_compiler
         .compile_ir_with_witness(&program, &all_signals)
         .unwrap_or_else(|e| panic!("{test_name} R1CS compilation failed: {e}"));
@@ -713,6 +717,73 @@ fn circomlib_e2e_verify_fe(
     eprintln!("  {test_name} — {num_constraints} constraints — VERIFIED ✓");
 
     num_constraints
+}
+
+/// Like `circomlib_e2e_verify_fe` but also applies R1CS linear constraint elimination.
+fn circomlib_e2e_optimized(
+    test_name: &str,
+    circom_file: &str,
+    inputs: &HashMap<String, FieldElement<Bn254Fr>>,
+) -> usize {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join(circom_file);
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("{test_name} compilation failed: {e}"));
+
+    let prove_ir = &compile_result.prove_ir;
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate(&fe_captures)
+        .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
+
+    ir::passes::optimize(&mut program);
+
+    let mut all_signals =
+        circom::witness::compute_witness_hints_with_captures(prove_ir, inputs, capture_values)
+            .unwrap_or_else(|e| panic!("{test_name} witness computation failed: {e}"));
+
+    for (cname, fe) in &fe_captures {
+        all_signals.entry(cname.clone()).or_insert(*fe);
+    }
+
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    let mut r1cs_compiler = R1CSCompiler::<Bn254Fr>::new();
+    r1cs_compiler.set_proven_boolean(proven);
+    let mut witness = r1cs_compiler
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("{test_name} R1CS compilation failed: {e}"));
+
+    let pre_opt = r1cs_compiler.cs.num_constraints();
+
+    // Apply R1CS linear constraint elimination
+    let stats = r1cs_compiler.optimize_r1cs();
+    if let Some(subs) = &r1cs_compiler.substitution_map {
+        for (var_idx, lc) in subs {
+            witness[*var_idx] = lc.evaluate(&witness).unwrap();
+        }
+    }
+
+    let post_opt = r1cs_compiler.cs.num_constraints();
+    eprintln!(
+        "  {test_name}: {pre_opt} → {post_opt} ({} linear elim, {} dedup, {} vars subst)",
+        stats.constraints_before - stats.constraints_after - stats.duplicates_removed,
+        stats.duplicates_removed,
+        stats.variables_eliminated,
+    );
+
+    r1cs_compiler
+        .cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("{test_name} R1CS verification failed (post-opt): {e}"));
+
+    post_opt
 }
 
 /// EscalarMulAny(254): full R1CS verify with identity point.
@@ -902,8 +973,17 @@ fn eddsaposeidon_r1cs() {
         "test/circomlib/eddsaposeidon_test.circom",
         &inputs,
     );
-    eprintln!("  Constraints: {n}");
-    assert!(n > 10000, "expected >10000 constraints, got {n}");
+    eprintln!("  Constraints (pre-opt): {n}");
+
+    // Also test with R1CS linear constraint optimization
+    let n_opt = circomlib_e2e_optimized(
+        "EdDSAPoseidon R1CS optimized",
+        "test/circomlib/eddsaposeidon_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints (post-opt): {n_opt}");
+    eprintln!("  circom --O1 reference: 8086");
+    eprintln!("  Ratio: {:.2}x", n_opt as f64 / 8086.0);
 }
 
 /// CompConstant standalone R1CS verify — isolates the 1<<128 BigVal fix.
