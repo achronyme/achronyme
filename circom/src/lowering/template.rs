@@ -9,6 +9,16 @@ use ir::prove_ir::types::{CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, Fo
 
 use crate::ast::{CircomProgram, MainComponent, TemplateDef};
 
+/// Result of lowering a Circom template, including output signal metadata.
+#[derive(Debug)]
+pub struct LowerTemplateResult {
+    pub prove_ir: ProveIR,
+    /// Names of output signals (always public in R1CS).
+    /// Used by the instantiator to emit post-body AssertEq constraints
+    /// tying public output wires to their body-computed values.
+    pub output_names: HashSet<String>,
+}
+
 use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
@@ -24,7 +34,7 @@ pub fn lower_template(
     template: &TemplateDef,
     main: Option<&MainComponent>,
     program: &CircomProgram,
-) -> Result<ProveIR, LoweringError> {
+) -> Result<LowerTemplateResult, LoweringError> {
     let mut ctx = LoweringContext::from_program(program);
 
     // Compute param values from main component args (for component array sizes, etc.)
@@ -93,14 +103,25 @@ pub fn lower_template(
     // 4. Classify captures
     let captures = classify_captures(&template.params, &body);
 
-    // 5. Assemble ProveIR
-    Ok(ProveIR {
-        name: Some(template.name.clone()),
-        public_inputs: layout.public_inputs,
-        witness_inputs: layout.witness_inputs,
-        captures,
-        body,
-        capture_arrays: Vec::new(),
+    // 5. Convert output signals to public input declarations and collect names.
+    //    In Circom, all `signal output` are public wires in the R1CS.
+    let output_names: HashSet<String> = layout.outputs.iter().map(|o| o.name.clone()).collect();
+    let mut all_public = layout.public_inputs;
+    for out in &layout.outputs {
+        all_public.push(out.to_input_decl());
+    }
+
+    // 6. Assemble ProveIR
+    Ok(LowerTemplateResult {
+        prove_ir: ProveIR {
+            name: Some(template.name.clone()),
+            public_inputs: all_public,
+            witness_inputs: layout.witness_inputs,
+            captures,
+            body,
+            capture_arrays: Vec::new(),
+        },
+        output_names,
     })
 }
 
@@ -284,11 +305,10 @@ mod tests {
     use crate::parser::parse_circom;
     use ir::prove_ir::types::{CaptureUsage, CircuitNode, ForRange};
 
-    fn parse_and_lower(src: &str) -> ProveIR {
+    fn parse_and_lower_full(src: &str) -> LowerTemplateResult {
         let (prog, errors) = parse_circom(src).expect("parse failed");
         assert!(errors.is_empty(), "parse errors: {:?}", errors);
 
-        // Find the template that matches the main component, or use the first one.
         let main_name = prog
             .main_component
             .as_ref()
@@ -309,11 +329,15 @@ mod tests {
         lower_template(template, prog.main_component.as_ref(), &prog).unwrap()
     }
 
+    fn parse_and_lower(src: &str) -> ProveIR {
+        parse_and_lower_full(src).prove_ir
+    }
+
     // ── Basic template ──────────────────────────────────────────────
 
     #[test]
     fn simple_multiplier() {
-        let ir = parse_and_lower(
+        let result = parse_and_lower_full(
             r#"
             template Multiplier() {
                 signal input a;
@@ -324,10 +348,14 @@ mod tests {
             component main = Multiplier();
             "#,
         );
+        let ir = &result.prove_ir;
 
         assert_eq!(ir.name, Some("Multiplier".to_string()));
         // No public signals declared in main, so all inputs are witness
-        assert!(ir.public_inputs.is_empty());
+        // But output c is always public
+        assert_eq!(ir.public_inputs.len(), 1);
+        assert_eq!(ir.public_inputs[0].name, "c");
+        assert!(result.output_names.contains("c"));
         assert_eq!(ir.witness_inputs.len(), 2);
         assert_eq!(ir.witness_inputs[0].name, "a");
         assert_eq!(ir.witness_inputs[1].name, "b");
@@ -340,7 +368,7 @@ mod tests {
 
     #[test]
     fn multiplier_with_public_inputs() {
-        let ir = parse_and_lower(
+        let result = parse_and_lower_full(
             r#"
             template Multiplier() {
                 signal input a;
@@ -351,9 +379,14 @@ mod tests {
             component main {public [a]} = Multiplier();
             "#,
         );
+        let ir = &result.prove_ir;
 
-        assert_eq!(ir.public_inputs.len(), 1);
+        // a is public input, c is public output
+        assert_eq!(ir.public_inputs.len(), 2);
         assert_eq!(ir.public_inputs[0].name, "a");
+        assert_eq!(ir.public_inputs[1].name, "c");
+        assert!(result.output_names.contains("c"));
+        assert!(!result.output_names.contains("a"));
         assert_eq!(ir.witness_inputs.len(), 1);
         assert_eq!(ir.witness_inputs[0].name, "b");
     }
@@ -481,7 +514,7 @@ mod tests {
         );
 
         assert_eq!(ir.name, Some("Empty".to_string()));
-        assert!(ir.public_inputs.is_empty());
+        assert!(ir.public_inputs.is_empty()); // no inputs, no outputs
         assert!(ir.witness_inputs.is_empty());
         assert!(ir.body.is_empty());
     }
@@ -526,9 +559,9 @@ mod tests {
             "#,
         );
 
-        // 4 inputs (witness), 4 body nodes:
-        // xout <-- 1, yout <-- 1, xout === ..., yout === ...
+        // 2 witness inputs (x1, y1), 2 public outputs (xout, yout), 4 body nodes
         assert_eq!(ir.witness_inputs.len(), 2); // x1, y1
+        assert_eq!(ir.public_inputs.len(), 2); // xout, yout (outputs are public)
         assert_eq!(ir.body.len(), 4);
     }
 
@@ -827,8 +860,10 @@ mod tests {
         );
 
         assert_eq!(ir.name, Some("Num2Bits".to_string()));
-        assert_eq!(ir.public_inputs.len(), 1);
+        // "in" is public input, "out" is public output
+        assert_eq!(ir.public_inputs.len(), 2);
         assert_eq!(ir.public_inputs[0].name, "in");
+        assert_eq!(ir.public_inputs[1].name, "out");
         // n is a capture (template parameter)
         assert!(!ir.captures.is_empty());
         assert_eq!(ir.captures[0].name, "n");
@@ -971,7 +1006,7 @@ mod tests {
         }
 
         let mut program = prove_ir
-            .instantiate(&fe_captures)
+            .instantiate_with_outputs(&fe_captures, &result.output_names)
             .expect("instantiation failed");
 
         ir::passes::optimize(&mut program);
@@ -1061,7 +1096,7 @@ mod tests {
             .collect();
 
         let mut program = prove_ir
-            .instantiate(&fe_captures)
+            .instantiate_with_outputs(&fe_captures, &result.output_names)
             .expect("instantiation failed");
 
         ir::passes::optimize(&mut program);
@@ -1107,8 +1142,10 @@ mod tests {
             "#,
             &[("in", 13)],
         );
+        // 17 constraints: 8 boolean + 1 sum + 8 output tie
         assert_eq!(nc, 17);
-        assert_eq!(np, 1);
+        // 2 public: "in" (input) + "out" (output array counted as 1 decl, but 8 elements + 1 input = 9)
+        assert_eq!(np, 9);
         assert_proof_valid(&proof);
         eprintln!("Num2Bits(8) Groth16 proof verified!");
     }
@@ -1132,7 +1169,8 @@ mod tests {
             &[("in", 42)],
         );
         assert!(nc > 0);
-        assert_eq!(np, 1);
+        // 2 public: "in" (input) + "out" (output)
+        assert_eq!(np, 2);
         assert_proof_valid(&proof);
         eprintln!("IsZero(in=42) Groth16 proof verified! ({nc} constraints)");
     }
