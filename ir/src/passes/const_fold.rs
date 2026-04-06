@@ -11,6 +11,9 @@ use crate::types::{Instruction, IrProgram, SsaVar};
 /// instruction with a `Const`.
 pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
     let mut constants: HashMap<SsaVar, FieldElement<F>> = HashMap::new();
+    // Decompose(Const(k), N) can't be replaced in-place (1 → N+1 instructions).
+    // Collect them here and expand after the main loop.
+    let mut decompose_expansions: Vec<(SsaVar, FieldElement<F>, Vec<SsaVar>, usize)> = Vec::new();
 
     for inst in &mut program.instructions {
         match inst {
@@ -395,8 +398,85 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
                     };
                 }
             }
+            // Decompose(Const(k), N): fold to N constant bits.
+            // Can't replace in-place (1 instruction → N), so mark for expansion.
+            Instruction::Decompose {
+                result,
+                bit_results,
+                operand,
+                num_bits,
+            } => {
+                if let Some(val) = constants.get(operand).copied() {
+                    let limbs = val.to_canonical();
+                    for (i, bit_var) in bit_results.iter().enumerate() {
+                        let limb_idx = i / 64;
+                        let bit_idx = i % 64;
+                        let bit = if limb_idx < 4 {
+                            (limbs[limb_idx] >> bit_idx) & 1
+                        } else {
+                            0
+                        };
+                        let bit_val = if bit == 1 {
+                            FieldElement::<F>::one()
+                        } else {
+                            FieldElement::<F>::zero()
+                        };
+                        constants.insert(*bit_var, bit_val);
+                    }
+                    constants.insert(*result, val);
+                    let nb = *num_bits as usize;
+                    let r = *result;
+                    let bits: Vec<SsaVar> = bit_results.clone();
+                    *inst = Instruction::Const { result: r, value: val };
+                    decompose_expansions.push((r, val, bits, nb));
+                }
+            }
             // Input, AssertEq, Assert, PoseidonHash — no folding
             _ => {}
         }
+    }
+
+    // Expand constant Decompose: insert Const instructions for each bit.
+    if !decompose_expansions.is_empty() {
+        let mut new_instructions = Vec::with_capacity(
+            program.instructions.len() + decompose_expansions.iter().map(|(_, _, b, _)| b.len()).sum::<usize>(),
+        );
+        let folded_results: std::collections::HashSet<SsaVar> =
+            decompose_expansions.iter().map(|(r, _, _, _)| *r).collect();
+
+        for inst in program.instructions.drain(..) {
+            let result = inst.result_var();
+            if folded_results.contains(&result) {
+                // This is the Const that replaced the Decompose.
+                // Emit the original Const (alias for operand value)...
+                new_instructions.push(inst);
+                // ...then emit Const for each bit.
+                if let Some(pos) = decompose_expansions.iter().position(|(r, _, _, _)| *r == result) {
+                    let (_, val, bits, _nb) = &decompose_expansions[pos];
+                    let limbs = val.to_canonical();
+                    for (i, bit_var) in bits.iter().enumerate() {
+                        let limb_idx = i / 64;
+                        let bit_idx = i % 64;
+                        let bit = if limb_idx < 4 {
+                            (limbs[limb_idx] >> bit_idx) & 1
+                        } else {
+                            0
+                        };
+                        let bit_val = if bit == 1 {
+                            FieldElement::<F>::one()
+                        } else {
+                            FieldElement::<F>::zero()
+                        };
+                        new_instructions.push(Instruction::Const {
+                            result: *bit_var,
+                            value: bit_val,
+                        });
+                    }
+                }
+            } else {
+                new_instructions.push(inst);
+            }
+        }
+        program.instructions = new_instructions;
     }
 }
