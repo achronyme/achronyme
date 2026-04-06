@@ -27,7 +27,7 @@ pub mod parser;
 pub mod token;
 pub mod witness;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use diagnostics::Diagnostic;
@@ -113,6 +113,10 @@ impl CircomError {
 /// extracted from the main component's template arguments.
 pub struct CircomCompileResult {
     pub prove_ir: ProveIR,
+    /// Names of output signals (always public in R1CS).
+    /// Used by the instantiator to emit post-body AssertEq constraints
+    /// tying public output wires to their body-computed values.
+    pub output_names: HashSet<String>,
     /// Template parameter values from `component main = Template(arg1, arg2, ...)`.
     /// Maps parameter names to their constant values.
     pub capture_values: HashMap<String, u64>,
@@ -277,7 +281,7 @@ fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, 
         })?;
 
     // 4. Lower to ProveIR
-    let prove_ir = lowering::template::lower_template(template, Some(main), program)
+    let lower_result = lowering::template::lower_template(template, Some(main), program)
         .map_err(CircomError::LoweringError)?;
 
     // 5. Extract capture values from main component template args
@@ -291,7 +295,8 @@ fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, 
     }
 
     Ok(CircomCompileResult {
-        prove_ir,
+        prove_ir: lower_result.prove_ir,
+        output_names: lower_result.output_names,
         capture_values,
         warnings,
     })
