@@ -20,6 +20,8 @@
 #[allow(dead_code)]
 pub mod components;
 #[allow(dead_code)]
+pub mod const_fold;
+#[allow(dead_code)]
 pub mod context;
 #[allow(dead_code)]
 pub mod env;
