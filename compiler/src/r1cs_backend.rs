@@ -582,6 +582,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                                 - LinearCombination::from_variable(bit_var),
                             LinearCombination::zero(),
                         );
+                        // Track as bool-enforced so Mux/And/Or won't emit duplicate enforcement
+                        self.bool_enforced.insert(*bit_ssa);
                         let coeff = power_of_two_generic::<F>(i as u32);
                         sum = sum + LinearCombination::from_variable(bit_var) * coeff;
                         self.witness_ops.push(WitnessOp::BitExtract {
