@@ -275,6 +275,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     }
 
     let prove_ir = compile_result.prove_ir;
+    let output_names = compile_result.output_names;
     let capture_values = compile_result.capture_values;
 
     if verbose {
@@ -310,7 +311,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         .map(|(k, v)| (k.clone(), FieldElement::<F>::from_u64(*v)))
         .collect();
     let mut program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_with_outputs(&fe_captures, &output_names)
         .map_err(|e| anyhow::anyhow!("ProveIR instantiation error: {e}"))?;
 
     if verbose {

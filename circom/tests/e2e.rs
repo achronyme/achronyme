@@ -125,6 +125,7 @@ fn run_circom_test(circom_path: &Path) -> TestResult {
     let (user_inputs, expected_constraints) = load_inputs(&inputs_path);
 
     let prove_ir = compile_result.prove_ir;
+    let output_names = compile_result.output_names;
     let capture_values = compile_result.capture_values;
 
     // Build FieldElement inputs
@@ -161,8 +162,8 @@ fn run_circom_test(circom_path: &Path) -> TestResult {
         all_signals.entry(cname.clone()).or_insert(*fe);
     }
 
-    // Instantiate
-    let mut program = match prove_ir.instantiate(&fe_captures) {
+    // Instantiate (with output support — outputs become public R1CS wires)
+    let mut program = match prove_ir.instantiate_with_outputs(&fe_captures, &output_names) {
         Ok(p) => p,
         Err(e) => {
             return TestResult {
@@ -399,10 +400,11 @@ fn poseidon_real_circomlib() {
         .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
         .collect();
 
-    let mut program = match prove_ir.instantiate(&fe_captures) {
-        Ok(p) => p,
-        Err(e) => panic!("Poseidon instantiation failed: {e}"),
-    };
+    let mut program =
+        match prove_ir.instantiate_with_outputs(&fe_captures, &compile_result.output_names) {
+            Ok(p) => p,
+            Err(e) => panic!("Poseidon instantiation failed: {e}"),
+        };
 
     ir::passes::optimize(&mut program);
     eprintln!(
@@ -489,10 +491,11 @@ fn mimcsponge_real_circomlib() {
         .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
         .collect();
 
-    let mut program = match prove_ir.instantiate(&fe_captures) {
-        Ok(p) => p,
-        Err(e) => panic!("MiMCSponge instantiation failed: {e}"),
-    };
+    let mut program =
+        match prove_ir.instantiate_with_outputs(&fe_captures, &compile_result.output_names) {
+            Ok(p) => p,
+            Err(e) => panic!("MiMCSponge instantiation failed: {e}"),
+        };
 
     ir::passes::optimize(&mut program);
     eprintln!(
@@ -567,7 +570,7 @@ fn circomlib_e2e_verify(test_name: &str, circom_file: &str, inputs: &[(&str, u64
         .collect();
 
     let mut program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -681,7 +684,7 @@ fn circomlib_e2e_verify_fe(
         .collect();
 
     let mut program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -740,7 +743,7 @@ fn circomlib_e2e_optimized(
         .collect();
 
     let mut program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -837,7 +840,7 @@ fn escalarmulany_groth16() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("instantiation failed: {e}"));
     ir::passes::optimize(&mut program);
 
@@ -915,7 +918,7 @@ fn eddsaposeidon_compile() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("EdDSAPoseidon instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -1202,7 +1205,9 @@ fn num2bits_optimization_diagnostic() {
         .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
         .collect();
 
-    let mut program = prove_ir.instantiate(&fe_captures).unwrap();
+    let mut program = prove_ir
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .unwrap();
     ir::passes::optimize(&mut program);
 
     // Print IR instructions to understand wire names
@@ -1401,7 +1406,7 @@ fn r1cs_optimization_benchmark() {
             .collect();
 
         let mut program = prove_ir
-            .instantiate(&fe_captures)
+            .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
             .unwrap_or_else(|e| panic!("{name} instantiation failed: {e}"));
         ir::passes::optimize(&mut program);
 
