@@ -40,6 +40,25 @@ pub struct OutputSignal {
     pub dimensions: Vec<u64>,
 }
 
+impl OutputSignal {
+    /// Convert to a `ProveInputDecl` for use as a public output wire.
+    pub fn to_input_decl(&self) -> ProveInputDecl {
+        let array_size = match self.dimensions.len() {
+            0 => None,
+            1 => Some(ArraySize::Literal(self.dimensions[0] as usize)),
+            _ => {
+                let total: u64 = self.dimensions.iter().product();
+                Some(ArraySize::Literal(total as usize))
+            }
+        };
+        ProveInputDecl {
+            name: self.name.clone(),
+            array_size,
+            ir_type: IrType::Field,
+        }
+    }
+}
+
 /// An intermediate signal to be lowered as a local let-binding.
 #[derive(Debug)]
 pub struct IntermediateSignal {
