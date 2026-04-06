@@ -21,6 +21,8 @@ pub struct R1CSOptimizeResult {
     pub constraints_after: usize,
     /// Number of variables substituted away.
     pub variables_eliminated: usize,
+    /// Number of duplicate non-linear constraints removed.
+    pub duplicates_removed: usize,
 }
 
 /// Maps a variable index to the LC that replaces it.
@@ -195,13 +197,60 @@ pub fn optimize_linear<F: FieldBackend>(
         all_subs.extend(round_subs);
     }
 
+    // Phase 2: Remove duplicate non-linear constraints.
+    // After variable substitution, constraints from different template instances
+    // (wired via AssertEq) can become identical. Deduplicate by hashing.
+    let before_dedup = constraints.len();
+    deduplicate_constraints(constraints);
+    let duplicates_removed = before_dedup - constraints.len();
+
     let result = R1CSOptimizeResult {
         constraints_before,
         constraints_after: constraints.len(),
         variables_eliminated: all_subs.len(),
+        duplicates_removed,
     };
 
     (all_subs, result)
+}
+
+/// Hash a simplified linear combination into a deterministic byte vector.
+fn lc_fingerprint<F: FieldBackend>(lc: &LinearCombination<F>) -> Vec<u8> {
+    let simplified = lc.simplify();
+    let mut bytes = Vec::with_capacity(simplified.terms.len() * 40);
+    for (var, coeff) in &simplified.terms {
+        bytes.extend_from_slice(&var.index().to_le_bytes());
+        for limb in coeff.to_canonical().iter() {
+            bytes.extend_from_slice(&limb.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+/// Remove duplicate constraints (same A, B, C after simplification).
+/// Also removes commuted duplicates (A*B=C == B*A=C).
+fn deduplicate_constraints<F: FieldBackend>(constraints: &mut Vec<Constraint<F>>) {
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<Vec<u8>> = HashSet::with_capacity(constraints.len());
+
+    constraints.retain(|c| {
+        let fa = lc_fingerprint(&c.a);
+        let fb = lc_fingerprint(&c.b);
+        let fc = lc_fingerprint(&c.c);
+
+        // Canonical key: sort A,B to handle commutativity (A*B=C ≡ B*A=C)
+        let (fa, fb) = if fa <= fb { (fa, fb) } else { (fb, fa) };
+
+        let mut key = Vec::with_capacity(fa.len() + fb.len() + fc.len() + 2);
+        key.extend_from_slice(&fa);
+        key.push(0xFF); // separator
+        key.extend_from_slice(&fb);
+        key.push(0xFF);
+        key.extend_from_slice(&fc);
+
+        seen.insert(key)
+    });
 }
 
 #[cfg(test)]
