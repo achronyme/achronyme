@@ -1508,16 +1508,42 @@ fn r1cs_optimization_benchmark() {
         (before, after)
     }
 
-    eprintln!("\n╔══════════════════════════════════════════════════════════════════╗");
-    eprintln!("║         R1CS Linear Constraint Elimination Benchmark           ║");
-    eprintln!("╠══════════════════════════════════════════════════════════════════╣");
+    eprintln!("\n╔════════════════════════════════════════════════════════════════════════════╗");
+    eprintln!("║            R1CS Constraint Benchmark: achronyme vs circom               ║");
+    eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
     eprintln!(
-        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
-        "Circuit", "Before", "After", "Elim", "circom"
+        "║ {:26} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6} {:>7} ║",
+        "Circuit", "achO0", "achO1", "cirO0", "cirO1", "cirO2", "Elim", "Time"
     );
-    eprintln!("╠══════════════════════════════════════════════════════════════════╣");
+    eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
+
+    /// Format and print a benchmark row.
+    fn print_row(
+        name: &str,
+        b: usize,
+        a: usize,
+        cir_o0: &str,
+        cir_o1: &str,
+        cir_o2: &str,
+        ms: f64,
+    ) {
+        eprintln!(
+            "║ {:26} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6} {:>5.0}ms ║",
+            name,
+            b,
+            a,
+            cir_o0,
+            cir_o1,
+            cir_o2,
+            b - a,
+            ms,
+        );
+    }
+
+    let t0 = std::time::Instant::now();
 
     // Num2Bits(8)
+    let t = std::time::Instant::now();
     let (b, a) = compile_and_measure(
         "Num2Bits(8)",
         "test/circom/num2bits_8.circom",
@@ -1526,16 +1552,18 @@ fn r1cs_optimization_benchmark() {
             .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
             .collect(),
     );
-    eprintln!(
-        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+    print_row(
         "Num2Bits(8)",
         b,
         a,
-        b - a,
-        17
+        "17",
+        "17",
+        "17",
+        t.elapsed().as_secs_f64() * 1000.0,
     );
 
     // IsZero
+    let t = std::time::Instant::now();
     let (b, a) = compile_and_measure(
         "IsZero",
         "test/circom/iszero.circom",
@@ -1544,16 +1572,18 @@ fn r1cs_optimization_benchmark() {
             .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
             .collect(),
     );
-    eprintln!(
-        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+    print_row(
         "IsZero",
         b,
         a,
-        b - a,
-        2
+        "3",
+        "2",
+        "2",
+        t.elapsed().as_secs_f64() * 1000.0,
     );
 
     // LessThan(8)
+    let t = std::time::Instant::now();
     let (b, a) = compile_and_measure(
         "LessThan(8)",
         "test/circom/lessthan_8.circom",
@@ -1562,16 +1592,56 @@ fn r1cs_optimization_benchmark() {
             .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
             .collect(),
     );
-    eprintln!(
-        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+    print_row(
         "LessThan(8)",
         b,
         a,
-        b - a,
-        "~20"
+        "21",
+        "20",
+        "20",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+
+    // Pedersen(8)
+    let t = std::time::Instant::now();
+    let (b, a) = compile_and_measure(
+        "Pedersen(8)",
+        "test/circomlib/pedersen_test.circom",
+        &(0..8)
+            .map(|i| (format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(i % 2)))
+            .collect(),
+    );
+    print_row(
+        "Pedersen(8)",
+        b,
+        a,
+        "91",
+        "89",
+        "13",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+
+    // EscalarMulFix(253)
+    let t = std::time::Instant::now();
+    let (b, a) = compile_and_measure(
+        "EscalarMulFix(253)",
+        "test/circomlib/escalarmulfix_test.circom",
+        &(0..253)
+            .map(|i| (format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0)))
+            .collect(),
+    );
+    print_row(
+        "EscalarMulFix(253)",
+        b,
+        a,
+        "59",
+        "57",
+        "11",
+        t.elapsed().as_secs_f64() * 1000.0,
     );
 
     // EscalarMulAny(254)
+    let t = std::time::Instant::now();
     let mut ema_inputs = HashMap::new();
     for i in 0..254 {
         ema_inputs.insert(format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
@@ -1583,16 +1653,18 @@ fn r1cs_optimization_benchmark() {
         "test/circomlib/escalarmulany254_test.circom",
         &ema_inputs,
     );
-    eprintln!(
-        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+    print_row(
         "EscalarMulAny(254)",
         b,
         a,
-        b - a,
-        2312
+        "2310",
+        "2310",
+        "2310",
+        t.elapsed().as_secs_f64() * 1000.0,
     );
 
     // Poseidon(2)
+    let t = std::time::Instant::now();
     let (b, a) = compile_and_measure(
         "Poseidon(2)",
         "test/circomlib/poseidon_test.circom",
@@ -1601,15 +1673,42 @@ fn r1cs_optimization_benchmark() {
             .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
             .collect(),
     );
-    eprintln!(
-        "║ {:30} {:>7} {:>7} {:>7} {:>7} ║",
+    print_row(
         "Poseidon(2)",
         b,
         a,
-        b - a,
-        1006
+        "243",
+        "243",
+        "240",
+        t.elapsed().as_secs_f64() * 1000.0,
     );
 
-    eprintln!("╚══════════════════════════════════════════════════════════════════╝");
+    // MiMCSponge(2,220,1)
+    let t = std::time::Instant::now();
+    let (b, a) = compile_and_measure(
+        "MiMCSponge(2,220,1)",
+        "test/circomlib/mimcsponge_test.circom",
+        &[("ins_0", 1), ("ins_1", 2), ("k", 0)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    print_row(
+        "MiMCSponge(2,220,1)",
+        b,
+        a,
+        "1320",
+        "1320",
+        "1320",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+
+    eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
+    eprintln!(
+        "║ Total achronyme time: {:>5.0}ms {:>42} ║",
+        t0.elapsed().as_secs_f64() * 1000.0,
+        ""
+    );
+    eprintln!("╚════════════════════════════════════════════════════════════════════════════╝");
     eprintln!();
 }
