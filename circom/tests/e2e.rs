@@ -1239,12 +1239,13 @@ fn pedersen_o2() {
     );
 
     r1cs_compiler.cs.verify(&witness).unwrap();
-    // O1 gives 90 for Pedersen(8) with pre-multiply materialization.
-    // O2/DEDUCE finds no additional reductions because O1 substitutes
-    // materialization wires back, re-expanding LCs before DEDUCE runs.
+    // Constant propagation through template inlining collapses Montgomery/
+    // Edwards operations with known base points to scalars. The remaining
+    // constraints are: 2×Window4 MUX (3+1 each = 8) + 1 MontgomeryAdd (3) +
+    // 1 Montgomery2Edwards (2) = 13. Matches circom --O1.
     assert!(
-        post_opt <= 90,
-        "O2 should not regress vs O1 (90): got {post_opt}"
+        post_opt <= 13,
+        "O2 should match circom (13): got {post_opt}"
     );
 }
 
