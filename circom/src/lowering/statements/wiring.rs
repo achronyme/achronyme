@@ -28,17 +28,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{CircuitExpr, FieldConst};
+use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
+
+use super::super::const_fold::try_fold_const;
 
 use crate::ast::{self, Expr};
 
-use super::super::components::inline_component_body_with_arrays;
+use super::super::components::inline_component_body_with_const_inputs;
 use super::super::context::LoweringContext;
 use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::utils::{extract_ident_name, EvalValue};
 use super::targets::resolve_component_array_name;
-use ir::prove_ir::types::CircuitNode;
 
 /// A pending component whose input signals haven't all been wired yet.
 pub(super) struct PendingComponent<'a> {
@@ -52,6 +53,12 @@ pub(super) struct PendingComponent<'a> {
     /// Such components can't trigger inline from wiring completion alone —
     /// they need explicit flushing before their outputs are referenced.
     pub has_indexed_wirings: bool,
+    /// Signal inputs wired to compile-time constants.
+    /// When the component body is inlined, these are injected into the
+    /// sub-template's `known_constants` so the lowerer emits `Const`
+    /// instead of `Input`, enabling full constant propagation through
+    /// Montgomery/MUX operations (Pedersen: 88→13 constraints).
+    pub const_wired: HashMap<String, FieldConst>,
 }
 
 /// Flush pending components whose inputs were wired via indexed
@@ -62,6 +69,7 @@ pub(super) fn flush_indexed_pending<'a>(
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
+    env: &mut LoweringEnv,
 ) -> Result<(), LoweringError> {
     let to_flush: Vec<String> = pending
         .iter()
@@ -70,14 +78,18 @@ pub(super) fn flush_indexed_pending<'a>(
         .collect();
     for comp_name in &to_flush {
         if let Some(comp) = pending.remove(comp_name) {
-            let body = inline_component_body_with_arrays(
+            let mut const_inputs = comp.const_wired.clone();
+            extract_const_inputs_from_nodes(comp_name, nodes, &mut const_inputs);
+            let body = inline_component_body_with_const_inputs(
                 comp_name,
                 comp.template,
                 &comp.template_args,
                 &comp.array_args,
+                &const_inputs,
                 ctx,
                 &comp.template.span,
             )?;
+            propagate_const_nodes(&body, env);
             nodes.extend(body);
         }
     }
@@ -95,19 +107,90 @@ pub(super) fn flush_specific_component<'a>(
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
+    env: &mut LoweringEnv,
 ) -> Result<(), LoweringError> {
     if let Some(comp) = pending.remove(comp_name) {
-        let body = inline_component_body_with_arrays(
+        // Build const_inputs by merging explicit const_wired with constants
+        // extracted from already-emitted Let/WitnessHint nodes for this component.
+        // This handles indexed wirings (e.g., comp.base[0] <== Const) where
+        // the element name "base_0" isn't tracked during wiring.
+        let mut const_inputs = comp.const_wired.clone();
+        extract_const_inputs_from_nodes(comp_name, nodes, &mut const_inputs);
+        let body = inline_component_body_with_const_inputs(
             comp_name,
             comp.template,
             &comp.template_args,
             &comp.array_args,
+            &const_inputs,
             ctx,
             &comp.template.span,
         )?;
+        propagate_const_nodes(&body, env);
         nodes.extend(body);
     }
     Ok(())
+}
+
+/// Scan existing nodes for Let/LetIndexed/WitnessHint/WitnessHintIndexed
+/// with name `comp_name.signal_name` and constant values.
+/// Extracts `signal_name → FieldConst` pairs.
+///
+/// For indexed nodes (e.g., `LetIndexed { array: "comp.base", index: Const(0), value: Const(fc) }`),
+/// the element name is constructed as `base_0`.
+pub(super) fn extract_const_inputs_from_nodes(
+    comp_name: &str,
+    nodes: &[CircuitNode],
+    const_inputs: &mut HashMap<String, FieldConst>,
+) {
+    let prefix = format!("{comp_name}.");
+    for node in nodes {
+        match node {
+            CircuitNode::Let { name, value, .. } => {
+                if let Some(signal) = name.strip_prefix(&prefix) {
+                    if let Some(fc) = try_fold_const(value) {
+                        const_inputs.insert(signal.to_string(), fc);
+                    }
+                }
+            }
+            CircuitNode::LetIndexed {
+                array,
+                index,
+                value,
+                ..
+            } => {
+                if let Some(signal_base) = array.strip_prefix(&prefix) {
+                    if let (Some(idx_fc), Some(val_fc)) =
+                        (try_fold_const(index), try_fold_const(value))
+                    {
+                        if let Some(idx) = idx_fc.to_u64() {
+                            const_inputs.insert(format!("{signal_base}_{idx}"), val_fc);
+                        }
+                    }
+                }
+            }
+            CircuitNode::WitnessHint { name, hint, .. } => {
+                if let Some(signal) = name.strip_prefix(&prefix) {
+                    if let Some(fc) = try_fold_const(hint) {
+                        const_inputs.insert(signal.to_string(), fc);
+                    }
+                }
+            }
+            CircuitNode::WitnessHintIndexed {
+                array, index, hint, ..
+            } => {
+                if let Some(signal_base) = array.strip_prefix(&prefix) {
+                    if let (Some(idx_fc), Some(val_fc)) =
+                        (try_fold_const(index), try_fold_const(hint))
+                    {
+                        if let Some(idx) = idx_fc.to_u64() {
+                            const_inputs.insert(format!("{signal_base}_{idx}"), val_fc);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Scan a value expression for references to pending component outputs.
@@ -188,6 +271,10 @@ fn collect_refs_recursive(
 /// If this substitution wires a component input, mark it as wired.
 /// When all inputs are wired, inline the component body.
 ///
+/// `wired_value` is the lowered expression being assigned. When it's
+/// `Const(fc)`, we record it in the component's `const_wired` map so
+/// the sub-template can use the constant during lowering.
+///
 /// For indexed wirings (`comp.signal[i] <== expr`), the wiring is
 /// tracked but the base signal name counts as wired (since the array
 /// will be fully wired across multiple indexed assignments).
@@ -197,11 +284,16 @@ pub(super) fn maybe_trigger_inline<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
     span: &diagnostics::Span,
-    env: &LoweringEnv,
+    env: &mut LoweringEnv,
+    wired_value: Option<&CircuitExpr>,
 ) -> Result<(), LoweringError> {
     let is_indexed = matches!(target, Expr::Index { .. });
     if let Some((comp_name, signal_name)) = extract_component_wiring_with_env(target, env, ctx) {
         if let Some(comp) = pending.get_mut(&comp_name) {
+            // Track constant wired values for propagation into sub-template
+            if let Some(CircuitExpr::Const(fc)) = wired_value {
+                comp.const_wired.insert(signal_name.clone(), *fc);
+            }
             comp.wired_signals.insert(signal_name);
             if is_indexed {
                 comp.has_indexed_wirings = true;
@@ -217,14 +309,18 @@ pub(super) fn maybe_trigger_inline<'a>(
                     "pending component disappeared between get_mut and remove; \
                      this is a bug in the wiring state machine",
                 );
-                let body = inline_component_body_with_arrays(
+                let mut const_inputs = comp.const_wired.clone();
+                extract_const_inputs_from_nodes(&comp_name, nodes, &mut const_inputs);
+                let body = inline_component_body_with_const_inputs(
                     &comp_name,
                     comp.template,
                     &comp.template_args,
                     &comp.array_args,
+                    &const_inputs,
                     ctx,
                     span,
                 )?;
+                propagate_const_nodes(&body, env);
                 nodes.extend(body);
             }
         }
@@ -284,5 +380,53 @@ pub(super) fn extract_component_wiring_with_env(
             }
         }
         _ => None,
+    }
+}
+
+/// Scan inlined circuit nodes for `Let` and `WitnessHint` with constant
+/// values, and add them to `env.known_constants`.
+///
+/// This enables constant propagation ACROSS component boundaries: after
+/// inlining Edwards2Montgomery with constant inputs, its output signals
+/// (e.g., `e2m.out_0`) become known constants in the parent scope, so
+/// subsequent components (Window4, MontgomeryDouble) can also fold.
+pub(super) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
+    for node in nodes {
+        match node {
+            CircuitNode::Let { name, value, .. } => {
+                if let Some(fc) = try_fold_const(value) {
+                    env.known_constants.insert(name.clone(), fc);
+                }
+            }
+            CircuitNode::LetIndexed {
+                array,
+                index,
+                value,
+                ..
+            } => {
+                if let (Some(idx_fc), Some(val_fc)) = (try_fold_const(index), try_fold_const(value))
+                {
+                    if let Some(idx) = idx_fc.to_u64() {
+                        env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                    }
+                }
+            }
+            CircuitNode::WitnessHint { name, hint, .. } => {
+                if let Some(fc) = try_fold_const(hint) {
+                    env.known_constants.insert(name.clone(), fc);
+                }
+            }
+            CircuitNode::WitnessHintIndexed {
+                array, index, hint, ..
+            } => {
+                if let (Some(idx_fc), Some(val_fc)) = (try_fold_const(index), try_fold_const(hint))
+                {
+                    if let Some(idx) = idx_fc.to_u64() {
+                        env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }

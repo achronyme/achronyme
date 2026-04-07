@@ -14,7 +14,7 @@
 //! The mangling format matches the existing `DotAccess` lowering in `expressions.rs`:
 //! `component_field` (single underscore separator).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ir::prove_ir::types::{
     CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp,
@@ -60,11 +60,57 @@ pub fn inline_component_body<'a>(
 /// `array_args` maps parameter names to their compile-time array values
 /// (e.g. `"C" → POSEIDON_C(t)` result).  These are injected into the
 /// sub-template's `known_array_values` so that `C[expr]` resolves.
+///
+/// `const_inputs` maps signal input names (unmangled) to their constant
+/// values.  These are injected into `known_constants` so the lowerer
+/// emits `Const` instead of `Input` for those signals, enabling full
+/// constant propagation through the sub-template body.
 pub fn inline_component_body_with_arrays<'a>(
     comp_name: &str,
     template: &'a TemplateDef,
     template_args: &[CircuitExpr],
     array_args: &HashMap<String, EvalValue>,
+    ctx: &mut LoweringContext<'a>,
+    span: &diagnostics::Span,
+) -> Result<Vec<CircuitNode>, LoweringError> {
+    inline_component_body_impl(
+        comp_name,
+        template,
+        template_args,
+        array_args,
+        &HashMap::new(),
+        ctx,
+        span,
+    )
+}
+
+/// Inline with constant signal input propagation.
+pub fn inline_component_body_with_const_inputs<'a>(
+    comp_name: &str,
+    template: &'a TemplateDef,
+    template_args: &[CircuitExpr],
+    array_args: &HashMap<String, EvalValue>,
+    const_inputs: &HashMap<String, FieldConst>,
+    ctx: &mut LoweringContext<'a>,
+    span: &diagnostics::Span,
+) -> Result<Vec<CircuitNode>, LoweringError> {
+    inline_component_body_impl(
+        comp_name,
+        template,
+        template_args,
+        array_args,
+        const_inputs,
+        ctx,
+        span,
+    )
+}
+
+fn inline_component_body_impl<'a>(
+    comp_name: &str,
+    template: &'a TemplateDef,
+    template_args: &[CircuitExpr],
+    array_args: &HashMap<String, EvalValue>,
+    const_inputs: &HashMap<String, FieldConst>,
     ctx: &mut LoweringContext<'a>,
     span: &diagnostics::Span,
 ) -> Result<Vec<CircuitNode>, LoweringError> {
@@ -129,6 +175,14 @@ pub fn inline_component_body_with_arrays<'a>(
         env.known_array_values.insert(name.clone(), val.clone());
     }
 
+    // Inject constant signal inputs so the lowerer emits `Const` instead
+    // of `Input` for these signals. This enables constant propagation
+    // through sub-template bodies (e.g., Montgomery operations with known
+    // base points collapse to zero constraints).
+    for (name, &val) in const_inputs {
+        env.known_constants.insert(name.clone(), val);
+    }
+
     // Extract param values from template args for stride computation.
     // For Const args, use the literal value directly.
     // For Capture/Var args, resolve from the parent's param_values
@@ -159,11 +213,27 @@ pub fn inline_component_body_with_arrays<'a>(
     let saved_params = ctx.param_values.clone();
     ctx.param_values = param_values.clone();
 
+    // Inject template param values into known_constants so expressions like
+    // `nWindows` resolve to Const during body lowering.
+    for (name, &val) in &param_values {
+        env.known_constants.insert(name.clone(), val);
+    }
+
     // Pre-evaluate compile-time var declarations (single pass, arrays + scalars)
     let precomputed =
         super::utils::precompute_all(&template.body.stmts, &ctx.param_values, &ctx.functions);
+    // Find vars that are reassigned after their declaration (e.g., `lc1 += ...`,
+    // `e2 = e2 + e2`). These must NOT be injected into known_constants because
+    // they change value during the body lowering.
+    let reassigned = find_reassigned_vars(&template.body.stmts);
     for (name, val) in &precomputed.scalars {
         ctx.param_values.insert(name.clone(), *val);
+        // Only inject into known_constants if the var is never reassigned.
+        // This enables constant folding for true constants like `var A = ...`
+        // in MontgomeryDouble, without breaking accumulators like `lc1`.
+        if !reassigned.contains(name) {
+            env.known_constants.insert(name.clone(), *val);
+        }
     }
     for (name, val) in precomputed.arrays {
         env.known_array_values.insert(name, val);
@@ -619,6 +689,78 @@ fn mangle_range(
 /// cannot appear in Circom identifiers, making collisions impossible.
 fn mangle_name(prefix: &str, name: &str) -> String {
     format!("{prefix}.{name}")
+}
+
+/// Find variables that are reassigned after their initial declaration.
+///
+/// Scans statements recursively for `Substitution { target: Ident(name), op: Assign, ... }`
+/// and `CompoundAssign { target: Ident(name), ... }`. Returns the set of var names that
+/// are targets of such reassignment. These vars must NOT be injected into
+/// `known_constants` because their value changes during lowering.
+fn find_reassigned_vars(stmts: &[crate::ast::Stmt]) -> HashSet<String> {
+    let mut reassigned = HashSet::new();
+    let mut declared = HashSet::new();
+    scan_reassignments(stmts, &mut declared, &mut reassigned);
+    reassigned
+}
+
+fn scan_reassignments(
+    stmts: &[crate::ast::Stmt],
+    declared: &mut HashSet<String>,
+    reassigned: &mut HashSet<String>,
+) {
+    use crate::ast::{AssignOp, Stmt};
+    for stmt in stmts {
+        match stmt {
+            Stmt::VarDecl { names, .. } => {
+                for name in names {
+                    declared.insert(name.clone());
+                }
+            }
+            Stmt::Substitution {
+                target,
+                op: AssignOp::Assign,
+                ..
+            } => {
+                if let Some(name) = super::utils::extract_ident_name(target) {
+                    if declared.contains(&name) {
+                        reassigned.insert(name);
+                    }
+                }
+            }
+            Stmt::CompoundAssign { target, .. } => {
+                if let Some(name) = super::utils::extract_ident_name(target) {
+                    reassigned.insert(name);
+                }
+            }
+            Stmt::For {
+                init, body, step, ..
+            } => {
+                scan_reassignments(std::slice::from_ref(init.as_ref()), declared, reassigned);
+                scan_reassignments(&body.stmts, declared, reassigned);
+                scan_reassignments(std::slice::from_ref(step.as_ref()), declared, reassigned);
+            }
+            Stmt::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                scan_reassignments(&then_body.stmts, declared, reassigned);
+                if let Some(crate::ast::ElseBranch::Block(block)) = else_body {
+                    scan_reassignments(&block.stmts, declared, reassigned);
+                } else if let Some(crate::ast::ElseBranch::IfElse(inner)) = else_body {
+                    scan_reassignments(std::slice::from_ref(inner.as_ref()), declared, reassigned);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+                scan_reassignments(&body.stmts, declared, reassigned);
+            }
+            Stmt::Block(block) => {
+                scan_reassignments(&block.stmts, declared, reassigned);
+            }
+            _ => {}
+        }
+    }
 }
 
 // Suppress unused warnings for operator enums that are used indirectly

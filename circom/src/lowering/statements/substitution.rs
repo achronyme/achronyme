@@ -77,6 +77,8 @@ pub(super) fn lower_substitution<'a>(
                     )
                 })?;
             let lowered = lower_expr(value, env, ctx)?;
+            // Snapshot the lowered value for constant tracking before it moves
+            let lowered_ref = lowered.clone();
             match assign_target {
                 // `<==` only needs a Let (or LetIndexed). The expression's Mul
                 // instructions generate R1CS constraints, and the Let binds the
@@ -87,6 +89,10 @@ pub(super) fn lower_substitution<'a>(
                 // Emitting AssertEq here would re-emit the entire expression tree
                 // a second time, creating duplicate Mul constraints.
                 AssignTarget::Scalar(name) => {
+                    // Track constant signal for intra-template propagation
+                    if let Some(fc) = super::super::const_fold::try_fold_const(&lowered) {
+                        env.known_constants.insert(name.clone(), fc);
+                    }
                     nodes.push(CircuitNode::Let {
                         name,
                         value: lowered,
@@ -95,6 +101,15 @@ pub(super) fn lower_substitution<'a>(
                 }
                 AssignTarget::Indexed { array, index } => {
                     let idx_expr = lower_expr(&index, env, ctx)?;
+                    // Track constant indexed signal for intra-template propagation
+                    if let (Some(idx_fc), Some(val_fc)) = (
+                        super::super::const_fold::try_fold_const(&idx_expr),
+                        super::super::const_fold::try_fold_const(&lowered),
+                    ) {
+                        if let Some(idx) = idx_fc.to_u64() {
+                            env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                        }
+                    }
                     nodes.push(CircuitNode::LetIndexed {
                         array,
                         index: idx_expr,
@@ -112,7 +127,7 @@ pub(super) fn lower_substitution<'a>(
                     });
                 }
             }
-            maybe_trigger_inline(target, nodes, ctx, pending, span, env)?;
+            maybe_trigger_inline(target, nodes, ctx, pending, span, env, Some(&lowered_ref))?;
         }
 
         // `target <-- expr` → WitnessHint or WitnessHintIndexed
@@ -126,8 +141,13 @@ pub(super) fn lower_substitution<'a>(
                     )
                 })?;
             let lowered = lower_expr(value, env, ctx)?;
+            let lowered_ref = lowered.clone();
             match assign_target {
                 AssignTarget::Scalar(name) => {
+                    // Track constant witness for intra-template propagation
+                    if let Some(fc) = super::super::const_fold::try_fold_const(&lowered) {
+                        env.known_constants.insert(name.clone(), fc);
+                    }
                     nodes.push(CircuitNode::WitnessHint {
                         name,
                         hint: lowered,
@@ -136,6 +156,15 @@ pub(super) fn lower_substitution<'a>(
                 }
                 AssignTarget::Indexed { array, index } => {
                     let idx_expr = lower_expr(&index, env, ctx)?;
+                    // Track constant indexed witness for intra-template propagation
+                    if let (Some(idx_fc), Some(val_fc)) = (
+                        super::super::const_fold::try_fold_const(&idx_expr),
+                        super::super::const_fold::try_fold_const(&lowered),
+                    ) {
+                        if let Some(idx) = idx_fc.to_u64() {
+                            env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                        }
+                    }
                     nodes.push(CircuitNode::WitnessHintIndexed {
                         array,
                         index: idx_expr,
@@ -153,7 +182,7 @@ pub(super) fn lower_substitution<'a>(
                     });
                 }
             }
-            maybe_trigger_inline(target, nodes, ctx, pending, span, env)?;
+            maybe_trigger_inline(target, nodes, ctx, pending, span, env, Some(&lowered_ref))?;
         }
 
         // RConstraintAssign (==>) and RSignalAssign (-->) are desugared
@@ -248,6 +277,7 @@ fn lower_var_assign<'a>(
                             input_signals,
                             wired_signals: HashSet::new(),
                             has_indexed_wirings: false,
+                            const_wired: HashMap::new(),
                         },
                     );
                 }

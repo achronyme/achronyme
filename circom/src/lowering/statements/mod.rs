@@ -23,7 +23,10 @@ use ir::prove_ir::types::{CircuitExpr, CircuitNode};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
-use super::components::{inline_component_body_with_arrays, register_component_locals};
+use super::components::{
+    inline_component_body_with_arrays, inline_component_body_with_const_inputs,
+    register_component_locals,
+};
 use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
@@ -67,14 +70,18 @@ fn lower_stmts_with_pending<'a>(
     let remaining: Vec<String> = pending.keys().cloned().collect();
     for comp_name in remaining {
         if let Some(comp) = pending.remove(&comp_name) {
-            let body = inline_component_body_with_arrays(
+            let mut const_inputs = comp.const_wired.clone();
+            wiring::extract_const_inputs_from_nodes(&comp_name, &nodes, &mut const_inputs);
+            let body = inline_component_body_with_const_inputs(
                 &comp_name,
                 comp.template,
                 &comp.template_args,
                 &comp.array_args,
+                &const_inputs,
                 ctx,
                 &comp.template.span,
             )?;
+            wiring::propagate_const_nodes(&body, env);
             nodes.extend(body);
         }
     }
@@ -117,7 +124,7 @@ fn lower_stmt<'a>(
         };
         let refs = collect_value_component_refs(actual_value, pending, env, ctx);
         for comp_name in refs {
-            flush_specific_component(&comp_name, nodes, ctx, pending)?;
+            flush_specific_component(&comp_name, nodes, ctx, pending, env)?;
         }
     }
 
@@ -132,6 +139,11 @@ fn lower_stmt<'a>(
             for decl in declarations {
                 let lowered_value = lower_expr(value, env, ctx)?;
                 let sr = Some(SpanRange::from_span(span));
+
+                // Track constant signal values for intra-template propagation
+                if let Some(fc) = super::const_fold::try_fold_const(&lowered_value) {
+                    env.known_constants.insert(decl.name.clone(), fc);
+                }
 
                 match op {
                     AssignOp::ConstraintAssign => {
@@ -198,16 +210,23 @@ fn lower_stmt<'a>(
                 }
             }
             for comp_name in refs {
-                flush_specific_component(&comp_name, nodes, ctx, pending)?;
+                flush_specific_component(&comp_name, nodes, ctx, pending, env)?;
             }
             let l = lower_expr(lhs, env, ctx)?;
             let r = lower_expr(rhs, env, ctx)?;
-            nodes.push(CircuitNode::AssertEq {
-                lhs: l,
-                rhs: r,
-                message: None,
-                span: Some(SpanRange::from_span(span)),
-            });
+            // Skip trivially-satisfied constraints where both sides are
+            // compile-time constants (e.g., `Const(fc) * Const(k) === Const(m)`).
+            // These arise from constant-propagated Montgomery/Edwards operations.
+            let l_const = super::const_fold::try_fold_const(&l).is_some();
+            let r_const = super::const_fold::try_fold_const(&r).is_some();
+            if !(l_const && r_const) {
+                nodes.push(CircuitNode::AssertEq {
+                    lhs: l,
+                    rhs: r,
+                    message: None,
+                    span: Some(SpanRange::from_span(span)),
+                });
+            }
         }
 
         // ── Compound assignment ─────────────────────────────────────
@@ -576,6 +595,7 @@ fn lower_component_decl<'a>(
                                 input_signals,
                                 wired_signals: HashSet::new(),
                                 has_indexed_wirings: false,
+                                const_wired: HashMap::new(),
                             },
                         );
                     }
