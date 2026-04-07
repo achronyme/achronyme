@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::FieldConst;
+use ir::prove_ir::types::{CircuitNode, FieldConst};
 
 use crate::ast::{CircomProgram, Definition, FunctionDef, TemplateDef};
 
@@ -32,6 +32,13 @@ pub struct LoweringContext<'a> {
     pub bus_names: HashSet<&'a str>,
     /// Counter for generating unique anonymous component names.
     anon_counter: usize,
+    /// Cache of lowered template bodies (before mangling).
+    ///
+    /// Key: `template_name` for parameterless templates, or
+    /// `template_name:param=val:...` for parameterized ones.
+    /// Only entries with empty `const_inputs` and `array_args` are cached,
+    /// since those guarantee identical lowered output.
+    pub body_cache: HashMap<String, Vec<CircuitNode>>,
 }
 
 impl<'a> LoweringContext<'a> {
@@ -60,6 +67,7 @@ impl<'a> LoweringContext<'a> {
             param_values: HashMap::new(),
             bus_names,
             anon_counter: 0,
+            body_cache: HashMap::new(),
         }
     }
 
@@ -72,14 +80,34 @@ impl<'a> LoweringContext<'a> {
 
     /// Build a combined constants map from `param_values` and `env.known_constants`.
     ///
-    /// Used by many lowering functions that need to resolve identifiers to
-    /// compile-time constants (target resolution, loop bounds, array indexing).
+    /// Used by lowering functions that need to iterate over all constants or pass
+    /// to expression evaluation. Prefer [`resolve_constant`] for single lookups.
     pub fn all_constants(&self, env: &super::env::LoweringEnv) -> HashMap<String, FieldConst> {
-        let mut all = self.param_values.clone();
-        for (k, &v) in &env.known_constants {
+        let mut all = HashMap::with_capacity(self.param_values.len() + env.known_constants.len());
+        for (k, &v) in &self.param_values {
             all.insert(k.clone(), v);
         }
+        for (k, &v) in &env.known_constants {
+            all.entry(k.clone()).or_insert(v);
+        }
         all
+    }
+
+    /// Look up a single constant by name without creating a merged HashMap.
+    ///
+    /// Checks `param_values` first (template params, precomputed vars),
+    /// then `env.known_constants` (signals with known values). This avoids
+    /// the allocation overhead of [`all_constants`] for simple lookups.
+    #[inline]
+    pub fn resolve_constant(
+        &self,
+        name: &str,
+        env: &super::env::LoweringEnv,
+    ) -> Option<FieldConst> {
+        self.param_values
+            .get(name)
+            .or_else(|| env.known_constants.get(name))
+            .copied()
     }
 
     /// Create an empty context (for testing).
@@ -89,6 +117,7 @@ impl<'a> LoweringContext<'a> {
             templates: HashMap::new(),
             functions: HashMap::new(),
             inline_depth: 0,
+            body_cache: HashMap::new(),
             param_values: HashMap::new(),
             bus_names: HashSet::new(),
             anon_counter: 0,

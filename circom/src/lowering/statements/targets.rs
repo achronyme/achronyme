@@ -36,6 +36,131 @@ pub(super) fn extract_assign_target(expr: &Expr) -> Option<AssignTarget> {
     extract_assign_target_with_constants(expr, &HashMap::new())
 }
 
+/// Extract an assignment target using ctx+env for constant resolution.
+///
+/// Avoids creating a merged HashMap by looking up constants directly
+/// in `ctx.param_values` and `env.known_constants`.
+pub(super) fn extract_assign_target_ctx(
+    expr: &Expr,
+    ctx: &LoweringContext,
+    env: &LoweringEnv,
+) -> Option<AssignTarget> {
+    match expr {
+        Expr::Ident { name, .. } => Some(AssignTarget::Scalar(name.clone())),
+        Expr::DotAccess { object, field, .. } => {
+            if let Some(obj) = extract_ident_name(object) {
+                return Some(AssignTarget::Scalar(format!("{obj}.{field}")));
+            }
+            if let Some(comp_name) = resolve_component_array_name_ctx(object, ctx, env) {
+                return Some(AssignTarget::Scalar(format!("{comp_name}.{field}")));
+            }
+            None
+        }
+        Expr::Index { object, index, .. } => {
+            let mut indices: Vec<Expr> = vec![index.as_ref().clone()];
+            let mut current = object.as_ref();
+            loop {
+                match current {
+                    Expr::Ident { name, .. } => {
+                        indices.reverse();
+                        return if indices.len() == 1 {
+                            Some(AssignTarget::Indexed {
+                                array: name.clone(),
+                                index: Box::new(indices.remove(0)),
+                            })
+                        } else {
+                            Some(AssignTarget::MultiIndexed {
+                                array: name.clone(),
+                                indices,
+                            })
+                        };
+                    }
+                    Expr::DotAccess {
+                        object: inner,
+                        field,
+                        ..
+                    } => {
+                        let base = if let Some(obj) = extract_ident_name(inner) {
+                            format!("{obj}.{field}")
+                        } else if let Some(comp) = resolve_component_array_name_ctx(inner, ctx, env)
+                        {
+                            format!("{comp}.{field}")
+                        } else {
+                            return None;
+                        };
+                        indices.reverse();
+                        return if indices.len() == 1 {
+                            Some(AssignTarget::Indexed {
+                                array: base,
+                                index: Box::new(indices.remove(0)),
+                            })
+                        } else {
+                            Some(AssignTarget::MultiIndexed {
+                                array: base,
+                                indices,
+                            })
+                        };
+                    }
+                    Expr::Index {
+                        object: o,
+                        index: i,
+                        ..
+                    } => {
+                        indices.push(i.as_ref().clone());
+                        current = o.as_ref();
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Resolve component array name using ctx+env (avoids merged HashMap).
+fn resolve_component_array_name_ctx(
+    expr: &Expr,
+    ctx: &LoweringContext,
+    env: &LoweringEnv,
+) -> Option<String> {
+    match expr {
+        Expr::Index { object, index, .. } => {
+            let idx = resolve_const_index_ctx(index, ctx, env)?;
+            if let Some(arr_name) = extract_ident_name(object) {
+                Some(format!("{arr_name}_{idx}"))
+            } else {
+                let inner = resolve_component_array_name_ctx(object, ctx, env)?;
+                Some(format!("{inner}_{idx}"))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Resolve constant index using ctx+env (avoids creating merged HashMap).
+fn resolve_const_index_ctx(expr: &Expr, ctx: &LoweringContext, env: &LoweringEnv) -> Option<u64> {
+    if let Some(v) = const_eval_u64(expr) {
+        return Some(v);
+    }
+    if let Expr::Ident { name, .. } = expr {
+        return ctx.resolve_constant(name, env)?.to_u64();
+    }
+    if let Expr::BinOp { op, lhs, rhs, .. } = expr {
+        if let (Expr::Ident { name, .. }, Some(rhs_val)) = (lhs.as_ref(), const_eval_u64(rhs)) {
+            if let Some(lhs_val) = ctx.resolve_constant(name, env)?.to_u64() {
+                return match op {
+                    crate::ast::BinOp::Add => lhs_val.checked_add(rhs_val),
+                    crate::ast::BinOp::Sub => lhs_val.checked_sub(rhs_val),
+                    _ => None,
+                };
+            }
+        }
+    }
+    // Fallback
+    let all = ctx.all_constants(env);
+    resolve_const_index(expr, &all)
+}
+
 /// Extract an assignment target, resolving known constants for component array indices.
 pub(super) fn extract_assign_target_with_constants(
     expr: &Expr,
@@ -155,7 +280,31 @@ pub(super) fn resolve_const_index(
     if let Some(v) = const_eval_u64(expr) {
         return Some(v);
     }
-    // Evaluate using BigVal to detect negative values
+    // Fast path: simple identifier lookup (avoids creating BigVal HashMap)
+    if let Expr::Ident { name, .. } = expr {
+        return known_constants.get(name.as_str())?.to_u64();
+    }
+    // Fast path: ident op literal (e.g., `i-1`, `i+1`, `n\2`)
+    if let Expr::BinOp { op, lhs, rhs, .. } = expr {
+        if let (Expr::Ident { name, .. }, Some(rhs_val)) = (lhs.as_ref(), const_eval_u64(rhs)) {
+            if let Some(lhs_val) = known_constants.get(name.as_str())?.to_u64() {
+                return match op {
+                    crate::ast::BinOp::Add => lhs_val.checked_add(rhs_val),
+                    crate::ast::BinOp::Sub => lhs_val.checked_sub(rhs_val),
+                    crate::ast::BinOp::Mul => lhs_val.checked_mul(rhs_val),
+                    crate::ast::BinOp::IntDiv => {
+                        if rhs_val != 0 {
+                            Some(lhs_val / rhs_val)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+            }
+        }
+    }
+    // Fallback: full BigVal evaluation for complex expressions
     let vars = super::super::utils::fc_map_to_bigval(known_constants);
     let empty_fns = HashMap::new();
     let result = super::super::utils::eval_expr(expr, &vars, &empty_fns, 0)?;
@@ -175,9 +324,7 @@ pub(super) fn try_resolve_component_array_target(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<String> {
-    // Combine known_constants + param_values for full resolution
     let all_constants = ctx.all_constants(env);
-    // Unwrap Index chain to find base name and indices
     let mut indices: Vec<&Expr> = Vec::new();
     let mut current = target;
     loop {

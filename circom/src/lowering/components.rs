@@ -149,6 +149,43 @@ fn inline_component_body_impl<'a>(
         }
     }
 
+    // Extract param values from template args for cache key + stride computation.
+    let mut param_values: HashMap<String, FieldConst> = HashMap::new();
+    for (i, param) in template.params.iter().enumerate() {
+        if let Some(arg) = template_args.get(i) {
+            match arg {
+                CircuitExpr::Const(fc) => {
+                    param_values.insert(param.clone(), *fc);
+                }
+                CircuitExpr::Capture(name) | CircuitExpr::Var(name) => {
+                    if let Some(&val) = ctx.param_values.get(name) {
+                        param_values.insert(param.clone(), val);
+                    }
+                }
+                other => {
+                    if let Some(val) = try_eval_circuit_expr_fc(other, &ctx.param_values) {
+                        param_values.insert(param.clone(), val);
+                    }
+                }
+            }
+        }
+    }
+
+    // Check body cache: only cache when const_inputs and array_args are empty,
+    // since those guarantee identical lowered output for the same (template, params).
+    let cacheable = const_inputs.is_empty() && array_args.is_empty();
+    if cacheable {
+        let cache_key = build_cache_key(&template.name, &param_values);
+        if let Some(cached_body) = ctx.body_cache.get(&cache_key) {
+            let mangled = mangle_nodes(cached_body, comp_name, &param_subs);
+
+            ctx.inline_depth -= 1;
+            return Ok(mangled);
+        }
+    }
+
+    // Cache miss — full lowering
+
     // Build env for the sub-template (original signal names)
     let mut env = LoweringEnv::new();
 
@@ -181,32 +218,6 @@ fn inline_component_body_impl<'a>(
     // base points collapse to zero constraints).
     for (name, &val) in const_inputs {
         env.known_constants.insert(name.clone(), val);
-    }
-
-    // Extract param values from template args for stride computation.
-    // For Const args, use the literal value directly.
-    // For Capture/Var args, resolve from the parent's param_values
-    // (e.g., Capture("t") → 2, or Var("t") → 2 when t is a precomputed var).
-    let mut param_values: HashMap<String, FieldConst> = HashMap::new();
-    for (i, param) in template.params.iter().enumerate() {
-        if let Some(arg) = template_args.get(i) {
-            match arg {
-                CircuitExpr::Const(fc) => {
-                    param_values.insert(param.clone(), *fc);
-                }
-                CircuitExpr::Capture(name) | CircuitExpr::Var(name) => {
-                    if let Some(&val) = ctx.param_values.get(name) {
-                        param_values.insert(param.clone(), val);
-                    }
-                }
-                other => {
-                    // Try to evaluate expression args (e.g. `(r+1)*t`) to constants
-                    if let Some(val) = try_eval_circuit_expr_fc(other, &ctx.param_values) {
-                        param_values.insert(param.clone(), val);
-                    }
-                }
-            }
-        }
     }
 
     // Save parent param_values and inject sub-template values
@@ -260,6 +271,12 @@ fn inline_component_body_impl<'a>(
 
     // Restore parent param_values
     ctx.param_values = saved_params;
+
+    // Cache the unmangled body for future instances
+    if cacheable {
+        let cache_key = build_cache_key(&template.name, &param_values);
+        ctx.body_cache.insert(cache_key, nodes.clone());
+    }
 
     // Mangle all names and substitute captures
     let mangled = mangle_nodes(&nodes, comp_name, &param_subs);
@@ -761,6 +778,31 @@ fn scan_reassignments(
             _ => {}
         }
     }
+}
+
+/// Build a cache key for the body cache from template name and param values.
+///
+/// The key uniquely identifies the lowered body for a (template, params)
+/// combination. Templates with the same name and same param values produce
+/// identical lowered bodies (before mangling), so the cached result can be
+/// reused by just re-mangling with a different component prefix.
+fn build_cache_key(template_name: &str, params: &HashMap<String, FieldConst>) -> String {
+    if params.is_empty() {
+        return template_name.to_string();
+    }
+    let mut pairs: Vec<_> = params.iter().collect();
+    pairs.sort_by_key(|(k, _)| k.as_str());
+    let mut key = template_name.to_string();
+    for (name, val) in pairs {
+        use std::fmt::Write;
+        // Use u64 for small values, Debug repr for large ones
+        if let Some(v) = val.to_u64() {
+            let _ = write!(key, ":{name}={v}");
+        } else {
+            let _ = write!(key, ":{name}={val:?}");
+        }
+    }
+    key
 }
 
 // Suppress unused warnings for operator enums that are used indirectly
