@@ -315,14 +315,135 @@ mod circom_import_dispatch_tests {
             .compile(&ach_src)
             .expect_err("import circuit without component main should fail");
         match err {
-            CompilerError::CompileError(msg, _) => {
+            CompilerError::CircomImport { diagnostics, .. } => {
                 assert!(
-                    msg.contains("no `component main`") || msg.contains("component main"),
-                    "expected missing main error, got: {msg}"
+                    diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("component main")),
+                    "expected missing main diagnostic, got: {diagnostics:?}"
                 );
             }
-            other => panic!("expected CompileError, got {other:?}"),
+            other => panic!("expected CircomImport, got {other:?}"),
         }
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn import_circuit_circom_alias_collides_with_existing_global() {
+        // B2 from the refactor review: full_circuit was silently
+        // overwriting existing global_symbols entries. Now the
+        // check_alias_conflict helper rejects the collision with
+        // DuplicateModuleAlias before any bytecode is emitted.
+        let circom_path = temp_circom(
+            "circuit_collision",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            component main = Square();
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        // `poseidon` is a native global registered at compiler
+        // construction — importing as `poseidon` must collide.
+        let ach_src = format!("import circuit \"./{rel}\" as poseidon\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        let err = compiler
+            .compile(&ach_src)
+            .expect_err("alias collision with `poseidon` native should fail");
+        assert!(
+            matches!(err, CompilerError::DuplicateModuleAlias(ref name, _) if name == "poseidon"),
+            "expected DuplicateModuleAlias(poseidon), got {err:?}"
+        );
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn import_circuit_circom_alias_collides_with_circom_namespace() {
+        // B3: imports were inconsistent about checking the circom
+        // namespace table. After R12 all three dispatch paths share
+        // check_alias_conflict, so an import_circuit that shadows a
+        // previously-registered circom namespace is rejected.
+        let circom_path = temp_circom(
+            "ns_then_circuit",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            component main = Square();
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import \"./{rel}\" as C\nimport circuit \"./{rel}\" as C\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        let err = compiler
+            .compile(&ach_src)
+            .expect_err("alias collision with circom namespace should fail");
+        assert!(
+            matches!(err, CompilerError::DuplicateModuleAlias(ref name, _) if name == "C"),
+            "expected DuplicateModuleAlias(C), got {err:?}"
+        );
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn import_circom_parse_error_returns_structured_diagnostic() {
+        // D2: instead of flattening circom diagnostics into a plain
+        // string, the compiler now raises CompilerError::CircomImport
+        // carrying the inner Diagnostic list. to_diagnostic() folds
+        // them into notes on the outer diagnostic so the
+        // DiagnosticRenderer can show both together.
+        let circom_path = temp_circom("bad_syntax", "this is not circom at all @#$%");
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import \"./{rel}\" as P\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        let err = compiler
+            .compile(&ach_src)
+            .expect_err("bad circom should fail");
+        let diag = err.to_diagnostic();
+        assert_eq!(diag.severity, achronyme_parser::Severity::Error);
+        assert!(
+            diag.message.contains("failed to load circom file"),
+            "unexpected primary message: {}",
+            diag.message
+        );
+        assert!(
+            !diag.notes.is_empty(),
+            "expected at least one note carrying inner circom diagnostics"
+        );
 
         let _ = std::fs::remove_file(&circom_path);
     }

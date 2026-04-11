@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use achronyme_parser::ast::Span;
 use achronyme_parser::diagnostic::SpanRange;
@@ -29,6 +30,23 @@ pub enum CompilerError {
     InternalError(String),
     /// A rich error that already carries a full Diagnostic (for structured suggestions).
     DiagnosticError(Box<Diagnostic>),
+    /// A `.circom` file imported from an `.ach` source failed to load.
+    /// Preserves structured diagnostics from the circom frontend so
+    /// they can be rendered alongside the `.ach` import site via
+    /// `DiagnosticRenderer`, rather than being collapsed into a
+    /// flat string.
+    CircomImport {
+        /// Path to the `.circom` source (for the primary error message).
+        path: PathBuf,
+        /// Diagnostics produced by the circom frontend, one per
+        /// underlying failure. The first is used as the primary
+        /// message; the rest become notes on the resulting
+        /// [`Diagnostic`].
+        diagnostics: Vec<Diagnostic>,
+        /// Span of the `.ach` `import` / `import circuit` statement
+        /// that triggered the load.
+        span: OptSpan,
+    },
 }
 
 fn fmt_span(span: &OptSpan) -> String {
@@ -75,6 +93,22 @@ impl fmt::Display for CompilerError {
             }
             CompilerError::InternalError(msg) => write!(f, "internal compiler error: {msg}"),
             CompilerError::DiagnosticError(diag) => write!(f, "{diag}"),
+            CompilerError::CircomImport {
+                path,
+                diagnostics,
+                span,
+            } => {
+                write!(
+                    f,
+                    "{}failed to load circom file {}",
+                    fmt_span(span),
+                    path.display()
+                )?;
+                for d in diagnostics {
+                    write!(f, "\n  - {}", d.message)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -87,6 +121,30 @@ impl CompilerError {
         // DiagnosticError already carries the full Diagnostic
         if let CompilerError::DiagnosticError(diag) = self {
             return *diag.clone();
+        }
+
+        // CircomImport renders the .ach import span as the primary
+        // location and attaches each inner circom diagnostic as a note
+        // so the DiagnosticRenderer can show them together without
+        // flattening into a single String.
+        if let CompilerError::CircomImport {
+            path,
+            diagnostics,
+            span,
+        } = self
+        {
+            let primary = span
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(|| SpanRange::point(0, 0, 0));
+            let mut diag = Diagnostic::error(
+                format!("failed to load circom file {}", path.display()),
+                primary,
+            );
+            for inner in diagnostics {
+                diag = diag.with_note(inner.message.clone());
+            }
+            return diag;
         }
 
         let span = match self {
@@ -103,7 +161,8 @@ impl CompilerError {
             CompilerError::ParseError(_)
             | CompilerError::ModuleLoadError(_)
             | CompilerError::InternalError(_)
-            | CompilerError::DiagnosticError(_) => None,
+            | CompilerError::DiagnosticError(_)
+            | CompilerError::CircomImport { .. } => None,
         };
         let primary = span.unwrap_or_else(|| SpanRange::point(0, 0, 0));
         Diagnostic::error(self.to_string(), primary)
