@@ -545,6 +545,7 @@ dependencies = [
  "memory",
  "proptest",
  "serde_json",
+ "tempfile",
  "vm",
 ]
 

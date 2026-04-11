@@ -46,24 +46,36 @@ pub(crate) fn detect_import_kind(path: &str) -> ImportFileKind {
 mod circom_import_dispatch_tests {
     use super::*;
     use crate::codegen::Compiler;
-    use std::io::Write;
 
-    fn temp_circom(name: &str, src: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "ach_import_dispatch_{}_{}.circom",
-            std::process::id(),
-            name
-        ));
-        let mut f = std::fs::File::create(&path).expect("create temp circom");
-        f.write_all(src.as_bytes()).expect("write temp circom");
-        path
+    /// Owns a `tempfile::TempDir` + the path of a `.circom` file
+    /// inside it. On drop, the directory and its contents are
+    /// deleted — even if the test panics — so stray
+    /// `/tmp/ach_import_dispatch_*.circom` files don't accumulate
+    /// across failing runs.
+    struct TempCircom {
+        _dir: tempfile::TempDir,
+        path: std::path::PathBuf,
+    }
+
+    impl TempCircom {
+        fn dir(&self) -> std::path::PathBuf {
+            self.path.parent().unwrap().to_path_buf()
+        }
+        fn filename(&self) -> String {
+            self.path.file_name().unwrap().to_str().unwrap().to_string()
+        }
+    }
+
+    fn temp_circom(src: &str) -> TempCircom {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("module.circom");
+        std::fs::write(&path, src).expect("write temp circom");
+        TempCircom { _dir: dir, path }
     }
 
     #[test]
     fn import_circom_namespace_registers_library() {
-        let circom_path = temp_circom(
-            "ns_ok",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -73,13 +85,8 @@ mod circom_import_dispatch_tests {
             }
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import \"./{}\" as P\n", rel);
 
         let mut compiler = Compiler::new();
@@ -96,8 +103,6 @@ mod circom_import_dispatch_tests {
             !compiler.global_symbols.contains_key("P"),
             "P should not leak into global_symbols"
         );
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
@@ -118,8 +123,7 @@ mod circom_import_dispatch_tests {
 
     #[test]
     fn selective_import_circom_registers_aliases() {
-        let circom_path = temp_circom(
-            "sel_ok",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -136,13 +140,8 @@ mod circom_import_dispatch_tests {
             }
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import {{ Square, Cube }} from \"./{rel}\"\n");
 
         let mut compiler = Compiler::new();
@@ -156,14 +155,11 @@ mod circom_import_dispatch_tests {
         // Neither name should leak into the runtime global table.
         assert!(!compiler.global_symbols.contains_key("Square"));
         assert!(!compiler.global_symbols.contains_key("Cube"));
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
     fn selective_import_circom_unknown_name_with_suggestion() {
-        let circom_path = temp_circom(
-            "sel_typo",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -173,13 +169,8 @@ mod circom_import_dispatch_tests {
             }
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         // `Squar` is a typo for `Square` — distance 1.
         let ach_src = format!("import {{ Squar }} from \"./{rel}\"\n");
 
@@ -195,8 +186,6 @@ mod circom_import_dispatch_tests {
             }
             other => panic!("expected CompileError, got {other:?}"),
         }
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
@@ -206,8 +195,7 @@ mod circom_import_dispatch_tests {
         // the hood — not trigger a second compile_template_library call.
         // We can't inspect Arc refcount without racing, but we can at
         // least verify both imports succeed and the alias tables agree.
-        let circom_path = temp_circom(
-            "sel_share",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -217,13 +205,8 @@ mod circom_import_dispatch_tests {
             }
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import \"./{rel}\" as P\nimport {{ Square }} from \"./{rel}\"\n");
         let mut compiler = Compiler::new();
         compiler.base_path = Some(tmp_dir);
@@ -234,14 +217,11 @@ mod circom_import_dispatch_tests {
         let ns = compiler.circom_namespaces.get("P").unwrap();
         let sel_lib = compiler.circom_template_aliases.get("Square").unwrap();
         assert_eq!(ns.source_path, sel_lib.source_path);
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
     fn import_circuit_circom_with_main_component_registers_global() {
-        let circom_path = temp_circom(
-            "circuit_main",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -252,13 +232,8 @@ mod circom_import_dispatch_tests {
             component main = Square();
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import circuit \"./{rel}\" as SquareCircuit\n");
 
         let mut compiler = Compiler::new();
@@ -283,14 +258,11 @@ mod circom_import_dispatch_tests {
         assert!(!compiler
             .circom_template_aliases
             .contains_key("SquareCircuit"));
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
     fn import_circuit_circom_without_main_errors() {
-        let circom_path = temp_circom(
-            "circuit_no_main",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -300,13 +272,8 @@ mod circom_import_dispatch_tests {
             }
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import circuit \"./{rel}\" as C\n");
 
         let mut compiler = Compiler::new();
@@ -325,8 +292,6 @@ mod circom_import_dispatch_tests {
             }
             other => panic!("expected CircomImport, got {other:?}"),
         }
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
@@ -335,8 +300,7 @@ mod circom_import_dispatch_tests {
         // overwriting existing global_symbols entries. Now the
         // check_alias_conflict helper rejects the collision with
         // DuplicateModuleAlias before any bytecode is emitted.
-        let circom_path = temp_circom(
-            "circuit_collision",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -347,13 +311,8 @@ mod circom_import_dispatch_tests {
             component main = Square();
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         // `poseidon` is a native global registered at compiler
         // construction — importing as `poseidon` must collide.
         let ach_src = format!("import circuit \"./{rel}\" as poseidon\n");
@@ -367,8 +326,6 @@ mod circom_import_dispatch_tests {
             matches!(err, CompilerError::DuplicateModuleAlias(ref name, _) if name == "poseidon"),
             "expected DuplicateModuleAlias(poseidon), got {err:?}"
         );
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
@@ -377,8 +334,7 @@ mod circom_import_dispatch_tests {
         // namespace table. After R12 all three dispatch paths share
         // check_alias_conflict, so an import_circuit that shadows a
         // previously-registered circom namespace is rejected.
-        let circom_path = temp_circom(
-            "ns_then_circuit",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template Square() {
@@ -389,13 +345,8 @@ mod circom_import_dispatch_tests {
             component main = Square();
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import \"./{rel}\" as C\nimport circuit \"./{rel}\" as C\n");
 
         let mut compiler = Compiler::new();
@@ -407,8 +358,6 @@ mod circom_import_dispatch_tests {
             matches!(err, CompilerError::DuplicateModuleAlias(ref name, _) if name == "C"),
             "expected DuplicateModuleAlias(C), got {err:?}"
         );
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
@@ -418,14 +367,9 @@ mod circom_import_dispatch_tests {
         // carrying the inner Diagnostic list. to_diagnostic() folds
         // them into notes on the outer diagnostic so the
         // DiagnosticRenderer can show both together.
-        let circom_path = temp_circom("bad_syntax", "this is not circom at all @#$%");
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tc = temp_circom("this is not circom at all @#$%");
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         let ach_src = format!("import \"./{rel}\" as P\n");
 
         let mut compiler = Compiler::new();
@@ -444,14 +388,11 @@ mod circom_import_dispatch_tests {
             !diag.notes.is_empty(),
             "expected at least one note carrying inner circom diagnostics"
         );
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 
     #[test]
     fn import_circom_duplicate_alias_conflicts() {
-        let circom_path = temp_circom(
-            "dup_alias",
+        let tc = temp_circom(
             r#"
             pragma circom 2.0.0;
             template T() {
@@ -461,13 +402,8 @@ mod circom_import_dispatch_tests {
             }
             "#,
         );
-        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
-        let rel = circom_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
         // Same alias, same path → idempotent.
         let ach_src = format!("import \"./{rel}\" as P\nimport \"./{rel}\" as P\n");
         let mut compiler = Compiler::new();
@@ -475,8 +411,6 @@ mod circom_import_dispatch_tests {
         compiler
             .compile(&ach_src)
             .expect("duplicate same-path import is idempotent");
-
-        let _ = std::fs::remove_file(&circom_path);
     }
 }
 

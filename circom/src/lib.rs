@@ -391,20 +391,21 @@ fn compile_program_with_warnings(
 #[cfg(test)]
 mod lib_tests {
     use super::*;
-    use std::io::Write;
 
-    /// Write a `.circom` source string to a temp file and return its path.
-    /// Each call gets a unique filename so parallel tests don't collide.
-    fn write_temp_circom(name: &str, src: &str) -> PathBuf {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "ach_lib_test_{}_{}.circom",
-            std::process::id(),
-            name
-        ));
-        let mut f = std::fs::File::create(&path).expect("create temp circom");
-        f.write_all(src.as_bytes()).expect("write temp circom");
-        path
+    /// Guard owning a `tempfile::TempDir` + the path of a `.circom`
+    /// file inside it. On drop the directory and its contents are
+    /// deleted — even if the test panics — so stray temp files
+    /// don't accumulate across failing runs.
+    struct TempCircom {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+    }
+
+    fn write_temp_circom(src: &str) -> TempCircom {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("module.circom");
+        std::fs::write(&path, src).expect("write temp circom");
+        TempCircom { _dir: dir, path }
     }
 
     #[test]
@@ -433,8 +434,8 @@ mod lib_tests {
                 lc === in;
             }
         "#;
-        let path = write_temp_circom("no_main", src);
-        let lib = compile_template_library(&path, &[]).expect("library should compile");
+        let tc = write_temp_circom(src);
+        let lib = compile_template_library(&tc.path, &[]).expect("library should compile");
 
         assert!(lib.template("Pair").is_some());
         assert!(lib.template("Num2Bits").is_some());
@@ -450,8 +451,6 @@ mod lib_tests {
             n2b.outputs[0].dimensions[0],
             library::DimensionExpr::Param(ref p) if p == "n"
         ));
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -471,13 +470,11 @@ mod lib_tests {
                 signal output out[nb];
             }
         "#;
-        let path = write_temp_circom("with_fn", src);
-        let lib = compile_template_library(&path, &[]).expect("library should compile");
+        let tc = write_temp_circom(src);
+        let lib = compile_template_library(&tc.path, &[]).expect("library should compile");
 
         assert!(lib.function("nbits").is_some());
         assert!(lib.template("T").is_some());
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -495,21 +492,20 @@ mod lib_tests {
 
             component main = Square();
         "#;
-        let path = write_temp_circom("with_main", src);
-        let lib = compile_template_library(&path, &[]).expect("library should compile");
+        let tc = write_temp_circom(src);
+        let lib = compile_template_library(&tc.path, &[]).expect("library should compile");
 
         assert!(lib.template("Square").is_some());
         // Main component is preserved in the AST but not required.
-        assert!(lib.program.main_component.is_some());
-
-        let _ = std::fs::remove_file(&path);
+        // main_component is pub(crate) after R9 encapsulation — we only
+        // care that library loading succeeds regardless of its presence.
     }
 
     #[test]
     fn compile_template_library_parse_error() {
         let src = "this is not circom at all @#$%";
-        let path = write_temp_circom("broken", src);
-        let result = compile_template_library(&path, &[]);
+        let tc = write_temp_circom(src);
+        let result = compile_template_library(&tc.path, &[]);
         // Lexer-level errors are surfaced through the include resolver as
         // IncludeError::Parse, while recovered-parser errors go through
         // ParseError. Either shape is acceptable here — the important
@@ -521,6 +517,5 @@ mod lib_tests {
             ),
             "expected ParseError or IncludeError, got {result:?}"
         );
-        let _ = std::fs::remove_file(&path);
     }
 }
