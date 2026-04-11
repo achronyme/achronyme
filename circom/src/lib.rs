@@ -232,6 +232,95 @@ pub fn compile_file(
     compile_program(&program)
 }
 
+/// Compile a `.circom` file as a reusable library of templates.
+///
+/// Unlike [`compile_file`], this entry point does **not** require a
+/// `component main` declaration. It parses the file, resolves includes,
+/// runs constraint analysis (to surface errors early), and extracts
+/// library-level metadata for every declared template.
+///
+/// Template bodies are **not** lowered here — lowering is deferred to
+/// each call site via [`instantiate_template_into`] so that parent
+/// context (captures, constant inputs) can drive constant folding
+/// through component inlining.
+///
+/// Library-mode compilation is the frontend for `import "x.circom" as P`
+/// and `import { T1, T2 } from "x.circom"` in `.ach` files.
+pub fn compile_template_library(
+    path: &Path,
+    library_dirs: &[PathBuf],
+) -> Result<CircomLibrary, CircomError> {
+    let resolved = analysis::include_resolver::resolve_includes(path, library_dirs)
+        .map_err(CircomError::IncludeError)?;
+
+    // Surface any parse-time errors in the root or includes.
+    let parse_errs: Vec<&Diagnostic> = resolved
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .collect();
+    if !parse_errs.is_empty() {
+        return Err(CircomError::ParseError(
+            parse_errs.into_iter().cloned().collect(),
+        ));
+    }
+
+    let program = ast::CircomProgram {
+        version: resolved.version,
+        custom_templates: resolved.custom_templates,
+        includes: Vec::new(),
+        definitions: resolved.definitions,
+        main_component: resolved.main_component,
+    };
+
+    // Version sanity warnings (non-fatal).
+    validate_version_pragma(&program);
+
+    // Constraint analysis — errors block library compilation, warnings
+    // are currently swallowed (library consumers can re-surface them by
+    // calling `compile_file` later if the library is also used as a
+    // full circuit via `import circuit`).
+    let reports = analysis::constraint_check::check_constraints(&program.definitions);
+    let mut constraint_errors = Vec::new();
+    for report in reports {
+        for diag in report.diagnostics {
+            if diag.severity == diagnostics::Severity::Error {
+                constraint_errors.push(diag);
+            }
+        }
+    }
+    if !constraint_errors.is_empty() {
+        return Err(CircomError::ConstraintError(constraint_errors));
+    }
+
+    // Collect templates + functions.
+    let mut templates = HashMap::new();
+    let mut functions = HashMap::new();
+    for def in &program.definitions {
+        match def {
+            ast::Definition::Template(t) => {
+                let entry = library::extract_template_metadata(t, &HashMap::new());
+                templates.insert(t.name.clone(), entry);
+            }
+            ast::Definition::Function(f) => {
+                functions.insert(f.name.clone(), f.clone());
+            }
+            ast::Definition::Bus(_) => {
+                // Buses are not yet supported as library entries.
+            }
+        }
+    }
+
+    let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    Ok(CircomLibrary {
+        source_path,
+        templates,
+        functions,
+        program,
+    })
+}
+
 /// Shared compilation pipeline: analysis + lowering.
 fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, CircomError> {
     // 1. Version pragma validation
@@ -303,4 +392,141 @@ fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, 
         capture_values,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod lib_tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Write a `.circom` source string to a temp file and return its path.
+    /// Each call gets a unique filename so parallel tests don't collide.
+    fn write_temp_circom(name: &str, src: &str) -> PathBuf {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "ach_lib_test_{}_{}.circom",
+            std::process::id(),
+            name
+        ));
+        let mut f = std::fs::File::create(&path).expect("create temp circom");
+        f.write_all(src.as_bytes()).expect("write temp circom");
+        path
+    }
+
+    #[test]
+    fn compile_template_library_single_file_no_main() {
+        let src = r#"
+            pragma circom 2.0.0;
+
+            template Pair() {
+                signal input a;
+                signal input b;
+                signal output c;
+                c <== a + b;
+            }
+
+            template Num2Bits(n) {
+                signal input in;
+                signal output out[n];
+                var lc = 0;
+                var e = 1;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    out[i] * (out[i] - 1) === 0;
+                    lc += out[i] * e;
+                    e = e + e;
+                }
+                lc === in;
+            }
+        "#;
+        let path = write_temp_circom("no_main", src);
+        let lib = compile_template_library(&path, &[]).expect("library should compile");
+
+        assert!(lib.template("Pair").is_some());
+        assert!(lib.template("Num2Bits").is_some());
+
+        let pair = lib.template("Pair").unwrap();
+        assert!(pair.params.is_empty());
+        assert_eq!(pair.inputs.len(), 2);
+        assert_eq!(pair.outputs.len(), 1);
+
+        let n2b = lib.template("Num2Bits").unwrap();
+        assert_eq!(n2b.params, vec!["n".to_string()]);
+        assert!(matches!(
+            n2b.outputs[0].dimensions[0],
+            library::DimensionExpr::Param(ref p) if p == "n"
+        ));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compile_template_library_with_function() {
+        let src = r#"
+            pragma circom 2.0.0;
+
+            function nbits(a) {
+                var n = 1; var r = 0;
+                while (n - 1 < a) { r++; n *= 2; }
+                return r;
+            }
+
+            template T(maxval) {
+                var nb = nbits(maxval);
+                signal input in;
+                signal output out[nb];
+            }
+        "#;
+        let path = write_temp_circom("with_fn", src);
+        let lib = compile_template_library(&path, &[]).expect("library should compile");
+
+        assert!(lib.function("nbits").is_some());
+        assert!(lib.template("T").is_some());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compile_template_library_ignores_main_component() {
+        // Even if the file declares component main, library mode should
+        // still extract templates as reusable metadata without failing.
+        let src = r#"
+            pragma circom 2.0.0;
+
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+
+            component main = Square();
+        "#;
+        let path = write_temp_circom("with_main", src);
+        let lib = compile_template_library(&path, &[]).expect("library should compile");
+
+        assert!(lib.template("Square").is_some());
+        // Main component is preserved in the AST but not required.
+        assert!(lib.program.main_component.is_some());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compile_template_library_parse_error() {
+        let src = "this is not circom at all @#$%";
+        let path = write_temp_circom("broken", src);
+        let result = compile_template_library(&path, &[]);
+        // Lexer-level errors are surfaced through the include resolver as
+        // IncludeError::Parse, while recovered-parser errors go through
+        // ParseError. Either shape is acceptable here — the important
+        // part is that compilation is rejected.
+        assert!(
+            matches!(
+                result,
+                Err(CircomError::ParseError(_)) | Err(CircomError::IncludeError(_))
+            ),
+            "expected ParseError or IncludeError, got {result:?}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 }
