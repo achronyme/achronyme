@@ -202,7 +202,7 @@ pub(super) fn selective(
     // Conflict detection: reject if the unqualified name is already
     // bound. Same-origin re-imports are idempotent.
     for name in names {
-        if let Some((existing_lib, _)) = compiler.circom_template_aliases.get(name) {
+        if let Some(existing_lib) = compiler.circom_template_aliases.get(name) {
             if existing_lib.source_path == canonical {
                 continue;
             }
@@ -223,7 +223,7 @@ pub(super) fn selective(
         compiler
             .circom_template_aliases
             .entry(name.clone())
-            .or_insert_with(|| (library_arc.clone(), name.clone()));
+            .or_insert_with(|| library_arc.clone());
     }
 
     Ok(())

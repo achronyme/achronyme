@@ -232,7 +232,7 @@ mod circom_import_dispatch_tests {
             .expect("namespace + selective on same file should work");
 
         let ns = compiler.circom_namespaces.get("P").unwrap();
-        let (sel_lib, _) = compiler.circom_template_aliases.get("Square").unwrap();
+        let sel_lib = compiler.circom_template_aliases.get("Square").unwrap();
         assert_eq!(ns.source_path, sel_lib.source_path);
 
         let _ = std::fs::remove_file(&circom_path);

@@ -56,9 +56,14 @@ pub struct Compiler {
     /// These imports are **compile-time only** — no VM bytecode is emitted
     /// for them, so the alias is not registered as a global.
     pub circom_namespaces: HashMap<String, std::sync::Arc<circom::CircomLibrary>>,
-    /// Selectively imported Circom templates: unqualified name → (library, real template name).
-    /// Populated by `import { T1, T2 } from "x.circom"`.
-    pub circom_template_aliases: HashMap<String, (std::sync::Arc<circom::CircomLibrary>, String)>,
+    /// Selectively imported Circom templates: unqualified name →
+    /// owning library. Populated by
+    /// `import { T1, T2 } from "x.circom"`. The template name is
+    /// always the map key — rename-on-import (`import { X as Y }`)
+    /// is not supported today, so we don't carry a redundant "real
+    /// name" column. When rename support lands this field should
+    /// grow into a struct with an explicit `real_name: String`.
+    pub circom_template_aliases: HashMap<String, std::sync::Arc<circom::CircomLibrary>>,
 
     /// Span of the expression/statement currently being compiled.
     pub current_span: Option<Span>,
