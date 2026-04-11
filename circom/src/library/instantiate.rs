@@ -12,7 +12,7 @@ use crate::lowering::components::inline_component_body_with_const_inputs;
 use crate::lowering::context::LoweringContext;
 
 use super::error::{check_param_count, find_template, LibraryError};
-use super::metadata::extract_template_metadata;
+use super::metadata::resolve_entry;
 use super::types::{CircomLibrary, DimensionExpr};
 
 /// Result of inlining a Circom template into a parent circuit body.
@@ -108,13 +108,17 @@ pub fn instantiate_template_into(
     let template = find_template(library, template_name)?;
     check_param_count(template, template_args.len())?;
 
-    // 2. Re-extract metadata with the concrete template args folded in so
-    //    that output dimensions can be enumerated as scalar names.
+    // 2. Resolve the library's cached entry against the concrete
+    //    captures so output dimensions become Const. This is O(signals
+    //    × dims) and avoids re-walking the template body's AST.
     let mut known_params = HashMap::new();
     for (name, fc) in template.params.iter().zip(template_args.iter()) {
         known_params.insert(name.clone(), *fc);
     }
-    let entry = extract_template_metadata(template, &known_params);
+    let cached = library
+        .template(template_name)
+        .expect("find_template succeeded, cached entry must exist");
+    let entry = resolve_entry(cached, &known_params);
 
     // 3. Wire signal inputs: emit a Let binding per input, splitting
     //    compile-time constants into `const_inputs` for propagation.

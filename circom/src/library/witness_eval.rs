@@ -16,7 +16,7 @@ use crate::witness::{compute_witness_hints_with_captures, WitnessError};
 
 use super::error::{check_param_count, find_template, LibraryError};
 use super::instantiate::{iter_multi_index, resolve_output_dims};
-use super::metadata::extract_template_metadata;
+use super::metadata::resolve_entry;
 use super::types::CircomLibrary;
 
 /// Reason a VM-mode witness evaluation was rejected.
@@ -129,13 +129,17 @@ pub fn evaluate_template_witness<F: FieldBackend>(
     let env = compute_witness_hints_with_captures(&lowered.prove_ir, signal_inputs, &captures)
         .map_err(WitnessEvalError::Witness)?;
 
-    // 5. Extract outputs using metadata re-extracted against the concrete
-    //    captures, so array dimensions resolve to Const.
+    // 5. Resolve the cached library entry against the concrete
+    //    captures so array output dimensions become Const, without
+    //    re-walking the template body's AST.
     let mut known_params = HashMap::new();
     for (name, &v) in template.params.iter().zip(template_args.iter()) {
         known_params.insert(name.clone(), FieldConst::from_u64(v));
     }
-    let entry = extract_template_metadata(template, &known_params);
+    let cached = library
+        .template(template_name)
+        .expect("find_template succeeded, cached entry must exist");
+    let entry = resolve_entry(cached, &known_params);
 
     let mut outputs = HashMap::new();
     for out in &entry.outputs {
