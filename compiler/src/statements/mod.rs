@@ -116,6 +116,128 @@ mod circom_import_dispatch_tests {
     }
 
     #[test]
+    fn selective_import_circom_registers_aliases() {
+        let circom_path = temp_circom(
+            "sel_ok",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            template Cube() {
+                signal input x;
+                signal output y;
+                signal tmp;
+                tmp <== x * x;
+                y <== tmp * x;
+            }
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import {{ Square, Cube }} from \"./{rel}\"\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler
+            .compile(&ach_src)
+            .expect("selective import should succeed");
+
+        assert!(compiler.circom_template_aliases.contains_key("Square"));
+        assert!(compiler.circom_template_aliases.contains_key("Cube"));
+        // Neither name should leak into the runtime global table.
+        assert!(!compiler.global_symbols.contains_key("Square"));
+        assert!(!compiler.global_symbols.contains_key("Cube"));
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn selective_import_circom_unknown_name_with_suggestion() {
+        let circom_path = temp_circom(
+            "sel_typo",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        // `Squar` is a typo for `Square` — distance 1.
+        let ach_src = format!("import {{ Squar }} from \"./{rel}\"\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        let err = compiler
+            .compile(&ach_src)
+            .expect_err("selective import should fail on unknown template");
+        match err {
+            CompilerError::CompileError(msg, _) => {
+                assert!(msg.contains("does not declare template"), "msg: {msg}");
+                assert!(msg.contains("Did you mean `Square`"), "msg: {msg}");
+            }
+            other => panic!("expected CompileError, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn selective_import_circom_shares_library_with_namespace() {
+        // Same physical file imported twice (once as namespace, once
+        // selectively) should reuse the same Arc<CircomLibrary> under
+        // the hood — not trigger a second compile_template_library call.
+        // We can't inspect Arc refcount without racing, but we can at
+        // least verify both imports succeed and the alias tables agree.
+        let circom_path = temp_circom(
+            "sel_share",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import \"./{rel}\" as P\nimport {{ Square }} from \"./{rel}\"\n");
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler
+            .compile(&ach_src)
+            .expect("namespace + selective on same file should work");
+
+        let ns = compiler.circom_namespaces.get("P").unwrap();
+        let (sel_lib, _) = compiler.circom_template_aliases.get("Square").unwrap();
+        assert_eq!(ns.source_path, sel_lib.source_path);
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
     fn import_circom_duplicate_alias_conflicts() {
         let circom_path = temp_circom(
             "dup_alias",
@@ -680,6 +802,10 @@ impl StatementCompiler for Compiler {
         path: &str,
         span: &Span,
     ) -> Result<(), CompilerError> {
+        if detect_import_kind(path) == ImportFileKind::Circom {
+            return compile_selective_import_circom(self, names, path, span);
+        }
+
         // 1. Resolve path relative to base_path
         let base = self
             .base_path
@@ -904,6 +1030,133 @@ fn compile_import_circom_namespace(
     compiler
         .circom_namespaces
         .insert(alias.to_string(), std::sync::Arc::new(library));
+
+    Ok(())
+}
+
+/// Dispatch point for `import { T1, T2 } from "x.circom"` — selective
+/// import of named templates from a Circom library. Like namespace
+/// imports this is compile-time only: the template names are
+/// registered in `circom_template_aliases` but no VM bytecode or
+/// global_symbols entries are emitted. Phase 3 resolves
+/// `Call { callee: Ident(T1), ... }` against the alias table.
+fn compile_selective_import_circom(
+    compiler: &mut Compiler,
+    names: &[String],
+    path: &str,
+    span: &Span,
+) -> Result<(), CompilerError> {
+    // 1. Resolve the path (same convention as namespace imports).
+    let base = compiler
+        .base_path
+        .clone()
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+    let resolved = base.join(path);
+    if !resolved.exists() {
+        return Err(CompilerError::ModuleNotFound(
+            format!(
+                "circom file not found: {} (resolved from {})",
+                path,
+                base.display()
+            ),
+            span_box(span),
+        ));
+    }
+    let canonical = resolved.canonicalize().map_err(|e| {
+        CompilerError::CompileError(
+            format!(
+                "cannot canonicalize circom path {}: {e}",
+                resolved.display()
+            ),
+            span_box(span),
+        )
+    })?;
+
+    // 2. Reuse an already-loaded library if the same path has been
+    //    imported (possibly via a different alias or a previous
+    //    selective-import call). Otherwise load fresh.
+    let library_arc = compiler
+        .circom_namespaces
+        .values()
+        .find(|lib| lib.source_path == canonical)
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| {
+            circom::compile_template_library(&canonical, &compiler.circom_lib_dirs)
+                .map(std::sync::Arc::new)
+                .map_err(|e| {
+                    let mut msg = format!("failed to load circom library `{}`: {e}", path);
+                    for diag in e.to_diagnostics() {
+                        msg.push_str(&format!("\n  - {}", diag.message));
+                    }
+                    CompilerError::CompileError(msg, span_box(span))
+                })
+        })?;
+
+    // 3. Validate every requested name is declared by the library.
+    //    Surface did-you-mean suggestions using the same Levenshtein
+    //    helper as the .ach selective import path.
+    for name in names {
+        if library_arc.template(name).is_none() {
+            let available: Vec<&str> = library_arc.template_names().collect();
+            let suggestion = crate::suggest::find_similar(name, available.iter().copied(), 2);
+            let mut msg = format!(
+                "circom file \"{}\" does not declare template `{}`",
+                path, name
+            );
+            if let Some(s) = suggestion {
+                msg.push_str(&format!(". Did you mean `{s}`?"));
+            }
+            return Err(CompilerError::CompileError(msg, span_box(span)));
+        }
+    }
+
+    // 4. Conflict detection: reject if the unqualified name is already
+    //    bound — as a global, as a selective .ach import, or as a
+    //    previously-imported circom template from a different library.
+    for name in names {
+        if compiler.global_symbols.contains_key(name) {
+            return Err(CompilerError::CompileError(
+                format!(
+                    "cannot import `{}`: a global with this name already exists",
+                    name
+                ),
+                span_box(span),
+            ));
+        }
+        if let Some((existing_lib, existing_name)) = compiler.circom_template_aliases.get(name) {
+            if existing_lib.source_path != canonical || existing_name != name {
+                return Err(CompilerError::CompileError(
+                    format!(
+                        "`{}` already imported from \"{}\"",
+                        name,
+                        existing_lib.source_path.display()
+                    ),
+                    span_box(span),
+                ));
+            }
+            // Same origin: idempotent re-import.
+            continue;
+        }
+        if let Some((existing_path, _)) = compiler.imported_names.get(name) {
+            return Err(CompilerError::CompileError(
+                format!(
+                    "`{}` already imported from \"{}\"",
+                    name,
+                    existing_path.display()
+                ),
+                span_box(span),
+            ));
+        }
+    }
+
+    // 5. Register the aliases.
+    for name in names {
+        compiler
+            .circom_template_aliases
+            .entry(name.clone())
+            .or_insert_with(|| (library_arc.clone(), name.clone()));
+    }
 
     Ok(())
 }
