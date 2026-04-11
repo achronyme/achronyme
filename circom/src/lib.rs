@@ -29,8 +29,8 @@ pub mod token;
 pub mod witness;
 
 pub use library::{
-    instantiate_template_into, CircomLibrary, CircomTemplateEntry, DimensionExpr,
-    InstantiationError, SignalSig, TemplateInstantiation,
+    evaluate_template_witness, instantiate_template_into, CircomLibrary, CircomTemplateEntry,
+    DimensionExpr, InstantiationError, SignalSig, TemplateInstantiation, WitnessEvalError,
 };
 
 use std::collections::{HashMap, HashSet};
