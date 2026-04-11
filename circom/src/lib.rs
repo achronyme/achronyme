@@ -281,15 +281,18 @@ pub fn compile_template_library(
     validate_version_pragma(&program);
 
     // Constraint analysis — errors block library compilation, warnings
-    // are currently swallowed (library consumers can re-surface them by
-    // calling `compile_file` later if the library is also used as a
-    // full circuit via `import circuit`).
+    // are collected and attached to the returned library so callers
+    // (e.g. the Achronyme compiler's import dispatch) can re-render
+    // them alongside the .ach import span.
     let reports = analysis::constraint_check::check_constraints(&program.definitions);
     let mut constraint_errors = Vec::new();
+    let mut warnings = Vec::new();
     for report in reports {
         for diag in report.diagnostics {
             if diag.severity == diagnostics::Severity::Error {
                 constraint_errors.push(diag);
+            } else {
+                warnings.push(diag);
             }
         }
     }
@@ -322,6 +325,7 @@ pub fn compile_template_library(
         templates,
         functions,
         program,
+        warnings,
     })
 }
 

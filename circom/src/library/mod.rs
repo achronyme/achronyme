@@ -98,6 +98,7 @@ pub(crate) mod test_support {
             templates,
             functions,
             program: prog,
+            warnings: Vec::new(),
         }
     }
 }

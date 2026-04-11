@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use diagnostics::Diagnostic;
+
 use crate::ast;
 
 /// A signal declaration's array-dimension expression.
@@ -96,6 +98,11 @@ pub struct CircomLibrary {
     pub functions: HashMap<String, ast::FunctionDef>,
     /// Full program AST with `include` chain already resolved.
     pub program: ast::CircomProgram,
+    /// Non-fatal diagnostics emitted by the constraint analyzer while
+    /// loading this library (e.g. `W101`, `W103`). Always empty when
+    /// the caller constructs a `CircomLibrary` manually; populated by
+    /// [`crate::compile_template_library`].
+    pub warnings: Vec<Diagnostic>,
 }
 
 impl CircomLibrary {
@@ -195,6 +202,7 @@ mod tests {
                 definitions: Vec::new(),
                 main_component: None,
             },
+            warnings: Vec::new(),
         };
         assert!(lib.template("Num2Bits").is_some());
         assert!(lib.template("Missing").is_none());

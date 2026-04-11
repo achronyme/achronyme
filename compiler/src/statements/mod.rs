@@ -1120,6 +1120,13 @@ fn compile_import_circom_namespace(
             CompilerError::CompileError(msg, span_box(span))
         })?;
 
+    // 4. Surface library-load warnings to the compiler's diagnostic
+    //    channel so the user sees circom W101/W103/etc. rather than
+    //    them being silently dropped at the import boundary.
+    for warn in &library.warnings {
+        compiler.emit_warning(warn.clone());
+    }
+
     compiler
         .circom_namespaces
         .insert(alias.to_string(), std::sync::Arc::new(library));
@@ -1167,24 +1174,29 @@ fn compile_selective_import_circom(
 
     // 2. Reuse an already-loaded library if the same path has been
     //    imported (possibly via a different alias or a previous
-    //    selective-import call). Otherwise load fresh.
-    let library_arc = compiler
+    //    selective-import call). Otherwise load fresh and surface its
+    //    warnings to the compiler's diagnostic channel.
+    let library_arc = if let Some(existing) = compiler
         .circom_namespaces
         .values()
         .find(|lib| lib.source_path == canonical)
         .cloned()
-        .map(Ok)
-        .unwrap_or_else(|| {
-            circom::compile_template_library(&canonical, &compiler.circom_lib_dirs)
-                .map(std::sync::Arc::new)
-                .map_err(|e| {
-                    let mut msg = format!("failed to load circom library `{}`: {e}", path);
-                    for diag in e.to_diagnostics() {
-                        msg.push_str(&format!("\n  - {}", diag.message));
-                    }
-                    CompilerError::CompileError(msg, span_box(span))
-                })
-        })?;
+    {
+        existing
+    } else {
+        let fresh = circom::compile_template_library(&canonical, &compiler.circom_lib_dirs)
+            .map_err(|e| {
+                let mut msg = format!("failed to load circom library `{}`: {e}", path);
+                for diag in e.to_diagnostics() {
+                    msg.push_str(&format!("\n  - {}", diag.message));
+                }
+                CompilerError::CompileError(msg, span_box(span))
+            })?;
+        for warn in &fresh.warnings {
+            compiler.emit_warning(warn.clone());
+        }
+        std::sync::Arc::new(fresh)
+    };
 
     // 3. Validate every requested name is declared by the library.
     //    Surface did-you-mean suggestions using the same Levenshtein
