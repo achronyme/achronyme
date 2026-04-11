@@ -378,10 +378,7 @@ mod tests {
             "#,
         );
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "x".to_string(),
-            CircuitExpr::Const(FieldConst::from_u64(5)),
-        );
+        inputs.insert("x".to_string(), CircuitExpr::Const(FieldConst::from_u64(5)));
         let inst = instantiate_template_into(&lib, "Square", &[], &inputs, "k0", &dummy_span())
             .expect("instantiation should succeed");
 

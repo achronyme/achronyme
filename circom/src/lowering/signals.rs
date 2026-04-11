@@ -68,20 +68,18 @@ pub struct IntermediateSignal {
 
 /// Extract signal layout from a template, using the main component's public
 /// signal list to distinguish public vs witness inputs.
+///
+/// Thin wrapper over [`extract_signal_layout_with_captures`] that
+/// derives captures and the public-signals list from the main
+/// component's AST. Kept as the legacy entry point for the
+/// `compile_file` path; the library-mode caller uses the captures
+/// version directly.
 pub fn extract_signal_layout(
     template: &TemplateDef,
     main: Option<&MainComponent>,
     known_vars: &HashMap<String, FieldConst>,
 ) -> Result<SignalLayout, LoweringError> {
-    let public_set: HashSet<&str> = main
-        .map(|m| m.public_signals.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_default();
-
-    let template_params: HashSet<String> = template.params.iter().cloned().collect();
-
-    // Build param values from main component template args (if available).
-    // This allows evaluating expression dimensions like `n+1` eagerly.
-    let mut param_values: HashMap<String, FieldConst> = template
+    let captures: HashMap<String, FieldConst> = template
         .params
         .iter()
         .enumerate()
@@ -91,9 +89,30 @@ pub fn extract_signal_layout(
                 .map(|val| (param.clone(), FieldConst::from_u64(val)))
         })
         .collect();
+    let public_signals: Vec<String> = main.map(|m| m.public_signals.clone()).unwrap_or_default();
+    extract_signal_layout_with_captures(template, &captures, &public_signals, known_vars)
+}
 
-    // Merge pre-computed vars (e.g., `var nout = nbits(...)`) so they
-    // are available for signal dimension resolution.
+/// Extract signal layout from a template using an explicit captures
+/// map and public-signals list, without touching a `MainComponent`.
+///
+/// This is the library-mode entry point used by
+/// [`super::template::lower_template_with_captures`]. Callers pass
+/// resolved `FieldConst` values directly so there's no need to
+/// synthesize a fake AST just to thread captures through.
+pub fn extract_signal_layout_with_captures(
+    template: &TemplateDef,
+    captures: &HashMap<String, FieldConst>,
+    public_signals: &[String],
+    known_vars: &HashMap<String, FieldConst>,
+) -> Result<SignalLayout, LoweringError> {
+    let public_set: HashSet<&str> = public_signals.iter().map(|s| s.as_str()).collect();
+
+    let template_params: HashSet<String> = template.params.iter().cloned().collect();
+
+    // Merge captures and pre-computed vars into a single lookup map
+    // for dimension resolution.
+    let mut param_values: HashMap<String, FieldConst> = captures.clone();
     for (name, &val) in known_vars {
         param_values.insert(name.clone(), val);
     }

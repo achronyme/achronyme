@@ -3,9 +3,11 @@
 //! Orchestrates signal extraction, environment setup, and body lowering
 //! to produce a fully-formed `ProveIR` from a Circom `TemplateDef`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, ForRange, ProveIR};
+use ir::prove_ir::types::{
+    CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, FieldConst, ForRange, ProveIR,
+};
 
 use crate::ast::{CircomProgram, MainComponent, TemplateDef};
 
@@ -22,7 +24,6 @@ pub struct LowerTemplateResult {
 use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
-use super::signals::extract_signal_layout;
 use super::statements::lower_stmts;
 
 /// Lower a Circom template definition to a ProveIR circuit template.
@@ -35,20 +36,43 @@ pub fn lower_template(
     main: Option<&MainComponent>,
     program: &CircomProgram,
 ) -> Result<LowerTemplateResult, LoweringError> {
-    let mut ctx = LoweringContext::from_program(program);
-
-    // Compute param values from main component args (for component array sizes, etc.)
+    // Extract captures from the main component's template args —
+    // this is the only information lower_template_with_captures needs
+    // from `main`, aside from the public_signals set.
+    let mut captures: HashMap<String, FieldConst> = HashMap::new();
     if let Some(main_comp) = main {
         for (i, param) in template.params.iter().enumerate() {
             if let Some(arg) = main_comp.template_args.get(i) {
                 if let Some(val) = super::utils::const_eval_u64(arg) {
-                    ctx.param_values.insert(
-                        param.clone(),
-                        ir::prove_ir::types::FieldConst::from_u64(val),
-                    );
+                    captures.insert(param.clone(), FieldConst::from_u64(val));
                 }
             }
         }
+    }
+    let public_signals: Vec<String> = main.map(|m| m.public_signals.clone()).unwrap_or_default();
+
+    lower_template_with_captures(template, &captures, &public_signals, program)
+}
+
+/// Library-mode entry point: lower a template directly against a
+/// caller-supplied captures map and public-signals list, without
+/// requiring a synthetic [`MainComponent`].
+///
+/// This is what the off-circuit witness evaluator uses when
+/// an `.ach` file calls an imported Circom template in VM mode —
+/// there's no `component main` in sight and synthesizing a fake
+/// AST just to thread captures through the old entry point would
+/// fabricate spans and truncate non-`u64` values. Passing captures
+/// directly keeps everything honest.
+pub fn lower_template_with_captures(
+    template: &TemplateDef,
+    captures: &HashMap<String, FieldConst>,
+    public_signals: &[String],
+    program: &CircomProgram,
+) -> Result<LowerTemplateResult, LoweringError> {
+    let mut ctx = LoweringContext::from_program(program);
+    for (name, &val) in captures {
+        ctx.param_values.insert(name.clone(), val);
     }
 
     // Pre-evaluate compile-time var declarations in a single pass.
@@ -59,7 +83,12 @@ pub fn lower_template(
         super::utils::precompute_all(&template.body.stmts, &ctx.param_values, &ctx.functions);
 
     // 1. Extract signal layout (with pre-computed vars for dimension resolution)
-    let layout = extract_signal_layout(template, main, &precomputed.scalars)?;
+    let layout = super::signals::extract_signal_layout_with_captures(
+        template,
+        captures,
+        public_signals,
+        &precomputed.scalars,
+    )?;
 
     // Add pre-computed vars to param_values so they're available during body lowering
     for (name, val) in &precomputed.scalars {

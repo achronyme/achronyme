@@ -6,12 +6,10 @@
 
 use std::collections::HashMap;
 
-use diagnostics::Span;
 use ir::prove_ir::types::FieldConst;
 use memory::{FieldBackend, FieldElement};
 
-use crate::ast;
-use crate::lowering::template::lower_template;
+use crate::lowering::template::lower_template_with_captures;
 use crate::witness::{compute_witness_hints_with_captures, WitnessError};
 
 use super::error::{check_param_count, find_template, LibraryError};
@@ -120,43 +118,26 @@ pub fn evaluate_template_witness<F: FieldBackend>(
     let template = find_template(library, template_name)?;
     check_param_count(template, template_args.len())?;
 
-    // 2. Synthesize a throwaway MainComponent whose template_args are
-    //    numeric literals, so `lower_template` can seed its own
-    //    param_values via the existing code path without us adding a
-    //    parallel entry point.
-    let synth_span = Span {
-        byte_start: 0,
-        byte_end: 0,
-        line_start: 1,
-        col_start: 1,
-        line_end: 1,
-        col_end: 1,
-    };
-    let fake_main = ast::MainComponent {
-        public_signals: Vec::new(),
-        template_name: template.name.clone(),
-        template_args: template_args
-            .iter()
-            .map(|v| ast::Expr::Number {
-                value: v.to_string(),
-                span: synth_span.clone(),
-            })
-            .collect(),
-        span: synth_span,
-    };
-
-    // 3. Lower the template to ProveIR against the synthesized main.
-    let lowered = lower_template(template, Some(&fake_main), &library.program)
+    // 2. Lower directly against a caller-supplied captures map — no
+    //    synthetic MainComponent, no fabricated spans, no u64-only
+    //    truncation of captures.
+    let fc_captures: HashMap<String, FieldConst> = template
+        .params
+        .iter()
+        .zip(template_args.iter())
+        .map(|(name, &v)| (name.clone(), FieldConst::from_u64(v)))
+        .collect();
+    let lowered = lower_template_with_captures(template, &fc_captures, &[], &library.program)
         .map_err(|e| WitnessEvalError::Lowering(e.to_string()))?;
 
-    // 4. Run the witness hint pass.
-    let captures: HashMap<String, u64> = template
+    // 3. Run the witness hint pass.
+    let u64_captures: HashMap<String, u64> = template
         .params
         .iter()
         .zip(template_args.iter())
         .map(|(name, &v)| (name.clone(), v))
         .collect();
-    let env = compute_witness_hints_with_captures(&lowered.prove_ir, signal_inputs, &captures)
+    let env = compute_witness_hints_with_captures(&lowered.prove_ir, signal_inputs, &u64_captures)
         .map_err(WitnessEvalError::Witness)?;
 
     // 5. Resolve the cached library entry against the concrete
