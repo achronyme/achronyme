@@ -143,8 +143,11 @@ fn instantiate_poseidon_inline_body() {
     let lib = compile_template_library(&path, &lib_dirs).expect("library should load");
 
     let mut signal_inputs: HashMap<String, CircuitExpr> = HashMap::new();
-    // Poseidon(2) expects `inputs` (array input) — array inputs are not
-    // yet supported by instantiate_template_into; we expect an error.
+    // Poseidon(2) expects `inputs[2]` (array input). Array signal
+    // inputs aren't yet supported by instantiate_template_into, so
+    // the library reports a dedicated UnsupportedArrayInput variant
+    // regardless of whether the caller supplied a wiring — useful so
+    // Phase 3 can special-case this cleanly later.
     let result = instantiate_template_into(
         &lib,
         "Poseidon",
@@ -153,21 +156,12 @@ fn instantiate_poseidon_inline_body() {
         "pi_0",
         &dummy_span(),
     );
-    // Either the missing-input error (if we try to wire an array input)
-    // or the not-yet-supported lowering error — both are acceptable
-    // here; we just want to prove the error surface reports it clearly
-    // rather than lowering silently producing garbage.
     match result {
-        Err(InstantiationError::MissingSignalInput { signal, .. }) => {
+        Err(InstantiationError::UnsupportedArrayInput { template, signal }) => {
+            assert_eq!(template, "Poseidon");
             assert_eq!(signal, "inputs");
         }
-        Err(InstantiationError::Lowering(msg)) => {
-            assert!(
-                msg.contains("array signal inputs are not yet supported"),
-                "unexpected lowering error: {msg}"
-            );
-        }
-        other => panic!("expected MissingSignalInput or Lowering error, got {other:?}"),
+        other => panic!("expected UnsupportedArrayInput, got {other:?}"),
     }
 
     // Instantiate a scalar-only template from the same file (Sigma)

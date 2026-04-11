@@ -46,6 +46,11 @@ pub enum InstantiationError {
     Library(LibraryError),
     /// An input signal was not wired by the caller.
     MissingSignalInput { template: String, signal: String },
+    /// The template declares an array-valued input signal, which is
+    /// not yet supported by `instantiate_template_into`. Dedicated
+    /// variant so callers can special-case this rather than parsing
+    /// the `Lowering(String)` message.
+    UnsupportedArrayInput { template: String, signal: String },
     /// The underlying lowering step failed.
     Lowering(String),
 }
@@ -57,6 +62,11 @@ impl std::fmt::Display for InstantiationError {
             Self::MissingSignalInput { template, signal } => write!(
                 f,
                 "template `{template}` requires signal input `{signal}` which was not provided"
+            ),
+            Self::UnsupportedArrayInput { template, signal } => write!(
+                f,
+                "template `{template}` declares array-valued signal input `{signal}` \
+                 which is not yet supported by library-mode instantiation"
             ),
             Self::Lowering(msg) => write!(f, "lowering failed: {msg}"),
         }
@@ -113,12 +123,14 @@ pub fn instantiate_template_into(
 
     for input in &entry.inputs {
         if !input.is_scalar() {
-            // TODO (Phase 1.4+): support array-valued inputs by expanding
-            // to one Let per element. For now only scalars are supported.
-            return Err(InstantiationError::Lowering(format!(
-                "array signal inputs are not yet supported; `{}.{}` is an array",
-                template_name, input.name
-            )));
+            // TODO: support array-valued inputs by expanding to one Let
+            // per element. For now array inputs get their own dedicated
+            // error variant so callers can pattern-match cleanly rather
+            // than grepping a string out of `Lowering`.
+            return Err(InstantiationError::UnsupportedArrayInput {
+                template: template_name.to_string(),
+                signal: input.name.clone(),
+            });
         }
         let expr = signal_inputs.get(&input.name).ok_or_else(|| {
             InstantiationError::MissingSignalInput {

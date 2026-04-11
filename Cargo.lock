@@ -539,6 +539,7 @@ name = "compiler"
 version = "0.1.0-beta.19"
 dependencies = [
  "achronyme-parser",
+ "circom",
  "constraints",
  "ir",
  "memory",
