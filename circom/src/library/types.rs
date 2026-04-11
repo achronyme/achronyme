@@ -88,20 +88,28 @@ impl CircomTemplateEntry {
 ///
 /// Constructed by [`crate::compile_template_library`]. `includes` are
 /// pre-resolved into a single flattened `program`.
+///
+/// The AST-carrying fields (`program`, `functions`, `templates`) are
+/// **crate-private**: downstream consumers interact with the library
+/// exclusively through the accessor methods below, so the circom AST
+/// shape stays an internal detail.
 #[derive(Clone, Debug)]
 pub struct CircomLibrary {
     /// Absolute path of the source file (canonicalized when possible).
     pub source_path: PathBuf,
-    /// Templates available in the library, keyed by name.
-    pub templates: HashMap<String, CircomTemplateEntry>,
-    /// Functions available for inlining inside templates, keyed by name.
-    pub functions: HashMap<String, ast::FunctionDef>,
+    /// Templates available in the library, keyed by name. Access
+    /// through [`CircomLibrary::template`] / [`template_names`] so
+    /// the backing AST shape stays encapsulated.
+    pub(crate) templates: HashMap<String, CircomTemplateEntry>,
+    /// Functions available for inlining inside templates, keyed by
+    /// name. Access via [`CircomLibrary::function`].
+    pub(crate) functions: HashMap<String, ast::FunctionDef>,
     /// Full program AST with `include` chain already resolved.
-    pub program: ast::CircomProgram,
+    /// Kept for the library-mode lowering helpers inside the circom
+    /// crate; never exposed outside it.
+    pub(crate) program: ast::CircomProgram,
     /// Non-fatal diagnostics emitted by the constraint analyzer while
-    /// loading this library (e.g. `W101`, `W103`). Always empty when
-    /// the caller constructs a `CircomLibrary` manually; populated by
-    /// [`crate::compile_template_library`].
+    /// loading this library (e.g. `W101`, `W103`).
     pub warnings: Vec<Diagnostic>,
 }
 
