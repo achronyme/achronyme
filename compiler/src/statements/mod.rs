@@ -238,6 +238,95 @@ mod circom_import_dispatch_tests {
     }
 
     #[test]
+    fn import_circuit_circom_with_main_component_registers_global() {
+        let circom_path = temp_circom(
+            "circuit_main",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            component main = Square();
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import circuit \"./{rel}\" as SquareCircuit\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler
+            .compile(&ach_src)
+            .expect("import circuit should compile a full circom circuit");
+
+        // Unlike namespace/selective imports, `import circuit` binds a
+        // runtime global (the serialized ProveIR blob).
+        let entry = compiler
+            .global_symbols
+            .get("SquareCircuit")
+            .expect("SquareCircuit global registered");
+        let params = entry.param_names.as_ref().expect("param_names present");
+        assert!(params.iter().any(|p| p == "x"));
+        assert!(params.iter().any(|p| p == "y"));
+
+        // It must NOT be registered on the circom_* tables — those are
+        // for library-mode imports only.
+        assert!(!compiler.circom_namespaces.contains_key("SquareCircuit"));
+        assert!(!compiler
+            .circom_template_aliases
+            .contains_key("SquareCircuit"));
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn import_circuit_circom_without_main_errors() {
+        let circom_path = temp_circom(
+            "circuit_no_main",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import circuit \"./{rel}\" as C\n");
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        let err = compiler
+            .compile(&ach_src)
+            .expect_err("import circuit without component main should fail");
+        match err {
+            CompilerError::CompileError(msg, _) => {
+                assert!(
+                    msg.contains("no `component main`") || msg.contains("component main"),
+                    "expected missing main error, got: {msg}"
+                );
+            }
+            other => panic!("expected CompileError, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
     fn import_circom_duplicate_alias_conflicts() {
         let circom_path = temp_circom(
             "dup_alias",
@@ -574,6 +663,10 @@ impl StatementCompiler for Compiler {
         alias: &str,
         span: &Span,
     ) -> Result<(), CompilerError> {
+        if detect_import_kind(path) == ImportFileKind::Circom {
+            return compile_import_circuit_circom(self, path, alias, span);
+        }
+
         // 1. Resolve path relative to base_path
         let base = self
             .base_path
@@ -1157,6 +1250,84 @@ fn compile_selective_import_circom(
             .entry(name.clone())
             .or_insert_with(|| (library_arc.clone(), name.clone()));
     }
+
+    Ok(())
+}
+
+/// Dispatch point for `import circuit "x.circom" as C` — full-circuit
+/// embed of a `.circom` file that MUST declare `component main = ...`.
+/// The file is lowered through the circom frontend to a complete
+/// ProveIR, serialized as bytes, and bound to `alias` as a runtime
+/// global (same shape the native .ach `import circuit` uses).
+fn compile_import_circuit_circom(
+    compiler: &mut Compiler,
+    path: &str,
+    alias: &str,
+    span: &Span,
+) -> Result<(), CompilerError> {
+    // 1. Resolve the path against base_path.
+    let base = compiler
+        .base_path
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let full_path = base.join(path);
+    if !full_path.exists() {
+        return Err(CompilerError::CompileError(
+            format!("circuit file not found: {}", full_path.display()),
+            span_box(span),
+        ));
+    }
+
+    // 2. Compile the circom file — must have `component main`.
+    let result = circom::compile_file(&full_path, &compiler.circom_lib_dirs).map_err(|e| {
+        let mut msg = format!("failed to compile circom circuit `{}`: {e}", path);
+        for diag in e.to_diagnostics() {
+            msg.push_str(&format!("\n  - {}", diag.message));
+        }
+        CompilerError::CompileError(msg, span_box(span))
+    })?;
+    let mut prove_ir = result.prove_ir;
+    prove_ir.name = Some(alias.to_string());
+
+    // 3. Serialize ProveIR → bytes (mirrors the .ach import circuit path).
+    let ir_bytes = prove_ir.to_bytes(compiler.prime_id).map_err(|e| {
+        CompilerError::CompileError(format!("ProveIR serialization: {e}"), span_box(span))
+    })?;
+
+    // 4. Store bytes + bind the alias as a global.
+    let handle = compiler.intern_bytes(ir_bytes);
+    let val = Value::bytes(handle);
+    let idx = compiler.add_constant(val)?;
+    if idx > 0xFFFF {
+        return Err(CompilerError::TooManyConstants(span_box(span)));
+    }
+
+    if compiler.next_global_idx == u16::MAX {
+        return Err(CompilerError::TooManyConstants(span_box(span)));
+    }
+    let global_idx = compiler.next_global_idx;
+    compiler.next_global_idx += 1;
+
+    let circuit_param_names: Vec<String> = prove_ir
+        .public_inputs
+        .iter()
+        .chain(prove_ir.witness_inputs.iter())
+        .map(|input| input.name.clone())
+        .collect();
+    compiler.global_symbols.insert(
+        alias.to_string(),
+        crate::types::GlobalEntry {
+            index: global_idx,
+            type_ann: None,
+            is_mutable: false,
+            param_names: Some(circuit_param_names),
+        },
+    );
+
+    let reg = compiler.alloc_reg()?;
+    compiler.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
+    compiler.emit_abx(vm::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
+    compiler.free_reg(reg)?;
 
     Ok(())
 }
