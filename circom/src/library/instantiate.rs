@@ -159,10 +159,14 @@ pub fn instantiate_template_into(
             }
         })?;
 
-        // Propagate compile-time-known inputs into the sub-template
-        // so the lowerer emits `Const` instead of `Input` for them.
+        // Propagate compile-time-known inputs into the sub-template so
+        // the lowerer emits `Const` instead of `Input` for them. We do
+        // NOT emit a Let binding for Const inputs at all — it would be
+        // dead code (the body never reads the mangled name because
+        // const_inputs short-circuits in inline_component_body_with_const_inputs).
         if let CircuitExpr::Const(fc) = expr {
             const_inputs.insert(input.name.clone(), *fc);
+            continue;
         }
 
         let mangled = format!("{parent_prefix}_{}", input.name);
@@ -355,6 +359,46 @@ mod tests {
             other => panic!("expected Scalar Var(c0_y), got {other:?}"),
         }
         assert!(inst.body.len() >= 2);
+    }
+
+    #[test]
+    fn instantiate_const_input_skips_trivial_let() {
+        // When a signal input is a compile-time Const, the wiring Let
+        // would be dead code: inline_component_body_with_const_inputs
+        // injects the value into the sub-template's known_constants
+        // and the mangled name is never referenced. Verify no Let
+        // binding for the mangled input name is emitted.
+        let lib = make_library(
+            r#"
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            "#,
+        );
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            "x".to_string(),
+            CircuitExpr::Const(FieldConst::from_u64(5)),
+        );
+        let inst = instantiate_template_into(&lib, "Square", &[], &inputs, "k0", &dummy_span())
+            .expect("instantiation should succeed");
+
+        let has_mangled_input_let = inst.body.iter().any(|n| match n {
+            CircuitNode::Let { name, .. } => name == "k0_x",
+            _ => false,
+        });
+        assert!(
+            !has_mangled_input_let,
+            "Const inputs should not emit a wiring Let, body was: {:?}",
+            inst.body
+        );
+        // The Scalar output must still be present.
+        assert!(matches!(
+            inst.outputs.get("y"),
+            Some(TemplateOutput::Scalar(CircuitExpr::Var(_)))
+        ));
     }
 
     #[test]
