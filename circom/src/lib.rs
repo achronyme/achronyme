@@ -28,7 +28,10 @@ pub mod parser;
 pub mod token;
 pub mod witness;
 
-pub use library::{CircomLibrary, CircomTemplateEntry, DimensionExpr, SignalSig};
+pub use library::{
+    instantiate_template_into, CircomLibrary, CircomTemplateEntry, DimensionExpr,
+    InstantiationError, SignalSig, TemplateInstantiation,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
