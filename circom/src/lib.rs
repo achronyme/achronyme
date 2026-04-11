@@ -209,22 +209,36 @@ pub fn compile_file(
     path: &Path,
     library_dirs: &[PathBuf],
 ) -> Result<CircomCompileResult, CircomError> {
+    let (program, warnings) = load_and_validate_program(path, library_dirs)?;
+    compile_program_with_warnings(&program, warnings)
+}
+
+/// Shared pipeline between [`compile_file`] and
+/// [`compile_template_library`]: resolve includes, surface parse
+/// errors, validate the version pragma, and run constraint analysis.
+///
+/// Returns the flattened [`ast::CircomProgram`] plus any non-fatal
+/// warnings emitted by the constraint analyzer. Hard errors short-circuit
+/// the pipeline via the appropriate [`CircomError`] variant.
+fn load_and_validate_program(
+    path: &Path,
+    library_dirs: &[PathBuf],
+) -> Result<(ast::CircomProgram, Vec<Diagnostic>), CircomError> {
     let resolved = analysis::include_resolver::resolve_includes(path, library_dirs)
         .map_err(CircomError::IncludeError)?;
 
-    // Check for parse errors in any included file
-    let errors: Vec<&Diagnostic> = resolved
+    // Surface parse-time errors in the root or any include.
+    let parse_errs: Vec<&Diagnostic> = resolved
         .diagnostics
         .iter()
         .filter(|d| d.severity == diagnostics::Severity::Error)
         .collect();
-    if !errors.is_empty() {
+    if !parse_errs.is_empty() {
         return Err(CircomError::ParseError(
-            errors.into_iter().cloned().collect(),
+            parse_errs.into_iter().cloned().collect(),
         ));
     }
 
-    // Convert ResolvedProgram → CircomProgram for shared pipeline
     let program = ast::CircomProgram {
         version: resolved.version,
         custom_templates: resolved.custom_templates,
@@ -233,7 +247,33 @@ pub fn compile_file(
         main_component: resolved.main_component,
     };
 
-    compile_program(&program)
+    let warnings = validate_program(&program)?;
+    Ok((program, warnings))
+}
+
+/// Run the non-parse validation passes on an already-parsed
+/// [`ast::CircomProgram`]: version pragma sanity and constraint
+/// analysis. Returns non-fatal warnings; errors become the
+/// appropriate [`CircomError`] variant.
+fn validate_program(program: &ast::CircomProgram) -> Result<Vec<Diagnostic>, CircomError> {
+    validate_version_pragma(program);
+
+    let reports = analysis::constraint_check::check_constraints(&program.definitions);
+    let mut constraint_errors = Vec::new();
+    let mut warnings = Vec::new();
+    for report in reports {
+        for diag in report.diagnostics {
+            if diag.severity == diagnostics::Severity::Error {
+                constraint_errors.push(diag);
+            } else {
+                warnings.push(diag);
+            }
+        }
+    }
+    if !constraint_errors.is_empty() {
+        return Err(CircomError::ConstraintError(constraint_errors));
+    }
+    Ok(warnings)
 }
 
 /// Compile a `.circom` file as a reusable library of templates.
@@ -254,51 +294,7 @@ pub fn compile_template_library(
     path: &Path,
     library_dirs: &[PathBuf],
 ) -> Result<CircomLibrary, CircomError> {
-    let resolved = analysis::include_resolver::resolve_includes(path, library_dirs)
-        .map_err(CircomError::IncludeError)?;
-
-    // Surface any parse-time errors in the root or includes.
-    let parse_errs: Vec<&Diagnostic> = resolved
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == diagnostics::Severity::Error)
-        .collect();
-    if !parse_errs.is_empty() {
-        return Err(CircomError::ParseError(
-            parse_errs.into_iter().cloned().collect(),
-        ));
-    }
-
-    let program = ast::CircomProgram {
-        version: resolved.version,
-        custom_templates: resolved.custom_templates,
-        includes: Vec::new(),
-        definitions: resolved.definitions,
-        main_component: resolved.main_component,
-    };
-
-    // Version sanity warnings (non-fatal).
-    validate_version_pragma(&program);
-
-    // Constraint analysis — errors block library compilation, warnings
-    // are collected and attached to the returned library so callers
-    // (e.g. the Achronyme compiler's import dispatch) can re-render
-    // them alongside the .ach import span.
-    let reports = analysis::constraint_check::check_constraints(&program.definitions);
-    let mut constraint_errors = Vec::new();
-    let mut warnings = Vec::new();
-    for report in reports {
-        for diag in report.diagnostics {
-            if diag.severity == diagnostics::Severity::Error {
-                constraint_errors.push(diag);
-            } else {
-                warnings.push(diag);
-            }
-        }
-    }
-    if !constraint_errors.is_empty() {
-        return Err(CircomError::ConstraintError(constraint_errors));
-    }
+    let (program, warnings) = load_and_validate_program(path, library_dirs)?;
 
     // Collect templates + functions.
     let mut templates = HashMap::new();
@@ -329,30 +325,20 @@ pub fn compile_template_library(
     })
 }
 
-/// Shared compilation pipeline: analysis + lowering.
+/// Shared compilation pipeline: analysis + lowering. Runs validation.
 fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, CircomError> {
-    // 1. Version pragma validation
-    validate_version_pragma(program);
+    let warnings = validate_program(program)?;
+    compile_program_with_warnings(program, warnings)
+}
 
-    // 2. Constraint analysis
-    let reports = analysis::constraint_check::check_constraints(&program.definitions);
-    let all_diags: Vec<Diagnostic> = reports.into_iter().flat_map(|r| r.diagnostics).collect();
-
-    // Separate warnings (returned to caller for rendering) from errors (block compilation)
-    let mut warnings = Vec::new();
-    let mut constraint_errors = Vec::new();
-    for diag in all_diags {
-        if diag.severity == diagnostics::Severity::Error {
-            constraint_errors.push(diag);
-        } else {
-            warnings.push(diag);
-        }
-    }
-    if !constraint_errors.is_empty() {
-        return Err(CircomError::ConstraintError(constraint_errors));
-    }
-
-    // 3. Find main component and its template
+/// Same as [`compile_program`] but skips validation — callers who
+/// already ran [`load_and_validate_program`] (e.g. [`compile_file`])
+/// pass its warnings through here to avoid doing the work twice.
+fn compile_program_with_warnings(
+    program: &ast::CircomProgram,
+    warnings: Vec<Diagnostic>,
+) -> Result<CircomCompileResult, CircomError> {
+    // 1. Find main component and its template
     let main = program
         .main_component
         .as_ref()
