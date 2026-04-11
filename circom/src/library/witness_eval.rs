@@ -14,33 +14,24 @@ use crate::ast;
 use crate::lowering::template::lower_template;
 use crate::witness::{compute_witness_hints_with_captures, WitnessError};
 
+use super::error::{check_param_count, find_template, LibraryError};
 use super::instantiate::{iter_multi_index, resolve_output_dims};
 use super::metadata::extract_template_metadata;
 use super::types::CircomLibrary;
 
 /// Reason a VM-mode witness evaluation was rejected.
+///
+/// Shared low-level failures (unknown template, wrong param count,
+/// unresolved output dimension) live in [`LibraryError`] and are
+/// composed in via the [`WitnessEvalError::Library`] variant.
 #[derive(Debug)]
 pub enum WitnessEvalError {
-    /// The requested template does not exist in the library.
-    UnknownTemplate {
-        name: String,
-        available: Vec<String>,
-    },
-    /// Template argument count does not match `template.params`.
-    ParamCountMismatch {
-        template: String,
-        expected: usize,
-        got: usize,
-    },
+    /// Shared library-level failure.
+    Library(LibraryError),
     /// Lowering to ProveIR failed.
     Lowering(String),
     /// Witness computation failed (assertion, missing input, etc.).
     Witness(WitnessError),
-    /// An output's array dimension could not be resolved from the
-    /// template parameters — typically means the caller passed the
-    /// wrong captures or the template has an unsupported symbolic
-    /// dimension.
-    UnresolvedOutputDimension { template: String, signal: String },
     /// Output signal value was not populated by the witness hint pass.
     /// Usually indicates that the template body relies on values this
     /// evaluator cannot reconstruct off-circuit.
@@ -50,25 +41,9 @@ pub enum WitnessEvalError {
 impl std::fmt::Display for WitnessEvalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownTemplate { name, available } => write!(
-                f,
-                "circom library has no template `{name}`; available: {}",
-                available.join(", ")
-            ),
-            Self::ParamCountMismatch {
-                template,
-                expected,
-                got,
-            } => write!(
-                f,
-                "template `{template}` expects {expected} template parameter(s), got {got}"
-            ),
+            Self::Library(e) => write!(f, "{e}"),
             Self::Lowering(msg) => write!(f, "lowering failed: {msg}"),
             Self::Witness(e) => write!(f, "witness computation failed: {e}"),
-            Self::UnresolvedOutputDimension { template, signal } => write!(
-                f,
-                "output `{signal}` of template `{template}` has an unresolved array dimension"
-            ),
             Self::MissingOutput { template, signal } => write!(
                 f,
                 "witness evaluator did not produce a value for `{template}.{signal}`"
@@ -78,6 +53,12 @@ impl std::fmt::Display for WitnessEvalError {
 }
 
 impl std::error::Error for WitnessEvalError {}
+
+impl From<LibraryError> for WitnessEvalError {
+    fn from(e: LibraryError) -> Self {
+        Self::Library(e)
+    }
+}
 
 /// Evaluate a Circom template in VM mode (witness-only, no constraint
 /// generation) against concrete inputs and template parameter values.
@@ -104,27 +85,10 @@ pub fn evaluate_template_witness<F: FieldBackend>(
     template_args: &[u64],
     signal_inputs: &HashMap<String, FieldElement<F>>,
 ) -> Result<HashMap<String, FieldElement<F>>, WitnessEvalError> {
-    // 1. Locate the template.
-    let template = library
-        .program
-        .definitions
-        .iter()
-        .find_map(|d| match d {
-            ast::Definition::Template(t) if t.name == template_name => Some(t),
-            _ => None,
-        })
-        .ok_or_else(|| WitnessEvalError::UnknownTemplate {
-            name: template_name.to_string(),
-            available: library.templates.keys().cloned().collect(),
-        })?;
-
-    if template_args.len() != template.params.len() {
-        return Err(WitnessEvalError::ParamCountMismatch {
-            template: template_name.to_string(),
-            expected: template.params.len(),
-            got: template_args.len(),
-        });
-    }
+    // 1. Locate the template and validate argument count — shared
+    //    with the instantiation path.
+    let template = find_template(library, template_name)?;
+    check_param_count(template, template_args.len())?;
 
     // 2. Synthesize a throwaway MainComponent whose template_args are
     //    numeric literals, so `lower_template` can seed its own
@@ -190,10 +154,10 @@ pub fn evaluate_template_witness<F: FieldBackend>(
             continue;
         }
         let dims = resolve_output_dims(&out.dimensions).ok_or_else(|| {
-            WitnessEvalError::UnresolvedOutputDimension {
+            WitnessEvalError::Library(LibraryError::UnresolvedOutputDimension {
                 template: template_name.to_string(),
                 signal: out.name.clone(),
-            }
+            })
         })?;
         for index in iter_multi_index(&dims) {
             let suffix = index
@@ -291,7 +255,9 @@ mod tests {
         let result = evaluate_template_witness::<Bn254Fr>(&lib, "Cube", &[], &HashMap::new());
         assert!(matches!(
             result,
-            Err(WitnessEvalError::UnknownTemplate { .. })
+            Err(WitnessEvalError::Library(
+                LibraryError::UnknownTemplate { .. }
+            ))
         ));
     }
 
@@ -310,11 +276,13 @@ mod tests {
         let result = evaluate_template_witness::<Bn254Fr>(&lib, "Num2Bits", &[], &inputs);
         assert!(matches!(
             result,
-            Err(WitnessEvalError::ParamCountMismatch {
-                expected: 1,
-                got: 0,
-                ..
-            })
+            Err(WitnessEvalError::Library(
+                LibraryError::ParamCountMismatch {
+                    expected: 1,
+                    got: 0,
+                    ..
+                }
+            ))
         ));
     }
 }

@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use diagnostics::Span;
 use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
 
-use crate::ast;
 use crate::lowering::components::inline_component_body_with_const_inputs;
 use crate::lowering::context::LoweringContext;
 
+use super::error::{check_param_count, find_template, LibraryError};
 use super::metadata::extract_template_metadata;
 use super::types::{CircomLibrary, DimensionExpr};
 
@@ -34,26 +34,18 @@ pub struct TemplateInstantiation {
 }
 
 /// Reason an instantiation was rejected.
+///
+/// Shared low-level failures (unknown template, wrong param count,
+/// unresolved output dimension) live in [`LibraryError`] and are
+/// composed in via the [`InstantiationError::Library`] variant.
+/// Instantiation-specific failures get their own variants below.
 #[derive(Clone, Debug)]
 pub enum InstantiationError {
-    /// The requested template does not exist in the library.
-    UnknownTemplate {
-        name: String,
-        available: Vec<String>,
-    },
-    /// The number of supplied template arguments does not match the
-    /// template's parameter list.
-    ParamCountMismatch {
-        template: String,
-        expected: usize,
-        got: usize,
-    },
+    /// Shared library-level failure (unknown template, param count
+    /// mismatch, unresolved output dimension).
+    Library(LibraryError),
     /// An input signal was not wired by the caller.
     MissingSignalInput { template: String, signal: String },
-    /// An array-valued signal output had an unresolved dimension
-    /// (the caller did not pass a concrete value for a template
-    /// parameter referenced by the output's dimension).
-    UnresolvedOutputDimension { template: String, signal: String },
     /// The underlying lowering step failed.
     Lowering(String),
 }
@@ -61,28 +53,10 @@ pub enum InstantiationError {
 impl std::fmt::Display for InstantiationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownTemplate { name, available } => {
-                write!(
-                    f,
-                    "circom library has no template `{name}`; available: {}",
-                    available.join(", ")
-                )
-            }
-            Self::ParamCountMismatch {
-                template,
-                expected,
-                got,
-            } => write!(
-                f,
-                "template `{template}` expects {expected} template parameter(s), got {got}"
-            ),
+            Self::Library(e) => write!(f, "{e}"),
             Self::MissingSignalInput { template, signal } => write!(
                 f,
                 "template `{template}` requires signal input `{signal}` which was not provided"
-            ),
-            Self::UnresolvedOutputDimension { template, signal } => write!(
-                f,
-                "output `{signal}` of template `{template}` has an unresolved array dimension"
             ),
             Self::Lowering(msg) => write!(f, "lowering failed: {msg}"),
         }
@@ -90,6 +64,12 @@ impl std::fmt::Display for InstantiationError {
 }
 
 impl std::error::Error for InstantiationError {}
+
+impl From<LibraryError> for InstantiationError {
+    fn from(e: LibraryError) -> Self {
+        Self::Library(e)
+    }
+}
 
 /// Instantiate a Circom template into a parent circuit body.
 ///
@@ -113,27 +93,10 @@ pub fn instantiate_template_into(
     parent_prefix: &str,
     span: &Span,
 ) -> Result<TemplateInstantiation, InstantiationError> {
-    // 1. Locate the template in the library's AST.
-    let template = library
-        .program
-        .definitions
-        .iter()
-        .find_map(|d| match d {
-            ast::Definition::Template(t) if t.name == template_name => Some(t),
-            _ => None,
-        })
-        .ok_or_else(|| InstantiationError::UnknownTemplate {
-            name: template_name.to_string(),
-            available: library.templates.keys().cloned().collect::<Vec<_>>(),
-        })?;
-
-    if template_args.len() != template.params.len() {
-        return Err(InstantiationError::ParamCountMismatch {
-            template: template_name.to_string(),
-            expected: template.params.len(),
-            got: template_args.len(),
-        });
-    }
+    // 1. Locate the template and validate argument count — both shared
+    //    with the witness-eval path via `error::LibraryError`.
+    let template = find_template(library, template_name)?;
+    check_param_count(template, template_args.len())?;
 
     // 2. Re-extract metadata with the concrete template args folded in so
     //    that output dimensions can be enumerated as scalar names.
@@ -214,10 +177,10 @@ pub fn instantiate_template_into(
             continue;
         }
         let dims = resolve_output_dims(&out.dimensions).ok_or_else(|| {
-            InstantiationError::UnresolvedOutputDimension {
+            InstantiationError::Library(LibraryError::UnresolvedOutputDimension {
                 template: template_name.to_string(),
                 signal: out.name.clone(),
-            }
+            })
         })?;
         for index in iter_multi_index(&dims) {
             let suffix = index
@@ -283,7 +246,9 @@ mod tests {
             instantiate_template_into(&lib, "Cube", &[], &HashMap::new(), "c0", &dummy_span());
         assert!(matches!(
             result,
-            Err(InstantiationError::UnknownTemplate { .. })
+            Err(InstantiationError::Library(
+                LibraryError::UnknownTemplate { .. }
+            ))
         ));
     }
 
@@ -301,11 +266,13 @@ mod tests {
             instantiate_template_into(&lib, "Num2Bits", &[], &HashMap::new(), "c0", &dummy_span());
         assert!(matches!(
             result,
-            Err(InstantiationError::ParamCountMismatch {
-                expected: 1,
-                got: 0,
-                ..
-            })
+            Err(InstantiationError::Library(
+                LibraryError::ParamCountMismatch {
+                    expected: 1,
+                    got: 0,
+                    ..
+                }
+            ))
         ));
     }
 

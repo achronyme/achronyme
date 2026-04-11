@@ -30,7 +30,8 @@ pub mod witness;
 
 pub use library::{
     evaluate_template_witness, instantiate_template_into, CircomLibrary, CircomTemplateEntry,
-    DimensionExpr, InstantiationError, SignalSig, TemplateInstantiation, WitnessEvalError,
+    DimensionExpr, InstantiationError, LibraryError, SignalSig, TemplateInstantiation,
+    WitnessEvalError,
 };
 
 use std::collections::{HashMap, HashSet};

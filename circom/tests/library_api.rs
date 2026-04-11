@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use circom::{
     compile_template_library, evaluate_template_witness, instantiate_template_into, DimensionExpr,
-    InstantiationError, WitnessEvalError,
+    InstantiationError, LibraryError, WitnessEvalError,
 };
 use diagnostics::Span;
 use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
@@ -207,7 +207,7 @@ fn evaluate_poseidon_unknown_name() {
     let result =
         evaluate_template_witness::<Bn254Fr>(&lib, "DefinitelyNotAPoseidon", &[2], &HashMap::new());
     match result {
-        Err(WitnessEvalError::UnknownTemplate { available, .. }) => {
+        Err(WitnessEvalError::Library(LibraryError::UnknownTemplate { available, .. })) => {
             assert!(available.iter().any(|t| t == "Poseidon"));
         }
         other => panic!("expected UnknownTemplate, got {other:?}"),

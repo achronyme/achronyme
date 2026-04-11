@@ -23,11 +23,13 @@
 //! All public items are re-exported from this module so downstream
 //! crates use a single path: `circom::library::*`.
 
+mod error;
 mod instantiate;
 mod metadata;
 mod types;
 mod witness_eval;
 
+pub use error::LibraryError;
 pub use instantiate::{instantiate_template_into, InstantiationError, TemplateInstantiation};
 pub use metadata::extract_template_metadata;
 pub use types::{CircomLibrary, CircomTemplateEntry, DimensionExpr, SignalSig};
