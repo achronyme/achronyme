@@ -21,11 +21,14 @@
 pub mod analysis;
 pub mod ast;
 pub mod lexer;
+pub mod library;
 // pub(crate) so lib.rs can access lowering::utils::const_eval_u64
 pub(crate) mod lowering;
 pub mod parser;
 pub mod token;
 pub mod witness;
+
+pub use library::{CircomLibrary, CircomTemplateEntry, DimensionExpr, SignalSig};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
