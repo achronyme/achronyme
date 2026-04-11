@@ -31,7 +31,7 @@ pub mod witness;
 pub use library::{
     evaluate_template_witness, instantiate_template_into, CircomLibrary, CircomTemplateEntry,
     DimensionExpr, InstantiationError, LibraryError, SignalSig, TemplateInstantiation,
-    WitnessEvalError,
+    TemplateOutput, TemplateOutputValue, WitnessEvalError,
 };
 
 use std::collections::{HashMap, HashSet};

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use circom::{
     compile_template_library, evaluate_template_witness, instantiate_template_into, DimensionExpr,
-    InstantiationError, LibraryError, WitnessEvalError,
+    InstantiationError, LibraryError, TemplateOutput, WitnessEvalError,
 };
 use diagnostics::Span;
 use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
@@ -109,7 +109,10 @@ fn evaluate_poseidon_two_inputs_vm_mode() {
 
     let out_a = evaluate_template_witness::<Bn254Fr>(&lib, "Poseidon", &[2], &inputs_a)
         .expect("Poseidon(2) should evaluate off-circuit");
-    let hash_a = *out_a.get("out").expect("out signal present");
+    let hash_a = out_a
+        .get("out")
+        .and_then(|v| v.as_scalar())
+        .expect("out signal present as scalar");
     assert_ne!(
         hash_a,
         FieldElement::<Bn254Fr>::zero(),
@@ -120,7 +123,10 @@ fn evaluate_poseidon_two_inputs_vm_mode() {
     inputs_b.insert("inputs_1".to_string(), FieldElement::<Bn254Fr>::from_u64(3));
     let out_b = evaluate_template_witness::<Bn254Fr>(&lib, "Poseidon", &[2], &inputs_b)
         .expect("Poseidon(2) should evaluate off-circuit");
-    let hash_b = *out_b.get("out").expect("out signal present");
+    let hash_b = out_b
+        .get("out")
+        .and_then(|v| v.as_scalar())
+        .expect("out signal present as scalar");
     assert_ne!(
         hash_a, hash_b,
         "changing an input should change the Poseidon hash"
@@ -182,8 +188,8 @@ fn instantiate_poseidon_inline_body() {
     }
     let out = inst.outputs.get("out").expect("Sigma has out output");
     match out {
-        CircuitExpr::Var(v) => assert_eq!(v, "s0_out"),
-        other => panic!("expected Var, got {other:?}"),
+        TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "s0_out"),
+        other => panic!("expected Scalar Var, got {other:?}"),
     }
 }
 

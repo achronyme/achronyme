@@ -30,10 +30,12 @@ mod types;
 mod witness_eval;
 
 pub use error::LibraryError;
-pub use instantiate::{instantiate_template_into, InstantiationError, TemplateInstantiation};
-pub use metadata::extract_template_metadata;
+pub use instantiate::{
+    instantiate_template_into, InstantiationError, TemplateInstantiation, TemplateOutput,
+};
+pub use metadata::{extract_template_metadata, resolve_entry};
 pub use types::{CircomLibrary, CircomTemplateEntry, DimensionExpr, SignalSig};
-pub use witness_eval::{evaluate_template_witness, WitnessEvalError};
+pub use witness_eval::{evaluate_template_witness, TemplateOutputValue, WitnessEvalError};
 
 #[cfg(test)]
 pub(crate) mod test_support {

@@ -60,6 +60,36 @@ impl From<LibraryError> for WitnessEvalError {
     }
 }
 
+/// A single evaluated output of a template in VM mode.
+#[derive(Clone, Debug)]
+pub enum TemplateOutputValue<F: FieldBackend> {
+    /// Scalar output — single field element.
+    Scalar(FieldElement<F>),
+    /// Array output — resolved shape plus row-major element values.
+    Array {
+        dims: Vec<u64>,
+        values: Vec<FieldElement<F>>,
+    },
+}
+
+impl<F: FieldBackend> TemplateOutputValue<F> {
+    /// Return the scalar value if this is a scalar, else `None`.
+    pub fn as_scalar(&self) -> Option<FieldElement<F>> {
+        match self {
+            Self::Scalar(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Return the row-major slice if this is an array, else `None`.
+    pub fn as_array(&self) -> Option<&[FieldElement<F>]> {
+        match self {
+            Self::Array { values, .. } => Some(values),
+            _ => None,
+        }
+    }
+}
+
 /// Evaluate a Circom template in VM mode (witness-only, no constraint
 /// generation) against concrete inputs and template parameter values.
 ///
@@ -84,7 +114,7 @@ pub fn evaluate_template_witness<F: FieldBackend>(
     template_name: &str,
     template_args: &[u64],
     signal_inputs: &HashMap<String, FieldElement<F>>,
-) -> Result<HashMap<String, FieldElement<F>>, WitnessEvalError> {
+) -> Result<HashMap<String, TemplateOutputValue<F>>, WitnessEvalError> {
     // 1. Locate the template and validate argument count — shared
     //    with the instantiation path.
     let template = find_template(library, template_name)?;
@@ -144,17 +174,14 @@ pub fn evaluate_template_witness<F: FieldBackend>(
     let mut outputs = HashMap::new();
     for out in &entry.outputs {
         if out.is_scalar() {
-            match env.get(&out.name) {
-                Some(&val) => {
-                    outputs.insert(out.name.clone(), val);
-                }
-                None => {
-                    return Err(WitnessEvalError::MissingOutput {
+            let val =
+                env.get(&out.name)
+                    .copied()
+                    .ok_or_else(|| WitnessEvalError::MissingOutput {
                         template: template_name.to_string(),
                         signal: out.name.clone(),
-                    });
-                }
-            }
+                    })?;
+            outputs.insert(out.name.clone(), TemplateOutputValue::Scalar(val));
             continue;
         }
         let dims = resolve_output_dims(&out.dimensions).ok_or_else(|| {
@@ -163,6 +190,7 @@ pub fn evaluate_template_witness<F: FieldBackend>(
                 signal: out.name.clone(),
             })
         })?;
+        let mut values = Vec::with_capacity(dims.iter().product::<u64>() as usize);
         for index in iter_multi_index(&dims) {
             let suffix = index
                 .iter()
@@ -170,18 +198,19 @@ pub fn evaluate_template_witness<F: FieldBackend>(
                 .collect::<Vec<_>>()
                 .join("_");
             let key = format!("{}_{}", out.name, suffix);
-            match env.get(&key) {
-                Some(&val) => {
-                    outputs.insert(key, val);
-                }
-                None => {
-                    return Err(WitnessEvalError::MissingOutput {
-                        template: template_name.to_string(),
-                        signal: key,
-                    });
-                }
-            }
+            let val = env
+                .get(&key)
+                .copied()
+                .ok_or_else(|| WitnessEvalError::MissingOutput {
+                    template: template_name.to_string(),
+                    signal: key,
+                })?;
+            values.push(val);
         }
+        outputs.insert(
+            out.name.clone(),
+            TemplateOutputValue::Array { dims, values },
+        );
     }
 
     Ok(outputs)
@@ -210,7 +239,7 @@ mod tests {
             .expect("eval should succeed");
         assert_eq!(outputs.len(), 1);
         let y = outputs.get("y").expect("y output");
-        assert_eq!(*y, FieldElement::<Bn254Fr>::from_u64(49));
+        assert_eq!(y.as_scalar(), Some(FieldElement::<Bn254Fr>::from_u64(49)));
     }
 
     #[test]
@@ -236,12 +265,21 @@ mod tests {
         inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(13));
         let outputs = evaluate_template_witness::<Bn254Fr>(&lib, "Num2Bits", &[4], &inputs)
             .expect("eval should succeed");
-        assert_eq!(outputs.len(), 4);
-        let expected = [1u64, 0, 1, 1];
-        for (i, bit) in expected.iter().enumerate() {
-            let key = format!("out_{i}");
-            let got = outputs.get(&key).expect("output present");
-            assert_eq!(*got, FieldElement::<Bn254Fr>::from_u64(*bit), "bit {i}");
+        assert_eq!(outputs.len(), 1);
+        let out = outputs.get("out").expect("out entry");
+        match out {
+            TemplateOutputValue::Array { dims, values } => {
+                assert_eq!(dims, &vec![4u64]);
+                let expected = [1u64, 0, 1, 1];
+                for (i, bit) in expected.iter().enumerate() {
+                    assert_eq!(
+                        values[i],
+                        FieldElement::<Bn254Fr>::from_u64(*bit),
+                        "bit {i}"
+                    );
+                }
+            }
+            other => panic!("expected Array, got {other:?}"),
         }
     }
 

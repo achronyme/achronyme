@@ -15,6 +15,24 @@ use super::error::{check_param_count, find_template, LibraryError};
 use super::metadata::resolve_entry;
 use super::types::{CircomLibrary, DimensionExpr};
 
+/// A single declared output of an instantiated template.
+#[derive(Clone, Debug)]
+pub enum TemplateOutput {
+    /// Scalar signal output — single `CircuitExpr::Var` pointing at
+    /// the mangled name in the parent's scope.
+    Scalar(CircuitExpr),
+    /// Array signal output — row-major flattening of all elements.
+    ///
+    /// `dims` holds the resolved shape (e.g. `[n]` for `out[n]`),
+    /// `values` contains `dims.iter().product()` expressions in the
+    /// same order the witness evaluator uses (`name_i`, `name_i_j`,
+    /// etc.).
+    Array {
+        dims: Vec<u64>,
+        values: Vec<CircuitExpr>,
+    },
+}
+
 /// Result of inlining a Circom template into a parent circuit body.
 #[derive(Clone, Debug)]
 pub struct TemplateInstantiation {
@@ -24,13 +42,11 @@ pub struct TemplateInstantiation {
     /// sub-template's mangled signal names, followed by the mangled
     /// template body itself.
     pub body: Vec<CircuitNode>,
-    /// One entry per declared signal output of the template.
-    ///
-    /// For scalar outputs the value is a `CircuitExpr::Var` pointing
-    /// at the mangled output name in the parent's scope. For array
-    /// outputs, the map contains one entry per element with the
-    /// suffixed name (e.g. `out_0`, `out_1`, ...).
-    pub outputs: HashMap<String, CircuitExpr>,
+    /// One entry per declared signal output of the template, keyed
+    /// by the original output name. Scalars and arrays are
+    /// distinguished by the [`TemplateOutput`] variant, so callers
+    /// never have to special-case `out` vs `out_0` lookup.
+    pub outputs: HashMap<String, TemplateOutput>,
 }
 
 /// Reason an instantiation was rejected.
@@ -178,17 +194,15 @@ pub fn instantiate_template_into(
 
     body.extend(inlined);
 
-    // 5. Build the outputs map. Scalar outputs map to a single Var;
-    //    array outputs produce one entry per element using the stride
-    //    encoding the rest of the lowering pipeline already uses
-    //    (`name_i`, or for multi-dim `name_i_j...`). Dimensions must be
-    //    resolvable against the concrete template args.
+    // 5. Build the outputs map keyed by original output name.
+    //    Scalar outputs wrap a single Var; array outputs hold the
+    //    resolved shape + one Var per element in row-major order.
     let mut outputs = HashMap::new();
     for out in &entry.outputs {
         if out.is_scalar() {
             outputs.insert(
                 out.name.clone(),
-                CircuitExpr::Var(format!("{parent_prefix}_{}", out.name)),
+                TemplateOutput::Scalar(CircuitExpr::Var(format!("{parent_prefix}_{}", out.name))),
             );
             continue;
         }
@@ -198,18 +212,18 @@ pub fn instantiate_template_into(
                 signal: out.name.clone(),
             })
         })?;
-        for index in iter_multi_index(&dims) {
-            let suffix = index
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join("_");
-            let key = format!("{}_{}", out.name, suffix);
-            outputs.insert(
-                key.clone(),
-                CircuitExpr::Var(format!("{parent_prefix}_{key}")),
-            );
-        }
+        let values = iter_multi_index(&dims)
+            .into_iter()
+            .map(|index| {
+                let suffix = index
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                CircuitExpr::Var(format!("{parent_prefix}_{}_{}", out.name, suffix))
+            })
+            .collect();
+        outputs.insert(out.name.clone(), TemplateOutput::Array { dims, values });
     }
 
     Ok(TemplateInstantiation { body, outputs })
@@ -336,8 +350,10 @@ mod tests {
             other => panic!("expected Let, got {other:?}"),
         }
         assert_eq!(inst.outputs.len(), 1);
-        let y = inst.outputs.get("y").expect("y output");
-        assert!(matches!(y, CircuitExpr::Var(v) if v == "c0_y"));
+        match inst.outputs.get("y").expect("y output") {
+            TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "c0_y"),
+            other => panic!("expected Scalar Var(c0_y), got {other:?}"),
+        }
         assert!(inst.body.len() >= 2);
     }
 
@@ -373,14 +389,21 @@ mod tests {
         )
         .expect("Num2Bits(4) should instantiate");
 
-        for i in 0..4 {
-            let key = format!("out_{i}");
-            let expected = format!("c1_out_{i}");
-            match inst.outputs.get(&key).expect("output present") {
-                CircuitExpr::Var(v) => assert_eq!(v, &expected),
-                other => panic!("expected Var, got {other:?}"),
+        // The entire array is under a single key keyed by the
+        // declared output name, never `out_0`/`out_1`.
+        assert_eq!(inst.outputs.len(), 1);
+        match inst.outputs.get("out").expect("out entry") {
+            TemplateOutput::Array { dims, values } => {
+                assert_eq!(dims, &vec![4u64]);
+                assert_eq!(values.len(), 4);
+                for (i, v) in values.iter().enumerate() {
+                    match v {
+                        CircuitExpr::Var(name) => assert_eq!(name, &format!("c1_out_{i}")),
+                        other => panic!("expected Var, got {other:?}"),
+                    }
+                }
             }
+            other => panic!("expected Array, got {other:?}"),
         }
-        assert_eq!(inst.outputs.len(), 4);
     }
 }
