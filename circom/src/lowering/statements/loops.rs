@@ -176,7 +176,17 @@ pub(super) fn lower_for_loop<'a>(
                         // Write back evaluated vars to param_values AND
                         // known_constants so lower_expr emits Const(val)
                         // instead of Var(name) for compile-time vars.
+                        //
+                        // Do NOT write back the loop variable itself — it is
+                        // managed by env.known_constants at the top of each
+                        // iteration. Writing it to ctx.param_values would
+                        // pollute the persistent map with the iteration-0 value,
+                        // which then shadows the correct iteration value (via
+                        // `or_insert` in `all_constants`) for all later iterations.
                         for (k, v) in &eval_vars {
+                            if k == &var_name {
+                                continue;
+                            }
                             if !v.is_negative() {
                                 let fc = v.to_field_const();
                                 ctx.param_values.insert(k.clone(), fc);
