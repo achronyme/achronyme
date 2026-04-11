@@ -16,6 +16,7 @@ vm = { path = "../vm" }
 constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
+circom = { path = "../circom" }
 
 [dev-dependencies]
 proptest = "1"

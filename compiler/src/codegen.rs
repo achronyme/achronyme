@@ -47,6 +47,19 @@ pub struct Compiler {
     /// Tracks which selectively imported names have been referenced.
     pub used_imported_names: HashSet<String>,
 
+    // ── Circom interop ────────────────────────────────────────────
+    /// Library search directories for `.circom` includes, typically
+    /// read from `[circom] libs = [...]` in `achronyme.toml`.
+    pub circom_lib_dirs: Vec<PathBuf>,
+    /// Namespaces created by `import "x.circom" as P`. Templates are
+    /// referenced from prove/circuit/VM bodies via `P.TemplateName(...)(...)`.
+    /// These imports are **compile-time only** — no VM bytecode is emitted
+    /// for them, so the alias is not registered as a global.
+    pub circom_namespaces: HashMap<String, std::sync::Arc<circom::CircomLibrary>>,
+    /// Selectively imported Circom templates: unqualified name → (library, real template name).
+    /// Populated by `import { T1, T2 } from "x.circom"`.
+    pub circom_template_aliases: HashMap<String, (std::sync::Arc<circom::CircomLibrary>, String)>,
+
     /// Span of the expression/statement currently being compiled.
     pub current_span: Option<Span>,
 
@@ -145,6 +158,9 @@ impl Compiler {
             compiling_modules: HashSet::new(),
             imported_names: HashMap::new(),
             used_imported_names: HashSet::new(),
+            circom_lib_dirs: Vec::new(),
+            circom_namespaces: HashMap::new(),
+            circom_template_aliases: HashMap::new(),
             current_span: None,
             warnings: Vec::new(),
             known_methods,

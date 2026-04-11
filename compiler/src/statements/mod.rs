@@ -16,7 +16,6 @@ pub mod declarations;
 /// from the path's extension. Used to dispatch between the native `.ach`
 /// module loader and the `.circom` frontend (library-mode compilation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by Phase 2.2+ import dispatch
 pub(crate) enum ImportFileKind {
     /// Native Achronyme module — `.ach` suffix or no suffix at all.
     Ach,
@@ -30,7 +29,6 @@ pub(crate) enum ImportFileKind {
 /// anything else — including extensionless paths — resolves to
 /// [`ImportFileKind::Ach`]. The path is **not** validated here: that stays
 /// in the caller so the resulting error message can include the import span.
-#[allow(dead_code)] // consumed by Phase 2.2+ import dispatch
 pub(crate) fn detect_import_kind(path: &str) -> ImportFileKind {
     match Path::new(path)
         .extension()
@@ -40,6 +38,112 @@ pub(crate) fn detect_import_kind(path: &str) -> ImportFileKind {
     {
         Some("circom") => ImportFileKind::Circom,
         _ => ImportFileKind::Ach,
+    }
+}
+
+#[cfg(test)]
+mod circom_import_dispatch_tests {
+    use super::*;
+    use crate::codegen::Compiler;
+    use std::io::Write;
+
+    fn temp_circom(name: &str, src: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "ach_import_dispatch_{}_{}.circom",
+            std::process::id(),
+            name
+        ));
+        let mut f = std::fs::File::create(&path).expect("create temp circom");
+        f.write_all(src.as_bytes()).expect("write temp circom");
+        path
+    }
+
+    #[test]
+    fn import_circom_namespace_registers_library() {
+        let circom_path = temp_circom(
+            "ns_ok",
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let ach_src = format!("import \"./{}\" as P\n", rel);
+
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler.compile(&ach_src).expect("compile should succeed");
+
+        let ns = compiler
+            .circom_namespaces
+            .get("P")
+            .expect("P namespace registered");
+        assert!(ns.template("Square").is_some());
+        // Namespace imports must NOT register a runtime global.
+        assert!(
+            !compiler.global_symbols.contains_key("P"),
+            "P should not leak into global_symbols"
+        );
+
+        let _ = std::fs::remove_file(&circom_path);
+    }
+
+    #[test]
+    fn import_circom_missing_file_errors() {
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(std::env::temp_dir());
+        let result = compiler.compile("import \"./does-not-exist.circom\" as P\n");
+        match result {
+            Err(CompilerError::ModuleNotFound(msg, _)) => {
+                assert!(
+                    msg.contains("circom file not found"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            other => panic!("expected ModuleNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_circom_duplicate_alias_conflicts() {
+        let circom_path = temp_circom(
+            "dup_alias",
+            r#"
+            pragma circom 2.0.0;
+            template T() {
+                signal input x;
+                signal output y;
+                y <== x;
+            }
+            "#,
+        );
+        let tmp_dir = circom_path.parent().unwrap().to_path_buf();
+        let rel = circom_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        // Same alias, same path → idempotent.
+        let ach_src = format!("import \"./{rel}\" as P\nimport \"./{rel}\" as P\n");
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler
+            .compile(&ach_src)
+            .expect("duplicate same-path import is idempotent");
+
+        let _ = std::fs::remove_file(&circom_path);
     }
 }
 
@@ -426,6 +530,10 @@ impl StatementCompiler for Compiler {
         alias: &str,
         span: &Span,
     ) -> Result<(), CompilerError> {
+        if detect_import_kind(path) == ImportFileKind::Circom {
+            return compile_import_circom_namespace(self, path, alias, span);
+        }
+
         // 1. Resolve path relative to base_path
         let base = self
             .base_path
@@ -719,4 +827,83 @@ impl StatementCompiler for Compiler {
 
         Ok(())
     }
+}
+
+/// Dispatch point for `import "x.circom" as P` — namespace-mode import
+/// of a Circom library. This is compile-time only: no VM bytecode is
+/// emitted here and the alias is **not** registered as a runtime global.
+/// References inside `prove {}` / `circuit {}` blocks or VM expressions
+/// are resolved later by pattern-matching `Call { callee: Call { ... } }`
+/// against the namespace table (Phase 3).
+fn compile_import_circom_namespace(
+    compiler: &mut Compiler,
+    path: &str,
+    alias: &str,
+    span: &Span,
+) -> Result<(), CompilerError> {
+    // 1. Resolve path relative to the current base_path (same convention
+    //    as .ach imports). Circom `include` resolution inside the library
+    //    itself uses compiler.circom_lib_dirs as extra search roots.
+    let base = compiler
+        .base_path
+        .clone()
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+    let resolved = base.join(path);
+    if !resolved.exists() {
+        return Err(CompilerError::ModuleNotFound(
+            format!(
+                "circom file not found: {} (resolved from {})",
+                path,
+                base.display()
+            ),
+            span_box(span),
+        ));
+    }
+    let canonical = resolved.canonicalize().map_err(|e| {
+        CompilerError::CompileError(
+            format!(
+                "cannot canonicalize circom path {}: {e}",
+                resolved.display()
+            ),
+            span_box(span),
+        )
+    })?;
+
+    // 2. Reject a duplicate alias with a conflicting target (mirrors
+    //    .ach imports). Re-importing the same path under the same alias
+    //    is idempotent.
+    if let Some(existing) = compiler.circom_namespaces.get(alias) {
+        if existing.source_path != canonical {
+            return Err(CompilerError::DuplicateModuleAlias(
+                alias.to_string(),
+                span_box(span),
+            ));
+        }
+        return Ok(());
+    }
+    // An alias that's already used by a native module is also a conflict.
+    if compiler.imported_aliases.contains_key(alias) {
+        return Err(CompilerError::DuplicateModuleAlias(
+            alias.to_string(),
+            span_box(span),
+        ));
+    }
+
+    // 3. Load the library via the circom crate's public API.
+    let library =
+        circom::compile_template_library(&canonical, &compiler.circom_lib_dirs).map_err(|e| {
+            let mut msg = format!("failed to load circom library `{}`: {e}", path);
+            // Surface inner diagnostic messages when available (parse /
+            // constraint errors from the circom frontend).
+            for diag in e.to_diagnostics() {
+                msg.push_str(&format!("\n  - {}", diag.message));
+            }
+            CompilerError::CompileError(msg, span_box(span))
+        })?;
+
+    compiler
+        .circom_namespaces
+        .insert(alias.to_string(), std::sync::Arc::new(library));
+
+    Ok(())
 }
