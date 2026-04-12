@@ -196,7 +196,54 @@ pub(super) fn lower_for_loop<'a>(
                         continue;
                     }
                 }
+                // Fallthrough: lower the stmt normally. After emission, if
+                // we're in the mixed-signal-var eval path (e.g., MiMC7's
+                // var `t`) AND the stmt was a plain `Ident = expr`
+                // Substitution that fell through here (because its RHS
+                // referenced an intermediate signal array element like
+                // `t7[i-1]` that wasn't visible to `eval_vars`), keep
+                // `env.known_constants` in sync with the newly pushed
+                // `Let { name, value }` so subsequent stmts in the same
+                // unrolled iteration fold against the up-to-date value
+                // instead of the stale one written back by the previous
+                // iteration's var-only eval.
+                //
+                // Gated on `has_mixed_signal_var` because that is the only
+                // regime where iteration N's var-only eval may seed
+                // `env.known_constants` with a stale value that iteration
+                // N+1's fallthrough needs to overwrite. Other unroll
+                // regimes (component_array_ops / known_array_refs without
+                // mixed_signal_var — e.g. Poseidon's `Mix` template) run
+                // CompoundAssign loops that bind a var name to a
+                // non-const circuit expression; touching
+                // `env.known_constants` there would fold the var to its
+                // initial literal and silently zero out the accumulator.
+                let pre_len = nodes.len();
                 super::lower_stmt(stmt, env, nodes, ctx, pending)?;
+                if has_mixed_signal_var {
+                    if let Stmt::Substitution {
+                        op: AssignOp::Assign,
+                        target:
+                            Expr::Ident {
+                                name: target_name, ..
+                            },
+                        ..
+                    } = stmt
+                    {
+                        if let Some(CircuitNode::Let { name, value, .. }) =
+                            nodes.get(pre_len..).and_then(|new_nodes| new_nodes.last())
+                        {
+                            if name == target_name {
+                                if let Some(fc) = super::super::const_fold::try_fold_const(value) {
+                                    env.known_constants.insert(name.clone(), fc);
+                                    eval_vars.insert(name.clone(), BigVal::from_field_const(fc));
+                                } else {
+                                    env.known_constants.remove(name);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         env.known_constants.remove(&var_name);
