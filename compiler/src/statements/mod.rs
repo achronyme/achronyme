@@ -694,8 +694,44 @@ impl StatementCompiler for Compiler {
             } => {
                 // Store the AST for ProveIR (prove/circuit blocks inline outer functions).
                 // Only capture top-level functions (depth 1 = main script scope).
+                //
+                // When we're inside a namespace-imported module
+                // (`module_prefix = Some(alias)`), tag the stored FnDecl
+                // with its qualified name `alias::name` so prove blocks
+                // that dispatch via the `::` path find it in their
+                // `fn_table`. Without this, `h::commitment(...)` inside a
+                // prove block would silently miss because the module's
+                // functions land in the outer scope's fn_decl_asts with
+                // their bare name and the ProveIR compiler keys
+                // `fn_table` by the literal FnDecl name.
                 if self.compilers.len() == 1 {
-                    self.fn_decl_asts.push(stmt.clone());
+                    if let Some(prefix) = self.module_prefix.clone() {
+                        let qualified = format!("{prefix}::{name}");
+                        // Rebuild the stmt with the qualified name. Only
+                        // `FnDecl.name` changes; params, body,
+                        // return_type, span all stay put.
+                        let tagged = if let Stmt::FnDecl {
+                            params,
+                            body,
+                            return_type,
+                            span,
+                            ..
+                        } = stmt
+                        {
+                            Stmt::FnDecl {
+                                name: qualified,
+                                params: params.clone(),
+                                body: body.clone(),
+                                return_type: return_type.clone(),
+                                span: span.clone(),
+                            }
+                        } else {
+                            unreachable!("outer match arm guarantees Stmt::FnDecl")
+                        };
+                        self.fn_decl_asts.push(tagged);
+                    } else {
+                        self.fn_decl_asts.push(stmt.clone());
+                    }
                 }
                 let reg = self.compile_fn_core(Some(name), params, body)?;
                 self.free_reg(reg)?;

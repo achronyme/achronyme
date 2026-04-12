@@ -69,6 +69,21 @@ impl CircomVmCallEmitter for Compiler {
                 .circom_template_aliases
                 .get(name)
                 .map(|lib| (lib.clone(), name.clone())),
+            // `P::Poseidon(...)` — the compile-time `::` namespace
+            // form mirrored here so VM-mode calls match the ProveIR
+            // compiler's dispatch. Same fast-path as Ident: look up
+            // `type_name` in `circom_namespaces`, check the template
+            // actually exists in the library.
+            Expr::StaticAccess {
+                type_name, member, ..
+            } => {
+                let lib = self.circom_namespaces.get(type_name)?.clone();
+                if lib.template(member).is_some() {
+                    Some((lib, member.clone()))
+                } else {
+                    None
+                }
+            }
             Expr::DotAccess { object, field, .. } => {
                 let Expr::Ident { name: alias, .. } = object.as_ref() else {
                     return None;

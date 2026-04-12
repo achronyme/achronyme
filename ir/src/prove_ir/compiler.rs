@@ -1502,10 +1502,25 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 type_name: "BigInt".into(),
                 span: to_span(span),
             }),
-            _ => Err(ProveIrError::UnsupportedOperation {
-                description: format!("unknown static access `{type_name}::{member}`"),
-                span: to_span(span),
-            }),
+            _ => {
+                // Namespace lookup for `alias::const` where `alias` is an
+                // `import "./foo.ach" as alias`-style module alias. The
+                // fn_table already carries entries keyed `alias::name` for
+                // every exported function, and the outer scope's
+                // `CompEnvValue` map carries the same for exported
+                // constants. Resolving here at compile time is the prove-
+                // block sibling of the VM compiler's static-access fast
+                // path: no HashMap lookup at proof time, no runtime map
+                // object, just a direct value reference.
+                let qualified = format!("{type_name}::{member}");
+                if let Some(CompEnvValue::Scalar(resolved)) = self.env.get(&qualified) {
+                    return Ok(CircuitExpr::Var(resolved.clone()));
+                }
+                Err(ProveIrError::UnsupportedOperation {
+                    description: format!("unknown static access `{type_name}::{member}`"),
+                    span: to_span(span),
+                })
+            }
         }
     }
 
@@ -1568,17 +1583,58 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
 
         match callee {
-            // Method call: expr.method(args)
+            // Module function call via compile-time `::` path:
+            //   `alias::func(args)` parses as
+            //   `Call { callee: StaticAccess { type_name: alias, member: func }, args }`.
+            // The alias's exported functions live in `fn_table` under the
+            // `{alias}::{func}` key (seeded by the module loader at
+            // OuterScope build time), so this is a direct qualified
+            // lookup — no runtime map dispatch, no hashmap per call,
+            // fully constexpr. This is the new preferred syntax; the
+            // older `alias.func()` DotAccess form is still accepted
+            // below for a transition period.
+            Expr::StaticAccess {
+                type_name, member, ..
+            } => {
+                let qualified = format!("{type_name}::{member}");
+                if self.has_function(&qualified) {
+                    return self.compile_user_fn_call(&qualified, args, span);
+                }
+                Err(ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "unknown function `{type_name}::{member}` — is the alias \
+                         imported with `import \"./...\" as {type_name}` and the \
+                         function exported?"
+                    ),
+                    span: to_span(span),
+                })
+            }
+
+            // Method call: expr.method(args).
+            //
+            // `alias.func(...)` where `alias` is a module namespace
+            // import is no longer the canonical syntax — use
+            // `alias::func(...)` (handled by the `StaticAccess` arm
+            // above). Emit a migration error instead of silently
+            // falling through so the old syntax becomes a hard
+            // compile-time failure with a clean "did you mean" hint.
             Expr::DotAccess {
                 object,
                 field,
                 span: dot_span,
             } => {
-                // Check for module.func() first
                 if let Expr::Ident { name: module, .. } = object.as_ref() {
                     let qualified = format!("{module}::{field}");
-                    if self.has_function(&qualified) {
-                        return self.compile_user_fn_call(&qualified, args, span);
+                    if self.has_function(&qualified) || self.circom_table.contains_key(&qualified) {
+                        return Err(ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "use `{module}::{field}(...)` instead of \
+                                 `{module}.{field}(...)` — module-qualified calls \
+                                 are now compile-time paths, not dynamic method \
+                                 dispatch"
+                            ),
+                            span: to_span(span),
+                        });
                     }
                 }
                 self.compile_method_call(object, field, args, dot_span)
@@ -1707,6 +1763,23 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             Expr::Ident { name, .. } => {
                 if self.circom_table.contains_key(name) {
                     Some(name.clone())
+                } else {
+                    None
+                }
+            }
+            // Namespaced circom template via the compile-time `::` path:
+            // `P::Poseidon(2)([a, b])` parses as
+            //   Call { Call { StaticAccess { P, Poseidon }, [2] }, [arr] }
+            // so the inner callee is a `StaticAccess` whose `type_name`
+            // is the import alias. Match the same `{alias}::{template}`
+            // key format the circom dispatch table uses for namespace
+            // imports.
+            Expr::StaticAccess {
+                type_name, member, ..
+            } => {
+                let key = format!("{type_name}::{member}");
+                if self.circom_table.contains_key(&key) {
+                    Some(key)
                 } else {
                     None
                 }

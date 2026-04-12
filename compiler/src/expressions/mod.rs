@@ -383,16 +383,33 @@ impl Compiler {
             }
         }
 
-        // Detect method call pattern: expr.method(args) where method is known
+        // Detect method call pattern: expr.method(args) where method is known.
+        //
+        // `alias.func(...)` where `alias` is a module namespace import
+        // is NO LONGER a valid call shape — the canonical syntax is
+        // `alias::func(...)`, which is resolved at compile time against
+        // the unified dispatch table. Emit a clear migration error
+        // with a "did you mean" hint instead of silently falling
+        // through to the generic DotAccess path (which used to route
+        // through a runtime map lookup and couldn't be supported
+        // inside prove blocks).
         if let Expr::DotAccess { object, field, .. } = callee {
-            // Check: field is a known method AND object is NOT an imported module alias
-            let is_module_alias = if let Expr::Ident { name, .. } = object.as_ref() {
-                self.imported_aliases.contains_key(name)
-            } else {
-                false
-            };
+            if let Expr::Ident { name, .. } = object.as_ref() {
+                if self.imported_aliases.contains_key(name)
+                    || self.circom_namespaces.contains_key(name)
+                {
+                    return Err(CompilerError::CompileError(
+                        format!(
+                            "use `{name}::{field}(...)` instead of `{name}.{field}(...)` \
+                             — module-qualified calls now resolve at compile time via \
+                             the `::` path operator"
+                        ),
+                        self.cur_span(),
+                    ));
+                }
+            }
 
-            if self.known_methods.contains(field.as_str()) && !is_module_alias {
+            if self.known_methods.contains(field.as_str()) {
                 return self.compile_method_call(object, field, args);
             }
         }
@@ -559,6 +576,28 @@ impl Compiler {
                 self.emit_abx(OpCode::GetGlobal, reg, idx)?;
             }
             _ => {
+                // Namespace alias lookup: `alias::name` where `alias` came
+                // from an `import "./foo.ach" as alias` resolves to the
+                // mangled global `alias::name` at compile time — no runtime
+                // map dispatch, no HashMap lookup per call. Same strategy
+                // `Int::MAX` already uses for built-in static constants,
+                // extended to user-imported modules.
+                if self.imported_aliases.contains_key(type_name) {
+                    let mangled = format!("{type_name}::{member}");
+                    let entry = self.global_symbols.get(&mangled).ok_or_else(|| {
+                        CompilerError::CompileError(
+                            format!("module `{type_name}` does not export `{member}`"),
+                            self.cur_span(),
+                        )
+                    })?;
+                    // Mark the imported name as used so W005 doesn't flag it.
+                    if self.imported_names.contains_key(&mangled) {
+                        self.used_imported_names.insert(mangled.clone());
+                    }
+                    let idx = entry.index;
+                    self.emit_abx(OpCode::GetGlobal, reg, idx)?;
+                    return Ok(reg);
+                }
                 // Check if type is known but member isn't
                 let known_types = ["Int", "Field", "BigInt"];
                 if known_types.contains(&type_name) {
