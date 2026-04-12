@@ -1,0 +1,54 @@
+// ============================================================================
+// Cross-validation: circomlib MiMC7(nRounds) in library-mode
+// ============================================================================
+//
+// MiMC7(nRounds) is the block-cipher-based hash in circomlib's
+// `mimc.circom`. Scalar `x_in` and `k` in, scalar `out` — simple
+// signature but an internally complex for-loop body that threads a
+// `var t` accumulator through 91 rounds of signal-based S-box
+// computation.
+//
+// Regression test for the mixed-signal-var unroll path:
+//
+//     var t;
+//     for (var i=0; i<nrounds; i++) {
+//         t = (i==0) ? k+x_in : k + t7[i-1] + c[i];   // var reassign
+//         t2[i] <== t*t;                              // signal op
+//         ...
+//         if (i<nrounds-1) {                          // branched signal op
+//             t7[i] <== t6[i]*t;
+//         } else {
+//             out <== t6[i]*t + k;
+//         }
+//     }
+//
+// This pattern trips `body_mixes_signals_and_vars` in the for-loop
+// lowerer, which seeds an `eval_vars` map and writes computed var
+// values back into `env.known_constants` per iteration. Iteration N
+// may succeed with a stale value from iteration N-1; iteration N+1
+// needs the fallthrough `lower_stmt` path to refresh the entry. A
+// bug in that refresh caused `t` to stick at its iteration-0 value,
+// collapsing the entire chain to a single-round output (2189 =
+// 3^7 + 2). Fixed in the same commit that ships this file; this
+// test is the repro-turned-regression-guard.
+//
+// Note: MiMC7 is parametrized but its hardcoded constant table
+// only has 91 entries, so `MiMC7(91)` is the only working arity.
+
+import { MiMC7 } from "../circomlib/circuits/mimc.circom"
+
+// Use VM mode as the oracle: it routes through
+// `evaluate_template_witness` (the witness-evaluator path, known
+// to match standalone `ach circom` via `lower_template`), then
+// assert the prove block — which goes through
+// `inline_component_body_with_const_inputs` — produces the same
+// scalar.
+let h = MiMC7(91)(0p1, 0p2)
+print("MiMC7(91)(1, 2) = " + h.to_string())
+
+prove(h: Public) {
+    let r = MiMC7(91)(0p1, 0p2)
+    assert_eq(r, h)
+}
+
+print("PASS: mimc7")

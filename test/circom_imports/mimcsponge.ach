@@ -1,0 +1,40 @@
+// ============================================================================
+// Cross-validation: circomlib MiMCSponge(nInputs, nRounds, nOutputs)
+// ============================================================================
+//
+// MiMCSponge(2, 220, 1) is the production-grade 2-input, 220-round,
+// 1-output sponge hash used by early tornado-cash and a handful of
+// still-active circuits. Structurally it's the heaviest template in
+// Serie A:
+//
+//   - Three template params drive nested component arrays
+//     (`component S[nInputs + nOutputs - 1]` of `MiMCFeistel`).
+//   - Mixed array + scalar signal inputs (`ins[nInputs]`, `k`).
+//   - Array output (single element, `outs[1]`).
+//   - Each `MiMCFeistel(220)` sub-component has its own
+//     mixed-signal-var for loop over a 218-element compile-time
+//     constant table (the round constants).
+//
+// Regression test for the same bug class as `mimc7.ach` but through
+// a two-layer instantiation: MiMCSponge's body inlines
+// MiMCFeistel's body, which is the one that actually contains the
+// staleness-prone var loop.
+//
+// Like `mimc7.ach`, we use VM mode as the oracle and assert the
+// prove block matches.
+
+import { MiMCSponge } from "../circomlib/circuits/mimcsponge.circom"
+
+// VM mode returns a 1-element list for the `outs` array output;
+// grab the scalar with `h_vm[0]` so the prove block can bind `h`
+// as a public-scalar input and compare against `r.outs_0`.
+let h_vm = MiMCSponge(2, 220, 1)([0p1, 0p2], 0p0)
+let h = h_vm[0]
+print("MiMCSponge(2, 220, 1)([1, 2], 0) = " + h.to_string())
+
+prove(h: Public) {
+    let r = MiMCSponge(2, 220, 1)([0p1, 0p2], 0p0)
+    assert_eq(r.outs_0, h)
+}
+
+print("PASS: mimcsponge")
