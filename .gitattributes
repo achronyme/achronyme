@@ -1,3 +1,12 @@
 # Achronyme language files
 *.ach linguist-language=Achronyme
 *.ach linguist-detectable
+
+# Circom fixtures and vendored circomlib — not Achronyme's source, exclude
+# from GitHub language statistics. Most of the `.circom` mass in this
+# repo comes from `test/circomlib/` (the iden3/circomlib subset we
+# vendor for E2E tests) plus small standalone fixtures under
+# `test/circom/`. Marking the extension globally keeps tornado-style
+# vendored sub-trees under `examples/` out of the stats too.
+*.circom linguist-vendored
+*.circom linguist-generated=false
