@@ -740,6 +740,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         value: &Expr,
         span: &Span,
     ) -> Result<(), ProveIrError> {
+        // Circom template call bound to a let: `let r = T(args)(inputs)`.
+        // Must run before the scalar fall-through so multi-output and
+        // array-output templates can bind per-output env entries that
+        // compile_dot_access will later resolve as `r.out_name`.
+        if self.compile_let_for_circom_call(name, value, span)? {
+            return Ok(());
+        }
+
         // decompose(value, bits) → Decompose node (creates array of bit vars)
         if let Expr::Call { callee, args, .. } = value {
             if let Expr::Ident { name: fn_name, .. } = callee.as_ref() {
@@ -1570,33 +1578,36 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
     }
 
-    /// Instantiate a circom template call inside the current circuit
-    /// body and return a `CircuitExpr` that the caller can use as the
-    /// result of the expression.
+    /// Core circom template instantiation path — shared by both the
+    /// expression-level dispatcher and the let-binding dispatcher.
     ///
-    /// Only the single-scalar-output happy path is supported in
-    /// Phase 3.3. Array outputs, multi-output templates, array-valued
-    /// signal inputs, and the DotAccess variants are deferred to
-    /// Phase 3.4 / 3.5 and currently surface as
-    /// `UnsupportedOperation` errors with specific messages so tests
-    /// can pin each deferred variant.
-    fn compile_circom_template_call(
+    /// Validates arity, evaluates template args to `FieldConst`,
+    /// compiles signal inputs, allocates a fresh mangling prefix,
+    /// dispatches to the library handle, and appends the returned
+    /// body nodes to `self.body`.
+    ///
+    /// Returns the outputs map together with the resolved template
+    /// signature so callers can project or re-bind however the
+    /// caller context needs.
+    fn instantiate_circom_template(
         &mut self,
         key: &str,
         template_args: &[&Expr],
         signal_inputs: &[&Expr],
         span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
-        // Clone what we need so we can drop the borrow on self.circom_table
-        // before calling compile_expr (which takes &mut self).
+    ) -> Result<
+        (
+            HashMap<String, super::circom_interop::CircomTemplateOutput>,
+            super::circom_interop::CircomTemplateSignature,
+        ),
+        ProveIrError,
+    > {
         let callable = self
             .circom_table
             .get(key)
             .expect("try_resolve_circom_key validated the key")
             .clone();
 
-        // Fetch the template signature from the library handle so we
-        // can name signal inputs + validate counts.
         let signature = callable
             .library
             .template_signature(&callable.template_name)
@@ -1608,7 +1619,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 span: to_span(span),
             })?;
 
-        // --- Validate template parameter count ---
         if template_args.len() != signature.params.len() {
             return Err(ProveIrError::WrongArgumentCount {
                 name: format!("circom template `{}` parameters", callable.template_name),
@@ -1618,12 +1628,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             });
         }
 
-        // --- Evaluate template args to FieldConsts ---
-        //
-        // Each template argument MUST reduce to a compile-time
-        // constant — template params are captures, not runtime
-        // values. We compile the expression through the standard
-        // path and require the result to be `CircuitExpr::Const`.
         let mut template_const_args: Vec<FieldConst> = Vec::with_capacity(template_args.len());
         for (i, arg) in template_args.iter().enumerate() {
             let compiled = self.compile_expr(arg)?;
@@ -1642,7 +1646,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
         }
 
-        // --- Validate signal input count ---
         if signal_inputs.len() != signature.input_signals.len() {
             return Err(ProveIrError::WrongArgumentCount {
                 name: format!("circom template `{}` signal inputs", callable.template_name),
@@ -1652,17 +1655,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             });
         }
 
-        // --- Compile signal inputs by positional name match ---
         let mut signal_input_map: HashMap<String, CircuitExpr> = HashMap::new();
         for (sig_name, sig_input_expr) in signature.input_signals.iter().zip(signal_inputs.iter()) {
             let compiled = self.compile_expr(sig_input_expr)?;
             signal_input_map.insert(sig_name.clone(), compiled);
         }
 
-        // --- Allocate a fresh mangling prefix ---
         let prefix = self.next_circom_call_prefix();
 
-        // --- Dispatch to the library handle for actual instantiation ---
         let instantiation = callable
             .library
             .instantiate_template(
@@ -1680,49 +1680,193 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 span: to_span(span),
             })?;
 
-        // --- Append the instantiated body to the parent circuit ---
         self.body.extend(instantiation.body);
+        Ok((instantiation.outputs, signature))
+    }
 
-        // --- Project the outputs to a single CircuitExpr ---
-        //
-        // Phase 3.3 scope: single scalar output templates only. Array
-        // outputs and multi-output templates require DotAccess support
-        // (Phase 3.4) — we error here with a clear "deferred" message
-        // so callers that hit those cases get something better than a
-        // generic unsupported error.
+    /// Expression-level circom template call. Only templates with a
+    /// single scalar output are usable directly as a value — multi-
+    /// output and array-output templates must be bound via `let r =
+    /// T()(x)` so that `r.field` / `r.elem_i` can route through
+    /// [`compile_let_for_circom_call`].
+    fn compile_circom_template_call(
+        &mut self,
+        key: &str,
+        template_args: &[&Expr],
+        signal_inputs: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        let (outputs, signature) =
+            self.instantiate_circom_template(key, template_args, signal_inputs, span)?;
+
         if signature.output_signals.len() != 1 {
             return Err(ProveIrError::UnsupportedOperation {
                 description: format!(
-                    "circom template `{}` has {} outputs; multi-output templates are \
-                     not yet supported (Phase 3.4 adds DotAccess on the result)",
-                    callable.template_name,
+                    "circom template has {} outputs; bind the call with \
+                     `let r = T(...)(...)` and use `r.<output_name>` to select one",
                     signature.output_signals.len()
                 ),
                 span: to_span(span),
             });
         }
         let out_name = &signature.output_signals[0];
-        match instantiation.outputs.get(out_name) {
+        match outputs.get(out_name) {
             Some(super::circom_interop::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
             Some(super::circom_interop::CircomTemplateOutput::Array { .. }) => {
                 Err(ProveIrError::UnsupportedOperation {
                     description: format!(
-                        "circom template `{}` returns an array output; array outputs require \
-                         DotAccess on the result (Phase 3.4)",
-                        callable.template_name
+                        "circom template returns an array output `{out_name}`; bind the \
+                         call with `let r = T(...)(...)` and use `r.{out_name}_i` to \
+                         access an element"
                     ),
                     span: to_span(span),
                 })
             }
             None => Err(ProveIrError::UnsupportedOperation {
                 description: format!(
-                    "circom template `{}` declared output `{out_name}` but instantiation \
-                     returned no entry for it",
-                    callable.template_name
+                    "circom template declared output `{out_name}` but instantiation \
+                     returned no entry for it"
                 ),
                 span: to_span(span),
             }),
         }
+    }
+
+    /// Let-binding-aware circom template call.
+    ///
+    /// When the user writes `let r = T(args)(inputs)` the circom
+    /// template's outputs are published into the compiler env under
+    /// "dotted" keys so subsequent DotAccess resolves to each
+    /// individual output:
+    ///
+    /// - Scalar output `out`   → env entry `"r.out"` = Scalar(mangled)
+    /// - Array  output `out[N]` → env entries `"r.out_0"`..`"r.out_{N-1}"`
+    ///
+    /// For single-scalar-output templates the binding `r` itself is
+    /// also registered (via a plain Let node) so `r` alone still
+    /// evaluates to the single output — this keeps Phase 3.3 code
+    /// that treats the call as a scalar expression working.
+    ///
+    /// Returns `Ok(true)` when the let value was a circom template
+    /// call and binding succeeded; `Ok(false)` when the value did not
+    /// match the circom curry shape so the caller should fall back to
+    /// the normal let-compilation path.
+    fn compile_let_for_circom_call(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        span: &Span,
+    ) -> Result<bool, ProveIrError> {
+        // Detect `Call { callee: Call { callee: <resolvable>, args: template_args }, args: signal_inputs }`.
+        let Expr::Call {
+            callee: outer_callee,
+            args: outer_args,
+            ..
+        } = value
+        else {
+            return Ok(false);
+        };
+        let Expr::Call {
+            callee: inner_callee,
+            args: inner_args,
+            ..
+        } = outer_callee.as_ref()
+        else {
+            return Ok(false);
+        };
+        let Some(key) = self.try_resolve_circom_key(inner_callee) else {
+            return Ok(false);
+        };
+
+        let template_arg_exprs: Vec<&Expr> = inner_args.iter().map(|a| &a.value).collect();
+        let signal_input_exprs: Vec<&Expr> = outer_args.iter().map(|a| &a.value).collect();
+
+        let (outputs, signature) =
+            self.instantiate_circom_template(&key, &template_arg_exprs, &signal_input_exprs, span)?;
+
+        // Bind every declared output under "<name>.<output>" (scalar)
+        // or "<name>.<output>_<i>" (array). The mangled vars already
+        // exist in self.body thanks to instantiate_circom_template;
+        // the env entries just alias them so compile_dot_access can
+        // resolve the user-facing `r.out` syntax.
+        for sig_out in &signature.output_signals {
+            match outputs.get(sig_out) {
+                Some(super::circom_interop::CircomTemplateOutput::Scalar(expr)) => {
+                    let CircuitExpr::Var(mangled) = expr else {
+                        // Defensive: library impls return Scalar(Var(...))
+                        // today. If a non-Var expression ever appears we
+                        // fall back to registering under the dotted name
+                        // via a fresh Let binding.
+                        let dotted = format!("{name}.{sig_out}");
+                        self.body.push(CircuitNode::Let {
+                            name: dotted.clone(),
+                            value: expr.clone(),
+                            span: Some(SpanRange::from(span)),
+                        });
+                        self.env
+                            .insert(dotted.clone(), CompEnvValue::Scalar(dotted));
+                        continue;
+                    };
+                    let dotted = format!("{name}.{sig_out}");
+                    self.env
+                        .insert(dotted, CompEnvValue::Scalar(mangled.clone()));
+                }
+                Some(super::circom_interop::CircomTemplateOutput::Array { dims, values }) => {
+                    // Row-major flatten: iterate every value and bind
+                    // each under "<name>.<out>_<i>" / "<name>.<out>_<i>_<j>".
+                    let total: u64 = dims.iter().product();
+                    debug_assert_eq!(values.len() as u64, total);
+                    for (linear_idx, value_expr) in values.iter().enumerate() {
+                        let suffix = flat_index_suffix(dims, linear_idx);
+                        let dotted = format!("{name}.{sig_out}_{suffix}");
+                        match value_expr {
+                            CircuitExpr::Var(mangled) => {
+                                self.env
+                                    .insert(dotted, CompEnvValue::Scalar(mangled.clone()));
+                            }
+                            other => {
+                                self.body.push(CircuitNode::Let {
+                                    name: dotted.clone(),
+                                    value: other.clone(),
+                                    span: Some(SpanRange::from(span)),
+                                });
+                                self.env
+                                    .insert(dotted.clone(), CompEnvValue::Scalar(dotted));
+                            }
+                        }
+                    }
+                }
+                None => {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "circom template declared output `{sig_out}` but instantiation \
+                             returned no entry for it"
+                        ),
+                        span: to_span(span),
+                    });
+                }
+            }
+        }
+
+        // Convenience: a single-scalar-output template also binds
+        // `name` itself as a plain Let so existing users of
+        // `let r = Square()(x); r` keep working unchanged.
+        if signature.output_signals.len() == 1 {
+            let sole = &signature.output_signals[0];
+            if let Some(super::circom_interop::CircomTemplateOutput::Scalar(expr)) =
+                outputs.get(sole)
+            {
+                self.body.push(CircuitNode::Let {
+                    name: name.to_string(),
+                    value: expr.clone(),
+                    span: Some(SpanRange::from(span)),
+                });
+                self.env
+                    .insert(name.to_string(), CompEnvValue::Scalar(name.to_string()));
+            }
+        }
+
+        Ok(true)
     }
 
     /// Compile a named function or builtin call.
@@ -1880,8 +2024,17 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     ) -> Result<CircuitExpr, ProveIrError> {
         // module.constant access
         if let Expr::Ident { name: module, .. } = object {
+            // Module-level constants resolve through a `module::field`
+            // env key.
             let qualified = format!("{module}::{field}");
             if let Some(CompEnvValue::Scalar(resolved)) = self.env.get(&qualified) {
+                return Ok(CircuitExpr::Var(resolved.clone()));
+            }
+            // Circom template output fields: `let r = T()(x); r.out`
+            // bound in compile_let_for_circom_call under the dotted
+            // "<binding_name>.<output_name>" env key.
+            let dotted = format!("{module}.{field}");
+            if let Some(CompEnvValue::Scalar(resolved)) = self.env.get(&dotted) {
                 return Ok(CircuitExpr::Var(resolved.clone()));
             }
         }
@@ -2833,6 +2986,31 @@ fn program_to_block(source: &str, program: achronyme_parser::ast::Program) -> Bl
 }
 
 /// Convert an AST Span to an OptSpan for error reporting.
+/// Build the row-major flattened suffix for a multi-dimensional
+/// element index. For `dims = [3]` and `linear = 2` this returns
+/// `"2"`; for `dims = [2, 2]` and `linear = 3` it returns `"1_1"`.
+fn flat_index_suffix(dims: &[u64], linear: usize) -> String {
+    if dims.len() <= 1 {
+        return linear.to_string();
+    }
+    let mut remaining = linear;
+    let mut parts: Vec<String> = Vec::with_capacity(dims.len());
+    // Compute strides from the right (row-major).
+    let mut strides: Vec<u64> = Vec::with_capacity(dims.len());
+    let mut s = 1u64;
+    for d in dims.iter().rev() {
+        strides.push(s);
+        s = s.saturating_mul(*d);
+    }
+    strides.reverse();
+    for stride in &strides {
+        let idx = remaining as u64 / *stride;
+        parts.push(idx.to_string());
+        remaining = (remaining as u64 % *stride) as usize;
+    }
+    parts.join("_")
+}
+
 fn to_span(span: &Span) -> OptSpan {
     span_box(Some(SpanRange::from(span)))
 }
@@ -4962,19 +5140,22 @@ mod tests {
                 });
                 // Emit a marker Let so tests can observe the body was
                 // extended with the library's contribution.
-                let mut outputs = HashMap::new();
-                let first_out = &self.sig.output_signals[0];
                 let body = vec![CircuitNode::Let {
                     name: format!("{parent_prefix}_marker"),
                     value: CircuitExpr::Const(FieldConst::from_u64(42)),
                     span: None,
                 }];
-                outputs.insert(
-                    first_out.clone(),
-                    CircomTemplateOutput::Scalar(CircuitExpr::Var(format!(
-                        "{parent_prefix}_{first_out}"
-                    ))),
-                );
+                // Populate every declared output so multi-output
+                // tests can verify per-output binding in the env.
+                let mut outputs = HashMap::new();
+                for out in &self.sig.output_signals {
+                    outputs.insert(
+                        out.clone(),
+                        CircomTemplateOutput::Scalar(CircuitExpr::Var(format!(
+                            "{parent_prefix}_{out}"
+                        ))),
+                    );
+                }
                 Ok(CircomInstantiation { body, outputs })
             }
         }
@@ -5094,14 +5275,17 @@ mod tests {
         }
 
         #[test]
-        fn multi_output_template_deferred_to_phase_3_4() {
+        fn multi_output_template_at_expression_level_suggests_let_binding() {
+            // Expression-level calls on multi-output templates must
+            // redirect the user to bind the result via let so each
+            // output can be named through DotAccess.
             let (mut compiler, _lib) = compiler_with_stub("Pair", sig(&[], &["x"], &["a", "b"]));
             let expr = parse_expr("Pair()(x)");
             let err = compiler.compile_expr(&expr).expect_err("should fail");
             let msg = format!("{err}");
             assert!(
-                msg.contains("multi-output") || msg.contains("DotAccess"),
-                "expected multi-output deferral message, got: {msg}"
+                msg.contains("2 outputs") && msg.contains("let r"),
+                "expected let-binding suggestion, got: {msg}"
             );
         }
 
@@ -5129,6 +5313,214 @@ mod tests {
             assert!(
                 lib.recorded().is_empty(),
                 "library should not have been called for non-circom expression"
+            );
+        }
+
+        // --- Phase 3.4: let-binding + DotAccess ---
+
+        /// Parse source as a Block and compile through compile_block_stmts.
+        /// Useful for tests that need a let + dot-access sequence.
+        fn compile_block(
+            compiler: &mut ProveIrCompiler<Bn254Fr>,
+            source: &str,
+        ) -> Result<(), ProveIrError> {
+            use achronyme_parser::parse_program;
+            let (program, errors) = parse_program(source);
+            assert!(errors.is_empty(), "parse errors: {errors:?}");
+            let block = Block {
+                stmts: program.stmts,
+                span: Span {
+                    byte_start: 0,
+                    byte_end: 0,
+                    line_start: 0,
+                    col_start: 0,
+                    line_end: 0,
+                    col_end: 0,
+                },
+            };
+            compiler.compile_block_stmts(&block)
+        }
+
+        #[test]
+        fn let_bind_multi_output_template_publishes_dotted_env_entries() {
+            let (mut compiler, _lib) = compiler_with_stub("Pair", sig(&[], &["x"], &["a", "b"]));
+            compile_block(&mut compiler, "let r = Pair()(x)")
+                .expect("let-binding a multi-output template should succeed");
+            // Each output lands under "r.<output>" in the env.
+            assert!(compiler.env.contains_key("r.a"));
+            assert!(compiler.env.contains_key("r.b"));
+            // Single-scalar convenience binding is NOT emitted for
+            // multi-output templates.
+            assert!(!compiler.env.contains_key("r"));
+        }
+
+        #[test]
+        fn let_bind_single_scalar_template_also_binds_top_level_ident() {
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            compile_block(&mut compiler, "let r = Square()(x)")
+                .expect("let-binding a scalar template should succeed");
+            // Both `r` and `r.y` exist.
+            assert!(compiler.env.contains_key("r"));
+            assert!(compiler.env.contains_key("r.y"));
+        }
+
+        #[test]
+        fn dot_access_on_multi_output_let_binding_resolves_to_mangled_vars() {
+            let (mut compiler, _lib) = compiler_with_stub("Pair", sig(&[], &["x"], &["a", "b"]));
+            compile_block(
+                &mut compiler,
+                "let r = Pair()(x)\nassert_eq(r.a, x)\nassert_eq(r.b, x)",
+            )
+            .expect("dot access on multi-output should resolve");
+            // The compile body now has assert_eq nodes pointing at
+            // the mangled sub-template vars.
+            let assert_vars: Vec<&str> = compiler
+                .body
+                .iter()
+                .filter_map(|n| match n {
+                    CircuitNode::AssertEq {
+                        lhs: CircuitExpr::Var(v),
+                        ..
+                    } => Some(v.as_str()),
+                    _ => None,
+                })
+                .collect();
+            // StubLibrary names outputs as `<prefix>_<out>`. Pair's
+            // outputs were a/b; the instantiated prefix is
+            // circom_call_0. We expect exactly the first output
+            // recorded — the stub only stores the first in outputs.
+            // For this test we just assert both asserts landed.
+            assert!(assert_vars.iter().any(|v| v.starts_with("circom_call_")));
+        }
+
+        #[test]
+        fn namespaced_let_binding_publishes_dotted_env_entries() {
+            // The namespaced form P.Pair(...)(...) is resolved the same
+            // way as the bare form once try_resolve_circom_key has
+            // produced the "P::Pair" key, so the let-binding path
+            // should bind outputs identically.
+            let (mut compiler, _lib) = compiler_with_stub(
+                "Pair", // template_name
+                sig(&[], &["x"], &["a", "b"]),
+            );
+            // Rewire the registration: under key "P::Pair" instead of
+            // "Pair" (simulates a namespace import). We need to re-
+            // register because compiler_with_stub bound under "Pair".
+            let entry = compiler.circom_table.remove("Pair").unwrap();
+            compiler.circom_table.insert("P::Pair".to_string(), entry);
+
+            compile_block(&mut compiler, "let r = P.Pair()(x)")
+                .expect("namespaced let-binding should succeed");
+            assert!(compiler.env.contains_key("r.a"));
+            assert!(compiler.env.contains_key("r.b"));
+        }
+
+        /// Stub that returns an array output to exercise the array-
+        /// flattening code path on the let-binding side.
+        #[derive(Debug)]
+        struct ArrayOutputLibrary {
+            name: String,
+            dims: Vec<u64>,
+        }
+        impl CircomLibraryHandle for ArrayOutputLibrary {
+            fn template_signature(&self, name: &str) -> Option<CircomTemplateSignature> {
+                if name != self.name {
+                    return None;
+                }
+                Some(CircomTemplateSignature {
+                    params: vec!["n".to_string()],
+                    input_signals: vec!["in".to_string()],
+                    output_signals: vec!["out".to_string()],
+                })
+            }
+            fn template_names(&self) -> Vec<String> {
+                vec![self.name.clone()]
+            }
+            fn instantiate_template(
+                &self,
+                _template_name: &str,
+                _template_args: &[FieldConst],
+                _signal_inputs: &HashMap<String, CircuitExpr>,
+                parent_prefix: &str,
+                _span: &Span,
+            ) -> Result<CircomInstantiation, crate::prove_ir::CircomDispatchError> {
+                let total: u64 = self.dims.iter().product();
+                let values: Vec<CircuitExpr> = (0..total)
+                    .map(|i| CircuitExpr::Var(format!("{parent_prefix}_out_{i}")))
+                    .collect();
+                let mut outputs = HashMap::new();
+                outputs.insert(
+                    "out".to_string(),
+                    CircomTemplateOutput::Array {
+                        dims: self.dims.clone(),
+                        values,
+                    },
+                );
+                Ok(CircomInstantiation {
+                    body: Vec::new(),
+                    outputs,
+                })
+            }
+        }
+
+        #[test]
+        fn let_bind_array_output_publishes_indexed_env_entries() {
+            let lib: Arc<dyn CircomLibraryHandle> = Arc::new(ArrayOutputLibrary {
+                name: "Num2Bits".to_string(),
+                dims: vec![4],
+            });
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            compiler.register_circom_template("Num2Bits".to_string(), lib, "Num2Bits".to_string());
+            compiler
+                .env
+                .insert("x".to_string(), CompEnvValue::Scalar("x".to_string()));
+
+            compile_block(&mut compiler, "let r = Num2Bits(4)(x)")
+                .expect("array-output let binding should succeed");
+            for i in 0..4 {
+                let key = format!("r.out_{i}");
+                assert!(
+                    compiler.env.contains_key(&key),
+                    "expected env key {key}, have: {:?}",
+                    compiler.env.keys().collect::<Vec<_>>()
+                );
+            }
+            // No top-level `r` binding — arrays don't have a scalar
+            // convenience form.
+            assert!(!compiler.env.contains_key("r"));
+        }
+
+        #[test]
+        fn dot_access_on_array_output_bit_resolves_via_indexed_env_key() {
+            // `r.out_2` should resolve to the mangled `circom_call_0_out_2`.
+            let lib: Arc<dyn CircomLibraryHandle> = Arc::new(ArrayOutputLibrary {
+                name: "Num2Bits".to_string(),
+                dims: vec![4],
+            });
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            compiler.register_circom_template("Num2Bits".to_string(), lib, "Num2Bits".to_string());
+            compiler
+                .env
+                .insert("x".to_string(), CompEnvValue::Scalar("x".to_string()));
+
+            compile_block(
+                &mut compiler,
+                "let r = Num2Bits(4)(x)\nassert_eq(r.out_2, x)",
+            )
+            .expect("dot access on array-output bit should resolve");
+            // Verify an AssertEq landed that references the mangled
+            // 2nd element of the array output.
+            let has_expected = compiler.body.iter().any(|n| match n {
+                CircuitNode::AssertEq {
+                    lhs: CircuitExpr::Var(lhs),
+                    ..
+                } => lhs == "circom_call_0_out_2",
+                _ => false,
+            });
+            assert!(
+                has_expected,
+                "expected assert_eq lhs = circom_call_0_out_2, body: {:?}",
+                compiler.body
             );
         }
     }

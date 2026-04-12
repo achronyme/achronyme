@@ -114,6 +114,51 @@ prove(expected: Public) {{
 }
 
 #[test]
+fn prove_block_can_access_array_output_bits_via_dot() {
+    // Num2Bits(4) exposes a 4-bit array output. The prove block
+    // binds the call with `let r = Num2Bits(4)(x_val)` and asserts
+    // on individual bits via `r.out_0`, `r.out_1`, ... — which is
+    // how Phase 3.4's dotted env entries resolve.
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template Num2Bits(n) {
+            signal input in;
+            signal output out[n];
+            var lc = 0;
+            var e = 1;
+            for (var i = 0; i < n; i++) {
+                out[i] <-- (in >> i) & 1;
+                out[i] * (out[i] - 1) === 0;
+                lc += out[i] * e;
+                e = e + e;
+            }
+            lc === in;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    // 5 = 0b0101 → bit0=1, bit1=0, bit2=1, bit3=0
+    let ach_src = format!(
+        r#"
+import {{ Num2Bits }} from "./{rel}"
+let x_val = 0p5
+let bit0 = 0p1
+prove(bit0: Public) {{
+    let r = Num2Bits(4)(x_val)
+    assert_eq(r.out_0, bit0)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    compiler
+        .compile(&ach_src)
+        .expect("array-output DotAccess should compile");
+}
+
+#[test]
 fn prove_block_rejects_non_const_template_arg() {
     // Num2Bits expects a compile-time constant param. Passing a
     // captured variable (which is a runtime value inside the circuit)
