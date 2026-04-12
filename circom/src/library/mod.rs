@@ -24,6 +24,7 @@
 //! crates use a single path: `circom::library::*`.
 
 mod error;
+mod handle;
 mod instantiate;
 mod metadata;
 mod types;
