@@ -12,11 +12,16 @@
 //! - **Parametric**: captures from outer scope are "holes" filled at instantiation
 
 pub mod capture;
+pub mod circom_interop;
 pub mod compiler;
 pub mod error;
 pub mod instantiate;
 pub mod types;
 
+pub use circom_interop::{
+    CircomCallable, CircomDispatchError, CircomInstantiation, CircomLibraryHandle,
+    CircomTemplateOutput, CircomTemplateSignature,
+};
 pub use compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 pub use error::ProveIrError;
 pub use types::*;

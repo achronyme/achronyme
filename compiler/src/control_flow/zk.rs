@@ -98,6 +98,7 @@ pub(super) fn compile_prove(
     let outer_scope = ir::prove_ir::OuterScope {
         values: outer_values,
         functions: compiler.fn_decl_asts.clone(),
+        ..Default::default()
     };
 
     // 2. If params are provided (new syntax), validate no old-style

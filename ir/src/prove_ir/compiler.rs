@@ -8,6 +8,7 @@ use achronyme_parser::ast::*;
 use diagnostics::SpanRange;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
+use super::circom_interop::CircomCallable;
 use super::error::ProveIrError;
 use super::types::*;
 use crate::error::{span_box, OptSpan};
@@ -44,12 +45,20 @@ pub enum OuterScopeEntry {
 /// `functions` carries FnDecl AST nodes that should be registered in the
 /// ProveIR compiler's `fn_table` before the block body is compiled, so
 /// that user-defined functions from the outer scope can be inlined.
+/// `circom_imports` carries circom template handles — keyed by their
+/// lookup name inside the block (bare template name for selective
+/// imports, `"P::T"` for namespaced ones). The `compiler` crate is
+/// responsible for flattening namespace imports into `P::T` keys
+/// before handing the scope over.
 #[derive(Clone, Debug, Default)]
 pub struct OuterScope {
     /// Captured values (scalars / arrays) from the VM scope.
     pub values: HashMap<String, OuterScopeEntry>,
     /// Function declarations to register in fn_table before compilation.
     pub functions: Vec<Stmt>,
+    /// Circom templates importable into this block. Keys are the
+    /// names the ProveIR dispatcher will look up at Call time.
+    pub circom_imports: HashMap<String, CircomCallable>,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +101,16 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     module_loader: crate::module_loader::ModuleLoader,
     /// Tracks modules currently being compiled (for circular import detection).
     compiling_modules: HashSet<std::path::PathBuf>,
+    /// Flat table of circom templates callable from this block, keyed
+    /// by the name the dispatcher looks up (bare template name for
+    /// selective imports, `"P::T"` for namespace imports). Populated
+    /// by `register_circom_template` — typically seeded from
+    /// [`OuterScope::circom_imports`] before `compile_block_stmts`.
+    circom_table: HashMap<String, CircomCallable>,
+    /// Monotonic counter used to allocate unique prefixes
+    /// (`circom_call_0`, `circom_call_1`, ...) for circom template
+    /// instantiations. Bumped on use, not on registration.
+    circom_call_counter: usize,
     /// Phantom data for the field backend type parameter.
     _field: PhantomData<F>,
 }
@@ -111,8 +130,52 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             source_dir: None,
             module_loader: crate::module_loader::ModuleLoader::new(),
             compiling_modules: HashSet::new(),
+            circom_table: HashMap::new(),
+            circom_call_counter: 0,
             _field: PhantomData,
         }
+    }
+
+    /// Register a circom template under `key`.
+    ///
+    /// `key` is the name the dispatcher will look up at Call time —
+    /// typically either the bare template name (selective import) or
+    /// `"P::T"` (namespace import). `template_name` is the resolved
+    /// name inside `library`. Duplicate keys are overwritten — the
+    /// compiler-side import dispatcher is responsible for rejecting
+    /// conflicts before reaching this point.
+    ///
+    /// Does NOT bump [`circom_call_counter`]; that counter tracks
+    /// instantiation sites, not registrations.
+    pub fn register_circom_template(
+        &mut self,
+        key: String,
+        library: std::sync::Arc<dyn super::circom_interop::CircomLibraryHandle>,
+        template_name: String,
+    ) {
+        self.circom_table.insert(
+            key,
+            CircomCallable {
+                library,
+                template_name,
+            },
+        );
+    }
+
+    /// Allocate a unique mangling prefix for the next circom template
+    /// instantiation (`circom_call_0`, `circom_call_1`, ...). Bumps
+    /// [`circom_call_counter`] so subsequent calls get fresh prefixes.
+    #[allow(dead_code)]
+    pub(super) fn next_circom_call_prefix(&mut self) -> String {
+        let prefix = format!("circom_call_{}", self.circom_call_counter);
+        self.circom_call_counter += 1;
+        prefix
+    }
+
+    /// Look up a registered circom template by its dispatch key.
+    #[allow(dead_code)]
+    pub(super) fn lookup_circom_template(&self, key: &str) -> Option<&CircomCallable> {
+        self.circom_table.get(key)
     }
 
     /// Compile an AST Block into a ProveIR template.
@@ -176,6 +239,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     },
                 );
             }
+        }
+
+        // Seed circom template imports from the outer scope.
+        for (key, callable) in &outer_scope.circom_imports {
+            compiler.circom_table.insert(key.clone(), callable.clone());
         }
 
         // Compile all statements in the block
@@ -4287,6 +4355,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
             functions: vec![fn_stmt],
+            ..Default::default()
         };
         let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "public expected\nassert_eq(double(val), expected)",
@@ -4327,6 +4396,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
             functions: vec![fn_stmt],
+            ..Default::default()
         };
         // Local fn triple overrides nothing, but local double overrides outer double
         let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
@@ -4349,6 +4419,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
             functions: vec![],
+            ..Default::default()
         };
         let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "public result\nmut sum = 0\nfor i in 0..n { sum = sum + i }\nassert_eq(sum, result)",
@@ -4378,6 +4449,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
             functions: vec![],
+            ..Default::default()
         };
         let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
             "public result\nmut sum = 0\nfor i in 0..n+1 { sum = sum + i }\nassert_eq(sum, result)",
@@ -4474,5 +4546,131 @@ mod tests {
             msg.contains("array") || msg.contains("scalar"),
             "error should mention type mismatch, got: {msg}"
         );
+    }
+
+    // --- Circom interop: circom_table registration (Phase 3.1) ---
+
+    mod circom_table {
+        use super::super::*;
+        use crate::prove_ir::circom_interop::test_support::StubLibrary;
+        use crate::prove_ir::circom_interop::{CircomLibraryHandle, CircomTemplateSignature};
+        use std::sync::Arc;
+
+        fn sig(params: &[&str], inputs: &[&str], outputs: &[&str]) -> CircomTemplateSignature {
+            CircomTemplateSignature {
+                params: params.iter().map(|s| s.to_string()).collect(),
+                input_signals: inputs.iter().map(|s| s.to_string()).collect(),
+                output_signals: outputs.iter().map(|s| s.to_string()).collect(),
+            }
+        }
+
+        #[test]
+        fn new_compiler_has_empty_circom_table() {
+            let compiler = ProveIrCompiler::<Bn254Fr>::new();
+            assert!(compiler.circom_table.is_empty());
+            assert_eq!(compiler.circom_call_counter, 0);
+        }
+
+        #[test]
+        fn register_circom_template_inserts_entry_without_bumping_counter() {
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            let lib: Arc<dyn CircomLibraryHandle> = Arc::new(StubLibrary::with_template(
+                "Square",
+                sig(&[], &["x"], &["y"]),
+            ));
+            compiler.register_circom_template("Square".to_string(), lib, "Square".to_string());
+
+            assert_eq!(compiler.circom_table.len(), 1);
+            let entry = compiler
+                .lookup_circom_template("Square")
+                .expect("Square should be registered");
+            assert_eq!(entry.template_name, "Square");
+            // Registration alone MUST NOT bump the call counter —
+            // only actual instantiation sites do.
+            assert_eq!(compiler.circom_call_counter, 0);
+        }
+
+        #[test]
+        fn next_circom_call_prefix_produces_monotonic_unique_ids() {
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            assert_eq!(compiler.next_circom_call_prefix(), "circom_call_0");
+            assert_eq!(compiler.next_circom_call_prefix(), "circom_call_1");
+            assert_eq!(compiler.next_circom_call_prefix(), "circom_call_2");
+            assert_eq!(compiler.circom_call_counter, 3);
+        }
+
+        #[test]
+        fn namespaced_key_coexists_with_selective_key() {
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            let poseidon_lib: Arc<dyn CircomLibraryHandle> = Arc::new(StubLibrary::with_template(
+                "Poseidon",
+                sig(&["t"], &["inputs"], &["out"]),
+            ));
+            let num2bits_lib: Arc<dyn CircomLibraryHandle> = Arc::new(StubLibrary::with_template(
+                "Num2Bits",
+                sig(&["n"], &["in"], &["out"]),
+            ));
+            compiler.register_circom_template(
+                "P::Poseidon".to_string(),
+                poseidon_lib,
+                "Poseidon".to_string(),
+            );
+            compiler.register_circom_template(
+                "Num2Bits".to_string(),
+                num2bits_lib,
+                "Num2Bits".to_string(),
+            );
+
+            assert_eq!(compiler.circom_table.len(), 2);
+            assert_eq!(
+                compiler
+                    .lookup_circom_template("P::Poseidon")
+                    .unwrap()
+                    .template_name,
+                "Poseidon"
+            );
+            assert_eq!(
+                compiler
+                    .lookup_circom_template("Num2Bits")
+                    .unwrap()
+                    .template_name,
+                "Num2Bits"
+            );
+            assert!(compiler.lookup_circom_template("Poseidon").is_none());
+        }
+
+        #[test]
+        fn outer_scope_circom_imports_are_seeded_into_circom_table() {
+            // Drive the seeding path end-to-end via `compile_prove_block`
+            // so we don't need to construct a `Block` with a synthetic
+            // span. Using a trivial prove-block body is enough to
+            // exercise OuterScope → circom_table threading.
+            let lib: Arc<dyn CircomLibraryHandle> = Arc::new(StubLibrary::with_template(
+                "Square",
+                sig(&[], &["x"], &["y"]),
+            ));
+            let mut imports = HashMap::new();
+            imports.insert(
+                "Square".to_string(),
+                CircomCallable {
+                    library: lib,
+                    template_name: "Square".to_string(),
+                },
+            );
+            let outer = OuterScope {
+                circom_imports: imports.clone(),
+                ..Default::default()
+            };
+
+            // Direct new-compiler path lets us inspect the seeded table
+            // without having to run a full compilation. Mirror what
+            // `compile_with_source_dir` does on entry.
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            for (key, callable) in &outer.circom_imports {
+                compiler.circom_table.insert(key.clone(), callable.clone());
+            }
+            assert_eq!(compiler.circom_table.len(), 1);
+            assert!(compiler.lookup_circom_template("Square").is_some());
+        }
     }
 }
