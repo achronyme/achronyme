@@ -21,12 +21,19 @@
 // also happens to be the only shape the ProveIR compiler can
 // currently unroll cleanly inside a prove block.
 
-import { hash_node } from "./hash_mod.ach"
+import "./hash_mod.ach" as hash
 
 // Re-export the raw hash so modules that import `tree` don't
 // need a second import of `hash_mod` for trivial hashing.
+//
+// We use the compile-time `hash::hash_node` qualified path rather
+// than a selective import because the function body is inlined
+// into prove blocks of downstream callers — and those downstream
+// callers resolve bare names against their OWN dispatch table,
+// not ours. Explicit qualified references always resolve to the
+// same symbol regardless of the caller's scope.
 export fn node(left, right) {
-    hash_node(left, right)
+    hash::hash_node(left, right)
 }
 
 // Compute a depth-4 Merkle root from the 16 level-0 leaves.
@@ -39,27 +46,27 @@ export fn root16(
     m8, m9, mA, mB, mC, mD, mE, mF
 ) {
     // Level 1 (8 nodes)
-    let n01 = hash_node(m0, m1)
-    let n23 = hash_node(m2, m3)
-    let n45 = hash_node(m4, m5)
-    let n67 = hash_node(m6, m7)
-    let n89 = hash_node(m8, m9)
-    let nAB = hash_node(mA, mB)
-    let nCD = hash_node(mC, mD)
-    let nEF = hash_node(mE, mF)
+    let n01 = hash::hash_node(m0, m1)
+    let n23 = hash::hash_node(m2, m3)
+    let n45 = hash::hash_node(m4, m5)
+    let n67 = hash::hash_node(m6, m7)
+    let n89 = hash::hash_node(m8, m9)
+    let nAB = hash::hash_node(mA, mB)
+    let nCD = hash::hash_node(mC, mD)
+    let nEF = hash::hash_node(mE, mF)
 
     // Level 2 (4 nodes)
-    let n0123 = hash_node(n01, n23)
-    let n4567 = hash_node(n45, n67)
-    let n89AB = hash_node(n89, nAB)
-    let nCDEF = hash_node(nCD, nEF)
+    let n0123 = hash::hash_node(n01, n23)
+    let n4567 = hash::hash_node(n45, n67)
+    let n89AB = hash::hash_node(n89, nAB)
+    let nCDEF = hash::hash_node(nCD, nEF)
 
     // Level 3 (2 nodes)
-    let n01234567 = hash_node(n0123, n4567)
-    let n89ABCDEF = hash_node(n89AB, nCDEF)
+    let n01234567 = hash::hash_node(n0123, n4567)
+    let n89ABCDEF = hash::hash_node(n89AB, nCDEF)
 
     // Root
-    hash_node(n01234567, n89ABCDEF)
+    hash::hash_node(n01234567, n89ABCDEF)
 }
 
 // Walk one level of a Merkle proof, selecting (left, right) based
@@ -87,5 +94,5 @@ export fn root16(
 export fn merkle_step(current, sibling, dir) {
     let left = dir * sibling + (0p1 - dir) * current
     let right = dir * current + (0p1 - dir) * sibling
-    hash_node(left, right)
+    hash::hash_node(left, right)
 }

@@ -1,5 +1,5 @@
 import "./hash_lib.ach" as h
 
 circuit main_circuit(out: Public, a: Witness, b: Witness) {
-    assert_eq(h.my_hash(a, b), out)
+    assert_eq(h::my_hash(a, b), out)
 }

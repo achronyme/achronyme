@@ -23,7 +23,7 @@
 //      prove blocks can resolve them in the entry file's scope).
 //
 //   2. Imported functions invoked inside a `prove {}` block — when
-//      `main.ach`'s prove block calls `commitment(secret, nullifier)`
+//      `main.ach`'s prove block calls `hash::commitment(secret, nullifier)`
 //      or `tree::merkle_step(...)`, the ProveIR compiler has to
 //      inline the module-defined function body at the call site and
 //      resolve every name against the combined circom dispatch table
@@ -37,14 +37,14 @@
 // If this runs end-to-end the library-mode + module loader combination
 // is ready for a real frontend.
 
-// Note: `tree.ach` is imported selectively rather than as a
-// namespace because method-call shapes (`merkle_step(...)`)
-// aren't yet resolved by the ProveIR compiler inside prove
-// blocks — only bare-name function calls are. Pulling
-// `merkle_step` / `root16` / `node` into the top-level scope
-// sidesteps the limitation without changing the module split.
-import { commitment, nullifier_hash } from "./hash_mod.ach"
-import { root16, node, merkle_step } from "./tree.ach"
+// Namespace imports with compile-time `::` resolution. Both
+// `hash::commitment(...)` and `tree::merkle_step(...)` resolve
+// at compile time to qualified function symbols in the dispatch
+// table — no runtime map lookup, no method-call wrapper, and
+// the exact same syntax works in VM mode and inside prove
+// blocks.
+import "./hash_mod.ach" as hash
+import "./tree.ach" as tree
 
 // ── Phase 1: 16 users deposit ────────────────────────────────────────────
 //
@@ -72,25 +72,25 @@ let secret_E = 0p1015; let nullifier_E = 0p2015
 let secret_F = 0p1016; let nullifier_F = 0p2016
 
 // All 16 commitments (leaves of the Merkle tree).
-let m0 = commitment(secret_0, nullifier_0)
-let m1 = commitment(secret_1, nullifier_1)
-let m2 = commitment(secret_2, nullifier_2)
-let m3 = commitment(secret_3, nullifier_3)
-let m4 = commitment(secret_4, nullifier_4)
-let m5 = commitment(secret_5, nullifier_5)
-let m6 = commitment(secret_6, nullifier_6)
-let m7 = commitment(secret_7, nullifier_7)
-let m8 = commitment(secret_8, nullifier_8)
-let m9 = commitment(secret_9, nullifier_9)
-let mA = commitment(secret_A, nullifier_A)
-let mB = commitment(secret_B, nullifier_B)
-let mC = commitment(secret_C, nullifier_C)
-let mD = commitment(secret_D, nullifier_D)
-let mE = commitment(secret_E, nullifier_E)
-let mF = commitment(secret_F, nullifier_F)
+let m0 = hash::commitment(secret_0, nullifier_0)
+let m1 = hash::commitment(secret_1, nullifier_1)
+let m2 = hash::commitment(secret_2, nullifier_2)
+let m3 = hash::commitment(secret_3, nullifier_3)
+let m4 = hash::commitment(secret_4, nullifier_4)
+let m5 = hash::commitment(secret_5, nullifier_5)
+let m6 = hash::commitment(secret_6, nullifier_6)
+let m7 = hash::commitment(secret_7, nullifier_7)
+let m8 = hash::commitment(secret_8, nullifier_8)
+let m9 = hash::commitment(secret_9, nullifier_9)
+let mA = hash::commitment(secret_A, nullifier_A)
+let mB = hash::commitment(secret_B, nullifier_B)
+let mC = hash::commitment(secret_C, nullifier_C)
+let mD = hash::commitment(secret_D, nullifier_D)
+let mE = hash::commitment(secret_E, nullifier_E)
+let mF = hash::commitment(secret_F, nullifier_F)
 
 // Off-chain tree construction — 15 Poseidon invocations via tree::root16.
-let root = root16(
+let root = tree::root16(
     m0, m1, m2, m3, m4, m5, m6, m7,
     m8, m9, mA, mB, mC, mD, mE, mF
 )
@@ -119,19 +119,19 @@ print("")
 // the path from a locally-cached subset of the tree.
 
 // Rebuild the intermediate nodes the prover needs as siblings.
-let n45 = node(m4, m5)
-let n67 = node(m6, m7)
-let n01 = node(m0, m1)
-let n23 = node(m2, m3)
-let n89 = node(m8, m9)
-let nAB = node(mA, mB)
-let nCD = node(mC, mD)
-let nEF = node(mE, mF)
+let n45 = tree::node(m4, m5)
+let n67 = tree::node(m6, m7)
+let n01 = tree::node(m0, m1)
+let n23 = tree::node(m2, m3)
+let n89 = tree::node(m8, m9)
+let nAB = tree::node(mA, mB)
+let nCD = tree::node(mC, mD)
+let nEF = tree::node(mE, mF)
 
-let n0123     = node(n01, n23)
-let n89AB     = node(n89, nAB)
-let nCDEF     = node(nCD, nEF)
-let n89ABCDEF = node(n89AB, nCDEF)
+let n0123     = tree::node(n01, n23)
+let n89AB     = tree::node(n89, nAB)
+let nCDEF     = tree::node(nCD, nEF)
+let n89ABCDEF = tree::node(n89AB, nCDEF)
 
 // Merkle proof for leaf m5.
 let sibling_0 = m4
@@ -148,7 +148,7 @@ let dir_3 = 0p0
 // prevent double-withdraw. Anyone who knows `nullifier_5` can
 // compute it, but without the secret they can't produce a valid
 // membership proof.
-let nh = nullifier_hash(nullifier_5)
+let nh = hash::nullifier_hash(nullifier_5)
 print("Nullifier hash:   " + nh.to_string())
 print("User 5 proving withdrawal...")
 
@@ -163,16 +163,16 @@ print("User 5 proving withdrawal...")
 prove withdraw(root: Public, nh: Public) {
     // Step 1: rebuild the commitment from the secret + nullifier.
     // Routes through `hash_mod::commitment` → circomlib Poseidon.
-    let my_leaf = commitment(secret_5, nullifier_5)
+    let my_leaf = hash::commitment(secret_5, nullifier_5)
 
     // Step 2: reconstruct the tree root from the leaf and the
     // captured Merkle path, one level at a time. `merkle_step`
     // from `tree.ach` handles the left/right mux + hash at each
     // level — four circomlib Poseidon calls, one per tree depth.
-    let lvl0 = merkle_step(my_leaf, sibling_0, dir_0)
-    let lvl1 = merkle_step(lvl0, sibling_1, dir_1)
-    let lvl2 = merkle_step(lvl1, sibling_2, dir_2)
-    let lvl3 = merkle_step(lvl2, sibling_3, dir_3)
+    let lvl0 = tree::merkle_step(my_leaf, sibling_0, dir_0)
+    let lvl1 = tree::merkle_step(lvl0, sibling_1, dir_1)
+    let lvl2 = tree::merkle_step(lvl1, sibling_2, dir_2)
+    let lvl3 = tree::merkle_step(lvl2, sibling_3, dir_3)
 
     // Step 3: the computed root must match the public root.
     assert_eq(lvl3, root)
@@ -183,7 +183,7 @@ prove withdraw(root: Public, nh: Public) {
     // `nh` is burned, the same commitment can never be withdrawn
     // again even though its `(secret, nullifier)` pair is still
     // otherwise valid.
-    let my_nh = nullifier_hash(nullifier_5)
+    let my_nh = hash::nullifier_hash(nullifier_5)
     assert_eq(my_nh, nh)
 }
 

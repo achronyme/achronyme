@@ -1,4 +1,4 @@
 import "./math.ach" as math
-assert(math.square(4) == 16)
-assert(math.cube(2) == 8)
-assert(math.TAU == 6)
+assert(math::square(4) == 16)
+assert(math::cube(2) == 8)
+assert(math::TAU == 6)

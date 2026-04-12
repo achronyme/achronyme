@@ -1,2 +1,2 @@
 import "./b.ach" as b
-print(b.fb())
+print(b::fb())

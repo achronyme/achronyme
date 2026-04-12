@@ -1,2 +1,2 @@
 import "./a.ach" as a
-export fn fb() { a.fa() + 1 }
+export fn fb() { a::fa() + 1 }
