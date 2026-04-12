@@ -544,7 +544,7 @@ fn lower_chained_or() {
 #[test]
 fn error_has_source_span() {
     let result = IrLowering::<memory::Bn254Fr>::lower_circuit("let a = x", &[], &[]);
-    let err = result.err().expect("should fail");
+    let err = result.expect_err("should fail");
     // Should include line:col information
     let msg = format!("{err}");
     assert!(
@@ -556,7 +556,7 @@ fn error_has_source_span() {
 #[test]
 fn error_undeclared_has_span() {
     let result = IrLowering::<memory::Bn254Fr>::lower_circuit("x + 1", &[], &[]);
-    let err = result.err().expect("should fail");
+    let err = result.expect_err("should fail");
     let msg = format!("{err}");
     assert!(
         msg.contains("[1:"),
