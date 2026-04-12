@@ -1,0 +1,63 @@
+// ============================================================================
+// Verifiable Hash Chain with Circom Poseidon
+// ============================================================================
+//
+// Demonstrates: importing a circom template from circomlib, calling it
+// in both VM mode (off-chain hash-chain computation) and circuit mode
+// (inside a `prove {}` block), and verifying knowledge of a preimage
+// without revealing it.
+//
+// The circom `Poseidon(2)` template is the exact same constraint
+// system used by tornado-cash and semaphore, so any commitment
+// computed here is wire-compatible with the wider zk ecosystem.
+//
+// Scenario:
+//   Prove knowledge of a preimage that, after N rounds of iterated
+//   hashing with circom Poseidon, produces a known public digest —
+//   without revealing the preimage or any intermediate hashes.
+
+import { Poseidon } from "../test/circomlib/circuits/poseidon.circom"
+
+let preimage = 0p123456789
+
+// --- Phase 1: Off-chain hash-chain computation ---
+//
+// Call the imported circom `Poseidon(2)` template directly in VM
+// mode. Achronyme unpacks the `[acc, 0p0]` array literal into two
+// registers, hands them to circomlib's own witness evaluator, and
+// returns the resulting scalar — exactly what a circuit execution
+// would see.
+//
+// Top-level `for` ranges must be literal constants in VM mode;
+// dynamic bounds live inside prove {} blocks below.
+
+mut digest = preimage
+for _i in 0..5 {
+    digest = Poseidon(2)([digest, 0p0])
+}
+
+let final_hash = digest
+print("Circom Poseidon hash chain (5 rounds):")
+print("  " + final_hash.to_string())
+
+// --- Phase 2: Prove knowledge of the preimage ---
+//
+// Inside the prove block, the same circom template is instantiated
+// directly into the circuit — no separate witness evaluation, no
+// round-trip through native Poseidon. The constraint system the
+// verifier sees is bit-for-bit the circomlib one.
+
+prove(final_hash: Public) {
+    // Manual chain — `for` inside prove blocks doesn't currently
+    // unroll around circom template calls, so we spell each round
+    // out for now.
+    let h1 = Poseidon(2)([preimage, 0p0])
+    let h2 = Poseidon(2)([h1, 0p0])
+    let h3 = Poseidon(2)([h2, 0p0])
+    let h4 = Poseidon(2)([h3, 0p0])
+    let h5 = Poseidon(2)([h4, 0p0])
+    assert_eq(h5, final_hash)
+}
+
+print("Hash chain proof verified (circom Poseidon)")
+print("PASS: circom_poseidon_chain")

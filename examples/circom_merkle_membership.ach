@@ -1,0 +1,91 @@
+// ============================================================================
+// Merkle Membership Proof with Circom Poseidon
+// ============================================================================
+//
+// Demonstrates: importing circomlib Poseidon, using it both off-chain
+// to build a Merkle tree and on-chain (inside a `prove {}` block) to
+// verify set membership of a secret leaf — without revealing which
+// leaf it is.
+//
+// Why this matters: every circomlib-based protocol in production
+// (tornado-cash, semaphore, worldcoin, hashcloak) builds commitments
+// and nullifiers from circomlib Poseidon. By routing the same
+// template through Achronyme's library-mode import, `.ach` programs
+// can interoperate 1:1 with those systems — same on-chain verifier,
+// same off-chain witness, same Groth16 proving key.
+//
+//                        root
+//                      /      \
+//                   n01        n23
+//                  /    \     /    \
+//                 m0    m1   m2    m3
+//
+// Public input:  merkle_root
+// Private witness: secret_key, merkle path (1 sibling + 1 direction bit
+//                   per level, for a depth-2 tree)
+
+import { Poseidon } from "../test/circomlib/circuits/poseidon.circom"
+
+// --- Phase 1: Set up the club (all off-chain, in VM mode) ---
+
+let key_0 = 0p101
+let key_1 = 0p202
+let key_2 = 0p303
+let key_3 = 0p404
+
+// Member commitments: Poseidon(secret_key, 0)
+let m0 = Poseidon(2)([key_0, 0p0])
+let m1 = Poseidon(2)([key_1, 0p0])
+let m2 = Poseidon(2)([key_2, 0p0])
+let m3 = Poseidon(2)([key_3, 0p0])
+
+// Level 1: pair leaves
+let n01 = Poseidon(2)([m0, m1])
+let n23 = Poseidon(2)([m2, m3])
+
+// Root
+let merkle_root = Poseidon(2)([n01, n23])
+
+print("=== Merkle Membership (circom Poseidon) ===")
+print("Club Merkle root: " + merkle_root.to_string())
+print("4 members registered")
+print("")
+
+// --- Phase 2: Member 2 proves membership ---
+//
+// Member 2 (key_2) wants to prove they're in the club without
+// revealing which member. m2 is at index 2 (binary: 10):
+//   Level 0: m2 is LEFT child of n23 → sibling = m3, dir = 0
+//   Level 1: n23 is RIGHT child of root → sibling = n01, dir = 1
+
+let sibling_0 = m3
+let sibling_1 = n01
+
+print("Member 2 proving membership...")
+
+prove membership(merkle_root: Public) {
+    // Step 1: recompute the leaf from the secret key.
+    let my_leaf = Poseidon(2)([key_2, 0p0])
+
+    // Step 2: level 0 — combine leaf + sibling. Member 2 is LEFT,
+    // so order is (my_leaf, sibling_0).
+    let lvl0 = Poseidon(2)([my_leaf, sibling_0])
+
+    // Step 3: level 1 — combine lvl0 + sibling. Member 2's subtree
+    // is RIGHT, so order is (sibling_1, lvl0).
+    let computed_root = Poseidon(2)([sibling_1, lvl0])
+
+    assert_eq(computed_root, merkle_root)
+}
+
+print("Membership verified (circom Poseidon, on-chain)")
+print("")
+
+// --- Phase 3: Privacy check ---
+//
+// The verifier sees `merkle_root` (public) + a valid Groth16 proof.
+// They learn nothing about which member proved membership — the
+// secret key, leaf index, and path are all private witnesses.
+
+print("=== Proof revealed nothing about the prover's identity ===")
+print("PASS: circom_merkle_membership")

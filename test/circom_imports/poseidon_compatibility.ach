@@ -1,0 +1,57 @@
+// ============================================================================
+// Cross-validation: circom Poseidon vs native poseidon
+// ============================================================================
+//
+// This test verifies that `Poseidon(2)([a, b])` imported from
+// circomlib produces the same hash as Achronyme's native
+// `poseidon(a, b)` built-in. If this ever fails it means one of:
+//
+//   1. Circomlib's Poseidon parameters drifted vs. our native impl
+//   2. We regressed the library-mode instantiation pipeline
+//   3. We regressed the VM-mode witness evaluator
+//
+// Both checks are critical for interoperability with tornado-cash,
+// semaphore and anything else built on the circomlib Poseidon
+// constant system.
+
+import { Poseidon } from "../circomlib/circuits/poseidon.circom"
+
+let a = 0p1
+let b = 0p2
+
+// --- VM mode: evaluate both hashes off-circuit ---
+let circom_h = Poseidon(2)([a, b])
+let native_h = poseidon(a, b)
+
+print("Circom Poseidon(2)([1, 2]):")
+print("  " + circom_h.to_string())
+print("Native poseidon(1, 2):")
+print("  " + native_h.to_string())
+
+assert(circom_h == native_h)
+print("VM-mode cross-validation: OK")
+
+// --- Circuit mode: prove that both implementations agree under R1CS ---
+//
+// The prover instantiates circomlib's constraint system AND the
+// native poseidon gate, then asserts equality inside the circuit.
+// If the proof verifies, both implementations agree bit-for-bit
+// under constraint-mode semantics as well.
+
+prove(circom_h: Public) {
+    let circ = Poseidon(2)([a, b])
+    let nat  = poseidon(a, b)
+    assert_eq(circ, nat)
+    assert_eq(circ, circom_h)
+}
+
+print("Circuit-mode cross-validation: OK")
+
+// --- Sanity check on a second vector ---
+let x = 0p42
+let y = 0p1337
+let h2_c = Poseidon(2)([x, y])
+let h2_n = poseidon(x, y)
+assert(h2_c == h2_n)
+
+print("PASS: poseidon_compatibility")
