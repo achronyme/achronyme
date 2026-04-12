@@ -214,3 +214,112 @@ assert(bits[3] == 0p0)
     );
     run(&fixture).expect("array-output Num2Bits should succeed");
 }
+
+#[test]
+fn vm_mode_array_input_expansion_executes_successfully() {
+    // SumArr(3) takes an array signal input. The compiler must
+    // expand the ArrayLit `[3, 4, 5]` into 3 individual registers,
+    // and the handler must reassemble them as `in_0`, `in_1`, `in_2`
+    // before calling `evaluate_template_witness`.
+    let fixture = write_fixture(
+        r#"
+        pragma circom 2.0.0;
+        template SumArr(n) {
+            signal input in[n];
+            signal output out;
+            var acc = 0;
+            for (var i = 0; i < n; i++) {
+                acc += in[i];
+            }
+            out <== acc;
+        }
+        "#,
+        r#"
+import { SumArr } from "./module.circom"
+let s = SumArr(3)([0p3, 0p4, 0p5])
+assert(s == 0p12)
+"#,
+    );
+    run(&fixture).expect("array-input SumArr should succeed");
+}
+
+#[test]
+fn vm_mode_array_input_wrong_length_is_rejected() {
+    let fixture = write_fixture(
+        r#"
+        pragma circom 2.0.0;
+        template SumArr(n) {
+            signal input in[n];
+            signal output out;
+            var acc = 0;
+            for (var i = 0; i < n; i++) {
+                acc += in[i];
+            }
+            out <== acc;
+        }
+        "#,
+        r#"
+import { SumArr } from "./module.circom"
+let s = SumArr(3)([0p3, 0p4])
+"#,
+    );
+    let err = run(&fixture).expect_err("wrong array length should fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("expects an array of 3") || msg.contains("passed 2"),
+        "expected array-length mismatch error, got: {msg}"
+    );
+}
+
+#[test]
+fn vm_mode_poseidon_array_input_from_circomlib() {
+    // Real circomlib Poseidon(2) has a 2-element array signal input.
+    // This test locates the upstream `test/circomlib/circuits/poseidon.circom`
+    // fixture from CARGO_MANIFEST_DIR and exercises the full
+    // ArrayLit → expanded registers → witness pipeline.
+    //
+    // The Poseidon(1,2) constant is widely published; we assert on
+    // exact equality with the native `poseidon(1, 2)` value that
+    // already shipped in `test/prove/prove_with_poseidon.ach`.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let poseidon_path = manifest_dir
+        .parent()
+        .unwrap()
+        .join("test/circomlib/circuits/poseidon.circom");
+    if !poseidon_path.exists() {
+        eprintln!("skipping: {poseidon_path:?} not present");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let ach_path = dir.path().join("main.ach");
+    let mut f = std::fs::File::create(&ach_path).expect("create ach");
+    let poseidon_path_str = poseidon_path.to_str().unwrap();
+    use std::io::Write;
+    // poseidon(1, 2) known vector — same as prove_with_poseidon.ach.
+    let expected_hex =
+        "7853200120776062878684798364095072458815029376092732009249414926327459813530";
+    let ach_src = format!(
+        r#"
+import {{ Poseidon }} from "{poseidon_path_str}"
+let h = Poseidon(2)([0p1, 0p2])
+assert(h == 0p{expected_hex})
+"#
+    );
+    f.write_all(ach_src.as_bytes()).expect("write ach");
+    f.flush().expect("flush");
+
+    cli::commands::run::run_file(
+        ach_path.to_str().unwrap(),
+        false,
+        None,
+        "r1cs",
+        PrimeId::Bn254,
+        None,
+        false,
+        false,
+        EF,
+        &[],
+    )
+    .expect("Poseidon(2)([1, 2]) should match native poseidon(1, 2)");
+}

@@ -205,3 +205,124 @@ prove(out: Public) {{
         "expected compile-time constant error, got: {msg}"
     );
 }
+
+#[test]
+fn prove_block_can_call_template_with_array_signal_input() {
+    // SumArr(n) takes an array input and returns a scalar sum.
+    // The user passes the elements as an ArrayLit; the dispatcher
+    // must expand it into per-element entries before instantiation.
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template SumArr(n) {
+            signal input in[n];
+            signal output out;
+            var acc = 0;
+            for (var i = 0; i < n; i++) {
+                acc += in[i];
+            }
+            out <== acc;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    let ach_src = format!(
+        r#"
+import {{ SumArr }} from "./{rel}"
+let a = 0p3
+let b = 0p4
+let c = 0p5
+let expected = 0p12
+prove(expected: Public) {{
+    let sum = SumArr(3)([a, b, c])
+    assert_eq(sum, expected)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    compiler
+        .compile(&ach_src)
+        .expect("SumArr(3)([a, b, c]) should compile");
+}
+
+#[test]
+fn prove_block_array_input_wrong_length_errors() {
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template SumArr(n) {
+            signal input in[n];
+            signal output out;
+            var acc = 0;
+            for (var i = 0; i < n; i++) {
+                acc += in[i];
+            }
+            out <== acc;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    let ach_src = format!(
+        r#"
+import {{ SumArr }} from "./{rel}"
+prove(expected: Public) {{
+    // Template expects 3 elements but caller passes 2.
+    let sum = SumArr(3)([0p1, 0p2])
+    assert_eq(sum, expected)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    let err = compiler
+        .compile(&ach_src)
+        .expect_err("array length mismatch must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("expects an array of 3") || msg.contains("passed 2"),
+        "expected array-length mismatch error, got: {msg}"
+    );
+}
+
+#[test]
+fn prove_block_array_input_non_array_expr_errors() {
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template SumArr(n) {
+            signal input in[n];
+            signal output out;
+            var acc = 0;
+            for (var i = 0; i < n; i++) {
+                acc += in[i];
+            }
+            out <== acc;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    // Caller passes a scalar instead of an ArrayLit for an array signal.
+    let ach_src = format!(
+        r#"
+import {{ SumArr }} from "./{rel}"
+prove(expected: Public) {{
+    let sum = SumArr(2)(0p1)
+    assert_eq(sum, expected)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    let err = compiler
+        .compile(&ach_src)
+        .expect_err("non-array expression for array signal must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("array of size") || msg.contains("wrap the inputs"),
+        "expected array-input error, got: {msg}"
+    );
+}
