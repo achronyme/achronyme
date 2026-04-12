@@ -14,8 +14,9 @@ use std::sync::Arc;
 use memory::{Bn254Fr, CircomHandle, FieldElement};
 use vm::{CircomCallError, CircomCallResult, CircomOutputValue, CircomWitnessHandler};
 
-use circom::library::{evaluate_template_witness, TemplateOutputValue};
-use circom::CircomLibrary;
+use circom::library::{evaluate_template_witness, resolve_entry, TemplateOutputValue};
+use circom::{CircomLibrary, DimensionExpr};
+use ir::prove_ir::types::FieldConst;
 
 /// In-process circom witness handler. Owns the same `Arc<CircomLibrary>`
 /// instances the compiler allocated at compile time so the library
@@ -59,12 +60,50 @@ impl CircomWitnessHandler for DefaultCircomWitnessHandler {
             ))
         })?;
 
-        if entry.inputs.len() != signal_inputs.len() {
+        // Resolve the template's input layout against the concrete
+        // template args so we know the total flat element count and
+        // which inputs are arrays. The VM-mode compiler already
+        // flattened array inputs into one register per element, so we
+        // now map them to `signal_name_i` keys.
+        let mut known_params: HashMap<String, FieldConst> = HashMap::new();
+        for (param, arg) in entry.params.iter().zip(handle.template_args.iter()) {
+            known_params.insert(param.clone(), FieldConst::from_u64(*arg));
+        }
+        let resolved = resolve_entry(entry, &known_params);
+
+        // Compute expected flat element count: scalars contribute 1,
+        // arrays contribute the product of their resolved dimensions.
+        let mut expected_flat: usize = 0;
+        for sig in &resolved.inputs {
+            if sig.is_scalar() {
+                expected_flat += 1;
+                continue;
+            }
+            let mut elems: usize = 1;
+            for d in &sig.dimensions {
+                match d {
+                    DimensionExpr::Const(n) => elems *= *n as usize,
+                    _ => {
+                        return Err(CircomCallError::InvalidSignalInput {
+                            index: 0,
+                            reason: format!(
+                                "circom template `{}` input `{}` has an unresolved \
+                                 array dimension for args {:?}",
+                                handle.template_name, sig.name, handle.template_args
+                            ),
+                        });
+                    }
+                }
+            }
+            expected_flat += elems;
+        }
+
+        if expected_flat != signal_inputs.len() {
             return Err(CircomCallError::InvalidSignalInput {
                 index: 0,
                 reason: format!(
-                    "expected {} signal input(s) for circom template `{}`, got {}",
-                    entry.inputs.len(),
+                    "expected {expected_flat} flat signal input element(s) for circom \
+                     template `{}`, got {}",
                     handle.template_name,
                     signal_inputs.len()
                 ),
@@ -72,20 +111,33 @@ impl CircomWitnessHandler for DefaultCircomWitnessHandler {
         }
 
         // Build the name-keyed HashMap the library evaluator expects.
+        // Scalar inputs keep their declared names; array inputs get
+        // expanded into `name_i` (or `name_i_j` for multi-dim) keys.
         let mut map: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
-        for (i, input_sig) in entry.inputs.iter().enumerate() {
-            if !input_sig.is_scalar() {
-                return Err(CircomCallError::InvalidSignalInput {
-                    index: i,
-                    reason: format!(
-                        "circom template `{}` declares array-valued signal input \
-                         `{}`; VM-mode calls only support scalar signal inputs \
-                         (Phase 4 limitation)",
-                        handle.template_name, input_sig.name
-                    ),
-                });
+        let mut cursor: usize = 0;
+        for sig in &resolved.inputs {
+            if sig.is_scalar() {
+                map.insert(sig.name.clone(), signal_inputs[cursor]);
+                cursor += 1;
+                continue;
             }
-            map.insert(input_sig.name.clone(), signal_inputs[i]);
+            let dims: Vec<u64> = sig
+                .dimensions
+                .iter()
+                .map(|d| match d {
+                    DimensionExpr::Const(n) => *n,
+                    _ => 0, // unreachable — caught above
+                })
+                .collect();
+            for idx in flatten_row_major_indices(&dims) {
+                let suffix = idx
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                map.insert(format!("{}_{suffix}", sig.name), signal_inputs[cursor]);
+                cursor += 1;
+            }
         }
 
         // Dispatch to the real witness evaluator.
@@ -111,4 +163,26 @@ impl CircomWitnessHandler for DefaultCircomWitnessHandler {
 
         Ok(CircomCallResult { outputs })
     }
+}
+
+/// Build the row-major list of multi-dimensional indices for a shape.
+///
+/// For `dims = [2, 3]` returns
+/// `[[0,0], [0,1], [0,2], [1,0], [1,1], [1,2]]`. Used to map each
+/// flat `FieldElement` slot delivered by the VM onto its
+/// `name_i[_j…]` key in the witness-evaluator input map.
+fn flatten_row_major_indices(dims: &[u64]) -> Vec<Vec<u64>> {
+    let mut result = vec![Vec::new()];
+    for &d in dims {
+        let mut next = Vec::with_capacity(result.len() * d as usize);
+        for prefix in &result {
+            for i in 0..d {
+                let mut p = prefix.clone();
+                p.push(i);
+                next.push(p);
+            }
+        }
+        result = next;
+    }
+    result
 }

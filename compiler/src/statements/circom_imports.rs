@@ -159,11 +159,80 @@ impl CircomVmCallEmitter for Compiler {
                 self.cur_span(),
             ));
         }
-        if expected_inputs > 254 {
+
+        // Expand array signal inputs: for every declared array input
+        // the caller must pass an `Expr::Array` literal whose total
+        // element count matches the resolved array size. Each element
+        // lands in its own register — the runtime handler maps them
+        // back to `signal_name_i` keys via the same layout.
+        //
+        // Resolve the layout here (rather than relying on the raw
+        // library entry) so parametric sizes like `inputs[nInputs]`
+        // collapse to the concrete value the user passed as template arg.
+        let template_const_args: Vec<ir::prove_ir::types::FieldConst> = template_u64_args
+            .iter()
+            .map(|n| ir::prove_ir::types::FieldConst::from_u64(*n))
+            .collect();
+        let layouts = <circom::CircomLibrary as CircomLibraryHandle>::resolve_input_layout(
+            library.as_ref(),
+            &template_name,
+            &template_const_args,
+        )
+        .ok_or_else(|| {
+            CompilerError::CompileError(
+                format!(
+                    "circom template `{template_name}`: could not resolve input signal \
+                     dimensions for the given template arguments"
+                ),
+                self.cur_span(),
+            )
+        })?;
+
+        // Build a flat list of (expression, owned optional allocation)
+        // that compile_expr should evaluate in order. Scalar inputs
+        // map 1:1 to the user's expression; array inputs are
+        // replaced by their ArrayLit elements in row-major order.
+        let mut flat_exprs: Vec<&Expr> = Vec::with_capacity(expected_inputs);
+        for (layout, input_expr) in layouts.iter().zip(signal_inputs.iter()) {
+            if layout.dims.is_empty() {
+                flat_exprs.push(*input_expr);
+                continue;
+            }
+            let expected_len: usize = layout.dims.iter().product::<u64>() as usize;
+            let Expr::Array { elements, .. } = *input_expr else {
+                return Err(CompilerError::CompileError(
+                    format!(
+                        "circom template `{template_name}`: signal input `{}` is declared \
+                         as an array of size {} but the caller passed a non-array \
+                         expression; wrap the inputs in `[...]`",
+                        layout.name, expected_len
+                    ),
+                    self.cur_span(),
+                ));
+            };
+            if elements.len() != expected_len {
+                return Err(CompilerError::CompileError(
+                    format!(
+                        "circom template `{template_name}`: signal input `{}` expects an \
+                         array of {} element(s) but the caller passed {}",
+                        layout.name,
+                        expected_len,
+                        elements.len()
+                    ),
+                    self.cur_span(),
+                ));
+            }
+            for elem in elements {
+                flat_exprs.push(elem);
+            }
+        }
+
+        if flat_exprs.len() > 254 {
             return Err(CompilerError::CompileError(
                 format!(
-                    "circom template `{template_name}` has {expected_inputs} signal \
-                     inputs; VM-mode calls are limited to 254 (register budget)"
+                    "circom template `{template_name}` expands to {} signal input \
+                     element(s); VM-mode calls are limited to 254 (register budget)",
+                    flat_exprs.len()
                 ),
                 self.cur_span(),
             ));
@@ -199,9 +268,10 @@ impl CircomVmCallEmitter for Compiler {
         // Compile every signal input in sequence. compile_expr
         // allocates at `reg_top`, which has already advanced past
         // `handle_reg`, so the first input lands at handle_reg + 1,
-        // second at handle_reg + 2, etc.
+        // second at handle_reg + 2, etc. `flat_exprs` already expanded
+        // any array-valued inputs into their individual elements.
         let first_input_reg = handle_reg + 1;
-        for (i, input) in signal_inputs.iter().enumerate() {
+        for (i, input) in flat_exprs.iter().enumerate() {
             let landed = self.compile_expr(input)?;
             debug_assert_eq!(
                 landed as usize,
@@ -211,7 +281,7 @@ impl CircomVmCallEmitter for Compiler {
             );
         }
 
-        let input_count = signal_inputs.len() as u8;
+        let input_count = flat_exprs.len() as u8;
         self.emit_abc(
             OpCode::CallCircomTemplate,
             handle_reg,
