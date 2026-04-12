@@ -126,11 +126,7 @@ fn bench_native_map_vs_loop() {
     let (map_ns, _) = bench("map(1000, fn(n) { n * 2 })", map_source, iters);
     let (loop_ns, _) = bench("while-loop equivalent", loop_source, iters);
 
-    let diff = if map_ns > loop_ns {
-        map_ns - loop_ns
-    } else {
-        0
-    };
+    let diff = map_ns.saturating_sub(loop_ns);
     let pct = if loop_ns > 0 {
         (diff as f64 / loop_ns as f64) * 100.0
     } else {
@@ -189,11 +185,7 @@ fn bench_chained_hofs() {
     let (chain_ns, _) = bench("map→filter→reduce (500 elems)", chained_source, iters);
     let (loop_ns, _) = bench("while-loop equivalent", loop_source, iters);
 
-    let diff = if chain_ns > loop_ns {
-        chain_ns - loop_ns
-    } else {
-        0
-    };
+    let diff = chain_ns.saturating_sub(loop_ns);
     let pct = if loop_ns > 0 {
         (diff as f64 / loop_ns as f64) * 100.0
     } else {
@@ -243,11 +235,7 @@ fn bench_tight_native_calls() {
     let (native_ns, _) = bench("len() x 10,000", native_source, iters);
     let (pure_ns, _) = bench("constant add x 10,000", pure_source, iters);
 
-    let diff = if native_ns > pure_ns {
-        native_ns - pure_ns
-    } else {
-        0
-    };
+    let diff = native_ns.saturating_sub(pure_ns);
     let per_call = diff / 10_000;
 
     eprintln!("\n  Delta: {diff} ns/iter for 10,000 native calls");
