@@ -5,6 +5,13 @@ It compiles source code into R1CS or Plonkish constraint systems over a configur
 prime field (BN254, BLS12-381, or Goldilocks), producing outputs compatible with
 snarkjs for Groth16 proof generation, or native PlonK proofs via halo2.
 
+Alongside the native `.ach` language, Achronyme consumes `.circom` files in two
+modes: as a **full circuit** (via `import circuit "x.circom" as C`) or as a
+**template library** whose templates are called from `.ach` code both inside
+`prove {}` / `circuit` blocks and in regular VM mode. The Circom Interop section
+below covers the dispatch architecture, the dependency-cycle break, and the
+scope limitations of the current (beta.20) implementation.
+
 ## Pipeline
 
 ```
@@ -54,14 +61,14 @@ Source (.ach)                    Source (.circom)
 | `memory` | `memory/` | Generic field arithmetic (`F: FieldBackend`), tagged values, heap/GC | `FieldElement<F>`, `FieldBackend`, `Value`, `Heap` |
 | `achronyme-parser` | `achronyme-parser/` | Recursive descent parser, AST types | `Program`, `Stmt`, `Expr`, `Block` |
 | `constraints` | `constraints/` | R1CS + Plonkish constraint systems, export | `ConstraintSystem`, `Variable`, `LinearCombination`, `PlonkishSystem` |
-| `ir` | `ir/` | SSA intermediate representation, lowering, optimization | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering` |
-| `compiler` | `compiler/` | Bytecode compiler + ZK backends | `R1CSCompiler`, `PlonkishCompiler`, `Compiler` |
-| `vm` | `vm/` | Virtual machine execution | `VM` |
+| `ir` | `ir/` | SSA intermediate representation, lowering, optimization; also hosts `prove_ir::circom_interop` (trait-only surface for circom dispatch) | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering`, `CircomLibraryHandle`, `CircomCallable` |
+| `compiler` | `compiler/` | Bytecode compiler + ZK backends + compile-time circom handle/library registries | `R1CSCompiler`, `PlonkishCompiler`, `Compiler`, `CircomHandleInterner`, `CircomLibraryRegistry` |
+| `vm` | `vm/` | Virtual machine execution + `CallCircomTemplate` opcode dispatcher | `VM`, `CircomWitnessHandler`, `CircomCallResult` |
 | `proving` | `proving/` | Groth16 (arkworks), PlonK (halo2-KZG), Solidity verifier | `groth16_prove`, `halo2_prove` |
 | `achronyme-std` | `std/` | Standard library via `NativeModule` trait | `StdModule` |
 | `ach-macros` | `ach-macros/` | Proc-macros: `#[ach_native]`, `#[ach_module]` | — |
-| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, ProveIR lowering | `parse_circom`, `lower_template`, `check_constraints` |
-| `cli` | `cli/` | Command-line interface, prove handler, project config | `DefaultProveHandler`, `AchronymeToml`, `ProjectConfig` |
+| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, ProveIR lowering, library-mode template API | `parse_circom`, `lower_template`, `compile_template_library`, `instantiate_template_into`, `evaluate_template_witness` |
+| `cli` | `cli/` | Command-line interface, prove handler, circom witness handler, project config | `DefaultProveHandler`, `DefaultCircomWitnessHandler`, `AchronymeToml`, `ProjectConfig` |
 
 ### Dependency Graph
 
@@ -275,7 +282,179 @@ witness vector:
 - `PoseidonHash` — replay the full Poseidon permutation
 - `IsZero` — compute the inverse-or-zero witness
 
-## Diagnostic Pipeline
+## Circom Interop
+
+Achronyme consumes `.circom` files in two independent modes:
+
+| Mode | Syntax | Entry point | Runtime path |
+|------|--------|-------------|--------------|
+| **Full circuit import** | `import circuit "x.circom" as C` | `circom::compile_file` | Serialized into ProveIR bytes, bound as an `.ach` global — same runtime path as a hand-written `circuit` declaration |
+| **Library template import** | `import { T } from "x.circom"` / `import "x.circom" as P` | `circom::compile_template_library` | Each `T(params)(inputs)` call dispatches through a trait object at compile time (circuit mode) or a VM opcode (VM mode) |
+
+The full-circuit path requires a `component main` in the `.circom` file — it's a one-shot compilation into a complete ProveIR template. The library path skips `component main` and keeps the circom AST around so individual templates can be instantiated on demand. Both modes are exclusive at the file level: a single `.circom` file is consumed *either* as a circuit *or* as a library.
+
+### The dependency-cycle problem
+
+`circom` already depends on `ir` to reuse `CircuitExpr` / `CircuitNode` / `FieldConst`, so `ir` cannot reach back into `circom` without creating a cycle. The dispatcher has to work in both directions — `ir::prove_ir::compiler::ProveIrCompiler` needs to instantiate circom templates at compile time, and the `vm` crate (which sits below `circom` too) needs to invoke witness evaluation at run time.
+
+Both problems are solved the same way: define a trait in the lower crate, implement it in `circom`, and let the crate above both wire up the trait object.
+
+```
+circom  →  ir  →  memory          (ir defines CircomLibraryHandle,
+    │                              circom impls it on CircomLibrary)
+    ↓
+vm  →  memory                     (vm defines CircomWitnessHandler,
+    │                              cli impls it with Arc<CircomLibrary>)
+    ↓
+compiler  →  ir, vm, circom       (compiler wires both sides together)
+    ↓
+cli  →  compiler                  (cli injects the concrete handler at run time)
+```
+
+### Circuit mode dispatch (Phase 3)
+
+When a `prove {}` or `circuit` block calls a circom template, the `ProveIrCompiler` resolves the call through an in-memory `circom_table: HashMap<String, CircomCallable>` seeded from the parent compiler's circom imports at entry.
+
+**Key types** (`ir/src/prove_ir/circom_interop.rs`):
+
+- `CircomLibraryHandle` — dyn-safe trait with three methods: `template_signature`, `template_names`, `instantiate_template`. Send + Sync for future parallel compilation.
+- `CircomCallable { library: Arc<dyn CircomLibraryHandle>, template_name: String }` — one entry per dispatch key. Selective imports key by bare template name (`"Poseidon"`), namespace imports pre-flatten to `"P::T"` form so the call-site lookup stays a single `HashMap::get`.
+- `CircomInstantiation { body: Vec<CircuitNode>, outputs: HashMap<String, CircomTemplateOutput> }` — what a successful instantiation returns. The dispatcher appends the body to the current prove-block body and stores the outputs under dotted env keys so `r.out_i` DotAccess resolves.
+- `CircomDispatchError` — failure reasons (unknown template, param count mismatch, missing signal input, array input unsupported, lowering failed).
+
+**Implementation** (`circom/src/library/handle.rs`): `impl CircomLibraryHandle for CircomLibrary` delegates every method to the existing library API. `template_signature` projects out the cached `CircomTemplateEntry`; `instantiate_template` wraps `instantiate_template_into` and converts `TemplateOutput` / `InstantiationError` into the ir-local shapes.
+
+**Seeding** (`compiler/src/statements/circom_imports.rs::build_circom_imports_for_outer_scope`): flattens `compiler.circom_template_aliases` (selective imports) and `compiler.circom_namespaces` (namespace imports) into the flat `HashMap<String, CircomCallable>` that `OuterScope.circom_imports` carries into the ProveIR compiler.
+
+**Call-site resolution** (`ir/src/prove_ir/compiler.rs::compile_call`): the dispatcher pattern-matches on `Call { callee: Call { callee: Ident(T) | Ident(P).field, args: template_args }, args: signal_inputs }`, looks up the key in `circom_table`, evaluates template args to `CircuitExpr::Const` (rejecting runtime values), maps signal inputs by declared name, allocates a fresh `circom_call_N` prefix, and calls `instantiate_template`. The returned body is appended to `self.body`; outputs bind under `"<let_name>.<output_name>"` env keys for single-scalar templates and `"<let_name>.<output_name>_<i>"` for array outputs. `compile_dot_access` checks these dotted keys alongside the existing `module::field` namespace constants.
+
+**Diagnostics** (Phase 3.5): `ProveIrError::CircomDispatch { kind, span }` with 11 specific kinds — `NamespaceNotFound`, `TemplateNotFoundInNamespace`, `TemplateNotFoundSelective`, `MissingTemplateParams`, `NotAtomic`, `ParamCountMismatch`, `SignalInputCountMismatch`, `TemplateArgNotConst`, `ArrayInputUnsupported`, `ArrayOutputRequiresIndex`, `LoweringFailed`. Unresolved names carry Levenshtein `did_you_mean` suggestions scoped to the compiler's registered templates / namespaces.
+
+### VM mode dispatch (Phase 4)
+
+Outside `prove {}` / `circuit` blocks, circom template calls compile to a dedicated VM opcode so the template runs as ordinary witness code. The whole pipeline — opcode, tag, heap object, trait, handler — is deliberately parallel to the existing `Prove` opcode and `prove_handler` machinery so the injection pattern stays uniform.
+
+**Value tag + heap object** (`memory/src/value.rs`, `memory/src/heap.rs`):
+
+```rust
+pub const TAG_CIRCOM_HANDLE: u64 = 15; // last of the 16 tag slots
+
+pub struct CircomHandle {
+    pub library_id: u32,       // index into the handler's library registry
+    pub template_name: String, // resolved template name on that library
+    pub template_args: Vec<u64>, // pre-evaluated compile-time template params
+}
+```
+
+`CircomHandle` is a leaf GC object (no nested Values). The compiler allocates one per call site via `CircomHandleInterner`, intern-style; the bytecode loader bulk-imports the vec into the heap's `circom_handles` arena at program-load time with `Heap::import_circom_handles`, mirroring `import_bytes`.
+
+**Opcode** (`vm/src/opcode.rs::CallCircomTemplate = 162`, ABC encoding):
+
+```
+R[A] = CircomCall(R[B-1] as handle, R[B..B+C] as inputs)
+       │             │                │
+       │             │                └── C = input count
+       │             └────── B = first signal input register
+       │                     (handle Value lives at R[B-1],
+       │                      same slot convention MethodCall uses
+       │                      for its method-name register)
+       └────── A = destination register for the projected result:
+                   scalar output  → Value::field
+                   array output   → Value::list of fields
+                   multi-output   → Value::map keyed by output name
+```
+
+The compiler always loads the handle with a preceding `LoadConst`, then compiles each signal input into the next contiguous register slot. This reuses the exact register-layout convention `compile_method_call` already uses and avoids introducing a new opcode format.
+
+**Handler trait + dispatcher** (`vm/src/machine/circom.rs`):
+
+```rust
+pub trait CircomWitnessHandler: Send + Sync {
+    fn invoke(
+        &self,
+        handle: &CircomHandle,
+        signal_inputs: &[FieldElement],
+    ) -> Result<CircomCallResult, CircomCallError>;
+}
+
+pub struct VM {
+    // ...
+    pub circom_handler: Option<Box<dyn CircomWitnessHandler>>,
+}
+```
+
+`VM::handle_call_circom_template` reads `R[B-1]` as a `TAG_CIRCOM_HANDLE`, pulls the heap object, marshals `R[B..B+C]` into `FieldElement` values via the existing `prove::value_to_field_element` helper, calls `circom_handler.invoke`, and projects the returned `CircomCallResult` into a single `Value` via `marshal_outputs_to_value` / `alloc_field_list`.
+
+`CircomCallError` variants: `HandlerNotConfigured`, `UnknownLibraryId`, `InvalidSignalInput`, `WitnessEvaluation`, `OutputMarshalling`. The opcode maps all of them through `RuntimeError::CircomHandlerNotConfigured` (for the `None` case) or `resource_limit_exceeded` (for runtime failures) so the CLI error renderer handles them uniformly.
+
+**Compiler-side emission** (`compiler/src/statements/circom_imports.rs::CircomVmCallEmitter`):
+
+- `try_resolve_circom_vm_call(inner_callee)` — same resolution logic as the ProveIR dispatcher but against `compiler.circom_template_aliases` and `compiler.circom_namespaces` directly (no `OuterScope` indirection needed — we're still in the bytecode compiler's own state).
+- `compile_circom_vm_call(library, template_name, template_args, signal_inputs)` — validates arity, parses each template arg as a compile-time integer literal (Phase 4 limitation; runtime/computed params deferred), interns the `Arc<CircomLibrary>` into `compiler.circom_library_registry` to get a `library_id`, builds the `CircomHandle`, interns it via `CircomHandleInterner`, and emits the register sequence described above. Called from `expressions/mod.rs::compile_call` via a short-circuit pre-dispatch that runs before the normal method-call / function-call match.
+
+**Run-time wiring** (`cli/src/circom_handler.rs::DefaultCircomWitnessHandler`): owns the `Vec<Arc<CircomLibrary>>` drained from `compiler.circom_library_registry.take_libraries()` and installs itself into `vm.circom_handler` before `vm.interpret()` — same pattern as `DefaultProveHandler`. The `invoke` impl looks up the library by `handle.library_id`, maps positional signal inputs onto the template's declared input-signal names, calls `circom::evaluate_template_witness::<Bn254Fr>` with `handle.template_args`, and converts `TemplateOutputValue` → `CircomOutputValue` before returning.
+
+### Data flow: `let h = P.Square()(0p5)` in VM mode
+
+```
+.ach source                                        Run-time VM state
+    │                                                  │
+    ▼                                                  │
+Parser → Call{Call{DotAccess(P, Square), []}, [0p5]}   │
+    │                                                  │
+    ▼  compiler::expressions::compile_call             │
+try_resolve_circom_vm_call(DotAccess(P, Square))       │
+    → (Arc<Library>, "Square")                         │
+    │                                                  │
+    ▼  compile_circom_vm_call                          │
+register_circom_library(arc)              ─→  compiler.circom_library_registry
+    → library_id = 0                                   │
+CircomHandle{ library_id: 0, template_name: "Square",  │
+              template_args: [] }                      │
+    │                                                  │
+intern_circom_handle(handle)              ─→  compiler.circom_handle_interner[0]
+    → handle_idx = 0                                   │
+add_constant(Value::circom_handle(0))                  │
+    → const_idx = K                                    │
+    │                                                  │
+emit LoadConst r2, K                                   │
+emit compile_expr(0p5)         → lands in r3           │
+emit CallCircomTemplate A=2, B=3, C=1                  │
+    │                                                  │
+    ▼  cli::run_file                                   │
+compiler.bytes_interner → vm.heap                      │
+compiler.circom_handle_interner  ─→  vm.heap.import_circom_handles(…)
+compiler.circom_library_registry ─→  DefaultCircomWitnessHandler::new(…)
+                                 ─→  vm.circom_handler = Some(handler)
+    │                                                  │
+    ▼  vm.interpret() — hits CallCircomTemplate        │
+handle = vm.heap.get_circom_handle(0)                  │
+inputs = [vm.heap.get_field(R[3])]  ←─ 0p5 materialized│
+handler.invoke(&handle, &inputs)                       │
+    │                                                  │
+    ▼  DefaultCircomWitnessHandler                     │
+library = self.libraries[0]                            │
+evaluate_template_witness::<Bn254Fr>(library, "Square",│
+                                      [], {"x": 0p5}) │
+    → {"y": Scalar(0p25)}                              │
+    │                                                  │
+    ▼  marshal_outputs_to_value                        │
+Value::field(heap.alloc_field(0p25))                   │
+    │                                                  │
+    ▼  set_reg(base, A=2, result)                      │
+R[2] now holds 0p25                                    │
+```
+
+The same dispatch works for array outputs (marshalled to `Value::list`) and multi-output templates (marshalled to `Value::map` keyed by declared output-signal name).
+
+### Scope limitations (beta.20)
+
+- Cross-process persistence is out of scope — the `.achb` bytecode format does not serialize circom handles or library source paths. `ach compile` + later `ach run file.achb` will not carry circom state. In-process `ach run file.ach` is the MVP target.
+- VM-mode template parameters must be integer literals at the call site. Compile-time constant folding of expressions like `let n = 4; Num2Bits(n)(...)` is deferred — the compiler emits a "template argument must be an integer literal" error today.
+- Array-valued signal inputs are not supported in either mode — the library-mode inliner rejects them and the VM handler surfaces the same error.
+- The VM is single-field (BN254). Cross-field circom imports in VM mode require the generic-VM work tracked for beta.21+.
+
+
 
 All compilation phases produce errors and warnings through a unified `Diagnostic` type
 defined in the standalone `diagnostics` crate (zero external dependencies). This crate is
@@ -431,6 +610,25 @@ nodes in the AST.
 3. Call it from `optimize()` in `ir/src/passes/mod.rs`
 4. The pass receives the full instruction list and can rewrite, remove, or
    reorder instructions (respecting SSA and side-effect constraints)
+
+### Adding a new circom dispatch error
+
+1. Extend `CircomDispatchErrorKind` in `ir/src/prove_ir/error.rs` with the new variant
+2. Add a `Display` impl arm carrying the user-facing message
+3. Emit `ProveIrError::CircomDispatch { kind: NewVariant { .. }, span }` at the detection site
+4. Pin the new variant in `prove_ir::compiler::tests::circom_dispatch` with a `matches!` assertion
+5. If the new variant needs a "did you mean?" suggestion, route through `crate::suggest::find_similar_ir` with a scoped candidate iterator (templates in a namespace, all selective aliases, etc.)
+
+### Extending the VM-mode circom handler
+
+The runtime-side dispatch lives in `cli/src/circom_handler.rs::DefaultCircomWitnessHandler`. To support a new circom feature at runtime:
+
+1. Update `CircomHandle` in `memory/src/heap.rs` if the opcode needs new per-call state
+2. Update `CircomCallResult` / `CircomOutputValue` in `vm/src/machine/circom.rs` if the return shape changes
+3. Update `DefaultCircomWitnessHandler::invoke` to handle the new case
+4. If marshalling into a `Value` needs a new shape, update `marshal_outputs_to_value` in `vm/src/machine/circom.rs`
+5. Mirror the compile-time side in `compiler/src/statements/circom_imports.rs::compile_circom_vm_call` so the opcode gets emitted with the right operands
+6. Add an end-to-end test in `cli/tests/circom_vm_mode_test.rs` that drives a real `.circom` file through `cli::commands::run::run_file`
 
 ## Project Configuration (`achronyme.toml`)
 
