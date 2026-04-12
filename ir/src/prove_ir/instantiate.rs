@@ -731,15 +731,35 @@ impl<F: FieldBackend> Instantiator<F> {
                 })
             }
             CircuitExpr::ShiftL { operand, shift, .. } => {
-                let op_val = self.eval_const_expr_u64(operand)?;
+                // `x << s` is `x * 2^s` in the field. Use `FieldElement::pow`
+                // so shifts >= 64 (e.g. circomlib's `LessThan(64)` computing
+                // `1 << 64`) don't collapse to 0 via `u64::checked_shl`.
+                // BN254 is 254-bit so `2^s` for `s <= 253` is always a
+                // valid field element; shifts larger than that overflow
+                // the field and we bail out explicitly rather than
+                // silently wrap.
+                let op_val = self.eval_const_expr(operand)?;
                 let shift_val = self.eval_const_expr_u64(shift)?;
-                let result = op_val.checked_shl(shift_val as u32).unwrap_or(0);
-                Ok(FieldElement::<F>::from_u64(result))
+                if shift_val >= 254 {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "left shift amount {shift_val} exceeds BN254 field width (254 bits)"
+                        ),
+                        span: None,
+                    });
+                }
+                let two = FieldElement::<F>::from_u64(2);
+                let two_to_s = two.pow(&[shift_val, 0, 0, 0]);
+                Ok(op_val.mul(&two_to_s))
             }
             CircuitExpr::ShiftR { operand, shift, .. } => {
                 let op_val = self.eval_const_expr_u64(operand)?;
                 let shift_val = self.eval_const_expr_u64(shift)?;
-                let result = op_val.checked_shr(shift_val as u32).unwrap_or(0);
+                let result = if shift_val >= 64 {
+                    0
+                } else {
+                    op_val >> (shift_val as u32)
+                };
                 Ok(FieldElement::<F>::from_u64(result))
             }
             _ => Err(ProveIrError::UnsupportedOperation {

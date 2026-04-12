@@ -53,6 +53,43 @@ pub fn try_fold_const(expr: &CircuitExpr) -> Option<FieldConst> {
             Some(FieldConst::from_field(b.pow(&e)))
         }
 
+        // Left shift by a compile-time constant: `x << s` → `x * 2^s`
+        // in the field. Uses `pow` so the shift amount can exceed 63
+        // without overflowing — `1 << 64` correctly produces `2^64` as
+        // a BN254 field element (well within the 254-bit field).
+        //
+        // Missing this fold silently broke `LessThan(n)` for any
+        // n >= 64: circomlib's `n2b.in <== in[0] + (1 << n) - in[1]`
+        // expression got lowered to a runtime `CircuitExpr::ShiftL`,
+        // whose IR evaluation used u64 arithmetic and wrapped `1 << 64`
+        // to 0 — turning the range-check input into `in[0] - in[1]`
+        // (i.e. `-58 mod p` instead of `2^64 - 58`) and causing the
+        // Num2Bits sum constraint to fail.
+        CircuitExpr::ShiftL { operand, shift, .. } => {
+            let base = to_fe(try_fold_const(operand)?)?;
+            let shift_amt = try_fold_const(shift)?.to_u64()?;
+            let two = FieldElement::<Bn254Fr>::from_u64(2);
+            let e = [shift_amt, 0, 0, 0];
+            let two_to_s = two.pow(&e);
+            Some(FieldConst::from_field(base.mul(&two_to_s)))
+        }
+
+        // Right shift by a compile-time constant. For field elements
+        // this isn't a direct division — we need the integer
+        // representation. We only fold when the operand fits in u64
+        // (which covers every realistic compile-time case) and fall
+        // back to the runtime shift otherwise.
+        CircuitExpr::ShiftR { operand, shift, .. } => {
+            let base_u64 = try_fold_const(operand)?.to_u64()?;
+            let shift_amt = try_fold_const(shift)?.to_u64()?;
+            let shifted = if shift_amt >= 64 {
+                0
+            } else {
+                base_u64 >> shift_amt
+            };
+            Some(FieldConst::from_u64(shifted))
+        }
+
         // IntDiv / IntMod are integer operations, not field operations.
         // We can evaluate them when the values fit in u64.
         CircuitExpr::IntDiv { lhs, rhs, .. } => {

@@ -142,16 +142,31 @@ pub(super) fn lower_binop(
             rhs: r,
             num_bits: DEFAULT_MAX_BITS,
         }),
-        ast::BinOp::ShiftR => Ok(CircuitExpr::ShiftR {
-            operand: l,
-            shift: r,
-            num_bits: DEFAULT_MAX_BITS,
-        }),
-        ast::BinOp::ShiftL => Ok(CircuitExpr::ShiftL {
-            operand: l,
-            shift: r,
-            num_bits: DEFAULT_MAX_BITS,
-        }),
+        ast::BinOp::ShiftR => {
+            let expr = CircuitExpr::ShiftR {
+                operand: l,
+                shift: r,
+                num_bits: DEFAULT_MAX_BITS,
+            };
+            Ok(try_fold_const(&expr)
+                .map(CircuitExpr::Const)
+                .unwrap_or(expr))
+        }
+        ast::BinOp::ShiftL => {
+            // Fold `Const << Const` into a concrete field element so
+            // expressions like `(1 << n)` with a captured template
+            // param `n = 64` don't leak into a runtime ShiftL whose
+            // IR evaluator truncates via u64 (see `try_fold_const`
+            // for the long story).
+            let expr = CircuitExpr::ShiftL {
+                operand: l,
+                shift: r,
+                num_bits: DEFAULT_MAX_BITS,
+            };
+            Ok(try_fold_const(&expr)
+                .map(CircuitExpr::Const)
+                .unwrap_or(expr))
+        }
     }
 }
 
