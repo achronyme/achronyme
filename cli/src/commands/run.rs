@@ -116,6 +116,17 @@ pub fn run_file(
         vm.import_strings(compiler.interner.strings);
         // Transfer byte blobs (serialized ProveIR) from compiler to VM
         vm.heap.import_bytes(compiler.bytes_interner.blobs);
+        // Transfer compile-time circom handles into the VM heap so
+        // `Value::circom_handle(idx)` constants resolve at runtime.
+        vm.heap
+            .import_circom_handles(std::mem::take(&mut compiler.circom_handle_interner.handles));
+        // Install the circom witness dispatcher with the same
+        // library registry the compiler used at compile time.
+        vm.circom_handler = Some(Box::new(
+            crate::circom_handler::DefaultCircomWitnessHandler::new(
+                compiler.circom_library_registry.take_libraries(),
+            ),
+        ));
 
         // Transfer field literals from compiler to VM
         let field_map = vm.heap.import_fields(compiler.field_interner.fields)?;

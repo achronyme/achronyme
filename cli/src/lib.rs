@@ -1,3 +1,4 @@
+pub mod circom_handler;
 pub mod commands;
 pub mod config;
 pub mod init;

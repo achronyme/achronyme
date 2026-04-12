@@ -3,6 +3,7 @@ use crate::control_flow::ControlFlowCompiler;
 use crate::error::CompilerError;
 use crate::functions::FunctionDefinitionCompiler;
 use crate::scopes::ScopeCompiler;
+use crate::statements::circom_imports::CircomVmCallEmitter;
 use achronyme_parser::ast::*;
 use memory::Value;
 use vm::opcode::OpCode;
@@ -355,6 +356,33 @@ impl Compiler {
     }
 
     fn compile_call(&mut self, callee: &Expr, args: &[&Expr]) -> Result<u8, CompilerError> {
+        // Circom template atomic curry in VM mode:
+        //   Template(template_args)(signal_inputs)  →  CallCircomTemplate
+        //   P.Template(template_args)(signal_inputs) →  CallCircomTemplate
+        //
+        // Parses as Call { callee: Call { callee: <ident|dot>, args: template_args }, args: inputs }.
+        // Intercept before the normal call dispatch so the registered
+        // selective / namespaced circom imports emit the dedicated
+        // opcode instead of trying to go through the VM call path.
+        if let Expr::Call {
+            callee: inner_callee,
+            args: inner_args,
+            ..
+        } = callee
+        {
+            if let Some((library_arc, template_name)) =
+                self.try_resolve_circom_vm_call(inner_callee)
+            {
+                let template_arg_exprs: Vec<&Expr> = inner_args.iter().map(|a| &a.value).collect();
+                return self.compile_circom_vm_call(
+                    library_arc,
+                    template_name,
+                    &template_arg_exprs,
+                    args,
+                );
+            }
+        }
+
         // Detect method call pattern: expr.method(args) where method is known
         if let Expr::DotAccess { object, field, .. } = callee {
             // Check: field is a known method AND object is NOT an imported module alias

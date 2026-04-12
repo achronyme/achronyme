@@ -1,6 +1,9 @@
 use crate::error::{CompilerError, OptSpan};
 use crate::function_compiler::FunctionCompiler;
-use crate::interner::{BigIntInterner, BytesInterner, FieldInterner, StringInterner};
+use crate::interner::{
+    BigIntInterner, BytesInterner, CircomHandleInterner, CircomLibraryRegistry, FieldInterner,
+    StringInterner,
+};
 use crate::module_loader::ModuleLoader;
 use crate::statements::{stmt_span, StatementCompiler};
 use achronyme_parser::ast::{Span, Stmt};
@@ -33,6 +36,18 @@ pub struct Compiler {
 
     // Bytes Interner (binary blobs, e.g. serialized ProveIR)
     pub bytes_interner: BytesInterner,
+
+    /// Circom handle descriptors (template call sites) allocated
+    /// during VM-mode codegen. Bulk-imported into the VM heap at
+    /// program-load time alongside the constant pool.
+    pub circom_handle_interner: CircomHandleInterner,
+
+    /// Registry of compiled circom libraries referenced by the
+    /// circom handles in `circom_handle_interner`. The CLI hands
+    /// this over to the runtime handler so `library_id` inside a
+    /// handle resolves to the same `Arc<CircomLibrary>` the
+    /// compiler saw.
+    pub circom_library_registry: CircomLibraryRegistry,
 
     // Module system
     pub base_path: Option<PathBuf>,
@@ -156,6 +171,8 @@ impl Compiler {
             field_interner: FieldInterner::new(),
             bigint_interner: BigIntInterner::new(),
             bytes_interner: BytesInterner::new(),
+            circom_handle_interner: CircomHandleInterner::new(),
+            circom_library_registry: CircomLibraryRegistry::new(),
             base_path: None,
             module_loader: ModuleLoader::new(),
             module_prefix: None,
@@ -337,6 +354,19 @@ impl Compiler {
 
     pub fn intern_bytes(&mut self, data: Vec<u8>) -> u32 {
         self.bytes_interner.intern(data)
+    }
+
+    /// Register a circom handle descriptor and return the heap
+    /// index the VM will resolve at program-run time.
+    pub fn intern_circom_handle(&mut self, handle: memory::CircomHandle) -> u32 {
+        self.circom_handle_interner.intern(handle)
+    }
+
+    /// Register a circom library in the compile-time registry and
+    /// return its id. Called by the VM-mode codegen when it sees
+    /// the first template call against a library.
+    pub fn register_circom_library(&mut self, lib: std::sync::Arc<circom::CircomLibrary>) -> u32 {
+        self.circom_library_registry.intern(lib)
     }
 
     /// Returns a mutable reference to the current (top) function compiler
