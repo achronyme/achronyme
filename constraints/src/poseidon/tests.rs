@@ -110,6 +110,7 @@ fn test_poseidon_single() {
 }
 
 #[test]
+#[allow(clippy::needless_range_loop)]
 fn test_poseidon_circuit_matches_native() {
     // This is the critical test: R1CS computation must match native
     let params = PoseidonParams::bn254_t3();

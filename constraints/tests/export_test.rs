@@ -293,8 +293,8 @@ fn test_plonkish_json_export_roundtrip() {
     assert_eq!(parsed["format"], "achronyme-plonkish-v1");
     assert!(parsed["num_rows"].as_u64().unwrap() > 0);
     assert!(parsed["num_advice"].as_u64().unwrap() > 0);
-    assert!(parsed["gates"].as_array().unwrap().len() > 0);
-    assert!(parsed["copies"].as_array().unwrap().len() > 0);
+    assert!(!parsed["gates"].as_array().unwrap().is_empty());
+    assert!(!parsed["copies"].as_array().unwrap().is_empty());
 }
 
 /// snarkjs r1cs info + wtns check integration test.

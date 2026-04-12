@@ -1583,7 +1583,7 @@ merkle_verify(root, leaf, path, dirs)
     // Conditional swap: 3 * (2 mux + 1 poseidon + 2 materialize) + 1 assert_eq ≈ 1099
     let nc = compiler.cs.num_constraints();
     assert!(
-        nc >= 1000 && nc <= 1200,
+        (1000..=1200).contains(&nc),
         "expected ~1099 constraints for depth-3 Merkle, got {nc}"
     );
 }

@@ -88,10 +88,10 @@ fn merkle_proof(
     let mut siblings = Vec::with_capacity(depth);
     let mut directions = Vec::with_capacity(depth);
     let mut idx = index;
-    for d in 0..depth {
+    for level in levels.iter().take(depth) {
         let dir = idx & 1; // 0 = left, 1 = right
         let sibling_idx = idx ^ 1;
-        siblings.push(levels[d][sibling_idx]);
+        siblings.push(level[sibling_idx]);
         directions.push(fe(dir as u64));
         idx >>= 1;
     }
@@ -107,9 +107,9 @@ fn merkle_source(depth: usize) -> String {
     }
     src.push('\n');
     // Level 0: hash(leaf, sibling) or hash(sibling, leaf) based on direction
-    src.push_str(&format!(
-        "let l0 = mux(d0, s0, leaf)\nlet r0 = mux(d0, leaf, s0)\nlet h0 = poseidon(l0, r0)\n\n"
-    ));
+    src.push_str(
+        "let l0 = mux(d0, s0, leaf)\nlet r0 = mux(d0, leaf, s0)\nlet h0 = poseidon(l0, r0)\n\n",
+    );
     // Levels 1..depth-1
     for i in 1..depth {
         let prev = format!("h{}", i - 1);

@@ -598,7 +598,7 @@ fn golden_poseidon_groth16_full_cycle() {
     eprintln!("  Step 6/6: Groth16 proof VERIFIED by snarkjs ✓");
 
     // Verify public output matches the golden vector
-    let public_content = std::fs::read_to_string(&p("public.json")).unwrap();
+    let public_content = std::fs::read_to_string(p("public.json")).unwrap();
     let public_values: Vec<String> = serde_json::from_str(&public_content).unwrap();
     assert_eq!(
         public_values[0], POSEIDON_1_2_HASH,

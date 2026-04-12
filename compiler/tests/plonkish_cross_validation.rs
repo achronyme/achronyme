@@ -289,8 +289,8 @@ fn json_roundtrip_mul() {
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed["format"], "achronyme-plonkish-v1");
     assert!(parsed["num_rows"].as_u64().unwrap() > 0);
-    assert!(parsed["gates"].as_array().unwrap().len() > 0);
-    assert!(parsed["copies"].as_array().unwrap().len() > 0);
+    assert!(!parsed["gates"].as_array().unwrap().is_empty());
+    assert!(!parsed["copies"].as_array().unwrap().is_empty());
 }
 
 #[test]

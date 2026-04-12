@@ -495,6 +495,7 @@ fn mimcsponge_real_circomlib() {
         let mut ifs = 0usize;
         let mut other = 0usize;
         let mut const_lets = 0usize;
+        #[allow(clippy::too_many_arguments)]
         fn count_nodes(
             nodes: &[CircuitNode],
             lets: &mut usize,
@@ -1162,10 +1163,7 @@ fn mux4_circomlib() {
     let n = circomlib_e2e_verify(
         "Mux4 (sel=3)",
         "test/circomlib/mux4_test.circom",
-        &inputs
-            .iter()
-            .map(|&(n, v)| (n.as_ref(), v))
-            .collect::<Vec<_>>(),
+        &inputs.iter().map(|&(n, v)| (n, v)).collect::<Vec<_>>(),
     );
     eprintln!("  Constraints: {n}");
 }

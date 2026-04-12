@@ -20,10 +20,11 @@
 //!
 //! Reference: 0xPARC zk-bug-tracker, circomspect analysis
 
+#![allow(clippy::needless_range_loop, clippy::manual_swap, unused_mut)]
+
 use std::collections::HashMap;
 
 use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::WitnessGenerator;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
 use memory::{Bn254Fr, FieldElement};

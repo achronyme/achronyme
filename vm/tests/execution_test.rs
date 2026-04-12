@@ -40,7 +40,7 @@ fn test_execution_end_to_end() {
 
     vm.interpret().expect("Runtime error");
 
-    let result = vm.stack.get(0).cloned();
+    let result = vm.stack.first().cloned();
     if let Some(val) = result {
         if let Some(n) = val.as_int() {
             assert_eq!(n, 7);
