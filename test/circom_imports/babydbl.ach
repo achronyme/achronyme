@@ -1,0 +1,37 @@
+// ============================================================================
+// Cross-validation: circomlib BabyDbl() in library-mode
+// ============================================================================
+//
+// BabyDbl() doubles a BabyJubJub point. It takes a single point
+// `(x, y)` and internally instantiates a `BabyAdd()` sub-component
+// wired to `(x, y, x, y)` — i.e. it's a one-line composition that
+// forwards to `BabyAdd` and exposes `adder.xout` / `adder.yout` as
+// its own outputs.
+//
+// This is the tightest test of nested library-mode component
+// inlining we can get without touching loops or parametric
+// dimensions: BabyDbl body contains exactly one sub-component
+// instantiation + a straight-line wiring of its outputs. If this
+// works, basic single-component composition is solid.
+//
+// Serie A #6 — covers nested component inlining inside library-
+// mode templates (BabyAdd inside BabyDbl).
+
+import { BabyDbl } from "../circomlib/circuits/babyjub.circom"
+
+// Doubling the neutral element (0, 1) yields (0, 1) — same identity
+// as BabyAdd's self-add test, but routed through BabyDbl's internal
+// BabyAdd sub-component to verify the composition chain.
+let p = BabyDbl()(0p0, 0p1)
+assert(p["xout"] == 0p0)
+assert(p["yout"] == 0p1)
+print("VM-mode: BabyDbl(0, 1) = (0, 1) — OK")
+
+// Proof: same call routed through the ProveIR dispatcher.
+prove() {
+    let r = BabyDbl()(0p0, 0p1)
+    assert_eq(r.xout, 0p0)
+    assert_eq(r.yout, 0p1)
+}
+
+print("PASS: babydbl")

@@ -1,0 +1,32 @@
+// ============================================================================
+// Cross-validation: circomlib IsZero() in library-mode
+// ============================================================================
+//
+// IsZero(in) → 1 if in == 0, else 0. Scalar in, scalar out.
+// This is the simplest non-trivial circomlib template: internally
+// it uses a witness hint (1/in) and two constraints.
+//
+// Serie A #1 — covers scalar-in + scalar-out library-mode path.
+
+import { IsZero } from "../circomlib/circuits/comparators.circom"
+
+// --- VM mode: evaluate both vectors off-circuit ---
+let is_zero_of_zero = IsZero()(0p0)
+let is_zero_of_42 = IsZero()(0p42)
+
+assert(is_zero_of_zero == 0p1)
+assert(is_zero_of_42 == 0p0)
+print("VM-mode: IsZero(0)=1, IsZero(42)=0 — OK")
+
+// --- Circuit mode: prove the same vectors through Groth16 ---
+prove(is_zero_of_zero: Public) {
+    let r = IsZero()(0p0)
+    assert_eq(r, is_zero_of_zero)
+}
+
+prove(is_zero_of_42: Public) {
+    let r = IsZero()(0p42)
+    assert_eq(r, is_zero_of_42)
+}
+
+print("PASS: iszero")

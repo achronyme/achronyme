@@ -1,0 +1,39 @@
+// ============================================================================
+// Cross-validation: circomlib LessThan(n) in library-mode
+// ============================================================================
+//
+// LessThan(n)([a, b]) → 1 if a < b (treating both as n-bit unsigned),
+// else 0. Array input `in[2]`, scalar output.
+//
+// Internally: instantiates Num2Bits(n+1) and compares the sign bit of
+// `a + (1<<n) - b`. Real composition pattern used across circomlib
+// range checks.
+//
+// Serie A #4 — covers parametric array bounds + nested component inlining.
+// The template arg `n` controls an internal Num2Bits(n+1) component,
+// which exercises dependent-size inlining.
+
+import { LessThan } from "../circomlib/circuits/comparators.circom"
+
+// --- VM mode: 8-bit comparison ---
+let lt_true = LessThan(8)([0p3, 0p10])
+let lt_false = LessThan(8)([0p10, 0p3])
+let lt_equal = LessThan(8)([0p42, 0p42])
+
+assert(lt_true == 0p1)
+assert(lt_false == 0p0)
+assert(lt_equal == 0p0)
+print("VM-mode: LessThan(8) agrees with native `<` — OK")
+
+// --- Circuit mode ---
+prove(lt_true: Public) {
+    let r = LessThan(8)([0p3, 0p10])
+    assert_eq(r, lt_true)
+}
+
+prove(lt_false: Public) {
+    let r = LessThan(8)([0p10, 0p3])
+    assert_eq(r, lt_false)
+}
+
+print("PASS: lessthan")

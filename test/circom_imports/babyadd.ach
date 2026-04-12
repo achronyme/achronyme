@@ -1,0 +1,45 @@
+// ============================================================================
+// Cross-validation: circomlib BabyAdd() in library-mode
+// ============================================================================
+//
+// BabyAdd() implements point addition on the BabyJubJub twisted
+// Edwards curve (the curve used by semaphore, EdDSA, ZK email, ...).
+// Four scalar inputs `x1, y1, x2, y2` — four distinct signals, no
+// array-valued inputs — and two scalar outputs `xout, yout`.
+//
+// Multi-scalar-output templates route through the library-mode
+// `let r = T(...)(...); r.xout; r.yout` DotAccess path — no other
+// template in Serie A exercises this (everything else has a single
+// scalar or a single array output).
+//
+// Internally BabyAdd uses a witness hint (`xout <-- (beta+gamma) /
+// (1+d*tau)`) for the division, so it also cross-checks the circom
+// witness-hint bridge added earlier in the prove-handler.
+//
+// Serie A #5 — covers multi-scalar-output + divison witness hint.
+
+import { BabyAdd } from "../circomlib/circuits/babyjub.circom"
+
+// Adding the neutral element (0, 1) to itself yields (0, 1).
+// Known identity on any Edwards curve — closed-form, no oracle needed.
+//
+// Multi-scalar-output templates marshal into `Value::map` keyed by
+// the declared output signal name, so we access the result as
+// `p["xout"]` / `p["yout"]` in VM mode. (The same call inside a
+// `prove {}` block uses the dotted `r.xout` DotAccess path, which
+// the ProveIR dispatcher wires up separately.)
+let p = BabyAdd()(0p0, 0p1, 0p0, 0p1)
+assert(p["xout"] == 0p0)
+assert(p["yout"] == 0p1)
+print("VM-mode: BabyAdd((0, 1), (0, 1)) = (0, 1) — OK")
+
+// Proof: same call inside a `prove {}` block, accessing both outputs
+// via the dotted `r.xout` / `r.yout` bindings that
+// `compile_let_for_circom_call` publishes for multi-output templates.
+prove() {
+    let r = BabyAdd()(0p0, 0p1, 0p0, 0p1)
+    assert_eq(r.xout, 0p0)
+    assert_eq(r.yout, 0p1)
+}
+
+print("PASS: babyadd")

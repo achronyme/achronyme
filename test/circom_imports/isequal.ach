@@ -1,0 +1,35 @@
+// ============================================================================
+// Cross-validation: circomlib IsEqual() in library-mode
+// ============================================================================
+//
+// IsEqual()([a, b]) → 1 if a == b, else 0. Array input `in[2]`,
+// scalar output.
+//
+// Internally: uses IsZero on (in[1] - in[0]). Exercises library-mode
+// component composition — IsEqual instantiates IsZero as a
+// sub-component, which must also lower cleanly.
+//
+// Serie A #3 — covers array-in + component composition.
+
+import { IsEqual } from "../circomlib/circuits/comparators.circom"
+
+// --- VM mode ---
+let eq_same = IsEqual()([0p42, 0p42])
+let eq_diff = IsEqual()([0p42, 0p7])
+
+assert(eq_same == 0p1)
+assert(eq_diff == 0p0)
+print("VM-mode: IsEqual([42, 42])=1, IsEqual([42, 7])=0 — OK")
+
+// --- Circuit mode ---
+prove(eq_same: Public) {
+    let r = IsEqual()([0p42, 0p42])
+    assert_eq(r, eq_same)
+}
+
+prove(eq_diff: Public) {
+    let r = IsEqual()([0p42, 0p7])
+    assert_eq(r, eq_diff)
+}
+
+print("PASS: isequal")

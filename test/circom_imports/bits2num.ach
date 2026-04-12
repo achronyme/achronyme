@@ -1,0 +1,39 @@
+// ============================================================================
+// Cross-validation: circomlib Bits2Num(n) in library-mode
+// ============================================================================
+//
+// Bits2Num(n) reconstructs a field element from its little-endian bit
+// decomposition. Array input `in[n]`, scalar output `out`.
+//
+// Serie A #2 — covers array-in + scalar-out library-mode path.
+// Complementary to Num2Bits (tested separately) — proves the round
+// trip decomposition/composition works in both directions.
+
+import { Bits2Num } from "../circomlib/circuits/bitify.circom"
+
+// Note: array signal inputs must be passed as inline `[...]` literals
+// at the call site — the current library-mode compiler doesn't yet
+// unpack an array-valued variable into per-element registers.
+
+// --- Vector #1: 4 bits representing 5 (0b0101 → bits [1, 0, 1, 0] LE) ---
+let five = Bits2Num(4)([0p1, 0p0, 0p1, 0p0])
+assert(five == 0p5)
+
+// --- Vector #2: 8 bits representing 141 (0b10001101 → LE [1,0,1,1,0,0,0,1]) ---
+let one41 = Bits2Num(8)([0p1, 0p0, 0p1, 0p1, 0p0, 0p0, 0p0, 0p1])
+assert(one41 == 0p141)
+
+print("VM-mode: Bits2Num(4)([1,0,1,0])=5, Bits2Num(8)([1,0,1,1,0,0,0,1])=141 — OK")
+
+// --- Circuit mode: prove the same vectors ---
+prove(five: Public) {
+    let r = Bits2Num(4)([0p1, 0p0, 0p1, 0p0])
+    assert_eq(r, five)
+}
+
+prove(one41: Public) {
+    let r = Bits2Num(8)([0p1, 0p0, 0p1, 0p1, 0p0, 0p0, 0p0, 0p1])
+    assert_eq(r, one41)
+}
+
+print("PASS: bits2num")
