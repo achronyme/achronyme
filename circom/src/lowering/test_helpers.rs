@@ -2,8 +2,9 @@
 //!
 //! Provides common parsing and environment setup functions used across
 //! expression, statement, and utility tests.
-
-#![cfg(test)]
+//!
+//! The module itself is gated `#[cfg(test)]` in `lowering/mod.rs`, so
+//! a file-level `#![cfg(test)]` here would be a duplicated attribute.
 
 use std::collections::HashMap;
 

@@ -91,25 +91,25 @@ mod tests {
 
     #[test]
     fn find_similar_basic() {
-        let names = vec!["foo", "bar", "baz"];
+        let names = ["foo", "bar", "baz"];
         assert_eq!(find_similar("fob", names.iter().copied(), 2), Some("foo"));
     }
 
     #[test]
     fn find_similar_no_match() {
-        let names = vec!["foo", "bar"];
+        let names = ["foo", "bar"];
         assert_eq!(find_similar("xyz", names.iter().copied(), 2), None);
     }
 
     #[test]
     fn find_similar_exact_excluded() {
-        let names = vec!["foo"];
+        let names = ["foo"];
         assert_eq!(find_similar("foo", names.iter().copied(), 2), None);
     }
 
     #[test]
     fn find_similar_underscore_excluded() {
-        let names = vec!["_foo", "bar"];
+        let names = ["_foo", "bar"];
         assert_eq!(find_similar("baz", names.iter().copied(), 2), Some("bar"));
     }
 }

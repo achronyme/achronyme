@@ -597,6 +597,7 @@ mod tests {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn lexemes(src: &str) -> Vec<String> {
         Lexer::tokenize(src)
             .unwrap()

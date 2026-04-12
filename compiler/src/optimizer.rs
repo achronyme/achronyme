@@ -919,8 +919,8 @@ mod tests {
 
         if let Some(be) = back_edge_pos {
             let target = decode_bx(opt_bc[be]) as usize;
-            for i in target..be {
-                let op = decode_opcode(opt_bc[i]);
+            for (i, w) in opt_bc.iter().enumerate().take(be).skip(target) {
+                let op = decode_opcode(*w);
                 assert_ne!(
                     op,
                     OpCode::GetGlobal.as_u8(),

@@ -62,20 +62,20 @@ mod tests {
 
     #[test]
     fn find_similar_basic() {
-        let names = vec!["foo", "bar", "baz"];
+        let names = ["foo", "bar", "baz"];
         assert_eq!(find_similar("fob", names.iter().copied()), Some("foo"));
     }
 
     #[test]
     fn find_similar_no_match() {
-        let names = vec!["foo", "bar"];
+        let names = ["foo", "bar"];
         assert_eq!(find_similar("xyz", names.iter().copied()), None);
     }
 
     #[test]
     fn find_similar_short_name_strict() {
         // For short names (<=3), only 1 edit allowed
-        let names = vec!["ab", "cd"];
+        let names = ["ab", "cd"];
         assert_eq!(find_similar("ac", names.iter().copied()), Some("ab"));
         // "xy" is 2 edits from "ab" — too far for a 2-char name
         assert_eq!(find_similar("xy", names.iter().copied()), None);
