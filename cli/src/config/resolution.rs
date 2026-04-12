@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{AchronymeToml, ProjectConfig};
 
@@ -147,6 +147,25 @@ pub fn resolve_config(
 
     let circuit_stats = cli.circuit_stats;
 
+    // Circom libs: TOML circom.libs (resolved relative to project root)
+    let circom_lib_dirs: Vec<PathBuf> = toml
+        .and_then(|t| t.circom.as_ref()?.libs.as_ref())
+        .map(|libs| {
+            libs.iter()
+                .map(|l| {
+                    let p = PathBuf::from(l);
+                    if p.is_absolute() {
+                        p
+                    } else if let Some(root) = project_root {
+                        root.join(&p)
+                    } else {
+                        p
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     ProjectConfig {
         project_root: project_root.map(|p| p.to_path_buf()),
         project_name,
@@ -165,6 +184,7 @@ pub fn resolve_config(
         stress_gc,
         gc_stats,
         circuit_stats,
+        circom_lib_dirs,
     }
 }
 
@@ -333,6 +353,65 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert_eq!(config.entry.unwrap(), expected);
+    }
+
+    #[test]
+    fn resolve_circom_libs_from_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            "[project]\nname = \"t\"\nversion = \"0.1.0\"\n\n[circom]\nlibs = [\"vendor/circomlib/circuits\"]\n",
+        )
+        .unwrap();
+        let toml = load_toml(&path).unwrap();
+
+        let cli = CliOverrides {
+            path: None,
+            error_format: None,
+            prime: None,
+            backend: None,
+            prove_backend: None,
+            optimize: None,
+            r1cs_path: None,
+            wtns_path: None,
+            solidity_path: None,
+            plonkish_json_path: None,
+            max_heap: None,
+            stress_gc: false,
+            gc_stats: false,
+            circuit_stats: false,
+        };
+
+        let config = resolve_config(&cli, Some(&toml), Some(tmp.path()));
+        assert_eq!(config.circom_lib_dirs.len(), 1);
+        assert_eq!(
+            config.circom_lib_dirs[0],
+            tmp.path().join("vendor/circomlib/circuits")
+        );
+    }
+
+    #[test]
+    fn resolve_circom_libs_empty_without_section() {
+        let cli = CliOverrides {
+            path: None,
+            error_format: None,
+            prime: None,
+            backend: None,
+            prove_backend: None,
+            optimize: None,
+            r1cs_path: None,
+            wtns_path: None,
+            solidity_path: None,
+            plonkish_json_path: None,
+            max_heap: None,
+            stress_gc: false,
+            gc_stats: false,
+            circuit_stats: false,
+        };
+
+        let config = resolve_config(&cli, None, None);
+        assert!(config.circom_lib_dirs.is_empty());
     }
 
     #[test]

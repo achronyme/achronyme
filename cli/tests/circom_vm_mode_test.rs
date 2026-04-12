@@ -64,6 +64,7 @@ fn run(fixture: &CircomFixture) -> anyhow::Result<()> {
         false,
         false,
         EF,
+        &[],
     )
 }
 

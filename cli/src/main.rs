@@ -81,6 +81,7 @@ fn main() -> Result<()> {
                 cfg.gc_stats,
                 cfg.circuit_stats,
                 ef,
+                &cfg.circom_lib_dirs,
             )
         }
 
@@ -133,6 +134,15 @@ fn main() -> Result<()> {
                 anyhow::anyhow!("no input file specified and no `entry` in achronyme.toml")
             })?;
             validate_prime_backend(prime_id, &cfg.backend)?;
+            // Merge CLI --lib dirs with [circom].libs from achronyme.toml.
+            // CLI dirs take precedence (searched first).
+            let mut merged_lib_dirs: Vec<String> = lib_dirs.clone();
+            for toml_dir in &cfg.circom_lib_dirs {
+                let s = toml_dir.to_string_lossy().into_owned();
+                if !merged_lib_dirs.contains(&s) {
+                    merged_lib_dirs.push(s);
+                }
+            }
             cli::commands::circom::circom_command(
                 path,
                 &cfg.r1cs_path,
@@ -147,7 +157,7 @@ fn main() -> Result<()> {
                 cfg.plonkish_json_path.as_deref(),
                 *dump_ir,
                 cfg.circuit_stats,
-                lib_dirs,
+                &merged_lib_dirs,
                 ef,
             )
         }

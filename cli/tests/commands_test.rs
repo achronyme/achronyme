@@ -94,6 +94,7 @@ fn run_valid_arithmetic_source() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -111,6 +112,7 @@ fn run_source_with_runtime_error() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
@@ -132,6 +134,7 @@ fn run_nonexistent_file_returns_error() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
 }
@@ -161,6 +164,7 @@ fn run_compiled_binary() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(
         result.is_ok(),

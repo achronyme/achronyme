@@ -21,6 +21,7 @@ pub struct AchronymeToml {
     pub build: Option<BuildSection>,
     pub vm: Option<VmSection>,
     pub circuit: Option<CircuitSection>,
+    pub circom: Option<CircomSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +69,12 @@ pub struct CircuitSection {
     pub prime: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CircomSection {
+    pub libs: Option<Vec<String>>,
+}
+
 // ---------------------------------------------------------------------------
 // Resolved config (merged CLI + TOML + defaults)
 // ---------------------------------------------------------------------------
@@ -92,6 +99,7 @@ pub struct ProjectConfig {
     pub stress_gc: bool,
     pub gc_stats: bool,
     pub circuit_stats: bool,
+    pub circom_lib_dirs: Vec<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +219,42 @@ gc_stats = true
             Some("plonkish")
         );
         assert_eq!(toml.vm.as_ref().unwrap().max_heap.as_deref(), Some("256M"));
+    }
+
+    #[test]
+    fn load_toml_with_circom_libs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            r#"
+[project]
+name = "with-circom"
+version = "0.1.0"
+
+[circom]
+libs = ["vendor/circomlib/circuits", "lib/custom"]
+"#,
+        )
+        .unwrap();
+        let toml = load_toml(&path).unwrap();
+        let libs = toml.circom.as_ref().unwrap().libs.as_ref().unwrap();
+        assert_eq!(libs.len(), 2);
+        assert_eq!(libs[0], "vendor/circomlib/circuits");
+        assert_eq!(libs[1], "lib/custom");
+    }
+
+    #[test]
+    fn load_toml_circom_section_optional() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(TOML_FILENAME);
+        fs::write(
+            &path,
+            "[project]\nname = \"no-circom\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let toml = load_toml(&path).unwrap();
+        assert!(toml.circom.is_none());
     }
 
     #[test]

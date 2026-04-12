@@ -33,6 +33,7 @@ fn import_basic_function_call() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -49,6 +50,7 @@ fn import_constants_access() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -66,6 +68,7 @@ fn import_internal_helper_function() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -83,6 +86,7 @@ fn import_transitive() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -99,6 +103,7 @@ fn import_circular_detected() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
@@ -120,6 +125,7 @@ fn import_module_not_found() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
@@ -142,6 +148,7 @@ fn import_no_exports_module() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -162,6 +169,7 @@ fn selective_import_basic() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -178,6 +186,7 @@ fn export_list_via_namespace() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -194,6 +203,7 @@ fn mixed_selective_and_namespace_import() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_ok(), "run_file failed: {:?}", result.err());
 }
@@ -210,6 +220,7 @@ fn selective_import_nonexistent_name() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
@@ -231,6 +242,7 @@ fn duplicate_export_detected() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
@@ -252,6 +264,7 @@ fn export_list_undefined_name() {
         false,
         false,
         EF,
+        &[],
     );
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());

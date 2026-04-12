@@ -19,6 +19,7 @@ pub fn run_file(
     gc_stats: bool,
     circuit_stats: bool,
     error_format: ErrorFormat,
+    circom_lib_dirs: &[std::path::PathBuf],
 ) -> Result<()> {
     if ptau.is_some() {
         eprintln!(
@@ -81,6 +82,7 @@ pub fn run_file(
                 .unwrap_or(std::path::Path::new("."))
                 .to_path_buf(),
         );
+        compiler.circom_lib_dirs = circom_lib_dirs.to_vec();
         // Register the main file as "compiling" for circular import detection
         if let Ok(canonical) = source_path.canonicalize() {
             compiler.compiling_modules.insert(canonical);
