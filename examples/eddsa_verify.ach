@@ -1,0 +1,86 @@
+// ============================================================================
+// EdDSAPoseidon Verification via Library-Mode Circom Import
+// ============================================================================
+//
+// Serie B #3 — the "boss final" stress test. This is the biggest
+// circomlib template we can reach: 42,500+ ProveIR nodes,
+// 170,000+ IR instructions after instantiation, depends on
+// Num2Bits(253), CompConstant, Poseidon(5), BabyDbl, IsZero,
+// EscalarMulAny(254), BabyAdd, EscalarMulFix(253), and
+// ForceEqualIfEnabled — basically every circomlib gadget stacked
+// on top of each other.
+//
+// Running this end-to-end through library-mode proves the whole
+// pipeline (parser → circom lowering → library-mode
+// instantiation → ProveIR → IR SSA → R1CS → Groth16 witness +
+// verify) can survive a production-scale EdDSA verifier.
+//
+// Scenario (matches `circom/tests/e2e.rs::eddsaposeidon_r1cs`):
+// feed the BabyJubjub base point as both `(Ax, Ay)` and
+// `(R8x, R8y)`, with `S = 1` and `M = 42`, and run with
+// `enabled = 0`. When `enabled = 0` the internal
+// `ForceEqualIfEnabled` short-circuits — any well-formed curve
+// point + scalar combination satisfies the constraint system.
+// This keeps us from needing a real EdDSA signature (which would
+// require an off-chain signing oracle we don't have plumbed in
+// yet) while still exercising every node the real verification
+// path emits. Upgrading to `enabled = 1` with real vectors is a
+// drop-in substitution once we wire a signer.
+//
+// Expected: somewhere around 6,000-9,000 R1CS constraints after
+// Achronyme's O1 pass. Reference from the standalone e2e test:
+// circom --O1 reports 8,086 constraints on the same inputs.
+
+import { EdDSAPoseidonLib } from "../test/circomlib/eddsaposeidon_lib.circom"
+
+// --- BabyJubjub base point (a valid curve point) ---
+// Same coordinates the standalone e2e test uses. Reusing this
+// specific point keeps the library-mode output directly
+// comparable against the standalone path without having to
+// re-derive anything.
+
+let base_x = 0p5299619240641551281634865583518297030282874472190772894086521144482721001553
+let base_y = 0p16950150798460657717958625567821834550301663161624707787222815936182638968203
+
+// With `enabled = 0` the verifier skips the real check, so the
+// specific (S, R8, M) values can be any field elements. Picking
+// trivial ones (S=1, M=42) keeps the test self-contained.
+let s_sig = 0p1
+let m_msg = 0p42
+
+// --- VM mode: call once off-circuit ---
+//
+// Multi-input templates with no numeric output marshal their
+// `dummy` wrapper signal into a `Value::map` (the output name is
+// `dummy`, since the template has exactly one declared output).
+// `enabled = 0` makes the wrapper return `0` through the
+// pass-through binding `dummy <== enabled`.
+let vm_result = EdDSAPoseidonLib()(0p0, base_x, base_y, s_sig, base_x, base_y, m_msg)
+assert(vm_result == 0p0)
+print("VM: EdDSAPoseidonLib(enabled=0) = 0 — OK")
+
+// --- Circuit mode: full Groth16 proof over the verifier body ---
+//
+// This is what actually stresses the pipeline. The prove block
+// inlines the entire EdDSAPoseidonVerifier sub-circuit into the
+// parent ProveIR (via `instantiate_template_into`), which
+// recursively inlines every dependency (Num2Bits / CompConstant /
+// Poseidon / EscalarMul*). If *anything* is broken in the
+// library-mode lowering pipeline — constant folding, loop
+// unrolling, component inlining, const-input propagation,
+// witness-hint wiring — it tends to surface here because EdDSA
+// combines all of those in a single template.
+
+prove eddsa_passthrough() {
+    let r = EdDSAPoseidonLib()(
+        0p0,
+        base_x, base_y,
+        s_sig,
+        base_x, base_y,
+        m_msg
+    )
+    assert_eq(r.dummy, 0p0)
+}
+
+print("EdDSAPoseidon verifier proved (enabled=0 passthrough)")
+print("PASS: eddsa_verify")

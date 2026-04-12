@@ -1,0 +1,170 @@
+// ============================================================================
+// Depth-4 Merkle Membership with Circom Poseidon + Mux
+// ============================================================================
+//
+// Serie B #2 — the intermediate stress test between `range_proof`
+// (single template, single scalar I/O) and `eddsa_verify` (42k-node
+// circomlib monster).
+//
+// Scenario: a club with 16 members, each identified by a secret
+// key. Member commitments are the leaves of a binary Merkle tree
+// of depth 4, hashed with circomlib `Poseidon(2)`. Any member can
+// prove they belong to the club WITHOUT revealing which member
+// they are — the verifier only sees the public Merkle root and
+// the Groth16 proof.
+//
+//                              root
+//                        /              \
+//                   n01234567           n89ABCDEF
+//                  /         \         /          \
+//             n0123         n4567   n89AB         nCDEF
+//            /     \       /    \   /    \       /     \
+//           n01   n23   n45    n67 n89  nAB     nCD    nEF
+//          / \   / \   / \   / \  / \  /  \    /  \   /  \
+//         m0 m1 m2 m3 m4 m5 m6 m7 m8 m9 mA mB mC  mD mE  mF
+//
+// What this test exercises, beyond what `circom_merkle_membership`
+// (Serie A depth-2) already covered:
+//
+//   1. **Depth 4 × 4 Poseidon calls per proof.** Each prove block
+//      instantiates `Poseidon(2)` four times in a chain, one per
+//      level. Serie A's depth-2 proves this pattern works for two
+//      chained calls; this pushes it to a realistic tree height
+//      where constraint optimization has to dedupe wires across
+//      multiple library-mode instantiations.
+//
+//   2. **Direction-based mux inside the prove block.** The leaf's
+//      position in the tree is a 4-bit path index, so at each level
+//      the prover has to swap the (current, sibling) order
+//      depending on whether they're the left or right child. This
+//      test uses Achronyme's native `mux(cond, t, f)` builtin
+//      interleaved with circom Poseidon calls — the first test
+//      that combines the two primitive families in a single
+//      constraint block.
+//
+//   3. **15 off-chain Poseidon calls in VM mode.** Building the
+//      tree bottom-up uses 8+4+2+1 = 15 `Poseidon(2)` invocations
+//      in VM mode. Every one of them goes through the full
+//      library-mode call pipeline (compile_circom_vm_call →
+//      CallCircomTemplate opcode → handler → witness evaluator),
+//      so any register budget / GC / heap allocation issue at
+//      scale shows up here first.
+
+import { Poseidon } from "../test/circomlib/circuits/poseidon.circom"
+
+// --- Phase 1: Club setup (VM mode — all 16 member commitments) ---
+
+let key_0 = 0p1001
+let key_1 = 0p1002
+let key_2 = 0p1003
+let key_3 = 0p1004
+let key_4 = 0p1005
+let key_5 = 0p1006
+let key_6 = 0p1007
+let key_7 = 0p1008
+let key_8 = 0p1009
+let key_9 = 0p1010
+let key_A = 0p1011
+let key_B = 0p1012
+let key_C = 0p1013
+let key_D = 0p1014
+let key_E = 0p1015
+let key_F = 0p1016
+
+// Member commitments: Poseidon(secret, 0)
+let m0 = Poseidon(2)([key_0, 0p0])
+let m1 = Poseidon(2)([key_1, 0p0])
+let m2 = Poseidon(2)([key_2, 0p0])
+let m3 = Poseidon(2)([key_3, 0p0])
+let m4 = Poseidon(2)([key_4, 0p0])
+let m5 = Poseidon(2)([key_5, 0p0])
+let m6 = Poseidon(2)([key_6, 0p0])
+let m7 = Poseidon(2)([key_7, 0p0])
+let m8 = Poseidon(2)([key_8, 0p0])
+let m9 = Poseidon(2)([key_9, 0p0])
+let mA = Poseidon(2)([key_A, 0p0])
+let mB = Poseidon(2)([key_B, 0p0])
+let mC = Poseidon(2)([key_C, 0p0])
+let mD = Poseidon(2)([key_D, 0p0])
+let mE = Poseidon(2)([key_E, 0p0])
+let mF = Poseidon(2)([key_F, 0p0])
+
+// Level 1: pair leaves
+let n01 = Poseidon(2)([m0, m1])
+let n23 = Poseidon(2)([m2, m3])
+let n45 = Poseidon(2)([m4, m5])
+let n67 = Poseidon(2)([m6, m7])
+let n89 = Poseidon(2)([m8, m9])
+let nAB = Poseidon(2)([mA, mB])
+let nCD = Poseidon(2)([mC, mD])
+let nEF = Poseidon(2)([mE, mF])
+
+// Level 2: pair level-1 nodes
+let n0123 = Poseidon(2)([n01, n23])
+let n4567 = Poseidon(2)([n45, n67])
+let n89AB = Poseidon(2)([n89, nAB])
+let nCDEF = Poseidon(2)([nCD, nEF])
+
+// Level 3: pair level-2 nodes
+let n01234567 = Poseidon(2)([n0123, n4567])
+let n89ABCDEF = Poseidon(2)([n89AB, nCDEF])
+
+// Root
+let merkle_root = Poseidon(2)([n01234567, n89ABCDEF])
+
+print("=== Depth-4 Merkle Tree (16 members) ===")
+print("Root: " + merkle_root.to_string())
+print("")
+
+// --- Phase 2: Member 5 proves membership ---
+//
+// m5 is at index 5 (binary: 0101, LSB-first → [1, 0, 1, 0]):
+//   Level 0: m5 is RIGHT child of n45 → sibling = m4,    dir = 1
+//   Level 1: n45 is LEFT child of n4567 → sibling = n67, dir = 0
+//   Level 2: n4567 is RIGHT child of n01234567 → sibling = n0123, dir = 1
+//   Level 3: n01234567 is LEFT child of root → sibling = n89ABCDEF, dir = 0
+
+let sibling_0 = m4
+let sibling_1 = n67
+let sibling_2 = n0123
+let sibling_3 = n89ABCDEF
+
+let dir_0 = 0p1
+let dir_1 = 0p0
+let dir_2 = 0p1
+let dir_3 = 0p0
+
+print("Member 5 proving membership (index 0101)...")
+
+prove membership(merkle_root: Public) {
+    // Step 1: recompute the leaf from the secret key.
+    let my_leaf = Poseidon(2)([key_5, 0p0])
+
+    // Step 2: Level 0 — (left, right) depends on dir_0.
+    //   dir=0: hash(current, sibling)
+    //   dir=1: hash(sibling, current)
+    // `mux(cond, then, else)`: selects `then` when cond=1, `else` when cond=0.
+    let l0 = mux(dir_0, sibling_0, my_leaf)
+    let r0 = mux(dir_0, my_leaf, sibling_0)
+    let lvl0 = Poseidon(2)([l0, r0])
+
+    // Step 3: Level 1
+    let l1 = mux(dir_1, sibling_1, lvl0)
+    let r1 = mux(dir_1, lvl0, sibling_1)
+    let lvl1 = Poseidon(2)([l1, r1])
+
+    // Step 4: Level 2
+    let l2 = mux(dir_2, sibling_2, lvl1)
+    let r2 = mux(dir_2, lvl1, sibling_2)
+    let lvl2 = Poseidon(2)([l2, r2])
+
+    // Step 5: Level 3 (root)
+    let l3 = mux(dir_3, sibling_3, lvl2)
+    let r3 = mux(dir_3, lvl2, sibling_3)
+    let computed_root = Poseidon(2)([l3, r3])
+
+    assert_eq(computed_root, merkle_root)
+}
+
+print("Membership verified (circom Poseidon, 4 levels)")
+print("PASS: merkle_depth4")

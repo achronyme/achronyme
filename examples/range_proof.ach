@@ -1,0 +1,66 @@
+// ============================================================================
+// Range Proof with Circom LessThan(64)
+// ============================================================================
+//
+// Serie B #1 — the smallest real-world use of library-mode circom.
+//
+// Scenario: prove that a secret value `x` lies in `[0, bound)` for a
+// 64-bit unsigned integer bound, without revealing `x`. This is the
+// canonical primitive behind every balance check, age gate, privacy
+// pool limit, credit score proof — anything where you need a
+// compile-time-bounded numeric range assertion against a private
+// witness.
+//
+// `LessThan(n)` internally instantiates `Num2Bits(n+1)`, so calling
+// `LessThan(64)` forces a 65-bit decomposition plus the linear-
+// combination check from `comparators.circom`. Serie A already
+// covered `LessThan(8)` (31 constraints); this one runs the same
+// template at production width (~260 constraints) so we catch any
+// issue that only shows up at realistic parameter values before
+// Serie B escalates to Merkle + EdDSA.
+
+import { LessThan } from "../test/circomlib/circuits/comparators.circom"
+
+// Secret witness: the value we want to range-check.
+let secret_x = 0p42
+
+// Public bound. Any prover who can produce a valid proof has a
+// witness that satisfies `secret_x < bound`, but the verifier never
+// learns what `secret_x` is.
+let bound = 0p100
+
+// --- VM-mode sanity check: evaluate the same template off-circuit ---
+//
+// Using VM mode here catches inconsistencies between the witness
+// evaluator and the constraint lowering before we even reach the
+// prove block. A mismatch here means the library-mode pipeline is
+// diverging from standalone circom semantics for 64-bit inputs.
+let in_range_vm = LessThan(64)([secret_x, bound])
+assert(in_range_vm == 0p1)
+print("VM: LessThan(64)([42, 100]) = 1 — OK")
+
+// Negative case: 100 is NOT less than 42.
+let out_of_range_vm = LessThan(64)([0p100, 0p42])
+assert(out_of_range_vm == 0p0)
+print("VM: LessThan(64)([100, 42]) = 0 — OK")
+
+// Edge case: equal values are NOT strictly less than.
+let equal_vm = LessThan(64)([0p50, 0p50])
+assert(equal_vm == 0p0)
+print("VM: LessThan(64)([50, 50]) = 0 — OK")
+
+// --- Zero-knowledge range proof ---
+//
+// The verifier sees only `bound` (public). The prover knows
+// `secret_x` but it never appears in the public inputs — only the
+// constraint `LessThan(64)([secret_x, bound]) == 1` is enforced
+// under Groth16. A successful verification is cryptographic proof
+// that the prover knew some `x < 100` without revealing which.
+
+prove range_valid(bound: Public) {
+    let check = LessThan(64)([secret_x, bound])
+    assert_eq(check, 0p1)
+}
+
+print("Range proof verified (secret_x < 100, 64-bit)")
+print("PASS: range_proof")
