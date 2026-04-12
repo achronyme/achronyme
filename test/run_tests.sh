@@ -389,6 +389,21 @@ for f in "$SCRIPT_DIR"/prove/*.ach; do
     run_test "$name" "$ACH" run "$f"
 done
 
+# --- Circom import tests ---
+echo ""
+echo "=== Circom import tests ==="
+for f in "$SCRIPT_DIR"/circom_imports/*.ach; do
+    [ -f "$f" ] || continue
+    name="circom_imports/$(basename "$f")"
+    run_test "$name" "$ACH" run "$f"
+done
+
+run_test "examples/circom_poseidon_chain.ach" \
+    "$ACH" run "$REPO_ROOT/examples/circom_poseidon_chain.ach"
+
+run_test "examples/circom_merkle_membership.ach" \
+    "$ACH" run "$REPO_ROOT/examples/circom_merkle_membership.ach"
+
 # --- Summary ---
 echo ""
 TOTAL=$((PASS + FAIL))
