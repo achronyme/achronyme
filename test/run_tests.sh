@@ -413,6 +413,9 @@ run_test "examples/merkle_depth4.ach" \
 run_test "examples/eddsa_verify.ach" \
     "$ACH" run "$REPO_ROOT/examples/eddsa_verify.ach"
 
+run_test "examples/tornado/src/main.ach" \
+    "$ACH" run "$REPO_ROOT/examples/tornado/src/main.ach"
+
 # --- Summary ---
 echo ""
 TOTAL=$((PASS + FAIL))

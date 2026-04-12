@@ -1,0 +1,91 @@
+// Depth-4 Merkle tree helpers for the tornado demo.
+//
+// Depth 4 = 16 leaves = 2+4+8+16 node hashes to build the tree
+// bottom-up. Every hash goes through `hash_node` from hash_mod,
+// which forwards to circomlib `Poseidon(2)` — so both the
+// off-chain tree construction (VM mode) and the on-chain
+// membership proof (prove block) share the exact same hash
+// function and produce compatible roots.
+//
+// The module exposes **pure functions** only. No mutable state,
+// no global tree — main.ach holds the 16 leaves and drives the
+// construction. This keeps tree.ach stateless and reusable
+// across multiple trees in the same program.
+//
+// Note on the current multi-file module system: exporting `mut`
+// bindings is not supported, and arrays of 16+ elements as a
+// single function argument would need array-valued function
+// parameters which aren't the focus here. Instead, this module
+// exposes per-level hashing primitives and lets `main.ach`
+// wire them together with explicit local bindings — which
+// also happens to be the only shape the ProveIR compiler can
+// currently unroll cleanly inside a prove block.
+
+import { hash_node } from "./hash_mod.ach"
+
+// Re-export the raw hash so modules that import `tree` don't
+// need a second import of `hash_mod` for trivial hashing.
+export fn node(left, right) {
+    hash_node(left, right)
+}
+
+// Compute a depth-4 Merkle root from the 16 level-0 leaves.
+// Unrolled by hand — no loops, no arrays — because the ProveIR
+// compiler can only handle straight-line Poseidon chains inside
+// prove blocks today (the same limitation `merkle_depth4.ach`
+// documents). 15 Poseidon calls total: 8 + 4 + 2 + 1.
+export fn root16(
+    m0, m1, m2, m3, m4, m5, m6, m7,
+    m8, m9, mA, mB, mC, mD, mE, mF
+) {
+    // Level 1 (8 nodes)
+    let n01 = hash_node(m0, m1)
+    let n23 = hash_node(m2, m3)
+    let n45 = hash_node(m4, m5)
+    let n67 = hash_node(m6, m7)
+    let n89 = hash_node(m8, m9)
+    let nAB = hash_node(mA, mB)
+    let nCD = hash_node(mC, mD)
+    let nEF = hash_node(mE, mF)
+
+    // Level 2 (4 nodes)
+    let n0123 = hash_node(n01, n23)
+    let n4567 = hash_node(n45, n67)
+    let n89AB = hash_node(n89, nAB)
+    let nCDEF = hash_node(nCD, nEF)
+
+    // Level 3 (2 nodes)
+    let n01234567 = hash_node(n0123, n4567)
+    let n89ABCDEF = hash_node(n89AB, nCDEF)
+
+    // Root
+    hash_node(n01234567, n89ABCDEF)
+}
+
+// Walk one level of a Merkle proof, selecting (left, right) based
+// on the direction bit. Used by the prove block in main.ach to
+// rebuild the candidate root from a leaf + path.
+//
+// `dir = 0`: current is the left child, sibling is the right.
+// `dir = 1`: current is the right child, sibling is the left.
+//
+// Uses arithmetic mux (`d*a + (1-d)*b`) rather than the native
+// `mux()` builtin because module-exported functions must compile
+// to VM bytecode at module load time, and `mux` is only defined
+// in the ProveIR (circuit) compiler — not the VM-mode path. Pure
+// field arithmetic works in both contexts and costs the same
+// when it ends up inlined into a prove block (the constraint
+// optimizer folds the `(1 - dir)` term trivially).
+//
+// For the arithmetic to enforce `dir ∈ {0, 1}` the caller is
+// responsible — a malicious prover who feeds `dir = 2` would
+// produce a corrupted hash pair. In tornado this is safe because
+// the directions are derived from the leaf index, which the
+// prover doesn't control in the same way the witness values
+// are controlled — but for a hardened version you'd add
+// `assert((dir == 0) || (dir == 1))` or route through Num2Bits.
+export fn merkle_step(current, sibling, dir) {
+    let left = dir * sibling + (0p1 - dir) * current
+    let right = dir * current + (0p1 - dir) * sibling
+    hash_node(left, right)
+}

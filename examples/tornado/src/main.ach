@@ -1,0 +1,191 @@
+// ============================================================================
+// Tornado Cash — Multi-File Achronyme Demo
+// ============================================================================
+//
+// A 3-file zk-privacy-pool clone written in Achronyme:
+//
+//   src/main.ach       — entry point: deposit flow + withdraw proof
+//   src/hash_mod.ach   — Poseidon primitives (commitment, nullifier_hash,
+//                        hash_node) routed through circomlib
+//   src/tree.ach       — depth-4 Merkle root + per-level step helpers
+//
+// Each helper module imports `Poseidon` from circomlib and re-exports
+// thin wrappers. `main.ach` only imports the helpers — it never touches
+// circomlib directly — which is exactly how a real multi-file zk project
+// would factor its crypto primitives behind a small API.
+//
+// This file exercises three things we'd never combined before this
+// session:
+//
+//   1. Multi-file `.ach` imports + library-mode circom templates in the
+//      same compilation unit (the module loader has to propagate
+//      circom imports through transitive helpers so both VM mode and
+//      prove blocks can resolve them in the entry file's scope).
+//
+//   2. Imported functions invoked inside a `prove {}` block — when
+//      `main.ach`'s prove block calls `commitment(secret, nullifier)`
+//      or `tree::merkle_step(...)`, the ProveIR compiler has to
+//      inline the module-defined function body at the call site and
+//      resolve every name against the combined circom dispatch table
+//      from `hash_mod`, `tree`, AND `main`.
+//
+//   3. A production-shape protocol flow: 16 depositors → depth-4
+//      commitment tree → zk-proof of membership for a specific
+//      depositor without revealing which one, plus a public
+//      nullifier hash to prevent double-withdraw.
+//
+// If this runs end-to-end the library-mode + module loader combination
+// is ready for a real frontend.
+
+// Note: `tree.ach` is imported selectively rather than as a
+// namespace because method-call shapes (`merkle_step(...)`)
+// aren't yet resolved by the ProveIR compiler inside prove
+// blocks — only bare-name function calls are. Pulling
+// `merkle_step` / `root16` / `node` into the top-level scope
+// sidesteps the limitation without changing the module split.
+import { commitment, nullifier_hash } from "./hash_mod.ach"
+import { root16, node, merkle_step } from "./tree.ach"
+
+// ── Phase 1: 16 users deposit ────────────────────────────────────────────
+//
+// Each user picks a random secret + nullifier off-chain, publishes
+// the commitment `c = Poseidon(secret, nullifier)`, and the pool
+// operator inserts it into the next empty slot of a depth-4 Merkle
+// tree. In a real deployment the secrets stay private; here we
+// hardcode them so the demo is reproducible.
+
+let secret_0 = 0p1001; let nullifier_0 = 0p2001
+let secret_1 = 0p1002; let nullifier_1 = 0p2002
+let secret_2 = 0p1003; let nullifier_2 = 0p2003
+let secret_3 = 0p1004; let nullifier_3 = 0p2004
+let secret_4 = 0p1005; let nullifier_4 = 0p2005
+let secret_5 = 0p1006; let nullifier_5 = 0p2006
+let secret_6 = 0p1007; let nullifier_6 = 0p2007
+let secret_7 = 0p1008; let nullifier_7 = 0p2008
+let secret_8 = 0p1009; let nullifier_8 = 0p2009
+let secret_9 = 0p1010; let nullifier_9 = 0p2010
+let secret_A = 0p1011; let nullifier_A = 0p2011
+let secret_B = 0p1012; let nullifier_B = 0p2012
+let secret_C = 0p1013; let nullifier_C = 0p2013
+let secret_D = 0p1014; let nullifier_D = 0p2014
+let secret_E = 0p1015; let nullifier_E = 0p2015
+let secret_F = 0p1016; let nullifier_F = 0p2016
+
+// All 16 commitments (leaves of the Merkle tree).
+let m0 = commitment(secret_0, nullifier_0)
+let m1 = commitment(secret_1, nullifier_1)
+let m2 = commitment(secret_2, nullifier_2)
+let m3 = commitment(secret_3, nullifier_3)
+let m4 = commitment(secret_4, nullifier_4)
+let m5 = commitment(secret_5, nullifier_5)
+let m6 = commitment(secret_6, nullifier_6)
+let m7 = commitment(secret_7, nullifier_7)
+let m8 = commitment(secret_8, nullifier_8)
+let m9 = commitment(secret_9, nullifier_9)
+let mA = commitment(secret_A, nullifier_A)
+let mB = commitment(secret_B, nullifier_B)
+let mC = commitment(secret_C, nullifier_C)
+let mD = commitment(secret_D, nullifier_D)
+let mE = commitment(secret_E, nullifier_E)
+let mF = commitment(secret_F, nullifier_F)
+
+// Off-chain tree construction — 15 Poseidon invocations via tree::root16.
+let root = root16(
+    m0, m1, m2, m3, m4, m5, m6, m7,
+    m8, m9, mA, mB, mC, mD, mE, mF
+)
+
+print("=== Tornado Pool ===")
+print("Depth-4 tree over 16 commitments")
+print("Merkle root:      " + root.to_string())
+print("")
+
+// ── Phase 2: User 5 withdraws ────────────────────────────────────────────
+//
+// User 5 reveals their nullifier hash (prevents double-spending) and
+// proves they know the (secret_5, nullifier_5) pair corresponding to
+// one of the 16 leaves — without saying which one.
+//
+// Leaf index 5 = binary 0101 (LSB-first → path direction bits
+// [1, 0, 1, 0]). The Merkle proof siblings at each level:
+//
+//   Level 0: m5 is right child of n45 → sibling = m4, dir = 1
+//   Level 1: n45 is left  child of n4567 → sibling = n67, dir = 0
+//   Level 2: n4567 is right child of n01234567 → sibling = n0123, dir = 1
+//   Level 3: n01234567 is left child of root → sibling = n89ABCDEF, dir = 0
+//
+// These get computed once off-chain so the prover can capture them
+// into the circuit. A real deployment would have the client compute
+// the path from a locally-cached subset of the tree.
+
+// Rebuild the intermediate nodes the prover needs as siblings.
+let n45 = node(m4, m5)
+let n67 = node(m6, m7)
+let n01 = node(m0, m1)
+let n23 = node(m2, m3)
+let n89 = node(m8, m9)
+let nAB = node(mA, mB)
+let nCD = node(mC, mD)
+let nEF = node(mE, mF)
+
+let n0123     = node(n01, n23)
+let n89AB     = node(n89, nAB)
+let nCDEF     = node(nCD, nEF)
+let n89ABCDEF = node(n89AB, nCDEF)
+
+// Merkle proof for leaf m5.
+let sibling_0 = m4
+let sibling_1 = n67
+let sibling_2 = n0123
+let sibling_3 = n89ABCDEF
+
+let dir_0 = 0p1
+let dir_1 = 0p0
+let dir_2 = 0p1
+let dir_3 = 0p0
+
+// Public nullifier hash — this is what gets written on-chain to
+// prevent double-withdraw. Anyone who knows `nullifier_5` can
+// compute it, but without the secret they can't produce a valid
+// membership proof.
+let nh = nullifier_hash(nullifier_5)
+print("Nullifier hash:   " + nh.to_string())
+print("User 5 proving withdrawal...")
+
+// ── The zk withdraw proof ────────────────────────────────────────────────
+//
+// Public inputs: `root` (the pool's committed state) and `nh` (the
+// revealed nullifier hash). Everything else — the secret, the raw
+// nullifier, the Merkle path — stays private. The verifier learns
+// only that SOME user who deposited is withdrawing, and gets a
+// single nullifier hash to cross off their spent list.
+
+prove withdraw(root: Public, nh: Public) {
+    // Step 1: rebuild the commitment from the secret + nullifier.
+    // Routes through `hash_mod::commitment` → circomlib Poseidon.
+    let my_leaf = commitment(secret_5, nullifier_5)
+
+    // Step 2: reconstruct the tree root from the leaf and the
+    // captured Merkle path, one level at a time. `merkle_step`
+    // from `tree.ach` handles the left/right mux + hash at each
+    // level — four circomlib Poseidon calls, one per tree depth.
+    let lvl0 = merkle_step(my_leaf, sibling_0, dir_0)
+    let lvl1 = merkle_step(lvl0, sibling_1, dir_1)
+    let lvl2 = merkle_step(lvl1, sibling_2, dir_2)
+    let lvl3 = merkle_step(lvl2, sibling_3, dir_3)
+
+    // Step 3: the computed root must match the public root.
+    assert_eq(lvl3, root)
+
+    // Step 4: the public nullifier hash must match what we derive
+    // from the private nullifier. This is what prevents anyone
+    // else from re-using this withdrawal slot on chain — once
+    // `nh` is burned, the same commitment can never be withdrawn
+    // again even though its `(secret, nullifier)` pair is still
+    // otherwise valid.
+    let my_nh = nullifier_hash(nullifier_5)
+    assert_eq(my_nh, nh)
+}
+
+print("Withdrawal proved: member 5 exited the pool privately")
+print("PASS: tornado")

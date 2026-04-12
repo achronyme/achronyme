@@ -1,0 +1,36 @@
+// Tornado hash module — Poseidon primitives used across the
+// protocol. Every function here is a thin wrapper around a
+// circomlib template, so upgrading to a different hash
+// (Poseidon2, MiMC, etc.) is a one-file swap.
+//
+// Every function in this module is callable from both VM mode
+// (for off-chain tree construction, nullifier bookkeeping, UI
+// previews) AND from prove blocks (where the circom template
+// gets inlined into the parent circuit). The library-mode
+// dispatcher routes the call based on the caller context.
+
+import { Poseidon } from "../../../test/circomlib/circuits/poseidon.circom"
+
+// Binds a secret to its future nullifier so a single withdraw
+// ties both values together cryptographically. The commitment
+// gets inserted into the Merkle tree at deposit time; the
+// prover later reveals the same `(secret, nullifier)` to
+// withdraw.
+export fn commitment(secret, nullifier) {
+    Poseidon(2)([secret, nullifier])
+}
+
+// Public nullifier hash — what the prover reveals at withdraw
+// time to mark the deposit as spent without linking to any
+// specific commitment. A second Poseidon layer over the same
+// nullifier hides the raw value that was bound to the commitment.
+export fn nullifier_hash(nullifier) {
+    Poseidon(2)([nullifier, 0p0])
+}
+
+// Internal node hash for the depth-4 Merkle tree. Exported so
+// both `tree.ach` (off-chain construction) and `main.ach` (prove
+// block membership check) share the exact same hash convention.
+export fn hash_node(left, right) {
+    Poseidon(2)([left, right])
+}
