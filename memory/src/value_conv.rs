@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn bool_roundtrip() {
         let v = true.into_value();
-        assert_eq!(bool::from_value(v).unwrap(), true);
+        assert!(bool::from_value(v).unwrap());
     }
 
     #[test]
