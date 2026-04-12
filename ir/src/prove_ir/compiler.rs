@@ -9,7 +9,7 @@ use diagnostics::SpanRange;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 use super::circom_interop::CircomCallable;
-use super::error::ProveIrError;
+use super::error::{CircomDispatchErrorKind, ProveIrError};
 use super::types::*;
 use crate::error::{span_box, OptSpan};
 use crate::types::IrType;
@@ -1513,6 +1513,37 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 let template_arg_exprs: Vec<&Expr> = inner_args.iter().map(|a| &a.value).collect();
                 return self.compile_circom_template_call(&key, &template_arg_exprs, args, span);
             }
+            // Inner callee didn't resolve to a registered circom
+            // template. Before falling through to the normal call
+            // dispatch, check whether the user misspelled a
+            // registered template / namespace and surface a clean
+            // "did you mean" diagnostic.
+            if let Some(err) = self.diagnose_unresolved_circom_curry(inner_callee, span) {
+                return Err(err);
+            }
+        }
+
+        // Bare call `Template(inputs)` against a registered circom
+        // template: the user forgot the `()(...)` currying layer.
+        if let Expr::Ident { name, .. } = callee {
+            if !self.circom_table.is_empty() {
+                // Exact match: user wrote `Square(x)` when they
+                // needed `Square()(x)`.
+                if let Some(callable) = self.circom_table.get(name).cloned() {
+                    let expected_params = callable
+                        .library
+                        .template_signature(&callable.template_name)
+                        .map(|s| s.params.len())
+                        .unwrap_or(0);
+                    return Err(ProveIrError::CircomDispatch {
+                        kind: CircomDispatchErrorKind::MissingTemplateParams {
+                            template: callable.template_name.clone(),
+                            expected_params,
+                        },
+                        span: to_span(span),
+                    });
+                }
+            }
         }
 
         match callee {
@@ -1542,6 +1573,100 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     .into(),
                 span: to_span(span),
             }),
+        }
+    }
+
+    /// When a `T(args)(inputs)` shape fails to resolve against the
+    /// circom_table, try to produce a clean "did you mean?" diagnostic
+    /// that points at the inner callee. Returns `Some(err)` only if
+    /// the user appears to have *meant* a circom template — otherwise
+    /// returns `None` so the caller falls through to the normal
+    /// function dispatch.
+    fn diagnose_unresolved_circom_curry(
+        &self,
+        inner_callee: &Expr,
+        span: &Span,
+    ) -> Option<ProveIrError> {
+        if self.circom_table.is_empty() {
+            return None;
+        }
+        match inner_callee {
+            // Bare `Template(args)(inputs)` with a misspelled name.
+            Expr::Ident { name, .. } => {
+                // Only produce a suggestion if we have at least one
+                // selective (non-namespaced) entry — otherwise this
+                // is almost certainly a regular function call typo.
+                let flat_keys: Vec<&str> = self
+                    .circom_table
+                    .keys()
+                    .filter(|k| !k.contains("::"))
+                    .map(String::as_str)
+                    .collect();
+                if flat_keys.is_empty() {
+                    return None;
+                }
+                let did_you_mean = crate::suggest::find_similar_ir(name, flat_keys.into_iter());
+                // Only emit the diagnostic if we actually found a
+                // similar registered name — otherwise the user's
+                // call is probably a regular function call and we
+                // shouldn't assume circom intent.
+                did_you_mean.map(|suggestion| ProveIrError::CircomDispatch {
+                    kind: CircomDispatchErrorKind::TemplateNotFoundSelective {
+                        template: name.clone(),
+                        did_you_mean: Some(suggestion),
+                    },
+                    span: to_span(span),
+                })
+            }
+            // `P.Template(args)(inputs)` — namespace or template typo.
+            Expr::DotAccess { object, field, .. } => {
+                let Expr::Ident { name: alias, .. } = object.as_ref() else {
+                    return None;
+                };
+                // Collect registered namespace prefixes (everything
+                // before "::" in circom_table keys).
+                let mut namespaces: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for k in self.circom_table.keys() {
+                    if let Some((ns, _)) = k.split_once("::") {
+                        namespaces.insert(ns.to_string());
+                    }
+                }
+                if !namespaces.contains(alias) {
+                    // Alias itself is unknown — suggest a namespace.
+                    let suggestion = crate::suggest::find_similar_ir(
+                        alias,
+                        namespaces.iter().map(String::as_str),
+                    );
+                    return Some(ProveIrError::CircomDispatch {
+                        kind: CircomDispatchErrorKind::NamespaceNotFound {
+                            alias: alias.clone(),
+                            did_you_mean: suggestion,
+                        },
+                        span: to_span(span),
+                    });
+                }
+                // Alias is valid; the template name is wrong.
+                let expected_prefix = format!("{alias}::");
+                let templates_in_ns: Vec<String> = self
+                    .circom_table
+                    .keys()
+                    .filter_map(|k| k.strip_prefix(&expected_prefix).map(String::from))
+                    .collect();
+                let suggestion = crate::suggest::find_similar_ir(
+                    field,
+                    templates_in_ns.iter().map(String::as_str),
+                );
+                Some(ProveIrError::CircomDispatch {
+                    kind: CircomDispatchErrorKind::TemplateNotFoundInNamespace {
+                        alias: alias.clone(),
+                        template: field.clone(),
+                        did_you_mean: suggestion,
+                    },
+                    span: to_span(span),
+                })
+            }
+            _ => None,
         }
     }
 
@@ -1611,19 +1736,21 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         let signature = callable
             .library
             .template_signature(&callable.template_name)
-            .ok_or_else(|| ProveIrError::UnsupportedOperation {
-                description: format!(
-                    "circom template `{}` disappeared from library after registration",
-                    callable.template_name
-                ),
+            .ok_or_else(|| ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::LoweringFailed {
+                    template: callable.template_name.clone(),
+                    message: "template disappeared from library after registration".into(),
+                },
                 span: to_span(span),
             })?;
 
         if template_args.len() != signature.params.len() {
-            return Err(ProveIrError::WrongArgumentCount {
-                name: format!("circom template `{}` parameters", callable.template_name),
-                expected: signature.params.len(),
-                got: template_args.len(),
+            return Err(ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::ParamCountMismatch {
+                    template: callable.template_name.clone(),
+                    expected: signature.params.len(),
+                    got: template_args.len(),
+                },
                 span: to_span(span),
             });
         }
@@ -1634,12 +1761,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             match compiled {
                 CircuitExpr::Const(fc) => template_const_args.push(fc),
                 _ => {
-                    return Err(ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "circom template `{}`: template argument at position {i} must be \
-                             a compile-time constant (captures / witness values not allowed)",
-                            callable.template_name
-                        ),
+                    return Err(ProveIrError::CircomDispatch {
+                        kind: CircomDispatchErrorKind::TemplateArgNotConst {
+                            template: callable.template_name.clone(),
+                            arg_index: i,
+                        },
                         span: to_span(span),
                     });
                 }
@@ -1647,10 +1773,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
 
         if signal_inputs.len() != signature.input_signals.len() {
-            return Err(ProveIrError::WrongArgumentCount {
-                name: format!("circom template `{}` signal inputs", callable.template_name),
-                expected: signature.input_signals.len(),
-                got: signal_inputs.len(),
+            return Err(ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::SignalInputCountMismatch {
+                    template: callable.template_name.clone(),
+                    expected: signature.input_signals.len(),
+                    got: signal_inputs.len(),
+                },
                 span: to_span(span),
             });
         }
@@ -1672,12 +1800,42 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 &prefix,
                 span,
             )
-            .map_err(|e| ProveIrError::UnsupportedOperation {
-                description: format!(
-                    "circom template `{}` instantiation failed: {e}",
-                    callable.template_name
-                ),
-                span: to_span(span),
+            .map_err(|e| {
+                use super::circom_interop::CircomDispatchError as CircomErr;
+                let kind = match e {
+                    CircomErr::UnknownTemplate { template, .. } => {
+                        CircomDispatchErrorKind::LoweringFailed {
+                            template,
+                            message: "internal: template vanished mid-instantiation".into(),
+                        }
+                    }
+                    CircomErr::ParamCountMismatch {
+                        template,
+                        expected,
+                        got,
+                    } => CircomDispatchErrorKind::ParamCountMismatch {
+                        template,
+                        expected,
+                        got,
+                    },
+                    CircomErr::MissingSignalInput { template, signal } => {
+                        CircomDispatchErrorKind::LoweringFailed {
+                            template,
+                            message: format!("missing signal input `{signal}`"),
+                        }
+                    }
+                    CircomErr::UnsupportedArrayInput { template, signal } => {
+                        CircomDispatchErrorKind::ArrayInputUnsupported { template, signal }
+                    }
+                    CircomErr::Lowering(msg) => CircomDispatchErrorKind::LoweringFailed {
+                        template: callable.template_name.clone(),
+                        message: msg,
+                    },
+                };
+                ProveIrError::CircomDispatch {
+                    kind,
+                    span: to_span(span),
+                }
             })?;
 
         self.body.extend(instantiation.body);
@@ -1699,13 +1857,24 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         let (outputs, signature) =
             self.instantiate_circom_template(key, template_args, signal_inputs, span)?;
 
+        // Expression-level calls can only return a single scalar.
+        // Multi-output and array-output templates need the let +
+        // DotAccess machinery added in Phase 3.4.
+        let template_name = self
+            .circom_table
+            .get(key)
+            .map(|c| c.template_name.clone())
+            .unwrap_or_default();
         if signature.output_signals.len() != 1 {
-            return Err(ProveIrError::UnsupportedOperation {
-                description: format!(
-                    "circom template has {} outputs; bind the call with \
-                     `let r = T(...)(...)` and use `r.<output_name>` to select one",
-                    signature.output_signals.len()
-                ),
+            return Err(ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::LoweringFailed {
+                    template: template_name,
+                    message: format!(
+                        "template has {} outputs; bind the call with \
+                         `let r = T(...)(...)` and select with `r.<output_name>`",
+                        signature.output_signals.len()
+                    ),
+                },
                 span: to_span(span),
             });
         }
@@ -1713,20 +1882,19 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         match outputs.get(out_name) {
             Some(super::circom_interop::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
             Some(super::circom_interop::CircomTemplateOutput::Array { .. }) => {
-                Err(ProveIrError::UnsupportedOperation {
-                    description: format!(
-                        "circom template returns an array output `{out_name}`; bind the \
-                         call with `let r = T(...)(...)` and use `r.{out_name}_i` to \
-                         access an element"
-                    ),
+                Err(ProveIrError::CircomDispatch {
+                    kind: CircomDispatchErrorKind::ArrayOutputRequiresIndex {
+                        template: template_name,
+                        signal: out_name.clone(),
+                    },
                     span: to_span(span),
                 })
             }
-            None => Err(ProveIrError::UnsupportedOperation {
-                description: format!(
-                    "circom template declared output `{out_name}` but instantiation \
-                     returned no entry for it"
-                ),
+            None => Err(ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::LoweringFailed {
+                    template: template_name,
+                    message: format!("instantiation returned no entry for output `{out_name}`"),
+                },
                 span: to_span(span),
             }),
         }
@@ -5256,7 +5424,7 @@ mod tests {
             let err = compiler.compile_expr(&expr).expect_err("should fail");
             let msg = format!("{err}");
             assert!(
-                msg.contains("parameters") && msg.contains("expects"),
+                msg.contains("template parameter") && msg.contains("expects"),
                 "expected parameter-count error, got: {msg}"
             );
         }
@@ -5269,7 +5437,7 @@ mod tests {
             let err = compiler.compile_expr(&expr).expect_err("should fail");
             let msg = format!("{err}");
             assert!(
-                msg.contains("signal inputs") && msg.contains("expects"),
+                msg.contains("signal input") && msg.contains("expects"),
                 "expected signal-input-count error, got: {msg}"
             );
         }
@@ -5488,6 +5656,109 @@ mod tests {
             // No top-level `r` binding — arrays don't have a scalar
             // convenience form.
             assert!(!compiler.env.contains_key("r"));
+        }
+
+        // --- Phase 3.5: structured diagnostics ---
+
+        #[test]
+        fn unknown_template_name_with_near_match_suggests_did_you_mean() {
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            // `Squar` is a 1-edit typo of `Square`.
+            let expr = parse_expr("Squar()(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("not imported") && msg.contains("did you mean `Square`"),
+                "expected did-you-mean suggestion, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn unknown_namespace_alias_suggests_did_you_mean() {
+            // Register under namespace alias "Pp".
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            let entry = compiler.circom_table.remove("Square").unwrap();
+            compiler
+                .circom_table
+                .insert("Pp::Square".to_string(), entry);
+            // Typo `Pk` for `Pp`.
+            let expr = parse_expr("Pk.Square()(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("namespace `Pk`") && msg.contains("did you mean `Pp`"),
+                "expected namespace did-you-mean, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn namespaced_template_typo_suggests_did_you_mean_within_namespace() {
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            let entry = compiler.circom_table.remove("Square").unwrap();
+            compiler.circom_table.insert("P::Square".to_string(), entry);
+            // `Squar` is a near-miss of `Square` inside namespace `P`.
+            let expr = parse_expr("P.Squar()(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("namespace `P`")
+                    && msg.contains("Squar")
+                    && msg.contains("did you mean `Square`"),
+                "expected namespace-scoped did-you-mean, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn bare_template_call_without_param_layer_hints_atomic_curry() {
+            // User wrote `Square(x)` instead of `Square()(x)`.
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            let expr = parse_expr("Square(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("called atomically") && msg.contains("template params"),
+                "expected atomic-curry hint, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn template_arg_not_const_uses_structured_kind() {
+            let (mut compiler, _lib) = compiler_with_stub("Num2Bits", sig(&["n"], &["in"], &["y"]));
+            let expr = parse_expr("Num2Bits(x)(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            // Verify the error uses the structured CircomDispatch
+            // variant, not a raw UnsupportedOperation.
+            assert!(
+                matches!(
+                    err,
+                    ProveIrError::CircomDispatch {
+                        kind: CircomDispatchErrorKind::TemplateArgNotConst { arg_index: 0, .. },
+                        ..
+                    }
+                ),
+                "expected CircomDispatch(TemplateArgNotConst), got: {err:?}"
+            );
+        }
+
+        #[test]
+        fn param_count_mismatch_uses_structured_kind() {
+            let (mut compiler, _lib) = compiler_with_stub("Num2Bits", sig(&["n"], &["in"], &["y"]));
+            let expr = parse_expr("Num2Bits()(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            assert!(
+                matches!(
+                    err,
+                    ProveIrError::CircomDispatch {
+                        kind: CircomDispatchErrorKind::ParamCountMismatch {
+                            expected: 1,
+                            got: 0,
+                            ..
+                        },
+                        ..
+                    }
+                ),
+                "expected CircomDispatch(ParamCountMismatch), got: {err:?}"
+            );
         }
 
         #[test]
