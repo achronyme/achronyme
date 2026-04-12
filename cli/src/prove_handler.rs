@@ -142,6 +142,33 @@ impl ProveHandler for DefaultProveHandler {
             inputs.insert(cap.name.clone(), *fe);
         }
 
+        // 4b. Circom witness hints: templates imported via `import { T } from "x.circom"`
+        //     may produce `CircuitNode::WitnessHint { name, hint }` nodes for intermediate
+        //     signals that are witness-only (e.g., `IsZero`'s `inv <-- 1/in`). The IR
+        //     evaluator treats these as `Instruction::Input { Witness }` wires, so their
+        //     values must be computed off-circuit and supplied in the inputs map before
+        //     R1CS / Plonkish compilation. Reuses the same `compute_witness_hints` helper
+        //     that `ach circom` uses for standalone circuits.
+        //
+        //     `compute_witness_hints` walks the whole ProveIR body, including the
+        //     library-mode wiring `Let`s emitted by `instantiate_template_into`, so the
+        //     mangled `{prefix}.sig` names in hint expressions resolve against the
+        //     caller-supplied values. The returned map supersets `inputs`; we merge it
+        //     back, keeping existing keys authoritative so explicit public / witness
+        //     values always win over hint-computed ones.
+        match circom::witness::compute_witness_hints::<memory::Bn254Fr>(&prove_ir, &inputs) {
+            Ok(hint_env) => {
+                for (name, fe) in hint_env {
+                    inputs.entry(name).or_insert(fe);
+                }
+            }
+            Err(e) => {
+                return Err(ProveError::IrLowering(format!(
+                    "circom witness hint computation failed: {e}"
+                )));
+            }
+        }
+
         match self.backend {
             ProveBackend::R1cs => self.prove_r1cs(&program, &inputs),
             ProveBackend::Plonkish => self.prove_plonkish(&program, &inputs),
