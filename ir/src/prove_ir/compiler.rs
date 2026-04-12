@@ -1490,6 +1490,23 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
+        // Circom template atomic curry: T(template_args)(signal_inputs)
+        // parses as Call { callee: Call { callee: Ident(T), args: template_args },
+        // args: signal_inputs }. Intercept here before the standard
+        // call-dispatch so a bare or namespaced circom template is
+        // resolved against the compiler's circom_table.
+        if let Expr::Call {
+            callee: inner_callee,
+            args: inner_args,
+            ..
+        } = callee
+        {
+            if let Some(key) = self.try_resolve_circom_key(inner_callee) {
+                let template_arg_exprs: Vec<&Expr> = inner_args.iter().map(|a| &a.value).collect();
+                return self.compile_circom_template_call(&key, &template_arg_exprs, args, span);
+            }
+        }
+
         match callee {
             // Method call: expr.method(args)
             Expr::DotAccess {
@@ -1515,6 +1532,194 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 description: "only named function calls are supported in circuits \
                               (dynamic dispatch cannot be compiled to constraints)"
                     .into(),
+                span: to_span(span),
+            }),
+        }
+    }
+
+    /// Try to resolve an expression used as the inner callee of a
+    /// `T(...)(...)` atomic curry to a key in `circom_table`.
+    ///
+    /// Returns `Some(key)` when the expression is either:
+    /// - `Expr::Ident { name }` and `name` is a registered selective
+    ///   import (bare template name key), or
+    /// - `Expr::DotAccess { object: Ident(P), field: T }` and
+    ///   `"P::T"` is registered as a namespace entry (Phase 3.4).
+    ///
+    /// Returns `None` for every other shape so the caller falls
+    /// through to the normal call dispatch without regression.
+    fn try_resolve_circom_key(&self, callee: &Expr) -> Option<String> {
+        match callee {
+            Expr::Ident { name, .. } => {
+                if self.circom_table.contains_key(name) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }
+            Expr::DotAccess { object, field, .. } => {
+                if let Expr::Ident { name: alias, .. } = object.as_ref() {
+                    let key = format!("{alias}::{field}");
+                    if self.circom_table.contains_key(&key) {
+                        return Some(key);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Instantiate a circom template call inside the current circuit
+    /// body and return a `CircuitExpr` that the caller can use as the
+    /// result of the expression.
+    ///
+    /// Only the single-scalar-output happy path is supported in
+    /// Phase 3.3. Array outputs, multi-output templates, array-valued
+    /// signal inputs, and the DotAccess variants are deferred to
+    /// Phase 3.4 / 3.5 and currently surface as
+    /// `UnsupportedOperation` errors with specific messages so tests
+    /// can pin each deferred variant.
+    fn compile_circom_template_call(
+        &mut self,
+        key: &str,
+        template_args: &[&Expr],
+        signal_inputs: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        // Clone what we need so we can drop the borrow on self.circom_table
+        // before calling compile_expr (which takes &mut self).
+        let callable = self
+            .circom_table
+            .get(key)
+            .expect("try_resolve_circom_key validated the key")
+            .clone();
+
+        // Fetch the template signature from the library handle so we
+        // can name signal inputs + validate counts.
+        let signature = callable
+            .library
+            .template_signature(&callable.template_name)
+            .ok_or_else(|| ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "circom template `{}` disappeared from library after registration",
+                    callable.template_name
+                ),
+                span: to_span(span),
+            })?;
+
+        // --- Validate template parameter count ---
+        if template_args.len() != signature.params.len() {
+            return Err(ProveIrError::WrongArgumentCount {
+                name: format!("circom template `{}` parameters", callable.template_name),
+                expected: signature.params.len(),
+                got: template_args.len(),
+                span: to_span(span),
+            });
+        }
+
+        // --- Evaluate template args to FieldConsts ---
+        //
+        // Each template argument MUST reduce to a compile-time
+        // constant — template params are captures, not runtime
+        // values. We compile the expression through the standard
+        // path and require the result to be `CircuitExpr::Const`.
+        let mut template_const_args: Vec<FieldConst> = Vec::with_capacity(template_args.len());
+        for (i, arg) in template_args.iter().enumerate() {
+            let compiled = self.compile_expr(arg)?;
+            match compiled {
+                CircuitExpr::Const(fc) => template_const_args.push(fc),
+                _ => {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "circom template `{}`: template argument at position {i} must be \
+                             a compile-time constant (captures / witness values not allowed)",
+                            callable.template_name
+                        ),
+                        span: to_span(span),
+                    });
+                }
+            }
+        }
+
+        // --- Validate signal input count ---
+        if signal_inputs.len() != signature.input_signals.len() {
+            return Err(ProveIrError::WrongArgumentCount {
+                name: format!("circom template `{}` signal inputs", callable.template_name),
+                expected: signature.input_signals.len(),
+                got: signal_inputs.len(),
+                span: to_span(span),
+            });
+        }
+
+        // --- Compile signal inputs by positional name match ---
+        let mut signal_input_map: HashMap<String, CircuitExpr> = HashMap::new();
+        for (sig_name, sig_input_expr) in signature.input_signals.iter().zip(signal_inputs.iter()) {
+            let compiled = self.compile_expr(sig_input_expr)?;
+            signal_input_map.insert(sig_name.clone(), compiled);
+        }
+
+        // --- Allocate a fresh mangling prefix ---
+        let prefix = self.next_circom_call_prefix();
+
+        // --- Dispatch to the library handle for actual instantiation ---
+        let instantiation = callable
+            .library
+            .instantiate_template(
+                &callable.template_name,
+                &template_const_args,
+                &signal_input_map,
+                &prefix,
+                span,
+            )
+            .map_err(|e| ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "circom template `{}` instantiation failed: {e}",
+                    callable.template_name
+                ),
+                span: to_span(span),
+            })?;
+
+        // --- Append the instantiated body to the parent circuit ---
+        self.body.extend(instantiation.body);
+
+        // --- Project the outputs to a single CircuitExpr ---
+        //
+        // Phase 3.3 scope: single scalar output templates only. Array
+        // outputs and multi-output templates require DotAccess support
+        // (Phase 3.4) — we error here with a clear "deferred" message
+        // so callers that hit those cases get something better than a
+        // generic unsupported error.
+        if signature.output_signals.len() != 1 {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "circom template `{}` has {} outputs; multi-output templates are \
+                     not yet supported (Phase 3.4 adds DotAccess on the result)",
+                    callable.template_name,
+                    signature.output_signals.len()
+                ),
+                span: to_span(span),
+            });
+        }
+        let out_name = &signature.output_signals[0];
+        match instantiation.outputs.get(out_name) {
+            Some(super::circom_interop::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
+            Some(super::circom_interop::CircomTemplateOutput::Array { .. }) => {
+                Err(ProveIrError::UnsupportedOperation {
+                    description: format!(
+                        "circom template `{}` returns an array output; array outputs require \
+                         DotAccess on the result (Phase 3.4)",
+                        callable.template_name
+                    ),
+                    span: to_span(span),
+                })
+            }
+            None => Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "circom template `{}` declared output `{out_name}` but instantiation \
+                     returned no entry for it",
+                    callable.template_name
+                ),
                 span: to_span(span),
             }),
         }
@@ -4671,6 +4876,260 @@ mod tests {
             }
             assert_eq!(compiler.circom_table.len(), 1);
             assert!(compiler.lookup_circom_template("Square").is_some());
+        }
+    }
+
+    // --- Circom interop: compile_call dispatch (Phase 3.3) ---
+
+    mod circom_dispatch {
+        use super::super::*;
+        use crate::prove_ir::circom_interop::{
+            CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
+        };
+        use diagnostics::Span;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        fn sig(params: &[&str], inputs: &[&str], outputs: &[&str]) -> CircomTemplateSignature {
+            CircomTemplateSignature {
+                params: params.iter().map(|s| s.to_string()).collect(),
+                input_signals: inputs.iter().map(|s| s.to_string()).collect(),
+                output_signals: outputs.iter().map(|s| s.to_string()).collect(),
+            }
+        }
+
+        /// Stub that records instantiation calls so tests can assert
+        /// what the dispatcher handed to the library handle. Mirrors
+        /// `StubLibrary` but captures every `instantiate_template` call
+        /// into an interior-mutable log.
+        #[derive(Debug)]
+        struct RecordingLibrary {
+            sig: CircomTemplateSignature,
+            template_name: String,
+            calls: std::sync::Mutex<Vec<RecordedCall>>,
+        }
+
+        #[derive(Debug, Clone)]
+        struct RecordedCall {
+            template_name: String,
+            template_args: Vec<FieldConst>,
+            signal_inputs: Vec<(String, CircuitExpr)>,
+            parent_prefix: String,
+        }
+
+        impl RecordingLibrary {
+            fn new(template_name: &str, sig: CircomTemplateSignature) -> Self {
+                Self {
+                    sig,
+                    template_name: template_name.to_string(),
+                    calls: std::sync::Mutex::new(Vec::new()),
+                }
+            }
+            fn recorded(&self) -> Vec<RecordedCall> {
+                self.calls.lock().unwrap().clone()
+            }
+        }
+
+        impl CircomLibraryHandle for RecordingLibrary {
+            fn template_signature(&self, name: &str) -> Option<CircomTemplateSignature> {
+                if name == self.template_name {
+                    Some(self.sig.clone())
+                } else {
+                    None
+                }
+            }
+            fn template_names(&self) -> Vec<String> {
+                vec![self.template_name.clone()]
+            }
+            fn instantiate_template(
+                &self,
+                template_name: &str,
+                template_args: &[FieldConst],
+                signal_inputs: &HashMap<String, CircuitExpr>,
+                parent_prefix: &str,
+                _span: &Span,
+            ) -> Result<CircomInstantiation, crate::prove_ir::CircomDispatchError> {
+                let mut inputs: Vec<(String, CircuitExpr)> = signal_inputs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                inputs.sort_by(|a, b| a.0.cmp(&b.0));
+                self.calls.lock().unwrap().push(RecordedCall {
+                    template_name: template_name.to_string(),
+                    template_args: template_args.to_vec(),
+                    signal_inputs: inputs,
+                    parent_prefix: parent_prefix.to_string(),
+                });
+                // Emit a marker Let so tests can observe the body was
+                // extended with the library's contribution.
+                let mut outputs = HashMap::new();
+                let first_out = &self.sig.output_signals[0];
+                let body = vec![CircuitNode::Let {
+                    name: format!("{parent_prefix}_marker"),
+                    value: CircuitExpr::Const(FieldConst::from_u64(42)),
+                    span: None,
+                }];
+                outputs.insert(
+                    first_out.clone(),
+                    CircomTemplateOutput::Scalar(CircuitExpr::Var(format!(
+                        "{parent_prefix}_{first_out}"
+                    ))),
+                );
+                Ok(CircomInstantiation { body, outputs })
+            }
+        }
+
+        fn compiler_with_stub(
+            template: &str,
+            sig_val: CircomTemplateSignature,
+        ) -> (ProveIrCompiler<Bn254Fr>, Arc<RecordingLibrary>) {
+            let lib = Arc::new(RecordingLibrary::new(template, sig_val));
+            let handle: Arc<dyn CircomLibraryHandle> = lib.clone();
+            let mut compiler = ProveIrCompiler::<Bn254Fr>::new();
+            compiler.register_circom_template(template.to_string(), handle, template.to_string());
+            // The prove block has an "x" public input that the
+            // template consumes.
+            compiler
+                .env
+                .insert("x".to_string(), CompEnvValue::Scalar("x".to_string()));
+            (compiler, lib)
+        }
+
+        fn parse_expr(source: &str) -> Expr {
+            let (program, errors) = achronyme_parser::parse_program(source);
+            assert!(errors.is_empty(), "parse errors: {errors:?}");
+            match &program.stmts[0] {
+                Stmt::Expr(e) => e.clone(),
+                other => panic!("expected expression statement, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn bare_template_call_dispatches_to_library() {
+            let (mut compiler, lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            // Parse `Square()(x)` as an atomic curry expression.
+            let expr = parse_expr("Square()(x)");
+            let result = compiler
+                .compile_expr(&expr)
+                .expect("compile should succeed");
+            // Dispatcher returns the mangled output Var for the
+            // single scalar output.
+            assert_eq!(result, CircuitExpr::Var("circom_call_0_y".to_string()));
+
+            // The library received the call with empty template args
+            // and one signal input wired to `x`.
+            let calls = lib.recorded();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].template_name, "Square");
+            assert!(calls[0].template_args.is_empty());
+            assert_eq!(calls[0].signal_inputs.len(), 1);
+            assert_eq!(calls[0].signal_inputs[0].0, "x");
+            assert_eq!(calls[0].parent_prefix, "circom_call_0");
+
+            // The compiler body was extended with the stub's marker.
+            assert!(compiler.body.iter().any(|n| matches!(
+                n,
+                CircuitNode::Let { name, .. } if name == "circom_call_0_marker"
+            )));
+            // And the call counter bumped.
+            assert_eq!(compiler.circom_call_counter, 1);
+        }
+
+        #[test]
+        fn parametric_template_evaluates_args_at_compile_time() {
+            let (mut compiler, lib) = compiler_with_stub("Num2Bits", sig(&["n"], &["in"], &["y"]));
+            compiler.env.insert(
+                "in_sig".to_string(),
+                CompEnvValue::Scalar("in_sig".to_string()),
+            );
+            // Num2Bits(8)(in_sig)
+            let expr = parse_expr("Num2Bits(8)(in_sig)");
+            compiler
+                .compile_expr(&expr)
+                .expect("compile should succeed");
+
+            let calls = lib.recorded();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].template_args.len(), 1);
+            assert_eq!(calls[0].template_args[0], FieldConst::from_u64(8));
+        }
+
+        #[test]
+        fn template_arg_must_be_compile_time_const() {
+            let (mut compiler, _lib) = compiler_with_stub("Num2Bits", sig(&["n"], &["in"], &["y"]));
+            // `x` is a runtime input — Num2Bits(x) must be rejected.
+            let expr = parse_expr("Num2Bits(x)(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("compile-time constant"),
+                "error should mention compile-time constant requirement: {msg}"
+            );
+        }
+
+        #[test]
+        fn template_param_count_mismatch_rejected() {
+            let (mut compiler, _lib) = compiler_with_stub("Num2Bits", sig(&["n"], &["in"], &["y"]));
+            // Zero template args instead of one.
+            let expr = parse_expr("Num2Bits()(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("parameters") && msg.contains("expects"),
+                "expected parameter-count error, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn signal_input_count_mismatch_rejected() {
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            // Square takes 1 signal input, passing 2.
+            let expr = parse_expr("Square()(x, x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("signal inputs") && msg.contains("expects"),
+                "expected signal-input-count error, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn multi_output_template_deferred_to_phase_3_4() {
+            let (mut compiler, _lib) = compiler_with_stub("Pair", sig(&[], &["x"], &["a", "b"]));
+            let expr = parse_expr("Pair()(x)");
+            let err = compiler.compile_expr(&expr).expect_err("should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("multi-output") || msg.contains("DotAccess"),
+                "expected multi-output deferral message, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn call_counter_is_per_compiler() {
+            let (mut compiler, _lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            let e1 = parse_expr("Square()(x)");
+            let e2 = parse_expr("Square()(x)");
+            let r1 = compiler.compile_expr(&e1).unwrap();
+            let r2 = compiler.compile_expr(&e2).unwrap();
+            assert_eq!(r1, CircuitExpr::Var("circom_call_0_y".to_string()));
+            assert_eq!(r2, CircuitExpr::Var("circom_call_1_y".to_string()));
+            assert_eq!(compiler.circom_call_counter, 2);
+        }
+
+        #[test]
+        fn non_circom_call_falls_through_unchanged() {
+            // A Call that doesn't match the circom currying pattern
+            // (no second Call layer) must fall through to the normal
+            // function dispatch without hitting circom code paths.
+            let (mut compiler, lib) = compiler_with_stub("Square", sig(&[], &["x"], &["y"]));
+            // Not a curry — just `x + 1` as a plain expr.
+            let expr = parse_expr("x + 1");
+            let _ = compiler.compile_expr(&expr).unwrap();
+            assert!(
+                lib.recorded().is_empty(),
+                "library should not have been called for non-circom expression"
+            );
         }
     }
 }

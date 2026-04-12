@@ -1,0 +1,162 @@
+//! End-to-end compiler tests for the Phase 3 Circom import dispatcher.
+//!
+//! Phase 3.1 added the trait-based dispatch surface in the `ir`
+//! crate, Phase 3.2 implemented the trait for `CircomLibrary` and
+//! seeded OuterScope.circom_imports from the .ach compiler, and
+//! Phase 3.3 wires `compile_call` in `ProveIrCompiler` to actually
+//! instantiate templates inside prove/circuit blocks.
+//!
+//! These tests drive a full `.ach` → bytecode compile through the
+//! real circom frontend (no stubs) to pin the happy path:
+//!
+//! 1. `import { T } from "x.circom"` populates `circom_template_aliases`.
+//! 2. A `prove {}` block calling `T()(signal)` succeeds at compile
+//!    time and the resulting bytecode references the template's
+//!    instantiated body.
+//!
+//! The goal is a smoke-test — detailed unit coverage lives in
+//! `ir::prove_ir::compiler::tests::circom_dispatch` against the
+//! StubLibrary.
+
+use compiler::codegen::Compiler;
+use tempfile::TempDir;
+
+/// Owns a `tempfile::TempDir` + a `.circom` file inside it. On drop
+/// the directory and its contents are removed.
+struct TempCircom {
+    _dir: TempDir,
+    path: std::path::PathBuf,
+}
+
+impl TempCircom {
+    fn dir(&self) -> std::path::PathBuf {
+        self.path.parent().unwrap().to_path_buf()
+    }
+    fn filename(&self) -> String {
+        self.path.file_name().unwrap().to_str().unwrap().to_string()
+    }
+}
+
+fn temp_circom(src: &str) -> TempCircom {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let path = dir.path().join("module.circom");
+    std::fs::write(&path, src).expect("write temp circom");
+    TempCircom { _dir: dir, path }
+}
+
+#[test]
+fn prove_block_can_call_selective_imported_scalar_template() {
+    // Square is a single-scalar-input, single-scalar-output template.
+    // Seed `x_val` in the outer scope so the prove block captures it
+    // and hands it to Square()(x_val). The prove public parameter
+    // `out` is what the caller supplies when proving.
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template Square() {
+            signal input x;
+            signal output y;
+            y <== x * x;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    let ach_src = format!(
+        r#"
+import {{ Square }} from "./{rel}"
+let x_val = 0p5
+let expected = 0p25
+prove(expected: Public) {{
+    let y = Square()(x_val)
+    assert_eq(y, expected)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    compiler
+        .compile(&ach_src)
+        .expect("prove block calling imported circom Square should compile");
+}
+
+#[test]
+fn prove_block_can_call_namespaced_imported_scalar_template() {
+    // import "x.circom" as P; P.Square()(x_val)
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template Square() {
+            signal input x;
+            signal output y;
+            y <== x * x;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    let ach_src = format!(
+        r#"
+import "./{rel}" as P
+let x_val = 0p5
+let expected = 0p25
+prove(expected: Public) {{
+    let y = P.Square()(x_val)
+    assert_eq(y, expected)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    compiler
+        .compile(&ach_src)
+        .expect("namespaced circom call should compile");
+}
+
+#[test]
+fn prove_block_rejects_non_const_template_arg() {
+    // Num2Bits expects a compile-time constant param. Passing a
+    // captured variable (which is a runtime value inside the circuit)
+    // must be rejected with a clear compile-time-constant diagnostic.
+    let tc = temp_circom(
+        r#"
+        pragma circom 2.0.0;
+        template Num2Bits(n) {
+            signal input in;
+            signal output out[n];
+            var lc = 0;
+            var e = 1;
+            for (var i = 0; i < n; i++) {
+                out[i] <-- (in >> i) & 1;
+                out[i] * (out[i] - 1) === 0;
+                lc += out[i] * e;
+                e = e + e;
+            }
+            lc === in;
+        }
+        "#,
+    );
+    let rel = tc.filename();
+    let ach_src = format!(
+        r#"
+import {{ Num2Bits }} from "./{rel}"
+let n_val = 0p8
+let x_val = 0p5
+prove(out: Public) {{
+    let _ = Num2Bits(n_val)(x_val)
+    assert_eq(x_val, out)
+}}
+"#
+    );
+
+    let mut compiler = Compiler::new();
+    compiler.base_path = Some(tc.dir());
+    let err = compiler
+        .compile(&ach_src)
+        .expect_err("runtime template arg must be rejected");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("compile-time constant"),
+        "expected compile-time constant error, got: {msg}"
+    );
+}
