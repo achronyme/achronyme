@@ -404,6 +404,15 @@ run_test "examples/circom_poseidon_chain.ach" \
 run_test "examples/circom_merkle_membership.ach" \
     "$ACH" run "$REPO_ROOT/examples/circom_merkle_membership.ach"
 
+run_test "examples/range_proof.ach" \
+    "$ACH" run "$REPO_ROOT/examples/range_proof.ach"
+
+run_test "examples/merkle_depth4.ach" \
+    "$ACH" run "$REPO_ROOT/examples/merkle_depth4.ach"
+
+run_test "examples/eddsa_verify.ach" \
+    "$ACH" run "$REPO_ROOT/examples/eddsa_verify.ach"
+
 # --- Summary ---
 echo ""
 TOTAL=$((PASS + FAIL))
