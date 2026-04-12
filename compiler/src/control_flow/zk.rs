@@ -98,7 +98,9 @@ pub(super) fn compile_prove(
     let outer_scope = ir::prove_ir::OuterScope {
         values: outer_values,
         functions: compiler.fn_decl_asts.clone(),
-        ..Default::default()
+        circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
+            compiler,
+        ),
     };
 
     // 2. If params are provided (new syntax), validate no old-style

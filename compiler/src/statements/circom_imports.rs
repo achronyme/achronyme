@@ -15,15 +15,69 @@
 //! checks) extracted into private helpers so a bug fix or behavior
 //! tweak lives in exactly one place.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use achronyme_parser::ast::Span;
+use ir::prove_ir::{CircomCallable, CircomLibraryHandle};
 use memory::Value;
 use vm::opcode::OpCode;
 
 use crate::codegen::Compiler;
 use crate::error::{span_box, CompilerError};
+
+/// Flatten all circom imports registered on `compiler` into the
+/// dispatcher key format expected by [`ir::prove_ir::OuterScope::circom_imports`].
+///
+/// Selective imports contribute one entry per template under their
+/// bare name (`"Poseidon"`). Namespace imports (`import "x.circom" as P`)
+/// contribute one entry per template in the library under the
+/// `"P::TemplateName"` key — the flattening happens here rather than
+/// in the ProveIR compiler so the lookup path at call time stays a
+/// single `HashMap::get` instead of a two-step namespace + template
+/// resolution.
+///
+/// Runs every time a prove/circuit block is about to be compiled,
+/// which is O(total_templates_across_namespaces). This is cheap in
+/// practice (real-world circomlib libraries expose tens of templates,
+/// not thousands) and keeps the table immutable-once-built.
+pub(crate) fn build_circom_imports_for_outer_scope(
+    compiler: &Compiler,
+) -> HashMap<String, CircomCallable> {
+    let mut out: HashMap<String, CircomCallable> = HashMap::new();
+
+    // Selective imports: `import { Poseidon } from "x.circom"`
+    // → "Poseidon" → (library, "Poseidon").
+    for (name, lib) in &compiler.circom_template_aliases {
+        let handle: Arc<dyn CircomLibraryHandle> = lib.clone();
+        out.insert(
+            name.clone(),
+            CircomCallable {
+                library: handle,
+                template_name: name.clone(),
+            },
+        );
+    }
+
+    // Namespace imports: `import "x.circom" as P`
+    // → one "P::T" entry per template T in the library.
+    for (alias, lib) in &compiler.circom_namespaces {
+        let handle: Arc<dyn CircomLibraryHandle> = lib.clone();
+        for template_name in CircomLibraryHandle::template_names(&**lib) {
+            let key = format!("{alias}::{template_name}");
+            out.insert(
+                key,
+                CircomCallable {
+                    library: handle.clone(),
+                    template_name,
+                },
+            );
+        }
+    }
+
+    out
+}
 
 /// Resolve an import path relative to the compiler's current
 /// `base_path`, verify it exists, and canonicalize it. Returns a

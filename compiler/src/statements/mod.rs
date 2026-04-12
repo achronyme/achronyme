@@ -412,6 +412,128 @@ mod circom_import_dispatch_tests {
             .compile(&ach_src)
             .expect("duplicate same-path import is idempotent");
     }
+
+    // --- Phase 3.2: build_circom_imports_for_outer_scope ---
+
+    #[test]
+    fn build_circom_imports_flattens_namespace_templates_to_colon_keys() {
+        let tc = temp_circom(
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            template Cube() {
+                signal input x;
+                signal output y;
+                signal tmp;
+                tmp <== x * x;
+                y <== tmp * x;
+            }
+            "#,
+        );
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
+        let ach_src = format!("import \"./{rel}\" as P\n");
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler.compile(&ach_src).expect("namespace import");
+
+        let imports = circom_imports::build_circom_imports_for_outer_scope(&compiler);
+        // Two templates → two "P::T" keys.
+        assert!(imports.contains_key("P::Square"), "missing P::Square");
+        assert!(imports.contains_key("P::Cube"), "missing P::Cube");
+        assert_eq!(imports.get("P::Square").unwrap().template_name, "Square");
+        assert_eq!(imports.get("P::Cube").unwrap().template_name, "Cube");
+        // Bare names must NOT be present for namespace imports —
+        // namespaces do not pollute the unqualified key space.
+        assert!(!imports.contains_key("Square"));
+        assert!(!imports.contains_key("Cube"));
+    }
+
+    #[test]
+    fn build_circom_imports_carries_selective_aliases_under_bare_names() {
+        let tc = temp_circom(
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            template Cube() {
+                signal input x;
+                signal output y;
+                signal tmp;
+                tmp <== x * x;
+                y <== tmp * x;
+            }
+            "#,
+        );
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
+        // Selective import pulls only Square, leaves Cube un-imported.
+        let ach_src = format!("import {{ Square }} from \"./{rel}\"\n");
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler.compile(&ach_src).expect("selective import");
+
+        let imports = circom_imports::build_circom_imports_for_outer_scope(&compiler);
+        assert!(imports.contains_key("Square"));
+        assert_eq!(imports.get("Square").unwrap().template_name, "Square");
+        // Cube was not imported — must not appear.
+        assert!(!imports.contains_key("Cube"));
+        // And there is no namespace, so no "_::_" key either.
+        assert!(imports.keys().all(|k| !k.contains("::")));
+    }
+
+    #[test]
+    fn build_circom_imports_handles_namespace_and_selective_together() {
+        // Mirrors the real-world case: one file namespaced as P, a
+        // different import selects some templates by bare name.
+        let tc = temp_circom(
+            r#"
+            pragma circom 2.0.0;
+            template Square() {
+                signal input x;
+                signal output y;
+                y <== x * x;
+            }
+            template Cube() {
+                signal input x;
+                signal output y;
+                signal tmp;
+                tmp <== x * x;
+                y <== tmp * x;
+            }
+            "#,
+        );
+        let tmp_dir = tc.dir();
+        let rel = tc.filename();
+        // Same physical file gets namespaced + selectively-imported.
+        let ach_src = format!("import \"./{rel}\" as P\nimport {{ Square }} from \"./{rel}\"\n");
+        let mut compiler = Compiler::new();
+        compiler.base_path = Some(tmp_dir);
+        compiler
+            .compile(&ach_src)
+            .expect("namespace + selective must coexist");
+
+        let imports = circom_imports::build_circom_imports_for_outer_scope(&compiler);
+        assert!(imports.contains_key("P::Square"));
+        assert!(imports.contains_key("P::Cube"));
+        assert!(imports.contains_key("Square"));
+        assert!(!imports.contains_key("Cube"));
+        assert_eq!(imports.len(), 3);
+    }
+
+    #[test]
+    fn build_circom_imports_is_empty_when_no_circom_imports() {
+        let compiler = Compiler::new();
+        let imports = circom_imports::build_circom_imports_for_outer_scope(&compiler);
+        assert!(imports.is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -665,9 +787,14 @@ impl StatementCompiler for Compiler {
         };
 
         // 2. Compile to ProveIR — pass outer functions so the circuit can
-        //    inline user-defined helpers from the enclosing scope.
+        //    inline user-defined helpers from the enclosing scope, plus
+        //    any circom template imports so the ProveIR compiler can
+        //    resolve `Poseidon(...)(...)` / `P.Poseidon(...)(...)` calls.
         let outer_scope = ir::prove_ir::OuterScope {
             functions: self.fn_decl_asts.clone(),
+            circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
+                self,
+            ),
             ..Default::default()
         };
         let mut prove_ir =
