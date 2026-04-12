@@ -47,6 +47,7 @@ pub enum RuntimeError {
     StaleUpvalue,
     VerifyHandlerNotConfigured,
     ArenaCapacityExceeded,
+    CircomHandlerNotConfigured,
 
     // ── Boxed variants (8-byte pointer, allocation on error only) ───
     TypeMismatch(Box<String>),
@@ -176,6 +177,9 @@ impl fmt::Display for RuntimeError {
                 write!(f, "resource limit exceeded: {msg}")
             }
             RuntimeError::ArenaCapacityExceeded => write!(f, "arena capacity exceeded u32::MAX"),
+            RuntimeError::CircomHandlerNotConfigured => {
+                write!(f, "circom template handler not configured")
+            }
         }
     }
 }

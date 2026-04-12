@@ -5,6 +5,7 @@ use memory::field::PrimeId;
 use memory::{Heap, Value};
 use std::collections::HashMap;
 
+use super::circom::CircomWitnessHandler;
 use super::frame::CallFrame;
 use super::interpreter::InterpreterOps;
 use super::native::NativeRegistry;
@@ -44,6 +45,12 @@ pub struct VM {
 
     /// Handler for `verify_proof()` calls (injected by CLI or host)
     pub verify_handler: Option<Box<dyn VerifyHandler>>,
+
+    /// Handler for `CallCircomTemplate` opcode — evaluates a circom
+    /// template at runtime via the circom frontend. Injected by the
+    /// CLI after compile time so the VM can dispatch into an
+    /// in-process library registry without `vm` depending on `circom`.
+    pub circom_handler: Option<Box<dyn CircomWitnessHandler>>,
 
     /// Location of the last runtime error: (function_name, line_number).
     /// Set by interpret() before returning Err.
@@ -93,6 +100,7 @@ impl VM {
             debug_symbols: None,
             prove_handler: None,
             verify_handler: None,
+            circom_handler: None,
             last_error_location: None,
             native_roots: Vec::new(),
             prototype_registry: PrototypeRegistry::new(),

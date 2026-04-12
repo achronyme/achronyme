@@ -113,6 +113,27 @@ pub enum OpCode {
     /// Method name is read from R[B-1] (LoadConst prior).
     MethodCall = 161,
 
+    // ===== Circom interop (Phase 4) =====
+    /// Invoke a compile-time-registered circom template from VM mode.
+    ///
+    /// Layout: R[A] = CircomCall(R[B-1] as handle, R[B..B+C] as inputs)
+    /// - R[A]:    destination register for the template result. For
+    ///   single-scalar-output templates this is a field Value; for
+    ///   array outputs it is a list Value; for multi-output templates
+    ///   it is a map Value keyed by output signal name.
+    /// - R[B-1]:  `Value::circom_handle(idx)`, loaded via a prior
+    ///   `LoadConst` — same convention MethodCall uses for its name
+    ///   slot. The heap-indexed [`memory::CircomHandle`] carries the
+    ///   library id, template name, and compile-time template args.
+    /// - R[B..B+C]: the signal input registers, one per declared
+    ///   input signal in the library's declaration order.
+    ///
+    /// The VM dispatches to `VM::circom_handler` — a trait object
+    /// injected by the CLI at program-run time — which owns the
+    /// actual `CircomLibrary` registry and performs witness
+    /// evaluation via the circom frontend.
+    CallCircomTemplate = 162,
+
     // ===== Special =====
     /// No operation
     Nop = 255,
@@ -163,6 +184,7 @@ impl OpCode {
             153 => Some(OpCode::SetIndex),
             160 => Some(OpCode::Prove),
             161 => Some(OpCode::MethodCall),
+            162 => Some(OpCode::CallCircomTemplate),
             255 => Some(OpCode::Nop),
             _ => None,
         }
@@ -218,6 +240,7 @@ impl OpCode {
             OpCode::SetIndex => "SET_INDEX",
             OpCode::Prove => "PROVE",
             OpCode::MethodCall => "METHOD_CALL",
+            OpCode::CallCircomTemplate => "CALL_CIRCOM_TEMPLATE",
             OpCode::Nop => "NOP",
         }
     }
@@ -308,5 +331,22 @@ mod tests {
         assert_eq!(decode_opcode(inst), OpCode::LoadConst.as_u8());
         assert_eq!(decode_a(inst), 5);
         assert_eq!(decode_bx(inst), 1000);
+    }
+
+    #[test]
+    fn call_circom_template_opcode_roundtrips() {
+        assert_eq!(OpCode::CallCircomTemplate.as_u8(), 162);
+        assert_eq!(OpCode::from_u8(162), Some(OpCode::CallCircomTemplate));
+        assert_eq!(OpCode::CallCircomTemplate.name(), "CALL_CIRCOM_TEMPLATE");
+    }
+
+    #[test]
+    fn call_circom_template_encodes_as_abc() {
+        // Layout: A=dest, B=first_input_reg, C=input_count
+        let inst = encode_abc(OpCode::CallCircomTemplate.as_u8(), 3, 5, 2);
+        assert_eq!(decode_opcode(inst), OpCode::CallCircomTemplate.as_u8());
+        assert_eq!(decode_a(inst), 3);
+        assert_eq!(decode_b(inst), 5);
+        assert_eq!(decode_c(inst), 2);
     }
 }

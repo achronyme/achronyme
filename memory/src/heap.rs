@@ -61,6 +61,30 @@ pub struct ProofObject {
     pub vkey_json: String,
 }
 
+/// Compile-time circom template call descriptor, stored in the
+/// heap's `circom_handles` arena and referenced from user code via
+/// `Value::circom_handle(idx)`.
+///
+/// The handle is a leaf object — it does not reference any other
+/// `Value`, so GC tracing just marks its slot. The real
+/// [`circom::CircomLibrary`] is owned by the VM's `circom_handler`
+/// (a trait object injected at program-run time), not by the heap,
+/// so this struct never holds a direct reference into it. The
+/// `library_id` field selects which library the handler should use
+/// at dispatch time.
+///
+/// `template_args` stores the pre-evaluated compile-time template
+/// parameters as u64 values — they were required to reduce to
+/// `CircuitExpr::Const` at compile time, which for real-world circom
+/// use cases (array lengths, iteration counts, etc.) always fits in
+/// a u64.
+#[derive(Debug, Clone)]
+pub struct CircomHandle {
+    pub library_id: u32,
+    pub template_name: String,
+    pub template_args: Vec<u64>,
+}
+
 /// Set a mark bit in a bitmap vec. Returns true if was previously unmarked.
 /// Free function to enable split-borrow in `trace()` — takes `&mut Vec<u64>`
 /// instead of `&mut Arena<T>`, allowing disjoint borrows of `data` and `free_set`.
@@ -90,6 +114,7 @@ pub struct Heap {
     pub(crate) proofs: Arena<ProofObject>,
     pub(crate) bigints: Arena<BigInt>,
     pub(crate) bytes: Arena<Vec<u8>>,
+    pub(crate) circom_handles: Arena<CircomHandle>,
 
     // GC Metrics
     pub bytes_allocated: usize,
@@ -121,6 +146,7 @@ impl Heap {
             proofs: Arena::new(),
             bigints: Arena::new(),
             bytes: Arena::new(),
+            circom_handles: Arena::new(),
 
             bytes_allocated: 0,
             next_gc_threshold: 1024 * 1024, // Start at 1MB
@@ -377,6 +403,10 @@ impl Heap {
                 crate::value::TAG_BYTES => {
                     bitmap_set(&mut self.bytes.mark_bits, handle);
                 }
+                crate::value::TAG_CIRCOM_HANDLE => {
+                    // Leaf object — no nested Values to walk.
+                    bitmap_set(&mut self.circom_handles.mark_bits, handle);
+                }
                 _ => {}
             }
         }
@@ -527,6 +557,21 @@ impl Heap {
         }
         self.bytes.clear_marks();
 
+        // Circom handles (compile-time template call descriptors).
+        for i in 0..self.circom_handles.data.len() {
+            let idx = i as u32;
+            if !self.circom_handles.is_marked(idx) && !self.circom_handles.is_free(idx) {
+                self.circom_handles.mark_free(idx);
+                freed_bytes += circom_handle_cost(&self.circom_handles.data[i]);
+                self.circom_handles.data[i] = CircomHandle {
+                    library_id: 0,
+                    template_name: String::new(),
+                    template_args: Vec::new(),
+                };
+            }
+        }
+        self.circom_handles.clear_marks();
+
         self.stats.total_freed_bytes += freed_bytes as u64;
 
         // Recompute bytes_allocated from surviving objects (self-correcting).
@@ -602,6 +647,11 @@ impl Heap {
         for (i, b) in self.bytes.data.iter().enumerate() {
             if !self.bytes.is_free(i as u32) {
                 total += b.capacity();
+            }
+        }
+        for (i, ch) in self.circom_handles.data.iter().enumerate() {
+            if !self.circom_handles.is_free(i as u32) {
+                total += circom_handle_cost(ch);
             }
         }
         total
@@ -755,5 +805,131 @@ impl Heap {
         self.bytes.clear_free();
         self.bytes_allocated += cost;
         self.check_gc();
+    }
+
+    pub fn alloc_circom_handle(
+        &mut self,
+        handle: CircomHandle,
+    ) -> Result<u32, crate::arena::ArenaError> {
+        self.bytes_allocated += circom_handle_cost(&handle);
+        self.check_gc();
+        self.circom_handles.alloc(handle)
+    }
+
+    pub fn get_circom_handle(&self, index: u32) -> Option<&CircomHandle> {
+        self.circom_handles.get(index)
+    }
+
+    /// Bulk-import circom handles from the compiler's handle table
+    /// (same pattern as `import_bytes`). Called by the VM's bytecode
+    /// loader at program-load time so every `Value::circom_handle(i)`
+    /// constant resolves against the same arena slot the compiler
+    /// allocated at compile time.
+    pub fn import_circom_handles(&mut self, handles: Vec<CircomHandle>) {
+        assert!(
+            self.circom_handles.free_indices.is_empty(),
+            "import_circom_handles called after execution started \
+             (circom_handles arena has freed slots)"
+        );
+        let cost: usize = handles.iter().map(circom_handle_cost).sum();
+        self.circom_handles.data = handles;
+        self.circom_handles.clear_free();
+        self.bytes_allocated += cost;
+        self.check_gc();
+    }
+}
+
+/// Estimated heap cost of a [`CircomHandle`]: struct stack size +
+/// the template name's allocated capacity + the args vec capacity.
+fn circom_handle_cost(h: &CircomHandle) -> usize {
+    std::mem::size_of::<CircomHandle>()
+        + h.template_name.capacity()
+        + h.template_args.capacity() * std::mem::size_of::<u64>()
+}
+
+#[cfg(test)]
+mod circom_handle_tests {
+    use super::*;
+
+    fn sample_handle(id: u32, name: &str) -> CircomHandle {
+        CircomHandle {
+            library_id: id,
+            template_name: name.to_string(),
+            template_args: vec![2, 4],
+        }
+    }
+
+    #[test]
+    fn alloc_and_get_roundtrips() {
+        let mut heap = Heap::new();
+        let idx = heap
+            .alloc_circom_handle(sample_handle(3, "Poseidon"))
+            .expect("alloc should succeed");
+        let got = heap.get_circom_handle(idx).expect("should be present");
+        assert_eq!(got.library_id, 3);
+        assert_eq!(got.template_name, "Poseidon");
+        assert_eq!(got.template_args, vec![2, 4]);
+    }
+
+    #[test]
+    fn alloc_charges_bytes_against_heap_budget() {
+        let mut heap = Heap::new();
+        let before = heap.bytes_allocated;
+        heap.alloc_circom_handle(sample_handle(0, "Sigma")).unwrap();
+        assert!(heap.bytes_allocated > before, "bytes_allocated should grow");
+    }
+
+    #[test]
+    fn import_bulk_replaces_arena_contents() {
+        let mut heap = Heap::new();
+        heap.import_circom_handles(vec![
+            sample_handle(0, "Square"),
+            sample_handle(1, "Num2Bits"),
+            sample_handle(2, "Poseidon"),
+        ]);
+        assert_eq!(heap.get_circom_handle(0).unwrap().template_name, "Square");
+        assert_eq!(heap.get_circom_handle(1).unwrap().template_name, "Num2Bits");
+        assert_eq!(heap.get_circom_handle(2).unwrap().template_name, "Poseidon");
+    }
+
+    #[test]
+    fn gc_trace_marks_circom_handle_as_leaf() {
+        // Allocate a handle, keep only a Value reference to it, run
+        // trace against that root, and verify the arena slot was
+        // marked (not freed on sweep).
+        let mut heap = Heap::new();
+        let idx = heap.alloc_circom_handle(sample_handle(7, "Sigma")).unwrap();
+        let root = Value::circom_handle(idx);
+
+        heap.trace(vec![root]);
+        assert!(heap.circom_handles.is_marked(idx));
+        heap.sweep();
+        // After sweep the slot must still contain the original data
+        // (marked → survived), not the reset placeholder.
+        let survived = heap.get_circom_handle(idx).expect("should survive");
+        assert_eq!(survived.template_name, "Sigma");
+    }
+
+    #[test]
+    fn gc_sweep_collects_unmarked_circom_handle() {
+        let mut heap = Heap::new();
+        let idx = heap
+            .alloc_circom_handle(sample_handle(9, "Discarded"))
+            .unwrap();
+        // Do NOT mark via trace — just sweep. The slot should be
+        // marked as free and `get_circom_handle` returns None.
+        heap.trace(vec![]);
+        heap.sweep();
+        assert!(heap.circom_handles.is_free(idx));
+        assert!(heap.get_circom_handle(idx).is_none());
+    }
+
+    #[test]
+    fn recount_live_bytes_includes_circom_handles() {
+        let mut heap = Heap::new();
+        heap.alloc_circom_handle(sample_handle(0, "Poseidon"))
+            .unwrap();
+        let total = heap.recount_live_bytes();
+        assert!(total > 0);
     }
 }

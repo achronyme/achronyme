@@ -336,6 +336,10 @@ impl super::vm::VM {
                     self.handle_iterator(op, instruction, base, frame_idx, max_slots, chunk_len)?;
                 }
 
+                CallCircomTemplate => {
+                    self.handle_call_circom_template(instruction, base)?;
+                }
+
                 Nop => { /* no-op */ }
             }
         }

@@ -4,6 +4,7 @@
 //! focused submodules for maintainability and scalability.
 
 mod arithmetic;
+pub mod circom;
 mod closure;
 mod comparison;
 mod control;
@@ -24,6 +25,7 @@ pub mod value_ops;
 mod vm;
 
 // Public API
+pub use circom::{CircomCallError, CircomCallResult, CircomOutputValue, CircomWitnessHandler};
 pub use frame::CallFrame;
 pub use prove::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 pub use vm::{MAX_FRAMES, VM};

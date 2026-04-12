@@ -10,7 +10,10 @@ pub use globals::GlobalEntry;
 pub use machine::prototype::known_method_names;
 pub use machine::prove::ProveError;
 pub use machine::value_ops::ValueOps;
-pub use machine::{CallFrame, ProveHandler, ProveResult, VerifyHandler, MAX_FRAMES, VM};
+pub use machine::{
+    CallFrame, CircomCallError, CircomCallResult, CircomOutputValue, CircomWitnessHandler,
+    ProveHandler, ProveResult, VerifyHandler, MAX_FRAMES, VM,
+};
 pub use opcode::OpCode;
 pub mod module;
 pub mod native;

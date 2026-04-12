@@ -23,7 +23,14 @@ pub const TAG_CLOSURE: u64 = 11;
 pub const TAG_ITER: u64 = 12;
 pub const TAG_BIGINT: u64 = 13;
 pub const TAG_BYTES: u64 = 14;
-// 15 reserved
+/// Opaque handle for a circom template call registered at compile
+/// time. Payload is a heap index into `Heap::circom_handles`; the
+/// referenced [`crate::heap::CircomHandle`] carries the library id
+/// plus template name + pre-evaluated template parameters. The
+/// actual library lives in the VM's `circom_handler`, not in the
+/// heap — Phase 4 keeps compile-time and run-time circom state on
+/// opposite sides of this opaque index.
+pub const TAG_CIRCOM_HANDLE: u64 = 15;
 
 // i60 range constants
 pub const I60_MIN: i64 = -(1i64 << 59);
@@ -45,6 +52,7 @@ const _: () = assert!(TAG_CLOSURE < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_ITER < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_BIGINT < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_BYTES < 16, "tag must fit in 4 bits");
+const _: () = assert!(TAG_CIRCOM_HANDLE < 16, "tag must fit in 4 bits");
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
@@ -144,6 +152,11 @@ impl Value {
     }
 
     #[inline]
+    pub fn circom_handle(handle: u32) -> Self {
+        Value::make_obj(TAG_CIRCOM_HANDLE, handle)
+    }
+
+    #[inline]
     fn make_obj(tag: u64, handle: u32) -> Self {
         Value((tag << TAG_SHIFT) | (handle as u64))
     }
@@ -229,6 +242,11 @@ impl Value {
     #[inline]
     pub fn is_bytes(&self) -> bool {
         self.tag() == TAG_BYTES
+    }
+
+    #[inline]
+    pub fn is_circom_handle(&self) -> bool {
+        self.tag() == TAG_CIRCOM_HANDLE
     }
 
     // --- Accessors ---
@@ -324,6 +342,8 @@ impl fmt::Debug for Value {
             write!(f, "BigInt({})", self.as_handle().unwrap())
         } else if self.is_bytes() {
             write!(f, "Bytes({})", self.as_handle().unwrap())
+        } else if self.is_circom_handle() {
+            write!(f, "CircomHandle({})", self.as_handle().unwrap())
         } else {
             write!(f, "Unknown(Bits: {:x})", self.0)
         }

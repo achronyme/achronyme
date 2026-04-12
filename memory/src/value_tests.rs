@@ -107,4 +107,32 @@ mod tests {
         assert!(v.is_field());
         assert_eq!(v.as_handle(), Some(7));
     }
+
+    // --- TAG_CIRCOM_HANDLE (Phase 4.1) ---
+
+    #[test]
+    fn circom_handle_value_round_trip() {
+        let v = Value::circom_handle(42);
+        assert!(v.is_obj());
+        assert!(v.is_circom_handle());
+        assert!(!v.is_bytes());
+        assert!(!v.is_field());
+        assert_eq!(v.as_handle(), Some(42));
+        assert_eq!(v.tag(), crate::value::TAG_CIRCOM_HANDLE);
+    }
+
+    #[test]
+    fn circom_handle_tag_is_distinct_from_bytes() {
+        let bytes = Value::bytes(0);
+        let handle = Value::circom_handle(0);
+        assert_ne!(bytes.0, handle.0);
+        assert!(bytes.is_bytes() && !bytes.is_circom_handle());
+        assert!(handle.is_circom_handle() && !handle.is_bytes());
+    }
+
+    #[test]
+    fn circom_handle_debug_format() {
+        let v = Value::circom_handle(7);
+        assert_eq!(format!("{v:?}"), "CircomHandle(7)");
+    }
 }
