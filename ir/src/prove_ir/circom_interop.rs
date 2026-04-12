@@ -65,6 +65,19 @@ pub struct CircomTemplateSignature {
     pub output_signals: Vec<String>,
 }
 
+/// Resolved layout of a single declared input signal, returned by
+/// [`CircomLibraryHandle::resolve_input_layout`] once concrete template
+/// arguments are known.
+#[derive(Clone, Debug)]
+pub struct CircomInputLayout {
+    /// Original input signal name as declared in the template.
+    pub name: String,
+    /// Resolved array dimensions. An empty vector denotes a scalar
+    /// signal; a non-empty vector (`[n]`, `[n, m]`, …) denotes an
+    /// array whose total element count is the product of `dims`.
+    pub dims: Vec<u64>,
+}
+
 /// Reasons a circom template instantiation can be rejected, reported
 /// back to the ProveIR dispatcher so it can surface a proper
 /// [`super::error::ProveIrError`] variant with span information.
@@ -133,6 +146,26 @@ pub trait CircomLibraryHandle: std::fmt::Debug + Send + Sync {
     /// suggestions when the dispatcher can't find a name.
     fn template_names(&self) -> Vec<String>;
 
+    /// Resolve the layout (scalar vs array, with concrete sizes) of
+    /// every declared input signal given concrete template arguments.
+    ///
+    /// Returns one entry per declared input signal in declaration
+    /// order. A [`CircomInputLayout`] with empty `dims` is a scalar
+    /// signal; a non-empty `dims` denotes an array whose total element
+    /// count is the product of `dims`.
+    ///
+    /// Returns `None` when the template is unknown or when any
+    /// dimension cannot be resolved against the supplied args (e.g.
+    /// wrong arity or a parametric dimension not covered by the given
+    /// template parameters). The ProveIR dispatcher uses this to decide
+    /// whether a user-supplied `ArrayLit` should be expanded into
+    /// per-element entries before calling [`instantiate_template`].
+    fn resolve_input_layout(
+        &self,
+        template_name: &str,
+        template_args: &[FieldConst],
+    ) -> Option<Vec<CircomInputLayout>>;
+
     /// Instantiate a template into a fresh sub-circuit body.
     ///
     /// `parent_prefix` is a caller-chosen unique identifier (e.g.
@@ -192,6 +225,29 @@ pub(crate) mod test_support {
 
         fn template_names(&self) -> Vec<String> {
             self.templates.keys().cloned().collect()
+        }
+
+        fn resolve_input_layout(
+            &self,
+            template_name: &str,
+            template_args: &[FieldConst],
+        ) -> Option<Vec<CircomInputLayout>> {
+            let sig = self.templates.get(template_name)?;
+            if template_args.len() != sig.params.len() {
+                return None;
+            }
+            // StubLibrary has no dimension info, so every input is
+            // treated as a scalar — tests that exercise array-input
+            // expansion should use the real `CircomLibrary`.
+            Some(
+                sig.input_signals
+                    .iter()
+                    .map(|name| CircomInputLayout {
+                        name: name.clone(),
+                        dims: Vec::new(),
+                    })
+                    .collect(),
+            )
         }
 
         fn instantiate_template(

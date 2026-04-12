@@ -172,6 +172,27 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         prefix
     }
 
+    /// Build the row-major list of multi-dimensional indices for a
+    /// shape. For `dims = [2, 3]` returns
+    /// `[[0,0], [0,1], [0,2], [1,0], [1,1], [1,2]]`. Used to map each
+    /// element of an `Expr::Array` literal onto its expanded
+    /// `name_i[_j…]` key in the circom signal-input map.
+    fn flatten_row_major_indices(dims: &[u64]) -> Vec<Vec<u64>> {
+        let mut result = vec![Vec::new()];
+        for &d in dims {
+            let mut next = Vec::with_capacity(result.len() * d as usize);
+            for prefix in &result {
+                for i in 0..d {
+                    let mut p = prefix.clone();
+                    p.push(i);
+                    next.push(p);
+                }
+            }
+            result = next;
+        }
+        result
+    }
+
     /// Look up a registered circom template by its dispatch key.
     #[allow(dead_code)]
     pub(super) fn lookup_circom_template(&self, key: &str) -> Option<&CircomCallable> {
@@ -1783,10 +1804,80 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             });
         }
 
+        // Resolve the input layout against the concrete template
+        // arguments so we know which signals are scalar vs array.
+        // Array signals require the user-side expression to be an
+        // `Expr::Array` literal; we expand each element into its own
+        // `signal_name_<i>` entry so `instantiate_template_into` can
+        // wire them individually.
+        let input_layouts = callable
+            .library
+            .resolve_input_layout(&callable.template_name, &template_const_args)
+            .ok_or_else(|| ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::LoweringFailed {
+                    template: callable.template_name.clone(),
+                    message: "could not resolve input signal dimensions for the given \
+                              template arguments (parametric sizes must collapse to \
+                              concrete integers)"
+                        .into(),
+                },
+                span: to_span(span),
+            })?;
+
         let mut signal_input_map: HashMap<String, CircuitExpr> = HashMap::new();
-        for (sig_name, sig_input_expr) in signature.input_signals.iter().zip(signal_inputs.iter()) {
-            let compiled = self.compile_expr(sig_input_expr)?;
-            signal_input_map.insert(sig_name.clone(), compiled);
+        for (layout, sig_input_expr) in input_layouts.iter().zip(signal_inputs.iter()) {
+            if layout.dims.is_empty() {
+                // Scalar signal — single expression maps 1:1.
+                let compiled = self.compile_expr(sig_input_expr)?;
+                signal_input_map.insert(layout.name.clone(), compiled);
+                continue;
+            }
+
+            // Array-valued signal — the user must pass an array literal
+            // whose flattened length matches the signal's total size.
+            let expected_len: u64 = layout.dims.iter().product();
+            let Expr::Array { elements, .. } = sig_input_expr else {
+                return Err(ProveIrError::CircomDispatch {
+                    kind: CircomDispatchErrorKind::LoweringFailed {
+                        template: callable.template_name.clone(),
+                        message: format!(
+                            "signal input `{}` is declared as an array of size {} \
+                             but the caller passed a non-array expression; wrap the \
+                             inputs in `[...]` (e.g. `T(...)([a, b])`)",
+                            layout.name, expected_len
+                        ),
+                    },
+                    span: to_span(span),
+                });
+            };
+            if elements.len() as u64 != expected_len {
+                return Err(ProveIrError::CircomDispatch {
+                    kind: CircomDispatchErrorKind::LoweringFailed {
+                        template: callable.template_name.clone(),
+                        message: format!(
+                            "signal input `{}` expects an array of {} element(s) but \
+                             the caller passed {}",
+                            layout.name,
+                            expected_len,
+                            elements.len()
+                        ),
+                    },
+                    span: to_span(span),
+                });
+            }
+            // Build row-major flat indices (e.g. `[n]` → `_0`..`_{n-1}`,
+            // `[r, c]` → `_0_0`..`_{r-1}_{c-1}`) so the key layout
+            // matches `instantiate_template_into`'s expectations.
+            let indices = Self::flatten_row_major_indices(&layout.dims);
+            for (elem, idx) in elements.iter().zip(indices.iter()) {
+                let compiled = self.compile_expr(elem)?;
+                let suffix = idx
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                signal_input_map.insert(format!("{}_{suffix}", layout.name), compiled);
+            }
         }
 
         let prefix = self.next_circom_call_prefix();
@@ -5287,6 +5378,25 @@ mod tests {
             fn template_names(&self) -> Vec<String> {
                 vec![self.template_name.clone()]
             }
+            fn resolve_input_layout(
+                &self,
+                template_name: &str,
+                _template_args: &[FieldConst],
+            ) -> Option<Vec<crate::prove_ir::CircomInputLayout>> {
+                if template_name != self.template_name {
+                    return None;
+                }
+                Some(
+                    self.sig
+                        .input_signals
+                        .iter()
+                        .map(|n| crate::prove_ir::CircomInputLayout {
+                            name: n.clone(),
+                            dims: Vec::new(),
+                        })
+                        .collect(),
+                )
+            }
             fn instantiate_template(
                 &self,
                 template_name: &str,
@@ -5603,6 +5713,20 @@ mod tests {
             }
             fn template_names(&self) -> Vec<String> {
                 vec![self.name.clone()]
+            }
+            fn resolve_input_layout(
+                &self,
+                template_name: &str,
+                _template_args: &[FieldConst],
+            ) -> Option<Vec<crate::prove_ir::CircomInputLayout>> {
+                if template_name != self.name {
+                    return None;
+                }
+                // Single scalar input `in` for this stub.
+                Some(vec![crate::prove_ir::CircomInputLayout {
+                    name: "in".to_string(),
+                    dims: Vec::new(),
+                }])
             }
             fn instantiate_template(
                 &self,

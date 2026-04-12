@@ -19,8 +19,8 @@ pub mod instantiate;
 pub mod types;
 
 pub use circom_interop::{
-    CircomCallable, CircomDispatchError, CircomInstantiation, CircomLibraryHandle,
-    CircomTemplateOutput, CircomTemplateSignature,
+    CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
+    CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
 };
 pub use compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 pub use error::ProveIrError;

@@ -142,39 +142,98 @@ pub fn instantiate_template_into(
     let mut const_inputs: HashMap<String, FieldConst> = HashMap::new();
 
     for input in &entry.inputs {
-        if !input.is_scalar() {
-            // TODO: support array-valued inputs by expanding to one Let
-            // per element. For now array inputs get their own dedicated
-            // error variant so callers can pattern-match cleanly rather
-            // than grepping a string out of `Lowering`.
-            return Err(InstantiationError::UnsupportedArrayInput {
-                template: template_name.to_string(),
-                signal: input.name.clone(),
+        if input.is_scalar() {
+            let expr = signal_inputs.get(&input.name).ok_or_else(|| {
+                InstantiationError::MissingSignalInput {
+                    template: template_name.to_string(),
+                    signal: input.name.clone(),
+                }
+            })?;
+
+            // Propagate compile-time-known inputs into the sub-template so
+            // the lowerer emits `Const` instead of `Input` for them. We do
+            // NOT emit a Let binding for Const inputs at all — it would be
+            // dead code (the body never reads the mangled name because
+            // const_inputs short-circuits in inline_component_body_with_const_inputs).
+            if let CircuitExpr::Const(fc) = expr {
+                const_inputs.insert(input.name.clone(), *fc);
+                continue;
+            }
+
+            // Mangle with `.` to match the `mangle_name` convention
+            // used by `inline_component_body_with_const_inputs` — the
+            // inlined body references `{parent_prefix}.{input.name}`
+            // so the wiring Let must use the same separator.
+            let mangled = format!("{parent_prefix}.{}", input.name);
+            body.push(CircuitNode::Let {
+                name: mangled,
+                value: expr.clone(),
+                span: None,
+            });
+        } else {
+            // Array-valued input (e.g. `signal input inputs[nInputs]`).
+            // Resolve dimensions to concrete sizes, then wire each
+            // element individually. The caller has already expanded
+            // `ArrayLit` / VM-mode list values into per-element entries
+            // keyed `signal_0`, `signal_0_0`, ... in `signal_inputs`.
+            let dims = resolve_output_dims(&input.dimensions).ok_or_else(|| {
+                InstantiationError::Lowering(format!(
+                    "template `{template_name}` input signal `{}` has unresolved array \
+                     dimensions — template parameters must produce constant-sized inputs",
+                    input.name
+                ))
+            })?;
+            let indices = iter_multi_index(&dims);
+            // Collect the per-element expressions so we can also emit
+            // a single `LetArray` binding — the ProveIR → IR
+            // instantiation pass uses that to register the array as a
+            // whole under `{prefix}.{input.name}`, which lets
+            // non-unrolled body references like `in[i]` (with `i`
+            // still a runtime var) resolve via the IR array env.
+            let mut elem_exprs: Vec<CircuitExpr> = Vec::with_capacity(indices.len());
+            for idx in &indices {
+                let suffix = idx
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_");
+                let elem_key = format!("{}_{suffix}", input.name);
+                let expr = signal_inputs.get(&elem_key).ok_or_else(|| {
+                    InstantiationError::MissingSignalInput {
+                        template: template_name.to_string(),
+                        signal: elem_key.clone(),
+                    }
+                })?;
+                if let CircuitExpr::Const(fc) = expr {
+                    const_inputs.insert(elem_key.clone(), *fc);
+                    elem_exprs.push(CircuitExpr::Const(*fc));
+                    continue;
+                }
+                // Match the `.`-separated mangler convention — the
+                // inlined body resolves `in[i]` to `Var(in_i)`, which
+                // `mangle_name` then rewrites to `{prefix}.{in_i}`.
+                let mangled = format!("{parent_prefix}.{elem_key}");
+                body.push(CircuitNode::Let {
+                    name: mangled.clone(),
+                    value: expr.clone(),
+                    span: None,
+                });
+                elem_exprs.push(CircuitExpr::Var(mangled));
+            }
+
+            // Aggregate binding: `let {prefix}.{name} = [elem0, ...]`
+            // so non-unrolled loops that keep `in[i]` as an
+            // `ArrayIndex` with a runtime `i` can still resolve the
+            // whole array at IR instantiation time. Scalar-element
+            // lookups keep working because the individual `{prefix}.{name}_i`
+            // Lets above remain in scope.
+            let array_name = format!("{parent_prefix}.{}", input.name);
+            body.push(CircuitNode::LetArray {
+                name: array_name,
+                elements: elem_exprs,
+                span: None,
             });
         }
-        let expr = signal_inputs.get(&input.name).ok_or_else(|| {
-            InstantiationError::MissingSignalInput {
-                template: template_name.to_string(),
-                signal: input.name.clone(),
-            }
-        })?;
-
-        // Propagate compile-time-known inputs into the sub-template so
-        // the lowerer emits `Const` instead of `Input` for them. We do
-        // NOT emit a Let binding for Const inputs at all — it would be
-        // dead code (the body never reads the mangled name because
-        // const_inputs short-circuits in inline_component_body_with_const_inputs).
-        if let CircuitExpr::Const(fc) = expr {
-            const_inputs.insert(input.name.clone(), *fc);
-            continue;
-        }
-
-        let mangled = format!("{parent_prefix}_{}", input.name);
-        body.push(CircuitNode::Let {
-            name: mangled,
-            value: expr.clone(),
-            span: None,
-        });
     }
 
     // 4. Build a fresh LoweringContext bound to the library's program and
@@ -201,12 +260,15 @@ pub fn instantiate_template_into(
     // 5. Build the outputs map keyed by original output name.
     //    Scalar outputs wrap a single Var; array outputs hold the
     //    resolved shape + one Var per element in row-major order.
+    //    Names use the `.` separator to match `mangle_name` in
+    //    `components.rs`, so the Vars resolve to the locals the
+    //    inlined body just bound.
     let mut outputs = HashMap::new();
     for out in &entry.outputs {
         if out.is_scalar() {
             outputs.insert(
                 out.name.clone(),
-                TemplateOutput::Scalar(CircuitExpr::Var(format!("{parent_prefix}_{}", out.name))),
+                TemplateOutput::Scalar(CircuitExpr::Var(format!("{parent_prefix}.{}", out.name))),
             );
             continue;
         }
@@ -224,7 +286,7 @@ pub fn instantiate_template_into(
                     .map(|i| i.to_string())
                     .collect::<Vec<_>>()
                     .join("_");
-                CircuitExpr::Var(format!("{parent_prefix}_{}_{}", out.name, suffix))
+                CircuitExpr::Var(format!("{parent_prefix}.{}_{}", out.name, suffix))
             })
             .collect();
         outputs.insert(out.name.clone(), TemplateOutput::Array { dims, values });
@@ -348,15 +410,15 @@ mod tests {
 
         match &inst.body[0] {
             CircuitNode::Let { name, value, .. } => {
-                assert_eq!(name, "c0_x");
+                assert_eq!(name, "c0.x");
                 assert!(matches!(value, CircuitExpr::Var(v) if v == "ach_x"));
             }
             other => panic!("expected Let, got {other:?}"),
         }
         assert_eq!(inst.outputs.len(), 1);
         match inst.outputs.get("y").expect("y output") {
-            TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "c0_y"),
-            other => panic!("expected Scalar Var(c0_y), got {other:?}"),
+            TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "c0.y"),
+            other => panic!("expected Scalar Var(c0.y), got {other:?}"),
         }
         assert!(inst.body.len() >= 2);
     }
@@ -383,7 +445,7 @@ mod tests {
             .expect("instantiation should succeed");
 
         let has_mangled_input_let = inst.body.iter().any(|n| match n {
-            CircuitNode::Let { name, .. } => name == "k0_x",
+            CircuitNode::Let { name, .. } => name == "k0.x",
             _ => false,
         });
         assert!(
@@ -439,7 +501,7 @@ mod tests {
                 assert_eq!(values.len(), 4);
                 for (i, v) in values.iter().enumerate() {
                     match v {
-                        CircuitExpr::Var(name) => assert_eq!(name, &format!("c1_out_{i}")),
+                        CircuitExpr::Var(name) => assert_eq!(name, &format!("c1.out_{i}")),
                         other => panic!("expected Var, got {other:?}"),
                     }
                 }

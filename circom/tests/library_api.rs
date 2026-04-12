@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use circom::{
     compile_template_library, evaluate_template_witness, instantiate_template_into, DimensionExpr,
-    InstantiationError, LibraryError, TemplateOutput, WitnessEvalError,
+    LibraryError, TemplateOutput, WitnessEvalError,
 };
 use diagnostics::Span;
 use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
@@ -150,24 +150,43 @@ fn instantiate_poseidon_inline_body() {
 
     let mut signal_inputs: HashMap<String, CircuitExpr> = HashMap::new();
     // Poseidon(2) expects `inputs[2]` (array input). Array signal
-    // inputs aren't yet supported by instantiate_template_into, so
-    // the library reports a dedicated UnsupportedArrayInput variant
-    // regardless of whether the caller supplied a wiring — useful so
-    // Phase 3 can special-case this cleanly later.
-    let result = instantiate_template_into(
+    // inputs are wired via expanded element names `inputs_0`,
+    // `inputs_1`, ... — the caller is responsible for unpacking an
+    // ArrayLit (or VM-side list) into these entries before reaching
+    // `instantiate_template_into`.
+    signal_inputs.insert(
+        "inputs_0".to_string(),
+        CircuitExpr::Var("ach_a".to_string()),
+    );
+    signal_inputs.insert(
+        "inputs_1".to_string(),
+        CircuitExpr::Var("ach_b".to_string()),
+    );
+    let inst = instantiate_template_into(
         &lib,
         "Poseidon",
         &[FieldConst::from_u64(2)],
         &signal_inputs,
         "pi_0",
         &dummy_span(),
-    );
-    match result {
-        Err(InstantiationError::UnsupportedArrayInput { template, signal }) => {
-            assert_eq!(template, "Poseidon");
-            assert_eq!(signal, "inputs");
-        }
-        other => panic!("expected UnsupportedArrayInput, got {other:?}"),
+    )
+    .expect("Poseidon(2) should instantiate with expanded array inputs");
+
+    // The first two body nodes should be the input wiring Lets.
+    let wiring_names: Vec<_> = inst
+        .body
+        .iter()
+        .take(2)
+        .filter_map(|n| match n {
+            CircuitNode::Let { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(wiring_names, vec!["pi_0.inputs_0", "pi_0.inputs_1"]);
+    // Scalar `out` must be exposed.
+    match inst.outputs.get("out").expect("Poseidon out") {
+        TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "pi_0.out"),
+        other => panic!("expected Scalar Var(pi_0.out), got {other:?}"),
     }
 
     // Instantiate a scalar-only template from the same file (Sigma)
@@ -183,12 +202,12 @@ fn instantiate_poseidon_inline_body() {
         "Sigma body should contain at least the input wiring"
     );
     match &inst.body[0] {
-        CircuitNode::Let { name, .. } => assert_eq!(name, "s0_in"),
-        other => panic!("expected first node to be Let s0_in, got {other:?}"),
+        CircuitNode::Let { name, .. } => assert_eq!(name, "s0.in"),
+        other => panic!("expected first node to be Let s0.in, got {other:?}"),
     }
     let out = inst.outputs.get("out").expect("Sigma has out output");
     match out {
-        TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "s0_out"),
+        TemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "s0.out"),
         other => panic!("expected Scalar Var, got {other:?}"),
     }
 }

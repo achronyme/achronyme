@@ -12,12 +12,13 @@ use std::collections::HashMap;
 use diagnostics::Span;
 use ir::prove_ir::types::{CircuitExpr, FieldConst};
 use ir::prove_ir::{
-    CircomDispatchError, CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput,
-    CircomTemplateSignature,
+    CircomDispatchError, CircomInputLayout, CircomInstantiation, CircomLibraryHandle,
+    CircomTemplateOutput, CircomTemplateSignature,
 };
 
 use super::instantiate::{instantiate_template_into, InstantiationError, TemplateOutput};
-use super::types::CircomLibrary;
+use super::metadata::resolve_entry;
+use super::types::{CircomLibrary, DimensionExpr};
 use super::LibraryError;
 
 impl CircomLibraryHandle for CircomLibrary {
@@ -34,6 +35,37 @@ impl CircomLibraryHandle for CircomLibrary {
         CircomLibrary::template_names(self)
             .map(String::from)
             .collect()
+    }
+
+    fn resolve_input_layout(
+        &self,
+        template_name: &str,
+        template_args: &[FieldConst],
+    ) -> Option<Vec<CircomInputLayout>> {
+        let entry = self.template(template_name)?;
+        if template_args.len() != entry.params.len() {
+            return None;
+        }
+        let mut known_params = HashMap::new();
+        for (name, fc) in entry.params.iter().zip(template_args.iter()) {
+            known_params.insert(name.clone(), *fc);
+        }
+        let resolved = resolve_entry(entry, &known_params);
+        let mut out = Vec::with_capacity(resolved.inputs.len());
+        for sig in &resolved.inputs {
+            let mut dims = Vec::with_capacity(sig.dimensions.len());
+            for d in &sig.dimensions {
+                match d {
+                    DimensionExpr::Const(n) => dims.push(*n),
+                    _ => return None, // unresolved dimension — caller should surface an error
+                }
+            }
+            out.push(CircomInputLayout {
+                name: sig.name.clone(),
+                dims,
+            });
+        }
+        Some(out)
     }
 
     fn instantiate_template(
@@ -217,8 +249,8 @@ mod tests {
 
         assert!(!inst.body.is_empty());
         match inst.outputs.get("y").expect("y output") {
-            CircomTemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "c0_y"),
-            other => panic!("expected scalar Var(c0_y), got {other:?}"),
+            CircomTemplateOutput::Scalar(CircuitExpr::Var(v)) => assert_eq!(v, "c0.y"),
+            other => panic!("expected scalar Var(c0.y), got {other:?}"),
         }
     }
 
