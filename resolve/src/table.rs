@@ -98,7 +98,12 @@ impl SymbolTable {
     /// registered — a collision during table construction is a bug in
     /// the resolver pass, not a recoverable user error. Duplicate-name
     /// user errors are caught earlier by the import-resolution logic.
-    pub fn insert(&mut self, qualified_name: String, kind: CallableKind) -> SymbolId {
+    ///
+    /// Accepts anything convertible to `String`, so callers can pass
+    /// `&str` literals or `String` builders without an explicit
+    /// `.into()`.
+    pub fn insert(&mut self, qualified_name: impl Into<String>, kind: CallableKind) -> SymbolId {
+        let qualified_name = qualified_name.into();
         if self.by_qualified_name.contains_key(&qualified_name) {
             panic!(
                 "SymbolTable::insert called with duplicate name `{qualified_name}` \
@@ -139,26 +144,48 @@ impl SymbolTable {
     }
 
     /// Follow a chain of [`CallableKind::FnAlias`] entries until a
-    /// non-alias target is reached, or until [`FN_ALIAS_MAX_DEPTH`] is
-    /// exceeded.
+    /// non-alias target is reached, a cycle is detected, or
+    /// [`FN_ALIAS_MAX_DEPTH`] is exceeded.
     ///
     /// Returns the final non-alias [`SymbolId`] on success. Used by both
     /// compilers when dispatching through a `let a = p::fn` binding —
     /// see RFC §3.7.
+    ///
+    /// ## Cycle detection
+    ///
+    /// Catches **all** cycle shapes, not just self-references:
+    /// - `A → A` (self-cycle)
+    /// - `A → B → A` (two-hop cycle)
+    /// - `A → B → C → A` (longer cycle)
+    ///
+    /// The walker tracks every visited [`SymbolId`] in a fixed-size
+    /// stack buffer (capacity [`FN_ALIAS_MAX_DEPTH`], no allocation).
+    /// If a visited id is encountered again, [`ResolveError::FnAliasCycle`]
+    /// is returned with the hop count where the cycle was detected —
+    /// never [`ResolveError::FnAliasDepthExceeded`], which is reserved
+    /// for genuinely long non-cyclic chains.
     pub fn resolve_alias(&self, start: SymbolId) -> Result<SymbolId, ResolveError> {
+        // Fixed-size visited buffer: no allocation, bounded by the
+        // depth cap. Array of Option<SymbolId> to keep SymbolId: Copy.
+        // The loop variable `depth` doubles as the number of slots
+        // already populated in `visited` — they increment together.
+        let mut visited: [Option<SymbolId>; FN_ALIAS_MAX_DEPTH] = [None; FN_ALIAS_MAX_DEPTH];
         let mut current = start;
         for depth in 0..FN_ALIAS_MAX_DEPTH {
+            // Cycle check: has `current` already been visited on this walk?
+            if visited[..depth].contains(&Some(current)) {
+                return Err(ResolveError::FnAliasCycle {
+                    start: start.as_u32(),
+                    depth,
+                });
+            }
+            visited[depth] = Some(current);
+
             let kind = self.try_get(current).ok_or(ResolveError::InvalidSymbolId {
                 id: current.as_u32(),
             })?;
             match kind {
                 CallableKind::FnAlias { target } => {
-                    if *target == current {
-                        return Err(ResolveError::FnAliasCycle {
-                            start: start.as_u32(),
-                            depth,
-                        });
-                    }
                     current = *target;
                 }
                 _ => return Ok(current),
@@ -181,15 +208,26 @@ impl SymbolTable {
             .audit()
             .map_err(ResolveError::BuiltinAudit)?;
 
+        let registry_len = self.builtin_registry.len();
         for (idx, kind) in self.symbols.iter().enumerate() {
             if let CallableKind::Builtin { entry_index } = kind {
-                if *entry_index >= self.builtin_registry.entries.len() {
+                if *entry_index >= registry_len {
                     return Err(ResolveError::BuiltinIndexOutOfRange {
                         symbol_id: idx as u32,
                         entry_index: *entry_index,
-                        registry_len: self.builtin_registry.entries.len(),
+                        registry_len,
                     });
                 }
+            }
+        }
+
+        // Validate every FnAlias chain terminates — run resolve_alias on
+        // each alias symbol. Catches chains that reference missing slots,
+        // self-cycles, and multi-hop cycles at table-build time instead
+        // of waiting for a user-facing dispatch failure.
+        for (idx, kind) in self.symbols.iter().enumerate() {
+            if matches!(kind, CallableKind::FnAlias { .. }) {
+                self.resolve_alias(SymbolId(idx as u32))?;
             }
         }
 
@@ -200,7 +238,7 @@ impl SymbolTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtins::{BuiltinAuditError, BuiltinEntry};
+    use crate::builtins::{BuiltinAuditError, BuiltinEntry, ProveIrLowerHandle, VmFnHandle};
     use crate::symbol::{Arity, Availability, ConstKind};
 
     #[test]
@@ -216,10 +254,11 @@ mod tests {
     fn insert_and_lookup() {
         let mut t = SymbolTable::new();
         let id = t.insert(
-            "math::PI".into(),
+            "math::PI",
             CallableKind::Constant {
                 qualified_name: "math::PI".into(),
                 const_kind: ConstKind::Int,
+                value_handle: 0,
             },
         );
         assert_eq!(t.len(), 1);
@@ -232,17 +271,19 @@ mod tests {
     fn duplicate_insert_panics() {
         let mut t = SymbolTable::new();
         t.insert(
-            "x".into(),
+            "x",
             CallableKind::Constant {
                 qualified_name: "x".into(),
                 const_kind: ConstKind::Int,
+                value_handle: 0,
             },
         );
         t.insert(
-            "x".into(),
+            "x",
             CallableKind::Constant {
                 qualified_name: "x".into(),
                 const_kind: ConstKind::Field,
+                value_handle: 0,
             },
         );
     }
@@ -252,7 +293,7 @@ mod tests {
         let mut t = SymbolTable::new();
         // base: a UserFn
         let base = t.insert(
-            "p::add".into(),
+            "p::add",
             CallableKind::UserFn {
                 qualified_name: "p::add".into(),
                 ast_handle: 0,
@@ -260,9 +301,9 @@ mod tests {
             },
         );
         // first alias: a → p::add
-        let a = t.insert("a".into(), CallableKind::FnAlias { target: base });
+        let a = t.insert("a", CallableKind::FnAlias { target: base });
         // second alias: b → a
-        let b = t.insert("b".into(), CallableKind::FnAlias { target: a });
+        let b = t.insert("b", CallableKind::FnAlias { target: a });
 
         assert_eq!(t.resolve_alias(base).unwrap(), base);
         assert_eq!(t.resolve_alias(a).unwrap(), base);
@@ -272,19 +313,66 @@ mod tests {
     #[test]
     fn alias_self_cycle_is_detected() {
         let mut t = SymbolTable::new();
-        // Allocate a slot first, then patch it to point at itself. We
-        // can't build a cycle through the safe API because `insert`
-        // doesn't allow mutation, so we do it via direct vector access
-        // in the test.
+        // The first insert gets SymbolId(0), so pointing at SymbolId(0)
+        // from inside the same insert creates a self-cycle.
         let id = t.insert(
-            "loop".into(),
+            "loop",
             CallableKind::FnAlias {
                 target: SymbolId(0),
             },
         );
-        // The alias targets slot 0 = itself. Resolving should detect
-        // the self-cycle.
         let err = t.resolve_alias(id).unwrap_err();
+        assert!(matches!(err, ResolveError::FnAliasCycle { .. }));
+    }
+
+    #[test]
+    fn alias_two_hop_cycle_is_detected_as_cycle() {
+        // A → B → A must produce FnAliasCycle, not FnAliasDepthExceeded.
+        // This is the correctness fix for the hardening audit: earlier
+        // versions only caught self-cycles and fell through to the
+        // depth-exceeded error for multi-hop cycles, giving users a
+        // misleading "max depth 16" message when the real problem was
+        // a 2-hop loop.
+        let mut t = SymbolTable::new();
+        // A = slot 0 points at slot 1 (B)
+        let a = t.insert(
+            "a",
+            CallableKind::FnAlias {
+                target: SymbolId(1),
+            },
+        );
+        // B = slot 1 points back at slot 0 (A)
+        let b = t.insert("b", CallableKind::FnAlias { target: a });
+
+        let err = t.resolve_alias(a).unwrap_err();
+        assert!(
+            matches!(err, ResolveError::FnAliasCycle { .. }),
+            "expected FnAliasCycle, got {err:?}"
+        );
+        // Also verify the cycle is caught regardless of entry point.
+        let err = t.resolve_alias(b).unwrap_err();
+        assert!(matches!(err, ResolveError::FnAliasCycle { .. }));
+    }
+
+    #[test]
+    fn alias_three_hop_cycle_is_detected_as_cycle() {
+        // A → B → C → A, another non-self cycle shape.
+        let mut t = SymbolTable::new();
+        let a = t.insert(
+            "a",
+            CallableKind::FnAlias {
+                target: SymbolId(1),
+            },
+        );
+        let _b = t.insert(
+            "b",
+            CallableKind::FnAlias {
+                target: SymbolId(2),
+            },
+        );
+        let _c = t.insert("c", CallableKind::FnAlias { target: a });
+
+        let err = t.resolve_alias(a).unwrap_err();
         assert!(matches!(err, ResolveError::FnAliasCycle { .. }));
     }
 
@@ -317,7 +405,7 @@ mod tests {
             availability: Availability::Both,
             // Missing vm_fn — should fail audit
             vm_fn: None,
-            prove_ir_lower: Some(0),
+            prove_ir_lower: Some(ProveIrLowerHandle::PLACEHOLDER),
         });
         let result = SymbolTable::with_registry(reg);
         assert!(matches!(
@@ -335,12 +423,12 @@ mod tests {
             name: "poseidon",
             arity: Arity::Fixed(2),
             availability: Availability::Both,
-            vm_fn: Some(0),
-            prove_ir_lower: Some(0),
+            vm_fn: Some(VmFnHandle::PLACEHOLDER),
+            prove_ir_lower: Some(ProveIrLowerHandle::PLACEHOLDER),
         });
         let t = SymbolTable::with_registry(reg).unwrap();
         assert!(t.audit().is_ok());
-        assert_eq!(t.builtin_registry().entries.len(), 1);
+        assert_eq!(t.builtin_registry().len(), 1);
     }
 
     #[test]
@@ -349,7 +437,7 @@ mod tests {
         // Insert a Builtin symbol pointing at an empty registry —
         // entry_index 0 is out of range because builtin_registry has
         // zero entries.
-        t.insert("ghost".into(), CallableKind::Builtin { entry_index: 0 });
+        t.insert("ghost", CallableKind::Builtin { entry_index: 0 });
         let err = t.audit().unwrap_err();
         assert!(matches!(err, ResolveError::BuiltinIndexOutOfRange { .. }));
     }

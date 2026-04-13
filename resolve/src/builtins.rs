@@ -27,27 +27,80 @@
 //! registry shape. If the registry passes audit, every [`Availability`]
 //! is honored correctly.
 //!
-//! ## Lowering function signatures
+//! ## ⚠ CRITICAL FOR PHASE 2 — Dependency direction
 //!
-//! The `vm_fn` and `prove_ir_lower` fields use opaque function-pointer
-//! types in Phase 1 (just `usize` placeholders). Phase 2 will replace
-//! them with real signatures referencing `vm::NativeFn` and a
-//! `ProveIrLoweringFn` trait object. Phase 1 cares only about the
-//! audit structure.
+//! The [`VmFnHandle`] and [`ProveIrLowerHandle`] types are **opaque
+//! u32 indices**, not raw function pointers. This is deliberate and
+//! must be preserved when Phase 2 wires the real implementations:
+//!
+//! - `compiler/` depends on `vm` AND `resolve` (natural).
+//! - `ir/` depends on `resolve` but **must not** depend on `vm` —
+//!   ProveIR is ZK-backend-agnostic and pulling in the VM runtime
+//!   breaks that invariant.
+//! - If [`VmFnHandle`] became `fn(&mut Vm, &[Value]) -> ...`, then
+//!   `resolve` would gain a hard `vm` dep, `ir` would pull it
+//!   transitively, and the architecture would silently collapse.
+//!
+//! **The fix, forever**: keep the handles as opaque indices. Each
+//! backend owns its own `Vec<RealFn>` indexed by the handle. The
+//! registry stores only metadata + indices. Dispatch is a two-hop:
+//! name → handle → backend-owned fn. Zero dep cycle, zero trait
+//! objects, zero allocation.
+//!
+//! Phase 2 will extend this module with a `vm_table: Vec<NativeFn>`
+//! inside the VM compiler and a `prove_ir_table: Vec<ProveIrLowerFn>`
+//! inside the ProveIR compiler, both indexed by the handles stored
+//! in [`BuiltinEntry`]. Do **not** refactor the handles into concrete
+//! fn types — the dep-cycle risk is real and the indirection is
+//! virtually free (one extra slice index per dispatch).
 
 use crate::symbol::{Arity, Availability};
 use std::fmt;
 
-/// Placeholder type for a VM native function pointer. Phase 2 will
-/// replace this with `vm::NativeFn` once the dependency direction is
-/// wired in.
-pub type VmFnPtr = usize;
+/// Opaque handle to a VM native function implementation.
+///
+/// The handle is a u32 index into a backend-owned `Vec<NativeFn>`. See
+/// the module docs above for why this crate holds an index and not a
+/// raw function pointer — the TL;DR is "dep cycle with `vm`". Phase 1
+/// uses placeholder handle values (typically 0) because no real
+/// dispatch is wired yet; Phase 2 will populate real indices as it
+/// registers natives with the VM side.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct VmFnHandle(pub u32);
 
-/// Placeholder type for a ProveIR lowering callback. Phase 2 will
-/// replace this with a real `fn(&[CircuitExpr], Span, &mut
-/// ProveIrLoweringCtx) -> Result<LoweringOutput, ProveIrError>` once the
-/// context type is designed.
-pub type ProveIrLowerPtr = usize;
+impl VmFnHandle {
+    /// Sentinel used by tests and placeholder entries before Phase 2
+    /// wires real impls. Production code should never observe this
+    /// after Phase 2.
+    pub const PLACEHOLDER: Self = VmFnHandle(0);
+
+    /// Raw index view.
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+/// Opaque handle to a ProveIR lowering callback.
+///
+/// Symmetric to [`VmFnHandle`]: a u32 index into a backend-owned
+/// `Vec<ProveIrLowerFn>` that lives inside the `ir` crate. This
+/// crate carries only the handle so `ir` never pulls in VM types
+/// via `resolve`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ProveIrLowerHandle(pub u32);
+
+impl ProveIrLowerHandle {
+    /// Sentinel used by tests and placeholder entries before Phase 2
+    /// wires real impls.
+    pub const PLACEHOLDER: Self = ProveIrLowerHandle(0);
+
+    /// Raw index view.
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// One entry in the [`BuiltinRegistry`].
 ///
@@ -66,14 +119,14 @@ pub struct BuiltinEntry {
     /// Which contexts can call this builtin. Enforced structurally by
     /// [`BuiltinRegistry::audit`].
     pub availability: Availability,
-    /// VM runtime implementation. Required for
+    /// VM runtime implementation handle. Required for
     /// [`Availability::Vm`] and [`Availability::Both`]; must be `None`
     /// for [`Availability::ProveIr`].
-    pub vm_fn: Option<VmFnPtr>,
-    /// ProveIR lowering callback. Required for
+    pub vm_fn: Option<VmFnHandle>,
+    /// ProveIR lowering callback handle. Required for
     /// [`Availability::ProveIr`] and [`Availability::Both`]; must be
     /// `None` for [`Availability::Vm`].
-    pub prove_ir_lower: Option<ProveIrLowerPtr>,
+    pub prove_ir_lower: Option<ProveIrLowerHandle>,
 }
 
 impl BuiltinEntry {
@@ -117,12 +170,17 @@ impl BuiltinEntry {
 /// populates it with the ~23 existing builtins (14 VM + 9 ProveIR,
 /// deduplicated), wires both compilers to read from it, and removes the
 /// parallel `NATIVE_TABLE` / ProveIR match.
+///
+/// Fields are **private** to protect the uniqueness invariant maintained
+/// by [`BuiltinRegistry::push`]. Use [`BuiltinRegistry::entries`],
+/// [`BuiltinRegistry::len`], [`BuiltinRegistry::lookup`], etc. for read
+/// access.
 #[derive(Debug, Clone, Default)]
 pub struct BuiltinRegistry {
     /// The entries in declaration order. The order is NOT significant
     /// to dispatch (we use `name` as the key) but is preserved for
     /// stable diagnostic output.
-    pub entries: Vec<BuiltinEntry>,
+    entries: Vec<BuiltinEntry>,
 }
 
 impl BuiltinRegistry {
@@ -149,10 +207,51 @@ impl BuiltinRegistry {
         self.entries.push(entry);
     }
 
+    /// Read-only view of the entries in declaration order. Callers that
+    /// only need random access by index should use
+    /// [`BuiltinRegistry::get`] instead; this slice is exposed for
+    /// iteration and diagnostic purposes.
+    pub fn entries(&self) -> &[BuiltinEntry] {
+        &self.entries
+    }
+
+    /// How many entries are in the registry.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Is the registry empty?
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Look up a builtin by name. Linear scan, but there are ~23 entries
     /// and the resolver pass consults this at most once per call site.
+    /// Convenience wrapper over [`BuiltinRegistry::lookup_index`] +
+    /// [`BuiltinRegistry::get`].
     pub fn lookup(&self, name: &str) -> Option<&BuiltinEntry> {
-        self.entries.iter().find(|e| e.name == name)
+        self.lookup_index(name).and_then(|i| self.get(i))
+    }
+
+    /// Look up a builtin by name and return its index in the registry.
+    ///
+    /// This is the index [`CallableKind::Builtin::entry_index`] stores;
+    /// Phase 2's resolver pass will call this to construct
+    /// [`CallableKind::Builtin`] entries without a second lookup hop.
+    ///
+    /// [`CallableKind::Builtin`]: crate::symbol::CallableKind::Builtin
+    /// [`CallableKind::Builtin::entry_index`]: crate::symbol::CallableKind::Builtin
+    pub fn lookup_index(&self, name: &str) -> Option<usize> {
+        self.entries.iter().position(|e| e.name == name)
+    }
+
+    /// Random-access by index. The index must come from
+    /// [`BuiltinRegistry::lookup_index`] or from a previously-stored
+    /// [`CallableKind::Builtin::entry_index`].
+    ///
+    /// [`CallableKind::Builtin::entry_index`]: crate::symbol::CallableKind::Builtin
+    pub fn get(&self, index: usize) -> Option<&BuiltinEntry> {
+        self.entries.get(index)
     }
 
     /// Audit every entry against the invariants in the module docs.
@@ -161,7 +260,7 @@ impl BuiltinRegistry {
     /// but belt-and-suspenders).
     ///
     /// Returns the **first** violation. Callers that want the full list
-    /// should iterate `entries` manually.
+    /// should iterate [`BuiltinRegistry::entries`] manually.
     pub fn audit(&self) -> Result<(), BuiltinAuditError> {
         // Per-entry audit.
         for entry in &self.entries {
@@ -284,8 +383,16 @@ mod tests {
             name,
             arity: Arity::Fixed(1),
             availability,
-            vm_fn: if vm { Some(0) } else { None },
-            prove_ir_lower: if prove { Some(0) } else { None },
+            vm_fn: if vm {
+                Some(VmFnHandle::PLACEHOLDER)
+            } else {
+                None
+            },
+            prove_ir_lower: if prove {
+                Some(ProveIrLowerHandle::PLACEHOLDER)
+            } else {
+                None
+            },
         }
     }
 
@@ -391,7 +498,7 @@ mod tests {
         reg.push(entry("merkle_verify", Availability::ProveIr, false, true));
 
         assert!(reg.audit().is_ok());
-        assert_eq!(reg.entries.len(), 7);
+        assert_eq!(reg.len(), 7);
         assert!(reg.lookup("poseidon").is_some());
         assert!(reg.lookup("nonexistent").is_none());
     }

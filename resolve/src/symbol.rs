@@ -159,11 +159,21 @@ pub enum CallableKind {
     /// real shared [`Arc<FnDecl>`] once the parser types are wired in.
     /// `availability` is computed during Phase 4 availability inference
     /// and defaults to [`Availability::Both`] until that pass runs.
+    ///
+    /// ## Deferred fields from RFC §3.2
+    ///
+    /// Per the RFC, this variant will gain a `module: ModuleId` field
+    /// in Phase 3 once a `ModuleId` type exists (currently the module
+    /// graph isn't built yet). The field is deferred — not forgotten —
+    /// so Phase 3 must add it back before the resolver pass consumes
+    /// user fns from multiple modules. Until then, the qualified_name
+    /// prefix (e.g. `"math::add"`) disambiguates.
     UserFn {
         /// Fully qualified name. `"foo"` for a top-level fn in `main.ach`,
         /// `"math::add"` for an exported fn in an imported module.
         qualified_name: String,
         /// Phase-3 placeholder: opaque handle into the module AST store.
+        /// Will become `Arc<FnDecl>` once parser types are wired in.
         ast_handle: u32,
         /// Derived from the body during Phase 4 availability inference.
         availability: Availability,
@@ -198,15 +208,28 @@ pub enum CallableKind {
 
     /// A compile-time constant exported from a module: `export let PI = 3`.
     ///
-    /// Phase 6 populates the `value` field with a real const
-    /// representation; Phase 1 just records the qualified name and the
-    /// kind of constant.
+    /// **Note**: language-level statics like `Int::MAX` / `Field::ZERO`
+    /// do NOT use this variant — they live in the separate
+    /// [`crate::statics::STATIC_MEMBERS`] const array per the Fixed
+    /// decisions section of the RFC. `Constant` is only for user-
+    /// exported module constants.
+    ///
+    /// `value_handle` is a Phase 1 placeholder mirroring
+    /// [`CallableKind::UserFn::ast_handle`]: it pins the shape so
+    /// Phase 3/6 must explicitly fill in the value reference and can't
+    /// accidentally treat the field as optional.
     Constant {
         /// Fully qualified name, e.g. `"math::PI"`.
         qualified_name: String,
         /// What kind of constant this is. Determines how each backend
         /// renders it.
         const_kind: ConstKind,
+        /// Phase-1 placeholder: opaque handle into the constant store.
+        /// Phase 6 replaces this with a real
+        /// `resolve::statics::ConstValue` reference. Until then, the
+        /// field exists to force callers to decide how to render the
+        /// constant rather than silently treating it as absent.
+        value_handle: u32,
     },
 }
 

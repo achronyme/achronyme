@@ -29,19 +29,26 @@
 //! - The module graph builder. Landing in Phase 3.
 //! - The builtin entries themselves. Landing in Phase 2.
 //!
-//! ## Movimiento 2 phase status
+//! ## Movimiento 2 roadmap
 //!
-//! - **Phase 0** ✅ — extract `lower_builtin` in `ir/src/prove_ir/compiler.rs`.
-//! - **Phase 1** ✅ (this commit) — crate skeleton: types + empty registry + audit tests.
-//! - **Phase 2** — populate [`BuiltinRegistry::default()`]; both compilers
-//!   read builtins from it.
+//! The refactor lands in six phases (0–6). This crate is part of the
+//! backbone added in Phase 1 onward. The **authoritative phase status**
+//! lives in `.claude/plans/movimiento-2-unified-dispatch.md` — that's
+//! the RFC. The phase sequence is:
+//!
+//! - **Phase 0** — extract `lower_builtin` in `ir/src/prove_ir/compiler.rs`.
+//! - **Phase 1** — this crate's skeleton: types + empty registry + audit.
+//! - **Phase 2** — populate [`BuiltinRegistry::default()`] and wire both
+//!   compilers to read from it.
 //! - **Phase 3** — resolver pass + [`SymbolId`] annotation on the AST.
 //! - **Phase 4** — lazy compilation driven by reachability + [`Availability`].
 //! - **Phase 5** — `ConstExpr` surfacing for template args.
 //! - **Phase 6** — final cleanup. `fn_table`, `global_symbols`, and
 //!   `fn_decl_asts` are removed; statics unified in [`statics`].
 //!
-//! See `.claude/plans/movimiento-2-unified-dispatch.md` for the full RFC.
+//! Do not edit "current phase" markers here — they go stale. Consult
+//! the RFC instead. This doc block describes the crate's *scope*, not
+//! its *progress*.
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
