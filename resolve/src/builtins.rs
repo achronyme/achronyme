@@ -166,21 +166,130 @@ impl BuiltinEntry {
 
 /// The set of all registered builtins in a compilation session.
 ///
-/// Phase 1 ships with an empty [`BuiltinRegistry::default()`]. Phase 2
-/// populates it with the ~23 existing builtins (14 VM + 9 ProveIR,
-/// deduplicated), wires both compilers to read from it, and removes the
-/// parallel `NATIVE_TABLE` / ProveIR match.
+/// [`BuiltinRegistry::default()`] returns the production registry
+/// populated with every builtin shipped by Achronyme. Both compilers
+/// consult this registry instead of their historical parallel tables
+/// (VM's `NATIVE_TABLE` and ProveIR's `lower_builtin` match).
 ///
 /// Fields are **private** to protect the uniqueness invariant maintained
 /// by [`BuiltinRegistry::push`]. Use [`BuiltinRegistry::entries`],
 /// [`BuiltinRegistry::len`], [`BuiltinRegistry::lookup`], etc. for read
 /// access.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BuiltinRegistry {
     /// The entries in declaration order. The order is NOT significant
     /// to dispatch (we use `name` as the key) but is preserved for
     /// stable diagnostic output.
     entries: Vec<BuiltinEntry>,
+}
+
+/// Convenience for building a [`BuiltinEntry`] inline in
+/// [`BuiltinRegistry::default()`].
+macro_rules! entry {
+    (vm $name:literal, $arity:expr, vm = $vm_idx:literal) => {
+        BuiltinEntry {
+            name: $name,
+            arity: $arity,
+            availability: Availability::Vm,
+            vm_fn: Some(VmFnHandle($vm_idx)),
+            prove_ir_lower: None,
+        }
+    };
+    (prove $name:literal, $arity:expr, prove = $prove_idx:literal) => {
+        BuiltinEntry {
+            name: $name,
+            arity: $arity,
+            availability: Availability::ProveIr,
+            vm_fn: None,
+            prove_ir_lower: Some(ProveIrLowerHandle($prove_idx)),
+        }
+    };
+    (both $name:literal, $arity:expr, vm = $vm_idx:literal, prove = $prove_idx:literal) => {
+        BuiltinEntry {
+            name: $name,
+            arity: $arity,
+            availability: Availability::Both,
+            vm_fn: Some(VmFnHandle($vm_idx)),
+            prove_ir_lower: Some(ProveIrLowerHandle($prove_idx)),
+        }
+    };
+}
+
+impl Default for BuiltinRegistry {
+    /// Production registry with every builtin Achronyme ships.
+    ///
+    /// ## Handle conventions
+    ///
+    /// - `VmFnHandle(n)` — `n` is the builtin's index in
+    ///   `vm::specs::NATIVE_TABLE`. The cross-check integration test
+    ///   (`compiler/tests/builtin_registry_alignment.rs`) verifies
+    ///   alignment on every CI run.
+    /// - `ProveIrLowerHandle(n)` — `n` is the builtin's position in
+    ///   the match block in `ir::prove_ir::compiler::lower_builtin`,
+    ///   in source order.
+    ///
+    /// Phase 2B will make these handles the *actual* dispatch path
+    /// (replacing the current NATIVE_TABLE indexing and the hardcoded
+    /// ProveIR match). Phase 2A (this commit) populates the registry
+    /// as a read-only source of truth and adds cross-check tests.
+    ///
+    /// ## Inventory
+    ///
+    /// - **3 Both**: `poseidon`, `poseidon_many`, `assert`
+    /// - **11 Vm-only**: `print`, `typeof`, `time`, `proof_json`,
+    ///   `proof_public`, `proof_vkey`, `verify_proof`, `gc_stats`,
+    ///   `bigint256`, `bigint512`, `from_bits`
+    /// - **7 ProveIr-only**: `mux` (Phase 2C will promote to `Both`),
+    ///   `range_check`, `merkle_verify`, `len`, `assert_eq`, `int_div`,
+    ///   `int_mod`
+    ///
+    /// Total: **21 builtins**.
+    fn default() -> Self {
+        let entries = vec![
+            // ── VM-only (11) ───────────────────────────────────────
+            // Index matches NATIVE_TABLE position in vm/src/specs.rs
+            entry!(vm "print",         Arity::Variadic,   vm = 0),
+            entry!(vm "typeof",        Arity::Fixed(1),   vm = 1),
+            // NOTE: NATIVE_TABLE index 2 is `assert` — registered as
+            // Both below, not here.
+            entry!(vm "time",          Arity::Fixed(0),   vm = 3),
+            entry!(vm "proof_json",    Arity::Fixed(1),   vm = 4),
+            entry!(vm "proof_public",  Arity::Fixed(1),   vm = 5),
+            entry!(vm "proof_vkey",    Arity::Fixed(1),   vm = 6),
+            // NATIVE_TABLE indices 7 (poseidon) and 8 (poseidon_many)
+            // are Both — registered below.
+            entry!(vm "verify_proof",  Arity::Fixed(1),   vm = 9),
+            entry!(vm "gc_stats",      Arity::Fixed(0),   vm = 10),
+            entry!(vm "bigint256",     Arity::Fixed(1),   vm = 11),
+            entry!(vm "bigint512",     Arity::Fixed(1),   vm = 12),
+            entry!(vm "from_bits",     Arity::Fixed(2),   vm = 13),
+            // ── Both (3) ───────────────────────────────────────────
+            // vm index matches NATIVE_TABLE; prove index matches the
+            // corresponding arm in ir::prove_ir::compiler::lower_builtin.
+            entry!(both "poseidon",      Arity::Fixed(2), vm = 7,  prove = 0),
+            entry!(both "poseidon_many", Arity::Variadic, vm = 8,  prove = 1),
+            entry!(both "assert",        Arity::Fixed(1), vm = 2,  prove = 7),
+            // ── ProveIR-only (7) ───────────────────────────────────
+            // prove index = position in the lower_builtin match block.
+            entry!(prove "mux",           Arity::Fixed(3),    prove = 2),
+            entry!(prove "range_check",   Arity::Fixed(2),    prove = 3),
+            entry!(prove "merkle_verify", Arity::Fixed(4),    prove = 4),
+            entry!(prove "len",           Arity::Fixed(1),    prove = 5),
+            entry!(prove "assert_eq",     Arity::Range(2, 3), prove = 6),
+            entry!(prove "int_div",       Arity::Fixed(3),    prove = 8),
+            entry!(prove "int_mod",       Arity::Fixed(3),    prove = 9),
+        ];
+
+        let registry = Self { entries };
+
+        // Fail fast if the hand-written entries violate any audit
+        // invariant. This runs once per process, not per dispatch.
+        registry
+            .audit()
+            .expect("BuiltinRegistry::default() failed audit — production registry is malformed");
+
+        registry
+    }
 }
 
 impl BuiltinRegistry {
@@ -518,5 +627,123 @@ mod tests {
         assert!(rendered.contains("mux"));
         assert!(rendered.contains("Both"));
         assert!(rendered.contains("vm_fn"));
+    }
+
+    // ─── default() production registry ──────────────────────────────
+
+    #[test]
+    fn default_registry_audits_ok() {
+        // The ultimate test: the production registry must pass audit.
+        // If this fails, no compilation can proceed — it's the
+        // foundational invariant Movimiento 2 relies on.
+        let reg = BuiltinRegistry::default();
+        assert!(
+            reg.audit().is_ok(),
+            "production BuiltinRegistry::default() failed audit"
+        );
+    }
+
+    #[test]
+    fn default_registry_has_21_entries() {
+        let reg = BuiltinRegistry::default();
+        assert_eq!(
+            reg.len(),
+            21,
+            "expected 21 production builtins, got {}",
+            reg.len()
+        );
+    }
+
+    #[test]
+    fn default_registry_availability_counts() {
+        let reg = BuiltinRegistry::default();
+        let vm_only = reg
+            .entries()
+            .iter()
+            .filter(|e| e.availability == Availability::Vm)
+            .count();
+        let prove_only = reg
+            .entries()
+            .iter()
+            .filter(|e| e.availability == Availability::ProveIr)
+            .count();
+        let both = reg
+            .entries()
+            .iter()
+            .filter(|e| e.availability == Availability::Both)
+            .count();
+        assert_eq!(vm_only, 11, "expected 11 Vm-only builtins");
+        assert_eq!(prove_only, 7, "expected 7 ProveIr-only builtins");
+        assert_eq!(both, 3, "expected 3 Both builtins");
+        assert_eq!(vm_only + prove_only + both, 21);
+    }
+
+    #[test]
+    fn default_registry_has_expected_both_builtins() {
+        let reg = BuiltinRegistry::default();
+        for name in ["poseidon", "poseidon_many", "assert"] {
+            let entry = reg
+                .lookup(name)
+                .unwrap_or_else(|| panic!("missing Both builtin `{name}`"));
+            assert_eq!(
+                entry.availability,
+                Availability::Both,
+                "`{name}` should be Both"
+            );
+            assert!(entry.vm_fn.is_some(), "`{name}` missing vm_fn");
+            assert!(
+                entry.prove_ir_lower.is_some(),
+                "`{name}` missing prove_ir_lower"
+            );
+        }
+    }
+
+    #[test]
+    fn default_registry_mux_is_prove_ir_only_in_phase_2a() {
+        // `mux` is ProveIr-only until Phase 2C adds the VM scalar
+        // fallback. This test documents the expected state for 2A
+        // and will flip in 2C (the test name also changes then).
+        let reg = BuiltinRegistry::default();
+        let mux = reg.lookup("mux").expect("mux must be registered");
+        assert_eq!(mux.availability, Availability::ProveIr);
+        assert!(mux.vm_fn.is_none());
+        assert!(mux.prove_ir_lower.is_some());
+    }
+
+    #[test]
+    fn default_registry_vm_handles_are_unique() {
+        // Every VM-available builtin should have a unique VmFnHandle
+        // (the handle value encodes the NATIVE_TABLE position).
+        let reg = BuiltinRegistry::default();
+        let mut seen = std::collections::HashSet::new();
+        for entry in reg.entries() {
+            if let Some(handle) = entry.vm_fn {
+                assert!(
+                    seen.insert(handle),
+                    "duplicate VmFnHandle {handle:?} for builtin `{}`",
+                    entry.name
+                );
+            }
+        }
+        // 3 Both + 11 Vm-only = 14 unique vm handles (matching
+        // NATIVE_TABLE length).
+        assert_eq!(seen.len(), 14);
+    }
+
+    #[test]
+    fn default_registry_prove_handles_are_unique() {
+        let reg = BuiltinRegistry::default();
+        let mut seen = std::collections::HashSet::new();
+        for entry in reg.entries() {
+            if let Some(handle) = entry.prove_ir_lower {
+                assert!(
+                    seen.insert(handle),
+                    "duplicate ProveIrLowerHandle {handle:?} for builtin `{}`",
+                    entry.name
+                );
+            }
+        }
+        // 3 Both + 7 ProveIr-only = 10 unique prove handles.
+        assert_eq!(seen.len(), 10);
     }
 }

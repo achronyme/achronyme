@@ -544,6 +544,7 @@ dependencies = [
  "ir",
  "memory",
  "proptest",
+ "resolve",
  "serde_json",
  "tempfile",
  "vm",

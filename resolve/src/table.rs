@@ -382,9 +382,9 @@ mod tests {
         // We populate `symbols` directly since the chain needs forward
         // references that `insert` can't express.
         let mut t = SymbolTable::new();
-        for i in 0..20 {
+        for i in 0u32..20 {
             t.symbols.push(CallableKind::FnAlias {
-                target: SymbolId((i + 1) as u32),
+                target: SymbolId(i + 1),
             });
             t.by_qualified_name
                 .insert(format!("alias_{i}"), SymbolId(i));
@@ -433,10 +433,11 @@ mod tests {
 
     #[test]
     fn builtin_index_out_of_range_rejected_by_audit() {
-        let mut t = SymbolTable::new();
-        // Insert a Builtin symbol pointing at an empty registry —
-        // entry_index 0 is out of range because builtin_registry has
-        // zero entries.
+        // Use an explicit empty registry — the default() registry is
+        // populated with production builtins, so any index in [0, 21)
+        // would be valid. We need a table where *every* index is out
+        // of range.
+        let mut t = SymbolTable::with_registry(BuiltinRegistry::new()).unwrap();
         t.insert("ghost", CallableKind::Builtin { entry_index: 0 });
         let err = t.audit().unwrap_err();
         assert!(matches!(err, ResolveError::BuiltinIndexOutOfRange { .. }));
