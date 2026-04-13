@@ -8,10 +8,19 @@ pub struct NativeMeta {
 // Compiler keys = these names
 // VM slots 0..N = these functions in this order
 //
-// Grouped by NativeModule: core, string, bigint, collections.
+// Grouped by NativeModule: core, bigint.
 // The order within each group MUST match the module's natives() impl.
+//
+// Movimiento 2 note: this table is cross-checked against
+// `resolve::BuiltinRegistry::default()` at every compiler init (debug
+// builds) and at every CI run (via
+// `compiler/tests/builtin_registry_alignment.rs`). Adding or reordering
+// entries requires updating the registry's VmFnHandle values to match.
+// Phase 6 will delete this table and drive dispatch directly from the
+// registry — see `.claude/plans/movimiento-2-unified-dispatch.md` §4
+// Phase 6 MANDATORY block.
 pub const NATIVE_TABLE: &[NativeMeta] = &[
-    // ── core (0..10) ──
+    // ── core (0..11) ──
     NativeMeta {
         name: "print",
         arity: -1,
@@ -56,7 +65,15 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
         name: "gc_stats",
         arity: 0,
     },
-    // ── bigint (11..13) ──
+    // Phase 2C of Movimiento 2 — scalar VM fallback for the ProveIR
+    // `mux` builtin. Promotes mux to Availability::Both, closing gap
+    // 1.1 where modules that called mux could not be imported by
+    // VM-mode programs.
+    NativeMeta {
+        name: "mux",
+        arity: 3,
+    },
+    // ── bigint (12..14) ──
     NativeMeta {
         name: "bigint256",
         arity: 1,
@@ -73,7 +90,7 @@ pub const NATIVE_TABLE: &[NativeMeta] = &[
 
 // Expected native count — update this when adding/removing natives.
 // Compile-time assertion prevents silent index shifts.
-pub const NATIVE_COUNT: usize = 14;
+pub const NATIVE_COUNT: usize = 15;
 const _: () = assert!(
     NATIVE_TABLE.len() == NATIVE_COUNT,
     "NATIVE_TABLE length changed — update NATIVE_COUNT"

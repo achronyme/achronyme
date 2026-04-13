@@ -1,0 +1,61 @@
+// Movimiento 2 Phase 2C — `mux` callable from VM mode.
+//
+// Prior to 2C, `mux` was ProveIR-only. Any .ach module that called
+// `mux` (even inside a `prove {}` block) failed at VM bytecode
+// compilation time with "undefined variable: mux", making it impossible
+// to import such modules from VM-mode programs.
+//
+// Phase 2C added `native_mux` in vm/src/stdlib/core.rs with scalar
+// semantics matching the ProveIR constraint: cond must be 0 or 1, and
+// the returned value preserves the type of the selected branch.
+//
+// This test exercises the VM fallback end-to-end — compile, run,
+// observe the result. Closes gap 1.1 from .claude/docs/compiler-gaps.md.
+
+// ── Basic integer selection ─────────────────────────────────────────
+assert(mux(1, 10, 20) == 10)
+assert(mux(0, 10, 20) == 20)
+
+// ── Field values ────────────────────────────────────────────────────
+assert(mux(1, 0p42, 0p99) == 0p42)
+assert(mux(0, 0p42, 0p99) == 0p99)
+
+// ── Field condition (0p1 / 0p0) ─────────────────────────────────────
+// extract_fe accepts either Int or Field for the condition argument,
+// so a Field-typed 0/1 value selects correctly.
+assert(mux(0p1, 7, 13) == 7)
+assert(mux(0p0, 7, 13) == 13)
+
+// ── Nested mux — standard pattern from prove blocks ─────────────────
+// `mux(1, a, mux(0, b, c))` should return `a` (outer selects the
+// `if_true` branch without evaluating the inner mux in a prover-
+// constrained sense; VM mode eagerly evaluates both branches, which
+// is fine here because there's no side effect).
+let a = 5
+let b = 10
+let c = 15
+let pick_first = mux(1, a, mux(0, b, c))
+assert(pick_first == 5)
+
+// Outer selects `if_false`, which is the inner mux — inner selects b.
+let pick_second = mux(0, a, mux(1, b, c))
+assert(pick_second == 10)
+
+// Outer selects `if_false`, inner selects c.
+let pick_third = mux(0, a, mux(0, b, c))
+assert(pick_third == 15)
+
+// ── Mixed types (Int condition, Field branches) ─────────────────────
+let field_val_a = 0p123
+let field_val_b = 0p456
+assert(mux(1, field_val_a, field_val_b) == field_val_a)
+assert(mux(0, field_val_a, field_val_b) == field_val_b)
+
+// ── Works inside functions ──────────────────────────────────────────
+fn select_if(cond, a, b) {
+    mux(cond, a, b)
+}
+assert(select_if(1, 100, 200) == 100)
+assert(select_if(0, 100, 200) == 200)
+
+print("mux VM fallback test passed — gap 1.1 closed (Phase 2C)")

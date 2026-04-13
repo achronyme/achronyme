@@ -121,17 +121,18 @@ fn production_both_set_is_complete() {
         .collect();
     assert_eq!(
         both,
-        vec!["poseidon", "poseidon_many", "assert"],
-        "Phase 2A production Both set is exactly these three. Phase 2C \
-         will add `mux` when the VM scalar fallback lands."
+        vec!["poseidon", "poseidon_many", "assert", "mux"],
+        "Phase 2C promoted `mux` to Both with a scalar VM fallback. Any \
+         new Both additions should also land here and be traceable to a \
+         specific phase."
     );
 }
 
 /// The ProveIR-only list is the exact set of arms in
 /// `ir::prove_ir::compiler::lower_builtin` that are not Both. The
 /// hardcoded list below mirrors `.claude/plans/movimiento-2-phase-0-audit.md`
-/// §6. If a new ProveIR builtin is added and this test isn't updated,
-/// the drift gets caught here.
+/// §6 minus `mux` (which Phase 2C promoted). If a new ProveIR builtin
+/// is added and this test isn't updated, the drift gets caught here.
 #[test]
 fn production_prove_ir_only_set_matches_extracted_lower_builtin() {
     let reg = BuiltinRegistry::default();
@@ -143,8 +144,8 @@ fn production_prove_ir_only_set_matches_extracted_lower_builtin() {
         .collect();
     prove_only.sort_unstable();
 
+    // `mux` is deliberately absent — Phase 2C promoted it to Both.
     let mut expected = [
-        "mux",
         "range_check",
         "merkle_verify",
         "len",
@@ -175,7 +176,7 @@ fn production_vm_only_set_matches_native_table_minus_both() {
         .collect();
     vm_only.sort_unstable();
 
-    let both_names = ["poseidon", "poseidon_many", "assert"];
+    let both_names = ["poseidon", "poseidon_many", "assert", "mux"];
     let mut expected: Vec<&str> = NATIVE_TABLE
         .iter()
         .map(|m| m.name)

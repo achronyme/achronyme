@@ -270,4 +270,53 @@ pub mod core_impl {
         let handle = vm.heap.alloc_map(map)?;
         Ok(Value::map(handle))
     }
+
+    /// Scalar multiplexer: selects one of two values based on a boolean
+    /// condition. VM fallback for the ProveIR `mux` builtin.
+    ///
+    /// ## Semantics
+    ///
+    /// `mux(cond, if_true, if_false)` returns `if_true` when `cond == 1`
+    /// and `if_false` when `cond == 0`. Any other condition value is
+    /// rejected as a type error.
+    ///
+    /// The strict 0/1 check matches ProveIR's Mux constraint semantics:
+    /// `out = cond * if_true + (1 - cond) * if_false`, which only produces
+    /// sensible results when `cond` is boolean. Accepting non-boolean
+    /// values would diverge from the circuit side and mask bugs that
+    /// only surface inside `prove {}` blocks.
+    ///
+    /// The return value preserves the type of the selected branch —
+    /// `if_true` or `if_false` are returned as-is, without coercion.
+    /// This lets `mux` work with Int, Field, or any heap value that
+    /// fits in a `Value`.
+    ///
+    /// ## Movimiento 2 Phase 2C
+    ///
+    /// This native was added to promote `mux` from `Availability::ProveIr`
+    /// to `Availability::Both` in `resolve::BuiltinRegistry`. Closes gap
+    /// 1.1 from `.claude/docs/compiler-gaps.md` — modules that call
+    /// `mux` can now be imported by VM-mode programs, even if the
+    /// actual `mux` call only executes inside a `prove {}` block.
+    #[ach_native(name = "mux", arity = 3)]
+    pub fn native_mux(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+        if args.len() != 3 {
+            return Err(RuntimeError::arity_mismatch(
+                "mux(cond, if_true, if_false) takes exactly 3 arguments",
+            ));
+        }
+        let cond_fe = extract_fe(vm, &args[0])?;
+        if cond_fe == FieldElement::ZERO {
+            Ok(args[2])
+        } else if cond_fe == FieldElement::from_u64(1) {
+            Ok(args[1])
+        } else {
+            Err(RuntimeError::type_mismatch(
+                "mux condition must be 0 or 1 (boolean); got a field element \
+                 with a different value. The VM fallback matches the ProveIR \
+                 constraint semantics, which only produce correct results for \
+                 boolean conditions.",
+            ))
+        }
+    }
 }

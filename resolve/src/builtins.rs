@@ -235,13 +235,13 @@ impl Default for BuiltinRegistry {
     ///
     /// ## Inventory
     ///
-    /// - **3 Both**: `poseidon`, `poseidon_many`, `assert`
+    /// - **4 Both**: `poseidon`, `poseidon_many`, `assert`, `mux`
+    ///   (`mux` promoted in Phase 2C with a scalar VM fallback)
     /// - **11 Vm-only**: `print`, `typeof`, `time`, `proof_json`,
     ///   `proof_public`, `proof_vkey`, `verify_proof`, `gc_stats`,
     ///   `bigint256`, `bigint512`, `from_bits`
-    /// - **7 ProveIr-only**: `mux` (Phase 2C will promote to `Both`),
-    ///   `range_check`, `merkle_verify`, `len`, `assert_eq`, `int_div`,
-    ///   `int_mod`
+    /// - **6 ProveIr-only**: `range_check`, `merkle_verify`, `len`,
+    ///   `assert_eq`, `int_div`, `int_mod`
     ///
     /// Total: **21 builtins**.
     fn default() -> Self {
@@ -260,18 +260,19 @@ impl Default for BuiltinRegistry {
             // are Both — registered below.
             entry!(vm "verify_proof",  Arity::Fixed(1),   vm = 9),
             entry!(vm "gc_stats",      Arity::Fixed(0),   vm = 10),
-            entry!(vm "bigint256",     Arity::Fixed(1),   vm = 11),
-            entry!(vm "bigint512",     Arity::Fixed(1),   vm = 12),
-            entry!(vm "from_bits",     Arity::Fixed(2),   vm = 13),
-            // ── Both (3) ───────────────────────────────────────────
+            // NATIVE_TABLE index 11 is `mux` — Both, registered below.
+            entry!(vm "bigint256",     Arity::Fixed(1),   vm = 12),
+            entry!(vm "bigint512",     Arity::Fixed(1),   vm = 13),
+            entry!(vm "from_bits",     Arity::Fixed(2),   vm = 14),
+            // ── Both (4) ───────────────────────────────────────────
             // vm index matches NATIVE_TABLE; prove index matches the
             // corresponding arm in ir::prove_ir::compiler::lower_builtin.
             entry!(both "poseidon",      Arity::Fixed(2), vm = 7,  prove = 0),
             entry!(both "poseidon_many", Arity::Variadic, vm = 8,  prove = 1),
             entry!(both "assert",        Arity::Fixed(1), vm = 2,  prove = 7),
-            // ── ProveIR-only (7) ───────────────────────────────────
+            entry!(both "mux",           Arity::Fixed(3), vm = 11, prove = 2),
+            // ── ProveIR-only (6) ───────────────────────────────────
             // prove index = position in the lower_builtin match block.
-            entry!(prove "mux",           Arity::Fixed(3),    prove = 2),
             entry!(prove "range_check",   Arity::Fixed(2),    prove = 3),
             entry!(prove "merkle_verify", Arity::Fixed(4),    prove = 4),
             entry!(prove "len",           Arity::Fixed(1),    prove = 5),
@@ -673,15 +674,15 @@ mod tests {
             .filter(|e| e.availability == Availability::Both)
             .count();
         assert_eq!(vm_only, 11, "expected 11 Vm-only builtins");
-        assert_eq!(prove_only, 7, "expected 7 ProveIr-only builtins");
-        assert_eq!(both, 3, "expected 3 Both builtins");
+        assert_eq!(prove_only, 6, "expected 6 ProveIr-only builtins");
+        assert_eq!(both, 4, "expected 4 Both builtins");
         assert_eq!(vm_only + prove_only + both, 21);
     }
 
     #[test]
     fn default_registry_has_expected_both_builtins() {
         let reg = BuiltinRegistry::default();
-        for name in ["poseidon", "poseidon_many", "assert"] {
+        for name in ["poseidon", "poseidon_many", "assert", "mux"] {
             let entry = reg
                 .lookup(name)
                 .unwrap_or_else(|| panic!("missing Both builtin `{name}`"));
@@ -699,14 +700,15 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_mux_is_prove_ir_only_in_phase_2a() {
-        // `mux` is ProveIr-only until Phase 2C adds the VM scalar
-        // fallback. This test documents the expected state for 2A
-        // and will flip in 2C (the test name also changes then).
+    fn default_registry_mux_is_both_after_2c() {
+        // Phase 2C promoted `mux` from ProveIr-only to Both with a
+        // scalar VM fallback in vm/src/stdlib/core.rs:native_mux.
+        // Closes gap 1.1 — modules calling `mux` can now be imported
+        // by VM-mode programs.
         let reg = BuiltinRegistry::default();
         let mux = reg.lookup("mux").expect("mux must be registered");
-        assert_eq!(mux.availability, Availability::ProveIr);
-        assert!(mux.vm_fn.is_none());
+        assert_eq!(mux.availability, Availability::Both);
+        assert!(mux.vm_fn.is_some(), "mux must have VM fallback after 2C");
         assert!(mux.prove_ir_lower.is_some());
     }
 
@@ -725,9 +727,9 @@ mod tests {
                 );
             }
         }
-        // 3 Both + 11 Vm-only = 14 unique vm handles (matching
-        // NATIVE_TABLE length).
-        assert_eq!(seen.len(), 14);
+        // 4 Both + 11 Vm-only = 15 unique vm handles (matching
+        // NATIVE_TABLE length after Phase 2C added `mux`).
+        assert_eq!(seen.len(), 15);
     }
 
     #[test]

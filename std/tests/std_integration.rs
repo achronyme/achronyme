@@ -28,9 +28,15 @@ fn std_native_table_matches_modules() {
 
 #[test]
 fn register_std_on_vm() {
+    // Use NATIVE_COUNT (SSOT in vm::specs) instead of a hardcoded
+    // value so this test stays green when new builtins land — e.g.,
+    // Movimiento 2 Phase 2C added `mux`, bumping NATIVE_COUNT from
+    // 14 to 15.
+    use vm::specs::NATIVE_COUNT;
+
     let mut vm = vm::VM::new();
     let builtin_count = vm.natives.len();
-    assert_eq!(builtin_count, 14); // builtins (beta.13)
+    assert_eq!(builtin_count, NATIVE_COUNT);
 
     for module in achronyme_std::std_modules() {
         vm.register_module(&*module)
@@ -38,10 +44,10 @@ fn register_std_on_vm() {
     }
 
     let std_table = achronyme_std::std_native_table();
-    assert_eq!(vm.natives.len(), 14 + std_table.len());
+    assert_eq!(vm.natives.len(), NATIVE_COUNT + std_table.len());
 
     // Verify each new native is accessible
-    for i in 14..vm.natives.len() {
+    for i in NATIVE_COUNT..vm.natives.len() {
         assert!(vm.globals[i].value.is_native());
     }
 }
