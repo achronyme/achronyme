@@ -2208,16 +2208,46 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
+        // Movimiento 2 — Phase 0: builtin dispatch is extracted into a
+        // dedicated `lower_builtin` helper so later phases can redirect it
+        // to the shared `BuiltinRegistry` without touching every call site.
+        // Semantics are unchanged: `lower_builtin` returns `Ok(None)` when
+        // the name is not a recognised builtin, in which case we fall
+        // through to user-fn inlining exactly as before.
+        if let Some(expr) = self.lower_builtin(name, args, span)? {
+            return Ok(expr);
+        }
+        self.compile_user_fn_call(name, args, span)
+    }
+
+    /// Dispatch a builtin by name. Returns:
+    /// - `Ok(Some(expr))` — handled as a builtin, evaluation succeeded.
+    /// - `Ok(None)` — `name` is not a recognised builtin; the caller
+    ///   should fall through to user-function dispatch.
+    /// - `Err(e)` — handled as a builtin but the arguments were malformed
+    ///   (wrong arity, unsupported shape, etc.).
+    ///
+    /// This function is the single entry point that Movimiento 2 Phase 2
+    /// will redirect to the shared `BuiltinRegistry`. Keeping it in one
+    /// place (instead of inlined into `compile_named_call`) lets the
+    /// registry wiring live behind one function boundary without touching
+    /// any of the individual builtin implementations.
+    fn lower_builtin(
+        &mut self,
+        name: &str,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<Option<CircuitExpr>, ProveIrError> {
         match name {
             // Builtins that produce CircuitExpr directly
             "poseidon" => {
                 self.check_arity("poseidon", 2, args.len(), span)?;
                 let left = self.compile_expr(args[0])?;
                 let right = self.compile_expr(args[1])?;
-                Ok(CircuitExpr::PoseidonHash {
+                Ok(Some(CircuitExpr::PoseidonHash {
                     left: Box::new(left),
                     right: Box::new(right),
-                })
+                }))
             }
             "poseidon_many" => {
                 if args.len() < 2 {
@@ -2231,18 +2261,18 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 }
                 let compiled: Result<Vec<_>, _> =
                     args.iter().map(|a| self.compile_expr(a)).collect();
-                Ok(CircuitExpr::PoseidonMany(compiled?))
+                Ok(Some(CircuitExpr::PoseidonMany(compiled?)))
             }
             "mux" => {
                 self.check_arity("mux", 3, args.len(), span)?;
                 let cond = self.compile_expr(args[0])?;
                 let if_true = self.compile_expr(args[1])?;
                 let if_false = self.compile_expr(args[2])?;
-                Ok(CircuitExpr::Mux {
+                Ok(Some(CircuitExpr::Mux {
                     cond: Box::new(cond),
                     if_true: Box::new(if_true),
                     if_false: Box::new(if_false),
-                })
+                }))
             }
             "range_check" => {
                 self.check_arity("range_check", 2, args.len(), span)?;
@@ -2258,10 +2288,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     });
                 }
                 let bits = bits_u64 as u32;
-                Ok(CircuitExpr::RangeCheck {
+                Ok(Some(CircuitExpr::RangeCheck {
                     value: Box::new(value),
                     bits,
-                })
+                }))
             }
             "merkle_verify" => {
                 self.check_arity("merkle_verify", 4, args.len(), span)?;
@@ -2270,21 +2300,22 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 // path and indices must be array identifiers (referenced by name)
                 let path = self.extract_array_ident(args[2], span)?;
                 let indices = self.extract_array_ident(args[3], span)?;
-                Ok(CircuitExpr::MerkleVerify {
+                Ok(Some(CircuitExpr::MerkleVerify {
                     root: Box::new(root),
                     leaf: Box::new(leaf),
                     path,
                     indices,
-                })
+                }))
             }
             "len" => {
                 self.check_arity("len", 1, args.len(), span)?;
-                self.compile_len_call(args[0], span)
+                self.compile_len_call(args[0], span).map(Some)
             }
 
-            // Builtins that produce CircuitNode (handled at statement level)
+            // Builtins that produce CircuitNode (handled at statement level).
             // assert_eq and assert are expression-level in the AST but produce
-            // nodes — we return a dummy Const(0) since they're constraints, not values.
+            // nodes — we return a dummy Const(0) since they're constraints, not
+            // values.
             "assert_eq" => {
                 self.check_assert_eq_arity(args.len(), span)?;
                 let lhs = self.compile_expr(args[0])?;
@@ -2299,7 +2330,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     message,
                     span: Some(SpanRange::from(span)),
                 });
-                Ok(CircuitExpr::Const(FieldConst::zero()))
+                Ok(Some(CircuitExpr::Const(FieldConst::zero())))
             }
             "assert" => {
                 self.check_assert_arity(args.len(), span)?;
@@ -2311,7 +2342,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     message,
                     span: Some(SpanRange::from(span)),
                 });
-                Ok(CircuitExpr::Const(FieldConst::zero()))
+                Ok(Some(CircuitExpr::Const(FieldConst::zero())))
             }
 
             // Integer division: int_div(lhs, rhs, max_bits)
@@ -2320,11 +2351,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 let lhs = self.compile_expr(args[0])?;
                 let rhs = self.compile_expr(args[1])?;
                 let max_bits = self.extract_const_u64(args[2], span)? as u32;
-                Ok(CircuitExpr::IntDiv {
+                Ok(Some(CircuitExpr::IntDiv {
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                     max_bits,
-                })
+                }))
             }
             // Integer remainder: int_mod(lhs, rhs, max_bits)
             "int_mod" => {
@@ -2332,15 +2363,15 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 let lhs = self.compile_expr(args[0])?;
                 let rhs = self.compile_expr(args[1])?;
                 let max_bits = self.extract_const_u64(args[2], span)? as u32;
-                Ok(CircuitExpr::IntMod {
+                Ok(Some(CircuitExpr::IntMod {
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                     max_bits,
-                })
+                }))
             }
 
-            // User function call (inlined)
-            _ => self.compile_user_fn_call(name, args, span),
+            // Not a builtin — caller should fall through to user-fn dispatch.
+            _ => Ok(None),
         }
     }
 
