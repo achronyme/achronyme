@@ -17,9 +17,9 @@ constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
 circom = { path = "../circom" }
+resolve = { path = "../resolve" }
 
 [dev-dependencies]
 proptest = "1"
-resolve = { path = "../resolve" }
 serde_json = "1"
 tempfile = "3"

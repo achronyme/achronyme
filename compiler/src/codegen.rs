@@ -105,6 +105,65 @@ impl Default for Compiler {
     }
 }
 
+/// Cross-check `NATIVE_TABLE` against `resolve::BuiltinRegistry::default()`.
+///
+/// Runs exactly **once per process**. Fails loudly if the two dispatch
+/// surfaces have drifted: every `NATIVE_TABLE` entry must be backed by
+/// a VM-available registry entry whose `VmFnHandle` equals the
+/// `NATIVE_TABLE` position.
+///
+/// Movimiento 2 Phase 2B status: the registry is already the **source
+/// of truth** but dispatch still flows through `NATIVE_TABLE`. This
+/// check guarantees the two stay in sync until Phase 6 removes
+/// `NATIVE_TABLE` entirely (see the RFC §4 Phase 6 "MANDATORY" block).
+///
+/// Skipped in release builds because the integration test
+/// `compiler/tests/builtin_registry_alignment.rs` covers the same
+/// invariants at build time; runtime validation is a debug-mode
+/// tripwire for local development, not a production guard.
+#[cfg(debug_assertions)]
+fn cross_check_native_table_vs_registry() {
+    use std::sync::Once;
+    static CHECK: Once = Once::new();
+    CHECK.call_once(|| {
+        let registry = resolve::BuiltinRegistry::default();
+        for (idx, meta) in NATIVE_TABLE.iter().enumerate() {
+            let entry = registry.lookup(meta.name).unwrap_or_else(|| {
+                panic!(
+                    "NATIVE_TABLE[{idx}] = `{}` has no matching \
+                     resolve::BuiltinRegistry entry. Add it to \
+                     BuiltinRegistry::default() in resolve/src/builtins.rs. \
+                     Run `cargo test -p compiler --test builtin_registry_alignment` \
+                     to verify the fix.",
+                    meta.name
+                )
+            });
+            assert!(
+                entry.availability.includes_vm(),
+                "NATIVE_TABLE[{idx}] = `{}` exists in the registry but its \
+                 availability is {:?} (does not include Vm). Update \
+                 BuiltinRegistry::default().",
+                meta.name,
+                entry.availability,
+            );
+            let handle = entry.vm_fn.expect(
+                "VM-available registry entry must have vm_fn set \
+                 (audit should have caught this)",
+            );
+            assert_eq!(
+                handle.as_u32() as usize,
+                idx,
+                "NATIVE_TABLE[{idx}] = `{}` but registry has handle {} \
+                 (expected {}). Align BuiltinRegistry::default() entries \
+                 with NATIVE_TABLE positions.",
+                meta.name,
+                handle.as_u32(),
+                idx,
+            );
+        }
+    });
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Self::with_extra_natives(&[])
@@ -116,6 +175,13 @@ impl Compiler {
     /// continue from `USER_GLOBAL_START`.  The VM must register the same
     /// modules in the same order via `VM::register_module()`.
     pub fn with_extra_natives(extra: &[NativeMeta]) -> Self {
+        // Movimiento 2 Phase 2B: verify NATIVE_TABLE is still aligned
+        // with the resolve registry. Runs once per process in debug
+        // builds; release builds rely on the integration test at
+        // compiler/tests/builtin_registry_alignment.rs.
+        #[cfg(debug_assertions)]
+        cross_check_native_table_vs_registry();
+
         use crate::types::GlobalEntry;
         let mut global_symbols = HashMap::new();
 

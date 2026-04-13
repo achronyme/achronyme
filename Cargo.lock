@@ -881,6 +881,7 @@ dependencies = [
  "constraints",
  "diagnostics",
  "memory",
+ "resolve",
  "serde",
 ]
 

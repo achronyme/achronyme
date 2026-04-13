@@ -2227,17 +2227,72 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// - `Err(e)` — handled as a builtin but the arguments were malformed
     ///   (wrong arity, unsupported shape, etc.).
     ///
-    /// This function is the single entry point that Movimiento 2 Phase 2
-    /// will redirect to the shared `BuiltinRegistry`. Keeping it in one
-    /// place (instead of inlined into `compile_named_call`) lets the
-    /// registry wiring live behind one function boundary without touching
-    /// any of the individual builtin implementations.
+    /// ## Movimiento 2 Phase 2B — registry cross-validation
+    ///
+    /// Before the hardcoded match runs, this function consults
+    /// `resolve::BuiltinRegistry::default()` to verify that the name
+    /// is recognised as a ProveIR-available builtin. This is a
+    /// debug-mode tripwire that catches drift between the registry
+    /// and the match: if someone adds a new match arm without
+    /// registering it (or vice versa), the assertion fires.
+    ///
+    /// The registry is cached in a `OnceLock` so the lookup is
+    /// O(1) after the first call. Production dispatch still goes
+    /// through the hardcoded match — Phase 6 will flip this to real
+    /// registry-driven dispatch (see the RFC §4 Phase 6 MANDATORY
+    /// block).
     fn lower_builtin(
         &mut self,
         name: &str,
         args: &[&Expr],
         span: &Span,
     ) -> Result<Option<CircuitExpr>, ProveIrError> {
+        // Phase 2B cross-validation: every match arm below must be
+        // registered as ProveIr-available. We DON'T fail the user if
+        // the name isn't in the registry at all — that just means
+        // it's a user fn, which is the `Ok(None)` path. We only fail
+        // if the match claims to handle it (by name) but the registry
+        // disagrees.
+        #[cfg(debug_assertions)]
+        {
+            use std::sync::OnceLock;
+            static REGISTRY: OnceLock<resolve::BuiltinRegistry> = OnceLock::new();
+            let registry = REGISTRY.get_or_init(resolve::BuiltinRegistry::default);
+
+            // List of names handled by the match below (kept in sync
+            // manually for Phase 2B; Phase 6 makes this automatic by
+            // driving dispatch from the registry directly).
+            const PROVE_IR_BUILTINS: &[&str] = &[
+                "poseidon",
+                "poseidon_many",
+                "mux",
+                "range_check",
+                "merkle_verify",
+                "len",
+                "assert_eq",
+                "assert",
+                "int_div",
+                "int_mod",
+            ];
+            if PROVE_IR_BUILTINS.contains(&name) {
+                let entry = registry.lookup(name).unwrap_or_else(|| {
+                    panic!(
+                        "lower_builtin match has arm for `{name}` but \
+                         resolve::BuiltinRegistry::default() has no such \
+                         entry. Either remove the arm or add the entry in \
+                         resolve/src/builtins.rs."
+                    )
+                });
+                assert!(
+                    entry.availability.includes_prove_ir(),
+                    "lower_builtin match handles `{name}` but registry \
+                     availability is {:?} (does not include ProveIr). \
+                     Update BuiltinRegistry::default().",
+                    entry.availability,
+                );
+            }
+        }
+
         match name {
             // Builtins that produce CircuitExpr directly
             "poseidon" => {
