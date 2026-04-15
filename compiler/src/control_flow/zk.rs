@@ -95,25 +95,33 @@ pub(super) fn compile_prove(
         }
     }
 
-    // Phase 3E.1: forward the VM compiler's already-built resolver
-    // state (if any) to ProveIR so it can record shadow hits during
-    // the walk. Cheap: SymbolTable and ResolvedProgram move into
-    // `Arc`s once per prove block, and the OuterScope clone inside
-    // `ProveIrCompiler::compile_with_source_dir` is cloning `Arc`s,
-    // not full tables. No-op when the VM compiler didn't auto-build
-    // a resolver state (multi-module programs).
+    // Phase 3E.1 / 3F: forward the VM compiler's already-built
+    // resolver state (if any) to ProveIR. SymbolTable and
+    // ResolvedProgram move into `Arc`s once per prove block; the
+    // dispatch maps are already `Arc`-shared on the VM compiler so
+    // the clone is a refcount bump. No-op when the VM compiler
+    // didn't auto-build a resolver state — prove blocks in
+    // multi-module compiles without `base_path`, for example.
     let resolver_state = match (
         compiler.resolver_symbol_table.as_ref(),
         compiler.resolved_program.as_ref(),
         compiler.resolver_root_module,
+        compiler.resolver_dispatch_by_symbol.as_ref(),
+        compiler.resolver_module_by_key.as_ref(),
     ) {
-        (Some(table), Some(resolved), Some(root_module)) => {
-            Some(ir::prove_ir::OuterResolverState {
-                table: std::sync::Arc::new(table.clone()),
-                resolved: std::sync::Arc::new(resolved.clone()),
-                root_module,
-            })
-        }
+        (
+            Some(table),
+            Some(resolved),
+            Some(root_module),
+            Some(dispatch_by_symbol),
+            Some(module_by_key),
+        ) => Some(ir::prove_ir::OuterResolverState {
+            table: std::sync::Arc::new(table.clone()),
+            resolved: std::sync::Arc::new(resolved.clone()),
+            root_module,
+            dispatch_key_by_symbol: dispatch_by_symbol.clone(),
+            module_by_dispatch_key: module_by_key.clone(),
+        }),
         _ => None,
     };
 
