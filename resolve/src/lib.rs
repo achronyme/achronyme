@@ -62,7 +62,9 @@ pub mod statics;
 pub mod symbol;
 pub mod table;
 
-pub use annotate::{register_all, register_module};
+pub use annotate::{
+    annotate_program, register_all, register_builtins, register_module, AnnotationKey,
+};
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
 pub use error::ResolveError;
 pub use module_graph::{
