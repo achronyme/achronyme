@@ -108,11 +108,28 @@ impl<'a> ModuleSource for CompilerModuleSource<'a> {
                 return Ok(ro.canonical.clone());
             }
         }
-        let base = importer
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())
-            .or_else(|| self.base_path.clone())
-            .unwrap_or_else(|| Path::new(".").to_path_buf());
+        // Phase 3F: transitive imports from the in-memory root arrive
+        // with `importer = Some(<resolve-in-memory-root>)`. That
+        // pseudo-path has no real filesystem parent, so we substitute
+        // `self.base_path` as the base directory for resolving
+        // `relative`. This is the only way `compile(&source)` compiles
+        // can walk a multi-module import graph without a real root
+        // file on disk.
+        let is_in_memory_root = match (&self.root_override, importer) {
+            (Some(ro), Some(imp)) => imp == ro.canonical,
+            _ => false,
+        };
+        let base = if is_in_memory_root {
+            self.base_path
+                .clone()
+                .unwrap_or_else(|| Path::new(".").to_path_buf())
+        } else {
+            importer
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf())
+                .or_else(|| self.base_path.clone())
+                .unwrap_or_else(|| Path::new(".").to_path_buf())
+        };
         let resolved = base.join(relative);
         resolved
             .canonicalize()
