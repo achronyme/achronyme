@@ -143,6 +143,18 @@ impl SymbolTable {
         self.symbols.get(id.0 as usize)
     }
 
+    /// Iterate every `(SymbolId, &CallableKind)` pair in insertion
+    /// order. Consumers that need to derive per-symbol metadata (e.g.
+    /// Phase 3F's fn_table dispatch-key precomputation in the
+    /// `compiler` crate) use this to walk the whole table without
+    /// knowing which ids are valid.
+    pub fn iter(&self) -> impl Iterator<Item = (SymbolId, &CallableKind)> + '_ {
+        self.symbols
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (SymbolId(i as u32), k))
+    }
+
     /// Follow a chain of [`CallableKind::FnAlias`] entries until a
     /// non-alias target is reached, a cycle is detected, or
     /// [`FN_ALIAS_MAX_DEPTH`] is exceeded.
