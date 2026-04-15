@@ -14,6 +14,8 @@ use super::types::*;
 use crate::error::{span_box, OptSpan};
 use crate::types::IrType;
 
+use resolve::{AnnotationKey, ModuleId, ResolvedProgram, SymbolId, SymbolTable};
+
 // ---------------------------------------------------------------------------
 // Environment values
 // ---------------------------------------------------------------------------
@@ -50,6 +52,13 @@ pub enum OuterScopeEntry {
 /// imports, `"P::T"` for namespaced ones). The `compiler` crate is
 /// responsible for flattening namespace imports into `P::T` keys
 /// before handing the scope over.
+///
+/// `resolver_state` (Movimiento 2 Phase 3E) forwards the VM compiler's
+/// already-built [`ResolvedProgram`] + [`SymbolTable`] + root
+/// [`ModuleId`]. When present, the ProveIR compiler uses it to record
+/// shadow resolver hits alongside its own dispatch. The legacy
+/// `fn_table`/`env` lookup remains authoritative in 3E.1; Phase
+/// 3E.2/3 is where dispatch actually reads from annotations.
 #[derive(Clone, Debug, Default)]
 pub struct OuterScope {
     /// Captured values (scalars / arrays) from the VM scope.
@@ -59,6 +68,33 @@ pub struct OuterScope {
     /// Circom templates importable into this block. Keys are the
     /// names the ProveIR dispatcher will look up at Call time.
     pub circom_imports: HashMap<String, CircomCallable>,
+    /// Optional resolver state forwarded from the caller. None
+    /// means "standalone compile" — the ProveIR compiler will
+    /// either run without resolver observation, or (future work)
+    /// build its own state.
+    pub resolver_state: Option<OuterResolverState>,
+}
+
+/// Borrow-free bundle of resolver state for prove-block outer scope.
+///
+/// The VM compiler stores these three pieces in separate `Option`
+/// fields; for the prove-block hand-off we repackage them into a
+/// single [`Arc`]-shared struct so cloning `OuterScope` is free
+/// regardless of how big the symbol table grows. The VM compiler
+/// moves its own state into `Arc`s at the hand-off point (see
+/// `compile_prove` in the `compiler` crate).
+///
+/// [`SymbolTable`] and [`ResolvedProgram`] are not `Clone`
+/// themselves — the `Arc` indirection is therefore mandatory, not
+/// a premature optimisation.
+#[derive(Clone, Debug)]
+pub struct OuterResolverState {
+    /// Symbol table shared by the VM + ProveIR compilers.
+    pub table: std::sync::Arc<SymbolTable>,
+    /// Annotation map keyed by `(module_id, expr_id)`.
+    pub resolved: std::sync::Arc<ResolvedProgram>,
+    /// Root module id in the graph the annotations were built for.
+    pub root_module: ModuleId,
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +147,33 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     /// (`circom_call_0`, `circom_call_1`, ...) for circom template
     /// instantiations. Bumped on use, not on registration.
     circom_call_counter: usize,
+    // ── Movimiento 2 Phase 3E ────────────────────────────────────
+    /// Optional resolver state forwarded from the outer (VM)
+    /// compiler via [`OuterScope::resolver_state`]. Installed at
+    /// the start of `compile_with_source_dir`. When `None`, every
+    /// resolver-shadow hook is a no-op (single-module prove blocks
+    /// compiled without a pre-built resolver state).
+    resolver_table: Option<std::sync::Arc<SymbolTable>>,
+    /// Annotation map mirroring [`resolver_table`]; see the
+    /// `compiler` crate's [`Compiler::resolved_program`] doc for
+    /// the key semantics.
+    resolver_resolved: Option<std::sync::Arc<ResolvedProgram>>,
+    /// The [`ModuleId`] annotations are currently being resolved
+    /// against. Starts at the root the outer scope handed over;
+    /// Phase 3E.3 will maintain a stack of these to fix gap 2.4
+    /// (name resolution inside inlined fn bodies).
+    resolver_root_module: Option<ModuleId>,
+    /// Phase 3E shadow hit trace: every `(module_id, expr_id)` the
+    /// annotation table resolved to a [`SymbolId`] during the walk.
+    /// Populated by [`record_resolver_hit`]; consumed by tests
+    /// under `ir/tests/prove_ir_resolver_dispatch.rs`. Clears per
+    /// compile invocation.
+    resolver_hits: Vec<(AnnotationKey, SymbolId)>,
+    /// The id of the [`Expr`] currently being walked, set at the
+    /// top of [`compile_expr`]. Pairs with
+    /// [`resolver_root_module`] to form the annotation lookup key.
+    /// `None` outside expression contexts.
+    current_expr_id: Option<ExprId>,
     /// Phantom data for the field backend type parameter.
     _field: PhantomData<F>,
 }
@@ -132,7 +195,52 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiling_modules: HashSet::new(),
             circom_table: HashMap::new(),
             circom_call_counter: 0,
+            resolver_table: None,
+            resolver_resolved: None,
+            resolver_root_module: None,
+            resolver_hits: Vec::new(),
+            current_expr_id: None,
             _field: PhantomData,
+        }
+    }
+
+    /// Borrow the shadow hit trace. Populated during compile by
+    /// [`record_resolver_hit`]; consumers are integration tests
+    /// asserting that the annotation-driven dispatch agrees with
+    /// the legacy path.
+    pub fn resolver_hits(&self) -> &[(AnnotationKey, SymbolId)] {
+        &self.resolver_hits
+    }
+
+    /// Record a shadow resolver hit for the current expression, if
+    /// any. No-op when the resolver state isn't installed, when
+    /// `current_expr_id` is unset, or when the annotation table has
+    /// no entry for this key. Phase 3E.1 only records — Phase 3E.2
+    /// flips dispatch.
+    fn record_resolver_hit(&mut self) {
+        let Some(expr_id) = self.current_expr_id else {
+            return;
+        };
+        self.record_resolver_hit_for(expr_id);
+    }
+
+    /// Record a shadow resolver hit for an explicit [`ExprId`],
+    /// bypassing `self.current_expr_id`. Needed for `Call` sites
+    /// where the enclosing `compile_expr` set `current_expr_id` to
+    /// the Call's id, but the annotation (from the resolver's
+    /// `annotate_program`) is actually keyed by the **callee
+    /// Ident's** id — ProveIR never recurses into the callee
+    /// expression, so the callee's id must be threaded through
+    /// explicitly.
+    fn record_resolver_hit_for(&mut self, expr_id: ExprId) {
+        let (Some(resolved), Some(module_id)) =
+            (self.resolver_resolved.as_ref(), self.resolver_root_module)
+        else {
+            return;
+        };
+        let key = (module_id, expr_id);
+        if let Some(&sid) = resolved.annotations.get(&key) {
+            self.resolver_hits.push((key, sid));
         }
     }
 
@@ -207,12 +315,40 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Self::compile_with_source_dir(block, outer_scope, None, None)
     }
 
+    /// Like [`compile`] but also returns the resolver shadow-hit
+    /// trace that was recorded during the walk. Phase 3E.1 consumers
+    /// (integration tests under `ir/tests/prove_ir_resolver_dispatch.rs`)
+    /// use this to verify that the annotation-driven dispatch points
+    /// at the same symbol the legacy env/fn_table lookup is about to
+    /// pick. Not used by the production pipeline — the hit trace is
+    /// observation only until Phase 3E.2 flips dispatch.
+    pub fn compile_with_trace(
+        block: &Block,
+        outer_scope: &OuterScope,
+    ) -> Result<(ProveIR, Vec<(AnnotationKey, SymbolId)>), ProveIrError> {
+        let (prove_ir, compiler) = Self::compile_into_instance(block, outer_scope, None, None)?;
+        Ok((prove_ir, compiler.resolver_hits))
+    }
+
     fn compile_with_source_dir(
         block: &Block,
         outer_scope: &OuterScope,
         source_dir: Option<std::path::PathBuf>,
         source_path: Option<std::path::PathBuf>,
     ) -> Result<ProveIR, ProveIrError> {
+        Self::compile_into_instance(block, outer_scope, source_dir, source_path).map(|(ir, _)| ir)
+    }
+
+    /// Worker shared by [`compile_with_source_dir`] and
+    /// [`compile_with_trace`]. Returns the fully-compiled ProveIR
+    /// alongside the compiler instance so shadow-dispatch consumers
+    /// can inspect the hit trace without re-running the walk.
+    fn compile_into_instance(
+        block: &Block,
+        outer_scope: &OuterScope,
+        source_dir: Option<std::path::PathBuf>,
+        source_path: Option<std::path::PathBuf>,
+    ) -> Result<(ProveIR, Self), ProveIrError> {
         let mut compiler = Self::new();
         compiler.source_dir = source_dir;
         if let Some(path) = source_path {
@@ -267,6 +403,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiler.circom_table.insert(key.clone(), callable.clone());
         }
 
+        // Phase 3E.1: install the caller-built resolver state (if any)
+        // so shadow dispatch can record annotation hits during the
+        // walk. This is pure observation — legacy env/fn_table lookups
+        // remain authoritative. Phase 3E.2/3 will flip the dispatch.
+        if let Some(state) = &outer_scope.resolver_state {
+            compiler.resolver_table = Some(state.table.clone());
+            compiler.resolver_resolved = Some(state.resolved.clone());
+            compiler.resolver_root_module = Some(state.root_module);
+        }
+
         // Compile all statements in the block
         compiler.compile_block_stmts(block)?;
 
@@ -288,14 +434,15 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
         }
 
-        Ok(ProveIR {
+        let prove_ir = ProveIR {
             name: None,
-            public_inputs: compiler.public_inputs,
-            witness_inputs: compiler.witness_inputs,
+            public_inputs: std::mem::take(&mut compiler.public_inputs),
+            witness_inputs: std::mem::take(&mut compiler.witness_inputs),
             captures,
-            body: compiler.body,
+            body: std::mem::take(&mut compiler.body),
             capture_arrays,
-        })
+        };
+        Ok((prove_ir, compiler))
     }
 
     /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
@@ -1306,6 +1453,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     /// Compile an AST expression into a `CircuitExpr`.
     pub(crate) fn compile_expr(&mut self, expr: &Expr) -> Result<CircuitExpr, ProveIrError> {
+        // Phase 3E.1: thread the current ExprId so the shadow-dispatch
+        // hooks in compile_ident / compile_named_call can read it off
+        // the compiler. Mirrors the VM compiler's pattern in
+        // `compiler/src/expressions/mod.rs::compile_expr`. We don't
+        // need the previous id for scoping because compile_expr is
+        // the only site that writes the field, and each recursive
+        // call re-overrides it before any hook reads it.
+        self.current_expr_id = Some(expr.id());
         match expr {
             Expr::Number { value, span, .. } => self.compile_number(value, span),
             Expr::FieldLit {
@@ -1469,6 +1624,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
 
     fn compile_ident(&mut self, name: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
+        // Phase 3E.1 shadow dispatch: observation only. Real
+        // dispatch flip lands in Phase 3E.2/3. Records a hit only
+        // when the resolver state is installed AND the annotation
+        // map has an entry for the current `(root_module, expr_id)`
+        // pair. No effect on the lookup that follows.
+        self.record_resolver_hit();
         match self.env.get(name) {
             Some(CompEnvValue::Scalar(resolved)) => Ok(CircuitExpr::Var(resolved.clone())),
             Some(CompEnvValue::Array(_)) => Err(ProveIrError::TypeMismatch {
@@ -1659,7 +1820,21 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
 
             // Named function/builtin call: name(args)
-            Expr::Ident { name, .. } => self.compile_named_call(name, args, span),
+            //
+            // Phase 3E.1: the resolver's annotate_program walker
+            // annotates the callee Ident (not the enclosing Call),
+            // so we need the Ident's own ExprId to consult the
+            // annotation table. `compile_expr` has stashed the Call's
+            // id in `self.current_expr_id` by now — re-override it
+            // with the Ident's id so the shadow hook in
+            // `compile_named_call` reads the correct annotation key.
+            // This is cheap and localized; the alternative of
+            // threading the id through `compile_named_call`'s
+            // signature would touch many test call sites.
+            Expr::Ident { name, id, .. } => {
+                self.current_expr_id = Some(*id);
+                self.compile_named_call(name, args, span)
+            }
 
             // Dynamic dispatch not supported
             _ => Err(ProveIrError::UnsupportedOperation {
@@ -2226,6 +2401,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
+        // Phase 3E.1 shadow dispatch: observation only. Records a
+        // hit for the Call expression's `(root_module, expr_id)`
+        // pair if the annotation map has an entry — lets tests
+        // verify that the resolver points at the same symbol the
+        // hardcoded dispatch ends up picking. Phase 3E.2 flips
+        // dispatch to read from this table first.
+        self.record_resolver_hit();
+
         // Movimiento 2 — Phase 0: builtin dispatch is extracted into a
         // dedicated `lower_builtin` helper so later phases can redirect it
         // to the shared `BuiltinRegistry` without touching every call site.
