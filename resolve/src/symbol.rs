@@ -4,6 +4,7 @@
 //! These are the shapes consumed by both compilers after the resolver pass
 //! annotates the AST. See the crate-level docs for how they fit together.
 
+use crate::module_graph::ModuleId;
 use std::fmt;
 
 /// Opaque, dense, [`u32`] identifier for a resolved symbol.
@@ -135,10 +136,12 @@ impl Arity {
 ///   referenced by the variant. The indirection keeps
 ///   [`SymbolTable::get`](crate::table::SymbolTable::get) cheap and lets
 ///   the registry own the impls.
-/// - [`CallableKind::UserFn`] holds an opaque `ast_handle` instead of the
-///   AST directly, so this crate stays free of parser dependencies during
-///   Phase 1. Phase 3 will plug in the real `Arc<FnDecl>` type from the
-///   parser crate.
+/// - [`CallableKind::UserFn`] points at the declaring module plus the
+///   index of the `Stmt::FnDecl` inside that module's `Program.stmts`.
+///   The [`ModuleGraph`](crate::module_graph::ModuleGraph) retains
+///   ownership of the AST — the symbol table never clones the function
+///   body. This is how the RFC's `ast: Arc<FnDecl>` idea actually lands
+///   without touching the parser's storage model.
 /// - [`CallableKind::FnAlias`] exists so `let a = p::fn; a()` works
 ///   uniformly in VM mode and prove blocks when the RHS const-resolves to
 ///   a known symbol (§3.7 of the RFC).
@@ -155,26 +158,30 @@ pub enum CallableKind {
 
     /// A user-defined function from a `.ach` file.
     ///
-    /// The `ast_handle` is an opaque token; Phase 3 replaces it with the
-    /// real shared [`Arc<FnDecl>`] once the parser types are wired in.
+    /// The variant points into the
+    /// [`ModuleGraph`](crate::module_graph::ModuleGraph) via
+    /// `(module, stmt_index)`: the declaring module and the index of
+    /// the [`Stmt::FnDecl`](achronyme_parser::ast::Stmt::FnDecl) inside
+    /// that module's [`Program.stmts`](achronyme_parser::ast::Program).
+    /// The graph retains ownership of the AST; the symbol table never
+    /// clones function bodies. The RFC §3.2 sketch of `ast: Arc<FnDecl>`
+    /// lands as this indirection.
+    ///
     /// `availability` is computed during Phase 4 availability inference
     /// and defaults to [`Availability::Both`] until that pass runs.
-    ///
-    /// ## Deferred fields from RFC §3.2
-    ///
-    /// Per the RFC, this variant will gain a `module: ModuleId` field
-    /// in Phase 3 once a `ModuleId` type exists (currently the module
-    /// graph isn't built yet). The field is deferred — not forgotten —
-    /// so Phase 3 must add it back before the resolver pass consumes
-    /// user fns from multiple modules. Until then, the qualified_name
-    /// prefix (e.g. `"math::add"`) disambiguates.
     UserFn {
-        /// Fully qualified name. `"foo"` for a top-level fn in `main.ach`,
-        /// `"math::add"` for an exported fn in an imported module.
+        /// Fully qualified name. `"foo"` for a top-level fn in
+        /// `main.ach`, `"math::add"` for an exported fn in an imported
+        /// module. The same string is the key used by
+        /// [`SymbolTable::lookup`](crate::table::SymbolTable::lookup).
         qualified_name: String,
-        /// Phase-3 placeholder: opaque handle into the module AST store.
-        /// Will become `Arc<FnDecl>` once parser types are wired in.
-        ast_handle: u32,
+        /// Module that declares this function.
+        module: ModuleId,
+        /// Index of the `Stmt::FnDecl` inside the declaring module's
+        /// `Program.stmts`. Valid for the lifetime of the owning
+        /// [`ModuleGraph`](crate::module_graph::ModuleGraph); stale if
+        /// the graph is rebuilt.
+        stmt_index: u32,
         /// Derived from the body during Phase 4 availability inference.
         availability: Availability,
     },
@@ -214,10 +221,12 @@ pub enum CallableKind {
     /// decisions section of the RFC. `Constant` is only for user-
     /// exported module constants.
     ///
-    /// `value_handle` is a Phase 1 placeholder mirroring
-    /// [`CallableKind::UserFn::ast_handle`]: it pins the shape so
-    /// Phase 3/6 must explicitly fill in the value reference and can't
-    /// accidentally treat the field as optional.
+    /// `value_handle` is a Phase 1 placeholder mirroring the original
+    /// `UserFn::ast_handle` opaque token: it pins the shape so Phase
+    /// 3/6 must explicitly fill in the value reference and can't
+    /// accidentally treat the field as optional. Unlike `UserFn`, the
+    /// `Constant` variant still needs module-constant support in
+    /// Phase 6 before it can cite a real value source.
     Constant {
         /// Fully qualified name, e.g. `"math::PI"`.
         qualified_name: String,

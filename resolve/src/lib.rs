@@ -54,6 +54,7 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
+pub mod annotate;
 pub mod builtins;
 pub mod error;
 pub mod module_graph;
@@ -61,6 +62,7 @@ pub mod statics;
 pub mod symbol;
 pub mod table;
 
+pub use annotate::{register_all, register_module};
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
 pub use error::ResolveError;
 pub use module_graph::{

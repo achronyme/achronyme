@@ -296,7 +296,8 @@ mod tests {
             "p::add",
             CallableKind::UserFn {
                 qualified_name: "p::add".into(),
-                ast_handle: 0,
+                module: crate::module_graph::ModuleId::from_raw(0),
+                stmt_index: 0,
                 availability: Availability::Both,
             },
         );

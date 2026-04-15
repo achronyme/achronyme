@@ -112,6 +112,21 @@ pub enum ResolveError {
         /// Canonical path of the module that completed the cycle.
         path: PathBuf,
     },
+
+    /// A module declares two top-level symbols with the same name —
+    /// usually two `fn foo` / `let foo` declarations in the same file,
+    /// or a `fn foo` colliding with an `export let foo`. Surfaced by
+    /// [`register_module`](crate::annotate::register_module) during
+    /// Phase 3C.1; Phase 3E may extend this to catch cross-module
+    /// aliasing collisions when the importer's namespace merges.
+    DuplicateModuleSymbol {
+        /// Unqualified name that collided (the
+        /// [`SymbolTable`](crate::table::SymbolTable) key would be
+        /// `"{alias}::{name}"` or just `"{name}"` for the root module).
+        name: String,
+        /// Module that contained both declarations.
+        module: u32,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -160,6 +175,9 @@ impl fmt::Display for ResolveError {
                 write!(f, "failed to load {}: {reason}", path.display())
             }
             Self::ModuleCycle { path } => write!(f, "circular import detected: {}", path.display()),
+            Self::DuplicateModuleSymbol { name, module } => {
+                write!(f, "module {module} declares `{name}` more than once")
+            }
         }
     }
 }
