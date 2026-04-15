@@ -34,7 +34,7 @@ use std::collections::HashMap;
 /// A [`SymbolTable`] is built once per compilation session by
 /// `resolve::resolve()` (Phase 3) and then passed by reference to both
 /// compilers. Neither compiler mutates the table.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SymbolTable {
     /// Flat storage of resolved symbols. A [`SymbolId`] is just an
     /// index into this vector.

@@ -55,6 +55,7 @@
 #![deny(unsafe_code)]
 
 pub mod annotate;
+pub mod build;
 pub mod builtins;
 pub mod error;
 pub mod module_graph;
@@ -66,6 +67,7 @@ pub use annotate::{
     annotate_program, register_all, register_builtins, register_module, AnnotationKey,
     ResolvedProgram,
 };
+pub use build::{build_resolver_state, ResolverState};
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
 pub use error::{ResolveError, UnsupportedShape};
 pub use module_graph::{

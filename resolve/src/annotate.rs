@@ -188,7 +188,7 @@ pub type AnnotationKey = (ModuleId, ExprId);
 /// Consumers that only care about resolution (Phase 3D/3E compilers)
 /// read `annotations`; diagnostic pipelines read `diagnostics` and
 /// fold each [`ResolveError`] into the session's error report.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ResolvedProgram {
     /// `(module, expr_id) → symbol` for every successfully resolved
     /// [`Expr::Ident`], [`Expr::StaticAccess`], and [`Expr::DotAccess`]
