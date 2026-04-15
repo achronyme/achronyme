@@ -14,7 +14,10 @@ use super::types::*;
 use crate::error::{span_box, OptSpan};
 use crate::types::IrType;
 
-use resolve::{AnnotationKey, CallableKind, ModuleId, ResolvedProgram, SymbolId, SymbolTable};
+use resolve::{
+    build_dispatch_maps, build_resolver_state, AnnotationKey, CallableKind, ModuleId,
+    ResolvedProgram, ResolverState, SymbolId, SymbolTable,
+};
 
 // ---------------------------------------------------------------------------
 // Environment values
@@ -144,6 +147,23 @@ enum DispatchDecision {
     Builtin { name: String },
     UserFn { qualified_name: String },
     NoAnnotation,
+}
+
+/// Phase 3G: the full bundle of resolver state a standalone
+/// [`ProveIrCompiler::compile_circuit`] invocation uses.
+///
+/// Built by [`ProveIrCompiler::try_build_circuit_resolver_state`]
+/// from the parsed source + source directory. Short-circuits to
+/// `None` on any build error so the caller can fall back to the
+/// legacy path. The fields are consumed twice: once by
+/// [`ProveIrCompiler::outer_functions_from_graph`] to derive
+/// renamed [`Stmt::FnDecl`] entries for the fn_table population,
+/// and once by the `OuterResolverState` constructor so the
+/// ProveIR compiler's annotation-driven dispatch can flip.
+struct CircuitResolverBundle {
+    state: ResolverState,
+    dispatch_by_symbol: HashMap<SymbolId, String>,
+    module_by_key: HashMap<String, ModuleId>,
 }
 
 /// Compiles an AST `Block` (from a prove block or circuit file) into a `ProveIR`.
@@ -612,7 +632,23 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok((prove_ir, compiler))
     }
 
-    /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
+    /// Convenience: parse source and compile as a self-contained circuit.
+    ///
+    /// Movimiento 2 Phase 3G: if `source_path` is set and the
+    /// resolver's module-graph build succeeds, we pre-populate the
+    /// ProveIR compiler's `fn_table` from the full graph (every
+    /// transitively-reachable [`CallableKind::UserFn`]), precompute
+    /// the dispatch maps, and install the resolver state alongside.
+    /// This gives standalone circuit compiles the same cross-module
+    /// reach as the VM compiler's prove-block path, killing gap 2.4
+    /// in circuit mode as well.
+    ///
+    /// When the resolver auto-build fails (no source_path, unreadable
+    /// transitive imports, etc.) the legacy path runs unchanged: the
+    /// root-module's top-level fns go via `OuterScope::functions`
+    /// and the preamble imports are processed at block-walk time via
+    /// `register_module_exports`, which only sees surface-level
+    /// exports.
     pub fn compile_circuit(
         source: &str,
         source_path: Option<&Path>,
@@ -624,16 +660,31 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
 
-        // Collect top-level statements before the circuit declaration:
-        // - Imports/exports are prepended to the block (need stmt processing for module resolution)
-        // - FnDecl stmts are passed via OuterScope (registered in fn_table before compilation)
+        // Phase 3G: try to build the resolver state and dispatch
+        // maps upfront. Requires source_path so we can compute a
+        // base directory for transitive imports. Silently fails
+        // (returning None) if any step errors — the legacy path is
+        // always a valid fallback.
+        let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
+        let resolver_bundle = Self::try_build_circuit_resolver_state(&program, source_dir.clone());
+        let has_resolver_state = resolver_bundle.is_some();
+
+        // Collect top-level statements before the circuit declaration.
+        //
+        // When the resolver state built successfully, the preamble
+        // imports and top-level fns are already covered by the
+        // graph-driven pre-population below — we MUST skip them here
+        // so compile_block_stmts doesn't re-register the same
+        // entries (which would be wasted work) or, worse, produce
+        // conflicting fn_table keys via register_module_exports.
         let mut preamble_stmts: Vec<Stmt> = Vec::new();
         let mut outer_functions: Vec<Stmt> = Vec::new();
         let mut circuit_decl = None;
 
         for stmt in &program.stmts {
             match stmt {
-                Stmt::CircuitDecl { span, .. } if circuit_decl.is_none() => {
+                Stmt::CircuitDecl { .. } if circuit_decl.is_none() => {
                     circuit_decl = Some(stmt);
                 }
                 Stmt::CircuitDecl { span, .. } => {
@@ -643,13 +694,19 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     });
                 }
                 Stmt::Import { .. } | Stmt::SelectiveImport { .. } if circuit_decl.is_none() => {
-                    preamble_stmts.push(stmt.clone());
+                    if !has_resolver_state {
+                        preamble_stmts.push(stmt.clone());
+                    }
                 }
                 Stmt::FnDecl { .. } if circuit_decl.is_none() => {
-                    outer_functions.push(stmt.clone());
+                    if !has_resolver_state {
+                        outer_functions.push(stmt.clone());
+                    }
                 }
                 Stmt::Export { .. } if circuit_decl.is_none() => {
-                    preamble_stmts.push(stmt.clone());
+                    if !has_resolver_state {
+                        preamble_stmts.push(stmt.clone());
+                    }
                 }
                 _ => {}
             }
@@ -702,8 +759,31 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     }),
                 }
             }
-            // Prepend imports/exports before the circuit body (need stmt processing).
-            // Functions go via OuterScope — registered in fn_table before compilation.
+
+            // Phase 3G: if the resolver auto-build succeeded, swap
+            // the legacy outer_functions list for a graph-driven
+            // one (every transitive UserFn renamed to its fn_table
+            // key) and attach the resolver state so the ProveIR
+            // compiler's annotation path fires for dispatch.
+            let (functions_for_scope, resolver_state_for_scope) = match resolver_bundle {
+                Some(bundle) => {
+                    let graph_functions =
+                        Self::outer_functions_from_graph(&bundle.state, &bundle.dispatch_by_symbol);
+                    let state_for_scope = Some(OuterResolverState {
+                        table: std::sync::Arc::new(bundle.state.table.clone()),
+                        resolved: std::sync::Arc::new(bundle.state.resolved.clone()),
+                        root_module: bundle.state.root(),
+                        dispatch_key_by_symbol: std::sync::Arc::new(bundle.dispatch_by_symbol),
+                        module_by_dispatch_key: std::sync::Arc::new(bundle.module_by_key),
+                    });
+                    (graph_functions, state_for_scope)
+                }
+                None => (outer_functions, None),
+            };
+
+            // Prepend imports/exports before the circuit body (only
+            // when the resolver state isn't carrying them — see the
+            // `has_resolver_state` gate in the collection loop above).
             let mut all_stmts = preamble_stmts;
             all_stmts.extend(stmts);
             all_stmts.extend(body.stmts.clone());
@@ -712,11 +792,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 span: body.span.clone(),
             };
             let outer_scope = OuterScope {
-                functions: outer_functions,
+                functions: functions_for_scope,
+                resolver_state: resolver_state_for_scope,
                 ..Default::default()
             };
-            let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
             let mut prove_ir = Self::compile_with_source_dir(
                 &circuit_block,
                 &outer_scope,
@@ -734,6 +813,140 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 .into(),
             span: None,
         })
+    }
+
+    /// Phase 3G helper: attempt to build a resolver state from a
+    /// parsed circuit-file program and its source directory.
+    ///
+    /// Returns `Some(ResolverBundle)` on success or `None` on any
+    /// failure (missing source_dir, graph build error, etc.) so
+    /// `compile_circuit` can fall back to the legacy path without
+    /// surfacing resolver-level errors to the user — the legacy
+    /// path has its own error reporting via
+    /// `register_module_exports` + `compile_import`.
+    fn try_build_circuit_resolver_state(
+        program: &Program,
+        source_dir: Option<std::path::PathBuf>,
+    ) -> Option<CircuitResolverBundle> {
+        // Resolving transitive imports requires a filesystem root.
+        // Standalone circuit compiles without a source path (rare:
+        // only from in-memory API users who don't set source_path)
+        // skip the resolver state and take the legacy path.
+        source_dir.as_ref()?;
+
+        // Mirror ir::ModuleLoader's export-name flattening so
+        // register_module sees the same list the legacy loader
+        // would.
+        let exported_names: Vec<String> = program
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Export { inner, .. } => match inner.as_ref() {
+                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        // The root is served from the already-parsed program via the
+        // in-memory-root override (no re-parsing). Transitive imports
+        // fall through to the loader, which canonicalizes against
+        // source_dir via the Phase 3F adapter fix.
+        let root_path = std::path::PathBuf::from("<resolve-in-memory-root>");
+        let mut local_loader = crate::module_loader::ModuleLoader::new();
+        let mut source = crate::resolver_adapter::ModuleLoaderSource::with_root(
+            source_dir,
+            &mut local_loader,
+            root_path,
+            program.clone(),
+            exported_names,
+        );
+        let state = build_resolver_state("<resolve-in-memory-root>", &mut source).ok()?;
+        let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
+        Some(CircuitResolverBundle {
+            state,
+            dispatch_by_symbol,
+            module_by_key,
+        })
+    }
+
+    /// Phase 3G helper: walk the resolver's [`ModuleGraph`] and
+    /// build an [`OuterScope::functions`] list that covers every
+    /// transitively-reachable [`CallableKind::UserFn`], renamed to
+    /// its precomputed fn_table key so
+    /// [`compile_into_instance`]'s existing population loop just
+    /// works.
+    ///
+    /// This replaces the surface-level `register_module_exports`
+    /// mechanism the legacy `compile_circuit` path used. By walking
+    /// the graph directly we include:
+    ///
+    /// - Root-module top-level fns (under their bare name).
+    /// - Imported-module fns under their `{alias}::{name}` key.
+    /// - **Private fns** of imported modules, not just the
+    ///   `export`-marked ones. Inlined fn bodies frequently call
+    ///   same-module private helpers via bare identifiers, and
+    ///   those references resolve against the definer's scope via
+    ///   the resolver module stack that [`compile_user_fn_call`]
+    ///   maintains. Without pre-populating the private entries
+    ///   here, gap 2.4 in circuit mode would still bite the way
+    ///   it did pre-Phase-3F in prove-block mode.
+    ///
+    /// Fns whose owning module has no dispatch-map entry (i.e. the
+    /// module was selective-imported rather than aliased) are
+    /// skipped — those fall through to the legacy path unchanged.
+    fn outer_functions_from_graph(
+        state: &ResolverState,
+        dispatch_by_symbol: &HashMap<SymbolId, String>,
+    ) -> Vec<Stmt> {
+        let mut functions: Vec<Stmt> = Vec::new();
+        for (sid, kind) in state.table.iter() {
+            let (module, stmt_index) = match kind {
+                CallableKind::UserFn {
+                    module, stmt_index, ..
+                } => (*module, *stmt_index as usize),
+                _ => continue,
+            };
+            let Some(key) = dispatch_by_symbol.get(&sid).cloned() else {
+                continue;
+            };
+            let node = state.graph.get(module);
+            // stmt_index was set by register_module while walking
+            // node.program.stmts, so it's valid for the lifetime of
+            // the graph.
+            let stmt = match node.program.stmts.get(stmt_index) {
+                Some(s) => s,
+                None => continue,
+            };
+            // Unwrap `Stmt::Export { inner }` to reach the underlying
+            // FnDecl, mirroring the walk `register_module` does.
+            let inner = match stmt {
+                Stmt::Export { inner, .. } => inner.as_ref(),
+                other => other,
+            };
+            if let Stmt::FnDecl {
+                params,
+                body,
+                return_type,
+                span,
+                ..
+            } = inner
+            {
+                // Clone the FnDecl with its name replaced by the
+                // fn_table dispatch key. `compile_into_instance`'s
+                // fn_table population reads `Stmt::FnDecl.name` as
+                // the key, so the rename is load-bearing.
+                functions.push(Stmt::FnDecl {
+                    name: key,
+                    params: params.clone(),
+                    body: body.clone(),
+                    return_type: return_type.clone(),
+                    span: span.clone(),
+                });
+            }
+        }
+        functions
     }
 
     /// Convenience: parse source and compile as a prove block with outer scope.
