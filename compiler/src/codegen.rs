@@ -5,11 +5,16 @@ use crate::interner::{
     StringInterner,
 };
 use crate::module_loader::ModuleLoader;
+use crate::resolver_adapter::CompilerModuleSource;
 use crate::statements::{stmt_span, StatementCompiler};
-use achronyme_parser::ast::{Span, Stmt};
+use achronyme_parser::ast::{ExprId, Program, Span, Stmt};
 use achronyme_parser::diagnostic::SpanRange;
 use achronyme_parser::Diagnostic;
 use memory::Value;
+use resolve::{
+    annotate_program, register_all, register_builtins, BuiltinRegistry, ModuleGraph, ModuleId,
+    ResolvedProgram, SymbolId, SymbolTable,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use vm::opcode::OpCode;
@@ -95,6 +100,43 @@ pub struct Compiler {
 
     /// Prime field for ProveIR serialization. Defaults to BN254.
     pub prime_id: memory::field::PrimeId,
+
+    // ── Movimiento 2 Phase 3D: resolver shadow-dispatch ────────────
+    /// Annotation map produced by [`resolve::annotate_program`].
+    /// Populated either automatically by [`Compiler::compile`] (for
+    /// in-memory single-module programs) or manually via
+    /// [`Compiler::install_resolver_state`]. Phase 3D consults this
+    /// in `compile_ident` for observation only — it records a hit in
+    /// [`Compiler::resolver_hits`] so tests can verify the resolver
+    /// agrees with the legacy dispatch. The legacy path is
+    /// unchanged; Phase 3E wires real dispatch-via-SymbolId, and
+    /// Phase 6 removes the legacy path entirely.
+    pub resolved_program: Option<ResolvedProgram>,
+    /// Symbol table produced alongside `resolved_program`. Stored so
+    /// that hits into the annotation map can be resolved to their
+    /// [`resolve::CallableKind`] for cross-validation + future
+    /// dispatch.
+    pub resolver_symbol_table: Option<SymbolTable>,
+    /// Root [`ModuleId`] of the graph `resolved_program` belongs to.
+    /// The lookup key into
+    /// [`resolve::ResolvedProgram::annotations`] is `(module, expr_id)`;
+    /// Phase 3D only touches root-module expressions, so stashing
+    /// the id here avoids carrying the whole graph around. For
+    /// auto-built in-memory roots this is always
+    /// [`ModuleId::from_raw(0)`]; external installers pass their
+    /// own.
+    pub resolver_root_module: Option<ModuleId>,
+    /// [`ExprId`] of the expression currently being compiled, set at
+    /// the top of `compile_expr`. `compile_ident` reads this to form
+    /// the `(module, expr_id)` annotation key without threading the
+    /// id through every helper signature.
+    pub current_expr_id: Option<ExprId>,
+    /// Annotation hits recorded by `compile_ident` during a
+    /// compilation pass. Each entry is `(expr_id, symbol_id)` for an
+    /// [`Expr::Ident`](achronyme_parser::ast::Expr::Ident) whose
+    /// resolver annotation matched. Consumed by Phase 3D tests;
+    /// ignored by production code paths.
+    pub resolver_hits: Vec<(ExprId, SymbolId)>,
 }
 
 use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
@@ -254,7 +296,92 @@ impl Compiler {
             known_methods,
             fn_decl_asts: Vec::new(),
             prime_id: memory::field::PrimeId::Bn254,
+            resolved_program: None,
+            resolver_symbol_table: None,
+            resolver_root_module: None,
+            current_expr_id: None,
+            resolver_hits: Vec::new(),
         }
+    }
+
+    /// Install a pre-built resolver state. Tests and CLI flows that
+    /// want to control how the module graph is loaded can build the
+    /// [`SymbolTable`] + [`ResolvedProgram`] externally and hand them
+    /// to the compiler before calling [`Compiler::compile`].
+    ///
+    /// `root_module` is the [`ModuleId`] of the root of the graph
+    /// `program` belongs to; pass [`resolve::ModuleGraph::root`].
+    ///
+    /// Clears any previous resolver state and the hit trace.
+    pub fn install_resolver_state(
+        &mut self,
+        table: SymbolTable,
+        program: ResolvedProgram,
+        root_module: ModuleId,
+    ) {
+        self.resolver_symbol_table = Some(table);
+        self.resolved_program = Some(program);
+        self.resolver_root_module = Some(root_module);
+        self.resolver_hits.clear();
+    }
+
+    /// Build a resolver state from a single in-memory program that
+    /// has **no imports**, and install it on this compiler. Used by
+    /// [`Compiler::compile`] as the simplest integration path for
+    /// Phase 3D: programs with imports are left alone (the legacy
+    /// lazy per-import loader handles them; Phase 3E will wire a
+    /// real graph build).
+    ///
+    /// A silent no-op if the graph build or symbol-table
+    /// construction fails — Phase 3D is pure observation, so any
+    /// resolver failure must NOT break compilation.
+    fn try_auto_build_resolver_state(&mut self, program: &Program) {
+        if program_has_imports(program) {
+            return;
+        }
+        // Mirror ir::ModuleLoader's export-name flattening so
+        // register_module sees the same list the legacy loader
+        // would.
+        let exported_names: Vec<String> = program
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Export { inner, .. } => match inner.as_ref() {
+                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        // Opaque pseudo-path — the adapter's root override matches
+        // by equality against this PathBuf, nothing more.
+        let root_path = PathBuf::from("<resolve-in-memory-root>");
+        let mut local_loader = ModuleLoader::new();
+        let mut source = CompilerModuleSource::with_root(
+            self.base_path.clone(),
+            &mut local_loader,
+            root_path.clone(),
+            program.clone(),
+            exported_names,
+        );
+        let graph = match ModuleGraph::build("<resolve-in-memory-root>", &mut source) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let mut table = match SymbolTable::with_registry(BuiltinRegistry::default()) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        register_builtins(&mut table);
+        if register_all(&mut table, &graph).is_err() {
+            return;
+        }
+        let resolved = annotate_program(&graph, &table);
+        let root_module = graph.root();
+        self.resolved_program = Some(resolved);
+        self.resolver_symbol_table = Some(table);
+        self.resolver_root_module = Some(root_module);
     }
 
     /// Get the OptSpan for the current expression/statement being compiled.
@@ -488,6 +615,18 @@ impl Compiler {
             }
         }
 
+        // Movimiento 2 Phase 3D — if no resolver state was
+        // pre-installed (via `install_resolver_state`), try to build
+        // one from the parsed root. Only kicks in for single-module
+        // in-memory programs (no imports); anything more advanced
+        // stays on the legacy path until Phase 3E wires the real
+        // multi-module graph. Any failure is silent — the legacy
+        // compilation path must not regress because of a resolver
+        // hiccup.
+        if self.resolved_program.is_none() {
+            self.try_auto_build_resolver_state(&program);
+        }
+
         let mut terminated = false;
         let mut unreachable_warned = false;
         for stmt in &program.stmts {
@@ -540,6 +679,24 @@ pub(crate) fn is_terminator(stmt: &Stmt) -> bool {
         stmt,
         Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. }
     )
+}
+
+/// Returns true if a program contains any top-level `import` /
+/// `selective import`. Phase 3D skips auto-building the resolver
+/// state for programs with imports — the legacy lazy per-import
+/// loader is still authoritative, and the resolver adapter's
+/// filesystem path is deliberately unused in 3D to keep the blast
+/// radius small. Phase 3E will wire the real multi-module graph.
+fn program_has_imports(program: &Program) -> bool {
+    program.stmts.iter().any(has_import)
+}
+
+fn has_import(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Import { .. } | Stmt::SelectiveImport { .. } | Stmt::ImportCircuit { .. } => true,
+        Stmt::Export { inner, .. } => has_import(inner),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
