@@ -12,7 +12,6 @@ pub mod r1cs_backend;
 pub mod r1cs_error;
 pub mod r1cs_gadgets;
 pub mod r1cs_witness;
-pub mod resolver_adapter;
 pub mod scopes;
 pub mod statements;
 pub mod suggest;

@@ -21,10 +21,13 @@
 //! [`ResolverState`] is the "built" shape; the compiler destructures
 //! it into its own fields at install time.
 
+use std::collections::HashMap;
+
 use crate::annotate::{annotate_program, register_all, register_builtins, ResolvedProgram};
 use crate::builtins::BuiltinRegistry;
 use crate::error::ResolveError;
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleSource};
+use crate::symbol::{CallableKind, SymbolId};
 use crate::table::SymbolTable;
 
 /// The three pieces of state the resolver produces for a program.
@@ -81,4 +84,102 @@ pub fn build_resolver_state(
         resolved,
         graph,
     })
+}
+
+/// Precompute the fn_table dispatch maps from a
+/// [`SymbolTable`] + [`ModuleGraph`] for Movimiento 2 Phase 3F/3G.
+///
+/// Returns `(dispatch_by_symbol, module_by_key)`:
+///
+/// - `dispatch_by_symbol`: for every [`CallableKind::UserFn`]
+///   symbol, the fn_table key the ProveIR compiler actually uses.
+///   For root-module fns that's the bare name; for imported-module
+///   fns it's `"{alias}::{name}"` where `alias` is the string the
+///   importer chose in its `import "./..." as {alias}` statement.
+///   This matches the mangling the VM bytecode compiler applies
+///   during its recursive `fn_decl_asts` aggregation, so the
+///   ProveIR `fn_table` entries lift directly to these keys.
+///
+/// - `module_by_key`: the inverse lookup the ProveIR
+///   `compile_user_fn_call` consults to push the definer's module
+///   onto the resolver stack before inlining. Both the annotation
+///   path and the legacy StaticAccess path go through this push —
+///   gap 2.4 dies here.
+///
+/// ## Alias derivation
+///
+/// The alias for each non-root module comes from the
+/// [`ImportEdge::alias`](crate::module_graph::ImportEdge) field of
+/// the graph edge that imports it. For diamond imports (the same
+/// target imported under different aliases by different
+/// ancestors), the iteration order of [`ModuleGraph::iter`]
+/// determines last-write-wins — consistent with how the VM
+/// compiler's `fn_decl_asts` handles the same case today, so no
+/// new divergence.
+///
+/// Selective imports (`import { a, b } from "./x"`) have an empty
+/// `alias` string in their edge; their [`CallableKind::UserFn`]
+/// entries are skipped (they'd use bare names that collide with
+/// the root). Phase 3F/3G's scope is namespace imports only;
+/// selective-import symbols fall through to legacy dispatch
+/// unchanged.
+///
+/// ## Layering
+///
+/// This function lives in `resolve` because its inputs and
+/// outputs are entirely resolver types (SymbolTable, ModuleGraph,
+/// SymbolId, String). The "convention" it encodes — that
+/// non-root fn_table keys are `{alias}::{name}` — is a property
+/// of the resolver's naming model, not a compiler-specific hack.
+/// Both the VM bytecode compiler and the ProveIR compiler call
+/// this same helper.
+pub fn build_dispatch_maps(
+    table: &SymbolTable,
+    graph: &ModuleGraph,
+) -> (HashMap<SymbolId, String>, HashMap<String, ModuleId>) {
+    // Pass 1: derive ModuleId → alias by walking every namespace
+    // import edge. Empty aliases (selective imports) are skipped.
+    let mut alias_for_module: HashMap<ModuleId, String> = HashMap::new();
+    for module in graph.iter() {
+        for edge in &module.imports {
+            if !edge.alias.is_empty() {
+                alias_for_module.insert(edge.target, edge.alias.clone());
+            }
+        }
+    }
+
+    // Pass 2: for every UserFn symbol, compute its fn_table key.
+    // Entries whose owning module has no alias (selective-only
+    // imports, or pure-root modules) are omitted — dispatch for
+    // them falls through to the legacy name-based path.
+    let mut by_symbol: HashMap<SymbolId, String> = HashMap::new();
+    let mut by_key: HashMap<String, ModuleId> = HashMap::new();
+    let root_module = graph.root();
+    for (sid, kind) in table.iter() {
+        let (qualified_name, module) = match kind {
+            CallableKind::UserFn {
+                qualified_name,
+                module,
+                ..
+            } => (qualified_name, *module),
+            _ => continue,
+        };
+        // The resolver's qualified_name is either the bare name
+        // (root module) or `"mod{N}::name"` (non-root). We extract
+        // the trailing bare identifier; for root fns the rsplit
+        // returns the whole string, which is exactly what we want.
+        let bare = qualified_name.rsplit("::").next().unwrap_or(qualified_name);
+        let key = if module == root_module {
+            bare.to_string()
+        } else {
+            match alias_for_module.get(&module) {
+                Some(alias) => format!("{alias}::{bare}"),
+                None => continue,
+            }
+        };
+        by_symbol.insert(sid, key.clone());
+        by_key.insert(key, module);
+    }
+
+    (by_symbol, by_key)
 }

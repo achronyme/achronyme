@@ -1,42 +1,52 @@
-//! Compiler ↔ resolver bridge — Movimiento 2 Phase 3D.
+//! `resolve::ModuleSource` adapter backed by
+//! [`crate::module_loader::ModuleLoader`].
 //!
-//! [`CompilerModuleSource`] adapts [`ir::module_loader::ModuleLoader`]
-//! (the compiler's existing lazy module cache) to the
-//! [`resolve::module_graph::ModuleSource`] trait so the resolver pass
-//! can build a [`resolve::ModuleGraph`] without re-parsing any file
-//! the compiler already saw.
+//! Movimiento 2 Phase 3D introduced this adapter in the `compiler`
+//! crate under the name `CompilerModuleSource`. Phase 3G relocates
+//! it to the `ir` crate because its only runtime dependency
+//! ([`ModuleLoader`]) lives here, and because the standalone
+//! [`crate::prove_ir::ProveIrCompiler::compile_circuit`] entry
+//! point needs its own access to the adapter without adding a
+//! dependency on `compiler` (which would introduce a crate cycle).
+//!
+//! The type is renamed to `ModuleLoaderSource` — "compiler" in the
+//! old name referred to the VM bytecode compiler, which is no
+//! longer the exclusive consumer. The rename makes the actual
+//! dependency (a [`ModuleLoader`]) legible at the call site.
 //!
 //! ## In-memory root override
 //!
-//! The common entry point for this compiler is
-//! [`crate::codegen::Compiler::compile`], which receives a `&str`
-//! source blob directly — there is no filesystem path for the root.
-//! To keep that path alive while still exposing a
+//! [`Compiler::compile`](the VM compiler's entry point) and
+//! [`ProveIrCompiler::compile_circuit`] both receive their source
+//! as an already-parsed [`Program`] — there is no filesystem path
+//! for the root. To keep that path alive while still exposing a
 //! [`resolve::ModuleGraph`] rooted at the in-memory program, the
 //! adapter supports a **root override**: the caller hands over the
-//! already-parsed [`Program`] + exported names + a pseudo-canonical
-//! path, and the first `canonicalize(None, …)` / matching `load` pair
-//! returns the override instead of touching disk. Any subsequent
-//! transitive imports fall through to the real loader.
+//! already-parsed program + exported names + a pseudo-canonical
+//! path, and the first `canonicalize(None, …)` / matching `load`
+//! pair returns the override instead of touching disk. Any
+//! subsequent transitive imports fall through to the real loader.
 //!
-//! The override is cheap in expected use: the program is cloned once
-//! when handed to the graph, and the adapter exists only for the
-//! duration of the `ModuleGraph::build` call.
+//! The override is cheap in expected use: the program is cloned
+//! once when handed to the graph, and the adapter exists only for
+//! the duration of the [`resolve::ModuleGraph::build`] call.
 
 use std::path::{Path, PathBuf};
 
 use achronyme_parser::ast::Program;
-use ir::module_loader::ModuleLoader;
 use resolve::module_graph::{LoadedModule, ModuleSource};
 
+use crate::module_loader::ModuleLoader;
+
 /// [`ModuleSource`] implementation that layers an optional in-memory
-/// root on top of [`ir::module_loader::ModuleLoader`].
+/// root on top of [`ModuleLoader`].
 ///
 /// See the module docs for the "root override" rationale. When the
 /// root override is absent, every call delegates to the loader, so
-/// this is also a valid shape for filesystem-rooted compiles once a
-/// future phase plumbs through the root's canonical path.
-pub struct CompilerModuleSource<'a> {
+/// this is also a valid shape for filesystem-rooted compiles that
+/// hand the root's canonical path directly to
+/// [`resolve::ModuleGraph::build`].
+pub struct ModuleLoaderSource<'a> {
     /// Fallback base directory used when canonicalizing a relative
     /// path whose importer has no parent directory (the
     /// in-memory-root case).
@@ -58,12 +68,12 @@ struct RootOverride {
     /// Already-parsed root AST.
     program: Program,
     /// Top-level `export fn` / `export let` names. Mirrors the
-    /// contract [`ir::module_loader::ModuleLoader::load`] exposes so
-    /// the resolver's `register_module` pass sees the same shape.
+    /// contract [`crate::module_loader::ModuleLoader::load`] exposes
+    /// so the resolver's `register_module` pass sees the same shape.
     exported_names: Vec<String>,
 }
 
-impl<'a> CompilerModuleSource<'a> {
+impl<'a> ModuleLoaderSource<'a> {
     /// Construct without an in-memory root — every `canonicalize` /
     /// `load` call hits the loader.
     pub fn new(base_path: Option<PathBuf>, loader: &'a mut ModuleLoader) -> Self {
@@ -77,7 +87,8 @@ impl<'a> CompilerModuleSource<'a> {
     /// Construct with an in-memory root override. `canonical` is the
     /// pseudo-path that the graph builder will see for the root
     /// module; `program` is the already-parsed AST; `exported_names`
-    /// mirrors the contract of [`ir::module_loader::ModuleExports`].
+    /// mirrors the contract of
+    /// [`crate::module_loader::ModuleExports`].
     pub fn with_root(
         base_path: Option<PathBuf>,
         loader: &'a mut ModuleLoader,
@@ -97,7 +108,7 @@ impl<'a> CompilerModuleSource<'a> {
     }
 }
 
-impl<'a> ModuleSource for CompilerModuleSource<'a> {
+impl<'a> ModuleSource for ModuleLoaderSource<'a> {
     fn canonicalize(&mut self, importer: Option<&Path>, relative: &str) -> Result<PathBuf, String> {
         // Root canonicalization short-circuits when an in-memory
         // override is installed. The graph builder only ever passes
@@ -112,7 +123,7 @@ impl<'a> ModuleSource for CompilerModuleSource<'a> {
         // with `importer = Some(<resolve-in-memory-root>)`. That
         // pseudo-path has no real filesystem parent, so we substitute
         // `self.base_path` as the base directory for resolving
-        // `relative`. This is the only way `compile(&source)` compiles
+        // `relative`. This is the only way in-memory-rooted compiles
         // can walk a multi-module import graph without a real root
         // file on disk.
         let is_in_memory_root = match (&self.root_override, importer) {

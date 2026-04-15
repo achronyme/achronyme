@@ -5,15 +5,14 @@ use crate::interner::{
     StringInterner,
 };
 use crate::module_loader::ModuleLoader;
-use crate::resolver_adapter::CompilerModuleSource;
 use crate::statements::{stmt_span, StatementCompiler};
 use achronyme_parser::ast::{ExprId, Program, Span, Stmt};
 use achronyme_parser::diagnostic::SpanRange;
 use achronyme_parser::Diagnostic;
+use ir::resolver_adapter::ModuleLoaderSource;
 use memory::Value;
 use resolve::{
-    build_resolver_state, CallableKind, ModuleGraph, ModuleId, ResolvedProgram, SymbolId,
-    SymbolTable,
+    build_dispatch_maps, build_resolver_state, ModuleId, ResolvedProgram, SymbolId, SymbolTable,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -407,7 +406,7 @@ impl Compiler {
         // memory; only transitive imports touch the filesystem.
         let root_path = PathBuf::from("<resolve-in-memory-root>");
         let mut local_loader = ModuleLoader::new();
-        let mut source = CompilerModuleSource::with_root(
+        let mut source = ModuleLoaderSource::with_root(
             self.base_path.clone(),
             &mut local_loader,
             root_path,
@@ -727,95 +726,6 @@ pub(crate) fn is_terminator(stmt: &Stmt) -> bool {
         stmt,
         Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. }
     )
-}
-
-/// Precompute the Phase 3F fn_table dispatch maps from the
-/// resolver's [`SymbolTable`] + [`ModuleGraph`]. The caller
-/// (`try_auto_build_resolver_state`) runs this once per compile
-/// and forwards both maps to the ProveIR compiler via
-/// [`ir::prove_ir::OuterResolverState`].
-///
-/// Returns `(dispatch_by_symbol, module_by_key)`:
-///
-/// - `dispatch_by_symbol`: for every [`CallableKind::UserFn`]
-///   symbol, the fn_table key the ProveIR compiler actually uses.
-///   For root-module fns that's the bare name; for imported-module
-///   fns it's `"{alias}::{name}"` where `alias` is the string the
-///   importer chose in its `import "./..." as {alias}` statement.
-///   This matches the mangling [`fn_decl_asts`] aggregation does
-///   via [`Compiler::module_prefix`] during recursive compiles, so
-///   the ProveIR `fn_table` entries lift directly to these keys.
-///
-/// - `module_by_key`: the inverse lookup the ProveIR
-///   `compile_user_fn_call` consults to push the definer's module
-///   onto the resolver stack before inlining. Both the annotation
-///   path and the legacy StaticAccess path go through this push —
-///   gap 2.4 dies here.
-///
-/// ## Alias derivation
-///
-/// The alias for each non-root module comes from the
-/// [`resolve::ImportEdge::alias`] field of the graph edge that
-/// imports it. For diamond imports (the same target imported under
-/// different aliases by different ancestors), the iteration order
-/// of `graph.iter()` determines last-write-wins — consistent with
-/// how `fn_decl_asts` handles the same case today, so no new
-/// divergence.
-///
-/// Selective imports (`import { a, b } from "./x"`) have an empty
-/// `alias` string in their edge; their UserFn entries are skipped
-/// here (they'd use bare names that collide with the root). Phase
-/// 3F's scope is namespace imports only; selective-import symbols
-/// fall through to legacy dispatch unchanged.
-fn build_dispatch_maps(
-    table: &SymbolTable,
-    graph: &ModuleGraph,
-) -> (HashMap<SymbolId, String>, HashMap<String, ModuleId>) {
-    // Pass 1: derive ModuleId → alias by walking every namespace
-    // import edge. Empty aliases (selective imports) are skipped.
-    let mut alias_for_module: HashMap<ModuleId, String> = HashMap::new();
-    for module in graph.iter() {
-        for edge in &module.imports {
-            if !edge.alias.is_empty() {
-                alias_for_module.insert(edge.target, edge.alias.clone());
-            }
-        }
-    }
-
-    // Pass 2: for every UserFn symbol, compute its fn_table key.
-    // Entries whose owning module has no alias (selective-only
-    // imports, or pure-root modules) are omitted — dispatch for
-    // them falls through to the legacy name-based path.
-    let mut by_symbol: HashMap<SymbolId, String> = HashMap::new();
-    let mut by_key: HashMap<String, ModuleId> = HashMap::new();
-    let root_module = graph.root();
-    for (sid, kind) in table.iter() {
-        let (qualified_name, module) = match kind {
-            CallableKind::UserFn {
-                qualified_name,
-                module,
-                ..
-            } => (qualified_name, *module),
-            _ => continue,
-        };
-        // The resolver's qualified_name is either the bare name
-        // (root module) or `"mod{N}::name"` (non-root). We extract
-        // the trailing bare identifier; for root fns the rsplit
-        // returns the whole string, which is exactly what we want.
-        let bare = qualified_name.rsplit("::").next().unwrap_or(qualified_name);
-        let key = if module == root_module {
-            bare.to_string()
-        } else {
-            match alias_for_module.get(&module) {
-                Some(alias) => format!("{alias}::{bare}"),
-                None => continue,
-            }
-        };
-        by_symbol.insert(sid, key.clone());
-        by_key.insert(key, module);
-    }
-
-    (by_symbol, by_key)
 }
 
 /// Returns true if a program contains any top-level `import` /
