@@ -95,6 +95,26 @@ pub struct OuterResolverState {
     pub resolved: std::sync::Arc<ResolvedProgram>,
     /// Root module id in the graph the annotations were built for.
     pub root_module: ModuleId,
+    /// Phase 3F: precomputed map from [`SymbolId`] to the fn_table
+    /// key the ProveIR compiler uses. Built once at auto-build
+    /// time by walking the resolver's [`SymbolTable`] + module
+    /// graph edges (see `compiler::build_dispatch_maps`).
+    /// Consumed by [`resolve_dispatch_via_annotation`] to translate
+    /// resolved user-fn annotations into fn_table lookups without
+    /// parsing the resolver's name-mangling convention at dispatch
+    /// time. Empty when the compile had no multi-module state —
+    /// e.g. single-module programs whose only user fns are root
+    /// and need no alias prefix.
+    pub dispatch_key_by_symbol: std::sync::Arc<HashMap<SymbolId, String>>,
+    /// Phase 3F inverse of [`dispatch_key_by_symbol`]: fn_table key
+    /// to the owning [`ModuleId`]. Consumed by
+    /// [`ProveIrCompiler::compile_user_fn_call`] to push the
+    /// definer's module onto the resolver stack before inlining
+    /// the body — the structural half of the gap 2.4 fix. Both
+    /// the annotation path and the legacy StaticAccess path go
+    /// through this, so every inlined body correctly resolves
+    /// bare identifiers against the definer's scope.
+    pub module_by_dispatch_key: std::sync::Arc<HashMap<String, ModuleId>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,15 +136,13 @@ struct FnDef {
 /// [`ProveIrCompiler::resolve_dispatch_via_annotation`] — see that
 /// method for the semantics of each variant. Phase 3E.2 consults
 /// this outcome in [`compile_named_call`] before reaching for the
-/// legacy `lower_builtin`/`fn_table` lookup.
+/// legacy `lower_builtin`/`fn_table` lookup. Phase 3F removed the
+/// `module` field from `UserFn` in favour of threading module
+/// tracking through [`ProveIrCompiler::compile_user_fn_call`],
+/// which consults `resolver_module_by_key` directly.
 enum DispatchDecision {
-    Builtin {
-        name: String,
-    },
-    UserFn {
-        qualified_name: String,
-        module: ModuleId,
-    },
+    Builtin { name: String },
+    UserFn { qualified_name: String },
     NoAnnotation,
 }
 
@@ -182,15 +200,29 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     resolver_root_module: Option<ModuleId>,
     /// Stack of module ids that should override
     /// [`resolver_root_module`] while walking inlined user-fn
-    /// bodies. Phase 3E.3 structural fix for gap 2.4: every
-    /// [`compile_user_fn_call`] that lands through the annotation
-    /// path pushes the definer's [`ModuleId`] before compiling the
-    /// body and pops on exit. Legacy-path user-fn calls do NOT
-    /// push — in 3E.3 their inlined body is still resolved against
-    /// the caller's scope, which is the pre-existing behavior.
-    /// Phase 6 can remove the split once every dispatch site goes
-    /// through the annotation path.
+    /// bodies. Phase 3E.3 / 3F structural fix for gap 2.4: every
+    /// [`compile_user_fn_call`] looks up its fn_table key in
+    /// [`resolver_module_by_key`] and, if present, pushes the
+    /// discovered [`ModuleId`] before compiling the inlined body
+    /// and pops on exit. The stack top is consulted by every
+    /// annotation lookup during the walk so that bare identifiers
+    /// inside the inlined body resolve against the definer's
+    /// scope, not the caller's.
     resolver_module_stack: Vec<ModuleId>,
+    /// Phase 3F: precomputed `SymbolId → fn_table key` map. Forwarded
+    /// from [`OuterResolverState::dispatch_key_by_symbol`] via
+    /// [`OuterScope::resolver_state`]. Consumed by
+    /// [`resolve_dispatch_via_annotation`] to translate a resolved
+    /// user-fn annotation into the fn_table key without parsing
+    /// the resolver's name-mangling convention at each call site.
+    resolver_dispatch_by_symbol: Option<std::sync::Arc<HashMap<SymbolId, String>>>,
+    /// Phase 3F: precomputed `fn_table key → owning ModuleId` map.
+    /// Consumed by [`compile_user_fn_call`] to push the definer's
+    /// module onto [`resolver_module_stack`] before inlining. The
+    /// push/pop is unified at the inlining site so both the
+    /// annotation dispatch path and the legacy StaticAccess path
+    /// correctly maintain the stack.
+    resolver_module_by_key: Option<std::sync::Arc<HashMap<String, ModuleId>>>,
     /// Phase 3E shadow hit trace: every `(module_id, expr_id)` the
     /// annotation table resolved to a [`SymbolId`] during the walk.
     /// Populated by [`record_resolver_hit`]; consumed by tests
@@ -227,6 +259,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             resolver_resolved: None,
             resolver_root_module: None,
             resolver_module_stack: Vec::new(),
+            resolver_dispatch_by_symbol: None,
+            resolver_module_by_key: None,
             resolver_hits: Vec::new(),
             current_expr_id: None,
             _field: PhantomData,
@@ -344,18 +378,31 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     name: entry.name.to_string(),
                 })
                 .unwrap_or(DispatchDecision::NoAnnotation),
-            CallableKind::UserFn {
-                qualified_name,
-                module,
-                ..
-            } => DispatchDecision::UserFn {
-                qualified_name: qualified_name.clone(),
-                module: *module,
-            },
+            CallableKind::UserFn { .. } => {
+                // Phase 3F: translate the SymbolId to its fn_table
+                // key via the precomputed dispatch map. The map is
+                // derived from the resolver's SymbolTable +
+                // ModuleGraph at auto-build time (see
+                // `compiler::build_dispatch_maps`), so this lookup
+                // is O(1) with no string parsing of the resolver's
+                // name-mangling convention. Missing entries fall
+                // through to legacy — happens for symbols whose
+                // owning module wasn't imported under an alias
+                // (selective imports, pure-root), which the legacy
+                // name-based path already handles.
+                match self
+                    .resolver_dispatch_by_symbol
+                    .as_ref()
+                    .and_then(|m| m.get(&sid).cloned())
+                {
+                    Some(qualified_name) => DispatchDecision::UserFn { qualified_name },
+                    None => DispatchDecision::NoAnnotation,
+                }
+            }
             // Constants, circom templates, and stray FnAlias (can't
             // happen after `resolve_alias` — it either terminates at
             // a non-alias or errors out) are not dispatchable from a
-            // Call site in Phase 3E. Fall back to legacy so the
+            // Call site in Phase 3E/3F. Fall back to legacy so the
             // compiler's existing error paths run.
             _ => DispatchDecision::NoAnnotation,
         }
@@ -520,14 +567,17 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiler.circom_table.insert(key.clone(), callable.clone());
         }
 
-        // Phase 3E.1: install the caller-built resolver state (if any)
-        // so shadow dispatch can record annotation hits during the
-        // walk. This is pure observation — legacy env/fn_table lookups
-        // remain authoritative. Phase 3E.2/3 will flip the dispatch.
+        // Phase 3E.1 / 3F: install the caller-built resolver state
+        // and the precomputed dispatch maps. The resolver_table +
+        // resolved_program drive annotation-lookup; the two
+        // dispatch maps drive fn_table key translation + module
+        // stack push/pop in compile_user_fn_call.
         if let Some(state) = &outer_scope.resolver_state {
             compiler.resolver_table = Some(state.table.clone());
             compiler.resolver_resolved = Some(state.resolved.clone());
             compiler.resolver_root_module = Some(state.root_module);
+            compiler.resolver_dispatch_by_symbol = Some(state.dispatch_key_by_symbol.clone());
+            compiler.resolver_module_by_key = Some(state.module_by_dispatch_key.clone());
         }
 
         // Compile all statements in the block
@@ -1889,8 +1939,39 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // older `alias.func()` DotAccess form is still accepted
             // below for a transition period.
             Expr::StaticAccess {
-                type_name, member, ..
+                type_name,
+                member,
+                id: static_id,
+                ..
             } => {
+                // Phase 3F: try annotation-driven dispatch first so
+                // cross-module calls via `alias::name` also push
+                // the definer's module onto the resolver stack via
+                // `compile_user_fn_call` — this is what kills gap
+                // 2.4 for the `a → b::middle → helper` scenario
+                // (helper is a bare identifier inside middle's
+                // inlined body and resolves against mod_B, not
+                // against a's root module).
+                //
+                // `compile_expr` set `current_expr_id` to the
+                // Call's id when it dispatched here; we temporarily
+                // override it with the StaticAccess's own id so
+                // the annotation lookup keys correctly, then
+                // restore it afterwards.
+                let saved_expr_id = self.current_expr_id;
+                self.current_expr_id = Some(*static_id);
+                let annotation_result = self.try_annotation_dispatch(*static_id, args, span);
+                self.current_expr_id = saved_expr_id;
+                match annotation_result {
+                    Ok(Some(expr)) => return Ok(expr),
+                    Ok(None) => {}
+                    Err(e) => return Err(e),
+                }
+
+                // Legacy name-based lookup. `compile_user_fn_call`
+                // still maintains the resolver module stack via
+                // `resolver_module_by_key`, so the stack discipline
+                // holds even on this fallback path.
                 let qualified = format!("{type_name}::{member}");
                 if self.has_function(&qualified) {
                     return self.compile_user_fn_call(&qualified, args, span);
@@ -2511,18 +2592,83 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(true)
     }
 
+    /// Attempt annotation-driven dispatch for a call site.
+    ///
+    /// Shared helper consumed by both [`compile_named_call`] (for
+    /// bare-ident callees) and the `StaticAccess` arm of
+    /// [`compile_call`] (for `alias::name` callees). Returns:
+    ///
+    /// - `Ok(Some(expr))` — the annotation path handled the call
+    ///   fully and produced a [`CircuitExpr`]. The caller returns
+    ///   this immediately.
+    /// - `Ok(None)` — the annotation path declined (no annotation,
+    ///   unresolved dispatch map, or the annotated fn_table key
+    ///   isn't in `fn_table`). The caller falls through to the
+    ///   legacy name-based dispatch.
+    /// - `Err(e)` — the annotation path matched a dispatch site but
+    ///   the downstream compile errored (builtin arity mismatch,
+    ///   fn body compile failure, etc.).
+    ///
+    /// Module-stack push/pop for inlined user fn bodies lives in
+    /// [`compile_user_fn_call`] itself — this helper only selects
+    /// the dispatch arm.
+    fn try_annotation_dispatch(
+        &mut self,
+        callee_expr_id: ExprId,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<Option<CircuitExpr>, ProveIrError> {
+        match self.resolve_dispatch_via_annotation(callee_expr_id) {
+            DispatchDecision::Builtin { name: builtin_name } => {
+                // Builtin dispatch flows through `lower_builtin`
+                // using the resolver-verified canonical name. For
+                // alias flows (`let hash = poseidon; hash(a,b)`)
+                // this picks the builtin even though the parser's
+                // raw name was `hash` — a capability the legacy
+                // path never supported.
+                //
+                // `lower_builtin` returning `Ok(None)` means its
+                // hardcoded match lacks an arm for this name; we
+                // propagate the `None` so the caller falls through
+                // to the legacy path with the raw parser name.
+                self.lower_builtin(&builtin_name, args, span)
+            }
+            DispatchDecision::UserFn { qualified_name } => {
+                // Phase 3F: the dispatch map already translated the
+                // SymbolId to the correct fn_table key. If the key
+                // isn't in `fn_table` we fall through to legacy —
+                // happens when a symbol is known to the resolver
+                // but not registered in this specific prove block's
+                // OuterScope (e.g. prove-block-local imports that
+                // the auto-build never saw).
+                if !self.has_function(&qualified_name) {
+                    return Ok(None);
+                }
+                // Stack push/pop for the inlined body lives inside
+                // `compile_user_fn_call` — it consults
+                // `resolver_module_by_key` to discover the definer's
+                // module, so both the annotation path and the
+                // legacy path maintain the stack uniformly.
+                self.compile_user_fn_call(&qualified_name, args, span)
+                    .map(Some)
+            }
+            DispatchDecision::NoAnnotation => {
+                // Record a shadow hit for symmetry with Phase 3E.1
+                // — the annotation map may still have an entry
+                // (Constant in call position, etc.) that the
+                // dispatch helper rejected. The hit trace still
+                // reflects what the resolver saw at this call site.
+                self.record_resolver_hit_for(callee_expr_id);
+                Ok(None)
+            }
+        }
+    }
+
     /// Compile a named function or builtin call.
     ///
-    /// Movimiento 2 Phase 3E.2 — real annotation-driven dispatch.
-    /// The resolver pass has already attached a `SymbolId` to the
-    /// callee Ident; we consult that first and use the resolved
-    /// symbol's [`CallableKind`] to pick the dispatch arm. When the
-    /// resolver state is absent, the annotation map has no entry
-    /// for this callee, or the symbol isn't dispatchable from a
-    /// call site, we fall back to the legacy name-based path
-    /// (`lower_builtin` then `fn_table`). The fallback keeps
-    /// multi-module programs compiling until Phase 3F extends the
-    /// auto-build to walk import graphs.
+    /// Movimiento 2 Phase 3E.2 / 3F — annotation-driven dispatch
+    /// delegates to [`try_annotation_dispatch`] and falls back to
+    /// the legacy name-based path if the annotation path declines.
     fn compile_named_call(
         &mut self,
         name: &str,
@@ -2533,87 +2679,20 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // callee Ident. `current_expr_id` was overridden with the
         // Ident's ExprId by `compile_call`'s Ident arm.
         if let Some(expr_id) = self.current_expr_id {
-            match self.resolve_dispatch_via_annotation(expr_id) {
-                DispatchDecision::Builtin { name: builtin_name } => {
-                    // Builtin dispatch flows through `lower_builtin`
-                    // using the resolver-verified canonical name.
-                    // In single-module single-word programs this is
-                    // the same string the parser handed us, but for
-                    // alias flows like `let hash = poseidon; hash(a,b)`
-                    // it's the alias target — gives us aliases for
-                    // free, which the legacy path never supported.
-                    if let Some(expr) = self.lower_builtin(&builtin_name, args, span)? {
-                        return Ok(expr);
-                    }
-                    // Registry said Builtin but lower_builtin didn't
-                    // recognise the name. This is a resolver/ProveIR
-                    // divergence (the builtin is registered as
-                    // `Availability::ProveIr`-available but the match
-                    // below doesn't have an arm). Fall through to
-                    // legacy with the same name — the debug-mode
-                    // cross-validator in `lower_builtin` will catch
-                    // the drift on the next run.
-                }
-                DispatchDecision::UserFn {
-                    qualified_name,
-                    module,
-                } => {
-                    // Defensive: the resolver's `qualified_name` uses
-                    // the canonical `modN::name` form for non-root
-                    // modules, but the ProveIR `fn_table` is keyed by
-                    // the user's alias (e.g. `b::name`) via the
-                    // VM compiler's `fn_decl_asts` aggregation. Until
-                    // a future phase adds a ModuleId→alias translation
-                    // map (see the Option A decision logged in the
-                    // Phase 3E plan), we only take the annotation path
-                    // when the resolver's name is already present in
-                    // the fn_table. Otherwise we fall through to the
-                    // legacy name-based path, which uses the original
-                    // parsed `name` and matches the alias-keyed entry.
-                    //
-                    // In single-module programs the qualified name IS
-                    // the bare fn name (root module prefix is empty),
-                    // so this check always succeeds and the flip takes
-                    // effect.
-                    if self.has_function(&qualified_name) {
-                        // Push the definer's module so the inlined
-                        // body's annotations resolve against the
-                        // definer's scope — Phase 3E.3 structural
-                        // plumbing for gap 2.4. In single-module
-                        // programs the pushed id is the same as the
-                        // root, so the push/pop is observably a
-                        // no-op.
-                        self.resolver_module_stack.push(module);
-                        let result = self.compile_user_fn_call(&qualified_name, args, span);
-                        self.resolver_module_stack.pop();
-                        return result;
-                    }
-                }
-                DispatchDecision::NoAnnotation => {
-                    // Legacy fallback below. Still record a shadow
-                    // hit for symmetry with Phase 3E.1 — if the
-                    // annotation map DOES have an entry but the
-                    // dispatch helper rejected it (e.g., a Constant
-                    // in call position), we still want the trace to
-                    // reflect what the resolver saw.
-                    self.record_resolver_hit_for(expr_id);
-                }
+            if let Some(expr) = self.try_annotation_dispatch(expr_id, args, span)? {
+                return Ok(expr);
             }
         } else {
-            // No current_expr_id — synthetic call or similar. Record
-            // the best-effort shadow hit (no-op in practice since the
-            // hook keys off current_expr_id internally).
+            // No current_expr_id — synthetic call or similar. The
+            // shadow hook keys off current_expr_id internally, so
+            // this is a no-op in practice; the call records
+            // nothing for synthetic invocations.
             self.record_resolver_hit();
         }
 
-        // Legacy dispatch path.
-        //
-        // Movimiento 2 — Phase 0: builtin dispatch is extracted into a
-        // dedicated `lower_builtin` helper so later phases can redirect it
-        // to the shared `BuiltinRegistry` without touching every call site.
-        // Semantics are unchanged: `lower_builtin` returns `Ok(None)` when
-        // the name is not a recognised builtin, in which case we fall
-        // through to user-fn inlining exactly as before.
+        // Legacy dispatch path. `lower_builtin` returning `Ok(None)`
+        // means the name isn't a recognised builtin; fall through
+        // to user-fn inlining exactly as before.
         if let Some(expr) = self.lower_builtin(name, args, span)? {
             return Ok(expr);
         }
@@ -3434,6 +3513,38 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
         self.call_stack.insert(name.to_string());
 
+        // Phase 3F — gap 2.4 structural fix: push the definer's
+        // module onto the resolver module stack before compiling the
+        // inlined body. Both the annotation-driven dispatch path and
+        // the legacy name-based path (StaticAccess arm,
+        // compile_named_call legacy fallback) land here, so all
+        // inlined bodies consistently resolve bare identifiers
+        // against their definer's scope.
+        //
+        // The lookup keys off `resolver_module_by_key` (precomputed
+        // at auto-build time from the SymbolTable + ModuleGraph). A
+        // missing entry means either:
+        //   (a) the resolver state isn't installed — no dispatch map
+        //       exists, nothing to push, dispatch behaves exactly as
+        //       pre-Phase-3E.
+        //   (b) the resolver state exists but this fn was registered
+        //       through a prove-block-local `import` stmt (bypasses
+        //       the auto-build) — legacy behavior, caller's module
+        //       wins for annotation lookups inside the body.
+        //
+        // In both cases we skip the push and fall back to the
+        // previous behavior. `module_pushed` records whether we
+        // pushed so the matching pop is paired.
+        let module_pushed = self
+            .resolver_module_by_key
+            .as_ref()
+            .and_then(|m| m.get(name).copied())
+            .map(|module| {
+                self.resolver_module_stack.push(module);
+                true
+            })
+            .unwrap_or(false);
+
         // Save env for param names (+ array element names) and bind args
         let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
 
@@ -3498,6 +3609,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     self.env.remove(&p);
                 }
             }
+        }
+
+        // Phase 3F: pop the definer's module we pushed above.
+        // Paired with the push so the stack stays balanced across
+        // nested inlinings. Only executes when we actually pushed —
+        // see the `module_pushed` discussion above.
+        if module_pushed {
+            self.resolver_module_stack.pop();
         }
 
         self.call_stack.remove(name);
