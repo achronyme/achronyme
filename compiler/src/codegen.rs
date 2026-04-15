@@ -11,9 +11,13 @@ use achronyme_parser::ast::{ExprId, Program, Span, Stmt};
 use achronyme_parser::diagnostic::SpanRange;
 use achronyme_parser::Diagnostic;
 use memory::Value;
-use resolve::{build_resolver_state, ModuleId, ResolvedProgram, SymbolId, SymbolTable};
+use resolve::{
+    build_resolver_state, CallableKind, ModuleGraph, ModuleId, ResolvedProgram, SymbolId,
+    SymbolTable,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use vm::opcode::OpCode;
 
 /// The main compiler orchestrator
@@ -134,6 +138,23 @@ pub struct Compiler {
     /// resolver annotation matched. Consumed by Phase 3D tests;
     /// ignored by production code paths.
     pub resolver_hits: Vec<(ExprId, SymbolId)>,
+    // ── Movimiento 2 Phase 3F: multi-module dispatch maps ──────────
+    /// Precomputed translation from [`SymbolId`] to the fn_table
+    /// key the ProveIR compiler uses. Derived at auto-build time
+    /// from the resolver's [`SymbolTable`] + [`ModuleGraph`] import
+    /// edges — see [`build_dispatch_maps`]. `None` when resolver
+    /// state isn't installed. Shared with ProveIR per prove block
+    /// via [`OuterResolverState::dispatch_key_by_symbol`].
+    ///
+    /// The `Arc` indirection makes per-prove-block hand-off free
+    /// (cloning `Arc` is a refcount bump, not a `HashMap` copy).
+    pub resolver_dispatch_by_symbol: Option<Arc<HashMap<SymbolId, String>>>,
+    /// Inverse of [`resolver_dispatch_by_symbol`]: fn_table key to
+    /// the owning [`ModuleId`]. Consumed by
+    /// [`ir::prove_ir::ProveIrCompiler::compile_user_fn_call`] to
+    /// push the definer's module onto the resolver stack before
+    /// inlining — the structural half of the gap 2.4 fix.
+    pub resolver_module_by_key: Option<Arc<HashMap<String, ModuleId>>>,
 }
 
 use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
@@ -298,6 +319,8 @@ impl Compiler {
             resolver_root_module: None,
             current_expr_id: None,
             resolver_hits: Vec::new(),
+            resolver_dispatch_by_symbol: None,
+            resolver_module_by_key: None,
         }
     }
 
@@ -309,7 +332,11 @@ impl Compiler {
     /// `root_module` is the [`ModuleId`] of the root of the graph
     /// `program` belongs to; pass [`resolve::ModuleGraph::root`].
     ///
-    /// Clears any previous resolver state and the hit trace.
+    /// Clears any previous resolver state and the hit trace. Does
+    /// NOT populate the Phase 3F dispatch maps — external installers
+    /// that care about cross-module dispatch must either build the
+    /// maps themselves or use the [`Compiler::compile`] auto-build
+    /// path, which derives them from the graph.
     pub fn install_resolver_state(
         &mut self,
         table: SymbolTable,
@@ -320,26 +347,45 @@ impl Compiler {
         self.resolved_program = Some(program);
         self.resolver_root_module = Some(root_module);
         self.resolver_hits.clear();
+        self.resolver_dispatch_by_symbol = None;
+        self.resolver_module_by_key = None;
     }
 
-    /// Build a resolver state from a single in-memory program that
-    /// has **no imports**, and install it on this compiler. Used by
-    /// [`Compiler::compile`] as the simplest integration path for
-    /// Phase 3D/3E: programs with imports are left alone (the legacy
-    /// lazy per-import loader handles them; a later phase will wire a
-    /// real graph build).
+    /// Build a resolver state for the current program and install it
+    /// on this compiler. Used by [`Compiler::compile`] as the bridge
+    /// between the legacy dispatch path and the resolver-driven one.
     ///
-    /// The actual build sequence (graph → table → annotate) lives in
-    /// [`resolve::build_resolver_state`] so both this compiler and
-    /// the ProveIR compiler share the same entry point.
+    /// ## Multi-module policy (Phase 3F)
     ///
-    /// A silent no-op if the graph build or symbol-table
-    /// construction fails — shadow dispatch is pure observation, so
-    /// any resolver failure must NOT break compilation.
+    /// - Single-module programs (no imports) always go through the
+    ///   in-memory-root override: the adapter serves the already
+    ///   parsed [`Program`] to the graph builder without re-parsing.
+    /// - Multi-module programs build the full import graph when
+    ///   `self.base_path` is set — the adapter's in-memory-root fix
+    ///   lets the graph builder resolve transitive `./x.ach`
+    ///   imports against `base_path`. Without a `base_path` (typical
+    ///   for in-memory tests), multi-module compiles silently skip
+    ///   the auto-build, falling back to the legacy `fn_decl_asts`
+    ///   aggregation.
+    ///
+    /// On success, this also precomputes the Phase 3F fn_table
+    /// dispatch maps via [`build_dispatch_maps`] so the ProveIR
+    /// compiler can translate `SymbolId → fn_table key` and
+    /// `fn_table key → ModuleId` without re-parsing resolver
+    /// conventions at every call site.
+    ///
+    /// A silent no-op if any step fails — the resolver state is an
+    /// optimisation path, not a correctness requirement, so a
+    /// resolver failure must NOT break compilation.
     fn try_auto_build_resolver_state(&mut self, program: &Program) {
-        if program_has_imports(program) {
+        // Multi-module programs without base_path can't resolve
+        // transitive imports — the adapter would fail to
+        // canonicalize `./foo.ach` against an empty base. Skip in
+        // that case; legacy path still works.
+        if program_has_imports(program) && self.base_path.is_none() {
             return;
         }
+
         // Mirror ir::ModuleLoader's export-name flattening so
         // register_module sees the same list the legacy loader
         // would.
@@ -356,7 +402,9 @@ impl Compiler {
             .collect();
 
         // Opaque pseudo-path — the adapter's root override matches
-        // by equality against this PathBuf, nothing more.
+        // by equality against this PathBuf, nothing more. Even in
+        // the multi-module case, the root itself is served from
+        // memory; only transitive imports touch the filesystem.
         let root_path = PathBuf::from("<resolve-in-memory-root>");
         let mut local_loader = ModuleLoader::new();
         let mut source = CompilerModuleSource::with_root(
@@ -369,10 +417,19 @@ impl Compiler {
         let Ok(state) = build_resolver_state("<resolve-in-memory-root>", &mut source) else {
             return;
         };
+
+        // Phase 3F: precompute the fn_table dispatch maps from the
+        // SymbolTable + ModuleGraph. Both maps are Arc-shared so
+        // per-prove-block handoff into `OuterResolverState` is a
+        // refcount bump rather than a HashMap clone.
+        let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
+
         let root_module = state.root();
         self.resolved_program = Some(state.resolved);
         self.resolver_symbol_table = Some(state.table);
         self.resolver_root_module = Some(root_module);
+        self.resolver_dispatch_by_symbol = Some(Arc::new(dispatch_by_symbol));
+        self.resolver_module_by_key = Some(Arc::new(module_by_key));
     }
 
     /// Get the OptSpan for the current expression/statement being compiled.
@@ -672,12 +729,101 @@ pub(crate) fn is_terminator(stmt: &Stmt) -> bool {
     )
 }
 
+/// Precompute the Phase 3F fn_table dispatch maps from the
+/// resolver's [`SymbolTable`] + [`ModuleGraph`]. The caller
+/// (`try_auto_build_resolver_state`) runs this once per compile
+/// and forwards both maps to the ProveIR compiler via
+/// [`ir::prove_ir::OuterResolverState`].
+///
+/// Returns `(dispatch_by_symbol, module_by_key)`:
+///
+/// - `dispatch_by_symbol`: for every [`CallableKind::UserFn`]
+///   symbol, the fn_table key the ProveIR compiler actually uses.
+///   For root-module fns that's the bare name; for imported-module
+///   fns it's `"{alias}::{name}"` where `alias` is the string the
+///   importer chose in its `import "./..." as {alias}` statement.
+///   This matches the mangling [`fn_decl_asts`] aggregation does
+///   via [`Compiler::module_prefix`] during recursive compiles, so
+///   the ProveIR `fn_table` entries lift directly to these keys.
+///
+/// - `module_by_key`: the inverse lookup the ProveIR
+///   `compile_user_fn_call` consults to push the definer's module
+///   onto the resolver stack before inlining. Both the annotation
+///   path and the legacy StaticAccess path go through this push —
+///   gap 2.4 dies here.
+///
+/// ## Alias derivation
+///
+/// The alias for each non-root module comes from the
+/// [`resolve::ImportEdge::alias`] field of the graph edge that
+/// imports it. For diamond imports (the same target imported under
+/// different aliases by different ancestors), the iteration order
+/// of `graph.iter()` determines last-write-wins — consistent with
+/// how `fn_decl_asts` handles the same case today, so no new
+/// divergence.
+///
+/// Selective imports (`import { a, b } from "./x"`) have an empty
+/// `alias` string in their edge; their UserFn entries are skipped
+/// here (they'd use bare names that collide with the root). Phase
+/// 3F's scope is namespace imports only; selective-import symbols
+/// fall through to legacy dispatch unchanged.
+fn build_dispatch_maps(
+    table: &SymbolTable,
+    graph: &ModuleGraph,
+) -> (HashMap<SymbolId, String>, HashMap<String, ModuleId>) {
+    // Pass 1: derive ModuleId → alias by walking every namespace
+    // import edge. Empty aliases (selective imports) are skipped.
+    let mut alias_for_module: HashMap<ModuleId, String> = HashMap::new();
+    for module in graph.iter() {
+        for edge in &module.imports {
+            if !edge.alias.is_empty() {
+                alias_for_module.insert(edge.target, edge.alias.clone());
+            }
+        }
+    }
+
+    // Pass 2: for every UserFn symbol, compute its fn_table key.
+    // Entries whose owning module has no alias (selective-only
+    // imports, or pure-root modules) are omitted — dispatch for
+    // them falls through to the legacy name-based path.
+    let mut by_symbol: HashMap<SymbolId, String> = HashMap::new();
+    let mut by_key: HashMap<String, ModuleId> = HashMap::new();
+    let root_module = graph.root();
+    for (sid, kind) in table.iter() {
+        let (qualified_name, module) = match kind {
+            CallableKind::UserFn {
+                qualified_name,
+                module,
+                ..
+            } => (qualified_name, *module),
+            _ => continue,
+        };
+        // The resolver's qualified_name is either the bare name
+        // (root module) or `"mod{N}::name"` (non-root). We extract
+        // the trailing bare identifier; for root fns the rsplit
+        // returns the whole string, which is exactly what we want.
+        let bare = qualified_name.rsplit("::").next().unwrap_or(qualified_name);
+        let key = if module == root_module {
+            bare.to_string()
+        } else {
+            match alias_for_module.get(&module) {
+                Some(alias) => format!("{alias}::{bare}"),
+                None => continue,
+            }
+        };
+        by_symbol.insert(sid, key.clone());
+        by_key.insert(key, module);
+    }
+
+    (by_symbol, by_key)
+}
+
 /// Returns true if a program contains any top-level `import` /
-/// `selective import`. Phase 3D skips auto-building the resolver
-/// state for programs with imports — the legacy lazy per-import
-/// loader is still authoritative, and the resolver adapter's
-/// filesystem path is deliberately unused in 3D to keep the blast
-/// radius small. Phase 3E will wire the real multi-module graph.
+/// `selective import`. Phase 3F gates multi-module auto-build on
+/// the presence of `base_path`: in-memory compiles without a
+/// filesystem root can't canonicalize transitive imports, so the
+/// resolver state for such programs is silently skipped and the
+/// legacy `fn_decl_asts` aggregation path handles dispatch.
 fn program_has_imports(program: &Program) -> bool {
     program.stmts.iter().any(has_import)
 }
