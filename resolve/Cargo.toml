@@ -11,3 +11,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# Phase 3B onwards: the resolver consumes parsed ASTs directly — the
+# module graph holds `Program` values, and Phase 3C will walk `Expr`
+# nodes looking up `ExprId`s. Adding `achronyme-parser` as a dep was
+# explicitly deferred until a concrete consumer landed; `module_graph`
+# is that consumer. See the Phase 1 "CRITICAL FOR PHASE 2 dep barrier"
+# note in `.claude/plans/movimiento-2-unified-dispatch.md`.
+achronyme-parser = { path = "../achronyme-parser" }

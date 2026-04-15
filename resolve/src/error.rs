@@ -13,6 +13,7 @@
 
 use crate::builtins::BuiltinAuditError;
 use std::fmt;
+use std::path::PathBuf;
 
 /// Every failure mode the resolver can produce.
 ///
@@ -74,6 +75,43 @@ pub enum ResolveError {
         /// How many entries the registry actually has.
         registry_len: usize,
     },
+
+    // ----- Phase 3B: module graph builder -----
+    /// A relative module path could not be resolved to a canonical
+    /// filesystem key. Typically wraps a "file not found" error from
+    /// the underlying
+    /// [`ModuleSource`](crate::module_graph::ModuleSource). `importer`
+    /// is the canonical path of the file that contained the failing
+    /// `import` statement, or `None` if the failure occurred while
+    /// resolving the graph root.
+    ModuleCanonicalizeFailed {
+        /// The raw relative path from the `import` statement.
+        relative: String,
+        /// The canonical path of the file whose `import` failed.
+        importer: Option<PathBuf>,
+        /// Reason reported by the `ModuleSource` adapter.
+        reason: String,
+    },
+
+    /// The [`ModuleSource`](crate::module_graph::ModuleSource) adapter
+    /// refused to produce a parsed AST for a canonicalized path.
+    /// Usually caused by I/O or parse errors inside the backing loader.
+    ModuleLoadFailed {
+        /// Canonical path the resolver was trying to load.
+        path: PathBuf,
+        /// Reason reported by the underlying loader.
+        reason: String,
+    },
+
+    /// A module imports itself (directly or transitively) while the
+    /// graph builder is still descending its DFS stack — i.e. a true
+    /// cycle, not a diamond re-use. Matches the semantics of the legacy
+    /// `CircularImport` error in `compiler::CompilerError`; Phase 6
+    /// cleanup will collapse the two into this one.
+    ModuleCycle {
+        /// Canonical path of the module that completed the cycle.
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -103,6 +141,25 @@ impl fmt::Display for ResolveError {
                 "sym#{symbol_id} references builtin entry {entry_index} but \
                  the registry only has {registry_len} entries"
             ),
+            Self::ModuleCanonicalizeFailed {
+                relative,
+                importer,
+                reason,
+            } => {
+                if let Some(importer) = importer {
+                    write!(
+                        f,
+                        "cannot resolve `import \"{relative}\"` from {}: {reason}",
+                        importer.display()
+                    )
+                } else {
+                    write!(f, "cannot resolve root module `{relative}`: {reason}")
+                }
+            }
+            Self::ModuleLoadFailed { path, reason } => {
+                write!(f, "failed to load {}: {reason}", path.display())
+            }
+            Self::ModuleCycle { path } => write!(f, "circular import detected: {}", path.display()),
         }
     }
 }

@@ -25,9 +25,10 @@
 //! ## What does NOT live here (yet)
 //!
 //! - The resolver pass itself (walks the AST annotating expressions with
-//!   [`SymbolId`]s). Landing in Phase 3.
-//! - The module graph builder. Landing in Phase 3.
+//!   [`SymbolId`]s). Landing in Phase 3C.
 //! - The builtin entries themselves. Landing in Phase 2.
+//!
+//! The module graph builder ([`module_graph`]) landed in Phase 3B.
 //!
 //! ## Movimiento 2 roadmap
 //!
@@ -55,11 +56,15 @@
 
 pub mod builtins;
 pub mod error;
+pub mod module_graph;
 pub mod statics;
 pub mod symbol;
 pub mod table;
 
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
 pub use error::ResolveError;
+pub use module_graph::{
+    ImportEdge, ImportEdgeKind, LoadedModule, ModuleGraph, ModuleId, ModuleNode, ModuleSource,
+};
 pub use symbol::{Arity, Availability, CallableKind, SymbolId};
 pub use table::SymbolTable;
