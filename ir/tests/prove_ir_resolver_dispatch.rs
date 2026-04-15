@@ -20,10 +20,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use achronyme_parser::ast::{Block, Expr, Program, Stmt};
 use ir::prove_ir::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
 use memory::Bn254Fr;
-use resolve::{build_resolver_state, LoadedModule, ModuleSource, ResolverState, SymbolId};
+use resolve::{
+    build_resolver_state, CallableKind, LoadedModule, ModuleId, ModuleSource, ResolverState,
+    SymbolId,
+};
 
 /// In-memory `ModuleSource` that serves a single pre-parsed program as
 /// the root and refuses any transitive load. Mirrors the pattern
@@ -75,6 +80,42 @@ fn parse_and_resolve(source: &str) -> (Program, ResolverState) {
     (program, state)
 }
 
+/// Build the Phase 3F fn_table dispatch maps from a `ResolverState`.
+///
+/// Mirrors the logic in `compiler::build_dispatch_maps` but scoped
+/// to the test's single-module case. We duplicate rather than
+/// depend on the compiler crate (which would introduce a crate
+/// cycle since `compiler` depends on `ir`). The single-module
+/// subset is ~8 lines so the cost of duplication is low.
+fn build_dispatch_maps_for_test(
+    state: &ResolverState,
+) -> (HashMap<SymbolId, String>, HashMap<String, ModuleId>) {
+    let mut by_symbol: HashMap<SymbolId, String> = HashMap::new();
+    let mut by_key: HashMap<String, ModuleId> = HashMap::new();
+    let root = state.root();
+    for (sid, kind) in state.table.iter() {
+        if let CallableKind::UserFn {
+            qualified_name,
+            module,
+            ..
+        } = kind
+        {
+            // Single-module tests: every user fn lives in the root.
+            // Phase 3F's non-root alias prefixing isn't exercised
+            // here — the cross-module path is covered end-to-end
+            // by the `compiler/tests/gap_24_multi_module.rs`
+            // integration test.
+            if *module != root {
+                continue;
+            }
+            let key = qualified_name.clone();
+            by_symbol.insert(sid, key.clone());
+            by_key.insert(key, *module);
+        }
+    }
+    (by_symbol, by_key)
+}
+
 /// Build an `OuterScope` that forwards `state` as the resolver
 /// handoff. Captures `outer_scalars` as scalar captures so bodies
 /// that reference outer-scope names parse cleanly. `functions`
@@ -89,6 +130,7 @@ fn outer_scope_with_state(
     for &name in outer_scalars {
         values.insert(name.to_string(), OuterScopeEntry::Scalar);
     }
+    let (dispatch_by_symbol, module_by_key) = build_dispatch_maps_for_test(state);
     OuterScope {
         values,
         functions,
@@ -97,6 +139,8 @@ fn outer_scope_with_state(
             table: Arc::new(state.table.clone()),
             resolved: Arc::new(state.resolved.clone()),
             root_module: state.root(),
+            dispatch_key_by_symbol: Arc::new(dispatch_by_symbol),
+            module_by_dispatch_key: Arc::new(module_by_key),
         }),
     }
 }
