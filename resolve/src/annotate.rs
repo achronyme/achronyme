@@ -23,11 +23,11 @@
 //! `.claude/plans/movimiento-2-unified-dispatch.md` §4 Phase 3 for
 //! the full decomposition.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use achronyme_parser::ast::{Block, ElseBranch, Expr, ExprId, ForIterable, Stmt};
+use achronyme_parser::ast::{Block, ElseBranch, Expr, ExprId, ForIterable, Span, Stmt};
 
-use crate::error::ResolveError;
+use crate::error::{ResolveError, UnsupportedShape};
 use crate::module_graph::{ImportEdgeKind, ModuleGraph, ModuleId, ModuleNode};
 use crate::symbol::{Availability, CallableKind, ConstKind, SymbolId};
 use crate::table::SymbolTable;
@@ -179,6 +179,30 @@ pub fn register_builtins(table: &mut SymbolTable) {
 /// module they are compiling, so supplying the pair is free.
 pub type AnnotationKey = (ModuleId, ExprId);
 
+/// Output of the resolver pass: the `(ModuleId, ExprId) → SymbolId`
+/// annotation map plus any resolve-time diagnostics accumulated along
+/// the way.
+///
+/// The `annotations` table mirrors the plan doc's `ResolvedProgram`
+/// sketch: each resolvable leaf in every module gets an entry.
+/// Consumers that only care about resolution (Phase 3D/3E compilers)
+/// read `annotations`; diagnostic pipelines read `diagnostics` and
+/// fold each [`ResolveError`] into the session's error report.
+#[derive(Debug, Default)]
+pub struct ResolvedProgram {
+    /// `(module, expr_id) → symbol` for every successfully resolved
+    /// [`Expr::Ident`], [`Expr::StaticAccess`], and [`Expr::DotAccess`]
+    /// node in every module. Unresolved nodes are silently omitted —
+    /// the Phase 3D/3E consumers fall back to their legacy lookup for
+    /// anything not in the map.
+    pub annotations: HashMap<AnnotationKey, SymbolId>,
+    /// Resolve-time diagnostics accumulated by the walker — currently
+    /// only [`ResolveError::ProveBlockUnsupportedShape`] variants
+    /// emitted inside `prove {}` / `circuit {}` scopes. Empty for
+    /// well-formed programs.
+    pub diagnostics: Vec<ResolveError>,
+}
+
 /// Walk every [`Expr`] in every module and emit an annotation map from
 /// `(ModuleId, ExprId)` to [`SymbolId`] for each resolvable reference.
 ///
@@ -234,11 +258,8 @@ pub type AnnotationKey = (ModuleId, ExprId);
 /// there are no bare names left for it to re-resolve against the wrong
 /// scope. Phase 3E wires the consumer side; 3C.2 just plants the
 /// annotations.
-pub fn annotate_program(
-    graph: &ModuleGraph,
-    table: &SymbolTable,
-) -> HashMap<AnnotationKey, SymbolId> {
-    let mut annotations: HashMap<AnnotationKey, SymbolId> = HashMap::new();
+pub fn annotate_program(graph: &ModuleGraph, table: &SymbolTable) -> ResolvedProgram {
+    let mut out = ResolvedProgram::default();
     for module in graph.iter() {
         let prefix = module_prefix(module.id, graph);
         let mut ctx = AnnotateCtx {
@@ -246,23 +267,55 @@ pub fn annotate_program(
             table,
             module,
             prefix,
-            annotations: &mut annotations,
+            annotations: &mut out.annotations,
+            diagnostics: &mut out.diagnostics,
             scope: Vec::new(),
+            in_prove_depth: 0,
         };
         for stmt in &module.program.stmts {
             walk_stmt(&mut ctx, stmt);
         }
     }
-    annotations
+    out
 }
 
 // ----------------------------------------------------------------------
 // Annotate walker internals
 // ----------------------------------------------------------------------
 
+/// What flavour of local binding a name represents. Enables Phase
+/// 3C.3's FnAlias + prove-block shape diagnostics — the walker stores
+/// extra metadata alongside the shadow set so later call sites can
+/// re-classify references without re-walking the RHS.
+#[derive(Clone, Debug)]
+enum LocalKind {
+    /// Plain value binding: fn params, `for` loop vars, ordinary
+    /// `let x = 42`. Shadows module symbols; nothing special.
+    Plain,
+    /// `let a = p::fn` where the RHS const-resolved at annotation
+    /// time to a single fn-valued [`SymbolId`]. Subsequent references
+    /// to `a` annotate directly to the target — Phase 3D/3E dispatch
+    /// through the target without ever creating a
+    /// [`CallableKind::FnAlias`] entry in the table (the plan-doc
+    /// version lives in the table, but the annotation-map approach
+    /// gives both backends the same observable behaviour with no
+    /// extra mutation cost).
+    Alias(SymbolId),
+    /// `let a = if c { f } else { g }` where both branches const-
+    /// resolve to fn symbols — a dynamic fn value. Calling `a()`
+    /// inside a prove block emits
+    /// [`UnsupportedShape::DynamicFnValue`].
+    DynamicFn,
+    /// `let m = { k: v, ... }` — a Map literal. Field/index access
+    /// on `m` inside a prove block emits
+    /// [`UnsupportedShape::RuntimeMapAccess`].
+    RuntimeMap,
+}
+
 /// Per-module walker state. Holds read-only refs to the graph/table/
-/// module plus a `&mut` handle to the annotation map and a growable
-/// lexical scope stack.
+/// module plus `&mut` handles to the annotation map and diagnostic
+/// vector, the lexical scope stack, and the prove-block depth
+/// counter.
 struct AnnotateCtx<'a> {
     graph: &'a ModuleGraph,
     table: &'a SymbolTable,
@@ -271,33 +324,62 @@ struct AnnotateCtx<'a> {
     /// to look up the current module's own symbols in [`SymbolTable`].
     prefix: String,
     annotations: &'a mut HashMap<AnnotationKey, SymbolId>,
-    /// Stack of lexical scopes. Each scope is a set of names that
-    /// **shadow** module symbols. At module top level the stack is
-    /// empty — top-level `let`/`mut` bindings are not tracked because
-    /// exported ones live in the `SymbolTable` and private ones have
-    /// no annotation-time consumer yet (the compilers handle them).
-    scope: Vec<HashSet<String>>,
+    /// Accumulated diagnostics. Phase 3C.3 only pushes
+    /// [`ResolveError::ProveBlockUnsupportedShape`] variants; later
+    /// phases may add more.
+    diagnostics: &'a mut Vec<ResolveError>,
+    /// Stack of lexical scopes. Each entry binds a name to its
+    /// [`LocalKind`]; inner layers shadow outer layers. At module top
+    /// level the stack is empty — top-level `let`/`mut` bindings are
+    /// not tracked because exported ones live in the `SymbolTable`
+    /// and private ones have no annotation-time consumer yet.
+    scope: Vec<HashMap<String, LocalKind>>,
+    /// Depth counter of nested `prove {}` / `circuit {}` blocks. Zero
+    /// at module top level; incremented on entry, decremented on
+    /// exit. `> 0` means every shape check in the walker should run.
+    in_prove_depth: u32,
 }
 
 impl<'a> AnnotateCtx<'a> {
     fn push_scope(&mut self) {
-        self.scope.push(HashSet::new());
+        self.scope.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scope.pop();
     }
 
-    /// Add a name to the innermost scope, if any. A no-op at the
-    /// module top level — see the `scope` field docstring for why.
-    fn add_local(&mut self, name: &str) {
+    /// Bind a local name to `kind` inside the innermost scope. A
+    /// no-op at the module top level (where `scope` is empty) — see
+    /// the field docstring above for the rationale.
+    fn add_local(&mut self, name: &str, kind: LocalKind) {
         if let Some(top) = self.scope.last_mut() {
-            top.insert(name.to_string());
+            top.insert(name.to_string(), kind);
         }
     }
 
+    /// Walk the scope stack from innermost to outermost and return
+    /// the first matching binding's kind, if any.
+    fn lookup_local(&self, name: &str) -> Option<&LocalKind> {
+        for layer in self.scope.iter().rev() {
+            if let Some(kind) = layer.get(name) {
+                return Some(kind);
+            }
+        }
+        None
+    }
+
     fn is_local(&self, name: &str) -> bool {
-        self.scope.iter().rev().any(|s| s.contains(name))
+        self.lookup_local(name).is_some()
+    }
+
+    fn push_diagnostic(&mut self, span: Span, shape: UnsupportedShape, reason: &'static str) {
+        self.diagnostics
+            .push(ResolveError::ProveBlockUnsupportedShape {
+                span,
+                shape,
+                reason,
+            });
     }
 }
 
@@ -305,9 +387,9 @@ fn walk_stmt(ctx: &mut AnnotateCtx, stmt: &Stmt) {
     match stmt {
         Stmt::LetDecl { name, value, .. } | Stmt::MutDecl { name, value, .. } => {
             walk_expr(ctx, value);
-            // Only track as a local if we're inside a function/block
-            // scope — top-level lets live in the table or are ignored.
-            ctx.add_local(name);
+            // Classify the RHS for FnAlias + shape-diagnostic tracking.
+            let kind = classify_let_rhs(ctx, value);
+            ctx.add_local(name, kind);
         }
         Stmt::Assignment { target, value, .. } => {
             walk_expr(ctx, target);
@@ -318,17 +400,19 @@ fn walk_stmt(ctx: &mut AnnotateCtx, stmt: &Stmt) {
             // top-level `let` inside the body shadows a param.
             ctx.push_scope();
             for p in params {
-                ctx.add_local(&p.name);
+                ctx.add_local(&p.name, LocalKind::Plain);
             }
             walk_block_stmts(ctx, body);
             ctx.pop_scope();
         }
         Stmt::CircuitDecl { params, body, .. } => {
             ctx.push_scope();
+            ctx.in_prove_depth += 1;
             for p in params {
-                ctx.add_local(&p.name);
+                ctx.add_local(&p.name, LocalKind::Plain);
             }
             walk_block_stmts(ctx, body);
+            ctx.in_prove_depth -= 1;
             ctx.pop_scope();
         }
         Stmt::Print { value, .. } => walk_expr(ctx, value),
@@ -409,17 +493,56 @@ fn walk_expr(ctx: &mut AnnotateCtx, expr: &Expr) {
             walk_expr(ctx, rhs);
         }
         Expr::UnaryOp { operand, .. } => walk_expr(ctx, operand),
-        Expr::Call { callee, args, .. } => {
-            walk_expr(ctx, callee);
-            for a in args {
-                walk_expr(ctx, &a.value);
+        Expr::Call {
+            callee, args, span, ..
+        } => walk_call(ctx, callee, args, span),
+        Expr::Index {
+            object,
+            index,
+            span,
+            ..
+        } => {
+            // Inside a prove block, indexing into a local Map literal
+            // is `RuntimeMapAccess`. Plain arrays (witness arrays,
+            // fixed-size `[Field; N]` style bindings) don't bind as
+            // `LocalKind::RuntimeMap`, so they pass through.
+            if ctx.in_prove_depth > 0 {
+                if let Expr::Ident { name, .. } = object.as_ref() {
+                    if matches!(ctx.lookup_local(name), Some(LocalKind::RuntimeMap)) {
+                        ctx.push_diagnostic(
+                            span.clone(),
+                            UnsupportedShape::RuntimeMapAccess,
+                            "indexing a runtime map inside a prove block",
+                        );
+                    }
+                }
             }
-        }
-        Expr::Index { object, index, .. } => {
             walk_expr(ctx, object);
             walk_expr(ctx, index);
         }
-        Expr::DotAccess { object, .. } => walk_expr(ctx, object),
+        Expr::DotAccess {
+            object,
+            field: _,
+            span,
+            ..
+        } => {
+            // Standalone DotAccess (not the callee of a Call — the
+            // Call arm handles that path). Inside a prove block,
+            // `m.field` where `m` is a local Map literal is a
+            // `RuntimeMapAccess`.
+            if ctx.in_prove_depth > 0 {
+                if let Expr::Ident { name, .. } = object.as_ref() {
+                    if matches!(ctx.lookup_local(name), Some(LocalKind::RuntimeMap)) {
+                        ctx.push_diagnostic(
+                            span.clone(),
+                            UnsupportedShape::RuntimeMapAccess,
+                            "field access on a runtime map inside a prove block",
+                        );
+                    }
+                }
+            }
+            walk_expr(ctx, object);
+        }
         Expr::If {
             condition,
             then_block,
@@ -446,7 +569,7 @@ fn walk_expr(ctx: &mut AnnotateCtx, expr: &Expr) {
                 ForIterable::Expr(e) => walk_expr(ctx, e),
             }
             ctx.push_scope();
-            ctx.add_local(var);
+            ctx.add_local(var, LocalKind::Plain);
             walk_block_stmts(ctx, body);
             ctx.pop_scope();
         }
@@ -461,17 +584,19 @@ fn walk_expr(ctx: &mut AnnotateCtx, expr: &Expr) {
         Expr::FnExpr { params, body, .. } => {
             ctx.push_scope();
             for p in params {
-                ctx.add_local(&p.name);
+                ctx.add_local(&p.name, LocalKind::Plain);
             }
             walk_block_stmts(ctx, body);
             ctx.pop_scope();
         }
         Expr::Prove { params, body, .. } => {
             ctx.push_scope();
+            ctx.in_prove_depth += 1;
             for p in params {
-                ctx.add_local(&p.name);
+                ctx.add_local(&p.name, LocalKind::Plain);
             }
             walk_block_stmts(ctx, body);
+            ctx.in_prove_depth -= 1;
             ctx.pop_scope();
         }
         Expr::Array { elements, .. } => {
@@ -487,6 +612,71 @@ fn walk_expr(ctx: &mut AnnotateCtx, expr: &Expr) {
     }
 }
 
+/// Walk a `Call { callee, args }` with prove-block shape checks.
+/// This is broken out of [`walk_expr`] because the callee is inspected
+/// for [`UnsupportedShape::RuntimeMethodChain`] + [`UnsupportedShape::DynamicFnValue`]
+/// *before* being walked, and each argument is inspected for
+/// [`UnsupportedShape::NonStaticFnArg`].
+fn walk_call(
+    ctx: &mut AnnotateCtx,
+    callee: &Expr,
+    args: &[achronyme_parser::ast::CallArg],
+    call_span: &Span,
+) {
+    if ctx.in_prove_depth > 0 {
+        // DynamicFnValue: calling a local that was bound to an
+        // if/else of fn references.
+        if let Expr::Ident { name, span, .. } = callee {
+            if matches!(ctx.lookup_local(name), Some(LocalKind::DynamicFn)) {
+                ctx.push_diagnostic(
+                    span.clone(),
+                    UnsupportedShape::DynamicFnValue,
+                    "calling a local bound to a dynamic fn value inside a prove block",
+                );
+            }
+        }
+        // RuntimeMethodChain: `expr.method()` where `expr` is not a
+        // namespace import alias. Namespace calls via `l.foo()` use
+        // the `Expr::DotAccess` path and resolve to a module symbol;
+        // non-namespace DotAccess callees are runtime method dispatch
+        // which prove blocks can't model.
+        if let Expr::DotAccess { object, span, .. } = callee {
+            if !is_namespace_alias_ident(ctx, object) {
+                ctx.push_diagnostic(
+                    span.clone(),
+                    UnsupportedShape::RuntimeMethodChain,
+                    "method call on a value that is not a namespace alias",
+                );
+            }
+        }
+        // NonStaticFnArg: any positional argument that is itself an
+        // if/else of fn references.
+        for a in args {
+            if let Expr::If {
+                then_block,
+                else_branch,
+                span,
+                ..
+            } = &a.value
+            {
+                if is_dynamic_fn_if(ctx, then_block, else_branch.as_ref()) {
+                    ctx.push_diagnostic(
+                        span.clone(),
+                        UnsupportedShape::NonStaticFnArg,
+                        "passing a dynamic fn value as an argument inside a prove block",
+                    );
+                }
+            }
+        }
+        let _ = call_span; // reserved for future whole-call diagnostics
+    }
+
+    walk_expr(ctx, callee);
+    for a in args {
+        walk_expr(ctx, &a.value);
+    }
+}
+
 // ----------------------------------------------------------------------
 // Resolution helpers
 // ----------------------------------------------------------------------
@@ -494,12 +684,22 @@ fn walk_expr(ctx: &mut AnnotateCtx, expr: &Expr) {
 /// Resolve a bare identifier against the walker's lexical stack and the
 /// symbol table. Returns `None` on any of:
 ///
-/// - name is a local in any enclosing scope (shadowing wins)
+/// - name is a plain local / dynamic-fn local / runtime-map local
+///   (shadowing wins; those categories are handled by their own
+///   diagnostic paths, not by annotation)
 /// - name is not in the current module, not selectively imported, and
 ///   not a bare builtin
+///
+/// Returns `Some(target)` when `name` is a [`LocalKind::Alias`] — the
+/// resolver flattens FnAlias chains at annotation time, so each
+/// reference to `a` after `let a = p::fn` is indistinguishable from a
+/// direct reference to `p::fn`.
 fn resolve_ident(ctx: &AnnotateCtx, name: &str) -> Option<SymbolId> {
-    if ctx.is_local(name) {
-        return None;
+    if let Some(kind) = ctx.lookup_local(name) {
+        return match kind {
+            LocalKind::Alias(sid) => Some(*sid),
+            LocalKind::Plain | LocalKind::DynamicFn | LocalKind::RuntimeMap => None,
+        };
     }
 
     // 1. Same-module symbol (private fn, exported fn, exported Constant).
@@ -593,6 +793,123 @@ fn resolve_dot_access(ctx: &AnnotateCtx, object: &Expr, field: &str) -> Option<S
         }
     }
     None
+}
+
+/// Try to const-resolve a `let` RHS to a single fn-valued [`SymbolId`].
+/// Only the three leaf shapes (bare ident, `Type::member`, `alias.member`)
+/// are considered — matching a more elaborate expression dynamically
+/// is the user's job (or the VM's). Returns `Some(id)` when:
+///
+/// - the expression is [`Expr::Ident`] / [`Expr::StaticAccess`] /
+///   [`Expr::DotAccess`] and resolves against the current context;
+/// - AND the resolved symbol's kind is [`CallableKind::UserFn`],
+///   [`CallableKind::Builtin`], or [`CallableKind::FnAlias`]
+///   (constants and circom templates aren't first-class callables in
+///   the 3C.3 alias sense).
+fn const_resolve_fn(ctx: &AnnotateCtx, expr: &Expr) -> Option<SymbolId> {
+    let sid = match expr {
+        Expr::Ident { name, .. } => resolve_ident(ctx, name)?,
+        Expr::StaticAccess {
+            type_name, member, ..
+        } => resolve_static_access(ctx, type_name, member)?,
+        Expr::DotAccess { object, field, .. } => resolve_dot_access(ctx, object, field)?,
+        _ => return None,
+    };
+    match ctx.table.get(sid) {
+        CallableKind::UserFn { .. }
+        | CallableKind::Builtin { .. }
+        | CallableKind::FnAlias { .. } => Some(sid),
+        _ => None,
+    }
+}
+
+/// Decide what [`LocalKind`] a `let x = <rhs>` binding should produce.
+/// The classification drives Phase 3C.3's FnAlias + shape diagnostics:
+///
+/// - a const-resolved fn reference → [`LocalKind::Alias`]
+/// - an `if` whose both branches const-resolve to fn references →
+///   [`LocalKind::DynamicFn`]
+/// - a map literal → [`LocalKind::RuntimeMap`]
+/// - anything else → [`LocalKind::Plain`]
+fn classify_let_rhs(ctx: &AnnotateCtx, rhs: &Expr) -> LocalKind {
+    if let Some(target) = const_resolve_fn(ctx, rhs) {
+        return LocalKind::Alias(target);
+    }
+    if let Expr::If {
+        then_block,
+        else_branch,
+        ..
+    } = rhs
+    {
+        if is_dynamic_fn_if(ctx, then_block, else_branch.as_ref()) {
+            return LocalKind::DynamicFn;
+        }
+    }
+    if matches!(rhs, Expr::Map { .. }) {
+        return LocalKind::RuntimeMap;
+    }
+    LocalKind::Plain
+}
+
+/// Return `true` if both branches of an `if/else` const-resolve to
+/// fn-valued symbols — the structural pattern that makes a binding a
+/// [`LocalKind::DynamicFn`] and that triggers
+/// [`UnsupportedShape::DynamicFnValue`] / [`UnsupportedShape::NonStaticFnArg`]
+/// inside a prove block. The tail of each branch is checked: the
+/// last statement of a block must be a `Stmt::Expr` that
+/// const-resolves, or the else branch must chain to another `if` that
+/// itself is a dynamic-fn `if`.
+fn is_dynamic_fn_if(
+    ctx: &AnnotateCtx,
+    then_block: &Block,
+    else_branch: Option<&ElseBranch>,
+) -> bool {
+    if block_tail_fn(ctx, then_block).is_none() {
+        return false;
+    }
+    match else_branch {
+        Some(ElseBranch::Block(b)) => block_tail_fn(ctx, b).is_some(),
+        Some(ElseBranch::If(e)) => {
+            // Nested else-if: require the whole chain to be fn-valued.
+            if let Expr::If {
+                then_block: inner_then,
+                else_branch: inner_else,
+                ..
+            } = e.as_ref()
+            {
+                is_dynamic_fn_if(ctx, inner_then, inner_else.as_ref())
+            } else {
+                false
+            }
+        }
+        None => false,
+    }
+}
+
+/// Extract the fn-valued symbol out of a block's tail statement, if any.
+fn block_tail_fn(ctx: &AnnotateCtx, block: &Block) -> Option<SymbolId> {
+    match block.stmts.last()? {
+        Stmt::Expr(e) => const_resolve_fn(ctx, e),
+        _ => None,
+    }
+}
+
+/// Return `true` if the given expression is an [`Expr::Ident`] whose
+/// name matches a namespace import alias on the current module. Used
+/// by the prove-block method-chain diagnostic to distinguish
+/// `l.foo()` (valid namespace call) from `value.method()` (runtime
+/// method dispatch).
+fn is_namespace_alias_ident(ctx: &AnnotateCtx, expr: &Expr) -> bool {
+    let Expr::Ident { name, .. } = expr else {
+        return false;
+    };
+    if ctx.is_local(name) {
+        return false;
+    }
+    ctx.module
+        .imports
+        .iter()
+        .any(|e| matches!(e.kind, ImportEdgeKind::Namespace) && &e.alias == name)
 }
 
 // ----------------------------------------------------------------------
@@ -1026,7 +1343,7 @@ mod tests {
         );
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let helper_id = table.lookup("helper").expect("helper registered");
         let root = graph.get(graph.root());
@@ -1055,7 +1372,7 @@ mod tests {
         );
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let root = graph.get(graph.root());
         // There are two Ident "x" nodes: one in the param position
@@ -1079,7 +1396,7 @@ mod tests {
         );
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let add_id = table.lookup("mod0::add").expect("add registered");
         let root = graph.get(graph.root());
@@ -1098,7 +1415,7 @@ mod tests {
         src.add("main", "import \"lib\" as l\nlet x = l::add(1, 2)");
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let add_id = table.lookup("mod0::add").expect("add registered");
         let root = graph.get(graph.root());
@@ -1114,7 +1431,7 @@ mod tests {
         src.add("main", "import \"lib\" as l\nlet x = l.add(1, 2)");
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let add_id = table.lookup("mod0::add").expect("add registered");
         let root = graph.get(graph.root());
@@ -1133,7 +1450,7 @@ mod tests {
         src.add("main", "fn f(a, b) { poseidon(a, b) }");
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let poseidon_id = table.lookup("poseidon").expect("builtin registered");
         // Sanity: it's actually a Builtin kind.
@@ -1166,7 +1483,7 @@ mod tests {
         src.add("a", "import \"b\" as b\nlet top = b::middle()");
         let graph = ModuleGraph::build("a", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         // c::deep lives under mod0::deep; b::middle under mod1::middle.
         let deep_id = table.lookup("mod0::deep").expect("deep registered");
@@ -1205,7 +1522,7 @@ mod tests {
         );
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let root = graph.get(graph.root());
         let ident_ids = find_idents(&root.program, "g");
@@ -1229,7 +1546,7 @@ mod tests {
         src.add("main", "export let PI = 3\nfn area(r) { PI }");
         let graph = ModuleGraph::build("main", &mut src).expect("build");
         let table = build_full_table(&graph);
-        let annotations = annotate_program(&graph, &table);
+        let annotations = annotate_program(&graph, &table).annotations;
 
         let pi_id = table.lookup("PI").expect("PI registered");
         let root = graph.get(graph.root());
@@ -1259,6 +1576,282 @@ mod tests {
     // inputs that parse into them.
     #[allow(dead_code)]
     fn _param_doc_marker(_: TypedParam) {}
+
+    // ======================================================================
+    // FnAlias + ProveBlockUnsupportedShape — Phase 3C.3
+    // ======================================================================
+
+    use crate::error::UnsupportedShape;
+
+    #[test]
+    fn fn_alias_local_resolves_to_target() {
+        // `let a = helper; a()` — the call-site `a` is annotated
+        // directly to helper's SymbolId, so Phase 3D/3E dispatch
+        // through the alias uniformly.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn helper() { 1 }\n\
+             fn caller() { let a = helper\n a() }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+        assert!(
+            resolved.diagnostics.is_empty(),
+            "no diagnostics expected, got {:?}",
+            resolved.diagnostics
+        );
+
+        let helper_id = table.lookup("helper").expect("helper registered");
+        let root = graph.get(graph.root());
+        let a_idents = find_idents(&root.program, "a");
+        assert_eq!(
+            a_idents.len(),
+            1,
+            "expected one `a` Ident in the call-site position"
+        );
+        assert_eq!(
+            resolved.annotations.get(&(graph.root(), a_idents[0])),
+            Some(&helper_id),
+            "FnAlias should flatten to the target symbol"
+        );
+    }
+
+    #[test]
+    fn fn_alias_cross_module_via_static_access() {
+        // `let a = l::helper; a()` — the alias resolves against a
+        // namespace import, so the call site annotates to the
+        // imported module's symbol.
+        let mut src = MockSource::default();
+        src.add("lib", "export fn helper() { 1 }");
+        src.add(
+            "main",
+            "import \"lib\" as l\n\
+             fn caller() { let a = l::helper\n a() }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        let helper_id = table.lookup("mod0::helper").expect("helper registered");
+        let root = graph.get(graph.root());
+        let a_idents = find_idents(&root.program, "a");
+        assert_eq!(a_idents.len(), 1);
+        assert_eq!(
+            resolved.annotations.get(&(graph.root(), a_idents[0])),
+            Some(&helper_id)
+        );
+    }
+
+    #[test]
+    fn fn_alias_shadows_outer_module_fn() {
+        // Inside `f`, `let a = poseidon` binds `a` as an alias to the
+        // builtin. The outer `fn a()` is shadowed inside f's body —
+        // `a(1, 2)` annotates to poseidon, not to the module's `a`.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn a() { 0 }\n\
+             fn f() { let a = poseidon\n a(1, 2) }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        let poseidon_id = table.lookup("poseidon").expect("builtin registered");
+        let root = graph.get(graph.root());
+        // find_idents returns source order. The first `a` is the let
+        // LHS position? No — that's a String, not an Expr. The first
+        // Ident `a` is the call-site in `a(1, 2)`. And the let RHS
+        // contains Ident("poseidon"), not `a`, so we get exactly one
+        // Ident("a") in the program.
+        let a_idents = find_idents(&root.program, "a");
+        assert_eq!(a_idents.len(), 1);
+        assert_eq!(
+            resolved.annotations.get(&(graph.root(), a_idents[0])),
+            Some(&poseidon_id),
+            "inner alias should shadow the outer module fn `a`"
+        );
+    }
+
+    #[test]
+    fn dynamic_fn_value_emitted_inside_prove_block() {
+        // `let a = if true { poseidon } else { mux }; a(1,2,3)` in a
+        // prove block. Both branches const-resolve to fn symbols, so
+        // `a` is a DynamicFn local, and calling it in prove mode
+        // fires the DynamicFnValue diagnostic.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn outer() {\n\
+               prove() {\n\
+                 let a = if true { poseidon } else { mux }\n\
+                 a(1, 2, 3)\n\
+               }\n\
+             }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        assert!(
+            resolved.diagnostics.iter().any(|d| matches!(
+                d,
+                ResolveError::ProveBlockUnsupportedShape {
+                    shape: UnsupportedShape::DynamicFnValue,
+                    ..
+                }
+            )),
+            "expected DynamicFnValue, got {:?}",
+            resolved.diagnostics
+        );
+    }
+
+    #[test]
+    fn dynamic_fn_value_outside_prove_is_silent() {
+        // Same pattern as above, without the `prove()` wrapper —
+        // VM mode handles dynamic fn values through closures, so no
+        // diagnostic should fire.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn outer() {\n\
+               let a = if true { poseidon } else { mux }\n\
+               a(1, 2, 3)\n\
+             }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+        assert!(
+            resolved.diagnostics.is_empty(),
+            "no diagnostics expected outside prove block, got {:?}",
+            resolved.diagnostics
+        );
+    }
+
+    #[test]
+    fn runtime_map_access_emitted_inside_prove_block() {
+        // `let m = { k: 1 }; m.k` inside a prove block. The Map
+        // literal is classified as RuntimeMap; any DotAccess on `m`
+        // emits RuntimeMapAccess.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn outer() {\n\
+               prove() {\n\
+                 let m = { k: 1 }\n\
+                 m.k\n\
+               }\n\
+             }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        assert!(
+            resolved.diagnostics.iter().any(|d| matches!(
+                d,
+                ResolveError::ProveBlockUnsupportedShape {
+                    shape: UnsupportedShape::RuntimeMapAccess,
+                    ..
+                }
+            )),
+            "expected RuntimeMapAccess, got {:?}",
+            resolved.diagnostics
+        );
+    }
+
+    #[test]
+    fn runtime_method_chain_emitted_inside_prove_block() {
+        // `let x = 1; x.foo()` inside a prove block. The callee is a
+        // DotAccess whose object is a plain local — not a namespace
+        // alias — so walk_call emits RuntimeMethodChain.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn outer() {\n\
+               prove() {\n\
+                 let x = 1\n\
+                 x.foo()\n\
+               }\n\
+             }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        assert!(
+            resolved.diagnostics.iter().any(|d| matches!(
+                d,
+                ResolveError::ProveBlockUnsupportedShape {
+                    shape: UnsupportedShape::RuntimeMethodChain,
+                    ..
+                }
+            )),
+            "expected RuntimeMethodChain, got {:?}",
+            resolved.diagnostics
+        );
+    }
+
+    #[test]
+    fn namespace_dot_call_is_not_method_chain() {
+        // `l.helper()` where `l` is a namespace alias — valid in
+        // prove mode, no diagnostic.
+        let mut src = MockSource::default();
+        src.add("lib", "export fn helper() { 1 }");
+        src.add(
+            "main",
+            "import \"lib\" as l\n\
+             fn outer() {\n\
+               prove() {\n\
+                 l.helper()\n\
+               }\n\
+             }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        assert!(
+            resolved.diagnostics.is_empty(),
+            "namespace dot call should not trigger RuntimeMethodChain, got {:?}",
+            resolved.diagnostics
+        );
+    }
+
+    #[test]
+    fn non_static_fn_arg_emitted_inside_prove_block() {
+        // `poseidon(if true { poseidon } else { mux }, 2)` inside a
+        // prove block. The first arg is an If whose branches both
+        // const-resolve to fn symbols — a dynamic fn value in
+        // argument position.
+        let mut src = MockSource::default();
+        src.add(
+            "main",
+            "fn outer() {\n\
+               prove() {\n\
+                 poseidon(if true { poseidon } else { mux }, 2)\n\
+               }\n\
+             }",
+        );
+        let graph = ModuleGraph::build("main", &mut src).expect("build");
+        let table = build_full_table(&graph);
+        let resolved = annotate_program(&graph, &table);
+
+        assert!(
+            resolved.diagnostics.iter().any(|d| matches!(
+                d,
+                ResolveError::ProveBlockUnsupportedShape {
+                    shape: UnsupportedShape::NonStaticFnArg,
+                    ..
+                }
+            )),
+            "expected NonStaticFnArg, got {:?}",
+            resolved.diagnostics
+        );
+    }
 
     #[test]
     fn stmt_index_skips_imports_but_counts_position() {

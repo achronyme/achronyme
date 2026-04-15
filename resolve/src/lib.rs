@@ -64,9 +64,10 @@ pub mod table;
 
 pub use annotate::{
     annotate_program, register_all, register_builtins, register_module, AnnotationKey,
+    ResolvedProgram,
 };
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
-pub use error::ResolveError;
+pub use error::{ResolveError, UnsupportedShape};
 pub use module_graph::{
     ImportEdge, ImportEdgeKind, LoadedModule, ModuleGraph, ModuleId, ModuleNode, ModuleSource,
 };
