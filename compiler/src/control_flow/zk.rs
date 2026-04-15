@@ -95,12 +95,35 @@ pub(super) fn compile_prove(
         }
     }
 
+    // Phase 3E.1: forward the VM compiler's already-built resolver
+    // state (if any) to ProveIR so it can record shadow hits during
+    // the walk. Cheap: SymbolTable and ResolvedProgram move into
+    // `Arc`s once per prove block, and the OuterScope clone inside
+    // `ProveIrCompiler::compile_with_source_dir` is cloning `Arc`s,
+    // not full tables. No-op when the VM compiler didn't auto-build
+    // a resolver state (multi-module programs).
+    let resolver_state = match (
+        compiler.resolver_symbol_table.as_ref(),
+        compiler.resolved_program.as_ref(),
+        compiler.resolver_root_module,
+    ) {
+        (Some(table), Some(resolved), Some(root_module)) => {
+            Some(ir::prove_ir::OuterResolverState {
+                table: std::sync::Arc::new(table.clone()),
+                resolved: std::sync::Arc::new(resolved.clone()),
+                root_module,
+            })
+        }
+        _ => None,
+    };
+
     let outer_scope = ir::prove_ir::OuterScope {
         values: outer_values,
         functions: compiler.fn_decl_asts.clone(),
         circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
             compiler,
         ),
+        resolver_state,
     };
 
     // 2. If params are provided (new syntax), validate no old-style
