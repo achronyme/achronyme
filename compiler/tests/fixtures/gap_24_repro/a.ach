@@ -1,0 +1,21 @@
+// Gap 2.4 repro fixture — Movimiento 2 Phase 3F.
+//
+// This file is the **root**. It imports b.ach as `b` and inside
+// a prove block calls `b::middle()`. The definition of
+// `middle` internally references `helper()` (a bare identifier
+// to a module-private fn inside b.ach). When ProveIR inlines
+// middle's body into this prove block, the inlined AST still
+// says `helper()` — but the ProveIR fn_table stores the entry
+// under the mangled key `b::helper` (aggregated by the VM
+// compiler's recursive `module_prefix` mechanism). Today the
+// lookup of the bare name "helper" fails → UndeclaredVariable.
+// Phase 3F kills this.
+
+import "./b.ach" as b
+
+let expected = 1
+
+prove {
+    public expected: Field
+    assert_eq(expected, b::middle())
+}

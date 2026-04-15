@@ -1,0 +1,15 @@
+// Gap 2.4 repro fixture — companion module for a.ach.
+//
+// The only exported fn is `middle`, whose body references
+// `helper()` as a BARE identifier (not `b::helper`). Inside
+// this module, `helper` resolves to the module-private
+// declaration below. When the VM compiler recursively walks
+// this module, both `helper` and `middle` land in
+// `fn_decl_asts` with the mangled `b::` prefix, so the
+// ProveIR fn_table gets `b::helper` and `b::middle` — but
+// middle's body AST still has the raw `helper()` parser
+// output. See a.ach for the repro scenario.
+
+fn helper() { 1 }
+
+export fn middle() { helper() }
