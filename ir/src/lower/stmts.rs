@@ -179,6 +179,7 @@ impl<F: FieldBackend> IrLowering<F> {
         if let Expr::Array {
             elements,
             span: arr_span,
+            ..
         } = value
         {
             let sp = to_ir_span(arr_span);

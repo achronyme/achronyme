@@ -803,6 +803,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         if let Expr::Array {
             elements,
             span: arr_span,
+            ..
         } = value
         {
             if elements.is_empty() {
@@ -1073,6 +1074,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         if let Expr::Array {
             elements,
             span: arr_span,
+            ..
         } = value
         {
             if elements.is_empty() {
@@ -1133,6 +1135,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             object,
             index,
             span: idx_span,
+            ..
         } = target
         {
             return self.compile_indexed_assignment(object, index, value, idx_span);
@@ -1252,7 +1255,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     fn compile_expr_stmt(&mut self, expr: &Expr) -> Result<(), ProveIrError> {
         // Detect assert_eq(a, b) and assert(x) to emit constraint nodes
-        if let Expr::Call { callee, args, span } = expr {
+        if let Expr::Call {
+            callee, args, span, ..
+        } = expr
+        {
             let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
             if let Expr::Ident { name, .. } = callee.as_ref() {
                 match name.as_str() {
@@ -1301,24 +1307,31 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Compile an AST expression into a `CircuitExpr`.
     pub(crate) fn compile_expr(&mut self, expr: &Expr) -> Result<CircuitExpr, ProveIrError> {
         match expr {
-            Expr::Number { value, span } => self.compile_number(value, span),
+            Expr::Number { value, span, .. } => self.compile_number(value, span),
             Expr::FieldLit {
                 value, radix, span, ..
             } => self.compile_field_lit(value, radix, span),
             Expr::Bool { value: true, .. } => Ok(CircuitExpr::Const(FieldConst::one())),
             Expr::Bool { value: false, .. } => Ok(CircuitExpr::Const(FieldConst::zero())),
-            Expr::Ident { name, span } => self.compile_ident(name, span),
+            Expr::Ident { name, span, .. } => self.compile_ident(name, span),
 
-            Expr::BinOp { op, lhs, rhs, span } => self.compile_binop(op, lhs, rhs, span),
-            Expr::UnaryOp { op, operand, span } => self.compile_unary(op, operand, span),
+            Expr::BinOp {
+                op, lhs, rhs, span, ..
+            } => self.compile_binop(op, lhs, rhs, span),
+            Expr::UnaryOp {
+                op, operand, span, ..
+            } => self.compile_unary(op, operand, span),
 
             Expr::StaticAccess {
                 type_name,
                 member,
                 span,
+                ..
             } => self.compile_static_access(type_name, member, span),
 
-            Expr::Call { callee, args, span } => {
+            Expr::Call {
+                callee, args, span, ..
+            } => {
                 let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
                 self.compile_call(callee, &arg_vals, span)
             }
@@ -1327,6 +1340,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 object,
                 field,
                 span,
+                ..
             } => self.compile_dot_access(object, field, span),
 
             Expr::If {
@@ -1334,6 +1348,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 then_block,
                 else_branch,
                 span,
+                ..
             } => self.compile_if_expr(condition, then_block, else_branch.as_ref(), span),
 
             Expr::For {
@@ -1341,14 +1356,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 iterable,
                 body,
                 span,
+                ..
             } => self.compile_for_expr(var, iterable, body, span),
 
-            Expr::Block(block) => self.compile_block_as_expr(block),
+            Expr::Block { block, .. } => self.compile_block_as_expr(block),
 
             Expr::Index {
                 object,
                 index,
                 span,
+                ..
             } => self.compile_index(object, index, span),
 
             // --- Rejections (same as IrLowering, with better messages) ---
@@ -1372,7 +1389,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 type_name: "string".into(),
                 span: to_span(span),
             }),
-            Expr::Nil { span } => Err(ProveIrError::TypeNotConstrainable {
+            Expr::Nil { span, .. } => Err(ProveIrError::TypeNotConstrainable {
                 type_name: "nil".into(),
                 span: to_span(span),
             }),
@@ -1389,7 +1406,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 got: "array literal (use let binding for arrays)".into(),
                 span: to_span(span),
             }),
-            Expr::Error { span } => Err(ProveIrError::UnsupportedOperation {
+            Expr::Error { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "cannot compile error placeholder (source has parse errors)".into(),
                 span: to_span(span),
             }),
@@ -1622,6 +1639,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 object,
                 field,
                 span: dot_span,
+                ..
             } => {
                 if let Expr::Ident { name: module, .. } = object.as_ref() {
                     let qualified = format!("{module}::{field}");

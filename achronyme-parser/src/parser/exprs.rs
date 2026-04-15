@@ -56,7 +56,9 @@ impl Parser {
                 let op = token_to_binop(&op_tok.kind);
                 let rhs = self.parse_expr_bp(r_bp)?;
                 let sp = lhs.span().clone();
+                let id = self.alloc_expr_id();
                 lhs = Expr::BinOp {
+                    id,
                     op,
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
@@ -91,7 +93,9 @@ impl Parser {
                     _ => unreachable!(),
                 };
                 let operand = self.parse_expr_bp(11)?; // prefix BP
+                let id = self.alloc_expr_id();
                 Ok(Expr::UnaryOp {
+                    id,
                     op,
                     operand: Box::new(operand),
                     span: self.span_to_prev(&sp),
@@ -106,7 +110,9 @@ impl Parser {
         match self.peek_kind().clone() {
             TokenKind::Integer => {
                 let tok = self.advance().clone();
+                let id = self.alloc_expr_id();
                 Ok(Expr::Number {
+                    id,
                     value: tok.lexeme,
                     span: self.span_to_prev(&sp),
                 })
@@ -120,7 +126,9 @@ impl Parser {
                 } else {
                     (tok.lexeme, FieldRadix::Decimal)
                 };
+                let id = self.alloc_expr_id();
                 Ok(Expr::FieldLit {
+                    id,
                     value,
                     radix,
                     span: self.span_to_prev(&sp),
@@ -151,7 +159,9 @@ impl Parser {
                         sp.col_start,
                     ));
                 };
+                let id = self.alloc_expr_id();
                 Ok(Expr::BigIntLit {
+                    id,
                     value,
                     width,
                     radix,
@@ -160,28 +170,36 @@ impl Parser {
             }
             TokenKind::StringLit => {
                 let tok = self.advance().clone();
+                let id = self.alloc_expr_id();
                 Ok(Expr::StringLit {
+                    id,
                     value: tok.lexeme,
                     span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::True => {
                 self.advance();
+                let id = self.alloc_expr_id();
                 Ok(Expr::Bool {
+                    id,
                     value: true,
                     span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::False => {
                 self.advance();
+                let id = self.alloc_expr_id();
                 Ok(Expr::Bool {
+                    id,
                     value: false,
                     span: self.span_to_prev(&sp),
                 })
             }
             TokenKind::Nil => {
                 self.advance();
+                let id = self.alloc_expr_id();
                 Ok(Expr::Nil {
+                    id,
                     span: self.span_to_prev(&sp),
                 })
             }
@@ -191,13 +209,17 @@ impl Parser {
                 if self.at(&TokenKind::ColonColon) {
                     self.advance(); // eat `::`
                     let member = self.expect_ident()?;
+                    let id = self.alloc_expr_id();
                     return Ok(Expr::StaticAccess {
+                        id,
                         type_name: tok.lexeme,
                         member,
                         span: self.span_to_prev(&sp),
                     });
                 }
+                let id = self.alloc_expr_id();
                 Ok(Expr::Ident {
+                    id,
                     name: tok.lexeme,
                     span: self.span_to_prev(&sp),
                 })
@@ -275,7 +297,9 @@ impl Parser {
         }
         self.expect(&TokenKind::RParen)?;
 
+        let id = self.alloc_expr_id();
         Ok(Expr::Call {
+            id,
             callee: Box::new(callee),
             args,
             span: self.span_to_prev(&sp),
@@ -287,7 +311,9 @@ impl Parser {
         self.advance(); // eat `[`
         let index = self.parse_expr()?;
         self.expect(&TokenKind::RBracket)?;
+        let id = self.alloc_expr_id();
         Ok(Expr::Index {
+            id,
             object: Box::new(object),
             index: Box::new(index),
             span: self.span_to_prev(&sp),
@@ -298,7 +324,9 @@ impl Parser {
         let sp = object.span().clone();
         self.advance(); // eat `.`
         let field = self.expect_ident()?;
+        let id = self.alloc_expr_id();
         Ok(Expr::DotAccess {
+            id,
             object: Box::new(object),
             field,
             span: self.span_to_prev(&sp),
@@ -323,7 +351,9 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBracket)?;
+        let id = self.alloc_expr_id();
         Ok(Expr::Array {
+            id,
             elements,
             span: self.span_to_prev(&sp),
         })
@@ -338,7 +368,8 @@ impl Parser {
             self.parse_map()
         } else {
             let block = self.parse_block_inner()?;
-            Ok(Expr::Block(block))
+            let id = self.alloc_expr_id();
+            Ok(Expr::Block { id, block })
         }
     }
 
@@ -369,7 +400,9 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBrace)?;
+        let id = self.alloc_expr_id();
         Ok(Expr::Map {
+            id,
             pairs,
             span: self.span_to_prev(&sp),
         })
@@ -416,7 +449,9 @@ impl Parser {
         } else {
             None
         };
+        let id = self.alloc_expr_id();
         Ok(Expr::If {
+            id,
             condition,
             then_block,
             else_branch,
@@ -429,7 +464,9 @@ impl Parser {
         self.advance(); // eat `while`
         let condition = Box::new(self.parse_expr()?);
         let body = self.parse_block_inner()?;
+        let id = self.alloc_expr_id();
         Ok(Expr::While {
+            id,
             condition,
             body,
             span: self.span_to_prev(&sp),
@@ -477,7 +514,9 @@ impl Parser {
         };
 
         let body = self.parse_block_inner()?;
+        let id = self.alloc_expr_id();
         Ok(Expr::For {
+            id,
             var,
             iterable,
             body,
@@ -489,7 +528,9 @@ impl Parser {
         let sp = self.span();
         self.advance(); // eat `forever`
         let body = self.parse_block_inner()?;
+        let id = self.alloc_expr_id();
         Ok(Expr::Forever {
+            id,
             body,
             span: self.span_to_prev(&sp),
         })
@@ -508,7 +549,9 @@ impl Parser {
         self.expect(&TokenKind::RParen)?;
         let return_type = self.try_parse_return_type()?;
         let body = self.parse_block_inner()?;
+        let id = self.alloc_expr_id();
         Ok(Expr::FnExpr {
+            id,
             name,
             params,
             return_type,
@@ -533,7 +576,9 @@ impl Parser {
         let params = self.parse_prove_params()?;
         let body = self.parse_block_inner()?;
 
+        let id = self.alloc_expr_id();
         Ok(Expr::Prove {
+            id,
             name,
             body,
             params,

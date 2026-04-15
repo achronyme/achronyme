@@ -120,7 +120,7 @@ impl ExpressionCompiler for Compiler {
                 ..
             } => self.compile_for(var, iterable, body),
             Expr::Forever { body, .. } => self.compile_forever(body),
-            Expr::Block(block) => {
+            Expr::Block { block, .. } => {
                 let reg = self.alloc_reg()?;
                 self.compile_block(block, reg)?;
                 Ok(reg)
