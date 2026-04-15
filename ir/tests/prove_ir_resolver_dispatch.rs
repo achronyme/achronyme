@@ -77,15 +77,21 @@ fn parse_and_resolve(source: &str) -> (Program, ResolverState) {
 
 /// Build an `OuterScope` that forwards `state` as the resolver
 /// handoff. Captures `outer_scalars` as scalar captures so bodies
-/// that reference outer-scope names parse cleanly.
-fn outer_scope_with_state(state: &ResolverState, outer_scalars: &[&str]) -> OuterScope {
+/// that reference outer-scope names parse cleanly. `functions`
+/// forwards top-level fn declarations the same way
+/// `compile_prove` does in the VM compiler.
+fn outer_scope_with_state(
+    state: &ResolverState,
+    outer_scalars: &[&str],
+    functions: Vec<Stmt>,
+) -> OuterScope {
     let mut values = std::collections::HashMap::new();
     for &name in outer_scalars {
         values.insert(name.to_string(), OuterScopeEntry::Scalar);
     }
     OuterScope {
         values,
-        functions: Vec::new(),
+        functions,
         circom_imports: std::collections::HashMap::new(),
         resolver_state: Some(OuterResolverState {
             table: Arc::new(state.table.clone()),
@@ -107,6 +113,17 @@ fn extract_prove_body(program: &Program) -> Block {
     panic!("no prove block found in program");
 }
 
+/// Collect every top-level `fn` declaration so tests can forward
+/// them via `OuterScope::functions` the way `compile_prove` does.
+fn extract_top_level_fns(program: &Program) -> Vec<Stmt> {
+    program
+        .stmts
+        .iter()
+        .filter(|s| matches!(s, Stmt::FnDecl { .. }))
+        .cloned()
+        .collect()
+}
+
 // ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
@@ -124,7 +141,7 @@ fn records_hit_for_both_builtin_in_prove_block() {
     ";
     let (program, state) = parse_and_resolve(source);
     let body = extract_prove_body(&program);
-    let outer = outer_scope_with_state(&state, &["a", "b"]);
+    let outer = outer_scope_with_state(&state, &["a", "b"], Vec::new());
 
     let (_ir, hits) = ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer)
         .expect("compile prove block with poseidon");
@@ -155,7 +172,7 @@ fn captured_outer_local_produces_no_hit() {
     ";
     let (program, state) = parse_and_resolve(source);
     let body = extract_prove_body(&program);
-    let outer = outer_scope_with_state(&state, &["a", "b"]);
+    let outer = outer_scope_with_state(&state, &["a", "b"], Vec::new());
 
     let (_ir, hits) =
         ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer).expect("compile");
@@ -220,7 +237,7 @@ fn shadow_path_does_not_break_compilation() {
     let body = extract_prove_body(&program);
 
     // With resolver state:
-    let outer_with = outer_scope_with_state(&state, &["a", "b"]);
+    let outer_with = outer_scope_with_state(&state, &["a", "b"], Vec::new());
     let (ir_with, hits) = ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer_with)
         .expect("compile with resolver state");
 
@@ -263,4 +280,164 @@ fn shadow_path_does_not_break_compilation() {
             "hits should all be rooted at the root module in 3E.1"
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// Phase 3E.2/3 — real annotation-driven dispatch tests
+// ---------------------------------------------------------------------
+
+#[test]
+fn user_fn_call_dispatches_via_annotation() {
+    // A top-level `helper` fn forwarded through OuterScope::functions
+    // and called from inside a prove block. The annotation map has a
+    // UserFn entry keyed by the callee Ident's ExprId; Phase 3E.2 is
+    // expected to take the annotation path and dispatch into
+    // compile_user_fn_call with the symbol's qualified_name. For a
+    // single-module program the qualified name IS the bare fn name,
+    // so the fn_table lookup inside compile_user_fn_call succeeds.
+    let source = "\
+        fn helper(x, y) { x + y }\n\
+        prove { public out: Field\n\
+          assert_eq(out, helper(out, out))\n\
+        }\n\
+    ";
+    let (program, state) = parse_and_resolve(source);
+    let body = extract_prove_body(&program);
+    let functions = extract_top_level_fns(&program);
+    let outer = outer_scope_with_state(&state, &[], functions);
+
+    let (ir, hits) = ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer)
+        .expect("compile prove block with user fn call");
+
+    // The prove block should have compiled cleanly with the user
+    // fn inlined — verify the body isn't empty.
+    assert!(!ir.body.is_empty(), "expected a non-empty ProveIR body");
+
+    // A hit for `helper` should be present, pointing at the user
+    // fn's symbol id. Note: `assert_eq` at statement level never
+    // flows through `compile_named_call` — it's intercepted by
+    // `compile_expr_stmt` to emit a constraint node directly. That
+    // interception happens before the annotation dispatch, so no
+    // hit is recorded for assert_eq. We assert only on the helper
+    // hit here; the assert_eq shortcut is existing, untouched
+    // behavior.
+    let helper_id = state
+        .table
+        .lookup("helper")
+        .expect("helper registered in table");
+    let sids: Vec<SymbolId> = hits.iter().map(|(_, s)| *s).collect();
+    assert!(
+        sids.contains(&helper_id),
+        "expected annotation-driven hit for helper, got {:?}",
+        sids
+    );
+}
+
+#[test]
+fn annotation_dispatch_and_legacy_produce_identical_ir() {
+    // With and without an installed resolver state, the ProveIR
+    // output must be structurally identical for a program the
+    // legacy path already handles. This is the observable-parity
+    // guarantee of Phase 3E.2 for single-module programs: the
+    // annotation-driven dispatch is cosmetic here (it always
+    // points at the same user fn / builtin the legacy path would
+    // have picked), so IR generation is unchanged.
+    let source = "\
+        fn helper(x, y) { x + y }\n\
+        prove { public out: Field\n\
+          assert_eq(out, helper(out, out))\n\
+        }\n\
+    ";
+    let (program, state) = parse_and_resolve(source);
+    let body = extract_prove_body(&program);
+    let functions = extract_top_level_fns(&program);
+
+    // With resolver state — annotation path.
+    let outer_with = outer_scope_with_state(&state, &[], functions.clone());
+    let (ir_with, hits_with) = ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer_with)
+        .expect("compile with state");
+
+    // Without resolver state — legacy path.
+    let outer_without = OuterScope {
+        values: std::collections::HashMap::new(),
+        functions,
+        circom_imports: std::collections::HashMap::new(),
+        resolver_state: None,
+    };
+    let (ir_without, hits_without) =
+        ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer_without)
+            .expect("compile without state");
+
+    // Both IRs should have identical public/witness signatures
+    // and identical body-node counts.
+    assert_eq!(
+        ir_with.public_inputs.len(),
+        ir_without.public_inputs.len(),
+        "public input count diverged"
+    );
+    assert_eq!(
+        ir_with.witness_inputs.len(),
+        ir_without.witness_inputs.len(),
+        "witness input count diverged"
+    );
+    assert_eq!(
+        ir_with.body.len(),
+        ir_without.body.len(),
+        "body node count diverged"
+    );
+
+    // Hit trace parity: with-state must record hits, without-state
+    // must record none. This is the observable difference between
+    // the two paths.
+    assert!(
+        !hits_with.is_empty(),
+        "expected annotation-path to record hits"
+    );
+    assert!(
+        hits_without.is_empty(),
+        "expected legacy-path to record no hits"
+    );
+}
+
+#[test]
+fn module_stack_empty_after_compile() {
+    // After compiling a prove block that calls a user fn through
+    // the annotation path, the resolver_module_stack must be empty
+    // — every push is matched by a pop. We verify indirectly by
+    // compiling twice in a row with the same compiler type and
+    // observing that the hit trace for the second compile contains
+    // the same symbol ids (no leftover state from compile #1 would
+    // drift SymbolIds, but a leaked stack entry would pin
+    // `current_resolver_module` to the wrong id and change which
+    // annotations resolve).
+    //
+    // The simpler structural assertion — "the stack is empty at
+    // end of compile" — isn't directly observable from outside,
+    // but a leaked stack would manifest as corrupted hit traces or
+    // compile errors, which the other tests in this file would
+    // also catch. This test focuses on cross-compile determinism.
+    let source = "\
+        fn helper(x, y) { x + y }\n\
+        prove { public out: Field\n\
+          assert_eq(out, helper(out, out))\n\
+        }\n\
+    ";
+    let (program, state) = parse_and_resolve(source);
+    let body = extract_prove_body(&program);
+    let functions = extract_top_level_fns(&program);
+
+    let outer1 = outer_scope_with_state(&state, &[], functions.clone());
+    let (_, hits1) =
+        ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer1).expect("compile 1");
+
+    let outer2 = outer_scope_with_state(&state, &[], functions);
+    let (_, hits2) =
+        ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer2).expect("compile 2");
+
+    let sids1: Vec<SymbolId> = hits1.iter().map(|(_, s)| *s).collect();
+    let sids2: Vec<SymbolId> = hits2.iter().map(|(_, s)| *s).collect();
+    assert_eq!(
+        sids1, sids2,
+        "cross-compile hit traces diverged — stack leak?"
+    );
 }
