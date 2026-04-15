@@ -11,10 +11,7 @@ use achronyme_parser::ast::{ExprId, Program, Span, Stmt};
 use achronyme_parser::diagnostic::SpanRange;
 use achronyme_parser::Diagnostic;
 use memory::Value;
-use resolve::{
-    annotate_program, register_all, register_builtins, BuiltinRegistry, ModuleGraph, ModuleId,
-    ResolvedProgram, SymbolId, SymbolTable,
-};
+use resolve::{build_resolver_state, ModuleId, ResolvedProgram, SymbolId, SymbolTable};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use vm::opcode::OpCode;
@@ -328,13 +325,17 @@ impl Compiler {
     /// Build a resolver state from a single in-memory program that
     /// has **no imports**, and install it on this compiler. Used by
     /// [`Compiler::compile`] as the simplest integration path for
-    /// Phase 3D: programs with imports are left alone (the legacy
-    /// lazy per-import loader handles them; Phase 3E will wire a
+    /// Phase 3D/3E: programs with imports are left alone (the legacy
+    /// lazy per-import loader handles them; a later phase will wire a
     /// real graph build).
     ///
+    /// The actual build sequence (graph → table → annotate) lives in
+    /// [`resolve::build_resolver_state`] so both this compiler and
+    /// the ProveIR compiler share the same entry point.
+    ///
     /// A silent no-op if the graph build or symbol-table
-    /// construction fails — Phase 3D is pure observation, so any
-    /// resolver failure must NOT break compilation.
+    /// construction fails — shadow dispatch is pure observation, so
+    /// any resolver failure must NOT break compilation.
     fn try_auto_build_resolver_state(&mut self, program: &Program) {
         if program_has_imports(program) {
             return;
@@ -361,26 +362,16 @@ impl Compiler {
         let mut source = CompilerModuleSource::with_root(
             self.base_path.clone(),
             &mut local_loader,
-            root_path.clone(),
+            root_path,
             program.clone(),
             exported_names,
         );
-        let graph = match ModuleGraph::build("<resolve-in-memory-root>", &mut source) {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        let mut table = match SymbolTable::with_registry(BuiltinRegistry::default()) {
-            Ok(t) => t,
-            Err(_) => return,
-        };
-        register_builtins(&mut table);
-        if register_all(&mut table, &graph).is_err() {
+        let Ok(state) = build_resolver_state("<resolve-in-memory-root>", &mut source) else {
             return;
-        }
-        let resolved = annotate_program(&graph, &table);
-        let root_module = graph.root();
-        self.resolved_program = Some(resolved);
-        self.resolver_symbol_table = Some(table);
+        };
+        let root_module = state.root();
+        self.resolved_program = Some(state.resolved);
+        self.resolver_symbol_table = Some(state.table);
         self.resolver_root_module = Some(root_module);
     }
 
