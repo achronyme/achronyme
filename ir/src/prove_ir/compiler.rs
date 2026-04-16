@@ -135,6 +135,15 @@ struct FnDef {
     body: Block,
     #[allow(dead_code)]
     return_type: Option<TypeAnnotation>,
+    /// Owning module id — used for resolver module stack push in
+    /// `compile_user_fn_call` so bare identifiers inside the inlined
+    /// body resolve against the definer's scope. `None` for functions
+    /// defined locally inside a prove/circuit block.
+    owner_module: Option<ModuleId>,
+    /// Availability of this function (Phase 4). `None` for locally
+    /// defined functions or when resolver state is not installed.
+    /// `compile_user_fn_call` checks this to reject Vm-only functions.
+    availability: Option<Availability>,
 }
 
 /// The annotation-driven dispatch choice for a call site.
@@ -143,10 +152,9 @@ struct FnDef {
 /// [`ProveIrCompiler::resolve_dispatch_via_annotation`] — see that
 /// method for the semantics of each variant. Phase 3E.2 consults
 /// this outcome in [`compile_named_call`] before reaching for the
-/// legacy `lower_builtin`/`fn_table` lookup. Phase 3F removed the
-/// `module` field from `UserFn` in favour of threading module
-/// tracking through [`ProveIrCompiler::compile_user_fn_call`],
-/// which consults `resolver_module_by_key` directly.
+/// legacy `lower_builtin`/`fn_table` lookup. Phase 6D embeds the
+/// owning `ModuleId` directly in [`FnDef`] so
+/// [`compile_user_fn_call`] reads it from the fn_table entry.
 enum DispatchDecision {
     Builtin {
         handle: resolve::builtins::ProveIrLowerHandle,
@@ -242,16 +250,8 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     /// user-fn annotation into the fn_table key without parsing
     /// the resolver's name-mangling convention at each call site.
     resolver_dispatch_by_symbol: Option<std::sync::Arc<HashMap<SymbolId, String>>>,
-    /// Phase 3F: precomputed `fn_table key → owning ModuleId` map.
-    /// Consumed by [`compile_user_fn_call`] to push the definer's
-    /// module onto [`resolver_module_stack`] before inlining. The
-    /// push/pop is unified at the inlining site so both the
-    /// annotation dispatch path and the legacy StaticAccess path
-    /// correctly maintain the stack.
-    resolver_module_by_key: Option<std::sync::Arc<HashMap<String, ModuleId>>>,
-    /// Phase 4: fn_table key → availability. Checked by
-    /// `compile_user_fn_call` to reject Vm-only functions.
-    resolver_availability_by_key: Option<std::sync::Arc<HashMap<String, Availability>>>,
+    // Phase 6D: resolver_module_by_key and resolver_availability_by_key
+    // removed — their data is now embedded in FnDef at registration time.
     /// Phase 3E shadow hit trace: every `(module_id, expr_id)` the
     /// annotation table resolved to a [`SymbolId`] during the walk.
     /// Populated by [`record_resolver_hit`]; consumed by tests
@@ -289,8 +289,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             resolver_root_module: None,
             resolver_module_stack: Vec::new(),
             resolver_dispatch_by_symbol: None,
-            resolver_module_by_key: None,
-            resolver_availability_by_key: None,
             resolver_hits: Vec::new(),
             current_expr_id: None,
             _field: PhantomData,
@@ -570,7 +568,18 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
         }
 
-        // Register outer scope functions in fn_table for inlining
+        // Register outer scope functions in fn_table for inlining.
+        // When resolver state is available, embed the owning ModuleId
+        // and Availability directly in the FnDef so compile_user_fn_call
+        // can read them without a separate map lookup.
+        let module_map = outer_scope
+            .resolver_state
+            .as_ref()
+            .map(|s| &s.module_by_dispatch_key);
+        let avail_map = outer_scope
+            .resolver_state
+            .as_ref()
+            .map(|s| &s.availability_by_key);
         for stmt in &outer_scope.functions {
             if let Stmt::FnDecl {
                 name,
@@ -580,12 +589,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 ..
             } = stmt
             {
+                let owner_module = module_map.and_then(|m| m.get(name).copied());
+                let availability = avail_map.and_then(|m| m.get(name).copied());
                 compiler.fn_table.insert(
                     name.clone(),
                     FnDef {
                         params: params.clone(),
                         body: body.clone(),
                         return_type: return_type.clone(),
+                        owner_module,
+                        availability,
                     },
                 );
             }
@@ -606,8 +619,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiler.resolver_resolved = Some(state.resolved.clone());
             compiler.resolver_root_module = Some(state.root_module);
             compiler.resolver_dispatch_by_symbol = Some(state.dispatch_key_by_symbol.clone());
-            compiler.resolver_module_by_key = Some(state.module_by_dispatch_key.clone());
-            compiler.resolver_availability_by_key = Some(state.availability_by_key.clone());
         }
 
         // Compile all statements in the block
@@ -1015,6 +1026,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                         params: params.clone(),
                         body: body.clone(),
                         return_type: return_type.clone(),
+                        owner_module: None,
+                        availability: None,
                     },
                 );
                 Ok(())
@@ -1121,6 +1134,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             params: params.clone(),
                             body: body.clone(),
                             return_type: return_type.clone(),
+                            owner_module: None,
+                            availability: None,
                         },
                     );
                 }
@@ -1199,6 +1214,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             params: params.clone(),
                             body: body.clone(),
                             return_type: return_type.clone(),
+                            owner_module: None,
+                            availability: None,
                         },
                     );
                 }
@@ -3731,18 +3748,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
-        // Phase 4: reject Vm-only functions inside prove/circuit blocks.
-        if let Some(avail_map) = &self.resolver_availability_by_key {
-            if let Some(avail) = avail_map.get(name) {
-                if !avail.includes_prove_ir() {
-                    return Err(ProveIrError::VmOnlyFunction {
-                        name: name.into(),
-                        span: to_span(span),
-                    });
-                }
-            }
-        }
-
         let fn_def =
             self.fn_table
                 .get(name)
@@ -3752,6 +3757,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     span: to_span(span),
                     suggestion: None,
                 })?;
+
+        // Phase 4: reject Vm-only functions inside prove/circuit blocks.
+        if let Some(avail) = fn_def.availability {
+            if !avail.includes_prove_ir() {
+                return Err(ProveIrError::VmOnlyFunction {
+                    name: name.into(),
+                    span: to_span(span),
+                });
+            }
+        }
 
         // Arity check
         if args.len() != fn_def.params.len() {
@@ -3772,29 +3787,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // Phase 3F — gap 2.4 structural fix: push the definer's
         // module onto the resolver module stack before compiling the
         // inlined body. Both the annotation-driven dispatch path and
-        // the legacy name-based path (StaticAccess arm,
-        // compile_named_call legacy fallback) land here, so all
-        // inlined bodies consistently resolve bare identifiers
-        // against their definer's scope.
-        //
-        // The lookup keys off `resolver_module_by_key` (precomputed
-        // at auto-build time from the SymbolTable + ModuleGraph). A
-        // missing entry means either:
-        //   (a) the resolver state isn't installed — no dispatch map
-        //       exists, nothing to push, dispatch behaves exactly as
-        //       pre-Phase-3E.
-        //   (b) the resolver state exists but this fn was registered
-        //       through a prove-block-local `import` stmt (bypasses
-        //       the auto-build) — legacy behavior, caller's module
-        //       wins for annotation lookups inside the body.
-        //
-        // In both cases we skip the push and fall back to the
-        // previous behavior. `module_pushed` records whether we
-        // pushed so the matching pop is paired.
-        let module_pushed = self
-            .resolver_module_by_key
-            .as_ref()
-            .and_then(|m| m.get(name).copied())
+        // the legacy name-based path land here, so all inlined bodies
+        // consistently resolve bare identifiers against their
+        // definer's scope. `owner_module` is embedded in FnDef at
+        // registration time from the dispatch maps.
+        let module_pushed = fn_def
+            .owner_module
             .map(|module| {
                 self.resolver_module_stack.push(module);
                 true
