@@ -136,26 +136,26 @@ impl CircomVmCallEmitter for Compiler {
         }
         let mut template_u64_args: Vec<u64> = Vec::with_capacity(expected_params);
         for (i, arg) in template_args.iter().enumerate() {
-            match arg {
-                Expr::Number { value, .. } => {
-                    let parsed: u64 = value.parse().map_err(|_| {
-                        CompilerError::CompileError(
-                            format!(
-                                "circom template `{template_name}`: template argument \
-                                 at position {i} (`{value}`) does not fit in u64"
-                            ),
-                            self.cur_span(),
-                        )
-                    })?;
-                    template_u64_args.push(parsed);
+            // Phase 5: accept any ConstExpr, not just Expr::Number.
+            // First try the literal path (cheapest), then check the
+            // resolver's const_values annotation map.
+            let const_val = match arg {
+                Expr::Number { value, .. } => value.parse::<i64>().ok(),
+                _ => self.resolved_program.as_ref().and_then(|rp| {
+                    let module = self.resolver_root_module?;
+                    rp.const_values.get(&(module, arg.id())).copied()
+                }),
+            };
+            match const_val {
+                Some(v) if v >= 0 => {
+                    template_u64_args.push(v as u64);
                 }
                 _ => {
                     return Err(CompilerError::CompileError(
                         format!(
                             "circom template `{template_name}`: template argument at \
-                             position {i} must be an integer literal at VM-mode call \
-                             sites (compile-time constant folding for template params \
-                             is not yet implemented in VM mode)"
+                             position {i} must be a compile-time constant \
+                             (e.g. `let n = 8; {template_name}(n)(...)`)"
                         ),
                         self.cur_span(),
                     ));

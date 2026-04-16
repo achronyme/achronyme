@@ -144,10 +144,9 @@ let h = Square()(0p3, 0p4)
 }
 
 #[test]
-fn vm_mode_runtime_template_arg_rejected_at_compile_time() {
-    // Num2Bits expects a compile-time integer template parameter.
-    // Passing a runtime identifier must be rejected at .ach compile
-    // time with a clear message — Phase 4.3 limitation.
+fn vm_mode_const_let_template_arg_accepted() {
+    // Phase 5: `let n = 4; Num2Bits(n)(x)` should work because the
+    // resolver's const evaluator proves `n` is a compile-time constant.
     let fixture = write_fixture(
         r#"
         pragma circom 2.0.0;
@@ -169,14 +168,11 @@ fn vm_mode_runtime_template_arg_rejected_at_compile_time() {
 import { Num2Bits } from "./module.circom"
 let n = 4
 let h = Num2Bits(n)(0p5)
+assert(h[0] == 0p1)
+assert(h[2] == 0p1)
 "#,
     );
-    let err = run(&fixture).expect_err("runtime template arg must be rejected");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("integer literal") || msg.contains("compile-time"),
-        "expected compile-time constant error, got: {msg}"
-    );
+    run(&fixture).expect("const let template arg should be accepted");
 }
 
 #[test]
