@@ -340,6 +340,11 @@ fn collect_imports(program: &Program) -> Vec<PendingImport> {
 fn collect_from_stmt(stmt: &Stmt, out: &mut Vec<PendingImport>) {
     match stmt {
         Stmt::Import { path, alias, span } => {
+            // Skip .circom imports — they are handled by the circom
+            // pipeline, not the .ach module graph.
+            if path.ends_with(".circom") {
+                return;
+            }
             out.push(PendingImport {
                 relative: path.clone(),
                 alias: alias.clone(),
@@ -348,6 +353,9 @@ fn collect_from_stmt(stmt: &Stmt, out: &mut Vec<PendingImport>) {
             });
         }
         Stmt::SelectiveImport { names, path, span } => {
+            if path.ends_with(".circom") {
+                return;
+            }
             out.push(PendingImport {
                 relative: path.clone(),
                 alias: String::new(),

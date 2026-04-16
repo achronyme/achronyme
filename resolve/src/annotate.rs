@@ -201,6 +201,11 @@ pub struct ResolvedProgram {
     /// emitted inside `prove {}` / `circuit {}` scopes. Empty for
     /// well-formed programs.
     pub diagnostics: Vec<ResolveError>,
+    /// Phase 5: `(module, expr_id) → i64` for every expression that
+    /// the compile-time const evaluator proved constant. The VM
+    /// compiler's circom template dispatcher reads this to accept
+    /// `let n = 4; Num2Bits(n)(x)` — not just `Num2Bits(4)(x)`.
+    pub const_values: crate::const_eval::ConstValues,
 }
 
 /// Walk every [`Expr`] in every module and emit an annotation map from

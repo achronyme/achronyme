@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use crate::annotate::{annotate_program, register_all, register_builtins, ResolvedProgram};
 use crate::availability::{infer_availability, AvailabilityResult};
 use crate::builtins::BuiltinRegistry;
+use crate::const_eval::evaluate_constants;
 use crate::error::ResolveError;
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleSource};
 use crate::symbol::{Availability, CallableKind, SymbolId};
@@ -84,7 +85,8 @@ pub fn build_resolver_state(
     let mut table = SymbolTable::with_registry(BuiltinRegistry::default())?;
     register_builtins(&mut table);
     register_all(&mut table, &graph)?;
-    let resolved = annotate_program(&graph, &table);
+    let mut resolved = annotate_program(&graph, &table);
+    resolved.const_values = evaluate_constants(&graph);
     let availability = infer_availability(&mut table, &graph, &resolved);
     Ok(ResolverState {
         table,

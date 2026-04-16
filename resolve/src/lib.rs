@@ -58,6 +58,7 @@ pub mod annotate;
 pub mod availability;
 pub mod build;
 pub mod builtins;
+pub mod const_eval;
 pub mod error;
 pub mod module_graph;
 pub mod statics;
@@ -71,6 +72,7 @@ pub use annotate::{
 pub use availability::{infer_availability, AvailabilityResult, RestrictionReason};
 pub use build::{build_availability_map, build_dispatch_maps, build_resolver_state, ResolverState};
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
+pub use const_eval::{evaluate_constants, ConstValues};
 pub use error::{ResolveError, UnsupportedShape};
 pub use module_graph::{
     ImportEdge, ImportEdgeKind, LoadedModule, ModuleGraph, ModuleId, ModuleNode, ModuleSource,
