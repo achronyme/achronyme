@@ -23,6 +23,8 @@
 
 use std::collections::HashMap;
 
+use achronyme_parser::ast::Stmt;
+
 use crate::annotate::{annotate_program, register_all, register_builtins, ResolvedProgram};
 use crate::availability::{infer_availability, AvailabilityResult};
 use crate::builtins::BuiltinRegistry;
@@ -241,4 +243,60 @@ pub fn build_availability_map(
         result.insert(key, availability);
     }
     result
+}
+
+/// Build the list of outer-scope [`Stmt::FnDecl`] entries from the
+/// resolver state, each renamed to its fn_table dispatch key.
+///
+/// This replaces the VM compiler's incremental `fn_decl_asts`
+/// accumulation for callers that have a fully-built resolver state.
+/// Each UserFn in the [`SymbolTable`] that has a dispatch key in
+/// `dispatch_by_symbol` produces a cloned FnDecl with its name set
+/// to that key. [`Stmt::Export`] wrappers are peeled automatically.
+///
+/// Functions without a dispatch key (selective-import-only symbols)
+/// or with invalid `stmt_index` are silently skipped — they fall
+/// through to the legacy dispatch path unchanged.
+pub fn build_outer_functions(
+    state: &ResolverState,
+    dispatch_by_symbol: &HashMap<SymbolId, String>,
+) -> Vec<Stmt> {
+    let mut functions = Vec::new();
+    for (sid, kind) in state.table.iter() {
+        let (module, stmt_index) = match kind {
+            CallableKind::UserFn {
+                module, stmt_index, ..
+            } => (*module, *stmt_index as usize),
+            _ => continue,
+        };
+        let Some(key) = dispatch_by_symbol.get(&sid).cloned() else {
+            continue;
+        };
+        let node = state.graph.get(module);
+        let stmt = match node.program.stmts.get(stmt_index) {
+            Some(s) => s,
+            None => continue,
+        };
+        let inner = match stmt {
+            Stmt::Export { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        if let Stmt::FnDecl {
+            params,
+            body,
+            return_type,
+            span,
+            ..
+        } = inner
+        {
+            functions.push(Stmt::FnDecl {
+                name: key,
+                params: params.clone(),
+                body: body.clone(),
+                return_type: return_type.clone(),
+                span: span.clone(),
+            });
+        }
+    }
+    functions
 }

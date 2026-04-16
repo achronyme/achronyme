@@ -779,8 +779,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // compiler's annotation path fires for dispatch.
             let (functions_for_scope, resolver_state_for_scope) = match resolver_bundle {
                 Some(bundle) => {
-                    let graph_functions =
-                        Self::outer_functions_from_graph(&bundle.state, &bundle.dispatch_by_symbol);
+                    let graph_functions = resolve::build_outer_functions(
+                        &bundle.state,
+                        &bundle.dispatch_by_symbol,
+                    );
                     let avail_map =
                         build_availability_map(&bundle.state.table, &bundle.state.graph);
                     let state_for_scope = Some(OuterResolverState {
@@ -886,83 +888,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    /// Phase 3G helper: walk the resolver's [`ModuleGraph`] and
-    /// build an [`OuterScope::functions`] list that covers every
-    /// transitively-reachable [`CallableKind::UserFn`], renamed to
-    /// its precomputed fn_table key so
-    /// [`compile_into_instance`]'s existing population loop just
-    /// works.
-    ///
-    /// This replaces the surface-level `register_module_exports`
-    /// mechanism the legacy `compile_circuit` path used. By walking
-    /// the graph directly we include:
-    ///
-    /// - Root-module top-level fns (under their bare name).
-    /// - Imported-module fns under their `{alias}::{name}` key.
-    /// - **Private fns** of imported modules, not just the
-    ///   `export`-marked ones. Inlined fn bodies frequently call
-    ///   same-module private helpers via bare identifiers, and
-    ///   those references resolve against the definer's scope via
-    ///   the resolver module stack that [`compile_user_fn_call`]
-    ///   maintains. Without pre-populating the private entries
-    ///   here, gap 2.4 in circuit mode would still bite the way
-    ///   it did pre-Phase-3F in prove-block mode.
-    ///
-    /// Fns whose owning module has no dispatch-map entry (i.e. the
-    /// module was selective-imported rather than aliased) are
-    /// skipped — those fall through to the legacy path unchanged.
-    fn outer_functions_from_graph(
-        state: &ResolverState,
-        dispatch_by_symbol: &HashMap<SymbolId, String>,
-    ) -> Vec<Stmt> {
-        let mut functions: Vec<Stmt> = Vec::new();
-        for (sid, kind) in state.table.iter() {
-            let (module, stmt_index) = match kind {
-                CallableKind::UserFn {
-                    module, stmt_index, ..
-                } => (*module, *stmt_index as usize),
-                _ => continue,
-            };
-            let Some(key) = dispatch_by_symbol.get(&sid).cloned() else {
-                continue;
-            };
-            let node = state.graph.get(module);
-            // stmt_index was set by register_module while walking
-            // node.program.stmts, so it's valid for the lifetime of
-            // the graph.
-            let stmt = match node.program.stmts.get(stmt_index) {
-                Some(s) => s,
-                None => continue,
-            };
-            // Unwrap `Stmt::Export { inner }` to reach the underlying
-            // FnDecl, mirroring the walk `register_module` does.
-            let inner = match stmt {
-                Stmt::Export { inner, .. } => inner.as_ref(),
-                other => other,
-            };
-            if let Stmt::FnDecl {
-                params,
-                body,
-                return_type,
-                span,
-                ..
-            } = inner
-            {
-                // Clone the FnDecl with its name replaced by the
-                // fn_table dispatch key. `compile_into_instance`'s
-                // fn_table population reads `Stmt::FnDecl.name` as
-                // the key, so the rename is load-bearing.
-                functions.push(Stmt::FnDecl {
-                    name: key,
-                    params: params.clone(),
-                    body: body.clone(),
-                    return_type: return_type.clone(),
-                    span: span.clone(),
-                });
-            }
-        }
-        functions
-    }
+    // Phase 6E: `outer_functions_from_graph` moved to
+    // `resolve::build::build_outer_functions`.
 
     /// Convenience: parse source and compile as a prove block with outer scope.
     pub fn compile_prove_block(

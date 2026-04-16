@@ -841,8 +841,12 @@ impl StatementCompiler for Compiler {
         //    inline user-defined helpers from the enclosing scope, plus
         //    any circom template imports so the ProveIR compiler can
         //    resolve `Poseidon(...)(...)` / `P.Poseidon(...)(...)` calls.
+        let functions = self
+            .resolver_outer_functions
+            .clone()
+            .unwrap_or_else(|| self.fn_decl_asts.clone());
         let outer_scope = ir::prove_ir::OuterScope {
-            functions: self.fn_decl_asts.clone(),
+            functions,
             circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
                 self,
             ),

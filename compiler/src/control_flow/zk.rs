@@ -131,9 +131,19 @@ pub(super) fn compile_prove(
         _ => None,
     };
 
+    // Phase 6E: prefer graph-derived outer functions when the
+    // resolver auto-build succeeded — they capture transitive
+    // imports that the incremental fn_decl_asts may miss. Fall
+    // back to fn_decl_asts for in-memory compiles without a
+    // resolver state.
+    let functions = compiler
+        .resolver_outer_functions
+        .clone()
+        .unwrap_or_else(|| compiler.fn_decl_asts.clone());
+
     let outer_scope = ir::prove_ir::OuterScope {
         values: outer_values,
-        functions: compiler.fn_decl_asts.clone(),
+        functions,
         circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
             compiler,
         ),

@@ -70,7 +70,10 @@ pub use annotate::{
     ResolvedProgram,
 };
 pub use availability::{infer_availability, AvailabilityResult, RestrictionReason};
-pub use build::{build_availability_map, build_dispatch_maps, build_resolver_state, ResolverState};
+pub use build::{
+    build_availability_map, build_dispatch_maps, build_outer_functions, build_resolver_state,
+    ResolverState,
+};
 pub use builtins::{BuiltinEntry, BuiltinRegistry};
 pub use const_eval::{evaluate_constants, ConstValues};
 pub use error::{ResolveError, UnsupportedShape};

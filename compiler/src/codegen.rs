@@ -100,8 +100,16 @@ pub struct Compiler {
     pub known_methods: HashSet<String>,
 
     /// FnDecl AST nodes accumulated during top-level compilation.
-    /// Passed to ProveIR so prove/circuit blocks can inline outer functions.
+    /// Legacy path for ProveIR prove-block inlining. When the resolver
+    /// auto-build succeeds, `resolver_outer_functions` is preferred.
     pub fn_decl_asts: Vec<Stmt>,
+
+    /// Graph-derived outer functions built at resolver auto-build time.
+    /// Each FnDecl is renamed to its dispatch key and covers all
+    /// transitive UserFn symbols. When `Some`, prove blocks use this
+    /// instead of `fn_decl_asts` — it captures transitive imports
+    /// that the incremental accumulation misses.
+    pub resolver_outer_functions: Option<Vec<Stmt>>,
 
     /// Prime field for ProveIR serialization. Defaults to BN254.
     pub prime_id: memory::field::PrimeId,
@@ -262,6 +270,7 @@ impl Compiler {
             warnings: Vec::new(),
             known_methods,
             fn_decl_asts: Vec::new(),
+            resolver_outer_functions: None,
             prime_id: memory::field::PrimeId::Bn254,
             resolved_program: None,
             resolver_symbol_table: None,
@@ -300,6 +309,7 @@ impl Compiler {
         self.resolver_dispatch_by_symbol = None;
         self.resolver_module_by_key = None;
         self.resolver_availability_map = None;
+        self.resolver_outer_functions = None;
     }
 
     /// Build a resolver state for the current program and install it
@@ -376,6 +386,11 @@ impl Compiler {
         let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
         let availability_map = build_availability_map(&state.table, &state.graph);
 
+        // Phase 6E: derive outer functions from the graph so prove
+        // blocks can use them instead of the incremental fn_decl_asts.
+        let outer_functions =
+            resolve::build_outer_functions(&state, &dispatch_by_symbol);
+
         let root_module = state.root();
         self.resolved_program = Some(state.resolved);
         self.resolver_symbol_table = Some(state.table);
@@ -383,6 +398,7 @@ impl Compiler {
         self.resolver_dispatch_by_symbol = Some(Arc::new(dispatch_by_symbol));
         self.resolver_module_by_key = Some(Arc::new(module_by_key));
         self.resolver_availability_map = Some(availability_map);
+        self.resolver_outer_functions = Some(outer_functions);
     }
 
     /// Get the OptSpan for the current expression/statement being compiled.
