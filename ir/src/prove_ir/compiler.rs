@@ -148,13 +148,11 @@ struct FnDef {
 
 /// The annotation-driven dispatch choice for a call site.
 ///
-/// Returned by
-/// [`ProveIrCompiler::resolve_dispatch_via_annotation`] — see that
-/// method for the semantics of each variant. Phase 3E.2 consults
-/// this outcome in [`compile_named_call`] before reaching for the
-/// legacy `lower_builtin`/`fn_table` lookup. Phase 6D embeds the
-/// owning `ModuleId` directly in [`FnDef`] so
-/// [`compile_user_fn_call`] reads it from the fn_table entry.
+/// Returned by [`ProveIrCompiler::resolve_dispatch_via_annotation`].
+/// `Builtin` dispatches via [`ProveIrLowerHandle`] into the lowering
+/// table; `UserFn` carries the fn_table key for inlining. The legacy
+/// name-based path in [`compile_named_call`] handles the
+/// `NoAnnotation` fallback.
 enum DispatchDecision {
     Builtin {
         handle: resolve::builtins::ProveIrLowerHandle,

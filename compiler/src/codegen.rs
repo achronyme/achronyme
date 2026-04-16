@@ -118,12 +118,10 @@ pub struct Compiler {
     /// Annotation map produced by [`resolve::annotate_program`].
     /// Populated either automatically by [`Compiler::compile`] (for
     /// in-memory single-module programs) or manually via
-    /// [`Compiler::install_resolver_state`]. Phase 3D consults this
-    /// in `compile_ident` for observation only — it records a hit in
-    /// [`Compiler::resolver_hits`] so tests can verify the resolver
-    /// agrees with the legacy dispatch. The legacy path is
-    /// unchanged; Phase 3E wires real dispatch-via-SymbolId, and
-    /// Phase 6 removes the legacy path entirely.
+    /// [`Compiler::install_resolver_state`]. The resolver-driven
+    /// dispatch path reads this to resolve call-site annotations;
+    /// the legacy name-based path coexists as a fallback for
+    /// compiles without resolver state.
     pub resolved_program: Option<ResolvedProgram>,
     /// Symbol table produced alongside `resolved_program`. Stored so
     /// that hits into the annotation map can be resolved to their

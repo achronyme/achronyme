@@ -44,8 +44,8 @@
 //! - **Phase 3** — resolver pass + [`SymbolId`] annotation on the AST.
 //! - **Phase 4** — lazy compilation driven by reachability + [`Availability`].
 //! - **Phase 5** — `ConstExpr` surfacing for template args.
-//! - **Phase 6** — final cleanup. `fn_table`, `global_symbols`, and
-//!   `fn_decl_asts` are removed; statics unified in [`statics`].
+//! - **Phase 6** — registry-driven dispatch (`NATIVE_TABLE` deleted),
+//!   `FnDef` enrichment, graph-derived outer functions.
 //!
 //! Do not edit "current phase" markers here — they go stale. Consult
 //! the RFC instead. This doc block describes the crate's *scope*, not
