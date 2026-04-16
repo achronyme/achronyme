@@ -364,6 +364,41 @@ impl BuiltinRegistry {
         self.entries.get(index)
     }
 
+    /// Number of VM-available entries (both `Vm` and `Both`).
+    ///
+    /// This replaces the old `vm::specs::NATIVE_COUNT` constant — the
+    /// registry is now the single source of truth for how many native
+    /// slots the VM must reserve.
+    pub fn vm_native_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.availability.includes_vm())
+            .count()
+    }
+
+    /// VM-available entries sorted by [`VmFnHandle`] order.
+    ///
+    /// The compiler uses this to populate `global_symbols` in the
+    /// correct positional order, and the VM uses it to validate that
+    /// `builtin_modules()` produces natives in the same order.
+    pub fn vm_entries_by_handle(&self) -> Vec<&BuiltinEntry> {
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|e| e.availability.includes_vm())
+            .collect();
+        entries.sort_by_key(|e| e.vm_fn.map_or(u32::MAX, |h| h.as_u32()));
+        entries
+    }
+
+    /// Number of ProveIR-available entries (both `ProveIr` and `Both`).
+    pub fn prove_ir_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.availability.includes_prove_ir())
+            .count()
+    }
+
     /// Audit every entry against the invariants in the module docs.
     /// Additionally checks for duplicate names across the whole registry
     /// (should be impossible given [`BuiltinRegistry::push`]'s guard,
