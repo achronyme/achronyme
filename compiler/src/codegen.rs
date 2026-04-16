@@ -386,8 +386,7 @@ impl Compiler {
 
         // Phase 6E: derive outer functions from the graph so prove
         // blocks can use them instead of the incremental fn_decl_asts.
-        let outer_functions =
-            resolve::build_outer_functions(&state, &dispatch_by_symbol);
+        let outer_functions = resolve::build_outer_functions(&state, &dispatch_by_symbol);
 
         let root_module = state.root();
         self.resolved_program = Some(state.resolved);

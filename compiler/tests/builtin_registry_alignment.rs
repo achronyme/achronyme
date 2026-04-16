@@ -54,7 +54,8 @@ fn every_vm_registry_entry_has_a_real_native() {
         );
         let handle = entry.vm_fn.expect("vm_entries_by_handle guarantees vm_fn");
         assert_eq!(
-            handle.as_u32() as usize, i,
+            handle.as_u32() as usize,
+            i,
             "'{}' has VmFnHandle({}) but expected position {}",
             entry.name,
             handle.as_u32(),
@@ -70,10 +71,17 @@ fn every_prove_ir_registry_entry_has_a_valid_handle() {
     let reg = BuiltinRegistry::default();
     let prove_count = reg.prove_ir_count();
 
-    for entry in reg.entries().iter().filter(|e| e.availability.includes_prove_ir()) {
-        let handle = entry
-            .prove_ir_lower
-            .unwrap_or_else(|| panic!("`{}` is ProveIr-available but has no prove_ir_lower", entry.name));
+    for entry in reg
+        .entries()
+        .iter()
+        .filter(|e| e.availability.includes_prove_ir())
+    {
+        let handle = entry.prove_ir_lower.unwrap_or_else(|| {
+            panic!(
+                "`{}` is ProveIr-available but has no prove_ir_lower",
+                entry.name
+            )
+        });
         assert!(
             (handle.as_u32() as usize) < prove_count,
             "`{}` has ProveIrLowerHandle({}) but only {} ProveIR builtins exist",

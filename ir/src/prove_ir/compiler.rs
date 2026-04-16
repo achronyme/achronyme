@@ -157,7 +157,9 @@ enum DispatchDecision {
     Builtin {
         handle: resolve::builtins::ProveIrLowerHandle,
     },
-    UserFn { qualified_name: String },
+    UserFn {
+        qualified_name: String,
+    },
     NoAnnotation,
 }
 
@@ -777,10 +779,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // compiler's annotation path fires for dispatch.
             let (functions_for_scope, resolver_state_for_scope) = match resolver_bundle {
                 Some(bundle) => {
-                    let graph_functions = resolve::build_outer_functions(
-                        &bundle.state,
-                        &bundle.dispatch_by_symbol,
-                    );
+                    let graph_functions =
+                        resolve::build_outer_functions(&bundle.state, &bundle.dispatch_by_symbol);
                     let avail_map =
                         build_availability_map(&bundle.state.table, &bundle.state.graph);
                     let state_for_scope = Some(OuterResolverState {
@@ -2875,7 +2875,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             },
             None => return Ok(None),
         };
-        self.dispatch_builtin_by_handle(handle, args, span).map(Some)
+        self.dispatch_builtin_by_handle(handle, args, span)
+            .map(Some)
     }
 
     /// Dispatch a ProveIR builtin by its [`ProveIrLowerHandle`].
@@ -2898,16 +2899,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
         const LOWERING_COUNT: usize = 10;
         let lowerings: [LowerFn<F>; LOWERING_COUNT] = [
-            Self::lower_poseidon,       // 0
-            Self::lower_poseidon_many,  // 1
-            Self::lower_mux,            // 2
-            Self::lower_range_check,    // 3
-            Self::lower_merkle_verify,  // 4
-            Self::lower_len,            // 5
-            Self::lower_assert_eq,      // 6
-            Self::lower_assert,         // 7
-            Self::lower_int_div,        // 8
-            Self::lower_int_mod,        // 9
+            Self::lower_poseidon,      // 0
+            Self::lower_poseidon_many, // 1
+            Self::lower_mux,           // 2
+            Self::lower_range_check,   // 3
+            Self::lower_merkle_verify, // 4
+            Self::lower_len,           // 5
+            Self::lower_assert_eq,     // 6
+            Self::lower_assert,        // 7
+            Self::lower_int_div,       // 8
+            Self::lower_int_mod,       // 9
         ];
 
         let idx = handle.as_u32() as usize;
@@ -2921,11 +2922,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     // -- Individual builtin lowering functions --------------------------------
 
-    fn lower_poseidon(
-        &mut self,
-        args: &[&Expr],
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
+    fn lower_poseidon(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("poseidon", 2, args.len(), span)?;
         let left = self.compile_expr(args[0])?;
         let right = self.compile_expr(args[1])?;
@@ -2953,11 +2950,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::PoseidonMany(compiled?))
     }
 
-    fn lower_mux(
-        &mut self,
-        args: &[&Expr],
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
+    fn lower_mux(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("mux", 3, args.len(), span)?;
         let cond = self.compile_expr(args[0])?;
         let if_true = self.compile_expr(args[1])?;
@@ -3011,11 +3004,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_len(
-        &mut self,
-        args: &[&Expr],
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
+    fn lower_len(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("len", 1, args.len(), span)?;
         self.compile_len_call(args[0], span)
     }
@@ -3038,11 +3027,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    fn lower_assert(
-        &mut self,
-        args: &[&Expr],
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
+    fn lower_assert(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_assert_arity(args.len(), span)?;
         let cond = self.compile_expr(args[0])?;
         let message = self.extract_assert_message(args.get(1), span)?;
@@ -3054,11 +3039,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    fn lower_int_div(
-        &mut self,
-        args: &[&Expr],
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
+    fn lower_int_div(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("int_div", 3, args.len(), span)?;
         let lhs = self.compile_expr(args[0])?;
         let rhs = self.compile_expr(args[1])?;
@@ -3070,11 +3051,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_int_mod(
-        &mut self,
-        args: &[&Expr],
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
+    fn lower_int_mod(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("int_mod", 3, args.len(), span)?;
         let lhs = self.compile_expr(args[0])?;
         let rhs = self.compile_expr(args[1])?;
