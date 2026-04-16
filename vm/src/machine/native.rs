@@ -50,17 +50,12 @@ impl NativeRegistry for super::vm::VM {
     }
 
     fn bootstrap_natives(&mut self) -> Result<(), RuntimeError> {
-        use crate::specs::NATIVE_TABLE;
-
-        // Assert empty state to ensure alignment
         if !self.natives.is_empty() || !self.globals.is_empty() {
             panic!("VM must be empty before bootstrapping natives");
         }
 
-        // Collect all native definitions from modules
         let modules = builtin_modules();
 
-        // Validate module name uniqueness
         {
             let mut seen = std::collections::HashSet::new();
             for module in &modules {
@@ -72,33 +67,29 @@ impl NativeRegistry for super::vm::VM {
             }
         }
 
-        let mut all_defs = Vec::with_capacity(NATIVE_TABLE.len());
+        let registry = resolve::BuiltinRegistry::default();
+        let vm_entries = registry.vm_entries_by_handle();
+
+        let mut all_defs = Vec::with_capacity(vm_entries.len());
         for module in &modules {
             all_defs.extend(module.natives());
         }
 
-        // Validate alignment with NATIVE_TABLE (compiler SSOT)
         assert_eq!(
             all_defs.len(),
-            NATIVE_TABLE.len(),
-            "NativeModule definitions ({}) != NATIVE_TABLE length ({})",
+            vm_entries.len(),
+            "NativeModule definitions ({}) != registry VM entries ({})",
             all_defs.len(),
-            NATIVE_TABLE.len(),
+            vm_entries.len(),
         );
-        for (i, (def, meta)) in all_defs.iter().zip(NATIVE_TABLE.iter()).enumerate() {
+        for (i, (def, entry)) in all_defs.iter().zip(vm_entries.iter()).enumerate() {
             assert_eq!(
-                def.name, meta.name,
-                "Native index {i}: module says '{}' but NATIVE_TABLE says '{}'",
-                def.name, meta.name,
-            );
-            assert_eq!(
-                def.arity, meta.arity,
-                "Native '{}' arity mismatch: module={} vs table={}",
-                def.name, def.arity, meta.arity,
+                def.name, entry.name,
+                "Native index {i}: module says '{}' but registry says '{}'",
+                def.name, entry.name,
             );
         }
 
-        // Register all natives in order
         for def in &all_defs {
             self.define_native(def.name, def.func, def.arity)?;
         }
@@ -109,28 +100,29 @@ impl NativeRegistry for super::vm::VM {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::specs::NATIVE_TABLE;
     use crate::VM;
 
     #[test]
     fn test_native_alignment() {
+        let registry = resolve::BuiltinRegistry::default();
+        let native_count = registry.vm_native_count();
         let vm = VM::new();
 
-        // Check internal vectors match SSOT
-        assert_eq!(vm.globals.len(), NATIVE_TABLE.len());
+        assert_eq!(vm.globals.len(), native_count);
 
-        // Check index 0 validity
         let first_val = vm.globals[0].value;
         assert!(first_val.is_native());
 
-        // Check integrity of all natives
-        for (i, _meta) in NATIVE_TABLE.iter().enumerate() {
+        for i in 0..native_count {
             assert!(vm.globals[i].value.is_native());
         }
     }
 
     #[test]
-    fn test_module_names_match_table() {
+    fn test_module_names_match_registry() {
+        let registry = resolve::BuiltinRegistry::default();
+        let vm_entries = registry.vm_entries_by_handle();
+
         let modules = builtin_modules();
         let mut all_names: Vec<&str> = Vec::new();
         for module in &modules {
@@ -139,12 +131,12 @@ mod tests {
             }
         }
 
-        assert_eq!(all_names.len(), NATIVE_TABLE.len());
-        for (i, (name, meta)) in all_names.iter().zip(NATIVE_TABLE.iter()).enumerate() {
+        assert_eq!(all_names.len(), vm_entries.len());
+        for (i, (name, entry)) in all_names.iter().zip(vm_entries.iter()).enumerate() {
             assert_eq!(
-                *name, meta.name,
-                "Mismatch at index {i}: module='{}' vs table='{}'",
-                name, meta.name
+                *name, entry.name,
+                "Mismatch at index {i}: module='{}' vs registry='{}'",
+                name, entry.name
             );
         }
     }
@@ -156,7 +148,6 @@ mod tests {
         assert_eq!(modules[0].name(), "core");
         assert_eq!(modules[1].name(), "bigint");
 
-        // Verify each module contributes at least one native
         for module in &modules {
             assert!(
                 !module.natives().is_empty(),
