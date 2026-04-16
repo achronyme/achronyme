@@ -31,8 +31,8 @@ pub trait NativeModule {
 
 /// Returns the built-in modules in registration order.
 ///
-/// The order here **must** match `NATIVE_TABLE` in `specs.rs` — a
-/// compile-time-like assertion in `bootstrap_natives` verifies this.
+/// The order here **must** match the `VmFnHandle` ordering in
+/// `resolve::BuiltinRegistry::default()` — `bootstrap_natives` verifies this.
 pub fn builtin_modules() -> Vec<Box<dyn NativeModule>> {
     use crate::stdlib::{bigint::BigintModule, core::CoreModule};
 

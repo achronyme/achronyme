@@ -5,6 +5,7 @@
 
 use compiler::Compiler;
 use memory::{Closure, Function, Value};
+use resolve::BuiltinRegistry;
 use vm::opcode::instruction::{encode_abc, encode_abx};
 use vm::{CallFrame, OpCode, RuntimeError, MAX_FRAMES, VM};
 
@@ -106,8 +107,7 @@ fn deep_recursion_stack_overflow() {
     // Proto 0: GetGlobal "recurse", Call it (infinite recursion).
     let mut vm = VM::new();
 
-    // The user global index for "recurse" is USER_GLOBAL_START (12).
-    let user_global_idx: u16 = vm::specs::USER_GLOBAL_START;
+    let user_global_idx: u16 = resolve::BuiltinRegistry::default().vm_native_count() as u16;
 
     // Proto 0 (recursive function): GetGlobal "recurse" into R[0], Call R[0]
     let recurse_chunk = vec![
@@ -175,7 +175,7 @@ fn frame_depth_limit_before_stack_max() {
     // With max_slots=1, STACK_MAX (65536) would allow ~65K frames.
     // MAX_FRAMES (4096) must trigger first.
     let mut vm = VM::new();
-    let user_global_idx: u16 = vm::specs::USER_GLOBAL_START;
+    let user_global_idx: u16 = resolve::BuiltinRegistry::default().vm_native_count() as u16;
 
     let recurse_chunk = vec![
         encode_abx(OpCode::GetGlobal.as_u8(), 0, user_global_idx),

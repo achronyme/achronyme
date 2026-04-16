@@ -1,107 +1,85 @@
-//! Cross-check that `resolve::BuiltinRegistry::default()` stays aligned
-//! with the legacy dispatch surfaces — `vm::specs::NATIVE_TABLE` on the
-//! VM side and the `lower_builtin` match arms on the ProveIR side.
+//! Verify that `resolve::BuiltinRegistry::default()` is correctly wired
+//! to both the VM runtime and the ProveIR dispatch table.
 //!
 //! ## Why this test lives in `compiler/`
 //!
 //! The `resolve` crate has no deps on `vm` or `ir` (by design — see the
 //! dep-direction barrier doc in `resolve/src/builtins.rs`). That means
 //! `resolve`'s own tests can only verify the registry is
-//! self-consistent. Checking that the registry matches the
-//! backend-specific tables has to happen somewhere that sees all three
-//! crates. `compiler/` already depends on `vm`, `ir`, and (as of Phase
-//! 2A) `resolve` via dev-deps — it's the natural home.
+//! self-consistent. Checking that the registry matches the actual
+//! runtime natives requires a crate that sees all three crates.
+//! `compiler/` depends on `vm`, `ir`, and `resolve` — it's the natural
+//! home.
 //!
-//! ## Phase 2A scope
+//! ## Phase 6 scope
 //!
-//! These tests don't assert that dispatch actually flows through the
-//! registry — that's Phase 2B / 2C's job. They only verify that the
-//! registry is a faithful mirror of the current dispatch surfaces, so
-//! later phases can remove the legacy tables with confidence. If this
-//! test drifts, the legacy tables and the registry have diverged and
-//! Phase 2B would propagate the divergence.
+//! After Phase 6, the registry IS the dispatch surface. These tests
+//! verify:
+//! - Every VM-available registry entry is backed by a real native from
+//!   `builtin_modules()`.
+//! - Every ProveIR-available registry entry has a valid
+//!   `ProveIrLowerHandle` within the dispatch table bounds.
+//! - The production availability sets are frozen (Both, Vm-only,
+//!   ProveIr-only) so additions are explicit.
 
 use resolve::builtins::BuiltinRegistry;
-use resolve::symbol::{Arity, Availability};
-use vm::specs::NATIVE_TABLE;
+use resolve::symbol::Availability;
 
-/// Every entry in `NATIVE_TABLE` must have a matching registry entry
-/// with `Availability::Vm` or `Availability::Both`, and with a
-/// `VmFnHandle` whose raw index equals the `NATIVE_TABLE` position.
+/// Every VM-available registry entry must be backed by a real native
+/// from `builtin_modules()`, at the position given by its `VmFnHandle`.
 #[test]
-fn native_table_aligned_with_registry() {
+fn every_vm_registry_entry_has_a_real_native() {
     let reg = BuiltinRegistry::default();
+    let vm_entries = reg.vm_entries_by_handle();
 
-    for (idx, meta) in NATIVE_TABLE.iter().enumerate() {
-        let entry = reg.lookup(meta.name).unwrap_or_else(|| {
-            panic!(
-                "NATIVE_TABLE[{idx}] = `{}` but registry has no entry \
-                 for that name — did you forget to add it to \
-                 BuiltinRegistry::default()?",
-                meta.name
-            )
-        });
+    let modules = vm::module::builtin_modules();
+    let mut all_defs = Vec::new();
+    for module in &modules {
+        all_defs.extend(module.natives());
+    }
 
-        assert!(
-            entry.availability.includes_vm(),
-            "NATIVE_TABLE[{idx}] = `{}` is registered with availability \
-             {:?} which does not include Vm — should be Vm or Both",
-            meta.name,
-            entry.availability,
-        );
+    assert_eq!(
+        vm_entries.len(),
+        all_defs.len(),
+        "registry VM entries ({}) != builtin_modules definitions ({})",
+        vm_entries.len(),
+        all_defs.len(),
+    );
 
-        let handle = entry.vm_fn.unwrap_or_else(|| {
-            panic!(
-                "`{}` is VM-available but has no vm_fn handle set",
-                meta.name
-            )
-        });
-
+    for (i, (entry, def)) in vm_entries.iter().zip(all_defs.iter()).enumerate() {
         assert_eq!(
-            handle.as_u32() as usize,
-            idx,
-            "`{}` has VmFnHandle({}) but NATIVE_TABLE position is {}",
-            meta.name,
+            entry.name, def.name,
+            "Position {i}: registry says '{}' but builtin_modules says '{}'",
+            entry.name, def.name,
+        );
+        let handle = entry.vm_fn.expect("vm_entries_by_handle guarantees vm_fn");
+        assert_eq!(
+            handle.as_u32() as usize, i,
+            "'{}' has VmFnHandle({}) but expected position {}",
+            entry.name,
             handle.as_u32(),
-            idx,
+            i,
         );
     }
 }
 
-/// Every VM-available registry entry must have a matching `NATIVE_TABLE`
-/// entry at the position given by its `VmFnHandle`. This is the reverse
-/// direction of `native_table_aligned_with_registry` — catches the case
-/// where the registry has an extra VM entry that's not backed by a real
-/// native.
+/// Every ProveIR-available registry entry must have a valid
+/// `ProveIrLowerHandle` within the dispatch table bounds (0..10).
 #[test]
-fn every_vm_available_registry_entry_backs_a_native() {
+fn every_prove_ir_registry_entry_has_a_valid_handle() {
     let reg = BuiltinRegistry::default();
+    let prove_count = reg.prove_ir_count();
 
-    for entry in reg
-        .entries()
-        .iter()
-        .filter(|e| e.availability.includes_vm())
-    {
+    for entry in reg.entries().iter().filter(|e| e.availability.includes_prove_ir()) {
         let handle = entry
-            .vm_fn
-            .expect("VM-available entry must have vm_fn set (audit should have caught this)");
-
-        let idx = handle.as_u32() as usize;
-        let native = NATIVE_TABLE.get(idx).unwrap_or_else(|| {
-            panic!(
-                "registry entry `{}` has VmFnHandle({}) but NATIVE_TABLE \
-                 only has {} entries",
-                entry.name,
-                idx,
-                NATIVE_TABLE.len(),
-            )
-        });
-
-        assert_eq!(
-            native.name, entry.name,
-            "NATIVE_TABLE[{idx}] = `{}` but registry entry with that \
-             handle is `{}`",
-            native.name, entry.name,
+            .prove_ir_lower
+            .unwrap_or_else(|| panic!("`{}` is ProveIr-available but has no prove_ir_lower", entry.name));
+        assert!(
+            (handle.as_u32() as usize) < prove_count,
+            "`{}` has ProveIrLowerHandle({}) but only {} ProveIR builtins exist",
+            entry.name,
+            handle.as_u32(),
+            prove_count,
         );
     }
 }
@@ -122,19 +100,15 @@ fn production_both_set_is_complete() {
     assert_eq!(
         both,
         vec!["poseidon", "poseidon_many", "assert", "mux"],
-        "Phase 2C promoted `mux` to Both with a scalar VM fallback. Any \
-         new Both additions should also land here and be traceable to a \
+        "Any new Both additions should land here and be traceable to a \
          specific phase."
     );
 }
 
-/// The ProveIR-only list is the exact set of arms in
-/// `ir::prove_ir::compiler::lower_builtin` that are not Both. The
-/// hardcoded list below mirrors `.claude/plans/movimiento-2-phase-0-audit.md`
-/// §6 minus `mux` (which Phase 2C promoted). If a new ProveIR builtin
-/// is added and this test isn't updated, the drift gets caught here.
+/// The ProveIR-only set. If a new ProveIR builtin is added and this
+/// test isn't updated, the drift gets caught here.
 #[test]
-fn production_prove_ir_only_set_matches_extracted_lower_builtin() {
+fn production_prove_ir_only_set() {
     let reg = BuiltinRegistry::default();
     let mut prove_only: Vec<&str> = reg
         .entries()
@@ -144,7 +118,6 @@ fn production_prove_ir_only_set_matches_extracted_lower_builtin() {
         .collect();
     prove_only.sort_unstable();
 
-    // `mux` is deliberately absent — Phase 2C promoted it to Both.
     let mut expected = [
         "range_check",
         "merkle_verify",
@@ -162,10 +135,9 @@ fn production_prove_ir_only_set_matches_extracted_lower_builtin() {
     );
 }
 
-/// The VM-only list is the exact set of NATIVE_TABLE entries minus the
-/// ones that are Both. Sanity check against the `vm` crate.
+/// The VM-only set. Pinned so additions are explicit.
 #[test]
-fn production_vm_only_set_matches_native_table_minus_both() {
+fn production_vm_only_set() {
     let reg = BuiltinRegistry::default();
 
     let mut vm_only: Vec<&str> = reg
@@ -176,40 +148,52 @@ fn production_vm_only_set_matches_native_table_minus_both() {
         .collect();
     vm_only.sort_unstable();
 
-    let both_names = ["poseidon", "poseidon_many", "assert", "mux"];
-    let mut expected: Vec<&str> = NATIVE_TABLE
-        .iter()
-        .map(|m| m.name)
-        .filter(|n| !both_names.contains(n))
-        .collect();
+    let mut expected = vec![
+        "print",
+        "typeof",
+        "time",
+        "proof_json",
+        "proof_public",
+        "proof_vkey",
+        "verify_proof",
+        "gc_stats",
+        "bigint256",
+        "bigint512",
+        "from_bits",
+    ];
     expected.sort_unstable();
 
     assert_eq!(vm_only, expected);
 }
 
-/// Arities on VM-available registry entries must be compatible with
-/// the `arity` field stored in NATIVE_TABLE. NATIVE_TABLE uses
-/// `isize` with `-1` for variadic; the registry uses `Arity` enum.
-/// This test maps one to the other.
+/// Registry arities for VM-available entries must be compatible with
+/// what `builtin_modules()` declares. The VM uses `isize` with `-1`
+/// for variadic; the registry uses `Arity` enum.
 #[test]
-fn native_table_arities_are_compatible() {
-    let reg = BuiltinRegistry::default();
+fn vm_arities_are_compatible() {
+    use resolve::symbol::Arity;
 
-    for meta in NATIVE_TABLE {
-        let entry = reg.lookup(meta.name).unwrap();
-        match (meta.arity, entry.arity) {
+    let reg = BuiltinRegistry::default();
+    let vm_entries = reg.vm_entries_by_handle();
+
+    let modules = vm::module::builtin_modules();
+    let mut all_defs = Vec::new();
+    for module in &modules {
+        all_defs.extend(module.natives());
+    }
+
+    for (entry, def) in vm_entries.iter().zip(all_defs.iter()) {
+        match (def.arity, entry.arity) {
             (-1, Arity::Variadic) => {}
             (-1, other) => panic!(
-                "`{}`: NATIVE_TABLE says variadic but registry says {:?}",
-                meta.name, other
+                "`{}`: module says variadic but registry says {:?}",
+                entry.name, other
             ),
             (n, Arity::Fixed(m)) if n >= 0 && n as u8 == m => {}
-            (n, Arity::Range(min, max)) if n >= 0 && (n as u8) >= min && (n as u8) <= max => {
-                // NATIVE_TABLE arity fits inside the registry's range
-            }
+            (n, Arity::Range(min, max)) if n >= 0 && (n as u8) >= min && (n as u8) <= max => {}
             (n, other) => panic!(
-                "`{}`: NATIVE_TABLE arity = {} but registry arity = {:?}",
-                meta.name, n, other
+                "`{}`: module arity = {} but registry arity = {:?}",
+                entry.name, n, other
             ),
         }
     }

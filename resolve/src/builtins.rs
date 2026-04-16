@@ -1,8 +1,8 @@
 //! The shared builtin registry.
 //!
-//! Replaces the divergent pair of dispatch tables:
-//! - `vm/src/specs.rs:NATIVE_TABLE` (14 VM natives)
-//! - `ir/src/prove_ir/compiler.rs:lower_builtin` (9 ProveIR builtins)
+//! The single source of truth for all builtins. Both the VM compiler
+//! and the ProveIR compiler dispatch through this registry — the VM
+//! via `VmFnHandle` and ProveIR via `ProveIrLowerHandle`.
 //!
 //! ## Audit invariants
 //!
@@ -168,8 +168,7 @@ impl BuiltinEntry {
 ///
 /// [`BuiltinRegistry::default()`] returns the production registry
 /// populated with every builtin shipped by Achronyme. Both compilers
-/// consult this registry instead of their historical parallel tables
-/// (VM's `NATIVE_TABLE` and ProveIR's `lower_builtin` match).
+/// dispatch through this registry — it is the single source of truth.
 ///
 /// Fields are **private** to protect the uniqueness invariant maintained
 /// by [`BuiltinRegistry::push`]. Use [`BuiltinRegistry::entries`],
@@ -220,18 +219,13 @@ impl Default for BuiltinRegistry {
     ///
     /// ## Handle conventions
     ///
-    /// - `VmFnHandle(n)` — `n` is the builtin's index in
-    ///   `vm::specs::NATIVE_TABLE`. The cross-check integration test
-    ///   (`compiler/tests/builtin_registry_alignment.rs`) verifies
-    ///   alignment on every CI run.
-    /// - `ProveIrLowerHandle(n)` — `n` is the builtin's position in
-    ///   the match block in `ir::prove_ir::compiler::lower_builtin`,
-    ///   in source order.
-    ///
-    /// Phase 2B will make these handles the *actual* dispatch path
-    /// (replacing the current NATIVE_TABLE indexing and the hardcoded
-    /// ProveIR match). Phase 2A (this commit) populates the registry
-    /// as a read-only source of truth and adds cross-check tests.
+    /// - `VmFnHandle(n)` — `n` is the builtin's positional index in
+    ///   the VM's `builtin_modules()` registration order. The
+    ///   integration test `compiler/tests/builtin_registry_alignment.rs`
+    ///   verifies alignment on every CI run.
+    /// - `ProveIrLowerHandle(n)` — `n` is the slot in the ProveIR
+    ///   dispatch table (`dispatch_builtin_by_handle` in
+    ///   `ir::prove_ir::compiler`).
     ///
     /// ## Inventory
     ///
@@ -247,32 +241,28 @@ impl Default for BuiltinRegistry {
     fn default() -> Self {
         let entries = vec![
             // ── VM-only (11) ───────────────────────────────────────
-            // Index matches NATIVE_TABLE position in vm/src/specs.rs
+            // VmFnHandle = positional index in builtin_modules()
             entry!(vm "print",         Arity::Variadic,   vm = 0),
             entry!(vm "typeof",        Arity::Fixed(1),   vm = 1),
-            // NOTE: NATIVE_TABLE index 2 is `assert` — registered as
-            // Both below, not here.
+            // Handle 2 is `assert` — registered as Both below.
             entry!(vm "time",          Arity::Fixed(0),   vm = 3),
             entry!(vm "proof_json",    Arity::Fixed(1),   vm = 4),
             entry!(vm "proof_public",  Arity::Fixed(1),   vm = 5),
             entry!(vm "proof_vkey",    Arity::Fixed(1),   vm = 6),
-            // NATIVE_TABLE indices 7 (poseidon) and 8 (poseidon_many)
-            // are Both — registered below.
+            // Handles 7-8 (poseidon, poseidon_many) are Both — below.
             entry!(vm "verify_proof",  Arity::Fixed(1),   vm = 9),
             entry!(vm "gc_stats",      Arity::Fixed(0),   vm = 10),
-            // NATIVE_TABLE index 11 is `mux` — Both, registered below.
+            // Handle 11 is `mux` — Both, below.
             entry!(vm "bigint256",     Arity::Fixed(1),   vm = 12),
             entry!(vm "bigint512",     Arity::Fixed(1),   vm = 13),
             entry!(vm "from_bits",     Arity::Fixed(2),   vm = 14),
             // ── Both (4) ───────────────────────────────────────────
-            // vm index matches NATIVE_TABLE; prove index matches the
-            // corresponding arm in ir::prove_ir::compiler::lower_builtin.
             entry!(both "poseidon",      Arity::Fixed(2), vm = 7,  prove = 0),
             entry!(both "poseidon_many", Arity::Variadic, vm = 8,  prove = 1),
             entry!(both "assert",        Arity::Fixed(1), vm = 2,  prove = 7),
             entry!(both "mux",           Arity::Fixed(3), vm = 11, prove = 2),
             // ── ProveIR-only (6) ───────────────────────────────────
-            // prove index = position in the lower_builtin match block.
+            // ProveIrLowerHandle = slot in dispatch_builtin_by_handle.
             entry!(prove "range_check",   Arity::Fixed(2),    prove = 3),
             entry!(prove "merkle_verify", Arity::Fixed(4),    prove = 4),
             entry!(prove "len",           Arity::Fixed(1),    prove = 5),
@@ -750,7 +740,7 @@ mod tests {
     #[test]
     fn default_registry_vm_handles_are_unique() {
         // Every VM-available builtin should have a unique VmFnHandle
-        // (the handle value encodes the NATIVE_TABLE position).
+        // (the handle value encodes the positional index).
         let reg = BuiltinRegistry::default();
         let mut seen = std::collections::HashSet::new();
         for entry in reg.entries() {
@@ -762,8 +752,7 @@ mod tests {
                 );
             }
         }
-        // 4 Both + 11 Vm-only = 15 unique vm handles (matching
-        // NATIVE_TABLE length after Phase 2C added `mux`).
+        // 4 Both + 11 Vm-only = 15 unique vm handles.
         assert_eq!(seen.len(), 15);
     }
 

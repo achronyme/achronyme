@@ -17,3 +17,4 @@ ach-macros = { path = "../ach-macros" }
 
 [dev-dependencies]
 compiler = { path = "../compiler" }
+resolve = { path = "../resolve" }
