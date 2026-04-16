@@ -14,6 +14,11 @@ use super::types::*;
 use crate::error::{span_box, OptSpan};
 use crate::types::IrType;
 
+use resolve::{
+    build_availability_map, build_dispatch_maps, build_resolver_state, AnnotationKey, Availability,
+    CallableKind, ModuleId, ResolvedProgram, ResolverState, SymbolId, SymbolTable,
+};
+
 // ---------------------------------------------------------------------------
 // Environment values
 // ---------------------------------------------------------------------------
@@ -50,6 +55,13 @@ pub enum OuterScopeEntry {
 /// imports, `"P::T"` for namespaced ones). The `compiler` crate is
 /// responsible for flattening namespace imports into `P::T` keys
 /// before handing the scope over.
+///
+/// `resolver_state` (Movimiento 2 Phase 3E) forwards the VM compiler's
+/// already-built [`ResolvedProgram`] + [`SymbolTable`] + root
+/// [`ModuleId`]. When present, the ProveIR compiler uses it to record
+/// shadow resolver hits alongside its own dispatch. The legacy
+/// `fn_table`/`env` lookup remains authoritative in 3E.1; Phase
+/// 3E.2/3 is where dispatch actually reads from annotations.
 #[derive(Clone, Debug, Default)]
 pub struct OuterScope {
     /// Captured values (scalars / arrays) from the VM scope.
@@ -59,6 +71,57 @@ pub struct OuterScope {
     /// Circom templates importable into this block. Keys are the
     /// names the ProveIR dispatcher will look up at Call time.
     pub circom_imports: HashMap<String, CircomCallable>,
+    /// Optional resolver state forwarded from the caller. None
+    /// means "standalone compile" — the ProveIR compiler will
+    /// either run without resolver observation, or (future work)
+    /// build its own state.
+    pub resolver_state: Option<OuterResolverState>,
+}
+
+/// Borrow-free bundle of resolver state for prove-block outer scope.
+///
+/// The VM compiler stores these three pieces in separate `Option`
+/// fields; for the prove-block hand-off we repackage them into a
+/// single [`Arc`]-shared struct so cloning `OuterScope` is free
+/// regardless of how big the symbol table grows. The VM compiler
+/// moves its own state into `Arc`s at the hand-off point (see
+/// `compile_prove` in the `compiler` crate).
+///
+/// [`SymbolTable`] and [`ResolvedProgram`] are not `Clone`
+/// themselves — the `Arc` indirection is therefore mandatory, not
+/// a premature optimisation.
+#[derive(Clone, Debug)]
+pub struct OuterResolverState {
+    /// Symbol table shared by the VM + ProveIR compilers.
+    pub table: std::sync::Arc<SymbolTable>,
+    /// Annotation map keyed by `(module_id, expr_id)`.
+    pub resolved: std::sync::Arc<ResolvedProgram>,
+    /// Root module id in the graph the annotations were built for.
+    pub root_module: ModuleId,
+    /// Phase 3F: precomputed map from [`SymbolId`] to the fn_table
+    /// key the ProveIR compiler uses. Built once at auto-build
+    /// time by walking the resolver's [`SymbolTable`] + module
+    /// graph edges (see `compiler::build_dispatch_maps`).
+    /// Consumed by [`resolve_dispatch_via_annotation`] to translate
+    /// resolved user-fn annotations into fn_table lookups without
+    /// parsing the resolver's name-mangling convention at dispatch
+    /// time. Empty when the compile had no multi-module state —
+    /// e.g. single-module programs whose only user fns are root
+    /// and need no alias prefix.
+    pub dispatch_key_by_symbol: std::sync::Arc<HashMap<SymbolId, String>>,
+    /// Phase 3F inverse of [`dispatch_key_by_symbol`]: fn_table key
+    /// to the owning [`ModuleId`]. Consumed by
+    /// [`ProveIrCompiler::compile_user_fn_call`] to push the
+    /// definer's module onto the resolver stack before inlining
+    /// the body — the structural half of the gap 2.4 fix. Both
+    /// the annotation path and the legacy StaticAccess path go
+    /// through this, so every inlined body correctly resolves
+    /// bare identifiers against the definer's scope.
+    pub module_by_dispatch_key: std::sync::Arc<HashMap<String, ModuleId>>,
+    /// Phase 4: fn_table key → [`Availability`] for every user function.
+    /// `compile_user_fn_call` checks this to reject inlining of
+    /// Vm-only functions inside prove blocks.
+    pub availability_by_key: std::sync::Arc<HashMap<String, Availability>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +135,47 @@ struct FnDef {
     body: Block,
     #[allow(dead_code)]
     return_type: Option<TypeAnnotation>,
+    /// Owning module id — used for resolver module stack push in
+    /// `compile_user_fn_call` so bare identifiers inside the inlined
+    /// body resolve against the definer's scope. `None` for functions
+    /// defined locally inside a prove/circuit block.
+    owner_module: Option<ModuleId>,
+    /// Availability of this function (Phase 4). `None` for locally
+    /// defined functions or when resolver state is not installed.
+    /// `compile_user_fn_call` checks this to reject Vm-only functions.
+    availability: Option<Availability>,
+}
+
+/// The annotation-driven dispatch choice for a call site.
+///
+/// Returned by [`ProveIrCompiler::resolve_dispatch_via_annotation`].
+/// `Builtin` dispatches via [`ProveIrLowerHandle`] into the lowering
+/// table; `UserFn` carries the fn_table key for inlining. The legacy
+/// name-based path in [`compile_named_call`] handles the
+/// `NoAnnotation` fallback.
+enum DispatchDecision {
+    Builtin {
+        handle: resolve::builtins::ProveIrLowerHandle,
+    },
+    UserFn { qualified_name: String },
+    NoAnnotation,
+}
+
+/// Phase 3G: the full bundle of resolver state a standalone
+/// [`ProveIrCompiler::compile_circuit`] invocation uses.
+///
+/// Built by [`ProveIrCompiler::try_build_circuit_resolver_state`]
+/// from the parsed source + source directory. Short-circuits to
+/// `None` on any build error so the caller can fall back to the
+/// legacy path. The fields are consumed twice: once by
+/// [`ProveIrCompiler::outer_functions_from_graph`] to derive
+/// renamed [`Stmt::FnDecl`] entries for the fn_table population,
+/// and once by the `OuterResolverState` constructor so the
+/// ProveIR compiler's annotation-driven dispatch can flip.
+struct CircuitResolverBundle {
+    state: ResolverState,
+    dispatch_by_symbol: HashMap<SymbolId, String>,
+    module_by_key: HashMap<String, ModuleId>,
 }
 
 /// Compiles an AST `Block` (from a prove block or circuit file) into a `ProveIR`.
@@ -111,6 +215,49 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     /// (`circom_call_0`, `circom_call_1`, ...) for circom template
     /// instantiations. Bumped on use, not on registration.
     circom_call_counter: usize,
+    // ── Movimiento 2 Phase 3E ────────────────────────────────────
+    /// Optional resolver state forwarded from the outer (VM)
+    /// compiler via [`OuterScope::resolver_state`]. Installed at
+    /// the start of `compile_with_source_dir`. When `None`, every
+    /// resolver-shadow hook is a no-op (single-module prove blocks
+    /// compiled without a pre-built resolver state).
+    resolver_table: Option<std::sync::Arc<SymbolTable>>,
+    /// Annotation map mirroring [`resolver_table`]; see the
+    /// `compiler` crate's [`Compiler::resolved_program`] doc for
+    /// the key semantics.
+    resolver_resolved: Option<std::sync::Arc<ResolvedProgram>>,
+    /// The [`ModuleId`] annotations are currently being resolved
+    /// against when the stack is empty. Installed from
+    /// `OuterScope::resolver_state.root_module` at compile-start.
+    resolver_root_module: Option<ModuleId>,
+    /// Stack of module ids that should override
+    /// [`resolver_root_module`] while walking inlined user-fn
+    /// bodies. Phase 3E.3 / 3F structural fix for gap 2.4: every
+    /// [`compile_user_fn_call`] looks up its fn_table key in
+    /// [`resolver_module_by_key`] and, if present, pushes the
+    /// discovered [`ModuleId`] before compiling the inlined body
+    /// and pops on exit. The stack top is consulted by every
+    /// annotation lookup during the walk so that bare identifiers
+    /// inside the inlined body resolve against the definer's
+    /// scope, not the caller's.
+    resolver_module_stack: Vec<ModuleId>,
+    /// Reverse index from [`SymbolId`] to fn_table key, built during
+    /// fn_table registration from the dispatch maps in
+    /// [`OuterResolverState`]. Consumed by
+    /// [`resolve_dispatch_via_annotation`] to translate a resolved
+    /// user-fn annotation into the fn_table key.
+    fn_symbol_index: HashMap<SymbolId, String>,
+    /// Phase 3E shadow hit trace: every `(module_id, expr_id)` the
+    /// annotation table resolved to a [`SymbolId`] during the walk.
+    /// Populated by [`record_resolver_hit`]; consumed by tests
+    /// under `ir/tests/prove_ir_resolver_dispatch.rs`. Clears per
+    /// compile invocation.
+    resolver_hits: Vec<(AnnotationKey, SymbolId)>,
+    /// The id of the [`Expr`] currently being walked, set at the
+    /// top of [`compile_expr`]. Pairs with
+    /// [`resolver_root_module`] to form the annotation lookup key.
+    /// `None` outside expression contexts.
+    current_expr_id: Option<ExprId>,
     /// Phantom data for the field backend type parameter.
     _field: PhantomData<F>,
 }
@@ -132,7 +279,142 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiling_modules: HashSet::new(),
             circom_table: HashMap::new(),
             circom_call_counter: 0,
+            resolver_table: None,
+            resolver_resolved: None,
+            resolver_root_module: None,
+            resolver_module_stack: Vec::new(),
+            fn_symbol_index: HashMap::new(),
+            resolver_hits: Vec::new(),
+            current_expr_id: None,
             _field: PhantomData,
+        }
+    }
+
+    /// Borrow the shadow hit trace. Populated during compile by
+    /// [`record_resolver_hit`]; consumers are integration tests
+    /// asserting that the annotation-driven dispatch agrees with
+    /// the legacy path.
+    pub fn resolver_hits(&self) -> &[(AnnotationKey, SymbolId)] {
+        &self.resolver_hits
+    }
+
+    /// Record a shadow resolver hit for the current expression, if
+    /// any. No-op when the resolver state isn't installed, when
+    /// `current_expr_id` is unset, or when the annotation table has
+    /// no entry for this key. Phase 3E.1 only records — Phase 3E.2
+    /// flips dispatch.
+    fn record_resolver_hit(&mut self) {
+        let Some(expr_id) = self.current_expr_id else {
+            return;
+        };
+        self.record_resolver_hit_for(expr_id);
+    }
+
+    /// Record a shadow resolver hit for an explicit [`ExprId`],
+    /// bypassing `self.current_expr_id`. Needed for `Call` sites
+    /// where the enclosing `compile_expr` set `current_expr_id` to
+    /// the Call's id, but the annotation (from the resolver's
+    /// `annotate_program`) is actually keyed by the **callee
+    /// Ident's** id — ProveIR never recurses into the callee
+    /// expression, so the callee's id must be threaded through
+    /// explicitly.
+    fn record_resolver_hit_for(&mut self, expr_id: ExprId) {
+        let Some(module_id) = self.current_resolver_module() else {
+            return;
+        };
+        let Some(resolved) = self.resolver_resolved.as_ref() else {
+            return;
+        };
+        let key = (module_id, expr_id);
+        if let Some(&sid) = resolved.annotations.get(&key) {
+            self.resolver_hits.push((key, sid));
+        }
+    }
+
+    /// Which module the resolver-shadow hooks should consult.
+    ///
+    /// Phase 3E.1 used [`resolver_root_module`] directly — every
+    /// annotation was keyed by `(root_module, expr_id)`. Phase 3E.3
+    /// maintains a stack of active module ids so that when
+    /// [`compile_user_fn_call`] inlines a user fn defined in another
+    /// module, the annotations for [`Expr`]s inside the inlined body
+    /// are keyed by the **definer's** module, not the caller's. This
+    /// is the structural fix for gap 2.4 (transitive name
+    /// resolution inside inlined prove-block helpers).
+    ///
+    /// When the stack is empty, falls back to the root module
+    /// installed at OuterScope handoff.
+    fn current_resolver_module(&self) -> Option<ModuleId> {
+        self.resolver_module_stack
+            .last()
+            .copied()
+            .or(self.resolver_root_module)
+    }
+
+    /// Dispatch outcome the annotation table can drive.
+    ///
+    /// - `Builtin(name)` — the annotation (possibly through a
+    ///   [`CallableKind::FnAlias`] chain) points at a registered
+    ///   [`CallableKind::Builtin`]; the returned name is the
+    ///   builtin's canonical name from the [`BuiltinRegistry`] and
+    ///   should be passed straight to [`lower_builtin`].
+    /// - `UserFn { qualified_name, module }` — a
+    ///   [`CallableKind::UserFn`] entry; the caller should invoke
+    ///   [`compile_user_fn_call`] with `qualified_name` and push
+    ///   `module` onto the resolver module stack for the duration
+    ///   of the inlined body so that nested annotations resolve
+    ///   against the definer's scope.
+    /// - `NoAnnotation` — resolver state absent, annotation map
+    ///   empty for this key, or the [`CallableKind`] isn't
+    ///   dispatchable from a call site (constants, circom
+    ///   templates). Caller falls through to the legacy
+    ///   lookup-by-name path.
+    fn resolve_dispatch_via_annotation(&mut self, callee_expr_id: ExprId) -> DispatchDecision {
+        let (Some(table), Some(resolved), Some(module_id)) = (
+            self.resolver_table.as_ref(),
+            self.resolver_resolved.as_ref(),
+            self.current_resolver_module(),
+        ) else {
+            return DispatchDecision::NoAnnotation;
+        };
+        let key = (module_id, callee_expr_id);
+        let Some(&start) = resolved.annotations.get(&key) else {
+            return DispatchDecision::NoAnnotation;
+        };
+        // Follow FnAlias chain. A malformed alias cycle is
+        // impossible in a well-formed SymbolTable (Phase 3C caps
+        // depth via FN_ALIAS_MAX_DEPTH), but we still swallow the
+        // error and fall back to legacy dispatch — defensive,
+        // since Phase 3E is an extension path, not a hard cutover.
+        let Ok(sid) = table.resolve_alias(start) else {
+            return DispatchDecision::NoAnnotation;
+        };
+        // Record the hit for the shadow trace — both the
+        // annotation path AND the legacy path land here, so the
+        // hit trace remains observable-equivalent to Phase 3E.1.
+        self.resolver_hits.push((key, sid));
+        match table.get(sid) {
+            CallableKind::Builtin { entry_index } => table
+                .builtin_registry()
+                .get(*entry_index)
+                .and_then(|entry| entry.prove_ir_lower)
+                .map(|handle| DispatchDecision::Builtin { handle })
+                .unwrap_or(DispatchDecision::NoAnnotation),
+            CallableKind::UserFn { .. } => {
+                // Translate SymbolId → fn_table key via the index
+                // built during fn_table registration. Missing
+                // entries fall through to legacy dispatch.
+                match self.fn_symbol_index.get(&sid).cloned() {
+                    Some(qualified_name) => DispatchDecision::UserFn { qualified_name },
+                    None => DispatchDecision::NoAnnotation,
+                }
+            }
+            // Constants, circom templates, and stray FnAlias (can't
+            // happen after `resolve_alias` — it either terminates at
+            // a non-alias or errors out) are not dispatchable from a
+            // Call site in Phase 3E/3F. Fall back to legacy so the
+            // compiler's existing error paths run.
+            _ => DispatchDecision::NoAnnotation,
         }
     }
 
@@ -207,12 +489,40 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Self::compile_with_source_dir(block, outer_scope, None, None)
     }
 
+    /// Like [`compile`] but also returns the resolver shadow-hit
+    /// trace that was recorded during the walk. Phase 3E.1 consumers
+    /// (integration tests under `ir/tests/prove_ir_resolver_dispatch.rs`)
+    /// use this to verify that the annotation-driven dispatch points
+    /// at the same symbol the legacy env/fn_table lookup is about to
+    /// pick. Not used by the production pipeline — the hit trace is
+    /// observation only until Phase 3E.2 flips dispatch.
+    pub fn compile_with_trace(
+        block: &Block,
+        outer_scope: &OuterScope,
+    ) -> Result<(ProveIR, Vec<(AnnotationKey, SymbolId)>), ProveIrError> {
+        let (prove_ir, compiler) = Self::compile_into_instance(block, outer_scope, None, None)?;
+        Ok((prove_ir, compiler.resolver_hits))
+    }
+
     fn compile_with_source_dir(
         block: &Block,
         outer_scope: &OuterScope,
         source_dir: Option<std::path::PathBuf>,
         source_path: Option<std::path::PathBuf>,
     ) -> Result<ProveIR, ProveIrError> {
+        Self::compile_into_instance(block, outer_scope, source_dir, source_path).map(|(ir, _)| ir)
+    }
+
+    /// Worker shared by [`compile_with_source_dir`] and
+    /// [`compile_with_trace`]. Returns the fully-compiled ProveIR
+    /// alongside the compiler instance so shadow-dispatch consumers
+    /// can inspect the hit trace without re-running the walk.
+    fn compile_into_instance(
+        block: &Block,
+        outer_scope: &OuterScope,
+        source_dir: Option<std::path::PathBuf>,
+        source_path: Option<std::path::PathBuf>,
+    ) -> Result<(ProveIR, Self), ProveIrError> {
         let mut compiler = Self::new();
         compiler.source_dir = source_dir;
         if let Some(path) = source_path {
@@ -241,7 +551,18 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
         }
 
-        // Register outer scope functions in fn_table for inlining
+        // Register outer scope functions in fn_table for inlining.
+        // When resolver state is available, embed the owning ModuleId
+        // and Availability directly in the FnDef so compile_user_fn_call
+        // can read them without a separate map lookup.
+        let module_map = outer_scope
+            .resolver_state
+            .as_ref()
+            .map(|s| &s.module_by_dispatch_key);
+        let avail_map = outer_scope
+            .resolver_state
+            .as_ref()
+            .map(|s| &s.availability_by_key);
         for stmt in &outer_scope.functions {
             if let Stmt::FnDecl {
                 name,
@@ -251,12 +572,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 ..
             } = stmt
             {
+                let owner_module = module_map.and_then(|m| m.get(name).copied());
+                let availability = avail_map.and_then(|m| m.get(name).copied());
                 compiler.fn_table.insert(
                     name.clone(),
                     FnDef {
                         params: params.clone(),
                         body: body.clone(),
                         return_type: return_type.clone(),
+                        owner_module,
+                        availability,
                     },
                 );
             }
@@ -265,6 +590,24 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // Seed circom template imports from the outer scope.
         for (key, callable) in &outer_scope.circom_imports {
             compiler.circom_table.insert(key.clone(), callable.clone());
+        }
+
+        // Install the caller-built resolver state. The resolver_table +
+        // resolved_program drive annotation-lookup; fn_symbol_index
+        // (built below) translates SymbolId → fn_table key at dispatch.
+        if let Some(state) = &outer_scope.resolver_state {
+            compiler.resolver_table = Some(state.table.clone());
+            compiler.resolver_resolved = Some(state.resolved.clone());
+            compiler.resolver_root_module = Some(state.root_module);
+            // Build fn_symbol_index: for each (SymbolId → fn_key) in
+            // the dispatch map, record only entries whose key is
+            // actually present in fn_table (filters stale/unused
+            // symbols).
+            for (sid, key) in state.dispatch_key_by_symbol.iter() {
+                if compiler.fn_table.contains_key(key) {
+                    compiler.fn_symbol_index.insert(*sid, key.clone());
+                }
+            }
         }
 
         // Compile all statements in the block
@@ -288,17 +631,34 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
         }
 
-        Ok(ProveIR {
+        let prove_ir = ProveIR {
             name: None,
-            public_inputs: compiler.public_inputs,
-            witness_inputs: compiler.witness_inputs,
+            public_inputs: std::mem::take(&mut compiler.public_inputs),
+            witness_inputs: std::mem::take(&mut compiler.witness_inputs),
             captures,
-            body: compiler.body,
+            body: std::mem::take(&mut compiler.body),
             capture_arrays,
-        })
+        };
+        Ok((prove_ir, compiler))
     }
 
-    /// Convenience: parse source and compile as a self-contained circuit (no outer scope).
+    /// Convenience: parse source and compile as a self-contained circuit.
+    ///
+    /// Movimiento 2 Phase 3G: if `source_path` is set and the
+    /// resolver's module-graph build succeeds, we pre-populate the
+    /// ProveIR compiler's `fn_table` from the full graph (every
+    /// transitively-reachable [`CallableKind::UserFn`]), precompute
+    /// the dispatch maps, and install the resolver state alongside.
+    /// This gives standalone circuit compiles the same cross-module
+    /// reach as the VM compiler's prove-block path, killing gap 2.4
+    /// in circuit mode as well.
+    ///
+    /// When the resolver auto-build fails (no source_path, unreadable
+    /// transitive imports, etc.) the legacy path runs unchanged: the
+    /// root-module's top-level fns go via `OuterScope::functions`
+    /// and the preamble imports are processed at block-walk time via
+    /// `register_module_exports`, which only sees surface-level
+    /// exports.
     pub fn compile_circuit(
         source: &str,
         source_path: Option<&Path>,
@@ -310,16 +670,31 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
 
-        // Collect top-level statements before the circuit declaration:
-        // - Imports/exports are prepended to the block (need stmt processing for module resolution)
-        // - FnDecl stmts are passed via OuterScope (registered in fn_table before compilation)
+        // Phase 3G: try to build the resolver state and dispatch
+        // maps upfront. Requires source_path so we can compute a
+        // base directory for transitive imports. Silently fails
+        // (returning None) if any step errors — the legacy path is
+        // always a valid fallback.
+        let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
+        let resolver_bundle = Self::try_build_circuit_resolver_state(&program, source_dir.clone());
+        let has_resolver_state = resolver_bundle.is_some();
+
+        // Collect top-level statements before the circuit declaration.
+        //
+        // When the resolver state built successfully, the preamble
+        // imports and top-level fns are already covered by the
+        // graph-driven pre-population below — we MUST skip them here
+        // so compile_block_stmts doesn't re-register the same
+        // entries (which would be wasted work) or, worse, produce
+        // conflicting fn_table keys via register_module_exports.
         let mut preamble_stmts: Vec<Stmt> = Vec::new();
         let mut outer_functions: Vec<Stmt> = Vec::new();
         let mut circuit_decl = None;
 
         for stmt in &program.stmts {
             match stmt {
-                Stmt::CircuitDecl { span, .. } if circuit_decl.is_none() => {
+                Stmt::CircuitDecl { .. } if circuit_decl.is_none() => {
                     circuit_decl = Some(stmt);
                 }
                 Stmt::CircuitDecl { span, .. } => {
@@ -329,13 +704,19 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     });
                 }
                 Stmt::Import { .. } | Stmt::SelectiveImport { .. } if circuit_decl.is_none() => {
-                    preamble_stmts.push(stmt.clone());
+                    if !has_resolver_state {
+                        preamble_stmts.push(stmt.clone());
+                    }
                 }
                 Stmt::FnDecl { .. } if circuit_decl.is_none() => {
-                    outer_functions.push(stmt.clone());
+                    if !has_resolver_state {
+                        outer_functions.push(stmt.clone());
+                    }
                 }
                 Stmt::Export { .. } if circuit_decl.is_none() => {
-                    preamble_stmts.push(stmt.clone());
+                    if !has_resolver_state {
+                        preamble_stmts.push(stmt.clone());
+                    }
                 }
                 _ => {}
             }
@@ -388,8 +769,36 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     }),
                 }
             }
-            // Prepend imports/exports before the circuit body (need stmt processing).
-            // Functions go via OuterScope — registered in fn_table before compilation.
+
+            // Phase 3G: if the resolver auto-build succeeded, swap
+            // the legacy outer_functions list for a graph-driven
+            // one (every transitive UserFn renamed to its fn_table
+            // key) and attach the resolver state so the ProveIR
+            // compiler's annotation path fires for dispatch.
+            let (functions_for_scope, resolver_state_for_scope) = match resolver_bundle {
+                Some(bundle) => {
+                    let graph_functions = resolve::build_outer_functions(
+                        &bundle.state,
+                        &bundle.dispatch_by_symbol,
+                    );
+                    let avail_map =
+                        build_availability_map(&bundle.state.table, &bundle.state.graph);
+                    let state_for_scope = Some(OuterResolverState {
+                        table: std::sync::Arc::new(bundle.state.table.clone()),
+                        resolved: std::sync::Arc::new(bundle.state.resolved.clone()),
+                        root_module: bundle.state.root(),
+                        dispatch_key_by_symbol: std::sync::Arc::new(bundle.dispatch_by_symbol),
+                        module_by_dispatch_key: std::sync::Arc::new(bundle.module_by_key),
+                        availability_by_key: std::sync::Arc::new(avail_map),
+                    });
+                    (graph_functions, state_for_scope)
+                }
+                None => (outer_functions, None),
+            };
+
+            // Prepend imports/exports before the circuit body (only
+            // when the resolver state isn't carrying them — see the
+            // `has_resolver_state` gate in the collection loop above).
             let mut all_stmts = preamble_stmts;
             all_stmts.extend(stmts);
             all_stmts.extend(body.stmts.clone());
@@ -398,11 +807,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 span: body.span.clone(),
             };
             let outer_scope = OuterScope {
-                functions: outer_functions,
+                functions: functions_for_scope,
+                resolver_state: resolver_state_for_scope,
                 ..Default::default()
             };
-            let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
             let mut prove_ir = Self::compile_with_source_dir(
                 &circuit_block,
                 &outer_scope,
@@ -421,6 +829,65 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             span: None,
         })
     }
+
+    /// Phase 3G helper: attempt to build a resolver state from a
+    /// parsed circuit-file program and its source directory.
+    ///
+    /// Returns `Some(ResolverBundle)` on success or `None` on any
+    /// failure (missing source_dir, graph build error, etc.) so
+    /// `compile_circuit` can fall back to the legacy path without
+    /// surfacing resolver-level errors to the user — the legacy
+    /// path has its own error reporting via
+    /// `register_module_exports` + `compile_import`.
+    fn try_build_circuit_resolver_state(
+        program: &Program,
+        source_dir: Option<std::path::PathBuf>,
+    ) -> Option<CircuitResolverBundle> {
+        // Resolving transitive imports requires a filesystem root.
+        // Standalone circuit compiles without a source path (rare:
+        // only from in-memory API users who don't set source_path)
+        // skip the resolver state and take the legacy path.
+        source_dir.as_ref()?;
+
+        // Mirror ir::ModuleLoader's export-name flattening so
+        // register_module sees the same list the legacy loader
+        // would.
+        let exported_names: Vec<String> = program
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Export { inner, .. } => match inner.as_ref() {
+                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        // The root is served from the already-parsed program via the
+        // in-memory-root override (no re-parsing). Transitive imports
+        // fall through to the loader, which canonicalizes against
+        // source_dir via the Phase 3F adapter fix.
+        let root_path = std::path::PathBuf::from("<resolve-in-memory-root>");
+        let mut local_loader = crate::module_loader::ModuleLoader::new();
+        let mut source = crate::resolver_adapter::ModuleLoaderSource::with_root(
+            source_dir,
+            &mut local_loader,
+            root_path,
+            program.clone(),
+            exported_names,
+        );
+        let state = build_resolver_state("<resolve-in-memory-root>", &mut source).ok()?;
+        let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
+        Some(CircuitResolverBundle {
+            state,
+            dispatch_by_symbol,
+            module_by_key,
+        })
+    }
+
+    // Phase 6E: `outer_functions_from_graph` moved to
+    // `resolve::build::build_outer_functions`.
 
     /// Convenience: parse source and compile as a prove block with outer scope.
     pub fn compile_prove_block(
@@ -475,6 +942,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                         params: params.clone(),
                         body: body.clone(),
                         return_type: return_type.clone(),
+                        owner_module: None,
+                        availability: None,
                     },
                 );
                 Ok(())
@@ -581,6 +1050,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             params: params.clone(),
                             body: body.clone(),
                             return_type: return_type.clone(),
+                            owner_module: None,
+                            availability: None,
                         },
                     );
                 }
@@ -659,6 +1130,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             params: params.clone(),
                             body: body.clone(),
                             return_type: return_type.clone(),
+                            owner_module: None,
+                            availability: None,
                         },
                     );
                 }
@@ -803,6 +1276,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         if let Expr::Array {
             elements,
             span: arr_span,
+            ..
         } = value
         {
             if elements.is_empty() {
@@ -1073,6 +1547,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         if let Expr::Array {
             elements,
             span: arr_span,
+            ..
         } = value
         {
             if elements.is_empty() {
@@ -1133,6 +1608,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             object,
             index,
             span: idx_span,
+            ..
         } = target
         {
             return self.compile_indexed_assignment(object, index, value, idx_span);
@@ -1252,7 +1728,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     fn compile_expr_stmt(&mut self, expr: &Expr) -> Result<(), ProveIrError> {
         // Detect assert_eq(a, b) and assert(x) to emit constraint nodes
-        if let Expr::Call { callee, args, span } = expr {
+        if let Expr::Call {
+            callee, args, span, ..
+        } = expr
+        {
             let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
             if let Expr::Ident { name, .. } = callee.as_ref() {
                 match name.as_str() {
@@ -1300,25 +1779,40 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     /// Compile an AST expression into a `CircuitExpr`.
     pub(crate) fn compile_expr(&mut self, expr: &Expr) -> Result<CircuitExpr, ProveIrError> {
+        // Phase 3E.1: thread the current ExprId so the shadow-dispatch
+        // hooks in compile_ident / compile_named_call can read it off
+        // the compiler. Mirrors the VM compiler's pattern in
+        // `compiler/src/expressions/mod.rs::compile_expr`. We don't
+        // need the previous id for scoping because compile_expr is
+        // the only site that writes the field, and each recursive
+        // call re-overrides it before any hook reads it.
+        self.current_expr_id = Some(expr.id());
         match expr {
-            Expr::Number { value, span } => self.compile_number(value, span),
+            Expr::Number { value, span, .. } => self.compile_number(value, span),
             Expr::FieldLit {
                 value, radix, span, ..
             } => self.compile_field_lit(value, radix, span),
             Expr::Bool { value: true, .. } => Ok(CircuitExpr::Const(FieldConst::one())),
             Expr::Bool { value: false, .. } => Ok(CircuitExpr::Const(FieldConst::zero())),
-            Expr::Ident { name, span } => self.compile_ident(name, span),
+            Expr::Ident { name, span, .. } => self.compile_ident(name, span),
 
-            Expr::BinOp { op, lhs, rhs, span } => self.compile_binop(op, lhs, rhs, span),
-            Expr::UnaryOp { op, operand, span } => self.compile_unary(op, operand, span),
+            Expr::BinOp {
+                op, lhs, rhs, span, ..
+            } => self.compile_binop(op, lhs, rhs, span),
+            Expr::UnaryOp {
+                op, operand, span, ..
+            } => self.compile_unary(op, operand, span),
 
             Expr::StaticAccess {
                 type_name,
                 member,
                 span,
+                ..
             } => self.compile_static_access(type_name, member, span),
 
-            Expr::Call { callee, args, span } => {
+            Expr::Call {
+                callee, args, span, ..
+            } => {
                 let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
                 self.compile_call(callee, &arg_vals, span)
             }
@@ -1327,6 +1821,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 object,
                 field,
                 span,
+                ..
             } => self.compile_dot_access(object, field, span),
 
             Expr::If {
@@ -1334,6 +1829,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 then_block,
                 else_branch,
                 span,
+                ..
             } => self.compile_if_expr(condition, then_block, else_branch.as_ref(), span),
 
             Expr::For {
@@ -1341,14 +1837,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 iterable,
                 body,
                 span,
+                ..
             } => self.compile_for_expr(var, iterable, body, span),
 
-            Expr::Block(block) => self.compile_block_as_expr(block),
+            Expr::Block { block, .. } => self.compile_block_as_expr(block),
 
             Expr::Index {
                 object,
                 index,
                 span,
+                ..
             } => self.compile_index(object, index, span),
 
             // --- Rejections (same as IrLowering, with better messages) ---
@@ -1372,7 +1870,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 type_name: "string".into(),
                 span: to_span(span),
             }),
-            Expr::Nil { span } => Err(ProveIrError::TypeNotConstrainable {
+            Expr::Nil { span, .. } => Err(ProveIrError::TypeNotConstrainable {
                 type_name: "nil".into(),
                 span: to_span(span),
             }),
@@ -1389,7 +1887,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 got: "array literal (use let binding for arrays)".into(),
                 span: to_span(span),
             }),
-            Expr::Error { span } => Err(ProveIrError::UnsupportedOperation {
+            Expr::Error { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "cannot compile error placeholder (source has parse errors)".into(),
                 span: to_span(span),
             }),
@@ -1452,6 +1950,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
 
     fn compile_ident(&mut self, name: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
+        // Phase 3E.1 shadow dispatch: observation only. Real
+        // dispatch flip lands in Phase 3E.2/3. Records a hit only
+        // when the resolver state is installed AND the annotation
+        // map has an entry for the current `(root_module, expr_id)`
+        // pair. No effect on the lookup that follows.
+        self.record_resolver_hit();
         match self.env.get(name) {
             Some(CompEnvValue::Scalar(resolved)) => Ok(CircuitExpr::Var(resolved.clone())),
             Some(CompEnvValue::Array(_)) => Err(ProveIrError::TypeMismatch {
@@ -1594,8 +2098,39 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // older `alias.func()` DotAccess form is still accepted
             // below for a transition period.
             Expr::StaticAccess {
-                type_name, member, ..
+                type_name,
+                member,
+                id: static_id,
+                ..
             } => {
+                // Phase 3F: try annotation-driven dispatch first so
+                // cross-module calls via `alias::name` also push
+                // the definer's module onto the resolver stack via
+                // `compile_user_fn_call` — this is what kills gap
+                // 2.4 for the `a → b::middle → helper` scenario
+                // (helper is a bare identifier inside middle's
+                // inlined body and resolves against mod_B, not
+                // against a's root module).
+                //
+                // `compile_expr` set `current_expr_id` to the
+                // Call's id when it dispatched here; we temporarily
+                // override it with the StaticAccess's own id so
+                // the annotation lookup keys correctly, then
+                // restore it afterwards.
+                let saved_expr_id = self.current_expr_id;
+                self.current_expr_id = Some(*static_id);
+                let annotation_result = self.try_annotation_dispatch(*static_id, args, span);
+                self.current_expr_id = saved_expr_id;
+                match annotation_result {
+                    Ok(Some(expr)) => return Ok(expr),
+                    Ok(None) => {}
+                    Err(e) => return Err(e),
+                }
+
+                // Legacy name-based lookup. `compile_user_fn_call`
+                // still maintains the resolver module stack via
+                // `resolver_module_by_key`, so the stack discipline
+                // holds even on this fallback path.
                 let qualified = format!("{type_name}::{member}");
                 if self.has_function(&qualified) {
                     return self.compile_user_fn_call(&qualified, args, span);
@@ -1622,6 +2157,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 object,
                 field,
                 span: dot_span,
+                ..
             } => {
                 if let Expr::Ident { name: module, .. } = object.as_ref() {
                     let qualified = format!("{module}::{field}");
@@ -1641,7 +2177,21 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
 
             // Named function/builtin call: name(args)
-            Expr::Ident { name, .. } => self.compile_named_call(name, args, span),
+            //
+            // Phase 3E.1: the resolver's annotate_program walker
+            // annotates the callee Ident (not the enclosing Call),
+            // so we need the Ident's own ExprId to consult the
+            // annotation table. `compile_expr` has stashed the Call's
+            // id in `self.current_expr_id` by now — re-override it
+            // with the Ident's id so the shadow hook in
+            // `compile_named_call` reads the correct annotation key.
+            // This is cheap and localized; the alternative of
+            // threading the id through `compile_named_call`'s
+            // signature would touch many test call sites.
+            Expr::Ident { name, id, .. } => {
+                self.current_expr_id = Some(*id);
+                self.compile_named_call(name, args, span)
+            }
 
             // Dynamic dispatch not supported
             _ => Err(ProveIrError::UnsupportedOperation {
@@ -2201,147 +2751,339 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(true)
     }
 
+    /// Attempt annotation-driven dispatch for a call site.
+    ///
+    /// Shared helper consumed by both [`compile_named_call`] (for
+    /// bare-ident callees) and the `StaticAccess` arm of
+    /// [`compile_call`] (for `alias::name` callees). Returns:
+    ///
+    /// - `Ok(Some(expr))` — the annotation path handled the call
+    ///   fully and produced a [`CircuitExpr`]. The caller returns
+    ///   this immediately.
+    /// - `Ok(None)` — the annotation path declined (no annotation,
+    ///   unresolved dispatch map, or the annotated fn_table key
+    ///   isn't in `fn_table`). The caller falls through to the
+    ///   legacy name-based dispatch.
+    /// - `Err(e)` — the annotation path matched a dispatch site but
+    ///   the downstream compile errored (builtin arity mismatch,
+    ///   fn body compile failure, etc.).
+    ///
+    /// Module-stack push/pop for inlined user fn bodies lives in
+    /// [`compile_user_fn_call`] itself — this helper only selects
+    /// the dispatch arm.
+    fn try_annotation_dispatch(
+        &mut self,
+        callee_expr_id: ExprId,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<Option<CircuitExpr>, ProveIrError> {
+        match self.resolve_dispatch_via_annotation(callee_expr_id) {
+            DispatchDecision::Builtin { handle } => self
+                .dispatch_builtin_by_handle(handle, args, span)
+                .map(Some),
+            DispatchDecision::UserFn { qualified_name } => {
+                // Phase 3F: the dispatch map already translated the
+                // SymbolId to the correct fn_table key. If the key
+                // isn't in `fn_table` we fall through to legacy —
+                // happens when a symbol is known to the resolver
+                // but not registered in this specific prove block's
+                // OuterScope (e.g. prove-block-local imports that
+                // the auto-build never saw).
+                if !self.has_function(&qualified_name) {
+                    return Ok(None);
+                }
+                // Stack push/pop for the inlined body lives inside
+                // `compile_user_fn_call` — it consults
+                // `resolver_module_by_key` to discover the definer's
+                // module, so both the annotation path and the
+                // legacy path maintain the stack uniformly.
+                self.compile_user_fn_call(&qualified_name, args, span)
+                    .map(Some)
+            }
+            DispatchDecision::NoAnnotation => {
+                // Record a shadow hit for symmetry with Phase 3E.1
+                // — the annotation map may still have an entry
+                // (Constant in call position, etc.) that the
+                // dispatch helper rejected. The hit trace still
+                // reflects what the resolver saw at this call site.
+                self.record_resolver_hit_for(callee_expr_id);
+                Ok(None)
+            }
+        }
+    }
+
     /// Compile a named function or builtin call.
+    ///
+    /// Movimiento 2 Phase 3E.2 / 3F — annotation-driven dispatch
+    /// delegates to [`try_annotation_dispatch`] and falls back to
+    /// the legacy name-based path if the annotation path declines.
     fn compile_named_call(
         &mut self,
         name: &str,
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
-        match name {
-            // Builtins that produce CircuitExpr directly
-            "poseidon" => {
-                self.check_arity("poseidon", 2, args.len(), span)?;
-                let left = self.compile_expr(args[0])?;
-                let right = self.compile_expr(args[1])?;
-                Ok(CircuitExpr::PoseidonHash {
-                    left: Box::new(left),
-                    right: Box::new(right),
-                })
+        // Phase 3E.2: consult the annotation table for the current
+        // callee Ident. `current_expr_id` was overridden with the
+        // Ident's ExprId by `compile_call`'s Ident arm.
+        if let Some(expr_id) = self.current_expr_id {
+            if let Some(expr) = self.try_annotation_dispatch(expr_id, args, span)? {
+                return Ok(expr);
             }
-            "poseidon_many" => {
-                if args.len() < 2 {
-                    return Err(ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "`poseidon_many` requires at least 2 arguments, got {}",
-                            args.len()
-                        ),
-                        span: to_span(span),
-                    });
-                }
-                let compiled: Result<Vec<_>, _> =
-                    args.iter().map(|a| self.compile_expr(a)).collect();
-                Ok(CircuitExpr::PoseidonMany(compiled?))
-            }
-            "mux" => {
-                self.check_arity("mux", 3, args.len(), span)?;
-                let cond = self.compile_expr(args[0])?;
-                let if_true = self.compile_expr(args[1])?;
-                let if_false = self.compile_expr(args[2])?;
-                Ok(CircuitExpr::Mux {
-                    cond: Box::new(cond),
-                    if_true: Box::new(if_true),
-                    if_false: Box::new(if_false),
-                })
-            }
-            "range_check" => {
-                self.check_arity("range_check", 2, args.len(), span)?;
-                let value = self.compile_expr(args[0])?;
-                let bits_u64 = self.extract_const_u64(args[1], span)?;
-                if bits_u64 > u32::MAX as u64 {
-                    return Err(ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "range_check bit count {bits_u64} exceeds maximum ({})",
-                            u32::MAX
-                        ),
-                        span: to_span(span),
-                    });
-                }
-                let bits = bits_u64 as u32;
-                Ok(CircuitExpr::RangeCheck {
-                    value: Box::new(value),
-                    bits,
-                })
-            }
-            "merkle_verify" => {
-                self.check_arity("merkle_verify", 4, args.len(), span)?;
-                let root = self.compile_expr(args[0])?;
-                let leaf = self.compile_expr(args[1])?;
-                // path and indices must be array identifiers (referenced by name)
-                let path = self.extract_array_ident(args[2], span)?;
-                let indices = self.extract_array_ident(args[3], span)?;
-                Ok(CircuitExpr::MerkleVerify {
-                    root: Box::new(root),
-                    leaf: Box::new(leaf),
-                    path,
-                    indices,
-                })
-            }
-            "len" => {
-                self.check_arity("len", 1, args.len(), span)?;
-                self.compile_len_call(args[0], span)
-            }
-
-            // Builtins that produce CircuitNode (handled at statement level)
-            // assert_eq and assert are expression-level in the AST but produce
-            // nodes — we return a dummy Const(0) since they're constraints, not values.
-            "assert_eq" => {
-                self.check_assert_eq_arity(args.len(), span)?;
-                let lhs = self.compile_expr(args[0])?;
-                let rhs = self.compile_expr(args[1])?;
-                let message = self.extract_assert_message(args.get(2), span)?;
-                // Always emit the constraint node — even at expression level.
-                // This ensures the constraint is enforced regardless of whether
-                // assert_eq is used as a statement or inside a let binding.
-                self.body.push(CircuitNode::AssertEq {
-                    lhs,
-                    rhs,
-                    message,
-                    span: Some(SpanRange::from(span)),
-                });
-                Ok(CircuitExpr::Const(FieldConst::zero()))
-            }
-            "assert" => {
-                self.check_assert_arity(args.len(), span)?;
-                let cond = self.compile_expr(args[0])?;
-                let message = self.extract_assert_message(args.get(1), span)?;
-                // Always emit the constraint node — same rationale as assert_eq.
-                self.body.push(CircuitNode::Assert {
-                    expr: cond,
-                    message,
-                    span: Some(SpanRange::from(span)),
-                });
-                Ok(CircuitExpr::Const(FieldConst::zero()))
-            }
-
-            // Integer division: int_div(lhs, rhs, max_bits)
-            "int_div" => {
-                self.check_arity("int_div", 3, args.len(), span)?;
-                let lhs = self.compile_expr(args[0])?;
-                let rhs = self.compile_expr(args[1])?;
-                let max_bits = self.extract_const_u64(args[2], span)? as u32;
-                Ok(CircuitExpr::IntDiv {
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                    max_bits,
-                })
-            }
-            // Integer remainder: int_mod(lhs, rhs, max_bits)
-            "int_mod" => {
-                self.check_arity("int_mod", 3, args.len(), span)?;
-                let lhs = self.compile_expr(args[0])?;
-                let rhs = self.compile_expr(args[1])?;
-                let max_bits = self.extract_const_u64(args[2], span)? as u32;
-                Ok(CircuitExpr::IntMod {
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                    max_bits,
-                })
-            }
-
-            // User function call (inlined)
-            _ => self.compile_user_fn_call(name, args, span),
+        } else {
+            // No current_expr_id — synthetic call or similar. The
+            // shadow hook keys off current_expr_id internally, so
+            // this is a no-op in practice; the call records
+            // nothing for synthetic invocations.
+            self.record_resolver_hit();
         }
+
+        // Legacy dispatch path. `lower_builtin` returning `Ok(None)`
+        // means the name isn't a recognised builtin; fall through
+        // to user-fn inlining exactly as before.
+        if let Some(expr) = self.lower_builtin(name, args, span)? {
+            return Ok(expr);
+        }
+        self.compile_user_fn_call(name, args, span)
+    }
+
+    /// Dispatch a builtin by name. Returns:
+    /// - `Ok(Some(expr))` — handled as a builtin, evaluation succeeded.
+    /// - `Ok(None)` — `name` is not a recognised builtin; the caller
+    ///   should fall through to user-function dispatch.
+    /// - `Err(e)` — handled as a builtin but the arguments were malformed
+    ///   (wrong arity, unsupported shape, etc.).
+    ///
+    /// Dispatch is driven by [`resolve::BuiltinRegistry`]: the name is
+    /// looked up in the registry, and if a ProveIR-available entry
+    /// exists, its [`ProveIrLowerHandle`] indexes into the lowering
+    /// dispatch table. Names not in the registry return `Ok(None)`.
+    fn lower_builtin(
+        &mut self,
+        name: &str,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<Option<CircuitExpr>, ProveIrError> {
+        use std::sync::OnceLock;
+        static REGISTRY: OnceLock<resolve::BuiltinRegistry> = OnceLock::new();
+        let registry = REGISTRY.get_or_init(resolve::BuiltinRegistry::default);
+
+        let handle = match registry.lookup(name) {
+            Some(entry) => match entry.prove_ir_lower {
+                Some(h) => h,
+                None => return Ok(None),
+            },
+            None => return Ok(None),
+        };
+        self.dispatch_builtin_by_handle(handle, args, span).map(Some)
+    }
+
+    /// Dispatch a ProveIR builtin by its [`ProveIrLowerHandle`].
+    ///
+    /// The handle indexes into a function-pointer table whose slots
+    /// correspond 1:1 with the `ProveIrLowerHandle` values declared in
+    /// [`resolve::BuiltinRegistry::default()`]. Adding a new ProveIR
+    /// builtin requires:
+    /// 1. A new `ProveIrLowerHandle(N)` in the registry.
+    /// 2. A new `lower_*` method below.
+    /// 3. Slot `N` in the `LOWERINGS` table pointing to that method.
+    fn dispatch_builtin_by_handle(
+        &mut self,
+        handle: resolve::builtins::ProveIrLowerHandle,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        type LowerFn<F> =
+            fn(&mut ProveIrCompiler<F>, &[&Expr], &Span) -> Result<CircuitExpr, ProveIrError>;
+
+        const LOWERING_COUNT: usize = 10;
+        let lowerings: [LowerFn<F>; LOWERING_COUNT] = [
+            Self::lower_poseidon,       // 0
+            Self::lower_poseidon_many,  // 1
+            Self::lower_mux,            // 2
+            Self::lower_range_check,    // 3
+            Self::lower_merkle_verify,  // 4
+            Self::lower_len,            // 5
+            Self::lower_assert_eq,      // 6
+            Self::lower_assert,         // 7
+            Self::lower_int_div,        // 8
+            Self::lower_int_mod,        // 9
+        ];
+
+        let idx = handle.as_u32() as usize;
+        assert!(
+            idx < LOWERING_COUNT,
+            "ProveIrLowerHandle({idx}) out of range — \
+             add the lowering function to dispatch_builtin_by_handle"
+        );
+        lowerings[idx](self, args, span)
+    }
+
+    // -- Individual builtin lowering functions --------------------------------
+
+    fn lower_poseidon(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("poseidon", 2, args.len(), span)?;
+        let left = self.compile_expr(args[0])?;
+        let right = self.compile_expr(args[1])?;
+        Ok(CircuitExpr::PoseidonHash {
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+    }
+
+    fn lower_poseidon_many(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        if args.len() < 2 {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "`poseidon_many` requires at least 2 arguments, got {}",
+                    args.len()
+                ),
+                span: to_span(span),
+            });
+        }
+        let compiled: Result<Vec<_>, _> = args.iter().map(|a| self.compile_expr(a)).collect();
+        Ok(CircuitExpr::PoseidonMany(compiled?))
+    }
+
+    fn lower_mux(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("mux", 3, args.len(), span)?;
+        let cond = self.compile_expr(args[0])?;
+        let if_true = self.compile_expr(args[1])?;
+        let if_false = self.compile_expr(args[2])?;
+        Ok(CircuitExpr::Mux {
+            cond: Box::new(cond),
+            if_true: Box::new(if_true),
+            if_false: Box::new(if_false),
+        })
+    }
+
+    fn lower_range_check(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("range_check", 2, args.len(), span)?;
+        let value = self.compile_expr(args[0])?;
+        let bits_u64 = self.extract_const_u64(args[1], span)?;
+        if bits_u64 > u32::MAX as u64 {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "range_check bit count {bits_u64} exceeds maximum ({})",
+                    u32::MAX
+                ),
+                span: to_span(span),
+            });
+        }
+        let bits = bits_u64 as u32;
+        Ok(CircuitExpr::RangeCheck {
+            value: Box::new(value),
+            bits,
+        })
+    }
+
+    fn lower_merkle_verify(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("merkle_verify", 4, args.len(), span)?;
+        let root = self.compile_expr(args[0])?;
+        let leaf = self.compile_expr(args[1])?;
+        let path = self.extract_array_ident(args[2], span)?;
+        let indices = self.extract_array_ident(args[3], span)?;
+        Ok(CircuitExpr::MerkleVerify {
+            root: Box::new(root),
+            leaf: Box::new(leaf),
+            path,
+            indices,
+        })
+    }
+
+    fn lower_len(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("len", 1, args.len(), span)?;
+        self.compile_len_call(args[0], span)
+    }
+
+    fn lower_assert_eq(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_assert_eq_arity(args.len(), span)?;
+        let lhs = self.compile_expr(args[0])?;
+        let rhs = self.compile_expr(args[1])?;
+        let message = self.extract_assert_message(args.get(2), span)?;
+        self.body.push(CircuitNode::AssertEq {
+            lhs,
+            rhs,
+            message,
+            span: Some(SpanRange::from(span)),
+        });
+        Ok(CircuitExpr::Const(FieldConst::zero()))
+    }
+
+    fn lower_assert(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_assert_arity(args.len(), span)?;
+        let cond = self.compile_expr(args[0])?;
+        let message = self.extract_assert_message(args.get(1), span)?;
+        self.body.push(CircuitNode::Assert {
+            expr: cond,
+            message,
+            span: Some(SpanRange::from(span)),
+        });
+        Ok(CircuitExpr::Const(FieldConst::zero()))
+    }
+
+    fn lower_int_div(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("int_div", 3, args.len(), span)?;
+        let lhs = self.compile_expr(args[0])?;
+        let rhs = self.compile_expr(args[1])?;
+        let max_bits = self.extract_const_u64(args[2], span)? as u32;
+        Ok(CircuitExpr::IntDiv {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            max_bits,
+        })
+    }
+
+    fn lower_int_mod(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("int_mod", 3, args.len(), span)?;
+        let lhs = self.compile_expr(args[0])?;
+        let rhs = self.compile_expr(args[1])?;
+        let max_bits = self.extract_const_u64(args[2], span)? as u32;
+        Ok(CircuitExpr::IntMod {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            max_bits,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -2932,6 +3674,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     suggestion: None,
                 })?;
 
+        // Phase 4: reject Vm-only functions inside prove/circuit blocks.
+        if let Some(avail) = fn_def.availability {
+            if !avail.includes_prove_ir() {
+                return Err(ProveIrError::VmOnlyFunction {
+                    name: name.into(),
+                    span: to_span(span),
+                });
+            }
+        }
+
         // Arity check
         if args.len() != fn_def.params.len() {
             return Err(ProveIrError::WrongArgumentCount {
@@ -2947,6 +3699,21 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             return Err(ProveIrError::RecursiveFunction { name: name.into() });
         }
         self.call_stack.insert(name.to_string());
+
+        // Phase 3F — gap 2.4 structural fix: push the definer's
+        // module onto the resolver module stack before compiling the
+        // inlined body. Both the annotation-driven dispatch path and
+        // the legacy name-based path land here, so all inlined bodies
+        // consistently resolve bare identifiers against their
+        // definer's scope. `owner_module` is embedded in FnDef at
+        // registration time from the dispatch maps.
+        let module_pushed = fn_def
+            .owner_module
+            .map(|module| {
+                self.resolver_module_stack.push(module);
+                true
+            })
+            .unwrap_or(false);
 
         // Save env for param names (+ array element names) and bind args
         let param_names: Vec<String> = fn_def.params.iter().map(|p| p.name.clone()).collect();
@@ -3012,6 +3779,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     self.env.remove(&p);
                 }
             }
+        }
+
+        // Phase 3F: pop the definer's module we pushed above.
+        // Paired with the push so the stack stays balanced across
+        // nested inlinings. Only executes when we actually pushed —
+        // see the `module_pushed` discussion above.
+        if module_pushed {
+            self.resolver_module_stack.pop();
         }
 
         self.call_stack.remove(name);

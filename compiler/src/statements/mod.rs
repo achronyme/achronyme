@@ -733,6 +733,21 @@ impl StatementCompiler for Compiler {
                         self.fn_decl_asts.push(stmt.clone());
                     }
                 }
+                // Phase 4: skip VM bytecode for ProveIr-only functions.
+                // Their AST is already captured in fn_decl_asts above
+                // for ProveIR inlining; the VM compiler has no use for them.
+                let fn_key = match &self.module_prefix {
+                    Some(prefix) => format!("{prefix}::{name}"),
+                    None => name.clone(),
+                };
+                if let Some(map) = &self.resolver_availability_map {
+                    if let Some(avail) = map.get(&fn_key) {
+                        if !avail.includes_vm() {
+                            return Ok(());
+                        }
+                    }
+                }
+
                 let reg = self.compile_fn_core(Some(name), params, body)?;
                 self.free_reg(reg)?;
                 Ok(())
@@ -826,8 +841,12 @@ impl StatementCompiler for Compiler {
         //    inline user-defined helpers from the enclosing scope, plus
         //    any circom template imports so the ProveIR compiler can
         //    resolve `Poseidon(...)(...)` / `P.Poseidon(...)(...)` calls.
+        let functions = self
+            .resolver_outer_functions
+            .clone()
+            .unwrap_or_else(|| self.fn_decl_asts.clone());
         let outer_scope = ir::prove_ir::OuterScope {
-            functions: self.fn_decl_asts.clone(),
+            functions,
             circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
                 self,
             ),

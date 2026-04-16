@@ -88,19 +88,66 @@ pub(super) fn compile_prove(
     }
     // Global symbols — read type annotations from GlobalEntry
     for (gname, gentry) in &compiler.global_symbols {
-        if gentry.index >= vm::specs::USER_GLOBAL_START && !gname.contains("::") {
+        if gentry.index >= compiler.native_count && !gname.contains("::") {
             outer_values
                 .entry(gname.clone())
                 .or_insert_with(|| to_scope_entry(&gentry.type_ann));
         }
     }
 
+    // Phase 3E.1 / 3F: forward the VM compiler's already-built
+    // resolver state (if any) to ProveIR. SymbolTable and
+    // ResolvedProgram move into `Arc`s once per prove block; the
+    // dispatch maps are already `Arc`-shared on the VM compiler so
+    // the clone is a refcount bump. No-op when the VM compiler
+    // didn't auto-build a resolver state — prove blocks in
+    // multi-module compiles without `base_path`, for example.
+    let resolver_state = match (
+        compiler.resolver_symbol_table.as_ref(),
+        compiler.resolved_program.as_ref(),
+        compiler.resolver_root_module,
+        compiler.resolver_dispatch_by_symbol.as_ref(),
+        compiler.resolver_module_by_key.as_ref(),
+    ) {
+        (
+            Some(table),
+            Some(resolved),
+            Some(root_module),
+            Some(dispatch_by_symbol),
+            Some(module_by_key),
+        ) => Some(ir::prove_ir::OuterResolverState {
+            table: std::sync::Arc::new(table.clone()),
+            resolved: std::sync::Arc::new(resolved.clone()),
+            root_module,
+            dispatch_key_by_symbol: dispatch_by_symbol.clone(),
+            module_by_dispatch_key: module_by_key.clone(),
+            availability_by_key: std::sync::Arc::new(
+                compiler
+                    .resolver_availability_map
+                    .clone()
+                    .unwrap_or_default(),
+            ),
+        }),
+        _ => None,
+    };
+
+    // Phase 6E: prefer graph-derived outer functions when the
+    // resolver auto-build succeeded — they capture transitive
+    // imports that the incremental fn_decl_asts may miss. Fall
+    // back to fn_decl_asts for in-memory compiles without a
+    // resolver state.
+    let functions = compiler
+        .resolver_outer_functions
+        .clone()
+        .unwrap_or_else(|| compiler.fn_decl_asts.clone());
+
     let outer_scope = ir::prove_ir::OuterScope {
         values: outer_values,
-        functions: compiler.fn_decl_asts.clone(),
+        functions,
         circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
             compiler,
         ),
+        resolver_state,
     };
 
     // 2. If params are provided (new syntax), validate no old-style

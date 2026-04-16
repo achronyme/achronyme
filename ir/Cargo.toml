@@ -15,5 +15,6 @@ memory = { path = "../memory" }
 constraints = { path = "../constraints" }
 diagnostics = { path = "../diagnostics" }
 achronyme-parser = { path = "../achronyme-parser" }
+resolve = { path = "../resolve" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"

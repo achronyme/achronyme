@@ -196,10 +196,12 @@ impl Parser {
         let body = self.parse_block_inner()?;
         let span = self.span_to_prev(&sp);
 
+        let id = self.alloc_expr_id();
         Ok(Stmt::LetDecl {
             name: name.clone(),
             type_ann: None,
             value: Expr::Prove {
+                id,
                 name: Some(name),
                 body,
                 params,

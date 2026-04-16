@@ -1,0 +1,13 @@
+// Gap 2.4 repro fixture — companion module for a.ach.
+//
+// `middle` is the only exported fn. Its body references
+// `helper()` as a BARE identifier — resolving to the private
+// `helper` declared below. Under the standalone circuit compile
+// path, this bare reference is the exact case gap 2.4 used to
+// bite the hardest: register_module_exports only touches
+// exports, so `helper` never lands in the consumer's fn_table
+// under the legacy path.
+
+fn helper() { 1 }
+
+export fn middle() { helper() }

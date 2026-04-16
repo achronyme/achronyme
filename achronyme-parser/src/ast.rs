@@ -6,6 +6,47 @@
 // Re-export Span from the shared diagnostics crate.
 pub use diagnostics::Span;
 
+/// Dense, unique identifier assigned to every `Expr` at parse time.
+///
+/// `ExprId` is the key used by the resolver pass (Movimiento 2, Phase 3)
+/// to attach a `SymbolId` to each call site and identifier via a parallel
+/// `HashMap<ExprId, SymbolId>` inside `resolve::SymbolTable`. Every
+/// parser-allocated id is unique within one `Program`; clones of an
+/// `Expr` preserve the original id (cloning is never a source of new
+/// parse-time state).
+///
+/// The reserved value [`ExprId::SYNTHETIC`] marks `Expr` nodes constructed
+/// outside the parser (e.g. by the IR or circom compilers for internal
+/// lowering). Synthetic nodes are not resolved, so the resolver pass
+/// skips them.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ExprId(u32);
+
+impl ExprId {
+    /// Sentinel id for `Expr` nodes constructed outside the parser.
+    ///
+    /// Never collides with a parser-allocated id because the parser's
+    /// counter starts at 1 (see `Parser::alloc_expr_id`).
+    pub const SYNTHETIC: Self = Self(0);
+
+    /// Construct an id from a raw `u32`. `0` is reserved for
+    /// [`SYNTHETIC`](Self::SYNTHETIC); callers that need a parse-time
+    /// id should use the parser's allocator instead.
+    pub const fn from_raw(n: u32) -> Self {
+        Self(n)
+    }
+
+    /// Raw underlying `u32`, suitable for stable hashing or indexing.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Returns `true` if this id is the reserved synthetic sentinel.
+    pub const fn is_synthetic(self) -> bool {
+        self.0 == Self::SYNTHETIC.0
+    }
+}
+
 /// A complete program: a sequence of statements.
 #[derive(Clone, Debug)]
 pub struct Program {
@@ -139,87 +180,114 @@ pub enum BigIntRadix {
 }
 
 /// Expression variants.
+///
+/// Every variant carries an [`ExprId`] assigned by the parser (or
+/// [`ExprId::SYNTHETIC`] for nodes constructed outside the parser).
+/// The resolver pass (Movimiento 2, Phase 3) uses this id to attach
+/// a `SymbolId` via a parallel `HashMap<ExprId, SymbolId>`.
 #[derive(Clone, Debug)]
 pub enum Expr {
     Number {
+        id: ExprId,
         value: String,
         span: Span,
     },
     FieldLit {
+        id: ExprId,
         value: String,
         radix: FieldRadix,
         span: Span,
     },
     BigIntLit {
+        id: ExprId,
         value: String,
         width: u16,
         radix: BigIntRadix,
         span: Span,
     },
     Bool {
+        id: ExprId,
         value: bool,
         span: Span,
     },
     StringLit {
+        id: ExprId,
         value: String,
         span: Span,
     },
     Nil {
+        id: ExprId,
         span: Span,
     },
     Ident {
+        id: ExprId,
         name: String,
         span: Span,
     },
     BinOp {
+        id: ExprId,
         op: BinOp,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
         span: Span,
     },
     UnaryOp {
+        id: ExprId,
         op: UnaryOp,
         operand: Box<Expr>,
         span: Span,
     },
     Call {
+        id: ExprId,
         callee: Box<Expr>,
         args: Vec<CallArg>,
         span: Span,
     },
     Index {
+        id: ExprId,
         object: Box<Expr>,
         index: Box<Expr>,
         span: Span,
     },
     DotAccess {
+        id: ExprId,
         object: Box<Expr>,
         field: String,
         span: Span,
     },
     If {
+        id: ExprId,
         condition: Box<Expr>,
         then_block: Block,
         else_branch: Option<ElseBranch>,
         span: Span,
     },
     For {
+        id: ExprId,
         var: String,
         iterable: ForIterable,
         body: Block,
         span: Span,
     },
     While {
+        id: ExprId,
         condition: Box<Expr>,
         body: Block,
         span: Span,
     },
     Forever {
+        id: ExprId,
         body: Block,
         span: Span,
     },
-    Block(Block),
+    /// Block expression. The [`ExprId`] is attached to the expression
+    /// wrapper; the inner [`Block`] carries its own span but no id.
+    Block {
+        id: ExprId,
+        block: Block,
+    },
     FnExpr {
+        id: ExprId,
         name: Option<String>,
         params: Vec<TypedParam>,
         return_type: Option<TypeAnnotation>,
@@ -227,6 +295,7 @@ pub enum Expr {
         span: Span,
     },
     Prove {
+        id: ExprId,
         /// Optional name: `prove eligibility(hash: Public) { ... }`
         name: Option<String>,
         body: Block,
@@ -238,26 +307,31 @@ pub enum Expr {
     },
     // CircuitCall removed — unified into Call with keyword CallArgs.
     Array {
+        id: ExprId,
         elements: Vec<Expr>,
         span: Span,
     },
     Map {
+        id: ExprId,
         pairs: Vec<(MapKey, Expr)>,
         span: Span,
     },
     /// Static access: `Type::MEMBER` (e.g., `Int::MAX`, `Field::ORDER`).
     StaticAccess {
+        id: ExprId,
         type_name: String,
         member: String,
         span: Span,
     },
     /// Placeholder for an expression that failed to parse (error recovery).
     Error {
+        id: ExprId,
         span: Span,
     },
 }
 
 impl Expr {
+    /// Borrow the source span covering this expression.
     pub fn span(&self) -> &Span {
         match self {
             Expr::Number { span, .. }
@@ -265,7 +339,7 @@ impl Expr {
             | Expr::BigIntLit { span, .. }
             | Expr::Bool { span, .. }
             | Expr::StringLit { span, .. }
-            | Expr::Nil { span }
+            | Expr::Nil { span, .. }
             | Expr::Ident { span, .. }
             | Expr::BinOp { span, .. }
             | Expr::UnaryOp { span, .. }
@@ -281,8 +355,41 @@ impl Expr {
             | Expr::Array { span, .. }
             | Expr::Map { span, .. }
             | Expr::StaticAccess { span, .. }
-            | Expr::Error { span } => span,
-            Expr::Block(block) => &block.span,
+            | Expr::Error { span, .. } => span,
+            Expr::Block { block, .. } => &block.span,
+        }
+    }
+
+    /// Return the [`ExprId`] assigned to this expression.
+    ///
+    /// For parser-produced nodes this id is dense and unique within the
+    /// enclosing `Program`. Nodes constructed outside the parser carry
+    /// [`ExprId::SYNTHETIC`].
+    pub fn id(&self) -> ExprId {
+        match self {
+            Expr::Number { id, .. }
+            | Expr::FieldLit { id, .. }
+            | Expr::BigIntLit { id, .. }
+            | Expr::Bool { id, .. }
+            | Expr::StringLit { id, .. }
+            | Expr::Nil { id, .. }
+            | Expr::Ident { id, .. }
+            | Expr::BinOp { id, .. }
+            | Expr::UnaryOp { id, .. }
+            | Expr::Call { id, .. }
+            | Expr::Index { id, .. }
+            | Expr::DotAccess { id, .. }
+            | Expr::If { id, .. }
+            | Expr::For { id, .. }
+            | Expr::While { id, .. }
+            | Expr::Forever { id, .. }
+            | Expr::Block { id, .. }
+            | Expr::FnExpr { id, .. }
+            | Expr::Prove { id, .. }
+            | Expr::Array { id, .. }
+            | Expr::Map { id, .. }
+            | Expr::StaticAccess { id, .. }
+            | Expr::Error { id, .. } => *id,
         }
     }
 }

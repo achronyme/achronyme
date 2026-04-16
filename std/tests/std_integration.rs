@@ -28,9 +28,11 @@ fn std_native_table_matches_modules() {
 
 #[test]
 fn register_std_on_vm() {
+    let native_count = resolve::BuiltinRegistry::default().vm_native_count();
+
     let mut vm = vm::VM::new();
     let builtin_count = vm.natives.len();
-    assert_eq!(builtin_count, 14); // builtins (beta.13)
+    assert_eq!(builtin_count, native_count);
 
     for module in achronyme_std::std_modules() {
         vm.register_module(&*module)
@@ -38,10 +40,9 @@ fn register_std_on_vm() {
     }
 
     let std_table = achronyme_std::std_native_table();
-    assert_eq!(vm.natives.len(), 14 + std_table.len());
+    assert_eq!(vm.natives.len(), native_count + std_table.len());
 
-    // Verify each new native is accessible
-    for i in 14..vm.natives.len() {
+    for i in native_count..vm.natives.len() {
         assert!(vm.globals[i].value.is_native());
     }
 }

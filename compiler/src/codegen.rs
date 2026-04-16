@@ -6,12 +6,18 @@ use crate::interner::{
 };
 use crate::module_loader::ModuleLoader;
 use crate::statements::{stmt_span, StatementCompiler};
-use achronyme_parser::ast::{Span, Stmt};
+use achronyme_parser::ast::{ExprId, Program, Span, Stmt};
 use achronyme_parser::diagnostic::SpanRange;
 use achronyme_parser::Diagnostic;
+use ir::resolver_adapter::ModuleLoaderSource;
 use memory::Value;
+use resolve::{
+    build_availability_map, build_dispatch_maps, build_resolver_state, Availability, ModuleId,
+    ResolvedProgram, SymbolId, SymbolTable,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use vm::opcode::OpCode;
 
 /// The main compiler orchestrator
@@ -24,6 +30,10 @@ pub struct Compiler {
     // Global Symbol Table (Name -> Entry with index + metadata)
     pub global_symbols: HashMap<String, crate::types::GlobalEntry>,
     pub next_global_idx: u16,
+    /// Number of builtin native slots (from `BuiltinRegistry`). User
+    /// globals start at this index. Replaces the old `USER_GLOBAL_START`
+    /// constant — derived from the registry at construction time.
+    pub native_count: u16,
 
     // String Interner (shared across all functions)
     pub interner: StringInterner,
@@ -90,14 +100,81 @@ pub struct Compiler {
     pub known_methods: HashSet<String>,
 
     /// FnDecl AST nodes accumulated during top-level compilation.
-    /// Passed to ProveIR so prove/circuit blocks can inline outer functions.
+    /// Legacy path for ProveIR prove-block inlining. When the resolver
+    /// auto-build succeeds, `resolver_outer_functions` is preferred.
     pub fn_decl_asts: Vec<Stmt>,
+
+    /// Graph-derived outer functions built at resolver auto-build time.
+    /// Each FnDecl is renamed to its dispatch key and covers all
+    /// transitive UserFn symbols. When `Some`, prove blocks use this
+    /// instead of `fn_decl_asts` — it captures transitive imports
+    /// that the incremental accumulation misses.
+    pub resolver_outer_functions: Option<Vec<Stmt>>,
 
     /// Prime field for ProveIR serialization. Defaults to BN254.
     pub prime_id: memory::field::PrimeId,
+
+    // ── Movimiento 2 Phase 3D: resolver shadow-dispatch ────────────
+    /// Annotation map produced by [`resolve::annotate_program`].
+    /// Populated either automatically by [`Compiler::compile`] (for
+    /// in-memory single-module programs) or manually via
+    /// [`Compiler::install_resolver_state`]. The resolver-driven
+    /// dispatch path reads this to resolve call-site annotations;
+    /// the legacy name-based path coexists as a fallback for
+    /// compiles without resolver state.
+    pub resolved_program: Option<ResolvedProgram>,
+    /// Symbol table produced alongside `resolved_program`. Stored so
+    /// that hits into the annotation map can be resolved to their
+    /// [`resolve::CallableKind`] for cross-validation + future
+    /// dispatch.
+    pub resolver_symbol_table: Option<SymbolTable>,
+    /// Root [`ModuleId`] of the graph `resolved_program` belongs to.
+    /// The lookup key into
+    /// [`resolve::ResolvedProgram::annotations`] is `(module, expr_id)`;
+    /// Phase 3D only touches root-module expressions, so stashing
+    /// the id here avoids carrying the whole graph around. For
+    /// auto-built in-memory roots this is always
+    /// [`ModuleId::from_raw(0)`]; external installers pass their
+    /// own.
+    pub resolver_root_module: Option<ModuleId>,
+    /// [`ExprId`] of the expression currently being compiled, set at
+    /// the top of `compile_expr`. `compile_ident` reads this to form
+    /// the `(module, expr_id)` annotation key without threading the
+    /// id through every helper signature.
+    pub current_expr_id: Option<ExprId>,
+    /// Annotation hits recorded by `compile_ident` during a
+    /// compilation pass. Each entry is `(expr_id, symbol_id)` for an
+    /// [`Expr::Ident`](achronyme_parser::ast::Expr::Ident) whose
+    /// resolver annotation matched. Consumed by Phase 3D tests;
+    /// ignored by production code paths.
+    pub resolver_hits: Vec<(ExprId, SymbolId)>,
+    // ── Movimiento 2 Phase 3F: multi-module dispatch maps ──────────
+    /// Precomputed translation from [`SymbolId`] to the fn_table
+    /// key the ProveIR compiler uses. Derived at auto-build time
+    /// from the resolver's [`SymbolTable`] + [`ModuleGraph`] import
+    /// edges — see [`build_dispatch_maps`]. `None` when resolver
+    /// state isn't installed. Shared with ProveIR per prove block
+    /// via [`OuterResolverState::dispatch_key_by_symbol`].
+    ///
+    /// The `Arc` indirection makes per-prove-block hand-off free
+    /// (cloning `Arc` is a refcount bump, not a `HashMap` copy).
+    pub resolver_dispatch_by_symbol: Option<Arc<HashMap<SymbolId, String>>>,
+    /// Inverse of [`resolver_dispatch_by_symbol`]: fn_table key to
+    /// the owning [`ModuleId`]. Consumed by
+    /// [`ir::prove_ir::ProveIrCompiler::compile_user_fn_call`] to
+    /// push the definer's module onto the resolver stack before
+    /// inlining — the structural half of the gap 2.4 fix.
+    pub resolver_module_by_key: Option<Arc<HashMap<String, ModuleId>>>,
+    // ── Movimiento 2 Phase 4: availability inference ──────────────
+    /// fn_table key → [`Availability`] for every user function.
+    /// The VM compiler checks this before emitting bytecode: if a
+    /// function is `ProveIr`-only, its body is skipped (no bytecode)
+    /// while its AST is still captured in `fn_decl_asts` for ProveIR
+    /// inlining. `None` when resolver state isn't installed.
+    pub resolver_availability_map: Option<HashMap<String, Availability>>,
 }
 
-use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
+use vm::specs::NativeMeta;
 
 impl Default for Compiler {
     fn default() -> Self {
@@ -112,19 +189,23 @@ impl Compiler {
 
     /// Create a compiler with additional native functions beyond the builtins.
     ///
-    /// `extra` entries are appended after `NATIVE_TABLE` — their indices
-    /// continue from `USER_GLOBAL_START`.  The VM must register the same
-    /// modules in the same order via `VM::register_module()`.
+    /// `extra` entries are appended after the registry builtins — their
+    /// indices continue from the VM native count. The VM must register
+    /// the same modules in the same order via `VM::register_module()`.
     pub fn with_extra_natives(extra: &[NativeMeta]) -> Self {
         use crate::types::GlobalEntry;
+        let registry = resolve::BuiltinRegistry::default();
+        let vm_entries = registry.vm_entries_by_handle();
+        let native_count = vm_entries.len();
+
         let mut global_symbols = HashMap::new();
 
-        // Pre-populate builtins from SSOT
-        for (index, meta) in NATIVE_TABLE.iter().enumerate() {
+        for entry in &vm_entries {
+            let handle = entry.vm_fn.expect("vm_entries_by_handle guarantees vm_fn");
             global_symbols.insert(
-                meta.name.to_string(),
+                entry.name.to_string(),
                 GlobalEntry {
-                    index: index as u16,
+                    index: handle.as_u32() as u16,
                     type_ann: None,
                     is_mutable: false,
                     param_names: None,
@@ -132,9 +213,8 @@ impl Compiler {
             );
         }
 
-        // Append extra natives (stdlib, user modules, etc.)
         for (i, meta) in extra.iter().enumerate() {
-            let index = NATIVE_TABLE.len() + i;
+            let index = native_count + i;
             assert!(
                 !global_symbols.contains_key(meta.name),
                 "Native name collision: '{}' already defined as builtin",
@@ -151,7 +231,7 @@ impl Compiler {
             );
         }
 
-        let next_global_idx = (NATIVE_TABLE.len() + extra.len()) as u16;
+        let next_global_idx = (native_count + extra.len()) as u16;
 
         // Start with a "main" function compiler (arity=0 for top-level script)
         let main_compiler = FunctionCompiler::new("main".to_string(), 0);
@@ -167,6 +247,7 @@ impl Compiler {
             prototypes: Vec::new(),
             global_symbols,
             next_global_idx,
+            native_count: native_count as u16,
             interner: StringInterner::new(),
             field_interner: FieldInterner::new(),
             bigint_interner: BigIntInterner::new(),
@@ -187,8 +268,135 @@ impl Compiler {
             warnings: Vec::new(),
             known_methods,
             fn_decl_asts: Vec::new(),
+            resolver_outer_functions: None,
             prime_id: memory::field::PrimeId::Bn254,
+            resolved_program: None,
+            resolver_symbol_table: None,
+            resolver_root_module: None,
+            current_expr_id: None,
+            resolver_hits: Vec::new(),
+            resolver_dispatch_by_symbol: None,
+            resolver_module_by_key: None,
+            resolver_availability_map: None,
         }
+    }
+
+    /// Install a pre-built resolver state. Tests and CLI flows that
+    /// want to control how the module graph is loaded can build the
+    /// [`SymbolTable`] + [`ResolvedProgram`] externally and hand them
+    /// to the compiler before calling [`Compiler::compile`].
+    ///
+    /// `root_module` is the [`ModuleId`] of the root of the graph
+    /// `program` belongs to; pass [`resolve::ModuleGraph::root`].
+    ///
+    /// Clears any previous resolver state and the hit trace. Does
+    /// NOT populate the Phase 3F dispatch maps — external installers
+    /// that care about cross-module dispatch must either build the
+    /// maps themselves or use the [`Compiler::compile`] auto-build
+    /// path, which derives them from the graph.
+    pub fn install_resolver_state(
+        &mut self,
+        table: SymbolTable,
+        program: ResolvedProgram,
+        root_module: ModuleId,
+    ) {
+        self.resolver_symbol_table = Some(table);
+        self.resolved_program = Some(program);
+        self.resolver_root_module = Some(root_module);
+        self.resolver_hits.clear();
+        self.resolver_dispatch_by_symbol = None;
+        self.resolver_module_by_key = None;
+        self.resolver_availability_map = None;
+        self.resolver_outer_functions = None;
+    }
+
+    /// Build a resolver state for the current program and install it
+    /// on this compiler. Used by [`Compiler::compile`] as the bridge
+    /// between the legacy dispatch path and the resolver-driven one.
+    ///
+    /// ## Multi-module policy (Phase 3F)
+    ///
+    /// - Single-module programs (no imports) always go through the
+    ///   in-memory-root override: the adapter serves the already
+    ///   parsed [`Program`] to the graph builder without re-parsing.
+    /// - Multi-module programs build the full import graph when
+    ///   `self.base_path` is set — the adapter's in-memory-root fix
+    ///   lets the graph builder resolve transitive `./x.ach`
+    ///   imports against `base_path`. Without a `base_path` (typical
+    ///   for in-memory tests), multi-module compiles silently skip
+    ///   the auto-build, falling back to the legacy `fn_decl_asts`
+    ///   aggregation.
+    ///
+    /// On success, this also precomputes the Phase 3F fn_table
+    /// dispatch maps via [`build_dispatch_maps`] so the ProveIR
+    /// compiler can translate `SymbolId → fn_table key` and
+    /// `fn_table key → ModuleId` without re-parsing resolver
+    /// conventions at every call site.
+    ///
+    /// A silent no-op if any step fails — the resolver state is an
+    /// optimisation path, not a correctness requirement, so a
+    /// resolver failure must NOT break compilation.
+    fn try_auto_build_resolver_state(&mut self, program: &Program) {
+        // Multi-module programs without base_path can't resolve
+        // transitive imports — the adapter would fail to
+        // canonicalize `./foo.ach` against an empty base. Skip in
+        // that case; legacy path still works.
+        if program_has_imports(program) && self.base_path.is_none() {
+            return;
+        }
+
+        // Mirror ir::ModuleLoader's export-name flattening so
+        // register_module sees the same list the legacy loader
+        // would.
+        let exported_names: Vec<String> = program
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Export { inner, .. } => match inner.as_ref() {
+                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        // Opaque pseudo-path — the adapter's root override matches
+        // by equality against this PathBuf, nothing more. Even in
+        // the multi-module case, the root itself is served from
+        // memory; only transitive imports touch the filesystem.
+        let root_path = PathBuf::from("<resolve-in-memory-root>");
+        let mut local_loader = ModuleLoader::new();
+        let mut source = ModuleLoaderSource::with_root(
+            self.base_path.clone(),
+            &mut local_loader,
+            root_path,
+            program.clone(),
+            exported_names,
+        );
+        let Ok(state) = build_resolver_state("<resolve-in-memory-root>", &mut source) else {
+            return;
+        };
+
+        // Phase 3F: precompute the fn_table dispatch maps from the
+        // SymbolTable + ModuleGraph. Both maps are Arc-shared so
+        // per-prove-block handoff into `OuterResolverState` is a
+        // refcount bump rather than a HashMap clone.
+        let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
+        let availability_map = build_availability_map(&state.table, &state.graph);
+
+        // Phase 6E: derive outer functions from the graph so prove
+        // blocks can use them instead of the incremental fn_decl_asts.
+        let outer_functions =
+            resolve::build_outer_functions(&state, &dispatch_by_symbol);
+
+        let root_module = state.root();
+        self.resolved_program = Some(state.resolved);
+        self.resolver_symbol_table = Some(state.table);
+        self.resolver_root_module = Some(root_module);
+        self.resolver_dispatch_by_symbol = Some(Arc::new(dispatch_by_symbol));
+        self.resolver_module_by_key = Some(Arc::new(module_by_key));
+        self.resolver_availability_map = Some(availability_map);
+        self.resolver_outer_functions = Some(outer_functions);
     }
 
     /// Get the OptSpan for the current expression/statement being compiled.
@@ -217,9 +425,9 @@ impl Compiler {
             }
         }
 
-        // Global symbols (skip native internals with index < USER_GLOBAL_START)
+        // Global symbols (skip native builtins)
         for (name, entry) in &self.global_symbols {
-            if entry.index >= USER_GLOBAL_START && !name.contains("::") {
+            if entry.index >= self.native_count && !name.contains("::") {
                 names.push(name);
             }
         }
@@ -422,6 +630,18 @@ impl Compiler {
             }
         }
 
+        // Movimiento 2 Phase 3D — if no resolver state was
+        // pre-installed (via `install_resolver_state`), try to build
+        // one from the parsed root. Only kicks in for single-module
+        // in-memory programs (no imports); anything more advanced
+        // stays on the legacy path until Phase 3E wires the real
+        // multi-module graph. Any failure is silent — the legacy
+        // compilation path must not regress because of a resolver
+        // hiccup.
+        if self.resolved_program.is_none() {
+            self.try_auto_build_resolver_state(&program);
+        }
+
         let mut terminated = false;
         let mut unreachable_warned = false;
         for stmt in &program.stmts {
@@ -474,6 +694,24 @@ pub(crate) fn is_terminator(stmt: &Stmt) -> bool {
         stmt,
         Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. }
     )
+}
+
+/// Returns true if a program contains any top-level `import` /
+/// `selective import`. Phase 3F gates multi-module auto-build on
+/// the presence of `base_path`: in-memory compiles without a
+/// filesystem root can't canonicalize transitive imports, so the
+/// resolver state for such programs is silently skipped and the
+/// legacy `fn_decl_asts` aggregation path handles dispatch.
+fn program_has_imports(program: &Program) -> bool {
+    program.stmts.iter().any(has_import)
+}
+
+fn has_import(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Import { .. } | Stmt::SelectiveImport { .. } | Stmt::ImportCircuit { .. } => true,
+        Stmt::Export { inner, .. } => has_import(inner),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

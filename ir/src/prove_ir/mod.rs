@@ -22,7 +22,7 @@ pub use circom_interop::{
     CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
     CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
 };
-pub use compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+pub use compiler::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
 pub use error::ProveIrError;
 pub use types::*;
 

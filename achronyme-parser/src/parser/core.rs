@@ -15,6 +15,11 @@ pub(super) struct Parser {
     pub(super) block_depth: usize,
     /// Collected diagnostics from error recovery.
     pub(super) errors: Vec<Diagnostic>,
+    /// Monotonic counter used to assign every constructed `Expr` a
+    /// unique [`ExprId`]. Starts at 0 and is pre-incremented in
+    /// [`alloc_expr_id`], so the first allocated id is `ExprId(1)` —
+    /// never the reserved [`ExprId::SYNTHETIC`] (which is `0`).
+    pub(super) next_expr_id: u32,
 }
 
 impl Parser {
@@ -24,7 +29,26 @@ impl Parser {
             pos: 0,
             block_depth: 0,
             errors: Vec::new(),
+            next_expr_id: 0,
         }
+    }
+
+    /// Allocate a fresh, unique [`ExprId`] for the next `Expr` being
+    /// constructed. Caller must wire the returned id into the `id`
+    /// field of the `Expr` variant.
+    ///
+    /// Id allocation is monotonic but has **no required relationship
+    /// with source order** — some expressions allocate their id after
+    /// parsing their sub-expressions (e.g. `BinOp` and postfix chains),
+    /// so an outer expression may have a larger id than its own
+    /// operands. The only invariants the resolver relies on are
+    /// uniqueness and non-zero.
+    pub(super) fn alloc_expr_id(&mut self) -> ExprId {
+        self.next_expr_id = self
+            .next_expr_id
+            .checked_add(1)
+            .expect("parser allocated more than u32::MAX expression ids");
+        ExprId::from_raw(self.next_expr_id)
     }
 
     // ========================================================================

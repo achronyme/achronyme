@@ -9,11 +9,12 @@ use super::{field_to_u64, to_ir_span, EnvValue, IrLowering};
 impl<F: FieldBackend> IrLowering<F> {
     pub(super) fn lower_expr(&mut self, expr: &Expr) -> Result<SsaVar, IrError> {
         match expr {
-            Expr::Number { value, span } => self.lower_number(value, span),
+            Expr::Number { value, span, .. } => self.lower_number(value, span),
             Expr::FieldLit {
                 value,
                 radix,
                 span,
+                ..
             } => self.lower_field_lit(value, radix, span),
             Expr::Bool { value: true, .. } => {
                 let v = self.program.fresh_var();
@@ -33,7 +34,7 @@ impl<F: FieldBackend> IrLowering<F> {
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
-            Expr::Ident { name, span } => {
+            Expr::Ident { name, span, .. } => {
                 let sp = to_ir_span(span);
                 // Try direct lookup first, then prefixed for module-internal vars
                 let val = self.env.get(name.as_str()).or_else(|| {
@@ -51,26 +52,27 @@ impl<F: FieldBackend> IrLowering<F> {
                     None => Err(IrError::UndeclaredVariable(name.clone(), sp)),
                 }
             }
-            Expr::BinOp { op, lhs, rhs, span } => self.lower_binop(op, lhs, rhs, span),
-            Expr::UnaryOp { op, operand, span } => self.lower_unary(op, operand, span),
-            Expr::Call { callee, args, span } => {
+            Expr::BinOp { op, lhs, rhs, span, .. } => self.lower_binop(op, lhs, rhs, span),
+            Expr::UnaryOp { op, operand, span, .. } => self.lower_unary(op, operand, span),
+            Expr::Call { callee, args, span, .. } => {
                 let arg_vals: Vec<&Expr> = args.iter().map(|a| &a.value).collect();
                 self.lower_call(callee, &arg_vals, span)
             }
-            Expr::Index { object, index, span } => self.lower_index(object, index, span),
+            Expr::Index { object, index, span, .. } => self.lower_index(object, index, span),
             Expr::If {
                 condition,
                 then_block,
                 else_branch,
-                span: _,
+                ..
             } => self.lower_if(condition, then_block, else_branch.as_ref()),
             Expr::For {
                 var,
                 iterable,
                 body,
                 span,
+                ..
             } => self.lower_for(var, iterable, body, span),
-            Expr::Block(block) => self.lower_block(block),
+            Expr::Block { block, .. } => self.lower_block(block),
             Expr::While { span, .. } | Expr::Forever { span, .. } => {
                 Err(IrError::UnboundedLoop(to_ir_span(span)))
             }
@@ -86,7 +88,7 @@ impl<F: FieldBackend> IrLowering<F> {
             Expr::StringLit { span, .. } => {
                 Err(IrError::TypeNotConstrainable("string".into(), to_ir_span(span)))
             }
-            Expr::Nil { span } => {
+            Expr::Nil { span, .. } => {
                 Err(IrError::TypeNotConstrainable("nil".into(), to_ir_span(span)))
             }
             Expr::Array { span, .. } => Err(IrError::TypeMismatch {
@@ -101,6 +103,7 @@ impl<F: FieldBackend> IrLowering<F> {
                 object,
                 field,
                 span,
+                ..
             } => {
                 // Support module.name access for imported constants
                 if let Expr::Ident { name: module, .. } = object.as_ref() {
@@ -130,7 +133,7 @@ impl<F: FieldBackend> IrLowering<F> {
                 "static access (Type::MEMBER) is not supported in circuit mode".into(),
                 to_ir_span(span),
             )),
-            Expr::Error { span } => Err(IrError::UnsupportedOperation(
+            Expr::Error { span, .. } => Err(IrError::UnsupportedOperation(
                 "cannot compile error placeholder (source has parse errors)".into(),
                 to_ir_span(span),
             )),

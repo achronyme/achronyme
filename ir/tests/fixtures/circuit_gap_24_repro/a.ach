@@ -1,0 +1,22 @@
+// Gap 2.4 repro in circuit mode — Movimiento 2 Phase 3G.
+//
+// Standalone `circuit Foo(...)` declaration that imports b.ach
+// and calls b::middle() from inside the circuit body. middle's
+// body references a module-private `helper()` as a bare
+// identifier — that's what makes this a gap 2.4 scenario.
+//
+// Pre-Phase-3G this path is *worse* than the prove-block case:
+// compile_circuit's legacy `register_module_exports` path only
+// registers `b::middle` (exported) in the fn_table, NOT
+// `b::helper` (private). When middle is inlined, its body's
+// `helper()` lookup misses with UndeclaredVariable.
+//
+// Phase 3G fix: auto-build resolver state, walk the full graph,
+// and pre-populate fn_table with both exported AND private fns
+// under their correct alias-form keys.
+
+import "./b.ach" as b
+
+circuit Foo(expected: Public) {
+    assert_eq(expected, b::middle())
+}

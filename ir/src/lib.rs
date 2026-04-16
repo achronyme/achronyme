@@ -5,6 +5,7 @@ pub mod lower;
 pub mod module_loader;
 pub mod passes;
 pub mod prove_ir;
+pub mod resolver_adapter;
 pub mod stats;
 pub(crate) mod suggest;
 pub mod types;

@@ -12,6 +12,7 @@ members = [
     "ach-macros",
     "proving",
     "circom",
+    "resolve",
 ]
 exclude = ["wasm"]
 resolver = "2"
