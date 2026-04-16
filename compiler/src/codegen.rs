@@ -30,6 +30,10 @@ pub struct Compiler {
     // Global Symbol Table (Name -> Entry with index + metadata)
     pub global_symbols: HashMap<String, crate::types::GlobalEntry>,
     pub next_global_idx: u16,
+    /// Number of builtin native slots (from `BuiltinRegistry`). User
+    /// globals start at this index. Replaces the old `USER_GLOBAL_START`
+    /// constant — derived from the registry at construction time.
+    pub native_count: u16,
 
     // String Interner (shared across all functions)
     pub interner: StringInterner,
@@ -164,71 +168,12 @@ pub struct Compiler {
     pub resolver_availability_map: Option<HashMap<String, Availability>>,
 }
 
-use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
+use vm::specs::NativeMeta;
 
 impl Default for Compiler {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Cross-check `NATIVE_TABLE` against `resolve::BuiltinRegistry::default()`.
-///
-/// Runs exactly **once per process**. Fails loudly if the two dispatch
-/// surfaces have drifted: every `NATIVE_TABLE` entry must be backed by
-/// a VM-available registry entry whose `VmFnHandle` equals the
-/// `NATIVE_TABLE` position.
-///
-/// Movimiento 2 Phase 2B status: the registry is already the **source
-/// of truth** but dispatch still flows through `NATIVE_TABLE`. This
-/// check guarantees the two stay in sync until Phase 6 removes
-/// `NATIVE_TABLE` entirely (see the RFC §4 Phase 6 "MANDATORY" block).
-///
-/// Skipped in release builds because the integration test
-/// `compiler/tests/builtin_registry_alignment.rs` covers the same
-/// invariants at build time; runtime validation is a debug-mode
-/// tripwire for local development, not a production guard.
-#[cfg(debug_assertions)]
-fn cross_check_native_table_vs_registry() {
-    use std::sync::Once;
-    static CHECK: Once = Once::new();
-    CHECK.call_once(|| {
-        let registry = resolve::BuiltinRegistry::default();
-        for (idx, meta) in NATIVE_TABLE.iter().enumerate() {
-            let entry = registry.lookup(meta.name).unwrap_or_else(|| {
-                panic!(
-                    "NATIVE_TABLE[{idx}] = `{}` has no matching \
-                     resolve::BuiltinRegistry entry. Add it to \
-                     BuiltinRegistry::default() in resolve/src/builtins.rs. \
-                     Run `cargo test -p compiler --test builtin_registry_alignment` \
-                     to verify the fix.",
-                    meta.name
-                )
-            });
-            assert!(
-                entry.availability.includes_vm(),
-                "NATIVE_TABLE[{idx}] = `{}` exists in the registry but its \
-                 availability is {:?} (does not include Vm). Update \
-                 BuiltinRegistry::default().",
-                meta.name,
-                entry.availability,
-            );
-            let handle = entry.vm_fn.expect(
-                "VM-available registry entry must have vm_fn set \
-                 (audit should have caught this)",
-            );
-            assert_eq!(
-                handle.as_u32() as usize,
-                idx,
-                "NATIVE_TABLE[{idx}] = `{}` but registry has handle {} \
-                 (expected {}). Align BuiltinRegistry::default() entries \
-                 with NATIVE_TABLE positions.",
-                meta.name,
-                handle.as_u32(),
-                idx,
-            );
-        }
-    });
 }
 
 impl Compiler {
@@ -238,26 +183,23 @@ impl Compiler {
 
     /// Create a compiler with additional native functions beyond the builtins.
     ///
-    /// `extra` entries are appended after `NATIVE_TABLE` — their indices
-    /// continue from `USER_GLOBAL_START`.  The VM must register the same
-    /// modules in the same order via `VM::register_module()`.
+    /// `extra` entries are appended after the registry builtins — their
+    /// indices continue from the VM native count. The VM must register
+    /// the same modules in the same order via `VM::register_module()`.
     pub fn with_extra_natives(extra: &[NativeMeta]) -> Self {
-        // Movimiento 2 Phase 2B: verify NATIVE_TABLE is still aligned
-        // with the resolve registry. Runs once per process in debug
-        // builds; release builds rely on the integration test at
-        // compiler/tests/builtin_registry_alignment.rs.
-        #[cfg(debug_assertions)]
-        cross_check_native_table_vs_registry();
-
         use crate::types::GlobalEntry;
+        let registry = resolve::BuiltinRegistry::default();
+        let vm_entries = registry.vm_entries_by_handle();
+        let native_count = vm_entries.len();
+
         let mut global_symbols = HashMap::new();
 
-        // Pre-populate builtins from SSOT
-        for (index, meta) in NATIVE_TABLE.iter().enumerate() {
+        for entry in &vm_entries {
+            let handle = entry.vm_fn.expect("vm_entries_by_handle guarantees vm_fn");
             global_symbols.insert(
-                meta.name.to_string(),
+                entry.name.to_string(),
                 GlobalEntry {
-                    index: index as u16,
+                    index: handle.as_u32() as u16,
                     type_ann: None,
                     is_mutable: false,
                     param_names: None,
@@ -265,9 +207,8 @@ impl Compiler {
             );
         }
 
-        // Append extra natives (stdlib, user modules, etc.)
         for (i, meta) in extra.iter().enumerate() {
-            let index = NATIVE_TABLE.len() + i;
+            let index = native_count + i;
             assert!(
                 !global_symbols.contains_key(meta.name),
                 "Native name collision: '{}' already defined as builtin",
@@ -284,7 +225,7 @@ impl Compiler {
             );
         }
 
-        let next_global_idx = (NATIVE_TABLE.len() + extra.len()) as u16;
+        let next_global_idx = (native_count + extra.len()) as u16;
 
         // Start with a "main" function compiler (arity=0 for top-level script)
         let main_compiler = FunctionCompiler::new("main".to_string(), 0);
@@ -300,6 +241,7 @@ impl Compiler {
             prototypes: Vec::new(),
             global_symbols,
             next_global_idx,
+            native_count: native_count as u16,
             interner: StringInterner::new(),
             field_interner: FieldInterner::new(),
             bigint_interner: BigIntInterner::new(),
@@ -469,9 +411,9 @@ impl Compiler {
             }
         }
 
-        // Global symbols (skip native internals with index < USER_GLOBAL_START)
+        // Global symbols (skip native builtins)
         for (name, entry) in &self.global_symbols {
-            if entry.index >= USER_GLOBAL_START && !name.contains("::") {
+            if entry.index >= self.native_count && !name.contains("::") {
                 names.push(name);
             }
         }

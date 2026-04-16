@@ -88,7 +88,7 @@ pub(super) fn compile_prove(
     }
     // Global symbols — read type annotations from GlobalEntry
     for (gname, gentry) in &compiler.global_symbols {
-        if gentry.index >= vm::specs::USER_GLOBAL_START && !gname.contains("::") {
+        if gentry.index >= compiler.native_count && !gname.contains("::") {
             outer_values
                 .entry(gname.clone())
                 .or_insert_with(|| to_scope_entry(&gentry.type_ann));
