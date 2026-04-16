@@ -12,7 +12,8 @@ use achronyme_parser::Diagnostic;
 use ir::resolver_adapter::ModuleLoaderSource;
 use memory::Value;
 use resolve::{
-    build_dispatch_maps, build_resolver_state, ModuleId, ResolvedProgram, SymbolId, SymbolTable,
+    build_availability_map, build_dispatch_maps, build_resolver_state, Availability, ModuleId,
+    ResolvedProgram, SymbolId, SymbolTable,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -154,6 +155,13 @@ pub struct Compiler {
     /// push the definer's module onto the resolver stack before
     /// inlining — the structural half of the gap 2.4 fix.
     pub resolver_module_by_key: Option<Arc<HashMap<String, ModuleId>>>,
+    // ── Movimiento 2 Phase 4: availability inference ──────────────
+    /// fn_table key → [`Availability`] for every user function.
+    /// The VM compiler checks this before emitting bytecode: if a
+    /// function is `ProveIr`-only, its body is skipped (no bytecode)
+    /// while its AST is still captured in `fn_decl_asts` for ProveIR
+    /// inlining. `None` when resolver state isn't installed.
+    pub resolver_availability_map: Option<HashMap<String, Availability>>,
 }
 
 use vm::specs::{NativeMeta, NATIVE_TABLE, USER_GLOBAL_START};
@@ -320,6 +328,7 @@ impl Compiler {
             resolver_hits: Vec::new(),
             resolver_dispatch_by_symbol: None,
             resolver_module_by_key: None,
+            resolver_availability_map: None,
         }
     }
 
@@ -348,6 +357,7 @@ impl Compiler {
         self.resolver_hits.clear();
         self.resolver_dispatch_by_symbol = None;
         self.resolver_module_by_key = None;
+        self.resolver_availability_map = None;
     }
 
     /// Build a resolver state for the current program and install it
@@ -422,6 +432,7 @@ impl Compiler {
         // per-prove-block handoff into `OuterResolverState` is a
         // refcount bump rather than a HashMap clone.
         let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
+        let availability_map = build_availability_map(&state.table, &state.graph);
 
         let root_module = state.root();
         self.resolved_program = Some(state.resolved);
@@ -429,6 +440,7 @@ impl Compiler {
         self.resolver_root_module = Some(root_module);
         self.resolver_dispatch_by_symbol = Some(Arc::new(dispatch_by_symbol));
         self.resolver_module_by_key = Some(Arc::new(module_by_key));
+        self.resolver_availability_map = Some(availability_map);
     }
 
     /// Get the OptSpan for the current expression/statement being compiled.

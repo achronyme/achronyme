@@ -121,6 +121,12 @@ pub(super) fn compile_prove(
             root_module,
             dispatch_key_by_symbol: dispatch_by_symbol.clone(),
             module_by_dispatch_key: module_by_key.clone(),
+            availability_by_key: std::sync::Arc::new(
+                compiler
+                    .resolver_availability_map
+                    .clone()
+                    .unwrap_or_default(),
+            ),
         }),
         _ => None,
     };

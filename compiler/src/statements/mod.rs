@@ -733,6 +733,21 @@ impl StatementCompiler for Compiler {
                         self.fn_decl_asts.push(stmt.clone());
                     }
                 }
+                // Phase 4: skip VM bytecode for ProveIr-only functions.
+                // Their AST is already captured in fn_decl_asts above
+                // for ProveIR inlining; the VM compiler has no use for them.
+                let fn_key = match &self.module_prefix {
+                    Some(prefix) => format!("{prefix}::{name}"),
+                    None => name.clone(),
+                };
+                if let Some(map) = &self.resolver_availability_map {
+                    if let Some(avail) = map.get(&fn_key) {
+                        if !avail.includes_vm() {
+                            return Ok(());
+                        }
+                    }
+                }
+
                 let reg = self.compile_fn_core(Some(name), params, body)?;
                 self.free_reg(reg)?;
                 Ok(())
