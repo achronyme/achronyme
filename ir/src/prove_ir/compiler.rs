@@ -148,7 +148,9 @@ struct FnDef {
 /// tracking through [`ProveIrCompiler::compile_user_fn_call`],
 /// which consults `resolver_module_by_key` directly.
 enum DispatchDecision {
-    Builtin { name: String },
+    Builtin {
+        handle: resolve::builtins::ProveIrLowerHandle,
+    },
     UserFn { qualified_name: String },
     NoAnnotation,
 }
@@ -402,9 +404,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             CallableKind::Builtin { entry_index } => table
                 .builtin_registry()
                 .get(*entry_index)
-                .map(|entry| DispatchDecision::Builtin {
-                    name: entry.name.to_string(),
-                })
+                .and_then(|entry| entry.prove_ir_lower)
+                .map(|handle| DispatchDecision::Builtin { handle })
                 .unwrap_or(DispatchDecision::NoAnnotation),
             CallableKind::UserFn { .. } => {
                 // Phase 3F: translate the SymbolId to its fn_table
@@ -2844,20 +2845,9 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         span: &Span,
     ) -> Result<Option<CircuitExpr>, ProveIrError> {
         match self.resolve_dispatch_via_annotation(callee_expr_id) {
-            DispatchDecision::Builtin { name: builtin_name } => {
-                // Builtin dispatch flows through `lower_builtin`
-                // using the resolver-verified canonical name. For
-                // alias flows (`let hash = poseidon; hash(a,b)`)
-                // this picks the builtin even though the parser's
-                // raw name was `hash` — a capability the legacy
-                // path never supported.
-                //
-                // `lower_builtin` returning `Ok(None)` means its
-                // hardcoded match lacks an arm for this name; we
-                // propagate the `None` so the caller falls through
-                // to the legacy path with the raw parser name.
-                self.lower_builtin(&builtin_name, args, span)
-            }
+            DispatchDecision::Builtin { handle } => self
+                .dispatch_builtin_by_handle(handle, args, span)
+                .map(Some),
             DispatchDecision::UserFn { qualified_name } => {
                 // Phase 3F: the dispatch map already translated the
                 // SymbolId to the correct fn_table key. If the key
@@ -2931,207 +2921,236 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// - `Err(e)` — handled as a builtin but the arguments were malformed
     ///   (wrong arity, unsupported shape, etc.).
     ///
-    /// ## Movimiento 2 Phase 2B — registry cross-validation
-    ///
-    /// Before the hardcoded match runs, this function consults
-    /// `resolve::BuiltinRegistry::default()` to verify that the name
-    /// is recognised as a ProveIR-available builtin. This is a
-    /// debug-mode tripwire that catches drift between the registry
-    /// and the match: if someone adds a new match arm without
-    /// registering it (or vice versa), the assertion fires.
-    ///
-    /// The registry is cached in a `OnceLock` so the lookup is
-    /// O(1) after the first call. Production dispatch still goes
-    /// through the hardcoded match — Phase 6 will flip this to real
-    /// registry-driven dispatch (see the RFC §4 Phase 6 MANDATORY
-    /// block).
+    /// Dispatch is driven by [`resolve::BuiltinRegistry`]: the name is
+    /// looked up in the registry, and if a ProveIR-available entry
+    /// exists, its [`ProveIrLowerHandle`] indexes into the lowering
+    /// dispatch table. Names not in the registry return `Ok(None)`.
     fn lower_builtin(
         &mut self,
         name: &str,
         args: &[&Expr],
         span: &Span,
     ) -> Result<Option<CircuitExpr>, ProveIrError> {
-        // Phase 2B cross-validation: every match arm below must be
-        // registered as ProveIr-available. We DON'T fail the user if
-        // the name isn't in the registry at all — that just means
-        // it's a user fn, which is the `Ok(None)` path. We only fail
-        // if the match claims to handle it (by name) but the registry
-        // disagrees.
-        #[cfg(debug_assertions)]
-        {
-            use std::sync::OnceLock;
-            static REGISTRY: OnceLock<resolve::BuiltinRegistry> = OnceLock::new();
-            let registry = REGISTRY.get_or_init(resolve::BuiltinRegistry::default);
+        use std::sync::OnceLock;
+        static REGISTRY: OnceLock<resolve::BuiltinRegistry> = OnceLock::new();
+        let registry = REGISTRY.get_or_init(resolve::BuiltinRegistry::default);
 
-            // List of names handled by the match below (kept in sync
-            // manually for Phase 2B; Phase 6 makes this automatic by
-            // driving dispatch from the registry directly).
-            const PROVE_IR_BUILTINS: &[&str] = &[
-                "poseidon",
-                "poseidon_many",
-                "mux",
-                "range_check",
-                "merkle_verify",
-                "len",
-                "assert_eq",
-                "assert",
-                "int_div",
-                "int_mod",
-            ];
-            if PROVE_IR_BUILTINS.contains(&name) {
-                let entry = registry.lookup(name).unwrap_or_else(|| {
-                    panic!(
-                        "lower_builtin match has arm for `{name}` but \
-                         resolve::BuiltinRegistry::default() has no such \
-                         entry. Either remove the arm or add the entry in \
-                         resolve/src/builtins.rs."
-                    )
-                });
-                assert!(
-                    entry.availability.includes_prove_ir(),
-                    "lower_builtin match handles `{name}` but registry \
-                     availability is {:?} (does not include ProveIr). \
-                     Update BuiltinRegistry::default().",
-                    entry.availability,
-                );
-            }
+        let handle = match registry.lookup(name) {
+            Some(entry) => match entry.prove_ir_lower {
+                Some(h) => h,
+                None => return Ok(None),
+            },
+            None => return Ok(None),
+        };
+        self.dispatch_builtin_by_handle(handle, args, span).map(Some)
+    }
+
+    /// Dispatch a ProveIR builtin by its [`ProveIrLowerHandle`].
+    ///
+    /// The handle indexes into a function-pointer table whose slots
+    /// correspond 1:1 with the `ProveIrLowerHandle` values declared in
+    /// [`resolve::BuiltinRegistry::default()`]. Adding a new ProveIR
+    /// builtin requires:
+    /// 1. A new `ProveIrLowerHandle(N)` in the registry.
+    /// 2. A new `lower_*` method below.
+    /// 3. Slot `N` in the `LOWERINGS` table pointing to that method.
+    fn dispatch_builtin_by_handle(
+        &mut self,
+        handle: resolve::builtins::ProveIrLowerHandle,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        type LowerFn<F> =
+            fn(&mut ProveIrCompiler<F>, &[&Expr], &Span) -> Result<CircuitExpr, ProveIrError>;
+
+        const LOWERING_COUNT: usize = 10;
+        let lowerings: [LowerFn<F>; LOWERING_COUNT] = [
+            Self::lower_poseidon,       // 0
+            Self::lower_poseidon_many,  // 1
+            Self::lower_mux,            // 2
+            Self::lower_range_check,    // 3
+            Self::lower_merkle_verify,  // 4
+            Self::lower_len,            // 5
+            Self::lower_assert_eq,      // 6
+            Self::lower_assert,         // 7
+            Self::lower_int_div,        // 8
+            Self::lower_int_mod,        // 9
+        ];
+
+        let idx = handle.as_u32() as usize;
+        assert!(
+            idx < LOWERING_COUNT,
+            "ProveIrLowerHandle({idx}) out of range — \
+             add the lowering function to dispatch_builtin_by_handle"
+        );
+        lowerings[idx](self, args, span)
+    }
+
+    // -- Individual builtin lowering functions --------------------------------
+
+    fn lower_poseidon(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("poseidon", 2, args.len(), span)?;
+        let left = self.compile_expr(args[0])?;
+        let right = self.compile_expr(args[1])?;
+        Ok(CircuitExpr::PoseidonHash {
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+    }
+
+    fn lower_poseidon_many(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        if args.len() < 2 {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "`poseidon_many` requires at least 2 arguments, got {}",
+                    args.len()
+                ),
+                span: to_span(span),
+            });
         }
+        let compiled: Result<Vec<_>, _> = args.iter().map(|a| self.compile_expr(a)).collect();
+        Ok(CircuitExpr::PoseidonMany(compiled?))
+    }
 
-        match name {
-            // Builtins that produce CircuitExpr directly
-            "poseidon" => {
-                self.check_arity("poseidon", 2, args.len(), span)?;
-                let left = self.compile_expr(args[0])?;
-                let right = self.compile_expr(args[1])?;
-                Ok(Some(CircuitExpr::PoseidonHash {
-                    left: Box::new(left),
-                    right: Box::new(right),
-                }))
-            }
-            "poseidon_many" => {
-                if args.len() < 2 {
-                    return Err(ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "`poseidon_many` requires at least 2 arguments, got {}",
-                            args.len()
-                        ),
-                        span: to_span(span),
-                    });
-                }
-                let compiled: Result<Vec<_>, _> =
-                    args.iter().map(|a| self.compile_expr(a)).collect();
-                Ok(Some(CircuitExpr::PoseidonMany(compiled?)))
-            }
-            "mux" => {
-                self.check_arity("mux", 3, args.len(), span)?;
-                let cond = self.compile_expr(args[0])?;
-                let if_true = self.compile_expr(args[1])?;
-                let if_false = self.compile_expr(args[2])?;
-                Ok(Some(CircuitExpr::Mux {
-                    cond: Box::new(cond),
-                    if_true: Box::new(if_true),
-                    if_false: Box::new(if_false),
-                }))
-            }
-            "range_check" => {
-                self.check_arity("range_check", 2, args.len(), span)?;
-                let value = self.compile_expr(args[0])?;
-                let bits_u64 = self.extract_const_u64(args[1], span)?;
-                if bits_u64 > u32::MAX as u64 {
-                    return Err(ProveIrError::UnsupportedOperation {
-                        description: format!(
-                            "range_check bit count {bits_u64} exceeds maximum ({})",
-                            u32::MAX
-                        ),
-                        span: to_span(span),
-                    });
-                }
-                let bits = bits_u64 as u32;
-                Ok(Some(CircuitExpr::RangeCheck {
-                    value: Box::new(value),
-                    bits,
-                }))
-            }
-            "merkle_verify" => {
-                self.check_arity("merkle_verify", 4, args.len(), span)?;
-                let root = self.compile_expr(args[0])?;
-                let leaf = self.compile_expr(args[1])?;
-                // path and indices must be array identifiers (referenced by name)
-                let path = self.extract_array_ident(args[2], span)?;
-                let indices = self.extract_array_ident(args[3], span)?;
-                Ok(Some(CircuitExpr::MerkleVerify {
-                    root: Box::new(root),
-                    leaf: Box::new(leaf),
-                    path,
-                    indices,
-                }))
-            }
-            "len" => {
-                self.check_arity("len", 1, args.len(), span)?;
-                self.compile_len_call(args[0], span).map(Some)
-            }
+    fn lower_mux(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("mux", 3, args.len(), span)?;
+        let cond = self.compile_expr(args[0])?;
+        let if_true = self.compile_expr(args[1])?;
+        let if_false = self.compile_expr(args[2])?;
+        Ok(CircuitExpr::Mux {
+            cond: Box::new(cond),
+            if_true: Box::new(if_true),
+            if_false: Box::new(if_false),
+        })
+    }
 
-            // Builtins that produce CircuitNode (handled at statement level).
-            // assert_eq and assert are expression-level in the AST but produce
-            // nodes — we return a dummy Const(0) since they're constraints, not
-            // values.
-            "assert_eq" => {
-                self.check_assert_eq_arity(args.len(), span)?;
-                let lhs = self.compile_expr(args[0])?;
-                let rhs = self.compile_expr(args[1])?;
-                let message = self.extract_assert_message(args.get(2), span)?;
-                // Always emit the constraint node — even at expression level.
-                // This ensures the constraint is enforced regardless of whether
-                // assert_eq is used as a statement or inside a let binding.
-                self.body.push(CircuitNode::AssertEq {
-                    lhs,
-                    rhs,
-                    message,
-                    span: Some(SpanRange::from(span)),
-                });
-                Ok(Some(CircuitExpr::Const(FieldConst::zero())))
-            }
-            "assert" => {
-                self.check_assert_arity(args.len(), span)?;
-                let cond = self.compile_expr(args[0])?;
-                let message = self.extract_assert_message(args.get(1), span)?;
-                // Always emit the constraint node — same rationale as assert_eq.
-                self.body.push(CircuitNode::Assert {
-                    expr: cond,
-                    message,
-                    span: Some(SpanRange::from(span)),
-                });
-                Ok(Some(CircuitExpr::Const(FieldConst::zero())))
-            }
-
-            // Integer division: int_div(lhs, rhs, max_bits)
-            "int_div" => {
-                self.check_arity("int_div", 3, args.len(), span)?;
-                let lhs = self.compile_expr(args[0])?;
-                let rhs = self.compile_expr(args[1])?;
-                let max_bits = self.extract_const_u64(args[2], span)? as u32;
-                Ok(Some(CircuitExpr::IntDiv {
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                    max_bits,
-                }))
-            }
-            // Integer remainder: int_mod(lhs, rhs, max_bits)
-            "int_mod" => {
-                self.check_arity("int_mod", 3, args.len(), span)?;
-                let lhs = self.compile_expr(args[0])?;
-                let rhs = self.compile_expr(args[1])?;
-                let max_bits = self.extract_const_u64(args[2], span)? as u32;
-                Ok(Some(CircuitExpr::IntMod {
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                    max_bits,
-                }))
-            }
-
-            // Not a builtin — caller should fall through to user-fn dispatch.
-            _ => Ok(None),
+    fn lower_range_check(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("range_check", 2, args.len(), span)?;
+        let value = self.compile_expr(args[0])?;
+        let bits_u64 = self.extract_const_u64(args[1], span)?;
+        if bits_u64 > u32::MAX as u64 {
+            return Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "range_check bit count {bits_u64} exceeds maximum ({})",
+                    u32::MAX
+                ),
+                span: to_span(span),
+            });
         }
+        let bits = bits_u64 as u32;
+        Ok(CircuitExpr::RangeCheck {
+            value: Box::new(value),
+            bits,
+        })
+    }
+
+    fn lower_merkle_verify(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("merkle_verify", 4, args.len(), span)?;
+        let root = self.compile_expr(args[0])?;
+        let leaf = self.compile_expr(args[1])?;
+        let path = self.extract_array_ident(args[2], span)?;
+        let indices = self.extract_array_ident(args[3], span)?;
+        Ok(CircuitExpr::MerkleVerify {
+            root: Box::new(root),
+            leaf: Box::new(leaf),
+            path,
+            indices,
+        })
+    }
+
+    fn lower_len(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("len", 1, args.len(), span)?;
+        self.compile_len_call(args[0], span)
+    }
+
+    fn lower_assert_eq(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_assert_eq_arity(args.len(), span)?;
+        let lhs = self.compile_expr(args[0])?;
+        let rhs = self.compile_expr(args[1])?;
+        let message = self.extract_assert_message(args.get(2), span)?;
+        self.body.push(CircuitNode::AssertEq {
+            lhs,
+            rhs,
+            message,
+            span: Some(SpanRange::from(span)),
+        });
+        Ok(CircuitExpr::Const(FieldConst::zero()))
+    }
+
+    fn lower_assert(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_assert_arity(args.len(), span)?;
+        let cond = self.compile_expr(args[0])?;
+        let message = self.extract_assert_message(args.get(1), span)?;
+        self.body.push(CircuitNode::Assert {
+            expr: cond,
+            message,
+            span: Some(SpanRange::from(span)),
+        });
+        Ok(CircuitExpr::Const(FieldConst::zero()))
+    }
+
+    fn lower_int_div(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("int_div", 3, args.len(), span)?;
+        let lhs = self.compile_expr(args[0])?;
+        let rhs = self.compile_expr(args[1])?;
+        let max_bits = self.extract_const_u64(args[2], span)? as u32;
+        Ok(CircuitExpr::IntDiv {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            max_bits,
+        })
+    }
+
+    fn lower_int_mod(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
+        self.check_arity("int_mod", 3, args.len(), span)?;
+        let lhs = self.compile_expr(args[0])?;
+        let rhs = self.compile_expr(args[1])?;
+        let max_bits = self.extract_const_u64(args[2], span)? as u32;
+        Ok(CircuitExpr::IntMod {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            max_bits,
+        })
     }
 
     // -----------------------------------------------------------------------
