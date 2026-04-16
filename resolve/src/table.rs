@@ -209,6 +209,25 @@ impl SymbolTable {
         })
     }
 
+    /// Update the [`Availability`] of a [`CallableKind::UserFn`] entry.
+    ///
+    /// No-op if `id` does not point at a `UserFn`. Used by the Phase 4
+    /// availability inference pass to narrow functions from `Both` to
+    /// `Vm` or `ProveIr` based on their call graph.
+    pub fn set_user_fn_availability(
+        &mut self,
+        id: SymbolId,
+        new_availability: crate::symbol::Availability,
+    ) {
+        if let Some(CallableKind::UserFn {
+            availability: ref mut avail,
+            ..
+        }) = self.symbols.get_mut(id.0 as usize)
+        {
+            *avail = new_availability;
+        }
+    }
+
     /// Audit the whole table. Runs the registry audit plus any
     /// table-level invariants (currently: every
     /// [`CallableKind::Builtin`]'s `entry_index` is in range).
