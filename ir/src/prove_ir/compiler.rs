@@ -15,8 +15,8 @@ use crate::error::{span_box, OptSpan};
 use crate::types::IrType;
 
 use resolve::{
-    build_dispatch_maps, build_resolver_state, AnnotationKey, CallableKind, ModuleId,
-    ResolvedProgram, ResolverState, SymbolId, SymbolTable,
+    build_availability_map, build_dispatch_maps, build_resolver_state, AnnotationKey, Availability,
+    CallableKind, ModuleId, ResolvedProgram, ResolverState, SymbolId, SymbolTable,
 };
 
 // ---------------------------------------------------------------------------
@@ -118,6 +118,10 @@ pub struct OuterResolverState {
     /// through this, so every inlined body correctly resolves
     /// bare identifiers against the definer's scope.
     pub module_by_dispatch_key: std::sync::Arc<HashMap<String, ModuleId>>,
+    /// Phase 4: fn_table key → [`Availability`] for every user function.
+    /// `compile_user_fn_call` checks this to reject inlining of
+    /// Vm-only functions inside prove blocks.
+    pub availability_by_key: std::sync::Arc<HashMap<String, Availability>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +247,9 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     /// annotation dispatch path and the legacy StaticAccess path
     /// correctly maintain the stack.
     resolver_module_by_key: Option<std::sync::Arc<HashMap<String, ModuleId>>>,
+    /// Phase 4: fn_table key → availability. Checked by
+    /// `compile_user_fn_call` to reject Vm-only functions.
+    resolver_availability_by_key: Option<std::sync::Arc<HashMap<String, Availability>>>,
     /// Phase 3E shadow hit trace: every `(module_id, expr_id)` the
     /// annotation table resolved to a [`SymbolId`] during the walk.
     /// Populated by [`record_resolver_hit`]; consumed by tests
@@ -281,6 +288,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             resolver_module_stack: Vec::new(),
             resolver_dispatch_by_symbol: None,
             resolver_module_by_key: None,
+            resolver_availability_by_key: None,
             resolver_hits: Vec::new(),
             current_expr_id: None,
             _field: PhantomData,
@@ -598,6 +606,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiler.resolver_root_module = Some(state.root_module);
             compiler.resolver_dispatch_by_symbol = Some(state.dispatch_key_by_symbol.clone());
             compiler.resolver_module_by_key = Some(state.module_by_dispatch_key.clone());
+            compiler.resolver_availability_by_key = Some(state.availability_by_key.clone());
         }
 
         // Compile all statements in the block
@@ -769,12 +778,15 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 Some(bundle) => {
                     let graph_functions =
                         Self::outer_functions_from_graph(&bundle.state, &bundle.dispatch_by_symbol);
+                    let avail_map =
+                        build_availability_map(&bundle.state.table, &bundle.state.graph);
                     let state_for_scope = Some(OuterResolverState {
                         table: std::sync::Arc::new(bundle.state.table.clone()),
                         resolved: std::sync::Arc::new(bundle.state.resolved.clone()),
                         root_module: bundle.state.root(),
                         dispatch_key_by_symbol: std::sync::Arc::new(bundle.dispatch_by_symbol),
                         module_by_dispatch_key: std::sync::Arc::new(bundle.module_by_key),
+                        availability_by_key: std::sync::Arc::new(avail_map),
                     });
                     (graph_functions, state_for_scope)
                 }
@@ -3700,6 +3712,18 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
+        // Phase 4: reject Vm-only functions inside prove/circuit blocks.
+        if let Some(avail_map) = &self.resolver_availability_by_key {
+            if let Some(avail) = avail_map.get(name) {
+                if !avail.includes_prove_ir() {
+                    return Err(ProveIrError::VmOnlyFunction {
+                        name: name.into(),
+                        span: to_span(span),
+                    });
+                }
+            }
+        }
+
         let fn_def =
             self.fn_table
                 .get(name)

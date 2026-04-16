@@ -252,6 +252,10 @@ pub enum ProveIrError {
     ModuleLoadError(String),
     /// Parse error (propagated from parser).
     ParseError(Box<Diagnostic>),
+    /// A function that is VM-only (e.g. calls `print`) was referenced
+    /// inside a prove/circuit block. Phase 4 availability inference
+    /// detected this at resolve time.
+    VmOnlyFunction { name: String, span: OptSpan },
     /// Circom template dispatch failure inside a prove/circuit
     /// block. See [`CircomDispatchErrorKind`] for the variant list.
     CircomDispatch {
@@ -343,6 +347,11 @@ impl fmt::Display for ProveIrError {
             Self::CircularImport(path) => write!(f, "circular import detected: `{path}`"),
             Self::ModuleLoadError(msg) => write!(f, "module load error: {msg}"),
             Self::ParseError(diag) => write!(f, "parse error: {}", diag.message),
+            Self::VmOnlyFunction { name, .. } => write!(
+                f,
+                "function `{name}` cannot be used inside a prove/circuit block \
+                 because it uses VM-only operations"
+            ),
             Self::CircomDispatch { kind, .. } => write!(f, "{kind}"),
         }
     }
@@ -366,7 +375,9 @@ impl ProveIrError {
             | Self::StaticAccessNotConstrainable { span, .. }
             | Self::MethodNotConstrainable { span, .. }
             | Self::RangeTooLarge { span, .. } => span.as_ref().map(|s| (**s).clone()),
-            Self::DuplicateInput { span, .. } => span.as_ref().map(|s| (**s).clone()),
+            Self::DuplicateInput { span, .. } | Self::VmOnlyFunction { span, .. } => {
+                span.as_ref().map(|s| (**s).clone())
+            }
             Self::CircomDispatch { span, .. } => span.as_ref().map(|s| (**s).clone()),
             Self::ParseError(diag) => return (**diag).clone(),
             // Variants without span information — listed explicitly so new

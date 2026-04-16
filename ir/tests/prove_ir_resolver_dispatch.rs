@@ -102,6 +102,10 @@ fn outer_scope_with_state(
             root_module: state.root(),
             dispatch_key_by_symbol: Arc::new(dispatch_by_symbol),
             module_by_dispatch_key: Arc::new(module_by_key),
+            availability_by_key: Arc::new(resolve::build_availability_map(
+                &state.table,
+                &state.graph,
+            )),
         }),
     }
 }
