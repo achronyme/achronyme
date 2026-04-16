@@ -24,10 +24,11 @@
 use std::collections::HashMap;
 
 use crate::annotate::{annotate_program, register_all, register_builtins, ResolvedProgram};
+use crate::availability::{infer_availability, AvailabilityResult};
 use crate::builtins::BuiltinRegistry;
 use crate::error::ResolveError;
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleSource};
-use crate::symbol::{CallableKind, SymbolId};
+use crate::symbol::{Availability, CallableKind, SymbolId};
 use crate::table::SymbolTable;
 
 /// The three pieces of state the resolver produces for a program.
@@ -39,12 +40,17 @@ use crate::table::SymbolTable;
 /// sharing via `Arc` or building once per compile.
 pub struct ResolverState {
     /// Flat symbol table indexed by [`SymbolId`](crate::symbol::SymbolId).
+    /// After Phase 4, every `UserFn` entry has its `availability`
+    /// field inferred from the call graph.
     pub table: SymbolTable,
     /// Annotations keyed by `(module_id, expr_id)`.
     pub resolved: ResolvedProgram,
     /// The graph the resolver walked. Kept around because downstream
     /// passes need to map [`ModuleId`] back to paths / imports.
     pub graph: ModuleGraph,
+    /// Phase 4 availability inference result — restriction reasons
+    /// for every function narrowed from `Both`.
+    pub availability: AvailabilityResult,
 }
 
 impl ResolverState {
@@ -79,10 +85,12 @@ pub fn build_resolver_state(
     register_builtins(&mut table);
     register_all(&mut table, &graph)?;
     let resolved = annotate_program(&graph, &table);
+    let availability = infer_availability(&mut table, &graph, &resolved);
     Ok(ResolverState {
         table,
         resolved,
         graph,
+        availability,
     })
 }
 
@@ -182,4 +190,53 @@ pub fn build_dispatch_maps(
     }
 
     (by_symbol, by_key)
+}
+
+/// Build a map from fn_table key → [`Availability`] for every
+/// [`CallableKind::UserFn`] that has a dispatch key.
+///
+/// The VM compiler uses this to skip bytecode emission for
+/// `ProveIr`-only functions and to check availability before
+/// compiling function bodies. Runs after [`infer_availability`]
+/// has narrowed the table entries.
+///
+/// Keys use the same `{alias}::{name}` convention as
+/// [`build_dispatch_maps`].
+pub fn build_availability_map(
+    table: &SymbolTable,
+    graph: &ModuleGraph,
+) -> HashMap<String, Availability> {
+    let mut alias_for_module: HashMap<ModuleId, String> = HashMap::new();
+    for module in graph.iter() {
+        for edge in &module.imports {
+            if !edge.alias.is_empty() {
+                alias_for_module.insert(edge.target, edge.alias.clone());
+            }
+        }
+    }
+
+    let mut result = HashMap::new();
+    let root_module = graph.root();
+    for (_sid, kind) in table.iter() {
+        let (qualified_name, module, availability) = match kind {
+            CallableKind::UserFn {
+                qualified_name,
+                module,
+                availability,
+                ..
+            } => (qualified_name, *module, *availability),
+            _ => continue,
+        };
+        let bare = qualified_name.rsplit("::").next().unwrap_or(qualified_name);
+        let key = if module == root_module {
+            bare.to_string()
+        } else {
+            match alias_for_module.get(&module) {
+                Some(alias) => format!("{alias}::{bare}"),
+                None => continue,
+            }
+        };
+        result.insert(key, availability);
+    }
+    result
 }
