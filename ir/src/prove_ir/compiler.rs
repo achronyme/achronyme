@@ -243,15 +243,12 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     /// inside the inlined body resolve against the definer's
     /// scope, not the caller's.
     resolver_module_stack: Vec<ModuleId>,
-    /// Phase 3F: precomputed `SymbolId → fn_table key` map. Forwarded
-    /// from [`OuterResolverState::dispatch_key_by_symbol`] via
-    /// [`OuterScope::resolver_state`]. Consumed by
+    /// Reverse index from [`SymbolId`] to fn_table key, built during
+    /// fn_table registration from the dispatch maps in
+    /// [`OuterResolverState`]. Consumed by
     /// [`resolve_dispatch_via_annotation`] to translate a resolved
-    /// user-fn annotation into the fn_table key without parsing
-    /// the resolver's name-mangling convention at each call site.
-    resolver_dispatch_by_symbol: Option<std::sync::Arc<HashMap<SymbolId, String>>>,
-    // Phase 6D: resolver_module_by_key and resolver_availability_by_key
-    // removed — their data is now embedded in FnDef at registration time.
+    /// user-fn annotation into the fn_table key.
+    fn_symbol_index: HashMap<SymbolId, String>,
     /// Phase 3E shadow hit trace: every `(module_id, expr_id)` the
     /// annotation table resolved to a [`SymbolId`] during the walk.
     /// Populated by [`record_resolver_hit`]; consumed by tests
@@ -288,7 +285,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             resolver_resolved: None,
             resolver_root_module: None,
             resolver_module_stack: Vec::new(),
-            resolver_dispatch_by_symbol: None,
+            fn_symbol_index: HashMap::new(),
             resolver_hits: Vec::new(),
             current_expr_id: None,
             _field: PhantomData,
@@ -406,22 +403,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 .map(|handle| DispatchDecision::Builtin { handle })
                 .unwrap_or(DispatchDecision::NoAnnotation),
             CallableKind::UserFn { .. } => {
-                // Phase 3F: translate the SymbolId to its fn_table
-                // key via the precomputed dispatch map. The map is
-                // derived from the resolver's SymbolTable +
-                // ModuleGraph at auto-build time (see
-                // `compiler::build_dispatch_maps`), so this lookup
-                // is O(1) with no string parsing of the resolver's
-                // name-mangling convention. Missing entries fall
-                // through to legacy — happens for symbols whose
-                // owning module wasn't imported under an alias
-                // (selective imports, pure-root), which the legacy
-                // name-based path already handles.
-                match self
-                    .resolver_dispatch_by_symbol
-                    .as_ref()
-                    .and_then(|m| m.get(&sid).cloned())
-                {
+                // Translate SymbolId → fn_table key via the index
+                // built during fn_table registration. Missing
+                // entries fall through to legacy dispatch.
+                match self.fn_symbol_index.get(&sid).cloned() {
                     Some(qualified_name) => DispatchDecision::UserFn { qualified_name },
                     None => DispatchDecision::NoAnnotation,
                 }
@@ -609,16 +594,22 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             compiler.circom_table.insert(key.clone(), callable.clone());
         }
 
-        // Phase 3E.1 / 3F: install the caller-built resolver state
-        // and the precomputed dispatch maps. The resolver_table +
-        // resolved_program drive annotation-lookup; the two
-        // dispatch maps drive fn_table key translation + module
-        // stack push/pop in compile_user_fn_call.
+        // Install the caller-built resolver state. The resolver_table +
+        // resolved_program drive annotation-lookup; fn_symbol_index
+        // (built below) translates SymbolId → fn_table key at dispatch.
         if let Some(state) = &outer_scope.resolver_state {
             compiler.resolver_table = Some(state.table.clone());
             compiler.resolver_resolved = Some(state.resolved.clone());
             compiler.resolver_root_module = Some(state.root_module);
-            compiler.resolver_dispatch_by_symbol = Some(state.dispatch_key_by_symbol.clone());
+            // Build fn_symbol_index: for each (SymbolId → fn_key) in
+            // the dispatch map, record only entries whose key is
+            // actually present in fn_table (filters stale/unused
+            // symbols).
+            for (sid, key) in state.dispatch_key_by_symbol.iter() {
+                if compiler.fn_table.contains_key(key) {
+                    compiler.fn_symbol_index.insert(*sid, key.clone());
+                }
+            }
         }
 
         // Compile all statements in the block
