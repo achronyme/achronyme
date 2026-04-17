@@ -1,4 +1,16 @@
 //! Single-pass O(n) lexer for Circom 2.x syntax.
+//!
+//! The [`Lexer`] struct and its `tokenize` entry point live here; the
+//! rest of the state-machine is split by responsibility:
+//!
+//! - [`dispatch`] — the big `next_token` match that classifies the next
+//!   byte and emits operator/delimiter tokens directly.
+//! - [`literals`] — number, identifier/keyword, and string scanners.
+//! - [`trivia`] — whitespace and comment skipping.
+//!
+//! All three attach their own `impl<'a> Lexer<'a>` blocks so the
+//! primitive helpers below (`peek`, `advance`, `make_token`, …) stay
+//! shared.
 
 use diagnostics::{ParseError, Span};
 
@@ -77,7 +89,6 @@ impl<'a> Lexer<'a> {
             lexeme: lexeme.into(),
         }
     }
-
 }
 
 #[cfg(test)]
