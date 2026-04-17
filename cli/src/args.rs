@@ -82,6 +82,11 @@ pub enum Commands {
         /// HTTP server port (default: 3000)
         #[arg(long, default_value = "3000")]
         port: u16,
+        /// Address to bind the HTTP server to. Defaults to 127.0.0.1 (loopback only).
+        /// The inspector exposes witness values, source, and DAG state without auth —
+        /// binding to 0.0.0.0 or a LAN IP makes that visible to every peer on the network.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
         /// Don't auto-open the browser
         #[arg(long)]
         no_open: bool,

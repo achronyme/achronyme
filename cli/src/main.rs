@@ -105,6 +105,7 @@ fn main() -> Result<()> {
             input_file,
             prove,
             port,
+            bind,
             no_open,
             ..
         } => {
@@ -117,6 +118,7 @@ fn main() -> Result<()> {
                 input_file.as_deref(),
                 prove.as_deref(),
                 *port,
+                bind,
                 *no_open,
                 ef,
             )

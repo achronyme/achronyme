@@ -17,12 +17,14 @@ use super::ErrorFormat;
 /// Embedded inspector frontend — served as the index page.
 const INSPECTOR_HTML: &str = include_str!("../inspector.html");
 
+#[allow(clippy::too_many_arguments)]
 pub fn inspect_command(
     path: &str,
     inputs: Option<&str>,
     input_file: Option<&str>,
     prove_block: Option<&str>,
     port: u16,
+    bind: &str,
     no_open: bool,
     error_format: ErrorFormat,
 ) -> Result<()> {
@@ -44,7 +46,7 @@ pub fn inspect_command(
         inspect_circuit(&source, path, resolved_inputs.as_ref(), error_format)?
     };
 
-    serve_inspector(&graph_json, port, no_open)
+    serve_inspector(&graph_json, port, bind, no_open)
 }
 
 // ── Standalone circuit inspection ──
@@ -412,12 +414,23 @@ impl RCSCompilerWrapper {
 
 // ── HTTP server ──
 
-fn serve_inspector(graph_json: &str, port: u16, no_open: bool) -> Result<()> {
-    let addr = format!("0.0.0.0:{port}");
+fn serve_inspector(graph_json: &str, port: u16, bind: &str, no_open: bool) -> Result<()> {
+    let addr = format!("{bind}:{port}");
     let server =
         tiny_http::Server::http(&addr).map_err(|e| anyhow::anyhow!("cannot start server: {e}"))?;
 
-    let url = format!("http://localhost:{port}");
+    // Warn if the user opted into a non-loopback bind: the inspector serves
+    // witness values, source, and the full DAG with no authentication.
+    let is_loopback = bind == "127.0.0.1" || bind == "localhost" || bind == "::1";
+    if !is_loopback {
+        eprintln!(
+            "warning: inspector bound to {bind} (non-loopback). \
+             It serves witness values and source without auth — \
+             anyone who can reach this host on port {port} can read them."
+        );
+    }
+
+    let url = format!("http://{bind}:{port}");
     eprintln!("Inspector running at {url}");
     eprintln!("Press Ctrl+C to stop.");
 
