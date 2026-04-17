@@ -187,10 +187,9 @@ fn round_trip_preserves_field_elements() {
 fn round_trip_instantiate_produces_same_result() {
     use std::collections::HashMap;
 
-    let ir = crate::prove_ir::test_utils::compile_circuit(
-        "public x\npublic out\nassert_eq(x + 1, out)",
-    )
-    .unwrap();
+    let ir =
+        crate::prove_ir::test_utils::compile_circuit("public x\npublic out\nassert_eq(x + 1, out)")
+            .unwrap();
 
     // Instantiate original
     let program1 = ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();

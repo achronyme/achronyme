@@ -24,9 +24,7 @@ pub mod inputs;
 pub mod nodes;
 pub mod prove_ir;
 
-pub use expressions::{
-    CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitUnaryOp,
-};
+pub use expressions::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitUnaryOp};
 pub use field_const::FieldConst;
 pub use inputs::{ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, ProveInputDecl};
 pub use nodes::{CircuitNode, ForRange};
