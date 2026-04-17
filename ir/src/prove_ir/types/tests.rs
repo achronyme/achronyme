@@ -1,8 +1,10 @@
 //! Round-trip and validation tests for ProveIR types.
 
+use super::prove_ir::{PROVE_IR_FORMAT_VERSION, PROVE_IR_MAGIC};
 use super::*;
 use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 use crate::types::IrType;
+use memory::field::PrimeId;
 use memory::Bn254Fr;
 
 /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
