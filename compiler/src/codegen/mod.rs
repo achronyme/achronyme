@@ -1,23 +1,44 @@
+//! Top-level `Compiler` orchestrator — the struct that owns every
+//! compile-time interner, the function-compiler stack, the module
+//! system state, the resolver dispatch maps, and the warnings list.
+//!
+//! The public entry is [`Compiler::compile`]. This module's bulk is
+//! the `struct Compiler { … }` declaration; the methods and helpers
+//! that operate on it are split across sibling files by concern:
+//!
+//! - [`compile`] — the main `compile(source)` entry and the
+//!   `is_terminator` helper re-exported as `pub(crate)` for
+//!   `control_flow::mod` to share.
+//! - [`constructors`] — `Default`, `new`, `with_extra_natives`.
+//! - [`diagnostics`] — `cur_span`, `emit_warning`, `take_warnings`,
+//!   `collect_in_scope_names`, `MIGRATED_TO_METHOD`, and the
+//!   "did you mean?" `undefined_var_error` builder.
+//! - [`resolver_state`] — `install_resolver_state` +
+//!   `try_auto_build_resolver_state` (Movimiento 2 Phase 3D/3F/4/6E)
+//!   plus the `program_has_imports` / `has_import` gate helpers.
+//! - [`wrappers`] — register alloc / intern / emit / `current` /
+//!   `append_debug_symbols` thin delegations.
+
+mod compile;
 mod constructors;
 mod diagnostics;
 mod resolver_state;
 mod wrappers;
 
-use crate::error::CompilerError;
+pub(crate) use compile::is_terminator;
+
 use crate::function_compiler::FunctionCompiler;
 use crate::interner::{
     BigIntInterner, BytesInterner, CircomHandleInterner, CircomLibraryRegistry, FieldInterner,
     StringInterner,
 };
 use crate::module_loader::ModuleLoader;
-use crate::statements::{stmt_span, StatementCompiler};
 use achronyme_parser::ast::{ExprId, Span, Stmt};
 use achronyme_parser::Diagnostic;
 use resolve::{Availability, ModuleId, ResolvedProgram, SymbolId, SymbolTable};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use vm::opcode::OpCode;
 
 /// The main compiler orchestrator
 pub struct Compiler {
@@ -173,89 +194,5 @@ pub struct Compiler {
     pub resolver_availability_map: Option<HashMap<String, Availability>>,
 }
 
-impl Compiler {
-    pub fn compile(&mut self, source: &str) -> Result<Vec<u32>, CompilerError> {
-        let (program, parse_errors) = achronyme_parser::parse_program(source);
-        // Only reject actual errors, not warnings (W008, W010, etc.)
-        if let Some(err) = parse_errors
-            .iter()
-            .find(|d| d.severity == achronyme_parser::Severity::Error)
-        {
-            return Err(CompilerError::DiagnosticError(Box::new(err.clone())));
-        }
-        // Collect parser warnings into our warning list
-        for diag in parse_errors {
-            if diag.severity == achronyme_parser::Severity::Warning {
-                self.warnings.push(diag);
-            }
-        }
-
-        // Movimiento 2 Phase 3D — if no resolver state was
-        // pre-installed (via `install_resolver_state`), try to build
-        // one from the parsed root. Only kicks in for single-module
-        // in-memory programs (no imports); anything more advanced
-        // stays on the legacy path until Phase 3E wires the real
-        // multi-module graph. Any failure is silent — the legacy
-        // compilation path must not regress because of a resolver
-        // hiccup.
-        if self.resolved_program.is_none() {
-            self.try_auto_build_resolver_state(&program);
-        }
-
-        let mut terminated = false;
-        let mut unreachable_warned = false;
-        for stmt in &program.stmts {
-            if terminated && !unreachable_warned {
-                if let Some(span) = stmt_span(stmt) {
-                    self.emit_warning(
-                        Diagnostic::warning("unreachable code", span.into()).with_code("W003"),
-                    );
-                }
-                unreachable_warned = true;
-            }
-            self.compile_stmt(stmt)?;
-            if !terminated && is_terminator(stmt) {
-                terminated = true;
-            }
-        }
-
-        // W005: unused selective imports
-        for (name, (_path, span)) in &self.imported_names {
-            if !self.used_imported_names.contains(name) && !name.starts_with('_') {
-                self.warnings.push(
-                    Diagnostic::warning(
-                        format!("imported name `{name}` is never used"),
-                        span.into(),
-                    )
-                    .with_code("W005"),
-                );
-            }
-        }
-
-        // Final return
-        self.emit_abc(OpCode::Return, 0, 0, 0)?; // Return Nil/0
-
-        let func = self.current()?;
-        let (opt_bytecode, opt_line_info) = crate::optimizer::optimize(
-            func.bytecode.clone(),
-            func.line_info.clone(),
-            &mut func.max_slots,
-        );
-        func.bytecode = opt_bytecode;
-        func.line_info = opt_line_info;
-
-        Ok(self.current()?.bytecode.clone())
-    }
-}
-
-/// Returns true if a statement is a control-flow terminator (return, break, continue).
-pub(crate) fn is_terminator(stmt: &Stmt) -> bool {
-    matches!(
-        stmt,
-        Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. }
-    )
-}
-
 #[cfg(test)]
 mod tests;
-
