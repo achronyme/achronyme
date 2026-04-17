@@ -106,27 +106,7 @@ pub(super) fn lower_for_loop<'a>(
 
     // Classify the body to decide whether to unroll at lowering time
     // and — if so — which strategy governs the unroll.
-    let strategy = classify_loop_body(&body.stmts, env);
-
-    // Debug-only guard: the pre-refactor boolean computation must agree
-    // with the new enum. Remove in commit 6 once the parallel scaffold
-    // is retired.
-    debug_assert_eq!(
-        strategy,
-        match (
-            body_mixes_signals_and_vars(&body.stmts),
-            body_has_component_array_ops(&body.stmts, env),
-            body_references_known_arrays(&body.stmts, env),
-        ) {
-            (true, _, _) => Some(LoopLowering::MixedSignalVar),
-            (false, true, _) => Some(LoopLowering::ComponentArrayOps),
-            (false, false, true) => Some(LoopLowering::KnownArrayRefs),
-            (false, false, false) => None,
-        },
-        "LoopLowering classification diverged from the legacy boolean flags",
-    );
-
-    let Some(strategy) = strategy else {
+    let Some(strategy) = classify_loop_body(&body.stmts, env) else {
         return emit_for_node(var_name, bound, start, body, span, env, nodes, ctx, pending);
     };
 
