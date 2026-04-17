@@ -5,7 +5,6 @@
 
 use compiler::Compiler;
 use memory::{Closure, Function, Value};
-use resolve::BuiltinRegistry;
 use vm::opcode::instruction::{encode_abc, encode_abx};
 use vm::{CallFrame, OpCode, RuntimeError, MAX_FRAMES, VM};
 
