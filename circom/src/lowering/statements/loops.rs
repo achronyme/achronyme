@@ -115,6 +115,25 @@ pub(super) fn lower_for_loop<'a>(
     //    be concrete constants, not circuit variables, for valid R1CS.
     let has_mixed_signal_var = body_mixes_signals_and_vars(&body.stmts);
 
+    // Compute the new enum-based classification in parallel. Not yet
+    // consumed — the boolean dispatch below is still authoritative.
+    // The debug_assert guards that both representations agree.
+    let strategy = classify_loop_body(&body.stmts, env);
+    debug_assert_eq!(
+        strategy,
+        match (
+            has_mixed_signal_var,
+            has_component_array_ops,
+            has_known_array_refs,
+        ) {
+            (true, _, _) => Some(LoopLowering::MixedSignalVar),
+            (false, true, _) => Some(LoopLowering::ComponentArrayOps),
+            (false, false, true) => Some(LoopLowering::KnownArrayRefs),
+            (false, false, false) => None,
+        },
+        "LoopLowering classification diverged from the legacy boolean flags",
+    );
+
     if has_component_array_ops || has_known_array_refs || has_mixed_signal_var {
         // Resolve bound to a concrete number
         let end = match &bound {
@@ -629,5 +648,134 @@ fn validate_loop_step(
             "for loop step must be `i++` or `i += 1` in circuit context",
             span,
         )),
+    }
+}
+
+/// Which unroll strategy applies to a given `for` loop body.
+///
+/// Computed once up-front by `classify_loop_body` and consumed by the
+/// dispatch in `lower_for_loop`. Mutually exclusive and exhaustive:
+/// exactly one variant applies to any loop we choose to unroll at
+/// lowering time.
+///
+/// `None` from `classify_loop_body` means the loop stays as an
+/// IR-level `CircuitNode::For` — the dispatch handles that in the
+/// fall-through branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LoopLowering {
+    /// Body contains `component c[i] = Template()` or similar, where
+    /// component inlining needs a concrete numeric `i` at lowering time.
+    ComponentArrayOps,
+
+    /// Body references compile-time arrays (`C[i]`, `M[i][j]`) that
+    /// must be resolved before emission.
+    KnownArrayRefs,
+
+    /// Body mixes signal statements with `var` mutations
+    /// (`CompConstant`, `MiMC7`, `MiMCSponge`). Compile-time vars
+    /// drive coefficients in signal expressions, so they need to
+    /// be concrete constants, not circuit variables.
+    MixedSignalVar,
+}
+
+/// Classify a `for` loop body into a [`LoopLowering`] strategy, or
+/// return `None` if the body can stay as a `CircuitNode::For` node.
+///
+/// Priority: `MixedSignalVar` > `ComponentArrayOps` > `KnownArrayRefs`.
+/// A mixed-signal-var body can also contain component ops and known-
+/// array refs, but it additionally requires the compile-time eval
+/// machinery that the other two don't need — picking `MixedSignalVar`
+/// when multiple conditions match gives the correct behaviour.
+pub(super) fn classify_loop_body(stmts: &[Stmt], env: &LoweringEnv) -> Option<LoopLowering> {
+    if body_mixes_signals_and_vars(stmts) {
+        return Some(LoopLowering::MixedSignalVar);
+    }
+    if body_has_component_array_ops(stmts, env) {
+        return Some(LoopLowering::ComponentArrayOps);
+    }
+    if body_references_known_arrays(stmts, env) {
+        return Some(LoopLowering::KnownArrayRefs);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::test_helpers::parse_program;
+    use super::*;
+    use crate::ast::Definition;
+
+    fn extract_template_body(src: &str) -> Vec<Stmt> {
+        let prog = parse_program(src);
+        for def in prog.definitions {
+            if let Definition::Template(t) = def {
+                return t.body.stmts;
+            }
+        }
+        panic!("expected a template definition");
+    }
+
+    #[test]
+    fn classify_pure_signal_loop_is_none() {
+        // Num2Bits-style loop: signal assign + var mutation (lc1) but
+        // no branched signal ops → not MixedSignalVar. Also no
+        // component arrays and no known-array refs → None.
+        let stmts = extract_template_body(
+            r#"
+            template T(n) {
+                signal input in;
+                signal output out[n];
+                var lc1 = 0;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    lc1 += out[i];
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert_eq!(classify_loop_body(&for_body, &env), None);
+    }
+
+    #[test]
+    fn classify_mixed_signal_var_wins_over_other_signals() {
+        // CompConstant-style: if/else containing signal op + var mutation
+        // at same level → MixedSignalVar.
+        let stmts = extract_template_body(
+            r#"
+            template T(n) {
+                signal input in[n];
+                signal output out[n];
+                var b = 1;
+                for (var i = 0; i < n; i++) {
+                    if (i == 0) {
+                        out[i] <== in[i] * b;
+                    } else {
+                        out[i] <== in[i];
+                    }
+                    b = b + 1;
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert_eq!(
+            classify_loop_body(&for_body, &env),
+            Some(LoopLowering::MixedSignalVar),
+        );
     }
 }
