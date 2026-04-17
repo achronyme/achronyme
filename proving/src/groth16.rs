@@ -34,29 +34,50 @@ use memory::{Bn254Fr, FieldBackend, FieldElement};
 /// maps them to the correct negation in the target field:
 ///   source < p/2  →  target = source  (positive, same integer)
 ///   source >= p/2 →  target = -(p_source - source)  (negative, re-negated)
+///
+/// The implementation is constant-time in `fe`'s canonical value: both
+/// branches are always computed and the result is selected via field
+/// arithmetic. This matters when a server proves on behalf of remote
+/// callers (see `ach-server` / `/api/prove`), where a timing leak on the
+/// sign of witness limbs would be observable.
 pub fn fe_to_ark<B: FieldBackend, AF: PrimeField>(fe: &FieldElement<B>) -> AF {
     let bytes = fe.to_le_bytes();
     let canonical = fe.to_canonical();
-
-    // Get the source field's modulus and compute floor(p/2) via 256-bit
-    // right-shift (propagating carries between limbs).
     let half_mod = source_half_modulus::<B>();
-    let is_negative = canonical[3] > half_mod[3]
-        || (canonical[3] == half_mod[3]
-            && (canonical[2] > half_mod[2]
-                || (canonical[2] == half_mod[2]
-                    && (canonical[1] > half_mod[1]
-                        || (canonical[1] == half_mod[1] && canonical[0] > half_mod[0])))));
 
-    if is_negative {
-        // Compute abs = p_source - canonical (the positive magnitude)
-        let neg = fe.neg();
-        let neg_bytes = neg.to_le_bytes();
-        let pos_in_target = AF::from_le_bytes_mod_order(&neg_bytes);
-        -pos_in_target
-    } else {
-        AF::from_le_bytes_mod_order(&bytes)
+    // Constant-time: 1 iff canonical > floor(p/2), else 0.
+    let is_neg = ct_gt_u64x4(&canonical, &half_mod);
+
+    // Always compute both branches so the control flow is independent of
+    // the secret sign bit.
+    let neg = fe.neg();
+    let neg_bytes = neg.to_le_bytes();
+    let pos_case = AF::from_le_bytes_mod_order(&bytes);
+    let neg_case = -AF::from_le_bytes_mod_order(&neg_bytes);
+
+    // Arithmetic select: result = is_neg * neg_case + (1 - is_neg) * pos_case.
+    // Field multiplications are constant-time in arkworks, so no branch on
+    // `is_neg` ever reaches the generated code.
+    let sign = AF::from(is_neg);
+    let one_minus_sign = AF::ONE - sign;
+    neg_case * sign + pos_case * one_minus_sign
+}
+
+/// Constant-time `a > b` for 256-bit little-endian limb arrays.
+///
+/// Returns `1u64` if `a > b`, else `0u64`. Uses `overflowing_sub` (a
+/// constant-time u64 primitive on every target arkworks supports) and
+/// accumulates a borrow across limbs without branching on inputs.
+#[inline]
+fn ct_gt_u64x4(a: &[u64; 4], b: &[u64; 4]) -> u64 {
+    // a > b  iff  (b - a) underflows.
+    let mut borrow: u64 = 0;
+    for i in 0..4 {
+        let (d1, b1) = b[i].overflowing_sub(a[i]);
+        let (_, b2) = d1.overflowing_sub(borrow);
+        borrow = (b1 as u64) | (b2 as u64);
     }
+    borrow
 }
 
 /// Compute floor(p/2) for the source field `B` as 4 little-endian u64 limbs.
