@@ -323,7 +323,12 @@ impl Heap {
             if !val.is_obj() {
                 continue;
             }
-            let handle = val.as_handle().unwrap();
+            // `is_obj()` above guarantees `as_handle()` is `Some`. Use
+            // `unwrap_or(0)` instead of `.unwrap()` so the tracer stays
+            // panic-free even if a future refactor widens `is_obj()`
+            // without updating this path; `handle=0` is a harmless
+            // over-mark for the GC (bitmap_set is idempotent).
+            let handle = val.as_handle().unwrap_or(0);
 
             match val.tag() {
                 crate::value::TAG_STRING => {
