@@ -11,6 +11,7 @@ use ir::prove_ir::types::{CircuitNode, FieldConst, ForRange};
 
 use crate::ast::{self, AssignOp, BinOp, CompoundOp, ElseBranch, Expr, PostfixOp, Stmt};
 
+use super::super::compile_time::CompileTimeEnv;
 use super::super::context::LoweringContext;
 use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
@@ -136,59 +137,48 @@ pub(super) fn lower_for_loop<'a>(
     // For mixed signal+var loops (e.g. CompConstant), evaluate var-only
     // statements at compile time so vars like `b`, `a`, `e` become concrete
     // constants usable as coefficients in signal expressions.
-    let mut eval_vars: HashMap<String, BigVal> = HashMap::new();
-    if is_mixed {
-        // Seed evaluator with all known compile-time values
-        for (k, v) in &ctx.param_values {
-            eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
-        }
-        for (k, v) in &env.known_constants {
-            eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
-        }
-    }
+    //
+    // `CompileTimeEnv` is the single source of truth for the compile-time
+    // var snapshot. For non-mixed strategies it stays empty — that path
+    // drives `env.known_constants` directly and never consults `cte`.
+    let mut cte = if is_mixed {
+        CompileTimeEnv::from_constants(&ctx.param_values, &env.known_constants)
+    } else {
+        CompileTimeEnv::new()
+    };
     for i in start..end {
         env.known_constants
             .insert(var_name.clone(), FieldConst::from_u64(i));
         if is_mixed {
-            eval_vars.insert(var_name.clone(), BigVal::from_u64(i));
+            cte.insert(var_name.clone(), BigVal::from_u64(i));
         }
         for stmt in &body.stmts {
-            if is_mixed && stmt_is_var_only(stmt) {
-                // Evaluate var-only statements at compile time
-                let functions: HashMap<&str, &crate::ast::FunctionDef> =
-                    ctx.functions.iter().map(|(k, v)| (*k, *v)).collect();
-                if super::super::utils::try_eval_stmt_in_place(stmt, &mut eval_vars, &functions)
-                    .is_some()
-                {
-                    // Write back evaluated vars to param_values AND
-                    // known_constants so lower_expr emits Const(val)
-                    // instead of Var(name) for compile-time vars.
-                    //
-                    // Do NOT write back the loop variable itself — it is
-                    // managed by env.known_constants at the top of each
-                    // iteration. Writing it to ctx.param_values would
-                    // pollute the persistent map with the iteration-0 value,
-                    // which then shadows the correct iteration value (via
-                    // `or_insert` in `all_constants`) for all later iterations.
-                    for (k, v) in &eval_vars {
-                        if k == &var_name {
-                            continue;
-                        }
-                        if !v.is_negative() {
-                            let fc = v.to_field_const();
-                            ctx.param_values.insert(k.clone(), fc);
-                            env.known_constants.insert(k.clone(), fc);
-                        }
+            if is_mixed && stmt_is_var_only(stmt) && try_eval_at_compile_time(stmt, &mut cte, ctx) {
+                // Write back evaluated vars to param_values AND
+                // known_constants so lower_expr emits Const(val)
+                // instead of Var(name) for compile-time vars.
+                //
+                // Do NOT write back the loop variable itself — it is
+                // managed by env.known_constants at the top of each
+                // iteration. Writing it to ctx.param_values would
+                // pollute the persistent map with the iteration-0 value,
+                // which then shadows the correct iteration value (via
+                // `or_insert` in `all_constants`) for all later iterations.
+                for (k, fc) in cte.field_const_iter() {
+                    if k == &var_name {
+                        continue;
                     }
-                    continue;
+                    ctx.param_values.insert(k.clone(), fc);
+                    env.known_constants.insert(k.clone(), fc);
                 }
+                continue;
             }
             // Fallthrough: lower the stmt normally. After emission, if
             // we're in the mixed-signal-var eval path (e.g., MiMC7's
             // var `t`) AND the stmt was a plain `Ident = expr`
             // Substitution that fell through here (because its RHS
             // referenced an intermediate signal array element like
-            // `t7[i-1]` that wasn't visible to `eval_vars`), keep
+            // `t7[i-1]` that wasn't visible to `cte`), keep
             // `env.known_constants` in sync with the newly pushed
             // `Let { name, value }` so subsequent stmts in the same
             // unrolled iteration fold against the up-to-date value
@@ -208,42 +198,72 @@ pub(super) fn lower_for_loop<'a>(
             let pre_len = nodes.len();
             super::lower_stmt(stmt, env, nodes, ctx, pending)?;
             if is_mixed {
-                if let Stmt::Substitution {
-                    op: AssignOp::Assign,
-                    target:
-                        Expr::Ident {
-                            name: target_name, ..
-                        },
-                    ..
-                } = stmt
-                {
-                    if let Some(CircuitNode::Let { name, value, .. }) =
-                        nodes.get(pre_len..).and_then(|new_nodes| new_nodes.last())
-                    {
-                        if name == target_name {
-                            if let Some(fc) = super::super::const_fold::try_fold_const(value) {
-                                env.known_constants.insert(name.clone(), fc);
-                                eval_vars.insert(name.clone(), BigVal::from_field_const(fc));
-                            } else {
-                                env.known_constants.remove(name);
-                            }
-                        }
-                    }
-                }
+                sync_post_emission(stmt, nodes, pre_len, &mut cte, env);
             }
         }
     }
     env.known_constants.remove(&var_name);
     // Clean up vars injected during mixed-loop unrolling
     if is_mixed {
-        for k in eval_vars.keys() {
-            if k != &var_name {
-                env.known_constants.remove(k);
+        for name in cte.var_names() {
+            if name != &var_name {
+                env.known_constants.remove(name);
             }
         }
     }
 
     Ok(())
+}
+
+/// Evaluate a var-only statement at compile time inside
+/// `CompileTimeEnv`. Returns `true` iff the stmt's effect was
+/// captured (the loop unroll then skips the real `lower_stmt` call
+/// for that stmt).
+fn try_eval_at_compile_time(stmt: &Stmt, cte: &mut CompileTimeEnv, ctx: &LoweringContext) -> bool {
+    let functions: HashMap<&str, &crate::ast::FunctionDef> =
+        ctx.functions.iter().map(|(k, v)| (*k, *v)).collect();
+    super::super::utils::try_eval_stmt_in_place(stmt, cte.as_bigval_map_mut(), &functions).is_some()
+}
+
+/// If the most-recently-emitted node was a const-foldable `Let`
+/// targeting the same name as the AST `Substitution`, mirror that
+/// binding into `env.known_constants` and `cte` so the next
+/// iteration's compile-time eval reads the fresh value. Handles the
+/// MiMC7 `t = t7[i-1] + c[i]` case.
+fn sync_post_emission(
+    stmt: &Stmt,
+    nodes: &[CircuitNode],
+    pre_len: usize,
+    cte: &mut CompileTimeEnv,
+    env: &mut LoweringEnv,
+) {
+    let Stmt::Substitution {
+        op: AssignOp::Assign,
+        target: Expr::Ident {
+            name: target_name, ..
+        },
+        ..
+    } = stmt
+    else {
+        return;
+    };
+    let Some(CircuitNode::Let { name, value, .. }) =
+        nodes.get(pre_len..).and_then(|new_nodes| new_nodes.last())
+    else {
+        return;
+    };
+    if name != target_name {
+        return;
+    }
+    match super::super::const_fold::try_fold_const(value) {
+        Some(fc) => {
+            env.known_constants.insert(name.clone(), fc);
+            cte.insert(name.clone(), BigVal::from_field_const(fc));
+        }
+        None => {
+            env.known_constants.remove(name);
+        }
+    }
 }
 
 /// Resolve a [`LoopBound`] to a concrete `u64` end value. Used by the
