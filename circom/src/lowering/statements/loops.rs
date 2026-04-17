@@ -103,28 +103,19 @@ pub(super) fn lower_for_loop<'a>(
     // Register loop variable
     env.locals.insert(var_name.clone());
 
-    // Check if body requires lowering-time unrolling:
-    // 1. Component array operations (inlining needs concrete names)
-    // 2. Known array references (C[i] needs i resolved at lowering time)
-    let has_component_array_ops = body_has_component_array_ops(&body.stmts, env);
-    let has_known_array_refs = body_references_known_arrays(&body.stmts, env);
-
-    // 3. Mixed signal+var loops: body has signal ops AND var mutations.
-    //    Vars like `b`, `a`, `e` in CompConstant change each iteration
-    //    and are used as coefficients in signal expressions. These must
-    //    be concrete constants, not circuit variables, for valid R1CS.
-    let has_mixed_signal_var = body_mixes_signals_and_vars(&body.stmts);
-
-    // Compute the new enum-based classification in parallel. Not yet
-    // consumed — the boolean dispatch below is still authoritative.
-    // The debug_assert guards that both representations agree.
+    // Classify the body to decide whether to unroll at lowering time
+    // and — if so — which strategy governs the unroll.
     let strategy = classify_loop_body(&body.stmts, env);
+
+    // Debug-only guard: the pre-refactor boolean computation must agree
+    // with the new enum. Remove in commit 6 once the parallel scaffold
+    // is retired.
     debug_assert_eq!(
         strategy,
         match (
-            has_mixed_signal_var,
-            has_component_array_ops,
-            has_known_array_refs,
+            body_mixes_signals_and_vars(&body.stmts),
+            body_has_component_array_ops(&body.stmts, env),
+            body_references_known_arrays(&body.stmts, env),
         ) {
             (true, _, _) => Some(LoopLowering::MixedSignalVar),
             (false, true, _) => Some(LoopLowering::ComponentArrayOps),
@@ -134,124 +125,125 @@ pub(super) fn lower_for_loop<'a>(
         "LoopLowering classification diverged from the legacy boolean flags",
     );
 
-    if has_component_array_ops || has_known_array_refs || has_mixed_signal_var {
-        let end = resolve_bound_to_u64(&bound, env, ctx, span)?;
+    let Some(strategy) = strategy else {
+        return emit_for_node(var_name, bound, start, body, span, env, nodes, ctx, pending);
+    };
 
-        // Unroll: for each iteration, set loop var as known constant, lower body.
-        // For mixed signal+var loops (e.g. CompConstant), evaluate var-only
-        // statements at compile time so vars like `b`, `a`, `e` become concrete
-        // constants usable as coefficients in signal expressions.
-        let mut eval_vars: HashMap<String, BigVal> = HashMap::new();
-        if has_mixed_signal_var {
-            // Seed evaluator with all known compile-time values
-            for (k, v) in &ctx.param_values {
-                eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
-            }
-            for (k, v) in &env.known_constants {
-                eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
-            }
+    let is_mixed = strategy == LoopLowering::MixedSignalVar;
+    let end = resolve_bound_to_u64(&bound, env, ctx, span)?;
+
+    // Unroll: for each iteration, set loop var as known constant, lower body.
+    // For mixed signal+var loops (e.g. CompConstant), evaluate var-only
+    // statements at compile time so vars like `b`, `a`, `e` become concrete
+    // constants usable as coefficients in signal expressions.
+    let mut eval_vars: HashMap<String, BigVal> = HashMap::new();
+    if is_mixed {
+        // Seed evaluator with all known compile-time values
+        for (k, v) in &ctx.param_values {
+            eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
         }
-        for i in start..end {
-            env.known_constants
-                .insert(var_name.clone(), FieldConst::from_u64(i));
-            if has_mixed_signal_var {
-                eval_vars.insert(var_name.clone(), BigVal::from_u64(i));
-            }
-            for stmt in &body.stmts {
-                if has_mixed_signal_var && stmt_is_var_only(stmt) {
-                    // Evaluate var-only statements at compile time
-                    let functions: HashMap<&str, &crate::ast::FunctionDef> =
-                        ctx.functions.iter().map(|(k, v)| (*k, *v)).collect();
-                    if super::super::utils::try_eval_stmt_in_place(stmt, &mut eval_vars, &functions)
-                        .is_some()
-                    {
-                        // Write back evaluated vars to param_values AND
-                        // known_constants so lower_expr emits Const(val)
-                        // instead of Var(name) for compile-time vars.
-                        //
-                        // Do NOT write back the loop variable itself — it is
-                        // managed by env.known_constants at the top of each
-                        // iteration. Writing it to ctx.param_values would
-                        // pollute the persistent map with the iteration-0 value,
-                        // which then shadows the correct iteration value (via
-                        // `or_insert` in `all_constants`) for all later iterations.
-                        for (k, v) in &eval_vars {
-                            if k == &var_name {
-                                continue;
-                            }
-                            if !v.is_negative() {
-                                let fc = v.to_field_const();
-                                ctx.param_values.insert(k.clone(), fc);
-                                env.known_constants.insert(k.clone(), fc);
-                            }
+        for (k, v) in &env.known_constants {
+            eval_vars.insert(k.clone(), BigVal::from_field_const(*v));
+        }
+    }
+    for i in start..end {
+        env.known_constants
+            .insert(var_name.clone(), FieldConst::from_u64(i));
+        if is_mixed {
+            eval_vars.insert(var_name.clone(), BigVal::from_u64(i));
+        }
+        for stmt in &body.stmts {
+            if is_mixed && stmt_is_var_only(stmt) {
+                // Evaluate var-only statements at compile time
+                let functions: HashMap<&str, &crate::ast::FunctionDef> =
+                    ctx.functions.iter().map(|(k, v)| (*k, *v)).collect();
+                if super::super::utils::try_eval_stmt_in_place(stmt, &mut eval_vars, &functions)
+                    .is_some()
+                {
+                    // Write back evaluated vars to param_values AND
+                    // known_constants so lower_expr emits Const(val)
+                    // instead of Var(name) for compile-time vars.
+                    //
+                    // Do NOT write back the loop variable itself — it is
+                    // managed by env.known_constants at the top of each
+                    // iteration. Writing it to ctx.param_values would
+                    // pollute the persistent map with the iteration-0 value,
+                    // which then shadows the correct iteration value (via
+                    // `or_insert` in `all_constants`) for all later iterations.
+                    for (k, v) in &eval_vars {
+                        if k == &var_name {
+                            continue;
                         }
-                        continue;
-                    }
-                }
-                // Fallthrough: lower the stmt normally. After emission, if
-                // we're in the mixed-signal-var eval path (e.g., MiMC7's
-                // var `t`) AND the stmt was a plain `Ident = expr`
-                // Substitution that fell through here (because its RHS
-                // referenced an intermediate signal array element like
-                // `t7[i-1]` that wasn't visible to `eval_vars`), keep
-                // `env.known_constants` in sync with the newly pushed
-                // `Let { name, value }` so subsequent stmts in the same
-                // unrolled iteration fold against the up-to-date value
-                // instead of the stale one written back by the previous
-                // iteration's var-only eval.
-                //
-                // Gated on `has_mixed_signal_var` because that is the only
-                // regime where iteration N's var-only eval may seed
-                // `env.known_constants` with a stale value that iteration
-                // N+1's fallthrough needs to overwrite. Other unroll
-                // regimes (component_array_ops / known_array_refs without
-                // mixed_signal_var — e.g. Poseidon's `Mix` template) run
-                // CompoundAssign loops that bind a var name to a
-                // non-const circuit expression; touching
-                // `env.known_constants` there would fold the var to its
-                // initial literal and silently zero out the accumulator.
-                let pre_len = nodes.len();
-                super::lower_stmt(stmt, env, nodes, ctx, pending)?;
-                if has_mixed_signal_var {
-                    if let Stmt::Substitution {
-                        op: AssignOp::Assign,
-                        target:
-                            Expr::Ident {
-                                name: target_name, ..
-                            },
-                        ..
-                    } = stmt
-                    {
-                        if let Some(CircuitNode::Let { name, value, .. }) =
-                            nodes.get(pre_len..).and_then(|new_nodes| new_nodes.last())
-                        {
-                            if name == target_name {
-                                if let Some(fc) = super::super::const_fold::try_fold_const(value) {
-                                    env.known_constants.insert(name.clone(), fc);
-                                    eval_vars.insert(name.clone(), BigVal::from_field_const(fc));
-                                } else {
-                                    env.known_constants.remove(name);
-                                }
-                            }
+                        if !v.is_negative() {
+                            let fc = v.to_field_const();
+                            ctx.param_values.insert(k.clone(), fc);
+                            env.known_constants.insert(k.clone(), fc);
                         }
                     }
+                    continue;
+                }
+            }
+            // Fallthrough: lower the stmt normally. After emission, if
+            // we're in the mixed-signal-var eval path (e.g., MiMC7's
+            // var `t`) AND the stmt was a plain `Ident = expr`
+            // Substitution that fell through here (because its RHS
+            // referenced an intermediate signal array element like
+            // `t7[i-1]` that wasn't visible to `eval_vars`), keep
+            // `env.known_constants` in sync with the newly pushed
+            // `Let { name, value }` so subsequent stmts in the same
+            // unrolled iteration fold against the up-to-date value
+            // instead of the stale one written back by the previous
+            // iteration's var-only eval.
+            //
+            // Gated on MixedSignalVar because that is the only regime
+            // where iteration N's var-only eval may seed
+            // `env.known_constants` with a stale value that iteration
+            // N+1's fallthrough needs to overwrite. Other unroll
+            // regimes (ComponentArrayOps / KnownArrayRefs — e.g.
+            // Poseidon's `Mix` template) run CompoundAssign loops that
+            // bind a var name to a non-const circuit expression;
+            // touching `env.known_constants` there would fold the var
+            // to its initial literal and silently zero out the
+            // accumulator.
+            let pre_len = nodes.len();
+            super::lower_stmt(stmt, env, nodes, ctx, pending)?;
+            if is_mixed {
+                if let Stmt::Substitution {
+                    op: AssignOp::Assign,
+                    target:
+                        Expr::Ident {
+                            name: target_name, ..
+                        },
+                    ..
+                } = stmt
+                {
+                    if let Some(CircuitNode::Let { name, value, .. }) =
+                        nodes.get(pre_len..).and_then(|new_nodes| new_nodes.last())
+                    {
+                        if name == target_name {
+                            if let Some(fc) = super::super::const_fold::try_fold_const(value) {
+                                env.known_constants.insert(name.clone(), fc);
+                                eval_vars.insert(name.clone(), BigVal::from_field_const(fc));
+                            } else {
+                                env.known_constants.remove(name);
+                            }
+                        }
+                    }
                 }
             }
         }
-        env.known_constants.remove(&var_name);
-        // Clean up vars injected during mixed-loop unrolling
-        if has_mixed_signal_var {
-            for k in eval_vars.keys() {
-                if k != &var_name {
-                    env.known_constants.remove(k);
-                }
+    }
+    env.known_constants.remove(&var_name);
+    // Clean up vars injected during mixed-loop unrolling
+    if is_mixed {
+        for k in eval_vars.keys() {
+            if k != &var_name {
+                env.known_constants.remove(k);
             }
         }
-
-        return Ok(());
     }
 
-    emit_for_node(var_name, bound, start, body, span, env, nodes, ctx, pending)
+    Ok(())
 }
 
 /// Resolve a [`LoopBound`] to a concrete `u64` end value. Used by the
