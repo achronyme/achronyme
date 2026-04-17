@@ -135,34 +135,7 @@ pub(super) fn lower_for_loop<'a>(
     );
 
     if has_component_array_ops || has_known_array_refs || has_mixed_signal_var {
-        // Resolve bound to a concrete number
-        let end = match &bound {
-            LoopBound::Literal(n) => *n,
-            LoopBound::Capture(name) => {
-                let all = ctx.all_constants(env);
-                all.get(name).and_then(|fc| fc.to_u64()).ok_or_else(|| {
-                    LoweringError::new(
-                        format!(
-                            "component array loop bound `{name}` must be resolvable \
-                                 at compile time"
-                        ),
-                        span,
-                    )
-                })?
-            }
-            LoopBound::Expr(expr) => {
-                let all = ctx.all_constants(env);
-                super::super::utils::const_eval_with_params(expr, &all)
-                    .and_then(|fc| fc.to_u64())
-                    .ok_or_else(|| {
-                        LoweringError::new(
-                            "component array loop bound expression must be resolvable \
-                                 at compile time",
-                            span,
-                        )
-                    })?
-            }
-        };
+        let end = resolve_bound_to_u64(&bound, env, ctx, span)?;
 
         // Unroll: for each iteration, set loop var as known constant, lower body.
         // For mixed signal+var loops (e.g. CompConstant), evaluate var-only
@@ -278,9 +251,65 @@ pub(super) fn lower_for_loop<'a>(
         return Ok(());
     }
 
-    // Lower body — propagate pending so component wirings in loops
-    // (like `mux.c[0][i] <== c[i]`) update the parent's pending map.
-    // Don't flush remaining at end — that's the parent's job.
+    emit_for_node(var_name, bound, start, body, span, env, nodes, ctx, pending)
+}
+
+/// Resolve a [`LoopBound`] to a concrete `u64` end value. Used by the
+/// lowering-time unroll paths where iteration counts must be known
+/// before emission. Literal bounds are returned as-is; captures and
+/// expressions are looked up in `ctx.all_constants(env)`.
+fn resolve_bound_to_u64(
+    bound: &LoopBound,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+    span: &diagnostics::Span,
+) -> Result<u64, LoweringError> {
+    match bound {
+        LoopBound::Literal(n) => Ok(*n),
+        LoopBound::Capture(name) => {
+            let all = ctx.all_constants(env);
+            all.get(name).and_then(|fc| fc.to_u64()).ok_or_else(|| {
+                LoweringError::new(
+                    format!(
+                        "component array loop bound `{name}` must be resolvable \
+                         at compile time"
+                    ),
+                    span,
+                )
+            })
+        }
+        LoopBound::Expr(expr) => {
+            let all = ctx.all_constants(env);
+            super::super::utils::const_eval_with_params(expr, &all)
+                .and_then(|fc| fc.to_u64())
+                .ok_or_else(|| {
+                    LoweringError::new(
+                        "component array loop bound expression must be resolvable \
+                         at compile time",
+                        span,
+                    )
+                })
+        }
+    }
+}
+
+/// Emit a `CircuitNode::For` node for the fall-through case (no
+/// lowering-time unroll needed). Propagates `pending` so component
+/// wirings inside the loop (like `mux.c[0][i] <== c[i]`) update the
+/// parent's pending map — we deliberately do NOT flush remaining
+/// wirings at the end because that is the parent scope's job.
+#[allow(clippy::too_many_arguments)]
+fn emit_for_node<'a>(
+    var_name: String,
+    bound: LoopBound,
+    start: u64,
+    body: &'a ast::Block,
+    span: &diagnostics::Span,
+    env: &mut LoweringEnv,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
+) -> Result<(), LoweringError> {
     let body_nodes = {
         let mut lowered = Vec::new();
         for stmt in &body.stmts {
