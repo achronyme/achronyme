@@ -21,6 +21,19 @@ use crate::types::IrType;
 // FieldConst — field-erased constant (canonical LE bytes)
 // ---------------------------------------------------------------------------
 
+/// Read a little-endian `u64` from an 8-byte window of `buf` starting
+/// at `offset`. Panic-free variant of
+/// `u64::from_le_bytes(buf[offset..offset+8].try_into().unwrap())` —
+/// `copy_from_slice` has the same bounds check as the slice index but
+/// doesn't require the fallible `TryFrom<&[u8]>` conversion, so no
+/// `.unwrap()` lurks in the final byte.
+#[inline]
+fn read_le_u64(buf: &[u8], offset: usize) -> u64 {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&buf[offset..offset + 8]);
+    u64::from_le_bytes(bytes)
+}
+
 /// A field-erased constant stored as 32 canonical little-endian bytes.
 ///
 /// This allows ProveIR to remain non-generic while storing constants from
@@ -31,12 +44,14 @@ pub struct FieldConst([u8; 32]);
 
 impl std::fmt::Debug for FieldConst {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Show as hex for readability
+        // Show as hex for readability. Panic-free: slice `self.0`
+        // (always 32 bytes) into known 8-byte arrays without going
+        // through the fallible `.try_into()` path.
         let limbs = [
-            u64::from_le_bytes(self.0[0..8].try_into().unwrap()),
-            u64::from_le_bytes(self.0[8..16].try_into().unwrap()),
-            u64::from_le_bytes(self.0[16..24].try_into().unwrap()),
-            u64::from_le_bytes(self.0[24..32].try_into().unwrap()),
+            read_le_u64(&self.0, 0),
+            read_le_u64(&self.0, 8),
+            read_le_u64(&self.0, 16),
+            read_le_u64(&self.0, 24),
         ];
         if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
             write!(f, "FieldConst({})", limbs[0])
@@ -86,7 +101,7 @@ impl FieldConst {
         if self.0[8..].iter().any(|&b| b != 0) {
             return None;
         }
-        Some(u64::from_le_bytes(self.0[..8].try_into().unwrap()))
+        Some(read_le_u64(&self.0, 0))
     }
 
     /// Check if this is zero.

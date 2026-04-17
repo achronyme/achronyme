@@ -18,6 +18,8 @@
 //!   `TemplateDef` to `ProveIR`.
 
 #[allow(dead_code)]
+pub mod compile_time;
+#[allow(dead_code)]
 pub mod components;
 #[allow(dead_code)]
 pub mod const_fold;

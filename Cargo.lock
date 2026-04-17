@@ -25,6 +25,7 @@ dependencies = [
  "ach-macros",
  "compiler",
  "memory",
+ "resolve",
  "vm",
 ]
 
@@ -1606,6 +1607,7 @@ dependencies = [
  "constraints",
  "ir",
  "memory",
+ "resolve",
 ]
 
 [[package]]

@@ -461,7 +461,11 @@ fn serve_inspector(graph_json: &str, port: u16, bind: &str, no_open: bool) -> Re
                 tiny_http::Header::from_bytes("Content-Type", content_type).expect("valid header"),
             )
             .with_header(
-                tiny_http::Header::from_bytes("Cache-Control", "no-cache").expect("valid header"),
+                // `no-store` (vs `no-cache`) forbids any intermediate proxy
+                // from stashing the response at all. The inspector serves
+                // live witness values and source — a cached copy in a
+                // shared proxy could leak one user's circuit to another.
+                tiny_http::Header::from_bytes("Cache-Control", "no-store").expect("valid header"),
             );
         let _ = request.respond(resp);
     }
