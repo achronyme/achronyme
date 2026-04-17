@@ -19,9 +19,12 @@
 //!    the component body is inlined via `inline_component_body_with_arrays`.
 //!    Indexed wirings skip this check — they're flushed instead.
 //!
-//! 4. **Flush**: Before any substitution that reads a component output,
-//!    `flush_indexed_pending` inlines all components with `has_indexed_wirings`.
-//!    This ensures outputs are available before they're referenced.
+//! 4. **Demand-driven flush**: Before a substitution that references a
+//!    component output, [`collect_value_component_refs`] walks the read
+//!    side of the statement and emits a list of pending components the
+//!    value depends on; [`flush_specific_component`] inlines exactly
+//!    those. This replaces an older bulk-flush approach that could
+//!    inline components before their inputs were fully wired.
 //!
 //! 5. **Cleanup**: At the end of a statement block, `lower_stmts_with_pending`
 //!    inlines any remaining pending components (partial wiring or no-input).
@@ -59,41 +62,6 @@ pub(super) struct PendingComponent<'a> {
     /// instead of `Input`, enabling full constant propagation through
     /// Montgomery/MUX operations (Pedersen: 88→13 constraints).
     pub const_wired: HashMap<String, FieldConst>,
-}
-
-/// Flush pending components whose inputs were wired via indexed
-/// assignments (`comp.signal[i]`). These can't trigger eagerly because
-/// we don't know when the array is fully wired, so we flush before
-/// the next substitution statement (which might reference their outputs).
-pub(super) fn flush_indexed_pending<'a>(
-    nodes: &mut Vec<CircuitNode>,
-    ctx: &mut LoweringContext<'a>,
-    pending: &mut HashMap<String, PendingComponent<'a>>,
-    env: &mut LoweringEnv,
-) -> Result<(), LoweringError> {
-    let to_flush: Vec<String> = pending
-        .iter()
-        .filter(|(_, c)| c.has_indexed_wirings)
-        .map(|(name, _)| name.clone())
-        .collect();
-    for comp_name in &to_flush {
-        if let Some(comp) = pending.remove(comp_name) {
-            let mut const_inputs = comp.const_wired.clone();
-            extract_const_inputs_from_nodes(comp_name, nodes, &mut const_inputs);
-            let body = inline_component_body_with_const_inputs(
-                comp_name,
-                comp.template,
-                &comp.template_args,
-                &comp.array_args,
-                &const_inputs,
-                ctx,
-                &comp.template.span,
-            )?;
-            propagate_const_nodes(&body, env);
-            nodes.extend(body);
-        }
-    }
-    Ok(())
 }
 
 /// Inline a specific pending component by name.

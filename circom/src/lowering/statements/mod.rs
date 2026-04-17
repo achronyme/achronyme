@@ -104,10 +104,10 @@ fn lower_stmt<'a>(
     //
     // Demand-driven flush: scan the VALUE expression (the side being read)
     // for references to pending components, and flush only those. This
-    // avoids premature bulk flushing that can inline components before
-    // their inputs are fully wired (e.g., `doublers[s-1] = Template()`
-    // would previously trigger flush_indexed_pending, inlining
-    // `segments_1` before its `p` inputs were wired).
+    // avoids the bulk-flush approach we used to run, which could inline
+    // components before their inputs were fully wired (e.g.,
+    // `doublers[s-1] = Template()` would prematurely inline `segments_1`
+    // before its `p` inputs were wired).
     //
     // We must NOT scan the assignment target — that would flush the
     // component we're trying to wire (e.g., scanning `zeropoint.in` in
