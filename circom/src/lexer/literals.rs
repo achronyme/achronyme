@@ -10,10 +10,7 @@ use super::Lexer;
 use crate::token::{lookup_keyword, Token, TokenKind};
 
 impl<'a> Lexer<'a> {
-    pub(super) fn lex_number(
-        &mut self,
-        start: (usize, usize, usize),
-    ) -> Result<Token, ParseError> {
+    pub(super) fn lex_number(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         // Check for hex prefix: 0x
         if self.peek() == Some(b'0') && self.peek2() == Some(b'x') {
             self.advance(); // '0'
@@ -62,10 +59,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    pub(super) fn lex_ident(
-        &mut self,
-        start: (usize, usize, usize),
-    ) -> Result<Token, ParseError> {
+    pub(super) fn lex_ident(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         // Circom identifiers: [$_]*[a-zA-Z][a-zA-Z$_0-9]*
         // We accept the broader pattern: starts with alpha, _, or $
         while let Some(ch) = self.peek() {
@@ -96,10 +90,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    pub(super) fn lex_string(
-        &mut self,
-        start: (usize, usize, usize),
-    ) -> Result<Token, ParseError> {
+    pub(super) fn lex_string(&mut self, start: (usize, usize, usize)) -> Result<Token, ParseError> {
         self.advance(); // consume opening "
         let mut buf = String::new();
         loop {
