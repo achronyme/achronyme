@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+use crate::types::IrType;
 use memory::Bn254Fr;
 
 /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
@@ -359,7 +360,7 @@ fn adversarial_invalid_field_const_rejected_at_instantiation() {
     for (i, limb) in MODULUS.iter().enumerate() {
         bad_bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
     }
-    let bad_const = FieldConst(bad_bytes);
+    let bad_const = FieldConst::from_le_bytes(bad_bytes);
 
     let ir = ProveIR {
         name: None,
