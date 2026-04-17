@@ -54,9 +54,17 @@ const _: () = assert!(TAG_BIGINT < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_BYTES < 16, "tag must fit in 4 bits");
 const _: () = assert!(TAG_CIRCOM_HANDLE < 16, "tag must fit in 4 bits");
 
+/// Tagged 64-bit value. The `u64` payload is encoded as:
+/// `tag[63..60] | payload[59..0]`. The inner field is intentionally
+/// `pub(crate)` — external crates must go through a typed constructor
+/// (`Value::int`, `Value::field`, `Value::string`, …) so the tag/payload
+/// invariants can't be bypassed by accident.
+///
+/// If you're writing a bytecode loader or another module that genuinely
+/// needs the raw bits, add a validated accessor inside `memory/`.
 #[derive(Clone, Copy, PartialEq)]
 #[repr(transparent)]
-pub struct Value(pub u64);
+pub struct Value(pub(crate) u64);
 
 impl Value {
     // --- Constructors ---
