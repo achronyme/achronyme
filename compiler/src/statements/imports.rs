@@ -220,11 +220,8 @@ pub(super) fn compile_selective_import(
     // 4. Validate that all requested names are exported
     for name in names {
         if !exported_names.contains(name) {
-            let suggestion = crate::suggest::find_similar(
-                name,
-                exported_names.iter().map(|s| s.as_str()),
-                2,
-            );
+            let suggestion =
+                crate::suggest::find_similar(name, exported_names.iter().map(|s| s.as_str()), 2);
             let mut msg = format!("module \"{}\" does not export `{}`", path, name);
             if let Some(s) = suggestion {
                 msg.push_str(&format!(". Did you mean `{s}`?"));
