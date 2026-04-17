@@ -25,6 +25,15 @@ pub(super) fn lower_multi_index(
     env: &LoweringEnv,
     ctx: &mut LoweringContext<'_>,
 ) -> Result<CircuitExpr, LoweringError> {
+    // Defensive: callers unwrap a chain of `Index` AST nodes, so `indices` is
+    // always at least one element. Guard anyway so a future refactor cannot
+    // trigger the `.expect()` below.
+    if indices.is_empty() {
+        return Err(LoweringError::without_span(format!(
+            "internal: lower_multi_index called with empty indices on `{base_name}`"
+        )));
+    }
+
     // Check known compile-time arrays first (e.g. M[j][i] where M = POSEIDON_M(t))
     if let Some(arr_val) = env.known_array_values.get(base_name) {
         if let Some(fc) = resolve_multi_dim_array(arr_val, indices, env, ctx) {
@@ -89,11 +98,17 @@ pub(super) fn lower_multi_index(
         });
     }
 
-    // SAFETY: `indices` is non-empty (caller unwraps a chain of Index AST nodes),
-    // so the loop runs at least once and `result` is always Some.
+    // `indices` non-empty check at function entry ensures the loop ran at
+    // least once, so `result` is always Some here. Guard with `ok_or_else`
+    // instead of `.expect()` so clippy and reviewers see explicit error flow.
+    let index = result.ok_or_else(|| {
+        LoweringError::without_span(format!(
+            "internal: lower_multi_index produced no index for `{base_name}`"
+        ))
+    })?;
     Ok(CircuitExpr::ArrayIndex {
         array: base_name.to_string(),
-        index: Box::new(result.expect("lower_multi_index called with empty indices")),
+        index: Box::new(index),
     })
 }
 
