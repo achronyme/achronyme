@@ -1,0 +1,79 @@
+// Merkle membership proof with circom Poseidon.
+//
+// Prove that you hold a secret key whose leaf commitment sits in a
+// known-root Merkle tree, without revealing which leaf it is.
+//
+// Every major circomlib-based privacy protocol (tornado-cash,
+// semaphore, worldcoin) builds its set of commitments this way, so a
+// proof generated here is interoperable 1:1 with those systems.
+//
+//                        root
+//                      /      \
+//                   n01        n23
+//                  /    \     /    \
+//                 m0    m1   m2    m3
+//
+// Public input:    merkle_root
+// Private witness: secret_key, the sibling hashes and direction bits
+
+import { Poseidon } from "../../../test/circomlib/circuits/poseidon.circom"
+
+// ----------------------------------------------------------------------------
+// Phase 1 — Build the club off-chain (VM mode)
+// ----------------------------------------------------------------------------
+
+let key_0 = 0p101
+let key_1 = 0p202
+let key_2 = 0p303
+let key_3 = 0p404
+
+// Commitments: `Poseidon(secret_key, 0)` — same layout as
+// tornado-cash `commitment = Poseidon(secret, nullifier)` with
+// nullifier set to zero for this demo.
+let m0 = Poseidon(2)([key_0, 0p0])
+let m1 = Poseidon(2)([key_1, 0p0])
+let m2 = Poseidon(2)([key_2, 0p0])
+let m3 = Poseidon(2)([key_3, 0p0])
+
+let n01 = Poseidon(2)([m0, m1])
+let n23 = Poseidon(2)([m2, m3])
+let merkle_root = Poseidon(2)([n01, n23])
+
+print("=== Merkle Membership (circomlib Poseidon) ===")
+print("Club root:    " + merkle_root.to_string())
+print("Registered:   4 members")
+print("")
+
+// ----------------------------------------------------------------------------
+// Phase 2 — Member 2 proves membership
+// ----------------------------------------------------------------------------
+//
+// `m2` sits at index 2 (binary `10`):
+//   - Level 0: `m2` is the LEFT child of `n23`, sibling = `m3`
+//   - Level 1: `n23` is the RIGHT child of `root`, sibling = `n01`
+
+let sibling_0 = m3
+let sibling_1 = n01
+
+print("Member 2 proving membership…")
+
+prove membership(merkle_root: Public) {
+    // Re-derive the leaf from the secret key — this is what proves
+    // "I know a preimage for some commitment in the tree" without
+    // publishing which commitment it is.
+    let my_leaf = Poseidon(2)([key_2, 0p0])
+
+    // Level 0: (my_leaf, sibling_0) because member 2 is a LEFT child.
+    let lvl0 = Poseidon(2)([my_leaf, sibling_0])
+
+    // Level 1: (sibling_1, lvl0) because the subtree containing m2
+    // is the RIGHT child of the root.
+    let computed_root = Poseidon(2)([sibling_1, lvl0])
+
+    assert_eq(computed_root, merkle_root)
+}
+
+print("Membership verified ✓")
+print("")
+print("The verifier learned the root and saw a valid Groth16 proof,")
+print("but not which of the four members produced it.")

@@ -1,0 +1,23 @@
+[project]
+name = "merkle_membership"
+version = "0.1.0"
+description = "Prove membership in a depth-2 Merkle tree built from circom Poseidon(2) commitments."
+license = "Apache-2.0"
+entry = "src/main.ach"
+
+[build]
+backend = "r1cs"
+
+[circuit]
+prime = "bn254"
+
+[vm]
+prove_backend = "r1cs"
+
+# Path to circomlib (resolved relative to this `achronyme.toml`) — only
+# needed if the imported `.circom` file itself uses `include "..."`. The
+# direct `.ach → .circom` import in `src/main.ach` resolves against its
+# own directory, so this section is here for completeness and for any
+# future file that relies on include chains.
+[circom]
+libs = ["../../test/circomlib"]
