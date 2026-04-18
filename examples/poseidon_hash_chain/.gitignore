@@ -1,0 +1,8 @@
+*.r1cs
+*.wtns
+*.zkey
+*.ptau
+proof.json
+public.json
+vkey.json
+verifier.sol

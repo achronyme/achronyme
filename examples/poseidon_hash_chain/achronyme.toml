@@ -1,0 +1,21 @@
+[project]
+name = "poseidon_hash_chain"
+version = "0.1.0"
+description = "Prove knowledge of a preimage hashed N times with circom Poseidon(2)."
+license = "Apache-2.0"
+entry = "src/main.ach"
+
+[build]
+backend = "r1cs"
+
+[circuit]
+prime = "bn254"
+
+[vm]
+prove_backend = "r1cs"
+
+# Path to circomlib. Resolved relative to this `achronyme.toml`, so the
+# example is portable as long as the circomlib checkout lives at the
+# usual workspace-relative location.
+[circom]
+libs = ["../../test/circomlib"]

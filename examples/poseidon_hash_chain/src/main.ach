@@ -1,0 +1,60 @@
+// Verifiable Poseidon hash chain.
+//
+// Prove knowledge of a preimage whose 5-round iterated Poseidon(2)
+// hash equals a public digest, without revealing the preimage or any
+// intermediate hash.
+//
+// The circom `Poseidon(2)` template used here is bit-for-bit the one
+// tornado-cash, semaphore, and worldcoin deploy, so commitments and
+// proofs built on this example interoperate 1:1 with those systems.
+
+import { Poseidon } from "../../../test/circomlib/circuits/poseidon.circom"
+
+// ----------------------------------------------------------------------------
+// Phase 1 — Off-chain hash chain (VM mode)
+// ----------------------------------------------------------------------------
+//
+// The prover computes the public digest without touching the circuit.
+// Top-level `for` ranges must be literal constants in VM mode, so the
+// loop bound below is the exact number of rounds the prove block below
+// will re-derive.
+
+let preimage = 0p123456789
+
+mut digest = preimage
+for _i in 0..5 {
+    digest = Poseidon(2)([digest, 0p0])
+}
+
+let final_hash = digest
+
+print("=== Poseidon hash chain (circomlib) ===")
+print("Rounds:         5")
+print("Public digest:  " + final_hash.to_string())
+print("")
+
+// ----------------------------------------------------------------------------
+// Phase 2 — Prove knowledge of the preimage
+// ----------------------------------------------------------------------------
+//
+// The `prove {}` block declares `final_hash` as a public input; the
+// preimage (`preimage`) and every intermediate hash stay private. The
+// same circom template is instantiated straight into the circuit — no
+// separate witness evaluator, no round-trip through a native Poseidon
+// implementation — so the verifier checks exactly the circomlib
+// constraint system.
+//
+// Manual unrolling: `for` inside a prove block does not currently unroll
+// around circom template calls, so each round is written out.
+
+prove hash_chain(final_hash: Public) {
+    let h1 = Poseidon(2)([preimage, 0p0])
+    let h2 = Poseidon(2)([h1, 0p0])
+    let h3 = Poseidon(2)([h2, 0p0])
+    let h4 = Poseidon(2)([h3, 0p0])
+    let h5 = Poseidon(2)([h4, 0p0])
+    assert_eq(h5, final_hash)
+}
+
+print("Hash-chain proof verified ✓")
+print("The verifier learned the digest but not the preimage.")
