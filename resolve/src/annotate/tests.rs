@@ -52,9 +52,7 @@ impl ModuleSource for MockSource {
             .iter()
             .filter_map(|s| match s {
                 Stmt::Export { inner, .. } => match inner.as_ref() {
-                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => {
-                        Some(name.clone())
-                    }
+                    Stmt::FnDecl { name, .. } | Stmt::LetDecl { name, .. } => Some(name.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -373,8 +371,7 @@ fn find_dot_accesses(program: &Program, object_name: &str, field: &str) -> Vec<E
 /// Build a fresh table with the production builtin registry plus
 /// the given graph's module symbols.
 fn build_full_table(graph: &ModuleGraph) -> SymbolTable {
-    let mut table =
-        SymbolTable::with_registry(BuiltinRegistry::default()).expect("registry audit");
+    let mut table = SymbolTable::with_registry(BuiltinRegistry::default()).expect("registry audit");
     register_builtins(&mut table);
     register_all(&mut table, graph).expect("register_all");
     table
@@ -607,8 +604,7 @@ fn register_builtins_populates_bare_names() {
     // Defensive: register_builtins should insert every default
     // builtin under its bare name, and each should resolve via
     // table.lookup.
-    let mut table =
-        SymbolTable::with_registry(BuiltinRegistry::default()).expect("registry audit");
+    let mut table = SymbolTable::with_registry(BuiltinRegistry::default()).expect("registry audit");
     register_builtins(&mut table);
     for name in ["poseidon", "assert_eq", "range_check", "mux", "print"] {
         let id = table
