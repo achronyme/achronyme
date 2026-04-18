@@ -25,7 +25,8 @@
 //! para Entornos de Compilación de Conocimiento Cero" (2026), §Vulnerabilidades y
 //! Restricciones en Desigualdades Lógicas.
 //!
-//! License compatibility: circomlib GPL-3.0, Noir MIT/Apache-2.0, gnark Apache-2.0.
+//! Note: only numerical test vectors (not code) are referenced here.
+//! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 
 use std::collections::HashMap;
 

@@ -7,7 +7,8 @@
 //!
 //! Configuration: t=3, RF=8, RP=57, S-box x^5, BN254 Fr.
 //! Constants: circomlibjs convention (NOT Poseidon paper LFSR).
-//! License compatibility: all sources GPL-3.0 or MIT/Apache-2.0, compatible with our GPL-3.0.
+//! Note: only numerical test vectors (hash outputs, not code) are used here.
+//! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 
 use constraints::poseidon::{
     native::{poseidon_hash, poseidon_hash_single, sbox},

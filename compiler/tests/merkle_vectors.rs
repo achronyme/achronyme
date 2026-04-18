@@ -21,7 +21,8 @@
 //! Constraint benchmark (Table 1):
 //!   Circom depth-20: ~4,380 | Gnark depth-20: ~5,000 | Achronyme: TBD
 //!
-//! License compatibility: all sources GPL-3.0/Apache-2.0/LGPL-3.0, compatible with GPL-3.0.
+//! Note: only numerical test vectors (merkle roots, hashes — not code) are used here.
+//! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 
 use std::collections::HashMap;
 

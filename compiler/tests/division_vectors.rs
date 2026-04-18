@@ -19,7 +19,8 @@
 //! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
 //! para Entornos de Compilación de Conocimiento Cero" (2026), §Inversión Multiplicativa.
 //!
-//! License compatibility: all sources MIT/Apache-2.0, compatible with GPL-3.0.
+//! Note: only numerical test vectors (not code) are used here.
+//! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 
 use std::collections::HashMap;
 
