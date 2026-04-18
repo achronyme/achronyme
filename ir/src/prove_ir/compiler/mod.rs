@@ -1,5 +1,7 @@
 //! ProveIR compiler: AST Block → ProveIR template.
 
+mod helpers;
+
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -11,8 +13,8 @@ use memory::{Bn254Fr, FieldBackend, FieldElement};
 use super::circom_interop::CircomCallable;
 use super::error::{CircomDispatchErrorKind, ProveIrError};
 use super::types::*;
-use crate::error::{span_box, OptSpan};
 use crate::types::IrType;
+use helpers::{annotation_to_ir_type, flat_index_suffix, program_to_block, to_span};
 
 use resolve::{
     build_availability_map, build_dispatch_maps, build_resolver_state, AnnotationKey, Availability,
@@ -4047,67 +4049,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             op: circuit_op,
             operand: Box::new(inner),
         })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Convert a parsed Program into a Block (Programs don't carry their own span).
-fn program_to_block(source: &str, program: achronyme_parser::ast::Program) -> Block {
-    Block {
-        stmts: program.stmts,
-        span: Span {
-            byte_start: 0,
-            byte_end: source.len(),
-            line_start: 1,
-            col_start: 1,
-            line_end: 1,
-            col_end: 1,
-        },
-    }
-}
-
-/// Convert an AST Span to an OptSpan for error reporting.
-/// Build the row-major flattened suffix for a multi-dimensional
-/// element index. For `dims = [3]` and `linear = 2` this returns
-/// `"2"`; for `dims = [2, 2]` and `linear = 3` it returns `"1_1"`.
-fn flat_index_suffix(dims: &[u64], linear: usize) -> String {
-    if dims.len() <= 1 {
-        return linear.to_string();
-    }
-    let mut remaining = linear;
-    let mut parts: Vec<String> = Vec::with_capacity(dims.len());
-    // Compute strides from the right (row-major).
-    let mut strides: Vec<u64> = Vec::with_capacity(dims.len());
-    let mut s = 1u64;
-    for d in dims.iter().rev() {
-        strides.push(s);
-        s = s.saturating_mul(*d);
-    }
-    strides.reverse();
-    for stride in &strides {
-        let idx = remaining as u64 / *stride;
-        parts.push(idx.to_string());
-        remaining = (remaining as u64 % *stride) as usize;
-    }
-    parts.join("_")
-}
-
-fn to_span(span: &Span) -> OptSpan {
-    span_box(Some(SpanRange::from(span)))
-}
-
-/// Convert a TypeAnnotation to IrType.
-/// Only circuit types (Field, Bool) are valid here — Int/String are VM-only.
-fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
-    match ann.base {
-        achronyme_parser::ast::BaseType::Field => IrType::Field,
-        achronyme_parser::ast::BaseType::Bool => IrType::Bool,
-        achronyme_parser::ast::BaseType::Int | achronyme_parser::ast::BaseType::String => {
-            unreachable!("type `{}` is not valid in circuit/prove context", ann.base)
-        }
     }
 }
 
