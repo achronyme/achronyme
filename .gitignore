@@ -24,6 +24,10 @@ changes.txt
 # Proptest
 **/*.proptest-regressions
 
+# cargo-fuzz (local state: corpus grows per session, artifacts are crash repros)
+fuzz/corpus/
+fuzz/artifacts/
+
 # WASM playground
 wasm/target/
 wasm/pkg/
