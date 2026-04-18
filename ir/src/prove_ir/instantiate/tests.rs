@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
-use crate::types::Visibility;
+use crate::types::{IrType, Visibility};
 use memory::Bn254Fr;
 
 /// Helper: compile source as a circuit and instantiate (no captures).
