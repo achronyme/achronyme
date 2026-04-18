@@ -607,12 +607,9 @@ fn real_num2bits_e2e_instantiate() {
     let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
     inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(13));
 
-    let witness = crate::witness::compute_witness_hints_with_captures(
-        &prove_ir,
-        &inputs,
-        &capture_values,
-    )
-    .unwrap();
+    let witness =
+        crate::witness::compute_witness_hints_with_captures(&prove_ir, &inputs, &capture_values)
+            .unwrap();
 
     // Verify bit decomposition: 13 = 1101 in binary
     assert_eq!(
@@ -687,12 +684,9 @@ fn circom_prove_e2e(
         inputs.insert(name.to_string(), FieldElement::<Bn254Fr>::from_u64(*val));
     }
 
-    let mut all_signals = crate::witness::compute_witness_hints_with_captures(
-        &prove_ir,
-        &inputs,
-        &capture_values,
-    )
-    .unwrap();
+    let mut all_signals =
+        crate::witness::compute_witness_hints_with_captures(&prove_ir, &inputs, &capture_values)
+            .unwrap();
 
     let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
         .iter()
