@@ -1,0 +1,34 @@
+//! Public result + substitution-map types shared by both optimizer
+//! passes (O1 linear elimination and O2 DEDUCE).
+//!
+//! These are the only names re-exported from `r1cs_optimize` — the
+//! rest of the submodules expose their helpers as `pub(super)` to
+//! keep the surface area small. Consumers (the compiler's R1CS
+//! backend, the witness generator) only ever see
+//! `R1CSOptimizeResult` and `SubstitutionMap<F>`.
+
+use std::collections::HashMap;
+
+use crate::r1cs::LinearCombination;
+
+/// Statistics from linear constraint elimination.
+#[derive(Debug, Clone)]
+pub struct R1CSOptimizeResult {
+    /// Number of constraints before optimization.
+    pub constraints_before: usize,
+    /// Number of constraints after optimization.
+    pub constraints_after: usize,
+    /// Number of variables substituted away.
+    pub variables_eliminated: usize,
+    /// Number of duplicate non-linear constraints removed.
+    pub duplicates_removed: usize,
+    /// Number of trivially-satisfied constraints removed (0*B=0, k1*k2=k3).
+    pub trivial_removed: usize,
+    /// Number of fixpoint rounds executed.
+    pub rounds: usize,
+    /// Per-round breakdown: (linear_eliminated, newly_linear_from_nonlinear).
+    pub round_details: Vec<(usize, usize)>,
+}
+
+/// Maps a variable index to the LC that replaces it.
+pub type SubstitutionMap<F> = HashMap<usize, LinearCombination<F>>;

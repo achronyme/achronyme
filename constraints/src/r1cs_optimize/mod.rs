@@ -6,33 +6,15 @@
 //!
 //! This is the R1CS analogue of circom's `--O1` simplification pass.
 
+mod types;
+
+pub use types::{R1CSOptimizeResult, SubstitutionMap};
+
 use std::collections::{HashMap, HashSet};
 
 use memory::{FieldBackend, FieldElement};
 
 use crate::r1cs::{Constraint, LinearCombination, Variable};
-
-/// Statistics from linear constraint elimination.
-#[derive(Debug, Clone)]
-pub struct R1CSOptimizeResult {
-    /// Number of constraints before optimization.
-    pub constraints_before: usize,
-    /// Number of constraints after optimization.
-    pub constraints_after: usize,
-    /// Number of variables substituted away.
-    pub variables_eliminated: usize,
-    /// Number of duplicate non-linear constraints removed.
-    pub duplicates_removed: usize,
-    /// Number of trivially-satisfied constraints removed (0*B=0, k1*k2=k3).
-    pub trivial_removed: usize,
-    /// Number of fixpoint rounds executed.
-    pub rounds: usize,
-    /// Per-round breakdown: (linear_eliminated, newly_linear_from_nonlinear).
-    pub round_details: Vec<(usize, usize)>,
-}
-
-/// Maps a variable index to the LC that replaces it.
-pub type SubstitutionMap<F> = HashMap<usize, LinearCombination<F>>;
 
 /// Apply all substitutions in `subs` to a linear combination.
 ///
