@@ -10,9 +10,10 @@
 //! - Expand array declarations (sizes are now concrete)
 //! - Flatten the CircuitNode/CircuitExpr tree into a flat `Vec<Instruction>`
 
+mod api;
 mod utils;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use diagnostics::SpanRange;
 use memory::{FieldBackend, FieldElement};
@@ -25,10 +26,10 @@ use utils::{fe_to_u64, fe_to_usize};
 /// Maximum iterations allowed during instantiation (loop unrolling).
 /// This mirrors `MAX_UNROLL_ITERATIONS` in IrLowering but applies to capture-bound
 /// loops that are only resolved at instantiation time.
-const MAX_INSTANTIATE_ITERATIONS: u64 = 1_000_000;
+pub(super) const MAX_INSTANTIATE_ITERATIONS: u64 = 1_000_000;
 
 /// Bitwise binary operation type (used internally by emit_bitwise_binop).
-enum BitwiseOp {
+pub(super) enum BitwiseOp {
     And,
     Or,
     Xor,
@@ -40,7 +41,7 @@ enum BitwiseOp {
 
 /// A resolved value in the instantiation environment.
 #[derive(Clone, Debug)]
-enum InstEnvValue {
+pub(super) enum InstEnvValue {
     /// A scalar SSA variable.
     Scalar(SsaVar),
     /// An array of SSA variables (one per element).
@@ -52,182 +53,21 @@ enum InstEnvValue {
 // ---------------------------------------------------------------------------
 
 /// Converts a ProveIR template into a flat IrProgram given concrete capture values.
-struct Instantiator<F: FieldBackend> {
-    program: IrProgram<F>,
-    env: HashMap<String, InstEnvValue>,
+pub(super) struct Instantiator<F: FieldBackend> {
+    pub(super) program: IrProgram<F>,
+    pub(super) env: HashMap<String, InstEnvValue>,
     /// Concrete capture values (provided by caller).
-    captures: HashMap<String, FieldElement<F>>,
+    pub(super) captures: HashMap<String, FieldElement<F>>,
     /// Current source span context — set when entering a CircuitNode,
     /// propagated to all IR instructions emitted within that node.
-    current_span: Option<SpanRange>,
+    pub(super) current_span: Option<SpanRange>,
     /// Maps output signal element names → their public wire SSA vars.
     /// Non-empty only when instantiating Circom circuits with `signal output`.
     /// Used to intercept body nodes (WitnessHint, Let) that would create
     /// duplicate wires for output signals.
-    output_pub_vars: HashMap<String, SsaVar>,
+    pub(super) output_pub_vars: HashMap<String, SsaVar>,
 }
 
-impl ProveIR {
-    /// Instantiate this template with concrete capture values, producing a flat IrProgram.
-    ///
-    /// The resulting IrProgram is compatible with the existing optimize → R1CS/Plonkish
-    /// pipeline (same format as `IrLowering::lower_circuit()`).
-    pub fn instantiate<F: FieldBackend>(
-        &self,
-        captures: &HashMap<String, FieldElement<F>>,
-    ) -> Result<IrProgram<F>, ProveIrError> {
-        let mut inst = Instantiator {
-            program: IrProgram::new(),
-            env: HashMap::new(),
-            captures: captures.clone(),
-            current_span: None,
-            output_pub_vars: HashMap::new(),
-        };
-
-        // 1. Validate all required captures are provided
-        inst.validate_captures(self)?;
-
-        // 2. Declare public inputs
-        for input in &self.public_inputs {
-            inst.declare_input(input, Visibility::Public)?;
-        }
-
-        // 3. Declare witness inputs
-        for input in &self.witness_inputs {
-            inst.declare_input(input, Visibility::Witness)?;
-        }
-
-        // 4. Declare captures as circuit inputs or inline constants
-        for cap in &self.captures {
-            inst.declare_capture(cap)?;
-        }
-
-        // 4b. Reconstruct array env entries from capture_arrays.
-        //     Individual element captures (path_0, path_1) were declared above;
-        //     now assemble them into InstEnvValue::Array so array-consuming
-        //     constructs (e.g. merkle_verify) can resolve the array by name.
-        for arr in &self.capture_arrays {
-            let elem_vars: Vec<SsaVar> = (0..arr.size)
-                .map(|i| {
-                    let elem_name = format!("{}_{i}", arr.name);
-                    match inst.env.get(&elem_name) {
-                        Some(InstEnvValue::Scalar(v)) => Ok(*v),
-                        _ => Err(ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "missing array element capture `{elem_name}` for array `{}`",
-                                arr.name
-                            ),
-                            span: None,
-                        }),
-                    }
-                })
-                .collect::<Result<_, _>>()?;
-            inst.env
-                .insert(arr.name.clone(), InstEnvValue::Array(elem_vars));
-        }
-
-        // 5. Emit all body nodes
-        for node in &self.body {
-            inst.emit_node(node)?;
-        }
-
-        Ok(inst.program)
-    }
-
-    /// Instantiate with public output support (Circom frontend).
-    ///
-    /// Output signals in Circom are always public R1CS wires. When the body
-    /// encounters a `WitnessHint` or `Let` for an output signal, it reuses
-    /// the public wire instead of creating a separate witness wire. This
-    /// avoids duplicate wires and ensures constraints reference the public wire
-    /// directly.
-    ///
-    /// `output_names` contains the base names of output signals (e.g. `{"c", "out"}`).
-    pub fn instantiate_with_outputs<F: FieldBackend>(
-        &self,
-        captures: &HashMap<String, FieldElement<F>>,
-        output_names: &HashSet<String>,
-    ) -> Result<IrProgram<F>, ProveIrError> {
-        if output_names.is_empty() {
-            return self.instantiate(captures);
-        }
-
-        let mut inst = Instantiator {
-            program: IrProgram::new(),
-            env: HashMap::new(),
-            captures: captures.clone(),
-            current_span: None,
-            output_pub_vars: HashMap::new(),
-        };
-
-        // 1. Validate all required captures are provided
-        inst.validate_captures(self)?;
-
-        // 2. Declare public inputs (includes both inputs and outputs).
-        //    For outputs, save the element-level SSA vars so that body nodes
-        //    (WitnessHint, Let) reuse them instead of creating new wires.
-        for input in &self.public_inputs {
-            inst.declare_input(input, Visibility::Public)?;
-
-            if output_names.contains(&input.name) {
-                match &input.array_size {
-                    Some(array_size) => {
-                        let size = inst.resolve_array_size(array_size)?;
-                        for i in 0..size {
-                            let elem_name = format!("{}_{i}", input.name);
-                            if let Some(InstEnvValue::Scalar(v)) = inst.env.get(&elem_name) {
-                                inst.output_pub_vars.insert(elem_name, *v);
-                            }
-                        }
-                    }
-                    None => {
-                        if let Some(InstEnvValue::Scalar(v)) = inst.env.get(&input.name) {
-                            inst.output_pub_vars.insert(input.name.clone(), *v);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Declare witness inputs
-        for input in &self.witness_inputs {
-            inst.declare_input(input, Visibility::Witness)?;
-        }
-
-        // 4. Declare captures
-        for cap in &self.captures {
-            inst.declare_capture(cap)?;
-        }
-
-        // 4b. Reconstruct array env entries from capture_arrays
-        for arr in &self.capture_arrays {
-            let elem_vars: Vec<SsaVar> = (0..arr.size)
-                .map(|i| {
-                    let elem_name = format!("{}_{i}", arr.name);
-                    match inst.env.get(&elem_name) {
-                        Some(InstEnvValue::Scalar(v)) => Ok(*v),
-                        _ => Err(ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "missing array element capture `{elem_name}` for array `{}`",
-                                arr.name
-                            ),
-                            span: None,
-                        }),
-                    }
-                })
-                .collect::<Result<_, _>>()?;
-            inst.env
-                .insert(arr.name.clone(), InstEnvValue::Array(elem_vars));
-        }
-
-        // 5. Emit all body nodes (WitnessHint/Let for outputs are intercepted)
-        for node in &self.body {
-            inst.emit_node(node)?;
-        }
-
-        Ok(inst.program)
-    }
-}
 
 impl<F: FieldBackend> Instantiator<F> {
     // -------------------------------------------------------------------
@@ -247,7 +87,7 @@ impl<F: FieldBackend> Instantiator<F> {
     // Validation
     // -------------------------------------------------------------------
 
-    fn validate_captures(&self, prove_ir: &ProveIR) -> Result<(), ProveIrError> {
+    pub(super) fn validate_captures(&self, prove_ir: &ProveIR) -> Result<(), ProveIrError> {
         for cap in &prove_ir.captures {
             if !self.captures.contains_key(&cap.name) {
                 return Err(ProveIrError::UnsupportedOperation {
@@ -266,7 +106,7 @@ impl<F: FieldBackend> Instantiator<F> {
     // Input declarations
     // -------------------------------------------------------------------
 
-    fn declare_input(
+    pub(super) fn declare_input(
         &mut self,
         decl: &ProveInputDecl,
         visibility: Visibility,
@@ -323,7 +163,7 @@ impl<F: FieldBackend> Instantiator<F> {
         }
     }
 
-    fn declare_capture(&mut self, cap: &CaptureDef) -> Result<(), ProveIrError> {
+    pub(super) fn declare_capture(&mut self, cap: &CaptureDef) -> Result<(), ProveIrError> {
         // Safe: validate_captures already verified all required captures exist.
         let value =
             *self
@@ -380,7 +220,7 @@ impl<F: FieldBackend> Instantiator<F> {
     }
 
     /// Resolve an ArraySize to a concrete usize.
-    fn resolve_array_size(&self, size: &ArraySize) -> Result<usize, ProveIrError> {
+    pub(super) fn resolve_array_size(&self, size: &ArraySize) -> Result<usize, ProveIrError> {
         match size {
             ArraySize::Literal(n) => Ok(*n),
             ArraySize::Capture(name) => {
@@ -400,7 +240,7 @@ impl<F: FieldBackend> Instantiator<F> {
     // Node emission (CircuitNode → Instructions)
     // -------------------------------------------------------------------
 
-    fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
+    pub(super) fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
         // Set span context: all instructions emitted while processing this node
         // inherit the node's source span for source mapping.
         let prev_span = self.current_span.take();
