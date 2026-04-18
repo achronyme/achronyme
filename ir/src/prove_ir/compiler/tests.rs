@@ -3,7 +3,9 @@
 //! Loaded via `#[cfg(test)] mod tests;` in `compiler/mod.rs`.
 
 use super::*;
+use crate::prove_ir::error::ProveIrError;
 use achronyme_parser::parse_program;
+use memory::FieldElement;
 
 /// Helper: parse source and compile the first expression to CircuitExpr.
 fn compile_single_expr(source: &str) -> Result<CircuitExpr, ProveIrError> {
@@ -2033,7 +2035,7 @@ mod circom_dispatch {
     use crate::prove_ir::circom_interop::{
         CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
     };
-    use crate::prove_ir::error::CircomDispatchErrorKind;
+    use crate::prove_ir::error::{CircomDispatchErrorKind, ProveIrError};
     use diagnostics::Span;
     use std::collections::HashMap;
     use std::sync::Arc;
