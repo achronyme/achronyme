@@ -86,21 +86,22 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             .filter(|c| is_linear(c).is_none())
             .count();
 
+        // `round_protected` is mutated in place as new substitutions are
+        // claimed: once a variable is chosen this round, no later constraint
+        // may solve for it again. Cloning the set per iteration (and
+        // re-inserting `round_subs.keys()` each time) made the loop quadratic
+        // in the number of claimed variables — for circuits like
+        // EscalarMulAny(254) where ~3 000 vars are eliminated in a single
+        // round, that dominated O1 runtime.
         for (idx, constraint) in constraints.iter().enumerate() {
             if let Some((k, other_lc, c_lc)) = is_linear(constraint) {
                 // Constraint encodes: k * other_lc = c_lc
                 // i.e., c_lc - k * other_lc = 0
                 let combined = c_lc - (other_lc * k);
 
-                // Don't solve for a variable already claimed this round
-                let mut this_round_protected = round_protected.clone();
-                for var_idx in round_subs.keys() {
-                    this_round_protected.insert(*var_idx);
-                }
-
-                if let Some((var, expr)) =
-                    solve_for_variable(combined, &this_round_protected, &var_freq)
+                if let Some((var, expr)) = solve_for_variable(combined, &round_protected, &var_freq)
                 {
+                    round_protected.insert(var.index());
                     round_subs.insert(var.index(), expr);
                     to_remove.insert(idx);
                 }
