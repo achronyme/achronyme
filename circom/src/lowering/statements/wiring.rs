@@ -64,6 +64,96 @@ pub(super) struct PendingComponent<'a> {
     pub const_wired: HashMap<String, FieldConst>,
 }
 
+impl<'a> PendingComponent<'a> {
+    /// Build a pending component with no wirings recorded yet.
+    ///
+    /// Caller must ensure `input_signals` is non-empty — components
+    /// with zero inputs are inlined immediately at declaration and
+    /// never enter the pending map.
+    pub(super) fn new(
+        template: &'a ast::TemplateDef,
+        template_args: Vec<CircuitExpr>,
+        array_args: HashMap<String, EvalValue>,
+        input_signals: HashSet<String>,
+    ) -> Self {
+        Self {
+            template,
+            template_args,
+            array_args,
+            input_signals,
+            wired_signals: HashSet::new(),
+            has_indexed_wirings: false,
+            const_wired: HashMap::new(),
+        }
+    }
+
+    /// Record that an input signal has been wired.
+    ///
+    /// `is_indexed` is `true` for `comp.signal[i] <== expr` wirings;
+    /// such wirings disable the scalar trigger path because the array
+    /// isn't fully wired after a single element. The component must
+    /// be flushed explicitly before its outputs are referenced.
+    ///
+    /// When `value` is a `Const`, the constant is recorded in
+    /// `const_wired` for sub-template constant propagation.
+    pub(super) fn mark_wired(
+        &mut self,
+        signal: String,
+        value: Option<&CircuitExpr>,
+        is_indexed: bool,
+    ) {
+        if let Some(CircuitExpr::Const(fc)) = value {
+            self.const_wired.insert(signal.clone(), *fc);
+        }
+        self.wired_signals.insert(signal);
+        if is_indexed {
+            self.has_indexed_wirings = true;
+        }
+    }
+
+    /// Returns `true` when all declared inputs have been wired AND
+    /// no indexed wirings have been recorded — the two conditions
+    /// the trigger path requires before inlining the component body.
+    pub(super) fn is_ready_to_inline(&self) -> bool {
+        !self.has_indexed_wirings && self.wired_signals.is_superset(&self.input_signals)
+    }
+
+    /// Inline this pending component's body into `nodes`, propagating
+    /// constants into `env`.
+    ///
+    /// Merges `const_wired` (recorded during `mark_wired`) with any
+    /// constants found in already-emitted `Let`/`WitnessHint` nodes
+    /// for this component (the indexed-wiring path stores constants
+    /// in nodes rather than in `const_wired`).
+    ///
+    /// `span` is used for error attribution. Callers triggered from a
+    /// wiring statement pass that statement's span; cleanup paths pass
+    /// the template declaration's span.
+    pub(super) fn inline_into(
+        &self,
+        comp_name: &str,
+        nodes: &mut Vec<CircuitNode>,
+        ctx: &mut LoweringContext<'a>,
+        env: &mut LoweringEnv,
+        span: &diagnostics::Span,
+    ) -> Result<(), LoweringError> {
+        let mut const_inputs = self.const_wired.clone();
+        extract_const_inputs_from_nodes(comp_name, nodes, &mut const_inputs);
+        let body = inline_component_body_with_const_inputs(
+            comp_name,
+            self.template,
+            &self.template_args,
+            &self.array_args,
+            &const_inputs,
+            ctx,
+            span,
+        )?;
+        propagate_const_nodes(&body, env);
+        nodes.extend(body);
+        Ok(())
+    }
+}
+
 /// Inline a specific pending component by name.
 ///
 /// Used by the value-scan flush: when a substitution's value expression
@@ -256,44 +346,21 @@ pub(super) fn maybe_trigger_inline<'a>(
     wired_value: Option<&CircuitExpr>,
 ) -> Result<(), LoweringError> {
     let is_indexed = matches!(target, Expr::Index { .. });
-    if let Some((comp_name, signal_name)) = extract_component_wiring_with_env(target, env, ctx) {
-        if let Some(comp) = pending.get_mut(&comp_name) {
-            // Track constant wired values for propagation into sub-template
-            if let Some(CircuitExpr::Const(fc)) = wired_value {
-                comp.const_wired.insert(signal_name.clone(), *fc);
-            }
-            comp.wired_signals.insert(signal_name);
-            if is_indexed {
-                comp.has_indexed_wirings = true;
-            }
-            // Don't trigger inline from the first indexed wiring to an
-            // array — wait until the next non-wiring statement forces a
-            // flush, or until all non-array inputs are also wired.
-            if comp.has_indexed_wirings {
-                return Ok(());
-            }
-            if comp.wired_signals.is_superset(&comp.input_signals) {
-                let comp = pending.remove(&comp_name).expect(
-                    "pending component disappeared between get_mut and remove; \
-                     this is a bug in the wiring state machine",
-                );
-                let mut const_inputs = comp.const_wired.clone();
-                extract_const_inputs_from_nodes(&comp_name, nodes, &mut const_inputs);
-                let body = inline_component_body_with_const_inputs(
-                    &comp_name,
-                    comp.template,
-                    &comp.template_args,
-                    &comp.array_args,
-                    &const_inputs,
-                    ctx,
-                    span,
-                )?;
-                propagate_const_nodes(&body, env);
-                nodes.extend(body);
-            }
-        }
+    let Some((comp_name, signal_name)) = extract_component_wiring_with_env(target, env, ctx) else {
+        return Ok(());
+    };
+    let Some(comp) = pending.get_mut(&comp_name) else {
+        return Ok(());
+    };
+    comp.mark_wired(signal_name, wired_value, is_indexed);
+    if !comp.is_ready_to_inline() {
+        return Ok(());
     }
-    Ok(())
+    let comp = pending.remove(&comp_name).expect(
+        "pending component disappeared between get_mut and remove; \
+         this is a bug in the wiring state machine",
+    );
+    comp.inline_into(&comp_name, nodes, ctx, env, span)
 }
 
 /// Check if a substitution target is a component signal wiring.
