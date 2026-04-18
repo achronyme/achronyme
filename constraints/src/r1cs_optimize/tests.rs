@@ -1,3 +1,4 @@
+use super::predicates::is_trivially_satisfied;
 use super::*;
 use crate::r1cs::ConstraintSystem;
 use memory::FieldElement;
