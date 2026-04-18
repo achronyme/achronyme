@@ -307,11 +307,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 });
             }
 
-            let ir_type = decl
-                .type_ann
-                .as_ref()
-                .map(annotation_to_ir_type)
-                .unwrap_or(IrType::Field);
+            let ir_type = match decl.type_ann.as_ref() {
+                Some(ann) => annotation_to_ir_type(ann, span)?,
+                None => IrType::Field,
+            };
 
             let inputs = if is_public {
                 &mut self.public_inputs

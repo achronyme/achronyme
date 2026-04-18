@@ -632,6 +632,60 @@ fn stmt_public_decl_array() {
 }
 
 #[test]
+fn annotation_to_ir_type_rejects_int_directly() {
+    // Defense-in-depth (Gap 2.4 hardening): the parser already rejects
+    // `public x: Int` upstream with a clear ParseError, so this lowerer
+    // path was unreachable in practice. The fix replaces the previous
+    // `unreachable!()` with a proper `TypeNotConstrainable` so a future
+    // parser change (new BaseType, relaxed validation) cannot panic the
+    // lowerer in production.
+    use achronyme_parser::ast::{BaseType, TypeAnnotation};
+    use diagnostics::Span;
+    let ann = TypeAnnotation {
+        visibility: None,
+        base: BaseType::Int,
+        array_size: None,
+    };
+    let span = Span {
+        byte_start: 0,
+        byte_end: 0,
+        line_start: 1,
+        col_start: 1,
+        line_end: 1,
+        col_end: 1,
+    };
+    let err = super::helpers::annotation_to_ir_type(&ann, &span).unwrap_err();
+    assert!(matches!(
+        err,
+        ProveIrError::TypeNotConstrainable { type_name, .. } if type_name == "Int"
+    ));
+}
+
+#[test]
+fn annotation_to_ir_type_rejects_string_directly() {
+    use achronyme_parser::ast::{BaseType, TypeAnnotation};
+    use diagnostics::Span;
+    let ann = TypeAnnotation {
+        visibility: None,
+        base: BaseType::String,
+        array_size: None,
+    };
+    let span = Span {
+        byte_start: 0,
+        byte_end: 0,
+        line_start: 1,
+        col_start: 1,
+        line_end: 1,
+        col_end: 1,
+    };
+    let err = super::helpers::annotation_to_ir_type(&ann, &span).unwrap_err();
+    assert!(matches!(
+        err,
+        ProveIrError::TypeNotConstrainable { type_name, .. } if type_name == "String"
+    ));
+}
+
+#[test]
 fn stmt_let_scalar() {
     let ir = compile_circuit("public x\nlet y = x\nassert_eq(y, x)").unwrap();
     assert!(ir.body.len() >= 2); // Let + AssertEq

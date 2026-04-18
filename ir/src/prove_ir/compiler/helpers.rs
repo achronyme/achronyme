@@ -61,13 +61,21 @@ pub(super) fn to_span(span: &Span) -> OptSpan {
 }
 
 /// Convert a TypeAnnotation to IrType.
-/// Only circuit types (Field, Bool) are valid here — Int/String are VM-only.
-pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
+/// Only circuit types (Field, Bool) are valid here — Int/String are VM-only
+/// and surface as `TypeNotConstrainable` if a user writes them in a
+/// circuit/prove context.
+pub(super) fn annotation_to_ir_type(
+    ann: &TypeAnnotation,
+    span: &Span,
+) -> Result<IrType, crate::prove_ir::error::ProveIrError> {
     match ann.base {
-        BaseType::Field => IrType::Field,
-        BaseType::Bool => IrType::Bool,
+        BaseType::Field => Ok(IrType::Field),
+        BaseType::Bool => Ok(IrType::Bool),
         BaseType::Int | BaseType::String => {
-            unreachable!("type `{}` is not valid in circuit/prove context", ann.base)
+            Err(crate::prove_ir::error::ProveIrError::TypeNotConstrainable {
+                type_name: ann.base.to_string(),
+                span: to_span(span),
+            })
         }
     }
 }
