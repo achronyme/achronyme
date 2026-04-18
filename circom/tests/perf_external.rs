@@ -295,14 +295,16 @@ fn bench_circom(
         .collect();
 
     // Compile once (outside timing loop) to know the r1cs path for zkey setup
-    // Using circom's default optimization (between --O0 and --O2). Enabling
-    // --O2 produces R1CS files that occasionally mismatch snarkjs' wire
-    // expectations on MiMCSponge-style circuits; the default is what most
-    // tutorials and circom users actually run.
+    // `--O2` matches Achronyme's default: full constraint simplification
+    // (linear elimination + signal dedup). circom's default is `--O1`
+    // which only does signal→signal / signal→constant substitution and
+    // would leave us comparing apples (circom lightly-optimized) to
+    // oranges (Achronyme fully-optimized).
     let mut cmd = Command::new("circom");
     cmd.arg(&src)
         .arg("--r1cs")
         .arg("--wasm")
+        .arg("--O2")
         .arg("-o")
         .arg(workdir);
     for l in &lib_args {
@@ -325,11 +327,13 @@ fn bench_circom(
     let mut prove_samples = Vec::with_capacity(3);
     let mut verify_samples = Vec::with_capacity(3);
     for _ in 0..3 {
-        // compile (r1cs + wasm)
+        // compile (r1cs + wasm) — same --O2 flag as the outside-loop
+        // compile to keep r1cs / witness / zkey wire-count consistent.
         let mut cmd = Command::new("circom");
         cmd.arg(&src)
             .arg("--r1cs")
             .arg("--wasm")
+            .arg("--O2")
             .arg("-o")
             .arg(workdir);
         for l in &lib_args {
