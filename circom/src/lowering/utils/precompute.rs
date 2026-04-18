@@ -5,11 +5,11 @@
 //! signal dimension resolution (e.g., `signal output out[nbits(n)]`) and
 //! known array indexing (e.g., `ROUNDS[t - 2]`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ir::prove_ir::types::FieldConst;
 
-use crate::ast::{Expr, FunctionDef, Stmt};
+use crate::ast::{AssignOp, Expr, FunctionDef, Stmt};
 
 use super::bigval::BigVal;
 use super::eval::{eval_expr, eval_function, eval_function_to_value};
@@ -50,52 +50,46 @@ pub fn precompute_all(
 ) -> PrecomputeResult {
     let mut scalars = params.clone();
     let mut arrays: HashMap<String, EvalValue> = HashMap::new();
+    // `var X;` declarations without an initializer. Circomlib (e.g.,
+    // SHA256) uses the pattern `var nBlocks; ...; nBlocks = expr;`
+    // where the first top-level `Substitution` to the name is
+    // semantically the initializer. We track the pending names here
+    // and treat the first matching `Substitution` as if it were the
+    // `init` expression on the original `VarDecl`.
+    let mut pending_vars: HashSet<String> = HashSet::new();
 
     for stmt in stmts {
-        if let Stmt::VarDecl {
-            names,
-            init: Some(expr),
-            ..
-        } = stmt
-        {
-            if names.len() != 1 {
-                continue;
+        match stmt {
+            Stmt::VarDecl {
+                names,
+                init: Some(expr),
+                ..
+            } => {
+                if names.len() != 1 {
+                    continue;
+                }
+                try_bind_precomputed(&names[0], expr, &mut scalars, &mut arrays, functions);
             }
-            let name = &names[0];
-
-            // 1. Try scalar eval (with array-index support)
-            if let Some(val) = const_eval_with_arrays(expr, &scalars, &arrays, functions) {
-                scalars.insert(name.clone(), val);
-                continue;
-            }
-
-            // 2. Try array-returning function call
-            if let Expr::Call { callee, args, .. } = expr {
-                if let Some(fn_name) = extract_ident_name(callee) {
-                    if let Some(func) = functions.get(fn_name.as_str()) {
-                        if let Some(val) =
-                            try_eval_function_call_to_value(func, args, &scalars, functions, 0)
-                        {
-                            if val.is_array() {
-                                arrays.insert(name.clone(), val);
-                                continue;
-                            }
-                        }
-                    }
+            Stmt::VarDecl {
+                names, init: None, ..
+            } => {
+                for name in names {
+                    pending_vars.insert(name.clone());
                 }
             }
-
-            // 3. Try array literal
-            if let Expr::ArrayLit { elements, .. } = expr {
-                let vars = fc_map_to_bigval(&scalars);
-                let vals: Option<Vec<EvalValue>> = elements
-                    .iter()
-                    .map(|e| super::eval::eval_expr_value(e, &vars, functions, 0))
-                    .collect();
-                if let Some(vals) = vals {
-                    arrays.insert(name.clone(), EvalValue::Array(vals));
+            Stmt::Substitution {
+                target: Expr::Ident { name, .. },
+                op: AssignOp::Assign,
+                value,
+                ..
+            } => {
+                if pending_vars.contains(name)
+                    && try_bind_precomputed(name, value, &mut scalars, &mut arrays, functions)
+                {
+                    pending_vars.remove(name);
                 }
             }
+            _ => {}
         }
     }
 
@@ -106,6 +100,54 @@ pub fn precompute_all(
             .collect(),
         arrays,
     }
+}
+
+/// Try to evaluate `expr` at compile time and bind it to `name` in
+/// either the scalar or array map. Returns `true` if a binding was
+/// produced.
+fn try_bind_precomputed(
+    name: &str,
+    expr: &Expr,
+    scalars: &mut HashMap<String, FieldConst>,
+    arrays: &mut HashMap<String, EvalValue>,
+    functions: &HashMap<&str, &FunctionDef>,
+) -> bool {
+    // 1. Scalar eval (with array-index support).
+    if let Some(val) = const_eval_with_arrays(expr, scalars, arrays, functions) {
+        scalars.insert(name.to_string(), val);
+        return true;
+    }
+
+    // 2. Array-returning function call.
+    if let Expr::Call { callee, args, .. } = expr {
+        if let Some(fn_name) = extract_ident_name(callee) {
+            if let Some(func) = functions.get(fn_name.as_str()) {
+                if let Some(val) =
+                    try_eval_function_call_to_value(func, args, scalars, functions, 0)
+                {
+                    if val.is_array() {
+                        arrays.insert(name.to_string(), val);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Array literal.
+    if let Expr::ArrayLit { elements, .. } = expr {
+        let vars = fc_map_to_bigval(scalars);
+        let vals: Option<Vec<EvalValue>> = elements
+            .iter()
+            .map(|e| super::eval::eval_expr_value(e, &vars, functions, 0))
+            .collect();
+        if let Some(vals) = vals {
+            arrays.insert(name.to_string(), EvalValue::Array(vals));
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Evaluate an expression to FieldConst with support for indexing into known arrays.

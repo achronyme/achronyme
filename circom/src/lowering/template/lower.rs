@@ -54,7 +54,14 @@ pub fn lower_template_with_captures(
         &precomputed.scalars,
     )?;
 
-    // Add pre-computed vars to param_values so they're available during body lowering
+    // Add pre-computed vars to param_values so they're available during body lowering.
+    // Also inject into env.known_constants so that `Expr::Ident` lowering folds
+    // them to `CircuitExpr::Const` — except for vars that are reassigned later
+    // in the body (accumulators like `lc1 += ...`), which would produce wrong
+    // values if folded. Template params and `var X; X = <const>;` patterns both
+    // flow through here; the latter is needed for circomlib SHA256's
+    // `var nBlocks; ...; nBlocks = (nBits+64)\512+1; paddedIn[nBlocks*512-k-1]`.
+    let reassigned = super::super::components::find_reassigned_vars(&template.body.stmts);
     for (name, val) in &precomputed.scalars {
         ctx.param_values.insert(name.clone(), *val);
     }
@@ -83,6 +90,14 @@ pub fn lower_template_with_captures(
     // Template parameters → env.captures
     for param in &template.params {
         env.captures.insert(param.clone());
+    }
+
+    // Inject pre-computed scalar vars into `known_constants` for identifier
+    // folding. Skip reassigned vars (accumulators) to preserve correctness.
+    for (name, val) in &precomputed.scalars {
+        if !reassigned.contains(name) {
+            env.known_constants.insert(name.clone(), *val);
+        }
     }
 
     // Inject pre-computed array vars into the environment

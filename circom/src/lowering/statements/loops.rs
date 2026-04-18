@@ -44,13 +44,19 @@ pub(super) fn lower_for_loop<'a>(
             init: Some(init_expr),
             ..
         } if names.len() == 1 => {
-            let start = const_eval_u64(init_expr).ok_or_else(|| {
-                LoweringError::with_code(
-                    "for loop init must be a compile-time constant",
-                    "E208",
-                    span,
-                )
-            })?;
+            // Fall back to param-aware evaluation for the common pattern
+            // `for (var k = nBits+1; ...)` where `nBits` is a template
+            // parameter — circomlib SHA256 uses this in padding loops.
+            let all = ctx.all_constants(env);
+            let start = const_eval_u64(init_expr)
+                .or_else(|| super::super::utils::const_eval_with_params(init_expr, &all)?.to_u64())
+                .ok_or_else(|| {
+                    LoweringError::with_code(
+                        "for loop init must be a compile-time constant",
+                        "E208",
+                        span,
+                    )
+                })?;
             (names[0].clone(), start)
         }
         // `for (i = 0; ...)` where `i` is already declared via `var i;`

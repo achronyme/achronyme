@@ -1168,6 +1168,35 @@ fn mux4_circomlib() {
     eprintln!("  Constraints: {n}");
 }
 
+/// `var X; ... X = <const-expr>;` compile-time tracking.
+///
+/// Regression for the pattern circomlib SHA256 uses:
+///
+/// ```circom
+/// var nBlocks;
+/// nBlocks = ((nBits + 64)\512) + 1;
+/// signal paddedIn[nBlocks*512];
+/// for (var k = nBits+1; k < nBlocks*512 - 64; k++) { ... }
+/// paddedIn[nBlocks*512 - k - 1] <== ...;
+/// ```
+///
+/// Before the fix, `precompute_all` only tracked `var X = expr;` on a
+/// single statement and `template::lower` never injected precomputed
+/// scalars into `env.known_constants`, so `nBlocks` reached the ProveIR
+/// instantiator as `CircuitExpr::Var("nBlocks")` and indexing failed
+/// with "indexed assignment requires a compile-time constant index".
+#[test]
+fn var_postdecl_padding_e2e() {
+    let n = circomlib_e2e_verify(
+        "VarPostDeclPadding(64)",
+        "test/circomlib/var_postdecl_padding_test.circom",
+        &[],
+    );
+    // 512 slots = nBlocks*512 with nBlocks=1 for nBits=64, one constraint per
+    // signal assignment plus 1 for the trailing boolean output packing.
+    assert_eq!(n, 513, "expected 513 constraints");
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,
