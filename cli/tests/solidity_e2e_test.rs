@@ -264,7 +264,7 @@ fn solidity_e2e_mul() {
     let num_pub = public_val.len();
 
     let test_sol = format!(
-        r#"// SPDX-License-Identifier: GPL-3.0
+        r#"// SPDX-License-Identifier: Apache-2.0
 pragma solidity >=0.8.0 <0.9.0;
 
 import "../src/Groth16Verifier.sol";
@@ -487,7 +487,7 @@ fn solidity_e2e_poseidon() {
         .join("\n");
 
     let test_sol = format!(
-        r#"// SPDX-License-Identifier: GPL-3.0
+        r#"// SPDX-License-Identifier: Apache-2.0
 pragma solidity >=0.8.0 <0.9.0;
 
 import "../src/Groth16Verifier.sol";

@@ -106,7 +106,7 @@ pub fn generate_solidity_verifier(vk: &ark_groth16::VerifyingKey<Bn254>) -> Stri
     };
 
     format!(
-        r#"// SPDX-License-Identifier: GPL-3.0
+        r#"// SPDX-License-Identifier: Apache-2.0
 pragma solidity >=0.8.0 <0.9.0;
 
 contract Groth16Verifier {{
@@ -287,7 +287,7 @@ mod tests {
         assert!(sol.contains("pragma solidity >=0.8.0 <0.9.0;"));
         assert!(sol.contains("contract Groth16Verifier"));
         assert!(sol.contains("function verifyProof"));
-        assert!(sol.contains("SPDX-License-Identifier: GPL-3.0"));
+        assert!(sol.contains("SPDX-License-Identifier: Apache-2.0"));
     }
 
     #[test]
