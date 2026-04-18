@@ -1,7 +1,7 @@
 use super::predicates::is_trivially_satisfied;
 use super::*;
-use crate::r1cs::ConstraintSystem;
-use memory::FieldElement;
+use crate::r1cs::{Constraint, ConstraintSystem, LinearCombination, Variable};
+use memory::{FieldBackend, FieldElement};
 
 /// Helper: build a constraint system, optimize it, and verify.
 fn make_lc_var<F: FieldBackend>(var: Variable) -> LinearCombination<F> {
