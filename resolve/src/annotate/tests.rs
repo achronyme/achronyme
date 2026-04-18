@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::ResolveError;
 use crate::module_graph::{LoadedModule, ModuleGraph, ModuleId, ModuleSource};
 use crate::symbol::ConstKind;
 use achronyme_parser::ast::ExprId;

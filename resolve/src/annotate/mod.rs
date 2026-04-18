@@ -23,6 +23,7 @@
 //! `.claude/plans/movimiento-2-unified-dispatch.md` §4 Phase 3 for
 //! the full decomposition.
 
+mod context;
 mod helpers;
 mod program;
 mod register;
@@ -30,15 +31,14 @@ mod register;
 pub use program::{AnnotationKey, ResolvedProgram};
 pub use register::{register_all, register_builtins, register_module};
 
-use std::collections::HashMap;
-
 use achronyme_parser::ast::{Block, ElseBranch, Expr, ForIterable, Span, Stmt};
 
-use crate::error::{ResolveError, UnsupportedShape};
-use crate::module_graph::{ImportEdgeKind, ModuleGraph, ModuleNode};
+use crate::error::UnsupportedShape;
+use crate::module_graph::{ImportEdgeKind, ModuleGraph};
 use crate::symbol::{CallableKind, SymbolId};
 use crate::table::SymbolTable;
 
+use context::{AnnotateCtx, LocalKind};
 use helpers::{module_prefix, qualify};
 
 /// Walk every [`Expr`] in every module and emit an annotation map from
@@ -115,110 +115,6 @@ pub fn annotate_program(graph: &ModuleGraph, table: &SymbolTable) -> ResolvedPro
         }
     }
     out
-}
-
-// ----------------------------------------------------------------------
-// Annotate walker internals
-// ----------------------------------------------------------------------
-
-/// What flavour of local binding a name represents. Enables Phase
-/// 3C.3's FnAlias + prove-block shape diagnostics — the walker stores
-/// extra metadata alongside the shadow set so later call sites can
-/// re-classify references without re-walking the RHS.
-#[derive(Clone, Debug)]
-enum LocalKind {
-    /// Plain value binding: fn params, `for` loop vars, ordinary
-    /// `let x = 42`. Shadows module symbols; nothing special.
-    Plain,
-    /// `let a = p::fn` where the RHS const-resolved at annotation
-    /// time to a single fn-valued [`SymbolId`]. Subsequent references
-    /// to `a` annotate directly to the target — Phase 3D/3E dispatch
-    /// through the target without ever creating a
-    /// [`CallableKind::FnAlias`] entry in the table (the plan-doc
-    /// version lives in the table, but the annotation-map approach
-    /// gives both backends the same observable behaviour with no
-    /// extra mutation cost).
-    Alias(SymbolId),
-    /// `let a = if c { f } else { g }` where both branches const-
-    /// resolve to fn symbols — a dynamic fn value. Calling `a()`
-    /// inside a prove block emits
-    /// [`UnsupportedShape::DynamicFnValue`].
-    DynamicFn,
-    /// `let m = { k: v, ... }` — a Map literal. Field/index access
-    /// on `m` inside a prove block emits
-    /// [`UnsupportedShape::RuntimeMapAccess`].
-    RuntimeMap,
-}
-
-/// Per-module walker state. Holds read-only refs to the graph/table/
-/// module plus `&mut` handles to the annotation map and diagnostic
-/// vector, the lexical scope stack, and the prove-block depth
-/// counter.
-struct AnnotateCtx<'a> {
-    graph: &'a ModuleGraph,
-    table: &'a SymbolTable,
-    module: &'a ModuleNode,
-    /// Precomputed `"modN::"` prefix (or `""` for the root module) used
-    /// to look up the current module's own symbols in [`SymbolTable`].
-    prefix: String,
-    annotations: &'a mut HashMap<AnnotationKey, SymbolId>,
-    /// Accumulated diagnostics. Phase 3C.3 only pushes
-    /// [`ResolveError::ProveBlockUnsupportedShape`] variants; later
-    /// phases may add more.
-    diagnostics: &'a mut Vec<ResolveError>,
-    /// Stack of lexical scopes. Each entry binds a name to its
-    /// [`LocalKind`]; inner layers shadow outer layers. At module top
-    /// level the stack is empty — top-level `let`/`mut` bindings are
-    /// not tracked because exported ones live in the `SymbolTable`
-    /// and private ones have no annotation-time consumer yet.
-    scope: Vec<HashMap<String, LocalKind>>,
-    /// Depth counter of nested `prove {}` / `circuit {}` blocks. Zero
-    /// at module top level; incremented on entry, decremented on
-    /// exit. `> 0` means every shape check in the walker should run.
-    in_prove_depth: u32,
-}
-
-impl<'a> AnnotateCtx<'a> {
-    fn push_scope(&mut self) {
-        self.scope.push(HashMap::new());
-    }
-
-    fn pop_scope(&mut self) {
-        self.scope.pop();
-    }
-
-    /// Bind a local name to `kind` inside the innermost scope. A
-    /// no-op at the module top level (where `scope` is empty) — see
-    /// the field docstring above for the rationale.
-    fn add_local(&mut self, name: &str, kind: LocalKind) {
-        if let Some(top) = self.scope.last_mut() {
-            top.insert(name.to_string(), kind);
-        }
-    }
-
-    /// Walk the scope stack from innermost to outermost and return
-    /// the first matching binding's kind, if any.
-    fn lookup_local(&self, name: &str) -> Option<&LocalKind> {
-        for layer in self.scope.iter().rev() {
-            if let Some(kind) = layer.get(name) {
-                return Some(kind);
-            }
-        }
-        None
-    }
-
-    fn is_local(&self, name: &str) -> bool {
-        self.lookup_local(name).is_some()
-    }
-
-    fn push_diagnostic(&mut self, span: Span, shape: UnsupportedShape, reason: &'static str) {
-        self.diagnostics
-            .push(ResolveError::ProveBlockUnsupportedShape {
-                span,
-                shape,
-                reason,
-            });
-    }
 }
 
 fn walk_stmt(ctx: &mut AnnotateCtx, stmt: &Stmt) {
