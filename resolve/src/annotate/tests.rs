@@ -1,5 +1,6 @@
 use super::*;
 use crate::module_graph::{LoadedModule, ModuleGraph, ModuleSource};
+use achronyme_parser::ast::ExprId;
 use achronyme_parser::parse_program;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
