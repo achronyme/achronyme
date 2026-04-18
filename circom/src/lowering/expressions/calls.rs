@@ -115,13 +115,6 @@ fn inline_function_call(
         return Ok(CircuitExpr::Const(result));
     }
 
-    // Build a local env with parameters bound to lowered argument expressions.
-    let mut fn_env = env.clone();
-    for (param, arg) in func.params.iter().zip(args) {
-        let _lowered_arg = lower_expr(arg, env, ctx)?;
-        fn_env.locals.insert(param.clone());
-    }
-
     // Find the return expression in the function body.
     let body = &func.body.stmts;
     let return_expr = find_return_expr(body).ok_or_else(|| {
@@ -134,8 +127,37 @@ fn inline_function_call(
         )
     })?;
 
-    // Build parameter substitution: replace param references with arg expressions
-    let mut param_env = env.clone();
+    // Compile-time evaluation failed — the function carries runtime signal
+    // arguments. A function body that declares internal state (vars, loops,
+    // multi-statement computations) cannot be safely inlined: substituting
+    // just the return expression silently drops the internal computation, and
+    // identifiers like `out` in `return out;` would fall back to the caller's
+    // scope (which is how Gap E manifested in SHA256 — the function's local
+    // `var out[256]` shadowed the template's `signal output out[256]`).
+    //
+    // Circom handles this pattern through witness calculators executed at
+    // prove time. Achronyme does not yet implement that subsystem, so surface
+    // the gap explicitly instead of producing garbage `Var(name)` references.
+    if function_body_has_internal_state(body) {
+        ctx.inline_depth -= 1;
+        return Err(LoweringError::with_code(
+            format!(
+                "function `{name}` cannot be circuit-inlined with runtime \
+                 arguments: its body declares internal state (vars, loops, \
+                 or multiple statements) that would require a witness \
+                 calculator. This pattern is not yet supported — call the \
+                 function with compile-time arguments, or move the \
+                 computation into a template."
+            ),
+            "E212",
+            span,
+        ));
+    }
+
+    // Trivial-body path: `function f(x) { return <expr>; }`. Lower the return
+    // expression with parameter substitution. No caller-scope leakage is
+    // possible because the body has no internal identifiers beyond params.
+    let mut param_env = LoweringEnv::new();
     let mut param_map: HashMap<String, CircuitExpr> = HashMap::new();
     for (param, arg) in func.params.iter().zip(args) {
         let lowered_arg = lower_expr(arg, env, ctx)?;
@@ -143,11 +165,27 @@ fn inline_function_call(
         param_env.locals.insert(param.clone());
     }
 
-    // Lower the return expression with parameter substitution
     let result = lower_expr_with_substitution(return_expr, &param_env, ctx, &param_map)?;
 
     ctx.inline_depth -= 1;
     Ok(result)
+}
+
+/// Is the function body "non-trivial" — does it declare internal state
+/// (local vars, loops, if/else, multiple statements) beyond a single
+/// `return <expr>;`?
+///
+/// This is the gating predicate for the witness-calculator gap: anything
+/// more than a one-liner return cannot be safely inlined when the caller
+/// passes runtime arguments, because we do not lower the body's
+/// statements — only the return expression — and the body's internal
+/// variables would silently collide with the caller's scope.
+fn function_body_has_internal_state(stmts: &[crate::ast::Stmt]) -> bool {
+    // Trivial form: body is a single `return <expr>;` statement.
+    if stmts.len() == 1 && matches!(stmts[0], crate::ast::Stmt::Return { .. }) {
+        return false;
+    }
+    true
 }
 
 /// Find the return expression in a function body.

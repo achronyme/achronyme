@@ -1197,6 +1197,49 @@ fn var_postdecl_padding_e2e() {
     assert_eq!(n, 513, "expected 513 constraints");
 }
 
+/// Gap E regression: a function that declares internal state (`var`
+/// declarations, loops) cannot be circuit-inlined when its arguments are
+/// runtime signals. Circom supports this pattern via witness calculators
+/// executed at prove time; Achronyme does not (yet). Before the fix the
+/// lowering would silently substitute only the `return` expression, and
+/// any local variable name in the function body (`var out[256]` in
+/// `sha256compression`) would resolve against the *caller's* scope —
+/// producing a bare `CircuitExpr::Var("out")` that collided with the
+/// template's `signal output out[256]` and exploded at instantiate time
+/// with a confusing "undeclared variable" / "expected scalar, got array"
+/// error two levels removed from the real cause.
+///
+/// The fix detects non-trivial function bodies (anything beyond a single
+/// `return <expr>;`) and emits diagnostic E212 pointing at the call site.
+#[test]
+fn fn_local_shadowing_emits_e212() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_local_shadowing_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    match circom::compile_file(&path, &lib_dirs) {
+        Ok(_) => panic!("expected E212, but compilation succeeded"),
+        Err(circom::CircomError::LoweringError(err)) => {
+            let code = err.diagnostic.code.as_deref();
+            assert_eq!(
+                code,
+                Some("E212"),
+                "expected E212 diagnostic code, got: {code:?}"
+            );
+            let msg = &err.diagnostic.message;
+            assert!(
+                msg.contains("witness calculator"),
+                "expected witness-calculator hint in diagnostic, got: {msg}"
+            );
+            assert!(
+                msg.contains("derive"),
+                "expected function name `derive` in diagnostic, got: {msg}"
+            );
+        }
+        Err(other) => panic!("expected LoweringError, got: {other:?}"),
+    }
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,
