@@ -9,10 +9,10 @@ use std::collections::{HashMap, HashSet};
 
 use diagnostics::Span;
 
-use crate::ast::*;
 use super::expr_helpers::{
     collect_signal_refs, expr_signal_degree, extract_signal_name, is_quadratic_safe,
 };
+use crate::ast::*;
 
 pub(super) struct ConstraintCollector {
     /// Signals assigned via `<--`, mapped to their assignment span.
