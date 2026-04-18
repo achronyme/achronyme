@@ -114,12 +114,12 @@ impl<F: FieldBackend> IrLowering<F> {
             if let Some(size) = decl.array_size {
                 let vars = self.declare_public_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
-                    self.enforce_input_type_ann(ann, &vars);
+                    self.enforce_input_type_ann(ann, &vars, span)?;
                 }
             } else {
                 let v = self.declare_public(&decl.name);
                 if let Some(ref ann) = decl.type_ann {
-                    self.enforce_input_type_ann(ann, &[v]);
+                    self.enforce_input_type_ann(ann, &[v], span)?;
                 }
             }
         }
@@ -132,12 +132,12 @@ impl<F: FieldBackend> IrLowering<F> {
             if let Some(size) = decl.array_size {
                 let vars = self.declare_witness_array(&decl.name, size);
                 if let Some(ref ann) = decl.type_ann {
-                    self.enforce_input_type_ann(ann, &vars);
+                    self.enforce_input_type_ann(ann, &vars, span)?;
                 }
             } else {
                 let v = self.declare_witness(&decl.name);
                 if let Some(ref ann) = decl.type_ann {
-                    self.enforce_input_type_ann(ann, &[v]);
+                    self.enforce_input_type_ann(ann, &[v], span)?;
                 }
             }
         }
@@ -147,8 +147,13 @@ impl<F: FieldBackend> IrLowering<F> {
     /// Apply a type annotation to input variables, emitting `RangeCheck(v, 1)` for
     /// `: Bool` annotations. Input variables are always untyped at declaration time,
     /// so Bool enforcement is always needed for soundness.
-    pub(super) fn enforce_input_type_ann(&mut self, ann: &TypeAnnotation, vars: &[SsaVar]) {
-        let ty = annotation_to_ir_type(ann);
+    pub(super) fn enforce_input_type_ann(
+        &mut self,
+        ann: &TypeAnnotation,
+        vars: &[SsaVar],
+        span: &Span,
+    ) -> Result<(), IrError> {
+        let ty = annotation_to_ir_type(ann, to_ir_span(span))?;
         if ty == IrType::Bool {
             for &v in vars {
                 let enforced = self.program.fresh_var();
@@ -166,6 +171,7 @@ impl<F: FieldBackend> IrLowering<F> {
                 self.program.set_type(v, ty);
             }
         }
+        Ok(())
     }
 
     pub(super) fn lower_let(
@@ -214,7 +220,7 @@ impl<F: FieldBackend> IrLowering<F> {
                         });
                     }
                 }
-                let elem_ty = annotation_to_ir_type(ann);
+                let elem_ty = annotation_to_ir_type(ann, to_ir_span(arr_span))?;
                 if elem_ty == IrType::Bool {
                     // For Bool arrays, enforce each element
                     for (i, v) in vars.iter_mut().enumerate() {
@@ -266,7 +272,7 @@ impl<F: FieldBackend> IrLowering<F> {
                     span: to_ir_span(span),
                 });
             }
-            let declared = annotation_to_ir_type(ann);
+            let declared = annotation_to_ir_type(ann, to_ir_span(span))?;
             if let Some(inferred) = self.program.get_type(v) {
                 if !type_compatible(declared, inferred) {
                     return Err(IrError::AnnotationMismatch {

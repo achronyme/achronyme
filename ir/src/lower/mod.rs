@@ -39,6 +39,8 @@ pub(super) struct FnDef {
 }
 
 /// Convert a `TypeAnnotation` to an `IrType` (scalar types only).
+/// `Int` and `String` annotations surface as
+/// [`IrError::TypeNotConstrainable`] — they're VM-only types.
 ///
 /// ```
 /// use ir::IrLowering;
@@ -47,12 +49,15 @@ pub(super) struct FnDef {
 ///     IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
 /// assert!(!prog.instructions.is_empty());
 /// ```
-pub(super) fn annotation_to_ir_type(ann: &TypeAnnotation) -> IrType {
+pub(super) fn annotation_to_ir_type(
+    ann: &TypeAnnotation,
+    span: OptSpan,
+) -> Result<IrType, IrError> {
     match ann.base {
-        achronyme_parser::ast::BaseType::Field => IrType::Field,
-        achronyme_parser::ast::BaseType::Bool => IrType::Bool,
+        achronyme_parser::ast::BaseType::Field => Ok(IrType::Field),
+        achronyme_parser::ast::BaseType::Bool => Ok(IrType::Bool),
         achronyme_parser::ast::BaseType::Int | achronyme_parser::ast::BaseType::String => {
-            unreachable!("type `{}` is not valid in circuit context", ann.base)
+            Err(IrError::TypeNotConstrainable(ann.base.to_string(), span))
         }
     }
 }
@@ -392,12 +397,12 @@ impl<F: FieldBackend> IrLowering<F> {
             if let Some(n) = size {
                 let vars = lowering.declare_public_array(name, *n);
                 if let Some(ann) = type_ann {
-                    lowering.enforce_input_type_ann(ann, &vars);
+                    lowering.enforce_input_type_ann(ann, &vars, span)?;
                 }
             } else {
                 let v = lowering.declare_public(name);
                 if let Some(ann) = type_ann {
-                    lowering.enforce_input_type_ann(ann, &[v]);
+                    lowering.enforce_input_type_ann(ann, &[v], span)?;
                 }
             }
         }
@@ -406,12 +411,12 @@ impl<F: FieldBackend> IrLowering<F> {
             if let Some(n) = size {
                 let vars = lowering.declare_witness_array(name, *n);
                 if let Some(ann) = type_ann {
-                    lowering.enforce_input_type_ann(ann, &vars);
+                    lowering.enforce_input_type_ann(ann, &vars, span)?;
                 }
             } else {
                 let v = lowering.declare_witness(name);
                 if let Some(ann) = type_ann {
-                    lowering.enforce_input_type_ann(ann, &[v]);
+                    lowering.enforce_input_type_ann(ann, &[v], span)?;
                 }
             }
         }

@@ -60,7 +60,7 @@ impl<F: FieldBackend> IrLowering<F> {
         // Validate typed params against argument types, enforce Bool on untyped args
         for (param, arg_var) in fn_def.params.iter().zip(arg_vars.iter_mut()) {
             if let Some(ref ann) = param.type_ann {
-                let declared = annotation_to_ir_type(ann);
+                let declared = annotation_to_ir_type(ann, sp.clone())?;
                 if let Some(inferred) = self.program.get_type(*arg_var) {
                     if !type_compatible(declared, inferred) {
                         return Err(IrError::AnnotationMismatch {
@@ -112,7 +112,7 @@ impl<F: FieldBackend> IrLowering<F> {
 
         // Set return type if declared
         if let Some(ref ret_ann) = fn_def.return_type {
-            let ret_ty = annotation_to_ir_type(ret_ann);
+            let ret_ty = annotation_to_ir_type(ret_ann, sp.clone())?;
             if let Some(inferred) = self.program.get_type(result) {
                 if !type_compatible(ret_ty, inferred) {
                     return Err(IrError::AnnotationMismatch {
