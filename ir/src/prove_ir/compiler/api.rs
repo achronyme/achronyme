@@ -39,7 +39,6 @@ use resolve::{
 };
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
-
     /// Compile an AST Block into a ProveIR template.
     ///
     /// `outer_scope`: values and functions from the enclosing scope.

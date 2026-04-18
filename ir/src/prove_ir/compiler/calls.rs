@@ -645,7 +645,9 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
         let out_name = &signature.output_signals[0];
         match outputs.get(out_name) {
-            Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
+            Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Scalar(expr)) => {
+                Ok(expr.clone())
+            }
             Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Array { .. }) => {
                 Err(ProveIrError::CircomDispatch {
                     kind: CircomDispatchErrorKind::ArrayOutputRequiresIndex {
@@ -744,7 +746,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     self.env
                         .insert(dotted, CompEnvValue::Scalar(mangled.clone()));
                 }
-                Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Array { dims, values }) => {
+                Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Array {
+                    dims,
+                    values,
+                }) => {
                     // Row-major flatten: iterate every value and bind
                     // each under "<name>.<out>_<i>" / "<name>.<out>_<i>_<j>".
                     let total: u64 = dims.iter().product();
@@ -973,7 +978,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     // -- Individual builtin lowering functions --------------------------------
 
-    pub(super) fn lower_poseidon(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_poseidon(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("poseidon", 2, args.len(), span)?;
         let left = self.compile_expr(args[0])?;
         let right = self.compile_expr(args[1])?;
@@ -1001,7 +1010,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::PoseidonMany(compiled?))
     }
 
-    pub(super) fn lower_mux(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_mux(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("mux", 3, args.len(), span)?;
         let cond = self.compile_expr(args[0])?;
         let if_true = self.compile_expr(args[1])?;
@@ -1055,7 +1068,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    pub(super) fn lower_len(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_len(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("len", 1, args.len(), span)?;
         self.compile_len_call(args[0], span)
     }
@@ -1078,7 +1095,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    pub(super) fn lower_assert(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_assert(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         self.check_assert_arity(args.len(), span)?;
         let cond = self.compile_expr(args[0])?;
         let message = self.extract_assert_message(args.get(1), span)?;
@@ -1090,7 +1111,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    pub(super) fn lower_int_div(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_int_div(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("int_div", 3, args.len(), span)?;
         let lhs = self.compile_expr(args[0])?;
         let rhs = self.compile_expr(args[1])?;
@@ -1102,7 +1127,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    pub(super) fn lower_int_mod(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_int_mod(
+        &mut self,
+        args: &[&Expr],
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("int_mod", 3, args.len(), span)?;
         let lhs = self.compile_expr(args[0])?;
         let rhs = self.compile_expr(args[1])?;
@@ -1113,5 +1142,4 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             max_bits,
         })
     }
-
 }

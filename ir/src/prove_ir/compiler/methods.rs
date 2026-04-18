@@ -219,7 +219,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
 
     /// Extract an array identifier name from an expression (for merkle_verify args).
-    pub(super) fn extract_array_ident(&mut self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
+    pub(super) fn extract_array_ident(
+        &mut self,
+        expr: &Expr,
+        span: &Span,
+    ) -> Result<String, ProveIrError> {
         if let Expr::Ident { name, .. } = expr {
             match self.env.get(name.as_str()) {
                 Some(CompEnvValue::Array(elems)) => {
@@ -283,7 +287,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Validate assert_eq arity: 2 or 3 arguments.
-    pub(super) fn check_assert_eq_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
+    pub(super) fn check_assert_eq_arity(
+        &self,
+        got: usize,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
         if !(2..=3).contains(&got) {
             return Err(ProveIrError::UnsupportedOperation {
                 description: format!("`assert_eq` expects 2 or 3 arguments, got {got}"),
@@ -339,7 +347,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(())
     }
 
-    pub(super) fn method_not_constrainable(&self, method: &str, reason: &str, span: &Span) -> ProveIrError {
+    pub(super) fn method_not_constrainable(
+        &self,
+        method: &str,
+        reason: &str,
+        span: &Span,
+    ) -> ProveIrError {
         ProveIrError::MethodNotConstrainable {
             method: method.into(),
             reason: reason.into(),

@@ -178,7 +178,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// `import "./module.ach" as alias`
-    pub(super) fn compile_import(&mut self, path: &str, alias: &str, span: &Span) -> Result<(), ProveIrError> {
+    pub(super) fn compile_import(
+        &mut self,
+        path: &str,
+        alias: &str,
+        span: &Span,
+    ) -> Result<(), ProveIrError> {
         let canonical = self.resolve_import_path(path, span)?;
         if self.compiling_modules.contains(&canonical) {
             return Err(ProveIrError::CircularImport(path.to_string()));
@@ -608,7 +613,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// - A bare `Expr::Ident` referencing an array
     /// - A `Stmt::Return` with an `Expr::Ident` referencing an array
     /// - Any other statement (compiled normally) followed by checking env
-    pub(super) fn find_array_result(&mut self, stmts: &[Stmt], span: &Span) -> Result<String, ProveIrError> {
+    pub(super) fn find_array_result(
+        &mut self,
+        stmts: &[Stmt],
+        span: &Span,
+    ) -> Result<String, ProveIrError> {
         let last = stmts
             .last()
             .ok_or_else(|| ProveIrError::UnsupportedOperation {
@@ -890,5 +899,4 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         });
         Ok(())
     }
-
 }

@@ -97,23 +97,20 @@ fn negative_field_literal() {
 
 #[test]
 fn ident_scalar() {
-    let expr =
-        compile_expr_with_scope("x", &[("x", CompEnvValue::Scalar("x".into()))]).unwrap();
+    let expr = compile_expr_with_scope("x", &[("x", CompEnvValue::Scalar("x".into()))]).unwrap();
     assert_eq!(expr, CircuitExpr::Var("x".into()));
 }
 
 #[test]
 fn ident_capture() {
-    let expr =
-        compile_expr_with_scope("n", &[("n", CompEnvValue::Capture("n".into()))]).unwrap();
+    let expr = compile_expr_with_scope("n", &[("n", CompEnvValue::Capture("n".into()))]).unwrap();
     assert_eq!(expr, CircuitExpr::Capture("n".into()));
 }
 
 #[test]
 fn ident_array_as_scalar_errors() {
-    let err =
-        compile_expr_with_scope("arr", &[("arr", CompEnvValue::Array(vec!["arr_0".into()]))])
-            .unwrap_err();
+    let err = compile_expr_with_scope("arr", &[("arr", CompEnvValue::Array(vec!["arr_0".into()]))])
+        .unwrap_err();
     assert!(matches!(err, ProveIrError::TypeMismatch { .. }));
 }
 
@@ -721,8 +718,7 @@ fn stmt_assert_too_many_args() {
 
 #[test]
 fn stmt_assert_eq_with_message() {
-    let ir =
-        compile_circuit("public a\npublic b\nassert_eq(a, b, \"values must match\")").unwrap();
+    let ir = compile_circuit("public a\npublic b\nassert_eq(a, b, \"values must match\")").unwrap();
     let node = ir
         .body
         .iter()
@@ -848,8 +844,7 @@ fn mut_decl_basic() {
 
 #[test]
 fn mut_reassignment_creates_ssa_version() {
-    let ir =
-        compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
+    let ir = compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
     // body[0]: Let { name: "acc", value: Var("x") }
     // body[1]: Let { name: "acc$v1", value: BinOp(Add, Var("acc"), Const(1)) }
     // body[2]: AssertEq { Var("acc$v1"), Var("x") }
@@ -871,10 +866,9 @@ fn mut_reassignment_creates_ssa_version() {
 
 #[test]
 fn mut_multiple_reassignments() {
-    let ir = compile_circuit(
-        "public x\nmut a = 0\na = a + 1\na = a + 2\na = a + 3\nassert_eq(a, x)",
-    )
-    .unwrap();
+    let ir =
+        compile_circuit("public x\nmut a = 0\na = a + 1\na = a + 2\na = a + 3\nassert_eq(a, x)")
+            .unwrap();
     // Let("a"), Let("a$v1"), Let("a$v2"), Let("a$v3"), AssertEq(Var("a$v3"), ...)
     assert!(matches!(
         &ir.body[0],
@@ -903,8 +897,7 @@ fn mut_multiple_reassignments() {
 #[test]
 fn mut_reassignment_uses_previous_version() {
     // acc = acc + 1 should reference the PREVIOUS version of acc in the RHS
-    let ir =
-        compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
+    let ir = compile_circuit("public x\nmut acc = x\nacc = acc + 1\nassert_eq(acc, x)").unwrap();
     // body[1]: Let { name: "acc$v1", value: BinOp(Add, Var("acc"), Const(1)) }
     if let CircuitNode::Let { value, .. } = &ir.body[1] {
         // The RHS should reference "acc" (v0), not "acc$v1"
@@ -970,10 +963,9 @@ fn mut_in_accumulator_pattern() {
 
 #[test]
 fn fn_simple_inline() {
-    let ir = compile_circuit(
-        "public x\npublic out\nfn double(a) { a * 2 }\nassert_eq(double(x), out)",
-    )
-    .unwrap();
+    let ir =
+        compile_circuit("public x\npublic out\nfn double(a) { a * 2 }\nassert_eq(double(x), out)")
+            .unwrap();
     // double(x) should produce: Let(__double_a = Var(x)) then the inline result
     // The AssertEq should have the inlined expression
     assert!(ir
@@ -1028,8 +1020,7 @@ fn fn_with_return() {
 
 #[test]
 fn fn_wrong_arity_errors() {
-    let err =
-        compile_circuit("public x\nfn f(a, b) { a + b }\nassert_eq(f(x), x)").unwrap_err();
+    let err = compile_circuit("public x\nfn f(a, b) { a + b }\nassert_eq(f(x), x)").unwrap_err();
     assert!(matches!(err, ProveIrError::WrongArgumentCount { .. }));
 }
 
@@ -1194,8 +1185,7 @@ fn for_expr_not_array_errors() {
 
 #[test]
 fn index_constant_resolves() {
-    let ir =
-        compile_circuit("public out\nlet arr = [10, 20, 30]\nassert_eq(arr[1], out)").unwrap();
+    let ir = compile_circuit("public out\nlet arr = [10, 20, 30]\nassert_eq(arr[1], out)").unwrap();
     // arr[1] with constant index should resolve to Var("arr_1")
     if let CircuitNode::AssertEq { lhs, .. } = &ir.body[1] {
         assert_eq!(*lhs, CircuitExpr::Var("arr_1".into()));
@@ -1277,8 +1267,7 @@ fn capture_classification_end_to_end() {
 #[test]
 fn no_captures_in_self_contained_circuit() {
     // ach circuit mode: no outer scope, no captures
-    let ir =
-        compile_circuit("public out\nwitness a\nwitness b\nassert_eq(a * b, out)").unwrap();
+    let ir = compile_circuit("public out\nwitness a\nwitness b\nassert_eq(a * b, out)").unwrap();
     assert!(ir.captures.is_empty());
 }
 
@@ -1829,8 +1818,7 @@ fn dynamic_loop_bound_expr() {
 
 #[test]
 fn mut_array_decl() {
-    let ir =
-        compile_circuit("public out\nmut arr = [1, 2, 3]\nassert_eq(arr[0], out)").unwrap();
+    let ir = compile_circuit("public out\nmut arr = [1, 2, 3]\nassert_eq(arr[0], out)").unwrap();
     // Should have a LetArray node
     assert!(
         ir.body
@@ -1893,8 +1881,7 @@ fn indexed_assignment_immutable_array_rejected() {
 
 #[test]
 fn indexed_assignment_scalar_rejected() {
-    let err =
-        compile_circuit("public out\nmut x = 5\nx[0] = 10\nassert_eq(x, out)").unwrap_err();
+    let err = compile_circuit("public out\nmut x = 5\nx[0] = 10\nassert_eq(x, out)").unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("array") || msg.contains("scalar"),

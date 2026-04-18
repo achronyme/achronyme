@@ -126,7 +126,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     ///   dispatchable from a call site (constants, circom
     ///   templates). Caller falls through to the legacy
     ///   lookup-by-name path.
-    pub(super) fn resolve_dispatch_via_annotation(&mut self, callee_expr_id: ExprId) -> DispatchDecision {
+    pub(super) fn resolve_dispatch_via_annotation(
+        &mut self,
+        callee_expr_id: ExprId,
+    ) -> DispatchDecision {
         let (Some(table), Some(resolved), Some(module_id)) = (
             self.resolver_table.as_ref(),
             self.resolver_resolved.as_ref(),

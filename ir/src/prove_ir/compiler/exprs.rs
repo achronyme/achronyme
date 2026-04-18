@@ -13,7 +13,7 @@
 //!   `compile_pow`, `compile_unary`, `extract_const_u64`.
 //!
 //! Statement-level compilation lives in [`super::stmts`]; call dispatch
-//! + builtin lowering in [`super::calls`]; method lookups in
+//! and builtin lowering in [`super::calls`]; method lookups in
 //! [`super::methods`].
 
 use achronyme_parser::ast::*;
@@ -26,7 +26,6 @@ use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::*;
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
-
     // -----------------------------------------------------------------------
     // Statement compilation
     // -----------------------------------------------------------------------
@@ -207,7 +206,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Identifiers
     // -----------------------------------------------------------------------
 
-    pub(super) fn compile_ident(&mut self, name: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn compile_ident(
+        &mut self,
+        name: &str,
+        span: &Span,
+    ) -> Result<CircuitExpr, ProveIrError> {
         // Phase 3E.1 shadow dispatch: observation only. Real
         // dispatch flip lands in Phase 3E.2/3. Records a hit only
         // when the resolver state is installed AND the annotation
@@ -240,7 +243,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
     // Dot access (non-call)
     // -----------------------------------------------------------------------
-
 
     // -----------------------------------------------------------------------
     // Control flow
@@ -709,7 +711,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Intermediate statements (Let, AssertEq, etc.) are appended to self.body.
     /// The last expression statement becomes the return value.
     /// If the block has no expression result, returns Const(ZERO).
-    pub(super) fn compile_block_as_expr(&mut self, block: &Block) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn compile_block_as_expr(
+        &mut self,
+        block: &Block,
+    ) -> Result<CircuitExpr, ProveIrError> {
         let stmts = &block.stmts;
         if stmts.is_empty() {
             return Ok(CircuitExpr::Const(FieldConst::zero()));
