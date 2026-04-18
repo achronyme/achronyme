@@ -2033,6 +2033,7 @@ mod circom_dispatch {
     use crate::prove_ir::circom_interop::{
         CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
     };
+    use crate::prove_ir::error::CircomDispatchErrorKind;
     use diagnostics::Span;
     use std::collections::HashMap;
     use std::sync::Arc;
