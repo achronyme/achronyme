@@ -23,6 +23,8 @@
 //! `.claude/plans/movimiento-2-unified-dispatch.md` §4 Phase 3 for
 //! the full decomposition.
 
+mod helpers;
+
 use std::collections::HashMap;
 
 use achronyme_parser::ast::{Block, ElseBranch, Expr, ExprId, ForIterable, Span, Stmt};
@@ -31,6 +33,8 @@ use crate::error::{ResolveError, UnsupportedShape};
 use crate::module_graph::{ImportEdgeKind, ModuleGraph, ModuleId, ModuleNode};
 use crate::symbol::{Availability, CallableKind, ConstKind, SymbolId};
 use crate::table::SymbolTable;
+
+use helpers::{is_exported, module_prefix, qualify, unwrap_exported};
 
 /// Walk every top-level statement in the given module and register
 /// every `fn` and (exported) `let` into the table.
@@ -916,48 +920,6 @@ fn is_namespace_alias_ident(ctx: &AnnotateCtx, expr: &Expr) -> bool {
         .iter()
         .any(|e| matches!(e.kind, ImportEdgeKind::Namespace) && &e.alias == name)
 }
-
-// ----------------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------------
-
-/// Build the qualified-name prefix for a module: `""` for the root,
-/// `"modN::"` otherwise. See [`register_module`]'s "Key choice"
-/// section for why we use the module id number instead of a user
-/// alias.
-fn module_prefix(id: ModuleId, graph: &ModuleGraph) -> String {
-    if id == graph.root() {
-        String::new()
-    } else {
-        format!("mod{}::", id.as_u32())
-    }
-}
-
-fn qualify(prefix: &str, name: &str) -> String {
-    if prefix.is_empty() {
-        name.to_string()
-    } else {
-        format!("{prefix}{name}")
-    }
-}
-
-/// Unwrap `Stmt::Export { inner, .. }` to return the inner statement.
-/// Non-exported statements pass through unchanged.
-fn unwrap_exported(stmt: &Stmt) -> Option<&Stmt> {
-    match stmt {
-        Stmt::Export { inner, .. } => Some(inner),
-        other => Some(other),
-    }
-}
-
-fn is_exported(stmt: &Stmt) -> bool {
-    matches!(stmt, Stmt::Export { .. })
-}
-
-// ==========================================================================
-// Unit tests
-// ==========================================================================
-
 
 #[cfg(test)]
 mod tests;
