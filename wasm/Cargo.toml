@@ -2,6 +2,11 @@
 name = "achronyme-wasm"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/achronyme/achronyme"
+homepage = "https://achrony.me"
+authors = ["Achronyme Contributors"]
+description = "WASM bindings for the Achronyme compiler, VM, and LSP — powers the browser playground."
 
 [lib]
 crate-type = ["cdylib"]
