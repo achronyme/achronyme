@@ -23,10 +23,7 @@ use ir::prove_ir::types::{CircuitExpr, CircuitNode};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
-use super::components::{
-    inline_component_body_with_arrays, inline_component_body_with_const_inputs,
-    register_component_locals,
-};
+use super::components::{inline_component_body_with_arrays, register_component_locals};
 use super::context::LoweringContext;
 use super::env::LoweringEnv;
 use super::error::LoweringError;
@@ -70,19 +67,8 @@ fn lower_stmts_with_pending<'a>(
     let remaining: Vec<String> = pending.keys().cloned().collect();
     for comp_name in remaining {
         if let Some(comp) = pending.remove(&comp_name) {
-            let mut const_inputs = comp.const_wired.clone();
-            wiring::extract_const_inputs_from_nodes(&comp_name, &nodes, &mut const_inputs);
-            let body = inline_component_body_with_const_inputs(
-                &comp_name,
-                comp.template,
-                &comp.template_args,
-                &comp.array_args,
-                &const_inputs,
-                ctx,
-                &comp.template.span,
-            )?;
-            wiring::propagate_const_nodes(&body, env);
-            nodes.extend(body);
+            let span = comp.template.span.clone();
+            comp.inline_into(&comp_name, &mut nodes, ctx, env, &span)?;
         }
     }
 
@@ -588,15 +574,12 @@ fn lower_component_decl<'a>(
                     } else {
                         pending.insert(
                             comp_name.clone(),
-                            PendingComponent {
+                            PendingComponent::new(
                                 template,
-                                template_args: call.scalar_args,
-                                array_args: call.array_args,
+                                call.scalar_args,
+                                call.array_args,
                                 input_signals,
-                                wired_signals: HashSet::new(),
-                                has_indexed_wirings: false,
-                                const_wired: HashMap::new(),
-                            },
+                            ),
                         );
                     }
                 } else {

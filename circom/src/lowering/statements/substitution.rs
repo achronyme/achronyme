@@ -269,15 +269,12 @@ fn lower_var_assign<'a>(
                 } else {
                     pending.insert(
                         comp_name,
-                        PendingComponent {
+                        PendingComponent::new(
                             template,
-                            template_args: call.scalar_args,
-                            array_args: call.array_args,
+                            call.scalar_args,
+                            call.array_args,
                             input_signals,
-                            wired_signals: HashSet::new(),
-                            has_indexed_wirings: false,
-                            const_wired: HashMap::new(),
-                        },
+                        ),
                     );
                 }
             }

@@ -168,23 +168,8 @@ pub(super) fn flush_specific_component<'a>(
     env: &mut LoweringEnv,
 ) -> Result<(), LoweringError> {
     if let Some(comp) = pending.remove(comp_name) {
-        // Build const_inputs by merging explicit const_wired with constants
-        // extracted from already-emitted Let/WitnessHint nodes for this component.
-        // This handles indexed wirings (e.g., comp.base[0] <== Const) where
-        // the element name "base_0" isn't tracked during wiring.
-        let mut const_inputs = comp.const_wired.clone();
-        extract_const_inputs_from_nodes(comp_name, nodes, &mut const_inputs);
-        let body = inline_component_body_with_const_inputs(
-            comp_name,
-            comp.template,
-            &comp.template_args,
-            &comp.array_args,
-            &const_inputs,
-            ctx,
-            &comp.template.span,
-        )?;
-        propagate_const_nodes(&body, env);
-        nodes.extend(body);
+        let span = comp.template.span.clone();
+        comp.inline_into(comp_name, nodes, ctx, env, &span)?;
     }
     Ok(())
 }
@@ -195,7 +180,7 @@ pub(super) fn flush_specific_component<'a>(
 ///
 /// For indexed nodes (e.g., `LetIndexed { array: "comp.base", index: Const(0), value: Const(fc) }`),
 /// the element name is constructed as `base_0`.
-pub(super) fn extract_const_inputs_from_nodes(
+fn extract_const_inputs_from_nodes(
     comp_name: &str,
     nodes: &[CircuitNode],
     const_inputs: &mut HashMap<String, FieldConst>,
@@ -425,7 +410,7 @@ pub(super) fn extract_component_wiring_with_env(
 /// inlining Edwards2Montgomery with constant inputs, its output signals
 /// (e.g., `e2m.out_0`) become known constants in the parent scope, so
 /// subsequent components (Window4, MontgomeryDouble) can also fold.
-pub(super) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
+fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
     for node in nodes {
         match node {
             CircuitNode::Let { name, value, .. } => {
