@@ -102,21 +102,26 @@ impl WiringState {
 }
 
 /// A pending component whose input signals haven't all been wired yet.
+///
+/// All fields are private — callers interact through `new`,
+/// `mark_wired`, `is_ready_to_inline`, and `inline_into`. This keeps
+/// the wiring state machine + const-propagation bookkeeping in a
+/// single module so future protocol changes only touch this file.
 pub(super) struct PendingComponent<'a> {
-    pub template: &'a ast::TemplateDef,
-    pub template_args: Vec<CircuitExpr>,
+    template: &'a ast::TemplateDef,
+    template_args: Vec<CircuitExpr>,
     /// Array template args (param_name → compile-time array value).
-    pub array_args: HashMap<String, EvalValue>,
-    pub input_signals: HashSet<String>,
+    array_args: HashMap<String, EvalValue>,
+    input_signals: HashSet<String>,
     /// Wiring progress (which signals are wired + whether any wiring
     /// was indexed).
-    pub state: WiringState,
+    state: WiringState,
     /// Signal inputs wired to compile-time constants.
     /// When the component body is inlined, these are injected into the
     /// sub-template's `known_constants` so the lowerer emits `Const`
     /// instead of `Input`, enabling full constant propagation through
     /// Montgomery/MUX operations (Pedersen: 88→13 constraints).
-    pub const_wired: HashMap<String, FieldConst>,
+    const_wired: HashMap<String, FieldConst>,
 }
 
 impl<'a> PendingComponent<'a> {
@@ -169,6 +174,13 @@ impl<'a> PendingComponent<'a> {
         self.state.is_ready(&self.input_signals)
     }
 
+    /// Span of the template declaration. Used by flush + cleanup
+    /// callers that don't have a wiring-statement span to attribute
+    /// inline errors to.
+    pub(super) fn template_span(&self) -> &diagnostics::Span {
+        &self.template.span
+    }
+
     /// Inline this pending component's body into `nodes`, propagating
     /// constants into `env`.
     ///
@@ -219,7 +231,7 @@ pub(super) fn flush_specific_component<'a>(
     env: &mut LoweringEnv,
 ) -> Result<(), LoweringError> {
     if let Some(comp) = pending.remove(comp_name) {
-        let span = comp.template.span.clone();
+        let span = comp.template_span().clone();
         comp.inline_into(comp_name, nodes, ctx, env, &span)?;
     }
     Ok(())

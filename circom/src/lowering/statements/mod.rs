@@ -67,7 +67,7 @@ fn lower_stmts_with_pending<'a>(
     let remaining: Vec<String> = pending.keys().cloned().collect();
     for comp_name in remaining {
         if let Some(comp) = pending.remove(&comp_name) {
-            let span = comp.template.span.clone();
+            let span = comp.template_span().clone();
             comp.inline_into(&comp_name, &mut nodes, ctx, env, &span)?;
         }
     }
