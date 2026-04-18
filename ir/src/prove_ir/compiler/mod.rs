@@ -155,7 +155,7 @@ struct FnDef {
 /// table; `UserFn` carries the fn_table key for inlining. The legacy
 /// name-based path in [`compile_named_call`] handles the
 /// `NoAnnotation` fallback.
-enum DispatchDecision {
+pub(super) enum DispatchDecision {
     Builtin {
         handle: resolve::builtins::ProveIrLowerHandle,
     },
@@ -176,7 +176,7 @@ enum DispatchDecision {
 /// renamed [`Stmt::FnDecl`] entries for the fn_table population,
 /// and once by the `OuterResolverState` constructor so the
 /// ProveIR compiler's annotation-driven dispatch can flip.
-struct CircuitResolverBundle {
+pub(super) struct CircuitResolverBundle {
     state: ResolverState,
     dispatch_by_symbol: HashMap<SymbolId, String>,
     module_by_key: HashMap<String, ModuleId>,
@@ -267,7 +267,7 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
 }
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             env: HashMap::new(),
             ssa_versions: HashMap::new(),
@@ -307,7 +307,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// `current_expr_id` is unset, or when the annotation table has
     /// no entry for this key. Phase 3E.1 only records — Phase 3E.2
     /// flips dispatch.
-    fn record_resolver_hit(&mut self) {
+    pub(super) fn record_resolver_hit(&mut self) {
         let Some(expr_id) = self.current_expr_id else {
             return;
         };
@@ -322,7 +322,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Ident's** id — ProveIR never recurses into the callee
     /// expression, so the callee's id must be threaded through
     /// explicitly.
-    fn record_resolver_hit_for(&mut self, expr_id: ExprId) {
+    pub(super) fn record_resolver_hit_for(&mut self, expr_id: ExprId) {
         let Some(module_id) = self.current_resolver_module() else {
             return;
         };
@@ -348,7 +348,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     ///
     /// When the stack is empty, falls back to the root module
     /// installed at OuterScope handoff.
-    fn current_resolver_module(&self) -> Option<ModuleId> {
+    pub(super) fn current_resolver_module(&self) -> Option<ModuleId> {
         self.resolver_module_stack
             .last()
             .copied()
@@ -373,7 +373,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     ///   dispatchable from a call site (constants, circom
     ///   templates). Caller falls through to the legacy
     ///   lookup-by-name path.
-    fn resolve_dispatch_via_annotation(&mut self, callee_expr_id: ExprId) -> DispatchDecision {
+    pub(super) fn resolve_dispatch_via_annotation(&mut self, callee_expr_id: ExprId) -> DispatchDecision {
         let (Some(table), Some(resolved), Some(module_id)) = (
             self.resolver_table.as_ref(),
             self.resolver_resolved.as_ref(),
@@ -463,7 +463,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// `[[0,0], [0,1], [0,2], [1,0], [1,1], [1,2]]`. Used to map each
     /// element of an `Expr::Array` literal onto its expanded
     /// `name_i[_j…]` key in the circom signal-input map.
-    fn flatten_row_major_indices(dims: &[u64]) -> Vec<Vec<u64>> {
+    pub(super) fn flatten_row_major_indices(dims: &[u64]) -> Vec<Vec<u64>> {
         let mut result = vec![Vec::new()];
         for &d in dims {
             let mut next = Vec::with_capacity(result.len() * d as usize);
@@ -508,7 +508,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok((prove_ir, compiler.resolver_hits))
     }
 
-    fn compile_with_source_dir(
+    pub(super) fn compile_with_source_dir(
         block: &Block,
         outer_scope: &OuterScope,
         source_dir: Option<std::path::PathBuf>,
@@ -521,7 +521,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// [`compile_with_trace`]. Returns the fully-compiled ProveIR
     /// alongside the compiler instance so shadow-dispatch consumers
     /// can inspect the hit trace without re-running the walk.
-    fn compile_into_instance(
+    pub(super) fn compile_into_instance(
         block: &Block,
         outer_scope: &OuterScope,
         source_dir: Option<std::path::PathBuf>,
@@ -841,7 +841,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// surfacing resolver-level errors to the user — the legacy
     /// path has its own error reporting via
     /// `register_module_exports` + `compile_import`.
-    fn try_build_circuit_resolver_state(
+    pub(super) fn try_build_circuit_resolver_state(
         program: &Program,
         source_dir: Option<std::path::PathBuf>,
     ) -> Option<CircuitResolverBundle> {
@@ -912,7 +912,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
 
     /// Compile all statements in a block, appending to self.body.
-    fn compile_block_stmts(&mut self, block: &Block) -> Result<(), ProveIrError> {
+    pub(super) fn compile_block_stmts(&mut self, block: &Block) -> Result<(), ProveIrError> {
         for stmt in &block.stmts {
             self.compile_stmt(stmt)?;
         }
@@ -920,7 +920,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Compile a single statement.
-    fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), ProveIrError> {
+    pub(super) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), ProveIrError> {
         match stmt {
             Stmt::PublicDecl { names, span } => self.compile_public_decl(names, span),
             Stmt::WitnessDecl { names, span } => self.compile_witness_decl(names, span),
@@ -1002,7 +1002,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
 
     /// Resolve a relative import path against the source directory.
-    fn resolve_import_path(
+    pub(super) fn resolve_import_path(
         &self,
         path: &str,
         _span: &Span,
@@ -1026,7 +1026,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Register exported functions from a module into fn_table with alias prefix.
-    fn register_module_exports(
+    pub(super) fn register_module_exports(
         &mut self,
         alias: &str,
         module: &crate::module_loader::ModuleExports,
@@ -1062,7 +1062,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// `import "./module.ach" as alias`
-    fn compile_import(&mut self, path: &str, alias: &str, span: &Span) -> Result<(), ProveIrError> {
+    pub(super) fn compile_import(&mut self, path: &str, alias: &str, span: &Span) -> Result<(), ProveIrError> {
         let canonical = self.resolve_import_path(path, span)?;
         if self.compiling_modules.contains(&canonical) {
             return Err(ProveIrError::CircularImport(path.to_string()));
@@ -1084,7 +1084,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// `import { fn1, fn2 } from "./module.ach"`
-    fn compile_selective_import(
+    pub(super) fn compile_selective_import(
         &mut self,
         names: &[String],
         path: &str,
@@ -1146,7 +1146,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Public/Witness declarations
     // -----------------------------------------------------------------------
 
-    fn compile_public_decl(
+    pub(super) fn compile_public_decl(
         &mut self,
         names: &[InputDecl],
         span: &Span,
@@ -1154,7 +1154,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         self.compile_input_decl(names, span, true)
     }
 
-    fn compile_witness_decl(
+    pub(super) fn compile_witness_decl(
         &mut self,
         names: &[InputDecl],
         span: &Span,
@@ -1163,7 +1163,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Shared implementation for public/witness input declarations.
-    fn compile_input_decl(
+    pub(super) fn compile_input_decl(
         &mut self,
         names: &[InputDecl],
         span: &Span,
@@ -1229,7 +1229,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Let declaration
     // -----------------------------------------------------------------------
 
-    fn compile_let(
+    pub(super) fn compile_let(
         &mut self,
         name: &str,
         type_ann: Option<&TypeAnnotation>,
@@ -1356,7 +1356,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Returns `Some(array_name_in_env)` if the call was handled as an
     /// array-returning function, or `None` if it should be compiled as a
     /// normal scalar expression.
-    fn try_compile_array_fn_call(
+    pub(super) fn try_compile_array_fn_call(
         &mut self,
         _let_name: &str,
         type_ann: Option<&TypeAnnotation>,
@@ -1492,7 +1492,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// - A bare `Expr::Ident` referencing an array
     /// - A `Stmt::Return` with an `Expr::Ident` referencing an array
     /// - Any other statement (compiled normally) followed by checking env
-    fn find_array_result(&mut self, stmts: &[Stmt], span: &Span) -> Result<String, ProveIrError> {
+    pub(super) fn find_array_result(&mut self, stmts: &[Stmt], span: &Span) -> Result<String, ProveIrError> {
         let last = stmts
             .last()
             .ok_or_else(|| ProveIrError::UnsupportedOperation {
@@ -1538,7 +1538,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Mut declaration (desugared to SSA)
     // -----------------------------------------------------------------------
 
-    fn compile_mut_decl(
+    pub(super) fn compile_mut_decl(
         &mut self,
         name: &str,
         _type_ann: Option<&TypeAnnotation>,
@@ -1599,7 +1599,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Assignment (desugared to SSA rebinding)
     // -----------------------------------------------------------------------
 
-    fn compile_assignment(
+    pub(super) fn compile_assignment(
         &mut self,
         target: &Expr,
         value: &Expr,
@@ -1669,7 +1669,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Compile `arr[i] = expr` → `LetIndexed { array, index, value }`.
-    fn compile_indexed_assignment(
+    pub(super) fn compile_indexed_assignment(
         &mut self,
         object: &Expr,
         index: &Expr,
@@ -1728,7 +1728,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Expression statement (handles assert_eq / assert as nodes)
     // -----------------------------------------------------------------------
 
-    fn compile_expr_stmt(&mut self, expr: &Expr) -> Result<(), ProveIrError> {
+    pub(super) fn compile_expr_stmt(&mut self, expr: &Expr) -> Result<(), ProveIrError> {
         // Detect assert_eq(a, b) and assert(x) to emit constraint nodes
         if let Expr::Call {
             callee, args, span, ..
@@ -1900,7 +1900,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Literals
     // -----------------------------------------------------------------------
 
-    fn compile_number(&self, s: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn compile_number(&self, s: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
         if s.contains('.') {
             return Err(ProveIrError::TypeNotConstrainable {
                 type_name: "decimal number".into(),
@@ -1929,7 +1929,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
     }
 
-    fn compile_field_lit(
+    pub(super) fn compile_field_lit(
         &self,
         value: &str,
         radix: &FieldRadix,
@@ -1951,7 +1951,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Identifiers
     // -----------------------------------------------------------------------
 
-    fn compile_ident(&mut self, name: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn compile_ident(&mut self, name: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
         // Phase 3E.1 shadow dispatch: observation only. Real
         // dispatch flip lands in Phase 3E.2/3. Records a hit only
         // when the resolver state is installed AND the annotation
@@ -1981,7 +1981,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Static access (Type::MEMBER)
     // -----------------------------------------------------------------------
 
-    fn compile_static_access(
+    pub(super) fn compile_static_access(
         &self,
         type_name: &str,
         member: &str,
@@ -2034,7 +2034,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Call dispatch
     // -----------------------------------------------------------------------
 
-    fn compile_call(
+    pub(super) fn compile_call(
         &mut self,
         callee: &Expr,
         args: &[&Expr],
@@ -2211,7 +2211,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// the user appears to have *meant* a circom template — otherwise
     /// returns `None` so the caller falls through to the normal
     /// function dispatch.
-    fn diagnose_unresolved_circom_curry(
+    pub(super) fn diagnose_unresolved_circom_curry(
         &self,
         inner_callee: &Expr,
         span: &Span,
@@ -2310,7 +2310,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     ///
     /// Returns `None` for every other shape so the caller falls
     /// through to the normal call dispatch without regression.
-    fn try_resolve_circom_key(&self, callee: &Expr) -> Option<String> {
+    pub(super) fn try_resolve_circom_key(&self, callee: &Expr) -> Option<String> {
         match callee {
             Expr::Ident { name, .. } => {
                 if self.circom_table.contains_key(name) {
@@ -2360,7 +2360,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Returns the outputs map together with the resolved template
     /// signature so callers can project or re-bind however the
     /// caller context needs.
-    fn instantiate_circom_template(
+    pub(super) fn instantiate_circom_template(
         &mut self,
         key: &str,
         template_args: &[&Expr],
@@ -2563,7 +2563,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// output and array-output templates must be bound via `let r =
     /// T()(x)` so that `r.field` / `r.elem_i` can route through
     /// [`compile_let_for_circom_call`].
-    fn compile_circom_template_call(
+    pub(super) fn compile_circom_template_call(
         &mut self,
         key: &str,
         template_args: &[&Expr],
@@ -2635,7 +2635,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// call and binding succeeded; `Ok(false)` when the value did not
     /// match the circom curry shape so the caller should fall back to
     /// the normal let-compilation path.
-    fn compile_let_for_circom_call(
+    pub(super) fn compile_let_for_circom_call(
         &mut self,
         name: &str,
         value: &Expr,
@@ -2773,7 +2773,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Module-stack push/pop for inlined user fn bodies lives in
     /// [`compile_user_fn_call`] itself — this helper only selects
     /// the dispatch arm.
-    fn try_annotation_dispatch(
+    pub(super) fn try_annotation_dispatch(
         &mut self,
         callee_expr_id: ExprId,
         args: &[&Expr],
@@ -2819,7 +2819,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Movimiento 2 Phase 3E.2 / 3F — annotation-driven dispatch
     /// delegates to [`try_annotation_dispatch`] and falls back to
     /// the legacy name-based path if the annotation path declines.
-    fn compile_named_call(
+    pub(super) fn compile_named_call(
         &mut self,
         name: &str,
         args: &[&Expr],
@@ -2860,7 +2860,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// looked up in the registry, and if a ProveIR-available entry
     /// exists, its [`ProveIrLowerHandle`] indexes into the lowering
     /// dispatch table. Names not in the registry return `Ok(None)`.
-    fn lower_builtin(
+    pub(super) fn lower_builtin(
         &mut self,
         name: &str,
         args: &[&Expr],
@@ -2890,7 +2890,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// 1. A new `ProveIrLowerHandle(N)` in the registry.
     /// 2. A new `lower_*` method below.
     /// 3. Slot `N` in the `LOWERINGS` table pointing to that method.
-    fn dispatch_builtin_by_handle(
+    pub(super) fn dispatch_builtin_by_handle(
         &mut self,
         handle: resolve::builtins::ProveIrLowerHandle,
         args: &[&Expr],
@@ -2924,7 +2924,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     // -- Individual builtin lowering functions --------------------------------
 
-    fn lower_poseidon(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_poseidon(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("poseidon", 2, args.len(), span)?;
         let left = self.compile_expr(args[0])?;
         let right = self.compile_expr(args[1])?;
@@ -2934,7 +2934,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_poseidon_many(
+    pub(super) fn lower_poseidon_many(
         &mut self,
         args: &[&Expr],
         span: &Span,
@@ -2952,7 +2952,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::PoseidonMany(compiled?))
     }
 
-    fn lower_mux(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_mux(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("mux", 3, args.len(), span)?;
         let cond = self.compile_expr(args[0])?;
         let if_true = self.compile_expr(args[1])?;
@@ -2964,7 +2964,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_range_check(
+    pub(super) fn lower_range_check(
         &mut self,
         args: &[&Expr],
         span: &Span,
@@ -2988,7 +2988,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_merkle_verify(
+    pub(super) fn lower_merkle_verify(
         &mut self,
         args: &[&Expr],
         span: &Span,
@@ -3006,12 +3006,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_len(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_len(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("len", 1, args.len(), span)?;
         self.compile_len_call(args[0], span)
     }
 
-    fn lower_assert_eq(
+    pub(super) fn lower_assert_eq(
         &mut self,
         args: &[&Expr],
         span: &Span,
@@ -3029,7 +3029,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    fn lower_assert(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_assert(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_assert_arity(args.len(), span)?;
         let cond = self.compile_expr(args[0])?;
         let message = self.extract_assert_message(args.get(1), span)?;
@@ -3041,7 +3041,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    fn lower_int_div(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_int_div(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("int_div", 3, args.len(), span)?;
         let lhs = self.compile_expr(args[0])?;
         let rhs = self.compile_expr(args[1])?;
@@ -3053,7 +3053,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn lower_int_mod(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn lower_int_mod(&mut self, args: &[&Expr], span: &Span) -> Result<CircuitExpr, ProveIrError> {
         self.check_arity("int_mod", 3, args.len(), span)?;
         let lhs = self.compile_expr(args[0])?;
         let rhs = self.compile_expr(args[1])?;
@@ -3069,7 +3069,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Dot access (non-call)
     // -----------------------------------------------------------------------
 
-    fn compile_dot_access(
+    pub(super) fn compile_dot_access(
         &mut self,
         object: &Expr,
         field: &str,
@@ -3103,7 +3103,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Method desugaring
     // -----------------------------------------------------------------------
 
-    fn compile_method_call(
+    pub(super) fn compile_method_call(
         &mut self,
         object: &Expr,
         method: &str,
@@ -3260,7 +3260,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
 
     /// Extract an array identifier name from an expression (for merkle_verify args).
-    fn extract_array_ident(&mut self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
+    pub(super) fn extract_array_ident(&mut self, expr: &Expr, span: &Span) -> Result<String, ProveIrError> {
         if let Expr::Ident { name, .. } = expr {
             match self.env.get(name.as_str()) {
                 Some(CompEnvValue::Array(elems)) => {
@@ -3286,7 +3286,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Compile `len(expr)` or `expr.len()` — resolve to ArrayLen.
-    fn compile_len_call(
+    pub(super) fn compile_len_call(
         &mut self,
         object: &Expr,
         span: &Span,
@@ -3305,7 +3305,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn check_arity(
+    pub(super) fn check_arity(
         &self,
         name: &str,
         expected: usize,
@@ -3324,7 +3324,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Validate assert_eq arity: 2 or 3 arguments.
-    fn check_assert_eq_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
+    pub(super) fn check_assert_eq_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
         if !(2..=3).contains(&got) {
             return Err(ProveIrError::UnsupportedOperation {
                 description: format!("`assert_eq` expects 2 or 3 arguments, got {got}"),
@@ -3335,7 +3335,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Validate assert arity: 1 or 2 arguments.
-    fn check_assert_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
+    pub(super) fn check_assert_arity(&self, got: usize, span: &Span) -> Result<(), ProveIrError> {
         if !(1..=2).contains(&got) {
             return Err(ProveIrError::UnsupportedOperation {
                 description: format!("`assert` expects 1 or 2 arguments, got {got}"),
@@ -3346,7 +3346,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Extract an optional string literal for assert_eq/assert messages.
-    fn extract_assert_message(
+    pub(super) fn extract_assert_message(
         &self,
         arg: Option<&&Expr>,
         span: &Span,
@@ -3362,7 +3362,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
     }
 
-    fn check_method_arity(
+    pub(super) fn check_method_arity(
         &self,
         name: &str,
         expected: usize,
@@ -3380,7 +3380,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(())
     }
 
-    fn method_not_constrainable(&self, method: &str, reason: &str, span: &Span) -> ProveIrError {
+    pub(super) fn method_not_constrainable(&self, method: &str, reason: &str, span: &Span) -> ProveIrError {
         ProveIrError::MethodNotConstrainable {
             method: method.into(),
             reason: reason.into(),
@@ -3389,7 +3389,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Check if a function name exists in the fn_table.
-    fn has_function(&self, name: &str) -> bool {
+    pub(super) fn has_function(&self, name: &str) -> bool {
         self.fn_table.contains_key(name)
     }
 
@@ -3397,7 +3397,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Control flow
     // -----------------------------------------------------------------------
 
-    fn compile_if_expr(
+    pub(super) fn compile_if_expr(
         &mut self,
         condition: &Expr,
         then_block: &Block,
@@ -3462,7 +3462,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn compile_for_expr(
+    pub(super) fn compile_for_expr(
         &mut self,
         var: &str,
         iterable: &ForIterable,
@@ -3579,7 +3579,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         Ok(CircuitExpr::Const(FieldConst::zero()))
     }
 
-    fn compile_index(
+    pub(super) fn compile_index(
         &mut self,
         object: &Expr,
         index: &Expr,
@@ -3637,7 +3637,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // User function inlining
     // -----------------------------------------------------------------------
 
-    fn compile_user_fn_call(
+    pub(super) fn compile_user_fn_call(
         &mut self,
         name: &str,
         args: &[&Expr],
@@ -3777,7 +3777,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Resolves the argument as an array name in the environment, creates
     /// SSA-renamed copies of each element, and registers the parameter as
     /// `CompEnvValue::Array` in the env.
-    fn bind_array_fn_param(
+    pub(super) fn bind_array_fn_param(
         &mut self,
         fn_name: &str,
         invoke_id: u32,
@@ -3860,7 +3860,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Intermediate statements (Let, AssertEq, etc.) are appended to self.body.
     /// The last expression statement becomes the return value.
     /// If the block has no expression result, returns Const(ZERO).
-    fn compile_block_as_expr(&mut self, block: &Block) -> Result<CircuitExpr, ProveIrError> {
+    pub(super) fn compile_block_as_expr(&mut self, block: &Block) -> Result<CircuitExpr, ProveIrError> {
         let stmts = &block.stmts;
         if stmts.is_empty() {
             return Ok(CircuitExpr::Const(FieldConst::zero()));
@@ -3897,7 +3897,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Binary operations
     // -----------------------------------------------------------------------
 
-    fn compile_binop(
+    pub(super) fn compile_binop(
         &mut self,
         op: &BinOp,
         lhs: &Expr,
@@ -3936,7 +3936,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
     }
 
-    fn compile_arith_binop(
+    pub(super) fn compile_arith_binop(
         &mut self,
         op: CircuitBinOp,
         lhs: &Expr,
@@ -3951,7 +3951,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn compile_comparison(
+    pub(super) fn compile_comparison(
         &mut self,
         op: CircuitCmpOp,
         lhs: &Expr,
@@ -3966,7 +3966,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn compile_bool_binop(
+    pub(super) fn compile_bool_binop(
         &mut self,
         op: CircuitBoolOp,
         lhs: &Expr,
@@ -3981,7 +3981,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    fn compile_pow(
+    pub(super) fn compile_pow(
         &mut self,
         base_expr: &Expr,
         exp_expr: &Expr,
@@ -3996,7 +3996,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Try to extract a constant u64 from an expression (for exponents, range_check bits, etc.)
-    fn extract_const_u64(&self, expr: &Expr, span: &Span) -> Result<u64, ProveIrError> {
+    pub(super) fn extract_const_u64(&self, expr: &Expr, span: &Span) -> Result<u64, ProveIrError> {
         match expr {
             Expr::Number { value, .. } => {
                 let n: u64 = value
@@ -4022,7 +4022,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Unary operations
     // -----------------------------------------------------------------------
 
-    fn compile_unary(
+    pub(super) fn compile_unary(
         &mut self,
         op: &UnaryOp,
         operand: &Expr,
