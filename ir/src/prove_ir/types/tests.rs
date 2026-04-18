@@ -1,6 +1,6 @@
 //! Round-trip and validation tests for ProveIR types.
 
-use super::prove_ir::{PROVE_IR_FORMAT_VERSION, PROVE_IR_MAGIC};
+use super::prove_ir::PROVE_IR_FORMAT_VERSION;
 use super::*;
 use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 use crate::types::IrType;
