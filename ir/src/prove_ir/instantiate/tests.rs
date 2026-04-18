@@ -1,0 +1,916 @@
+//! Tests for the ProveIR → IR instantiator.
+//!
+//! Loaded via `#[cfg(test)] mod tests;` in `instantiate/mod.rs`.
+
+use super::*;
+use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+use memory::Bn254Fr;
+
+/// Helper: compile source as a circuit and instantiate (no captures).
+fn compile_and_instantiate(source: &str) -> IrProgram<Bn254Fr> {
+    let program = crate::prove_ir::test_utils::compile_circuit(source).unwrap();
+    program.instantiate::<Bn254Fr>(&HashMap::new()).unwrap()
+}
+
+/// Helper: compile source as a prove block with captures and instantiate.
+fn compile_and_instantiate_with_captures(
+    source: &str,
+    outer_scope: &[&str],
+    captures: &[(&str, u64)],
+) -> IrProgram<Bn254Fr> {
+    let scope = OuterScope {
+        values: outer_scope
+            .iter()
+            .map(|s| (s.to_string(), OuterScopeEntry::Scalar))
+            .collect(),
+        ..Default::default()
+    };
+    let prove_ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(source, &scope).unwrap();
+    let cap_map: HashMap<String, FieldElement<Bn254Fr>> = captures
+        .iter()
+        .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    prove_ir.instantiate(&cap_map).unwrap()
+}
+
+// --- Basic circuits ---
+
+#[test]
+fn instantiate_empty_circuit() {
+    let ir = compile_and_instantiate("");
+    assert!(ir.instructions.is_empty());
+}
+
+#[test]
+fn instantiate_public_input() {
+    let ir = compile_and_instantiate("public x");
+    assert_eq!(ir.instructions.len(), 1);
+    assert!(matches!(
+        &ir.instructions[0],
+        Instruction::Input {
+            name,
+            visibility: Visibility::Public,
+            ..
+        } if name == "x"
+    ));
+}
+
+#[test]
+fn instantiate_witness_input() {
+    let ir = compile_and_instantiate("witness s");
+    assert_eq!(ir.instructions.len(), 1);
+    assert!(matches!(
+        &ir.instructions[0],
+        Instruction::Input {
+            name,
+            visibility: Visibility::Witness,
+            ..
+        } if name == "s"
+    ));
+}
+
+#[test]
+fn instantiate_array_input() {
+    let ir = compile_and_instantiate("public arr[3]");
+    // 3 Input instructions for arr_0, arr_1, arr_2
+    assert_eq!(ir.instructions.len(), 3);
+    for (i, inst) in ir.instructions.iter().enumerate() {
+        assert!(matches!(
+            inst,
+            Instruction::Input { name, visibility: Visibility::Public, .. }
+                if name == &format!("arr_{i}")
+        ));
+    }
+}
+
+#[test]
+fn instantiate_basic_arithmetic() {
+    let ir = compile_and_instantiate("public x\npublic y\npublic out\nassert_eq(x + y, out)");
+    // Inputs: x, y, out (3)
+    // Add: x + y (1)
+    // AssertEq: (x+y) == out (1)
+    let inputs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Input { .. }))
+        .count();
+    let adds = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Add { .. }))
+        .count();
+    let asserts = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+        .count();
+    assert_eq!(inputs, 3);
+    assert_eq!(adds, 1);
+    assert_eq!(asserts, 1);
+}
+
+#[test]
+fn instantiate_let_binding() {
+    let ir = compile_and_instantiate("public x\npublic out\nlet y = x * 2\nassert_eq(y, out)");
+    // Should have: Input(x), Input(out), Const(2), Mul(x,2), AssertEq
+    let muls = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mul { .. }))
+        .count();
+    assert_eq!(muls, 1);
+}
+
+#[test]
+fn instantiate_poseidon() {
+    let ir = compile_and_instantiate(
+        "public hash\nwitness a\nwitness b\nassert_eq(poseidon(a, b), hash)",
+    );
+    let hashes = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+        .count();
+    assert_eq!(hashes, 1);
+}
+
+#[test]
+fn instantiate_poseidon_many() {
+    let ir = compile_and_instantiate(
+        "public hash\nwitness a\nwitness b\nwitness c\nassert_eq(poseidon_many(a, b, c), hash)",
+    );
+    // poseidon_many(a, b, c) → poseidon(poseidon(a, b), c) — 2 hashes
+    let hashes = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+        .count();
+    assert_eq!(hashes, 2);
+}
+
+#[test]
+fn instantiate_range_check() {
+    let ir = compile_and_instantiate("witness x\nrange_check(x, 8)");
+    let checks = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::RangeCheck { bits: 8, .. }))
+        .count();
+    assert_eq!(checks, 1);
+}
+
+#[test]
+fn instantiate_mux() {
+    let ir = compile_and_instantiate("public c\nwitness a\nwitness b\nlet r = mux(c, a, b)");
+    let muxes = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mux { .. }))
+        .count();
+    assert_eq!(muxes, 1);
+}
+
+#[test]
+fn instantiate_if_else() {
+    let ir = compile_and_instantiate(
+        "public c\npublic out\nlet r = if c { 1 } else { 0 }\nassert_eq(r, out)",
+    );
+    // Should produce a Mux
+    let muxes = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mux { .. }))
+        .count();
+    assert!(muxes >= 1);
+}
+
+#[test]
+fn instantiate_pow() {
+    let ir = compile_and_instantiate("public x\npublic out\nassert_eq(x ^ 3, out)");
+    // x^3 via square-and-multiply: x*x=x², x²*x=x³ → 2 Mul
+    let muls = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mul { .. }))
+        .count();
+    assert_eq!(muls, 2, "x^3 should use 2 multiplications");
+}
+
+#[test]
+fn instantiate_pow_zero() {
+    let ir = compile_and_instantiate("public x\npublic out\nassert_eq(x ^ 0, out)");
+    // x^0 = 1
+    let has_const_one = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Const { value, .. } if *value == FieldElement::<Bn254Fr>::one()));
+    assert!(has_const_one, "x^0 should produce Const(1)");
+}
+
+// --- For loop unrolling ---
+
+#[test]
+fn instantiate_for_loop() {
+    let ir = compile_and_instantiate(
+        "public out\nmut acc = 0\nfor i in 0..3 { acc = acc + 1 }\nassert_eq(acc, out)",
+    );
+    // Unrolled: 3 iterations, each adds 1
+    let adds = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Add { .. }))
+        .count();
+    assert_eq!(adds, 3, "3 iterations of acc + 1");
+}
+
+#[test]
+fn instantiate_for_empty_range() {
+    let ir = compile_and_instantiate("public out\nfor i in 5..3 { }\nassert_eq(0, out)");
+    // 5..3 = empty range, no loop body emitted
+    // Should just have: Input(out), Const(0), AssertEq
+    let consts = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Const { .. }))
+        .count();
+    assert!(consts >= 1);
+}
+
+// --- Captures ---
+
+#[test]
+fn instantiate_with_capture_as_witness() {
+    let ir = compile_and_instantiate_with_captures(
+        "public hash\nassert_eq(poseidon(secret, 0), hash)",
+        &["secret", "hash"],
+        &[("secret", 42)],
+    );
+    // secret is a capture classified as CircuitInput → witness Input
+    let witness_inputs: Vec<&str> = ir
+        .instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::Input {
+                name,
+                visibility: Visibility::Witness,
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        witness_inputs.contains(&"secret"),
+        "secret should be a witness input, got: {witness_inputs:?}"
+    );
+}
+
+#[test]
+fn instantiate_with_capture_as_loop_bound() {
+    // WithCapture is tested by constructing ProveIR directly since the
+    // parser doesn't support `for i in 0..n` with dynamic n yet.
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![ProveInputDecl {
+            name: "out".into(),
+            array_size: None,
+            ir_type: IrType::Field,
+        }],
+        witness_inputs: vec![],
+        captures: vec![CaptureDef {
+            name: "n".into(),
+            usage: CaptureUsage::StructureOnly,
+        }],
+        body: vec![CircuitNode::For {
+            var: "i".into(),
+            range: ForRange::WithCapture {
+                start: 0,
+                end_capture: "n".into(),
+            },
+            body: vec![CircuitNode::Expr {
+                expr: CircuitExpr::Var("i".into()),
+                span: None,
+            }],
+            span: None,
+        }],
+        capture_arrays: vec![],
+    };
+    let captures: HashMap<String, FieldElement<Bn254Fr>> =
+        [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(4))]
+            .into_iter()
+            .collect();
+    let ir = prove_ir.instantiate(&captures).unwrap();
+    // n=4 means 4 iterations → 4 Const instructions for i=0,1,2,3
+    let consts: Vec<_> = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Const { .. }))
+        .collect();
+    // 1 const for structural capture "n" + 4 consts for loop var i
+    assert_eq!(
+        consts.len(),
+        5,
+        "expected 1 + 4 Const instructions, got {}",
+        consts.len()
+    );
+}
+
+#[test]
+fn instantiate_missing_capture_error() {
+    // Construct a ProveIR that requires a capture "secret" but don't provide it
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![],
+        witness_inputs: vec![],
+        captures: vec![CaptureDef {
+            name: "secret".into(),
+            usage: CaptureUsage::CircuitInput,
+        }],
+        body: vec![],
+        capture_arrays: vec![],
+    };
+    let result = prove_ir.instantiate::<Bn254Fr>(&HashMap::new());
+    assert!(result.is_err(), "should fail with missing capture");
+}
+
+// --- Comparison operators ---
+
+#[test]
+fn instantiate_comparison_eq() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a == b)");
+    let has_is_eq = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsEq { .. }));
+    assert!(has_is_eq);
+}
+
+#[test]
+fn instantiate_comparison_lt() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a < b)");
+    let has_is_lt = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsLt { .. }));
+    assert!(has_is_lt);
+}
+
+#[test]
+fn instantiate_comparison_gt_desugars_to_lt() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a > b)");
+    // a > b → IsLt(b, a) (operands swapped)
+    let has_is_lt = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsLt { .. }));
+    assert!(has_is_lt, "a > b should desugar to IsLt(b, a)");
+}
+
+// --- Boolean ops ---
+
+#[test]
+fn instantiate_bool_and() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a == 1 && b == 1)");
+    let has_and = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::And { .. }));
+    assert!(has_and);
+}
+
+// --- Function inlining ---
+
+#[test]
+fn instantiate_user_fn() {
+    let ir = compile_and_instantiate(
+        "public out\nfn double(x) { x * 2 }\nassert_eq(double(5), out)",
+    );
+    let muls = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mul { .. }))
+        .count();
+    assert_eq!(muls, 1);
+}
+
+// --- SSA naming ---
+
+#[test]
+fn instantiate_ssa_vars_unique() {
+    let ir = compile_and_instantiate(
+        "public x\npublic out\nmut a = x\na = a + 1\na = a * 2\nassert_eq(a, out)",
+    );
+    // All result vars should be unique
+    let vars: Vec<SsaVar> = ir.instructions.iter().map(|i| i.result_var()).collect();
+    let unique: std::collections::HashSet<SsaVar> = vars.iter().copied().collect();
+    assert_eq!(vars.len(), unique.len(), "SSA vars must be unique");
+}
+
+// --- Integration: full circuit patterns ---
+
+#[test]
+fn integration_poseidon_preimage() {
+    let ir = compile_and_instantiate(
+        "public hash\n\
+         witness secret\n\
+         assert_eq(poseidon(secret, Field::ZERO), hash)",
+    );
+    let inputs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Input { .. }))
+        .count();
+    let hashes = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+        .count();
+    let asserts = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+        .count();
+    assert_eq!(inputs, 2);
+    assert_eq!(hashes, 1);
+    assert_eq!(asserts, 1);
+}
+
+#[test]
+fn integration_accumulator_with_for() {
+    let ir = compile_and_instantiate(
+        "public total\n\
+         witness vals[4]\n\
+         mut sum = Field::ZERO\n\
+         for i in 0..4 { sum = sum + vals_0 }\n\
+         assert_eq(sum, total)",
+    );
+    // 4 iterations of sum + vals_0
+    let adds = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Add { .. }))
+        .count();
+    assert_eq!(adds, 4);
+}
+
+#[test]
+fn integration_array_len() {
+    let ir = compile_and_instantiate(
+        "let arr = [1, 2, 3]\nlet n = len(arr)\npublic out\nassert_eq(n, out)",
+    );
+    // len(arr) → Const(3)
+    let has_const_3 = ir.instructions.iter().any(|i| {
+        matches!(i, Instruction::Const { value, .. } if *value == FieldElement::<Bn254Fr>::from_u64(3))
+    });
+    assert!(has_const_3);
+}
+
+// =====================================================================
+// Phase B audit regression tests
+// =====================================================================
+
+// S1: Bool-typed inputs get RangeCheck enforcement
+#[test]
+fn audit_bool_input_gets_range_check() {
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![ProveInputDecl {
+            name: "flag".into(),
+            array_size: None,
+            ir_type: IrType::Bool,
+        }],
+        witness_inputs: vec![],
+        captures: vec![],
+        body: vec![],
+        capture_arrays: vec![],
+    };
+    let ir = prove_ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
+    let range_checks = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::RangeCheck { bits: 1, .. }))
+        .count();
+    assert_eq!(
+        range_checks, 1,
+        "Bool input must have RangeCheck(1), got {range_checks}"
+    );
+}
+
+#[test]
+fn audit_bool_array_input_gets_range_checks() {
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![ProveInputDecl {
+            name: "flags".into(),
+            array_size: Some(ArraySize::Literal(3)),
+            ir_type: IrType::Bool,
+        }],
+        witness_inputs: vec![],
+        captures: vec![],
+        body: vec![],
+        capture_arrays: vec![],
+    };
+    let ir = prove_ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
+    let range_checks = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::RangeCheck { bits: 1, .. }))
+        .count();
+    assert_eq!(range_checks, 3, "3 Bool array elements need 3 RangeChecks");
+}
+
+// E1: PoseidonMany with 2 args
+#[test]
+fn audit_poseidon_many_two_args() {
+    let ir = compile_and_instantiate(
+        "public hash\nwitness a\nwitness b\nassert_eq(poseidon_many(a, b), hash)",
+    );
+    let hashes = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::PoseidonHash { .. }))
+        .count();
+    assert_eq!(hashes, 1, "poseidon_many(a, b) should produce 1 hash");
+}
+
+// Pow with exp=1
+#[test]
+fn audit_pow_one_is_identity() {
+    let ir = compile_and_instantiate("public x\npublic out\nassert_eq(x ^ 1, out)");
+    // x^1 should NOT produce any Mul instructions (identity)
+    let muls = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mul { .. }))
+        .count();
+    assert_eq!(muls, 0, "x^1 should be identity (0 multiplications)");
+}
+
+// Unary Neg
+#[test]
+fn audit_unary_neg() {
+    let ir = compile_and_instantiate("public x\npublic out\nassert_eq(-x, out)");
+    let negs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Neg { .. }))
+        .count();
+    assert_eq!(negs, 1);
+}
+
+// Unary Not
+#[test]
+fn audit_unary_not() {
+    let ir = compile_and_instantiate("public x\npublic out\nassert_eq(!x, out)");
+    let nots = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Not { .. }))
+        .count();
+    assert_eq!(nots, 1);
+}
+
+// Comparison operators Neq, Le, Ge
+#[test]
+fn audit_comparison_neq() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a != b)");
+    assert!(ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsNeq { .. })));
+}
+
+#[test]
+fn audit_comparison_le() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a <= b)");
+    assert!(ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsLe { .. })));
+}
+
+#[test]
+fn audit_comparison_ge_desugars_to_le() {
+    let ir = compile_and_instantiate("public a\npublic b\nassert(a >= b)");
+    // a >= b → IsLe(b, a)
+    assert!(ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsLe { .. })));
+}
+
+// If node with nested constraints in both branches
+#[test]
+fn audit_if_emits_both_branch_constraints() {
+    let ir = compile_and_instantiate(
+        "public c\npublic a\npublic b\n\
+         if c { assert_eq(a, 1) } else { assert_eq(b, 2) }",
+    );
+    let assert_eqs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+        .count();
+    assert_eq!(
+        assert_eqs, 2,
+        "both if/else branches must emit their constraints"
+    );
+}
+
+// ForRange::Array with empty array
+#[test]
+fn audit_for_array_empty() {
+    let _prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![],
+        witness_inputs: vec![],
+        captures: vec![],
+        body: vec![CircuitNode::For {
+            var: "x".into(),
+            range: ForRange::Array("arr".into()),
+            body: vec![],
+            span: None,
+        }],
+        capture_arrays: vec![],
+    };
+    // Need "arr" in env as an empty array — not possible from the
+    // public API without a LetArray node. Use a LetArray with empty elements instead.
+    // Actually, empty arrays are rejected by the compiler. Test via non-empty but
+    // verifying the loop body isn't entered would require a different approach.
+    // Skip: empty arrays are rejected at compile time (Phase A).
+}
+
+// CaptureUsage::Both
+#[test]
+fn audit_capture_both_is_witness_input() {
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![ProveInputDecl {
+            name: "out".into(),
+            array_size: None,
+            ir_type: IrType::Field,
+        }],
+        witness_inputs: vec![],
+        captures: vec![CaptureDef {
+            name: "n".into(),
+            usage: CaptureUsage::Both,
+        }],
+        body: vec![
+            // Use n structurally (in a WithCapture range)
+            CircuitNode::For {
+                var: "i".into(),
+                range: ForRange::WithCapture {
+                    start: 0,
+                    end_capture: "n".into(),
+                },
+                body: vec![],
+                span: None,
+            },
+            // Use n in a constraint expression
+            CircuitNode::AssertEq {
+                lhs: CircuitExpr::Capture("n".into()),
+                rhs: CircuitExpr::Input("out".into()),
+                message: None,
+                span: None,
+            },
+        ],
+        capture_arrays: vec![],
+    };
+    let captures: HashMap<String, FieldElement<Bn254Fr>> =
+        [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
+            .into_iter()
+            .collect();
+    let ir = prove_ir.instantiate(&captures).unwrap();
+    // n should be a witness Input (not just a Const)
+    let witness_inputs: Vec<&str> = ir
+        .instructions
+        .iter()
+        .filter_map(|i| match i {
+            Instruction::Input {
+                name,
+                visibility: Visibility::Witness,
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        witness_inputs.contains(&"n"),
+        "Both capture must be witness input, got: {witness_inputs:?}"
+    );
+}
+
+// Type propagation verification
+#[test]
+fn audit_type_propagation() {
+    let ir = compile_and_instantiate("public a\npublic b\nlet sum = a + b\nassert(a == b)");
+    // sum (Add result) should have type Field
+    // a == b (IsEq result) should have type Bool
+    let has_field = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Add { result, .. } if ir.get_type(*result) == Some(IrType::Field)));
+    let has_bool = ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsEq { result, .. } if ir.get_type(*result) == Some(IrType::Bool)));
+    assert!(has_field, "Add result should have IrType::Field");
+    assert!(has_bool, "IsEq result should have IrType::Bool");
+}
+
+// ===================================================================
+// Phase D audit: hardening tests
+// ===================================================================
+
+// D1: Capture-bound loop exceeding MAX_INSTANTIATE_ITERATIONS is rejected
+#[test]
+fn audit_instantiate_rejects_huge_capture_loop() {
+    // Construct ProveIR directly (parser doesn't support dynamic for bounds)
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![],
+        witness_inputs: vec![],
+        captures: vec![CaptureDef {
+            name: "n".into(),
+            usage: CaptureUsage::StructureOnly,
+        }],
+        body: vec![CircuitNode::For {
+            var: "i".into(),
+            range: ForRange::WithCapture {
+                start: 0,
+                end_capture: "n".into(),
+            },
+            body: vec![],
+            span: None,
+        }],
+        capture_arrays: vec![],
+    };
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = [(
+        "n".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(2_000_000),
+    )]
+    .into_iter()
+    .collect();
+    let err = prove_ir.instantiate(&captures).unwrap_err();
+    assert!(
+        matches!(err, ProveIrError::RangeTooLarge { .. }),
+        "expected RangeTooLarge, got: {err}"
+    );
+}
+
+// D2: Both captures emit AssertEq to enforce structural-constraint consistency
+#[test]
+fn audit_both_capture_emits_assert_eq() {
+    let prove_ir = ProveIR {
+        name: None,
+        public_inputs: vec![],
+        witness_inputs: vec![],
+        captures: vec![CaptureDef {
+            name: "n".into(),
+            usage: CaptureUsage::Both,
+        }],
+        body: vec![CircuitNode::For {
+            var: "i".into(),
+            range: ForRange::WithCapture {
+                start: 0,
+                end_capture: "n".into(),
+            },
+            body: vec![],
+            span: None,
+        }],
+        capture_arrays: vec![],
+    };
+    let captures: HashMap<String, FieldElement<Bn254Fr>> =
+        [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
+            .into_iter()
+            .collect();
+    let ir = prove_ir.instantiate(&captures).unwrap();
+    // Should have at least one AssertEq constraining capture n to its constant
+    let assert_eqs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+        .count();
+    assert!(
+        assert_eqs >= 1,
+        "Both capture must emit AssertEq for consistency, found {assert_eqs}"
+    );
+}
+
+// D3: Import rejection — imports inside circuit body are rejected at parse time.
+// With flat format removed, imports can only appear at program top-level (before
+// the circuit decl), which the parser rejects inside blocks.
+#[test]
+fn audit_import_in_circuit_body_rejected() {
+    let err = ProveIrCompiler::<Bn254Fr>::compile_circuit(
+        "circuit test(x: Public) { import \"./foo.ach\" as foo\nassert_eq(x, x) }",
+        None,
+    )
+    .unwrap_err();
+    // Parser rejects import inside block — surfaces as a parse error
+    assert!(
+        matches!(err, ProveIrError::ParseError(_)),
+        "expected ParseError for import inside circuit body, got: {err}"
+    );
+}
+
+// --- Source map (span propagation) ---
+
+#[test]
+fn spans_propagated_to_assert_eq() {
+    // When compiling from source, CircuitNode::AssertEq gets a span.
+    // After instantiation, the IR instruction's SsaVar should have that span.
+    let ir = compile_and_instantiate("public x\nwitness y\nassert_eq(x, y)");
+    // Find the AssertEq instruction
+    let assert_eq_var = ir
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::AssertEq { .. }))
+        .map(|i| i.result_var())
+        .expect("should have AssertEq");
+    let span = ir.get_span(assert_eq_var);
+    assert!(
+        span.is_some(),
+        "AssertEq instruction should have a source span"
+    );
+    // wrap_flat_to_circuit moves declarations to params, body starts at line 2
+    assert_eq!(span.unwrap().line_start, 2);
+}
+
+#[test]
+fn spans_propagated_to_let_binding() {
+    let ir = compile_and_instantiate("public x\nwitness y\nlet z = x + y\nassert_eq(z, z)");
+    // The Add instruction comes from `let z = x + y`
+    let add_var = ir
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Add { .. }))
+        .map(|i| i.result_var())
+        .expect("should have Add");
+    let span = ir.get_span(add_var);
+    assert!(span.is_some(), "Add instruction should have a source span");
+    // Body line 1: let z = x + y → line 2 in wrapped format
+    assert_eq!(span.unwrap().line_start, 2);
+}
+
+#[test]
+fn spans_propagated_through_for_loop() {
+    // For loop body gets the body node's span, not the loop's span
+    let ir = compile_and_instantiate("public x\nfor i in 0..3 {\n  assert_eq(x, x)\n}");
+    // Should have 3 AssertEq instructions (loop unrolled)
+    let assert_eqs: Vec<_> = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+        .collect();
+    assert_eq!(assert_eqs.len(), 3);
+    // Each should have a span (from the body's assert_eq)
+    for inst in &assert_eqs {
+        let span = ir.get_span(inst.result_var());
+        assert!(
+            span.is_some(),
+            "AssertEq in loop body should have a source span"
+        );
+    }
+}
+
+// --- Indexed array assignment (LetIndexed from .ach) ---
+
+#[test]
+fn instantiate_indexed_assignment_constant() {
+    // mut arr = [0, 0, 0]; arr[1] = 42
+    let ir = compile_and_instantiate(
+        "public out\nmut arr = [0, 0, 0]\narr[1] = 42\nassert_eq(arr[1], out)",
+    );
+    // After instantiation, arr_1 should be set to 42 (constant)
+    let consts: Vec<_> = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Const { .. }))
+        .collect();
+    // Should have constants for 0, 0, 0, and 42
+    assert!(
+        consts.len() >= 4,
+        "expected at least 4 Const instructions, got {}",
+        consts.len()
+    );
+}
+
+#[test]
+fn instantiate_indexed_assignment_in_loop() {
+    // mut arr = [0, 0, 0]; for i in 0..3 { arr[i] = i * 2 }
+    let ir = compile_and_instantiate(
+        "public out\nmut arr = [0, 0, 0]\nfor i in 0..3 { arr[i] = i * 2 }\nassert_eq(arr[2], out)",
+    );
+    // Loop should unroll, producing Let assignments for arr_0, arr_1, arr_2
+    // After unroll: arr_0 = 0*2 = 0, arr_1 = 1*2 = 2, arr_2 = 2*2 = 4
+    let muls: Vec<_> = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mul { .. }))
+        .collect();
+    assert_eq!(
+        muls.len(),
+        3,
+        "expected 3 Mul instructions from unrolled loop"
+    );
+}
