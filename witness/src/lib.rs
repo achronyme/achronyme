@@ -1,0 +1,51 @@
+//! # Artik — Witness Computation VM
+//!
+//! Artik is a dedicated, register-based VM for witness computation in
+//! Achronyme circuits. It is isolated from the main Achronyme VM: no
+//! shared state, no shared heap, no shared opcode tables. The two VMs
+//! communicate only by value (field-element slices in, witness-slot
+//! slices out).
+//!
+//! ## Scope (v1)
+//!
+//! - ~25 opcodes, Brillig-aligned plus first-class `Rotl32/Rotr32/Rotl8`
+//!   for SHA-family hashing.
+//! - u8 / u32 / u64 / i64 bit-exact integer arithmetic with wrapping
+//!   semantics. u128 / i256 are out of scope.
+//! - Multi-prime bytecode within a field family
+//!   ([`FieldFamily::BnLike256`] covers BN254 + BLS12-381).
+//! - No oracles / foreign calls. No JIT. No heap / GC.
+//! - Mandatory bytecode validator runs on every [`decode`].
+//!
+//! ## Structure
+//!
+//! - [`ir`] — [`Instr`], [`IntW`], [`IntBinOp`], [`RegType`].
+//! - [`header`] — [`ArtikHeader`] + [`FieldFamily`].
+//! - [`program`] — [`Program`] + [`FieldConstEntry`].
+//! - [`bytecode`] — [`encode`] / [`decode`].
+//! - [`validate`] — structural invariants (runs inside [`decode`]).
+//! - [`error`] — [`ArtikError`].
+//!
+//! [`Instr`]: ir::Instr
+//! [`IntW`]: ir::IntW
+//! [`IntBinOp`]: ir::IntBinOp
+//! [`RegType`]: ir::RegType
+//! [`ArtikHeader`]: header::ArtikHeader
+//! [`FieldFamily`]: header::FieldFamily
+//! [`Program`]: program::Program
+//! [`FieldConstEntry`]: program::FieldConstEntry
+//! [`encode`]: bytecode::encode
+//! [`decode`]: bytecode::decode
+//! [`ArtikError`]: error::ArtikError
+
+pub mod bytecode;
+pub mod error;
+pub mod header;
+pub mod ir;
+pub mod program;
+pub mod validate;
+
+pub use error::ArtikError;
+pub use header::{ArtikHeader, FieldFamily};
+pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
+pub use program::{FieldConstEntry, Program};

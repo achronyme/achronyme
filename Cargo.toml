@@ -13,6 +13,7 @@ members = [
     "proving",
     "circom",
     "resolve",
+    "witness",
 ]
 exclude = ["wasm"]
 resolver = "2"
