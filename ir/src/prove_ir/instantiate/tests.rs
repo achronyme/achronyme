@@ -387,9 +387,8 @@ fn instantiate_bool_and() {
 
 #[test]
 fn instantiate_user_fn() {
-    let ir = compile_and_instantiate(
-        "public out\nfn double(x) { x * 2 }\nassert_eq(double(5), out)",
-    );
+    let ir =
+        compile_and_instantiate("public out\nfn double(x) { x * 2 }\nassert_eq(double(5), out)");
     let muls = ir
         .instructions
         .iter()

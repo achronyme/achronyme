@@ -541,5 +541,4 @@ impl<F: FieldBackend> Instantiator<F> {
 
         Ok(result.unwrap_or(base))
     }
-
 }
