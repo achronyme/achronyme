@@ -9,15 +9,19 @@
 //!    with the set of expected input signals (extracted from the template definition).
 //!    If the template has no inputs, it's inlined immediately — no pending entry.
 //!
-//! 2. **Wiring**: Each `c.signal <== expr` marks that signal as wired.
-//!    - Scalar wiring (`c.in <== x`): signal name added to `wired_signals`.
-//!    - Indexed wiring (`c.in[i] <== x`): sets `has_indexed_wirings = true`.
-//!      These can't trigger inline because we don't know when the array is
-//!      fully wired.
+//! 2. **Wiring**: Each `c.signal <== expr` calls `mark_wired` on the
+//!    pending entry. The component holds a [`WiringState`] enum:
+//!    - Scalar wiring (`c.in <== x`): adds to the wired set, stays
+//!      in `AllScalar`.
+//!    - Indexed wiring (`c.in[i] <== x`): adds to the wired set and
+//!      transitions to `PartialIndexed`. The transition is monotonic
+//!      — `PartialIndexed` never reverts.
 //!
-//! 3. **Trigger**: When `wired_signals ⊇ input_signals` (all inputs wired),
-//!    the component body is inlined via `inline_component_body_with_arrays`.
-//!    Indexed wirings skip this check — they're flushed instead.
+//! 3. **Trigger**: After every `mark_wired`, callers check
+//!    `is_ready_to_inline()`. It returns `true` iff the state is
+//!    still `AllScalar` and the wired set covers `input_signals`.
+//!    `PartialIndexed` always returns `false` — those components are
+//!    inlined via flush, not trigger.
 //!
 //! 4. **Demand-driven flush**: Before a substitution that references a
 //!    component output, [`collect_value_component_refs`] walks the read
@@ -511,5 +515,118 @@ fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Block, TemplateDef, TemplateModifiers};
+    use diagnostics::Span;
+    use ir::prove_ir::types::FieldConst;
+
+    fn dummy_span() -> Span {
+        Span {
+            byte_start: 0,
+            byte_end: 0,
+            line_start: 1,
+            col_start: 1,
+            line_end: 1,
+            col_end: 1,
+        }
+    }
+
+    fn dummy_template() -> TemplateDef {
+        TemplateDef {
+            name: "T".into(),
+            params: vec![],
+            modifiers: TemplateModifiers::default(),
+            body: Block {
+                stmts: vec![],
+                span: dummy_span(),
+            },
+            span: dummy_span(),
+        }
+    }
+
+    fn pending_with_inputs<'a>(template: &'a TemplateDef, inputs: &[&str]) -> PendingComponent<'a> {
+        let input_signals: HashSet<String> = inputs.iter().map(|s| s.to_string()).collect();
+        PendingComponent::new(template, vec![], HashMap::new(), input_signals)
+    }
+
+    #[test]
+    fn new_initializes_to_all_scalar_empty() {
+        let tmpl = dummy_template();
+        let comp = pending_with_inputs(&tmpl, &["a", "b"]);
+        assert!(matches!(&comp.state, WiringState::AllScalar { wired } if wired.is_empty()));
+        assert!(comp.const_wired.is_empty());
+        assert!(!comp.is_ready_to_inline());
+    }
+
+    #[test]
+    fn scalar_only_path_reaches_ready_when_all_inputs_wired() {
+        let tmpl = dummy_template();
+        let mut comp = pending_with_inputs(&tmpl, &["a", "b"]);
+        comp.mark_wired("a".into(), None, false);
+        assert!(!comp.is_ready_to_inline());
+        comp.mark_wired("b".into(), None, false);
+        assert!(comp.is_ready_to_inline());
+        assert!(matches!(comp.state, WiringState::AllScalar { .. }));
+    }
+
+    #[test]
+    fn extra_scalar_wirings_beyond_inputs_still_ready() {
+        let tmpl = dummy_template();
+        let mut comp = pending_with_inputs(&tmpl, &["a"]);
+        comp.mark_wired("a".into(), None, false);
+        comp.mark_wired("extra".into(), None, false);
+        assert!(comp.is_ready_to_inline());
+    }
+
+    #[test]
+    fn indexed_wiring_disables_trigger_even_with_full_coverage() {
+        let tmpl = dummy_template();
+        let mut comp = pending_with_inputs(&tmpl, &["a", "b"]);
+        comp.mark_wired("a".into(), None, true);
+        comp.mark_wired("b".into(), None, false);
+        assert!(!comp.is_ready_to_inline());
+        assert!(matches!(comp.state, WiringState::PartialIndexed { .. }));
+    }
+
+    #[test]
+    fn indexed_then_scalar_stays_partial_indexed() {
+        let tmpl = dummy_template();
+        let mut comp = pending_with_inputs(&tmpl, &["a", "b", "c"]);
+        comp.mark_wired("a".into(), None, true);
+        assert!(matches!(comp.state, WiringState::PartialIndexed { .. }));
+        // Subsequent scalar wirings cannot revert the state.
+        comp.mark_wired("b".into(), None, false);
+        comp.mark_wired("c".into(), None, false);
+        assert!(matches!(comp.state, WiringState::PartialIndexed { .. }));
+        assert!(!comp.is_ready_to_inline());
+    }
+
+    #[test]
+    fn const_value_is_recorded_in_const_wired() {
+        let tmpl = dummy_template();
+        let mut comp = pending_with_inputs(&tmpl, &["a"]);
+        let fc = FieldConst::from_u64(42);
+        comp.mark_wired("a".into(), Some(&CircuitExpr::Const(fc)), false);
+        assert_eq!(comp.const_wired.get("a"), Some(&fc));
+    }
+
+    #[test]
+    fn non_const_value_does_not_populate_const_wired() {
+        let tmpl = dummy_template();
+        let mut comp = pending_with_inputs(&tmpl, &["a"]);
+        comp.mark_wired("a".into(), Some(&CircuitExpr::Var("x".into())), false);
+        assert!(comp.const_wired.is_empty());
+    }
+
+    #[test]
+    fn template_span_returns_template_declaration_span() {
+        let tmpl = dummy_template();
+        let comp = pending_with_inputs(&tmpl, &["a"]);
+        assert_eq!(comp.template_span(), &tmpl.span);
     }
 }
