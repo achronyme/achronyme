@@ -44,6 +44,63 @@ use super::super::error::LoweringError;
 use super::super::utils::{extract_ident_name, EvalValue};
 use super::targets::resolve_component_array_name;
 
+/// Wiring progress for a pending component.
+///
+/// Two-state machine. The transition `AllScalar → PartialIndexed` is
+/// monotonic — once an indexed wiring (`comp.signal[i] <== expr`) is
+/// recorded, the trigger path is permanently disabled and the
+/// component must be flushed explicitly before its outputs are
+/// referenced. Encoding this as an enum (rather than a `wired:
+/// HashSet + has_indexed: bool` pair) makes the "forgot to set
+/// has_indexed" class of bug unrepresentable.
+pub(super) enum WiringState {
+    /// All wirings so far are scalar. The trigger path is live: the
+    /// component will inline as soon as `wired ⊇ input_signals`.
+    AllScalar { wired: HashSet<String> },
+    /// At least one wiring was indexed. The trigger path is dead;
+    /// the component must be flushed (demand-driven from
+    /// `flush_specific_component` or from the cleanup loop at end of
+    /// block) before its outputs are referenced.
+    PartialIndexed { wired: HashSet<String> },
+}
+
+impl WiringState {
+    fn new() -> Self {
+        Self::AllScalar {
+            wired: HashSet::new(),
+        }
+    }
+
+    /// Record a wiring. Transitions `AllScalar → PartialIndexed` on
+    /// the first indexed wiring; subsequent indexed wirings stay in
+    /// `PartialIndexed`. The signal name is added to `wired` in
+    /// either case.
+    fn mark(&mut self, signal: String, is_indexed: bool) {
+        match self {
+            Self::AllScalar { wired } => {
+                wired.insert(signal);
+                if is_indexed {
+                    let wired = std::mem::take(wired);
+                    *self = Self::PartialIndexed { wired };
+                }
+            }
+            Self::PartialIndexed { wired } => {
+                wired.insert(signal);
+            }
+        }
+    }
+
+    /// True iff `wired ⊇ inputs` AND no indexed wiring has been
+    /// recorded. `PartialIndexed` always returns false — those
+    /// components are inlined via flush, not trigger.
+    fn is_ready(&self, inputs: &HashSet<String>) -> bool {
+        match self {
+            Self::AllScalar { wired } => wired.is_superset(inputs),
+            Self::PartialIndexed { .. } => false,
+        }
+    }
+}
+
 /// A pending component whose input signals haven't all been wired yet.
 pub(super) struct PendingComponent<'a> {
     pub template: &'a ast::TemplateDef,
@@ -51,11 +108,9 @@ pub(super) struct PendingComponent<'a> {
     /// Array template args (param_name → compile-time array value).
     pub array_args: HashMap<String, EvalValue>,
     pub input_signals: HashSet<String>,
-    pub wired_signals: HashSet<String>,
-    /// True if any input was wired via indexed assignment (comp.signal[i]).
-    /// Such components can't trigger inline from wiring completion alone —
-    /// they need explicit flushing before their outputs are referenced.
-    pub has_indexed_wirings: bool,
+    /// Wiring progress (which signals are wired + whether any wiring
+    /// was indexed).
+    pub state: WiringState,
     /// Signal inputs wired to compile-time constants.
     /// When the component body is inlined, these are injected into the
     /// sub-template's `known_constants` so the lowerer emits `Const`
@@ -81,8 +136,7 @@ impl<'a> PendingComponent<'a> {
             template_args,
             array_args,
             input_signals,
-            wired_signals: HashSet::new(),
-            has_indexed_wirings: false,
+            state: WiringState::new(),
             const_wired: HashMap::new(),
         }
     }
@@ -105,17 +159,14 @@ impl<'a> PendingComponent<'a> {
         if let Some(CircuitExpr::Const(fc)) = value {
             self.const_wired.insert(signal.clone(), *fc);
         }
-        self.wired_signals.insert(signal);
-        if is_indexed {
-            self.has_indexed_wirings = true;
-        }
+        self.state.mark(signal, is_indexed);
     }
 
     /// Returns `true` when all declared inputs have been wired AND
     /// no indexed wirings have been recorded — the two conditions
     /// the trigger path requires before inlining the component body.
     pub(super) fn is_ready_to_inline(&self) -> bool {
-        !self.has_indexed_wirings && self.wired_signals.is_superset(&self.input_signals)
+        self.state.is_ready(&self.input_signals)
     }
 
     /// Inline this pending component's body into `nodes`, propagating
