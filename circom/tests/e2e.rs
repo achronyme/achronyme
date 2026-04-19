@@ -1615,6 +1615,72 @@ fn sha256_64_compiles_via_artik_lift() {
         .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
 }
 
+/// Fase 4 deliverable check: a circom template whose `out <--`
+/// value comes from an Artik witness program goes all the way
+/// through Groth16 proof generation and verification on BN-254.
+/// This is the end-to-end "can I ship this" test — the same path
+/// `ach prove file.circom --input inputs.toml` will walk once the
+/// CLI gets wired up.
+///
+/// Uses `triangle_sum` (for-loop lift producing `6*in`) so the
+/// constraint `out === 6 * in` is non-trivial and the proof
+/// actually has something to prove.
+#[test]
+fn fn_witness_lift_e2e_groth16_triangle_sum() {
+    use std::collections::HashSet;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_loop_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Artik→Groth16 compile failed: {e}"));
+
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+    ir::passes::optimize(&mut program);
+
+    // triangle_sum(n) = 6*n; template enforces `out === 6 * in`.
+    let n = 11u64;
+    let expected_out = 6 * n;
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(n));
+    inputs.insert(
+        "out".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(expected_out),
+    );
+
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
+    let witness = r1cs
+        .compile_ir_with_witness(&program, &inputs)
+        .expect("R1CS compile + witness");
+    r1cs.cs.verify(&witness).expect("R1CS verify");
+
+    let cache_dir = std::env::temp_dir().join("achronyme_test_keys");
+    let result = proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &cache_dir)
+        .unwrap_or_else(|e| panic!("Groth16 proof generation failed: {e}"));
+
+    match &result {
+        vm::ProveResult::Proof {
+            proof_json,
+            public_json,
+            vkey_json,
+        } => {
+            let valid =
+                proving::groth16_bn254::verify_proof_from_json(proof_json, public_json, vkey_json)
+                    .unwrap_or_else(|e| panic!("Groth16 verification failed: {e}"));
+            assert!(valid, "Groth16 proof did not verify");
+            eprintln!("  ✓ Artik→Groth16: triangle_sum({n}) = {expected_out} — PROOF VERIFIED");
+        }
+        _ => panic!("expected Proof variant from Groth16"),
+    }
+}
+
 /// Fase 3+4 end-to-end on a SHA-style bit-op body: the same σ0
 /// function that exercises `& | ^ >> <<` in the lift gets pushed
 /// through instantiate + R1CS + witness verify. The template pins
