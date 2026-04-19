@@ -307,7 +307,8 @@ pub(super) fn resolve_const_index(
     // Fallback: full BigVal evaluation for complex expressions
     let vars = super::super::utils::fc_map_to_bigval(known_constants);
     let empty_fns = HashMap::new();
-    let result = super::super::utils::eval_expr(expr, &vars, &empty_fns, 0)?;
+    let empty_arrays: HashMap<String, crate::lowering::utils::EvalValue> = HashMap::new();
+    let result = super::super::utils::eval_expr(expr, &vars, &empty_arrays, &empty_fns, 0)?;
     if result.is_negative() {
         None
     } else {

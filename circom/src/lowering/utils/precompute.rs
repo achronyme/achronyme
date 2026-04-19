@@ -123,7 +123,7 @@ fn try_bind_precomputed(
         if let Some(fn_name) = extract_ident_name(callee) {
             if let Some(func) = functions.get(fn_name.as_str()) {
                 if let Some(val) =
-                    try_eval_function_call_to_value(func, args, scalars, functions, 0)
+                    try_eval_function_call_to_value(func, args, scalars, arrays, functions, 0)
                 {
                     if val.is_array() {
                         arrays.insert(name.to_string(), val);
@@ -137,9 +137,10 @@ fn try_bind_precomputed(
     // 3. Array literal.
     if let Expr::ArrayLit { elements, .. } = expr {
         let vars = fc_map_to_bigval(scalars);
+        let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
         let vals: Option<Vec<EvalValue>> = elements
             .iter()
-            .map(|e| super::eval::eval_expr_value(e, &vars, functions, 0))
+            .map(|e| super::eval::eval_expr_value(e, &vars, &empty_arrays, functions, 0))
             .collect();
         if let Some(vals) = vals {
             arrays.insert(name.to_string(), EvalValue::Array(vals));
@@ -178,7 +179,8 @@ pub fn const_eval_with_functions(
     functions: &HashMap<&str, &FunctionDef>,
 ) -> Option<FieldConst> {
     let vars = fc_map_to_bigval(params);
-    eval_expr(expr, &vars, functions, 0).map(|v| v.to_field_const())
+    let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
+    eval_expr(expr, &vars, &empty_arrays, functions, 0).map(|v| v.to_field_const())
 }
 
 /// Try to evaluate a function call at compile time (scalar result).
@@ -190,27 +192,52 @@ pub fn try_eval_function_call(
     depth: usize,
 ) -> Option<FieldConst> {
     let vars = fc_map_to_bigval(params);
+    let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
     let arg_vals: Vec<BigVal> = args
         .iter()
-        .map(|a| eval_expr(a, &vars, functions, depth))
+        .map(|a| eval_expr(a, &vars, &empty_arrays, functions, depth))
         .collect::<Option<_>>()?;
     eval_function(func, &arg_vals, functions, depth).map(|v| v.to_field_const())
 }
 
 /// Try to evaluate a function call at compile time (scalar or array result).
+///
+/// `array_env` carries array values already known in the caller's
+/// scope (e.g. template array params recorded in
+/// `env.known_array_values`). When an argument is an `Ident` naming
+/// one of those arrays, it is bound positionally into the callee's
+/// array state instead of being coerced through scalar conversion.
 pub fn try_eval_function_call_to_value(
     func: &FunctionDef,
     args: &[Expr],
     params: &HashMap<String, FieldConst>,
+    array_env: &HashMap<String, EvalValue>,
     functions: &HashMap<&str, &FunctionDef>,
     depth: usize,
 ) -> Option<EvalValue> {
     let vars = fc_map_to_bigval(params);
-    let arg_vals: Vec<BigVal> = args
-        .iter()
-        .map(|a| eval_expr(a, &vars, functions, depth))
-        .collect::<Option<_>>()?;
-    eval_function_to_value(func, &arg_vals, functions, depth + 1)
+    let mut arg_vals: Vec<BigVal> = Vec::with_capacity(args.len());
+    let mut array_arg_names: Vec<Option<String>> = Vec::with_capacity(args.len());
+    for a in args {
+        if let Expr::Ident { name, .. } = a {
+            if array_env.contains_key(name.as_str()) {
+                array_arg_names.push(Some(name.clone()));
+                arg_vals.push(BigVal::ZERO);
+                continue;
+            }
+        }
+        let v = eval_expr(a, &vars, array_env, functions, depth)?;
+        arg_vals.push(v);
+        array_arg_names.push(None);
+    }
+    eval_function_to_value(
+        func,
+        &arg_vals,
+        array_env,
+        &array_arg_names,
+        functions,
+        depth + 1,
+    )
 }
 
 /// Evaluate a single statement in-place, updating `vars`.
@@ -219,7 +246,8 @@ pub fn try_eval_stmt_in_place(
     vars: &mut HashMap<String, BigVal>,
     functions: &HashMap<&str, &FunctionDef>,
 ) -> Option<()> {
-    super::eval::eval_stmt(stmt, vars, functions, 0)?;
+    let mut arrays: HashMap<String, EvalValue> = HashMap::new();
+    super::eval::eval_stmt(stmt, vars, &mut arrays, functions, 0)?;
     Some(())
 }
 
@@ -229,7 +257,8 @@ pub fn try_eval_expr(
     vars: &HashMap<String, BigVal>,
     functions: &HashMap<&str, &FunctionDef>,
 ) -> Option<BigVal> {
-    eval_expr(expr, vars, functions, 0)
+    let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
+    eval_expr(expr, vars, &empty_arrays, functions, 0)
 }
 
 /// Convert a FieldConst parameter map to BigVal for the evaluator.

@@ -139,7 +139,10 @@ fn resolve_component_array_expr_with_constants(
                 // Evaluate using BigVal to detect negative values
                 let vars = super::super::utils::fc_map_to_bigval(known_constants);
                 let empty_fns = HashMap::new();
-                let result = super::super::utils::eval_expr(index, &vars, &empty_fns, 0)?;
+                let empty_arrays: HashMap<String, crate::lowering::utils::EvalValue> =
+                    HashMap::new();
+                let result =
+                    super::super::utils::eval_expr(index, &vars, &empty_arrays, &empty_fns, 0)?;
                 if result.is_negative() {
                     None
                 } else {

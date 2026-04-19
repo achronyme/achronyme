@@ -68,7 +68,8 @@ pub fn const_eval_with_params(
 ) -> Option<FieldConst> {
     let vars = precompute::fc_map_to_bigval(params);
     let empty_fns = HashMap::new();
-    eval::eval_expr(expr, &vars, &empty_fns, 0).map(|v| v.to_field_const())
+    let empty_arrays: HashMap<String, eval_value::EvalValue> = HashMap::new();
+    eval::eval_expr(expr, &vars, &empty_arrays, &empty_fns, 0).map(|v| v.to_field_const())
 }
 
 #[cfg(test)]
@@ -245,7 +246,9 @@ mod tests {
     fn eval_array_return() {
         let prog = parse_program("function get_constants() { return [10, 20, 30]; }");
         let fns = extract_functions(&prog);
-        let val = eval_function_to_value(fns["get_constants"], &[], &fns, 0).unwrap();
+        let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
+        let val =
+            eval_function_to_value(fns["get_constants"], &[], &empty_arrays, &[], &fns, 0).unwrap();
         assert!(val.is_array());
         assert_eq!(
             val.index(0).unwrap().as_scalar(),
@@ -269,12 +272,29 @@ mod tests {
             "#,
         );
         let fns = extract_functions(&prog);
-        let v1 = eval_function_to_value(fns["select"], &[BigVal::ONE], &fns, 0).unwrap();
+        let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
+        let v1 = eval_function_to_value(
+            fns["select"],
+            &[BigVal::ONE],
+            &empty_arrays,
+            &[None],
+            &fns,
+            0,
+        )
+        .unwrap();
         assert_eq!(
             v1.index(0).unwrap().as_scalar(),
             Some(BigVal::from_i64(100))
         );
-        let v2 = eval_function_to_value(fns["select"], &[BigVal::from_i64(2)], &fns, 0).unwrap();
+        let v2 = eval_function_to_value(
+            fns["select"],
+            &[BigVal::from_i64(2)],
+            &empty_arrays,
+            &[None],
+            &fns,
+            0,
+        )
+        .unwrap();
         assert_eq!(
             v2.index(0).unwrap().as_scalar(),
             Some(BigVal::from_i64(300))
@@ -285,7 +305,9 @@ mod tests {
     fn eval_2d_array_return() {
         let prog = parse_program("function get_matrix() { return [[1, 2], [3, 4]]; }");
         let fns = extract_functions(&prog);
-        let val = eval_function_to_value(fns["get_matrix"], &[], &fns, 0).unwrap();
+        let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
+        let val =
+            eval_function_to_value(fns["get_matrix"], &[], &empty_arrays, &[], &fns, 0).unwrap();
         let row0 = val.index(0).unwrap();
         assert_eq!(
             row0.index(0).unwrap().as_scalar(),
@@ -301,7 +323,8 @@ mod tests {
     fn eval_hex_in_array_preserved_as_expr() {
         let prog = parse_program("function get_hex() { return [0x1, 0xFFFFFFFFFFFFFFFF]; }");
         let fns = extract_functions(&prog);
-        let val = eval_function_to_value(fns["get_hex"], &[], &fns, 0).unwrap();
+        let empty_arrays: HashMap<String, EvalValue> = HashMap::new();
+        let val = eval_function_to_value(fns["get_hex"], &[], &empty_arrays, &[], &fns, 0).unwrap();
         assert_eq!(val.index(0).unwrap().as_scalar(), Some(BigVal::from_i64(1)));
         // With BigVal, 0xFFFFFFFFFFFFFFFF fits as a positive 256-bit value now
         let second = val.index(1).unwrap().as_scalar().unwrap();
