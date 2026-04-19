@@ -2132,6 +2132,45 @@ fn sign_circomlib() {
     eprintln!("  Constraints: {n}");
 }
 
+/// Pedersen_old(8): hash 8 bits using the legacy Pedersen
+/// template that delegates to `EscalarMul` + `EscalarMulWindow` +
+/// `EscalarMulW4Table`. The table-builder function does compile-
+/// time Edwards-curve point doubling and addition via `pointAdd`
+/// (whose `/` is modular inverse in the scalar field, not integer
+/// division). Exercises:
+///
+///   - Array-valued reassignment at template level (`table =
+///     EscalarMulW4Table(base, k);`)
+///   - Deferred scalar component instantiation (`component mux;`
+///     then `mux = MultiMux4(2);`)
+///   - Partial array slice as component arg (`EscalarMul(n,
+///     PBASE[i])` where PBASE is a 2-D var)
+///   - Field-aware compile-time `+ - * /` in function bodies
+///
+/// Covers Fase 5.2. The test asserts the circuit compiles through
+/// to a non-empty R1CS — full Groth16 verification is a separate
+/// concern since computing a golden digest requires an independent
+/// Edwards-curve implementation.
+#[test]
+fn pedersen_old_circomlib_r1cs() {
+    let n = circomlib_e2e_verify(
+        "Pedersen_old(8)",
+        "test/circomlib/pedersen_old_test.circom",
+        &[
+            ("in_0", 0),
+            ("in_1", 1),
+            ("in_2", 0),
+            ("in_3", 0),
+            ("in_4", 1),
+            ("in_5", 1),
+            ("in_6", 0),
+            ("in_7", 1),
+        ],
+    );
+    eprintln!("  Pedersen_old(8): {n} constraints");
+    assert!(n > 0, "expected constraints for Pedersen_old");
+}
+
 /// Pedersen(8): hash 8 bits using BabyJubjub curve.
 ///
 /// Tests: Window4, MontgomeryAdd/Double, Edwards2Montgomery,
