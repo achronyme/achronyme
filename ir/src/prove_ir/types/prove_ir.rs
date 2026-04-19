@@ -202,6 +202,12 @@ fn validate_node(
             validate_expr(index)?;
             validate_expr(hint)
         }
+        CircuitNode::WitnessCall { input_signals, .. } => {
+            for sig in input_signals {
+                validate_expr(sig)?;
+            }
+            Ok(())
+        }
     }
 }
 

@@ -110,6 +110,32 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// Deferred witness-calculator call. The `program_bytes` field
+    /// carries an Artik bytecode payload; at prove time the
+    /// `input_signals` are resolved, handed to the Artik executor,
+    /// and the executor's witness slots are bound to the names in
+    /// `output_bindings` (one local per output signal the function
+    /// returns).
+    ///
+    /// Emitted by the circom Fase 2 lifting pass for function bodies
+    /// that cannot be circuit-inlined (local variables, loops,
+    /// multi-statement computations). The bytecode is opaque to
+    /// ProveIR itself — the instantiation pass carries the payload
+    /// through untouched, and the runtime hook in Fase 4 dispatches
+    /// it via the Artik executor.
+    WitnessCall {
+        /// Bindings for each output slot the Artik program writes to.
+        /// The caller may reference these names in later constraints.
+        output_bindings: Vec<String>,
+        /// Signal values to hand to Artik as inputs. Order matches
+        /// the program's `ReadSignal` order.
+        input_signals: Vec<CircuitExpr>,
+        /// Serialized Artik program (header + const pool + body).
+        /// Opaque at this layer — decoded by the runtime handler.
+        program_bytes: Vec<u8>,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
 }
 
 impl CircuitNode {
@@ -126,7 +152,8 @@ impl CircuitNode {
             | CircuitNode::Decompose { span, .. }
             | CircuitNode::WitnessHint { span, .. }
             | CircuitNode::LetIndexed { span, .. }
-            | CircuitNode::WitnessHintIndexed { span, .. } => span.as_ref(),
+            | CircuitNode::WitnessHintIndexed { span, .. }
+            | CircuitNode::WitnessCall { span, .. } => span.as_ref(),
         }
     }
 }

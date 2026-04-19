@@ -229,6 +229,31 @@ impl<F: FieldBackend> Instantiator<F> {
                     self.ensure_array_slot(array, idx, v);
                 }
             }
+            CircuitNode::WitnessCall {
+                output_bindings, ..
+            } => {
+                // Artik witness-calculator call. Fase 2 emits one
+                // witness-visibility IR input per output binding; the
+                // bytecode payload is threaded through untouched and
+                // consumed by the runtime handler wired up in Fase 4.
+                //
+                // Output signals take precedence (same rule as
+                // `WitnessHint`): if the binding name is already a
+                // public output wire, skip the duplicate allocation.
+                for name in output_bindings {
+                    if self.output_pub_vars.contains_key(name) {
+                        continue;
+                    }
+                    let v = self.program.fresh_var();
+                    self.program.set_name(v, name.clone());
+                    self.push_inst(Instruction::Input {
+                        result: v,
+                        name: name.clone(),
+                        visibility: Visibility::Witness,
+                    });
+                    self.env.insert(name.clone(), InstEnvValue::Scalar(v));
+                }
+            }
         }
         Ok(())
     }

@@ -131,6 +131,14 @@ fn walk_node(
             walk_expr(index, false, structural, constraint);
             walk_expr(hint, false, structural, constraint);
         }
+        CircuitNode::WitnessCall { input_signals, .. } => {
+            // Artik programs are opaque bytecode; their captures are
+            // reached purely through the argument expressions the
+            // caller built at lowering time.
+            for sig in input_signals {
+                walk_expr(sig, false, structural, constraint);
+            }
+        }
     }
 }
 

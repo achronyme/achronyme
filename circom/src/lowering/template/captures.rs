@@ -123,6 +123,13 @@ fn collect_capture_usage<'a>(
             collect_expr_captures(index, circuit);
             collect_expr_captures(hint, circuit);
         }
+        CircuitNode::WitnessCall { input_signals, .. } => {
+            // The Artik bytecode is opaque; only the caller-built
+            // input-signal expressions can reference captures.
+            for sig in input_signals {
+                collect_expr_captures(sig, circuit);
+            }
+        }
     }
 }
 

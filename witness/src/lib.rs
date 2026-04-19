@@ -41,6 +41,7 @@
 //! [`execute_with_budget`]: executor::execute_with_budget
 //! [`ArtikError`]: error::ArtikError
 
+pub mod builder;
 pub mod bytecode;
 pub mod error;
 pub mod executor;
@@ -49,6 +50,7 @@ pub mod ir;
 pub mod program;
 pub mod validate;
 
+pub use builder::{BuilderError, Label, ProgramBuilder};
 pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::{ArtikHeader, FieldFamily};

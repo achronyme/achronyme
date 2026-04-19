@@ -169,6 +169,31 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
         } => {
             writeln!(f, "{pad}{array}[{index}] <-- {hint}")
         }
+        CircuitNode::WitnessCall {
+            output_bindings,
+            input_signals,
+            program_bytes,
+            ..
+        } => {
+            // Disassembly is intentionally opaque — the payload is
+            // Artik bytecode and is expected to be meaningful only to
+            // the witness executor. Show a one-liner summary instead.
+            write!(f, "{pad}(")?;
+            for (i, name) in output_bindings.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{name}")?;
+            }
+            write!(f, ") <-- artik_call(")?;
+            for (i, sig) in input_signals.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{sig}")?;
+            }
+            writeln!(f, ") [{} bytes]", program_bytes.len())
+        }
     }
 }
 

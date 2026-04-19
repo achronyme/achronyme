@@ -502,6 +502,26 @@ fn mangle_node(
             hint: mangle_expr(hint, prefix, param_subs),
             span: span.clone(),
         },
+        CircuitNode::WitnessCall {
+            output_bindings,
+            input_signals,
+            program_bytes,
+            span,
+        } => CircuitNode::WitnessCall {
+            output_bindings: output_bindings
+                .iter()
+                .map(|n| mangle_name(prefix, n))
+                .collect(),
+            input_signals: input_signals
+                .iter()
+                .map(|e| mangle_expr(e, prefix, param_subs))
+                .collect(),
+            // Opaque Artik bytecode is unaffected by template
+            // mangling — its internal signal / slot ids are set at
+            // lift time and do not collide with outer-template names.
+            program_bytes: program_bytes.clone(),
+            span: span.clone(),
+        },
     }
 }
 
