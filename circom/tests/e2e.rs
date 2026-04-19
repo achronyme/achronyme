@@ -1300,6 +1300,90 @@ fn fn_witness_lift_produces_artik_call() {
         .expect("Artik payload must decode and validate");
 }
 
+/// Fase 2.1 lift extension: a function body with a compile-time
+/// bounded `for` loop now unrolls at lift time. The loop variable
+/// becomes a ConstInt in the lift state; each iteration's body is
+/// lowered with the variable substituted as `PushConst`. Verifies
+/// that (a) the loop-bearing function lowers without E212, (b) the
+/// resulting Artik payload is larger than the single-iteration
+/// baseline (evidence the body was actually emitted 4×), and (c)
+/// the payload validates.
+#[test]
+fn fn_witness_lift_unrolls_for_loop() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_loop_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("loop lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    // Bytes from the simpler baseline (`var y = x*2; return y+1;`)
+    // land around 50–60. An unrolled 4-iteration loop with an
+    // accumulator is measurably larger — assert we passed that floor
+    // so a regression that silently falls back to the single-return
+    // path (or worse, truncates the body) gets caught.
+    assert!(
+        bytes.len() > 80,
+        "unrolled loop payload suspiciously small: {} bytes",
+        bytes.len()
+    );
+
+    witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+        .expect("unrolled Artik payload must decode and validate");
+}
+
+/// Fase 2.1 lift extension: compile-time-folded `if / else` inside
+/// an unrolled loop selects the right branch per iteration without
+/// emitting any JumpIf. Runtime conditions still fall back to E212.
+#[test]
+fn fn_witness_lift_folds_if_else_in_loop() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_ifelse_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("if/else lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+        .expect("payload must decode and validate");
+
+    // Spot-check: no JumpIf / Jump should have been emitted — the
+    // condition folded at lift time, so the program is straight-line.
+    for instr in &prog.body {
+        assert!(
+            !matches!(
+                instr,
+                witness::Instr::Jump { .. } | witness::Instr::JumpIf { .. }
+            ),
+            "compile-time-folded branch should not emit Jump instructions"
+        );
+    }
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,
