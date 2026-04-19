@@ -69,7 +69,13 @@ pub fn eval_function_to_value(
                 continue;
             }
         }
-        vars.insert(param.clone(), args[i]);
+        // Canonicalize the incoming BigVal to field form. Callers
+        // sometimes pass `BigVal::from_i64(-3)` (two's complement),
+        // but the evaluator treats `var` arithmetic as BN254 field
+        // arithmetic — `p - 3` is the field representation of -3,
+        // not `2^256 - 3`. Without canonicalization, a subsequent
+        // `0 - x` would produce garbage.
+        vars.insert(param.clone(), args[i].to_field_canonical());
     }
 
     match eval_stmts(&func.body.stmts, &mut vars, &mut arrays, functions, depth)? {
@@ -536,10 +542,20 @@ pub fn eval_expr(
 fn eval_binop(l: BigVal, op: ast::BinOp, r: BigVal) -> Option<BigVal> {
     use std::cmp::Ordering;
     match op {
-        ast::BinOp::Add => Some(l.add(r)),
-        ast::BinOp::Sub => Some(l.sub(r)),
-        ast::BinOp::Mul => Some(l.mul(r)),
-        ast::BinOp::Div | ast::BinOp::IntDiv => l.div(r),
+        // Arithmetic in circom `var` context is field arithmetic
+        // modulo the scalar field order — division is modular
+        // inverse, not integer division. Route through the BN254
+        // field path so patterns like Edwards curve `pointAdd`
+        // (`(x1*y2 + y1*x2) / (1 + d*x1*...)`) produce the
+        // correct coordinate instead of overflowing to -1.
+        // `IntDiv` (`\` in circom) still uses truncating integer
+        // semantics for the rare cases that need it (loop bounds
+        // derived from byte counts etc.).
+        ast::BinOp::Add => Some(l.field_add(r)),
+        ast::BinOp::Sub => Some(l.field_sub(r)),
+        ast::BinOp::Mul => Some(l.field_mul(r)),
+        ast::BinOp::Div => l.field_div(r),
+        ast::BinOp::IntDiv => l.div(r),
         ast::BinOp::Mod => l.rem(r),
         ast::BinOp::Pow => {
             // Exponent must fit in u32 for practical use
@@ -551,22 +567,22 @@ fn eval_binop(l: BigVal, op: ast::BinOp, r: BigVal) -> Option<BigVal> {
         }
         ast::BinOp::Eq => Some(if l == r { BigVal::ONE } else { BigVal::ZERO }),
         ast::BinOp::Neq => Some(if l != r { BigVal::ONE } else { BigVal::ZERO }),
-        ast::BinOp::Lt => Some(if l.cmp_signed(r) == Ordering::Less {
+        ast::BinOp::Lt => Some(if l.cmp_field_signed(r) == Ordering::Less {
             BigVal::ONE
         } else {
             BigVal::ZERO
         }),
-        ast::BinOp::Le => Some(if l.cmp_signed(r) != Ordering::Greater {
+        ast::BinOp::Le => Some(if l.cmp_field_signed(r) != Ordering::Greater {
             BigVal::ONE
         } else {
             BigVal::ZERO
         }),
-        ast::BinOp::Gt => Some(if l.cmp_signed(r) == Ordering::Greater {
+        ast::BinOp::Gt => Some(if l.cmp_field_signed(r) == Ordering::Greater {
             BigVal::ONE
         } else {
             BigVal::ZERO
         }),
-        ast::BinOp::Ge => Some(if l.cmp_signed(r) != Ordering::Less {
+        ast::BinOp::Ge => Some(if l.cmp_field_signed(r) != Ordering::Less {
             BigVal::ONE
         } else {
             BigVal::ZERO
