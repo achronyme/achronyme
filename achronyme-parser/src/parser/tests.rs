@@ -1109,3 +1109,18 @@ impl Stmt {
         }
     }
 }
+
+/// Regression: deeply nested blocks must not blow the stack.
+/// Discovered by fuzz_parser on an 836-byte input of `{`
+/// characters; the recursive-descent block parser had no depth
+/// cap and ASAN flagged the overflow. The parser now bails with
+/// a diagnostic at a fixed depth limit instead.
+#[test]
+fn deeply_nested_blocks_do_not_overflow() {
+    let source: String = "{".repeat(2000);
+    let (_program, diagnostics) = crate::parse_program(&source);
+    assert!(
+        !diagnostics.is_empty(),
+        "expected parse diagnostics for deeply nested blocks"
+    );
+}

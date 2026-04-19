@@ -209,8 +209,27 @@ impl Parser {
     }
 
     pub(super) fn parse_block_inner(&mut self) -> Result<Block, ParseError> {
+        // Each nested block frame carries parse_stmt + parse_expr +
+        // parse_brace_expr on the stack (several KB per level in
+        // debug builds with ASAN). 64 is conservative enough to stay
+        // under a 2 MB default test thread stack with room to spare;
+        // legitimate programs never nest this deeply.
+        const MAX_BLOCK_DEPTH: usize = 64;
         let sp = self.span();
         self.expect(&TokenKind::LBrace)?;
+        if self.block_depth >= MAX_BLOCK_DEPTH {
+            // Stop before the recursive parse_stmt call blows the
+            // stack. Adversarial inputs like `{{{{...}}}}` would
+            // otherwise trigger an ASAN-detectable overflow (caught
+            // by fuzz_parser). A legitimate program never nests
+            // blocks this deeply; bail with a diagnostic instead.
+            let sp = self.span();
+            return Err(ParseError::new(
+                format!("block nesting exceeds {MAX_BLOCK_DEPTH} levels"),
+                sp.line_start,
+                sp.col_start,
+            ));
+        }
         self.block_depth += 1;
         let mut stmts = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
