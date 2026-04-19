@@ -42,7 +42,7 @@ use std::collections::HashMap;
 use diagnostics::Span;
 use witness::{ElemT, FieldFamily, IntW, ProgramBuilder, Reg};
 
-use crate::ast::{BinOp, Expr, PostfixOp, Stmt, UnaryOp};
+use crate::ast::{BinOp, Expr, FunctionDef, PostfixOp, Stmt, UnaryOp};
 use crate::lowering::context::LoweringContext;
 
 /// Result of a successful lift: the serialized Artik program + the
@@ -80,7 +80,16 @@ pub fn lift_function_to_artik(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
-    let mut state = LiftState::new(params);
+    // Copy function refs out of `ctx` so the lift's nested-call
+    // machinery can borrow them without holding `ctx` immutably for
+    // the entire walk. The function definitions themselves live in
+    // the AST and are stable for the duration of compilation.
+    let functions: HashMap<String, &FunctionDef> = ctx
+        .functions
+        .iter()
+        .map(|(&k, &v)| (k.to_string(), v))
+        .collect();
+    let mut state = LiftState::new(params, &functions);
 
     for stmt in body {
         state.lift_stmt(stmt)?;
@@ -137,7 +146,7 @@ enum ReturnShape {
 /// comfortably covers the entire circomlib corpus.
 type ConstInt = i64;
 
-struct LiftState {
+struct LiftState<'f> {
     builder: ProgramBuilder,
     /// Runtime-valued locals — each name holds a register that carries
     /// its current value. Mutable: a reassignment overwrites the
@@ -159,10 +168,32 @@ struct LiftState {
     /// `lift_function_to_artik` to decide how many witness slots the
     /// program exposes.
     return_shape: ReturnShape,
+    /// Function table for inlining nested calls. The lift walks
+    /// nested function bodies into the same builder, so a call like
+    /// `return bar(x + 1);` becomes straight-line bytecode with
+    /// bar's instructions interleaved into foo's.
+    functions: &'f HashMap<String, &'f FunctionDef>,
+    /// Non-zero while lifting a nested function body. Controls the
+    /// `return` dispatch so nested returns capture a value into
+    /// `nested_result` instead of emitting WriteWitness + Ret on the
+    /// outer program.
+    nested_depth: u32,
+    /// Captures the return of a nested call. Inspected and cleared
+    /// by `lift_nested_call`.
+    nested_result: Option<NestedResult>,
 }
 
-impl LiftState {
-    fn new(params: &[String]) -> Self {
+/// Value produced by a nested (inlined) function call. Arrays are
+/// kept as handle + length so the caller can thread them through the
+/// rest of the body identically to a `var arr[N];` local.
+#[derive(Clone, Copy)]
+enum NestedResult {
+    Scalar(Reg),
+    Array(Reg, u32),
+}
+
+impl<'f> LiftState<'f> {
+    fn new(params: &[String], functions: &'f HashMap<String, &'f FunctionDef>) -> Self {
         let mut builder = ProgramBuilder::new(FieldFamily::BnLike256);
         let mut locals = HashMap::new();
         for name in params {
@@ -177,6 +208,9 @@ impl LiftState {
             arrays: HashMap::new(),
             halted: false,
             return_shape: ReturnShape::Scalar,
+            functions,
+            nested_depth: 0,
+            nested_result: None,
         }
     }
 
@@ -307,11 +341,19 @@ impl LiftState {
                 ..
             } => self.lift_if_else(condition, then_body, else_body.as_ref()),
             Stmt::Return { value, .. } => {
-                // Array-return: `return <local_array>;` — expose each
-                // element as its own witness slot so the caller can
-                // re-bundle them into a `CircuitNode::LetArray`.
+                // Array-return: `return <local_array>;` — for the
+                // outer function, expose each element as its own
+                // witness slot so the caller can re-bundle them into
+                // a `CircuitNode::LetArray`. For a nested inlined
+                // call, hand the array handle back to the caller's
+                // lift_expr via `nested_result` — no slot allocation.
                 if let Expr::Ident { name, .. } = value {
                     if let Some(&(arr_reg, len)) = self.arrays.get(name) {
+                        if self.nested_depth > 0 {
+                            self.nested_result = Some(NestedResult::Array(arr_reg, len));
+                            self.halted = true;
+                            return Some(());
+                        }
                         for i in 0..len {
                             let slot = self.builder.alloc_witness_slot();
                             let idx_reg = self.push_int_const(i as u64)?;
@@ -326,8 +368,13 @@ impl LiftState {
                 }
 
                 // Scalar return.
-                let slot = self.builder.alloc_witness_slot();
                 let r = self.lift_expr(value)?;
+                if self.nested_depth > 0 {
+                    self.nested_result = Some(NestedResult::Scalar(r));
+                    self.halted = true;
+                    return Some(());
+                }
+                let slot = self.builder.alloc_witness_slot();
                 self.builder.write_witness(slot, r);
                 self.builder.ret();
                 self.halted = true;
@@ -565,8 +612,89 @@ impl LiftState {
                 let idx_reg = self.push_int_const(idx as u64)?;
                 Some(self.builder.load_arr(arr_reg, idx_reg))
             }
+            Expr::Call { callee, args, .. } => {
+                // Nested function call. Lift the callee's body into
+                // the same Artik program as this function, with the
+                // callee's params bound to arg-evaluated registers.
+                // Array returns are not representable as a single
+                // `Reg`; those currently bail out so the outer lift
+                // falls back to E212.
+                let name = extract_call_name(callee)?;
+                match self.lift_nested_call(&name, args)? {
+                    NestedResult::Scalar(r) => Some(r),
+                    NestedResult::Array(_, _) => None,
+                }
+            }
             _ => None,
         }
+    }
+
+    /// Inline a nested function call into the current Artik program.
+    /// Swaps the current scope (locals / arrays / const_locals) for
+    /// a fresh one bound to the callee's params, walks the callee's
+    /// body, captures the return value via `nested_result`, and
+    /// restores the outer scope.
+    fn lift_nested_call(&mut self, name: &str, args: &[Expr]) -> Option<NestedResult> {
+        let func = self.functions.get(name).copied()?;
+        if args.len() != func.params.len() {
+            return None;
+        }
+
+        // Simple recursion guard — the outer inline-depth counter
+        // lives in `LoweringContext` but we don't carry that here.
+        // A fixed ceiling on nested lift depth prevents programs
+        // that accidentally recurse through mutually-calling
+        // functions from exhausting the stack.
+        if self.nested_depth >= 32 {
+            return None;
+        }
+
+        // Evaluate args in the outer scope first.
+        let mut arg_regs = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_regs.push(self.lift_expr(arg)?);
+        }
+
+        // Swap scope.
+        let outer_locals = std::mem::take(&mut self.locals);
+        let outer_const = std::mem::take(&mut self.const_locals);
+        let outer_arrays = std::mem::take(&mut self.arrays);
+        let outer_halted = self.halted;
+        let outer_result = self.nested_result.take();
+        self.halted = false;
+        self.nested_depth += 1;
+
+        for (param, reg) in func.params.iter().zip(arg_regs.iter()) {
+            self.locals.insert(param.clone(), *reg);
+        }
+
+        // Lift the callee's body.
+        let mut body_ok = true;
+        for stmt in &func.body.stmts {
+            if self.lift_stmt(stmt).is_none() {
+                body_ok = false;
+                break;
+            }
+            if self.halted {
+                break;
+            }
+        }
+
+        let result = self.nested_result.take();
+
+        // Restore outer scope regardless of outcome so the program
+        // state stays sane even when a nested lift bails out.
+        self.nested_result = outer_result;
+        self.nested_depth -= 1;
+        self.halted = outer_halted;
+        self.locals = outer_locals;
+        self.const_locals = outer_const;
+        self.arrays = outer_arrays;
+
+        if !body_ok {
+            return None;
+        }
+        result
     }
 
     fn lookup_ident(&mut self, name: &str) -> Option<Reg> {
@@ -670,6 +798,17 @@ fn eval_const_expr(expr: &Expr, const_locals: &HashMap<String, ConstInt>) -> Opt
             operand,
             ..
         } => eval_const_expr(operand, const_locals).and_then(ConstInt::checked_neg),
+        _ => None,
+    }
+}
+
+/// Extract the simple identifier from a call's `callee` expression.
+/// Circom's function-call callees are always bare identifiers at the
+/// lowering layer; anything more complex (method access, indexed
+/// callable, etc.) bails out of the lift.
+fn extract_call_name(callee: &Expr) -> Option<String> {
+    match callee {
+        Expr::Ident { name, .. } => Some(name.clone()),
         _ => None,
     }
 }

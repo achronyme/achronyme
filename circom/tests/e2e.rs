@@ -1438,6 +1438,48 @@ fn fn_witness_lift_handles_internal_array() {
     assert!(seen_load, "expected at least one LoadArr (read path)");
 }
 
+/// Fase 2.1 lift extension: a nested function call inside another
+/// lifted function body is inlined into the same Artik program.
+/// `compute(x)` calls `helper` twice; both invocations lower into
+/// `compute`'s single program (no separate WitnessCall per call),
+/// and the resulting payload contains exactly one `Return` opcode.
+#[test]
+fn fn_witness_lift_inlines_nested_call() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_nested_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("nested-call lift test failed to compile: {e}"));
+
+    let mut witness_call_count = 0;
+    let mut payload: Option<Vec<u8>> = None;
+    for node in &result.prove_ir.body {
+        if let CircuitNode::WitnessCall { program_bytes, .. } = node {
+            witness_call_count += 1;
+            payload = Some(program_bytes.clone());
+        }
+    }
+    assert_eq!(
+        witness_call_count, 1,
+        "nested calls must be inlined into a single WitnessCall"
+    );
+    let prog = witness::bytecode::decode(&payload.unwrap(), Some(witness::FieldFamily::BnLike256))
+        .expect("nested-lift payload must decode and validate");
+
+    let return_count = prog
+        .body
+        .iter()
+        .filter(|i| matches!(i, witness::Instr::Return))
+        .count();
+    assert_eq!(
+        return_count, 1,
+        "the final program must have exactly one Return — nested returns are captured, not emitted"
+    );
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,
