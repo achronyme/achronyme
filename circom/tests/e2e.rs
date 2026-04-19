@@ -1653,20 +1653,82 @@ fn fn_witness_lift_array_param_e2e_groth16() {
     }
 }
 
-/// SHA-256 compile probe — documents the remaining Fase 5 gap.
+/// Fase 5.1 (array-literal init): a function body declares
+/// `var k[N] = [literal, ...];` and indexes `k[i]` in a loop.
+/// The lift allocates the backing store at declaration time and
+/// StoreArrs each literal into its slot, so later reads resolve
+/// via `LoadArr`. This is the `sha256K` shape: a constant table
+/// packed into a `var` at the top of a helper function.
 ///
-/// Array parameters are supported (Fase 5.1 closed). The next
-/// blocker is `var k[64] = [<literal>, <literal>, ...];` inside
-/// `sha256K` — the lift currently bails on `VarDecl` with both
-/// dimensions and an array-literal initializer. Closing that needs
-/// call-time const-array materialization (read the literal
-/// expression into a backing `AllocArray` + N StoreArrs at
-/// compile time, then treat `k[i]` reads through the existing
-/// folded-index path).
-///
-/// Run with `--ignored` to see the current E212 boundary.
+/// Verifies `n * (1+2+3+4) = 10*n` through Groth16 with n=7.
 #[test]
-#[ignore = "SHA-256 needs var arr[N] = [<literal>] initializers in the Artik lift"]
+fn fn_witness_lift_array_literal_e2e_groth16() {
+    use std::collections::{HashMap, HashSet};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_array_literal_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("array-literal lift failed to compile: {e}"));
+
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+    ir::passes::optimize(&mut program);
+
+    let n = 7u64;
+    let expected_out = 10 * n;
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("n".to_string(), FieldElement::<Bn254Fr>::from_u64(n));
+    inputs.insert(
+        "out".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(expected_out),
+    );
+
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
+    let witness = r1cs
+        .compile_ir_with_witness(&program, &inputs)
+        .expect("R1CS compile + witness");
+    r1cs.cs.verify(&witness).expect("R1CS verify");
+
+    let cache_dir = std::env::temp_dir().join("achronyme_test_keys");
+    let result = proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &cache_dir)
+        .unwrap_or_else(|e| panic!("Groth16 proof failed: {e}"));
+
+    match &result {
+        akron::ProveResult::Proof {
+            proof_json,
+            public_json,
+            vkey_json,
+        } => {
+            let valid =
+                proving::groth16_bn254::verify_proof_from_json(proof_json, public_json, vkey_json)
+                    .unwrap_or_else(|e| panic!("Groth16 verify failed: {e}"));
+            assert!(valid, "Groth16 proof did not verify");
+            eprintln!("  ✓ table_sum() * {n} = {expected_out} — Artik→Groth16 VERIFIED");
+        }
+        _ => panic!("expected Proof variant from Groth16"),
+    }
+}
+
+/// SHA-256 compile probe — does circomlib's `sha256compression`
+/// now make it through the Artik lift end-to-end?
+///
+/// Fase 5.1 closed the two historical blockers: array parameters
+/// (`hin[256]`, `inp[512]` bound at call sites) and array-literal
+/// initializers (`var k[64] = [...]` inside `sha256K`). Running
+/// this un-ignored will either pass outright or surface whatever
+/// remains — e.g. more exotic bit-manipulation shapes the lift
+/// doesn't cover yet. Kept separate from the focused lift tests so
+/// failures don't mask simpler regressions.
+#[test]
+#[ignore = "SHA-256 compile probe — run with --ignored to check Fase 5 completeness"]
 fn sha256_64_compiles_via_artik_lift() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/sha256_test.circom");
