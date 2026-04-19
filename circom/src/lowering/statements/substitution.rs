@@ -289,6 +289,67 @@ fn lower_var_assign<'a>(
         )
     })?;
 
+    // Array-valued reassignment (e.g. `table = EscalarMulW4Table(base, k);`
+    // inside `EscalarMulWindow` after a prior `var table[16][2];`
+    // declaration). Try compile-time evaluation; if the function returns
+    // an array, expand to per-element Let bindings and register the
+    // result under the target name so subsequent `table[i][j]` reads
+    // resolve via `env.known_array_values`.
+    if let Some(eval_val) = super::arrays::try_eval_array_init(value, env, ctx) {
+        super::arrays::expand_eval_value_to_nodes(&name, &eval_val, nodes, env, sr);
+        env.known_array_values.insert(name.clone(), eval_val);
+        env.locals.insert(name);
+        return Ok(());
+    }
+
+    // Deferred scalar component instantiation: `component c; ...; c = T();`
+    // circomlib uses this idiom (e.g. `component mux = MultiMux4(2);`
+    // split into `component mux;` followed by `mux = MultiMux4(2);`
+    // inside `EscalarMulWindow`). Detect by checking whether the RHS
+    // is a call to a registered template; if so, route through the
+    // same machinery as `component c = T()`.
+    if let Expr::Call { callee, .. } = value {
+        if let Some(fn_name) = extract_ident_name(callee) {
+            if ctx.templates.contains_key(fn_name.as_str()) {
+                if let Some(call) = extract_component_call(value, env, ctx)? {
+                    if let Some(template) = ctx.templates.get(call.template_name.as_str()) {
+                        let template = *template;
+                        register_component_locals(&name, template, &call.scalar_args, env);
+                        let signals = collect_signal_names(&template.body.stmts);
+                        let input_signals: HashSet<String> = signals
+                            .iter()
+                            .filter(|(_, st)| matches!(st, ast::SignalType::Input))
+                            .map(|(n, _)| n.clone())
+                            .collect();
+                        if input_signals.is_empty() {
+                            let body = inline_component_body_with_arrays(
+                                &name,
+                                template,
+                                &call.scalar_args,
+                                &call.array_args,
+                                ctx,
+                                span,
+                            )?;
+                            nodes.extend(body);
+                        } else {
+                            pending.insert(
+                                name.clone(),
+                                PendingComponent::new(
+                                    template,
+                                    call.scalar_args,
+                                    call.array_args,
+                                    input_signals,
+                                ),
+                            );
+                        }
+                        env.locals.insert(name);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
     // Track compile-time var assignments so loop bounds and array indices
     // can reference them (e.g., `var nseg = (s < n-1) ? 249 : last;`).
     // Use param_values (not known_constants) to avoid affecting Ident
@@ -562,6 +623,17 @@ pub(super) fn extract_component_call(
                 if let Some(arg_name) = extract_ident_name(arg) {
                     if let Some(arr_val) = env.known_array_values.get(&arg_name) {
                         array_arg_indices.push((i, arg_name, arr_val.clone()));
+                        continue;
+                    }
+                }
+                // Partially-indexed array (e.g. `PBASE[i]` where `PBASE`
+                // is 2D). Resolve the leading compile-time indices and
+                // check whether the remaining shape is still an array
+                // — in which case pass it as an array arg to the
+                // callee rather than coercing it through scalar lowering.
+                if let Some(slice) = resolve_partial_array_slice(arg, env, ctx) {
+                    if matches!(slice, EvalValue::Array(_)) {
+                        array_arg_indices.push((i, format!("__slice_{i}"), slice));
                     }
                 }
             }
@@ -614,6 +686,51 @@ pub(super) fn extract_component_call(
         ));
     }
     Ok(None)
+}
+
+/// Resolve an expression like `PBASE[i]` (or `M[i][j]` partial, etc.)
+/// to a sub-slice of a registered known-array value.
+///
+/// Walks the chain of `Expr::Index` back to the base `Ident`, folds
+/// each index to a compile-time `usize` using `ctx.all_constants(env)`,
+/// and steps through the nested `EvalValue::Array` stored in
+/// `env.known_array_values`. Returns the resulting `EvalValue` —
+/// scalar if fully indexed, sub-array if only the leading dimensions
+/// were resolved (e.g. `PBASE[3]` over a 10x2 → 2-element Array).
+///
+/// Returns `None` if the base isn't a known array, any index fails
+/// to fold, or an index is out of bounds.
+fn resolve_partial_array_slice(
+    expr: &Expr,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Option<EvalValue> {
+    let mut indices: Vec<&Expr> = Vec::new();
+    let mut cursor = expr;
+    while let Expr::Index { object, index, .. } = cursor {
+        indices.push(index);
+        cursor = object;
+    }
+    let base_name = if let Expr::Ident { name, .. } = cursor {
+        name.as_str()
+    } else {
+        return None;
+    };
+    let mut slice = env.known_array_values.get(base_name)?.clone();
+    // indices collected outermost-to-innermost traversal is reversed
+    indices.reverse();
+
+    let all = ctx.all_constants(env);
+    for idx_expr in &indices {
+        let idx_fc = super::super::utils::const_eval_with_params(idx_expr, &all)?;
+        let idx = idx_fc.to_u64()? as usize;
+        let next = match &slice {
+            EvalValue::Array(elems) => elems.get(idx)?.clone(),
+            _ => return None,
+        };
+        slice = next;
+    }
+    Some(slice)
 }
 
 /// Convert a compound assignment operator to a CircuitExpr binary op.
