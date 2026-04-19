@@ -1120,11 +1120,15 @@ fn expr_is_mux_compatible(expr: &Expr) -> bool {
                 && expr_is_mux_compatible(if_true)
                 && expr_is_mux_compatible(if_false)
         }
-        // Nested function calls are inlined into the current program;
-        // each call's emitted instructions run unconditionally under a
-        // mux. We don't yet attempt to prove absence of StoreArr inside
-        // the callee, so bail.
-        Expr::Call { .. } => false,
+        // Nested function calls inline into the current Artik program
+        // at `nested_depth > 0`, which captures `return` via
+        // `nested_result` instead of emitting `WriteWitness`. Array
+        // allocations inside the callee are scope-local to the nested
+        // frame and cannot leak to the caller's arrays map. Both arms
+        // emit the call's instructions — wasted work, but not a
+        // witness corruption, because the mux picks the winning
+        // register after the fact.
+        Expr::Call { args, .. } => args.iter().all(expr_is_mux_compatible),
         _ => false,
     }
 }

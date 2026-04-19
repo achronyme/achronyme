@@ -1588,6 +1588,59 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     );
 }
 
+/// Fase 2.4 mux extension: nested function calls on the RHS of
+/// assignments inside either arm of a runtime if/else are admissible.
+/// Each call inlines at nested_depth > 0 (return captured via
+/// nested_result, no WriteWitness), so both arms execute their call
+/// under the mux without corrupting the top-level witness write.
+/// Validated by decoding the payload and running the Artik executor
+/// with cond ∈ {0, 1} against a hand-computed reference.
+#[test]
+fn fn_witness_lift_mux_admits_nested_calls() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_mux_calls_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("mux+calls lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+        .expect("mux+calls payload must decode and validate");
+
+    use memory::field::{Bn254Fr, FieldElement};
+    type FE = FieldElement<Bn254Fr>;
+
+    // cond=1 → triple(x) == 3x.
+    let sigs = [FE::from_u64(1), FE::from_u64(17)];
+    let mut slots = [FE::zero()];
+    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    witness::execute(&prog, &mut ctx).expect("execute cond=1");
+    assert_eq!(slots[0], FE::from_u64(51), "cond=1 should pick triple(x)");
+
+    // cond=0 → quadruple(x) == 4x.
+    let sigs = [FE::from_u64(0), FE::from_u64(17)];
+    let mut slots = [FE::zero()];
+    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    witness::execute(&prog, &mut ctx).expect("execute cond=0");
+    assert_eq!(
+        slots[0],
+        FE::from_u64(68),
+        "cond=0 should pick quadruple(x)"
+    );
+}
+
 /// Fase 2.3 lift extension: bitwise ops (`&`, `|`, `^`, `<<`, `>>`)
 /// and `~` lift through the int-promotion scaffold
 /// (`IntFromField U32` → `IBin` → `FieldFromInt U32`). Exercised by
