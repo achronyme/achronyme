@@ -23,8 +23,15 @@
 //!   `BinOp` of `Add / Sub / Mul / Div` over field-typed operands,
 //!   `UnaryOp::Neg`.
 //!
-//! Anything else (arrays, `if/else`, nested calls, non-constant loop
-//! bounds, tuple destructuring) returns `None` silently and the
+//! - **Control flow**:
+//!   - `if (cond) { ... } else { ... }` — compile-time-foldable
+//!     conditions pick a single branch; runtime conditions lower
+//!     through a field-arithmetic mux
+//!     (`cond_bool * then + (1 - cond_bool) * else`) provided both
+//!     arms are pure-scalar (no array writes, no `return`).
+//!
+//! Anything else (non-constant loop bounds, tuple destructuring,
+//! branches with side effects) returns `None` silently and the
 //! caller falls back to E212.
 //!
 //! ## Non-goals
@@ -506,20 +513,34 @@ impl<'f> LiftState<'f> {
         Some(())
     }
 
-    /// Lift an `if / else` whose condition folds at compile time.
-    /// Runtime conditions return `None` — Artik's executor supports
-    /// `JumpIf` but the lift pass does not yet synthesize the label
-    /// scaffolding a runtime branch would need, so we fall back to
-    /// E212 for those. Nested `else if` chains traverse through
-    /// `ElseBranch::IfElse`.
+    /// Lift an `if / else`. Compile-time-foldable conditions pick a
+    /// single branch and emit only that body's instructions. Runtime
+    /// conditions (dependent on a signal or runtime-valued local) fall
+    /// through to [`lift_if_else_mux`], which branchlessly computes
+    /// both arms and selects per-variable via a field-arithmetic mux.
+    /// Anything the mux pass can't prove safe returns `None` and the
+    /// caller falls back to E212.
     fn lift_if_else(
         &mut self,
         condition: &Expr,
         then_body: &crate::ast::Block,
         else_body: Option<&crate::ast::ElseBranch>,
     ) -> Option<()> {
+        if let Some(cond) = eval_const_expr(condition, &self.const_locals) {
+            return self.lift_if_else_folded(cond, then_body, else_body);
+        }
+        self.lift_if_else_mux(condition, then_body, else_body)
+    }
+
+    /// Compile-time branch: `cond` already evaluated to an integer;
+    /// emit only the taken side's instructions.
+    fn lift_if_else_folded(
+        &mut self,
+        cond: ConstInt,
+        then_body: &crate::ast::Block,
+        else_body: Option<&crate::ast::ElseBranch>,
+    ) -> Option<()> {
         use crate::ast::ElseBranch;
-        let cond = eval_const_expr(condition, &self.const_locals)?;
         if cond != 0 {
             for s in &then_body.stmts {
                 self.lift_stmt(s)?;
@@ -543,6 +564,152 @@ impl<'f> LiftState<'f> {
                 None => {}
             }
         }
+        Some(())
+    }
+
+    /// Runtime if/else: lower both branches into the same Artik
+    /// program and merge their scalar local updates via a
+    /// field-arithmetic mux — `x = cond_bool * then_x + (1 - cond_bool) * else_x`.
+    /// `cond_bool` is derived from the raw condition through `FEq(cond, 0)`
+    /// so the result matches circom's semantics (0 → false, non-zero → true)
+    /// regardless of whether the caller already constrained `cond` to `{0,1}`.
+    ///
+    /// Bails (returns `None`) when either arm contains a shape the mux
+    /// can't handle safely: array writes, witness writes, `return`, or
+    /// non-scalar assignment targets. Both arms execute at runtime, so
+    /// any side effect that isn't "write to a register we later discard"
+    /// would produce a wrong witness.
+    fn lift_if_else_mux(
+        &mut self,
+        condition: &Expr,
+        then_body: &crate::ast::Block,
+        else_body: Option<&crate::ast::ElseBranch>,
+    ) -> Option<()> {
+        use crate::ast::ElseBranch;
+
+        // Pre-flight: reject anything that might have side effects at
+        // runtime. `return`, array writes, and witness writes would all
+        // execute unconditionally under the mux scheme.
+        if !stmts_are_mux_compatible(&then_body.stmts) {
+            return None;
+        }
+        match else_body {
+            Some(ElseBranch::Block(b)) => {
+                if !stmts_are_mux_compatible(&b.stmts) {
+                    return None;
+                }
+            }
+            Some(ElseBranch::IfElse(boxed)) => {
+                if !stmt_is_mux_compatible(boxed) {
+                    return None;
+                }
+            }
+            None => {}
+        }
+
+        // Normalize the condition to a {0, 1} field element. We
+        // compute `is_zero = FEq(cond, 0)` (outputs Int(U8) 0/1),
+        // lift back to Field via `FieldFromInt U8`, then take
+        // `bool_cond = 1 - is_zero`. This preserves circom's
+        // "0 is false, non-zero is true" semantics without assuming
+        // the caller pre-constrained `cond` to bool.
+        let raw_cond = self.lift_expr(condition)?;
+        let zero_reg = self.push_const_unsigned(0)?;
+        let is_zero_int = self.builder.feq(raw_cond, zero_reg);
+        let is_zero_field = self.builder.field_from_int(is_zero_int, IntW::U8);
+        let one_reg = self.push_const_unsigned(1)?;
+        let bool_cond = self.builder.fsub(one_reg, is_zero_field);
+        let not_bool_cond = self.builder.fsub(one_reg, bool_cond);
+
+        // Snapshot the caller's scope so each branch starts from the
+        // same pre-branch view.
+        let pre_locals = self.locals.clone();
+        let pre_const_locals = self.const_locals.clone();
+
+        // Then-branch.
+        for stmt in &then_body.stmts {
+            self.lift_stmt(stmt)?;
+            // `return` inside a mux branch is not representable —
+            // one arm halting while the other doesn't has no
+            // meaningful merge.
+            if self.halted {
+                return None;
+            }
+        }
+        // A branch that demoted a const_local to runtime would make
+        // the post-merge state ambiguous (const in one arm, runtime
+        // in the other). Bail conservatively.
+        if self.const_locals != pre_const_locals {
+            return None;
+        }
+        let then_locals = std::mem::replace(&mut self.locals, pre_locals.clone());
+
+        // Else-branch.
+        match else_body {
+            Some(ElseBranch::Block(b)) => {
+                for stmt in &b.stmts {
+                    self.lift_stmt(stmt)?;
+                    if self.halted {
+                        return None;
+                    }
+                }
+            }
+            Some(ElseBranch::IfElse(boxed)) => {
+                self.lift_stmt(boxed)?;
+                if self.halted {
+                    return None;
+                }
+            }
+            None => {}
+        }
+        if self.const_locals != pre_const_locals {
+            return None;
+        }
+        let else_locals = std::mem::take(&mut self.locals);
+
+        // Merge. For each name in the union of pre / then / else
+        // scopes, produce one register that holds the post-branch
+        // value. Names unchanged by both arms pass through; names
+        // updated in at least one arm get a mux instruction triple.
+        let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for k in pre_locals.keys() {
+            names.insert(k.clone());
+        }
+        for k in then_locals.keys() {
+            names.insert(k.clone());
+        }
+        for k in else_locals.keys() {
+            names.insert(k.clone());
+        }
+
+        let mut merged: HashMap<String, Reg> = HashMap::new();
+        for name in &names {
+            let then_r = then_locals
+                .get(name)
+                .copied()
+                .or_else(|| pre_locals.get(name).copied());
+            let else_r = else_locals
+                .get(name)
+                .copied()
+                .or_else(|| pre_locals.get(name).copied());
+            match (then_r, else_r) {
+                (Some(t), Some(e)) if t == e => {
+                    merged.insert(name.clone(), t);
+                }
+                (Some(t), Some(e)) => {
+                    let t_part = self.builder.fmul(bool_cond, t);
+                    let e_part = self.builder.fmul(not_bool_cond, e);
+                    let out = self.builder.fadd(t_part, e_part);
+                    merged.insert(name.clone(), out);
+                }
+                // Name exists in only one arm and wasn't declared
+                // before the branch — the other path leaves it
+                // undefined, which the mux can't fix.
+                _ => return None,
+            }
+        }
+
+        self.locals = merged;
         Some(())
     }
 
@@ -823,6 +990,96 @@ fn is_increment_on(expr: &Expr, name: &str) -> bool {
         return false;
     }
     matches!(operand.as_ref(), Expr::Ident { name: n, .. } if n == name)
+}
+
+/// Are all of `stmts` safe to lift under the mux scheme (both arms
+/// executing unconditionally at runtime)?
+fn stmts_are_mux_compatible(stmts: &[Stmt]) -> bool {
+    stmts.iter().all(stmt_is_mux_compatible)
+}
+
+/// Shape check for a single branch statement. The mux scheme runs
+/// both arms of an if/else at runtime and picks the output of the
+/// "taken" arm via field arithmetic, so only side-effect-free
+/// statements are admissible:
+/// - scalar `var` decls / `=` / compound-assign (no array writes),
+/// - nested if/else (recursively checked),
+/// - bare postfix/prefix side effects on pure expressions.
+///
+/// `return`, array stores, and tuple destructuring bail out of the mux
+/// pass; the caller falls back to E212.
+fn stmt_is_mux_compatible(stmt: &Stmt) -> bool {
+    use crate::ast::ElseBranch;
+    match stmt {
+        Stmt::VarDecl {
+            names,
+            dimensions,
+            init,
+            ..
+        } => {
+            names.len() == 1
+                && dimensions.is_empty()
+                && init.as_ref().is_none_or(expr_is_mux_compatible)
+        }
+        Stmt::Substitution { target, value, .. } => {
+            matches!(target, Expr::Ident { .. }) && expr_is_mux_compatible(value)
+        }
+        Stmt::CompoundAssign { target, value, .. } => {
+            matches!(target, Expr::Ident { .. }) && expr_is_mux_compatible(value)
+        }
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_is_mux_compatible(condition)
+                && stmts_are_mux_compatible(&then_body.stmts)
+                && match else_body {
+                    Some(ElseBranch::Block(b)) => stmts_are_mux_compatible(&b.stmts),
+                    Some(ElseBranch::IfElse(boxed)) => stmt_is_mux_compatible(boxed),
+                    None => true,
+                }
+        }
+        Stmt::Expr { expr, .. } => expr_is_mux_compatible(expr),
+        _ => false,
+    }
+}
+
+/// Is `expr` side-effect-free enough to evaluate on both arms of a
+/// runtime mux? Calls bail out: a nested lift could still read
+/// signals or emit work that's fine in isolation, but we keep the
+/// MVP conservative and only admit pure register arithmetic.
+fn expr_is_mux_compatible(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number { .. } | Expr::HexNumber { .. } | Expr::Ident { .. } => true,
+        Expr::BinOp { lhs, rhs, .. } => expr_is_mux_compatible(lhs) && expr_is_mux_compatible(rhs),
+        Expr::UnaryOp { operand, .. } => expr_is_mux_compatible(operand),
+        Expr::PostfixOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
+            expr_is_mux_compatible(operand)
+        }
+        Expr::Index { object, index, .. } => {
+            // `arr[i]` reads from a pre-allocated array; both arms do
+            // the read but only one result is selected.
+            expr_is_mux_compatible(object) && expr_is_mux_compatible(index)
+        }
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_is_mux_compatible(condition)
+                && expr_is_mux_compatible(if_true)
+                && expr_is_mux_compatible(if_false)
+        }
+        // Nested function calls are inlined into the current program;
+        // each call's emitted instructions run unconditionally under a
+        // mux. We don't yet attempt to prove absence of StoreArr inside
+        // the callee, so bail.
+        Expr::Call { .. } => false,
+        _ => false,
+    }
 }
 
 /// Map a circom compound-assignment operator to the plain binary op
