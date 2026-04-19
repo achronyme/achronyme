@@ -83,6 +83,18 @@ pub(super) struct Instantiator<F: FieldBackend> {
     /// Used to intercept body nodes (WitnessHint, Let) that would create
     /// duplicate wires for output signals.
     pub(super) output_pub_vars: HashMap<String, SsaVar>,
+    /// Dedup cache for `Instruction::Const`. Maps the field value's
+    /// canonical 32-byte representation to the SSA var of a previously
+    /// emitted Const with that value. Repeated emissions of the same
+    /// constant reuse the existing var, saving both a push and a
+    /// `set_type` call per reuse. Populated exclusively via [`emit_const`].
+    pub(super) const_cache: HashMap<[u8; 32], SsaVar>,
+    /// Reverse lookup: SSA var → field value, for every var known to
+    /// be a compile-time constant. Enables peephole const-fold in
+    /// `emit_expr` for `BinOp`/`UnaryOp` (e.g., `Add(x, Const(0)) → x`,
+    /// `Mul(Const, Const) → Const(fold)`). Populated alongside
+    /// [`const_cache`] in [`emit_const`].
+    pub(super) const_values: HashMap<SsaVar, FieldElement<F>>,
 }
 
 #[cfg(test)]

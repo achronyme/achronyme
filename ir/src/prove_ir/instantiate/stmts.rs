@@ -633,11 +633,7 @@ impl<F: FieldBackend> Instantiator<F> {
         }
         self.with_saved_var(var, |this| {
             for i in start..end {
-                let v = this.program.fresh_var();
-                this.program.push(Instruction::Const {
-                    result: v,
-                    value: FieldElement::<F>::from_u64(i),
-                });
+                let v = this.emit_const(FieldElement::<F>::from_u64(i));
                 this.program.set_name(v, var.to_string());
                 this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
 

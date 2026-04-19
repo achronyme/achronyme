@@ -1744,20 +1744,24 @@ fn sha256_64_compiles_via_artik_lift() {
 /// exercise the structural pipeline and surface constraint count
 /// or the first hard error (budget, memory, unsupported node).
 ///
-/// Known limitation (diagnosed via GlobalAlloc tracing): aborts
-/// during `instantiate_with_outputs` with a 4.83 GB allocation
-/// failure while growing `IrProgram.instructions`. Accompanied by
-/// a 2.72 GB HashMap rehash earlier in the same call. Estimated
-/// 100M instructions emitted vs. ~30k expected — ~3000x
-/// amplification. The hot stack shows triple-nested `emit_for` →
-/// `emit_node` → `emit_expr` (8 levels deep) → `push_inst`,
-/// suggesting component-inlining re-emits shared sub-expressions
-/// per iteration rather than caching. Orthogonal to the `If`
-/// branch-select fix (all 38 other circomlib E2E tests pass).
-/// Follow-up: CSE / memoization during instantiate, or scoped
-/// env cleanup between loop iterations.
+/// Current state (post const-dedup + peephole const-fold fix):
+/// the OOM is gone — peak RSS stays around 545 MB (vs. 6.6 GB
+/// before the fix). But the probe still fails to complete within
+/// practical time budgets: `instantiate` has run >25 min without
+/// producing the `[instantiate]` print. The root cause is
+/// architectural, not memory-bound: `Sha256(64)` has deeply
+/// nested loops (64 rounds × SigmaPlus(48) × SmallSigma0/1 with
+/// 32-bit decomposes) that our pipeline unrolls fully into flat
+/// SSA during instantiate. Circom avoids this by keeping
+/// templates abstract until final R1CS emission. On lighter
+/// circuits (Poseidon/MiMC/EdDSA) Achronyme beats circom ≥10×,
+/// but bit-heavy nested circuits like SHA-256 expose the gap.
+///
+/// Follow-up (post-beta.20): lazy unrolling (keep `CircuitNode::For`
+/// until R1CS backend) or template instancing with sub-tree
+/// sharing — see `project_instantiate_refactor.md`.
 #[test]
-#[ignore = "SHA-256 R1CS probe — diagnostic only; OOMs during instantiate, run with --ignored"]
+#[ignore = "SHA-256 R1CS probe — diagnostic only; hangs during instantiate due to unrolling amplification"]
 fn sha256_64_r1cs_probe() {
     use std::collections::HashSet;
     use std::time::Instant;

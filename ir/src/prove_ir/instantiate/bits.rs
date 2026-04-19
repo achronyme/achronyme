@@ -51,12 +51,7 @@ impl<F: FieldBackend> Instantiator<F> {
     /// Recompose bits (LSB first) back into a single field element: Σ bit_i * 2^i
     pub(super) fn emit_recompose(&mut self, bits: &[SsaVar]) -> Result<SsaVar, ProveIrError> {
         if bits.is_empty() {
-            let v = self.program.fresh_var();
-            self.push_inst(Instruction::Const {
-                result: v,
-                value: FieldElement::<F>::zero(),
-            });
-            return Ok(v);
+            return Ok(self.emit_const(FieldElement::<F>::zero()));
         }
 
         let mut acc = bits[0]; // bit_0 * 2^0 = bit_0
@@ -64,11 +59,7 @@ impl<F: FieldBackend> Instantiator<F> {
 
         for &bit in &bits[1..] {
             // coeff = 2^i
-            let coeff_var = self.program.fresh_var();
-            self.push_inst(Instruction::Const {
-                result: coeff_var,
-                value: power_of_two,
-            });
+            let coeff_var = self.emit_const(power_of_two);
             // term = bit * 2^i
             let term = self.program.fresh_var();
             self.push_inst(Instruction::Mul {
@@ -144,11 +135,7 @@ impl<F: FieldBackend> Instantiator<F> {
                         lhs: bits_l[i],
                         rhs: bits_r[i],
                     });
-                    let two = self.program.fresh_var();
-                    self.push_inst(Instruction::Const {
-                        result: two,
-                        value: FieldElement::<F>::from_u64(2),
-                    });
+                    let two = self.emit_const(FieldElement::<F>::from_u64(2));
                     let two_ab = self.program.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: two_ab,
@@ -183,11 +170,7 @@ impl<F: FieldBackend> Instantiator<F> {
         num_bits: u32,
     ) -> Result<SsaVar, ProveIrError> {
         let bits = self.emit_decompose_bits(operand, num_bits)?;
-        let one = self.program.fresh_var();
-        self.push_inst(Instruction::Const {
-            result: one,
-            value: FieldElement::<F>::one(),
-        });
+        let one = self.emit_const(FieldElement::<F>::one());
 
         let mut result_bits = Vec::with_capacity(num_bits as usize);
         for &bit in &bits {
@@ -211,12 +194,7 @@ impl<F: FieldBackend> Instantiator<F> {
         num_bits: u32,
     ) -> Result<SsaVar, ProveIrError> {
         if shift >= num_bits {
-            let v = self.program.fresh_var();
-            self.push_inst(Instruction::Const {
-                result: v,
-                value: FieldElement::<F>::zero(),
-            });
-            return Ok(v);
+            return Ok(self.emit_const(FieldElement::<F>::zero()));
         }
         let bits = self.emit_decompose_bits(operand, num_bits)?;
         // Right shift: drop the lowest `shift` bits
@@ -232,20 +210,11 @@ impl<F: FieldBackend> Instantiator<F> {
         num_bits: u32,
     ) -> Result<SsaVar, ProveIrError> {
         if shift >= num_bits {
-            let v = self.program.fresh_var();
-            self.push_inst(Instruction::Const {
-                result: v,
-                value: FieldElement::<F>::zero(),
-            });
-            return Ok(v);
+            return Ok(self.emit_const(FieldElement::<F>::zero()));
         }
         let bits = self.emit_decompose_bits(operand, num_bits)?;
         // Left shift: prepend `shift` zeros, truncate to num_bits
-        let zero = self.program.fresh_var();
-        self.push_inst(Instruction::Const {
-            result: zero,
-            value: FieldElement::<F>::zero(),
-        });
+        let zero = self.emit_const(FieldElement::<F>::zero());
         let mut shifted_bits: Vec<SsaVar> = vec![zero; shift as usize];
         let remaining = (num_bits - shift) as usize;
         shifted_bits.extend_from_slice(&bits[..remaining.min(bits.len())]);

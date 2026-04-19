@@ -39,6 +39,8 @@ impl ProveIR {
             captures: captures.clone(),
             current_span: None,
             output_pub_vars: HashMap::new(),
+            const_cache: HashMap::new(),
+            const_values: HashMap::new(),
         };
 
         // 1. Validate all required captures are provided
@@ -115,6 +117,8 @@ impl ProveIR {
             captures: captures.clone(),
             current_span: None,
             output_pub_vars: HashMap::new(),
+            const_cache: HashMap::new(),
+            const_values: HashMap::new(),
         };
 
         // 1. Validate all required captures are provided

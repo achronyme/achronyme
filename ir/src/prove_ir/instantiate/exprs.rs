@@ -31,13 +31,7 @@ impl<F: FieldBackend> Instantiator<F> {
                         span: None,
                     }
                 })?;
-                let v = self.program.fresh_var();
-                self.push_inst(Instruction::Const {
-                    result: v,
-                    value: fe,
-                });
-                self.program.set_type(v, IrType::Field);
-                Ok(v)
+                Ok(self.emit_const(fe))
             }
             CircuitExpr::Input(name) => self.resolve_scalar(name),
             CircuitExpr::Var(name) => self.resolve_scalar(name),
@@ -49,6 +43,61 @@ impl<F: FieldBackend> Instantiator<F> {
             CircuitExpr::BinOp { op, lhs, rhs } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
+
+                // Peephole const-fold: if both operands are known
+                // constants, compute at emit time and emit a deduped
+                // Const. If only one is a known identity/annihilator,
+                // short-circuit to the other operand (or a zero const).
+                // These rules mirror `ir::passes::const_fold` but run
+                // *during* instantiate, keeping the instruction stream
+                // small enough to survive large circuits (SHA-256).
+                let lv = self.const_value_of(l);
+                let rv = self.const_value_of(r);
+                if let (Some(a), Some(b)) = (lv, rv) {
+                    let folded = match op {
+                        CircuitBinOp::Add => Some(a.add(&b)),
+                        CircuitBinOp::Sub => Some(a.sub(&b)),
+                        CircuitBinOp::Mul => Some(a.mul(&b)),
+                        CircuitBinOp::Div => a.div(&b),
+                    };
+                    if let Some(fe) = folded {
+                        return Ok(self.emit_const(fe));
+                    }
+                }
+                match op {
+                    CircuitBinOp::Add => {
+                        if lv.map(|a| a.is_zero()).unwrap_or(false) {
+                            return Ok(r);
+                        }
+                        if rv.map(|b| b.is_zero()).unwrap_or(false) {
+                            return Ok(l);
+                        }
+                    }
+                    CircuitBinOp::Sub => {
+                        if rv.map(|b| b.is_zero()).unwrap_or(false) {
+                            return Ok(l);
+                        }
+                    }
+                    CircuitBinOp::Mul => {
+                        if lv.map(|a| a.is_zero()).unwrap_or(false)
+                            || rv.map(|b| b.is_zero()).unwrap_or(false)
+                        {
+                            return Ok(self.emit_const(FieldElement::<F>::zero()));
+                        }
+                        if lv.map(|a| a == FieldElement::<F>::one()).unwrap_or(false) {
+                            return Ok(r);
+                        }
+                        if rv.map(|b| b == FieldElement::<F>::one()).unwrap_or(false) {
+                            return Ok(l);
+                        }
+                    }
+                    CircuitBinOp::Div => {
+                        if rv.map(|b| b == FieldElement::<F>::one()).unwrap_or(false) {
+                            return Ok(l);
+                        }
+                    }
+                }
+
                 let v = self.program.fresh_var();
                 let inst = match op {
                     CircuitBinOp::Add => Instruction::Add {
@@ -78,6 +127,22 @@ impl<F: FieldBackend> Instantiator<F> {
             }
             CircuitExpr::UnaryOp { op, operand } => {
                 let inner = self.emit_expr(operand)?;
+
+                // Peephole const-fold for unary operators.
+                if let Some(a) = self.const_value_of(inner) {
+                    let folded = match op {
+                        CircuitUnaryOp::Neg => Some(a.neg()),
+                        CircuitUnaryOp::Not => Some(if a.is_zero() {
+                            FieldElement::<F>::one()
+                        } else {
+                            FieldElement::<F>::zero()
+                        }),
+                    };
+                    if let Some(fe) = folded {
+                        return Ok(self.emit_const(fe));
+                    }
+                }
+
                 let v = self.program.fresh_var();
                 let inst = match op {
                     CircuitUnaryOp::Neg => Instruction::Neg {
@@ -208,11 +273,7 @@ impl<F: FieldBackend> Instantiator<F> {
 
                 if compiled.len() == 1 {
                     // Match IrLowering semantics: single arg → poseidon(arg, ZERO)
-                    let zero = self.program.fresh_var();
-                    self.push_inst(Instruction::Const {
-                        result: zero,
-                        value: FieldElement::<F>::zero(),
-                    });
+                    let zero = self.emit_const(FieldElement::<F>::zero());
                     let v = self.program.fresh_var();
                     self.push_inst(Instruction::PoseidonHash {
                         result: v,
@@ -380,12 +441,7 @@ impl<F: FieldBackend> Instantiator<F> {
                         });
                     }
                 };
-                let v = self.program.fresh_var();
-                self.push_inst(Instruction::Const {
-                    result: v,
-                    value: FieldElement::<F>::from_u64(len as u64),
-                });
-                Ok(v)
+                Ok(self.emit_const(FieldElement::<F>::from_u64(len as u64)))
             }
             CircuitExpr::Pow { base, exp } => {
                 let base_var = self.emit_expr(base)?;
@@ -443,12 +499,7 @@ impl<F: FieldBackend> Instantiator<F> {
             } => {
                 // If both operand and shift are compile-time constants, fold entirely
                 if let Ok(fe) = self.eval_const_expr(expr) {
-                    let v = self.program.fresh_var();
-                    self.push_inst(Instruction::Const {
-                        result: v,
-                        value: fe,
-                    });
-                    return Ok(v);
+                    return Ok(self.emit_const(fe));
                 }
                 let op = self.emit_expr(operand)?;
                 let shift_val = self.resolve_const_u32(shift, "shift right amount")?;
@@ -461,12 +512,7 @@ impl<F: FieldBackend> Instantiator<F> {
             } => {
                 // If both operand and shift are compile-time constants, fold entirely
                 if let Ok(fe) = self.eval_const_expr(expr) {
-                    let v = self.program.fresh_var();
-                    self.push_inst(Instruction::Const {
-                        result: v,
-                        value: fe,
-                    });
-                    return Ok(v);
+                    return Ok(self.emit_const(fe));
                 }
                 let op = self.emit_expr(operand)?;
                 let shift_val = self.resolve_const_u32(shift, "shift left amount")?;
@@ -499,12 +545,7 @@ impl<F: FieldBackend> Instantiator<F> {
     /// Emit a power chain: base^exp as repeated multiplication.
     pub(super) fn emit_pow(&mut self, base: SsaVar, exp: u64) -> Result<SsaVar, ProveIrError> {
         if exp == 0 {
-            let v = self.program.fresh_var();
-            self.push_inst(Instruction::Const {
-                result: v,
-                value: FieldElement::<F>::one(),
-            });
-            return Ok(v);
+            return Ok(self.emit_const(FieldElement::<F>::one()));
         }
 
         // Square-and-multiply for efficiency

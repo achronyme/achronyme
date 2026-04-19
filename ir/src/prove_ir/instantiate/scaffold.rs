@@ -7,7 +7,7 @@
 //! [`super::api`] (entry points) and [`super::stmts`] / [`super::exprs`]
 //! / [`super::bits`] (body emission) can use them.
 
-use memory::FieldBackend;
+use memory::{FieldBackend, FieldElement};
 
 use super::utils::fe_to_usize;
 use super::{InstEnvValue, Instantiator};
@@ -22,6 +22,34 @@ impl<F: FieldBackend> Instantiator<F> {
             self.program.set_span(var, span.clone());
         }
         var
+    }
+
+    /// Emit a field constant, deduping against previously emitted Consts
+    /// with the same value. Populates both [`const_cache`] (value→var)
+    /// and [`const_values`] (var→value) so downstream peephole folds
+    /// in `emit_expr` can recognise constant operands.
+    ///
+    /// Field-erased key: the 32-byte canonical representation, so
+    /// equal values collapse regardless of which construction path
+    /// built them (e.g., `FieldElement::from_u64(0)` vs
+    /// `FieldElement::zero()`).
+    pub(super) fn emit_const(&mut self, value: FieldElement<F>) -> SsaVar {
+        let key = fe_canonical_bytes(&value);
+        if let Some(&var) = self.const_cache.get(&key) {
+            return var;
+        }
+        let var = self.program.fresh_var();
+        self.push_inst(Instruction::Const { result: var, value });
+        self.program.set_type(var, IrType::Field);
+        self.const_cache.insert(key, var);
+        self.const_values.insert(var, value);
+        var
+    }
+
+    /// If `var` was emitted as a compile-time constant via [`emit_const`],
+    /// return its field value. Used by `emit_expr` peephole folds.
+    pub(super) fn const_value_of(&self, var: SsaVar) -> Option<FieldElement<F>> {
+        self.const_values.get(&var).copied()
     }
 
     // -------------------------------------------------------------------
@@ -140,11 +168,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // than the one used for structural decisions (e.g., loop count),
                 // producing an unsound proof.
                 if cap.usage == CaptureUsage::Both {
-                    let const_var = self.program.fresh_var();
-                    self.push_inst(Instruction::Const {
-                        result: const_var,
-                        value,
-                    });
+                    let const_var = self.emit_const(value);
                     let eq_var = self.program.fresh_var();
                     self.push_inst(Instruction::AssertEq {
                         result: eq_var,
@@ -156,8 +180,7 @@ impl<F: FieldBackend> Instantiator<F> {
             }
             CaptureUsage::StructureOnly => {
                 // Inlined as a constant — not a circuit wire.
-                let v = self.program.fresh_var();
-                self.push_inst(Instruction::Const { result: v, value });
+                let v = self.emit_const(value);
                 self.program.set_name(v, cap.name.clone());
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
             }
@@ -181,4 +204,16 @@ impl<F: FieldBackend> Instantiator<F> {
             }
         }
     }
+}
+
+/// Pack a field element's canonical 4-limb representation into a
+/// 32-byte key suitable for hashing. Identical values produce
+/// identical keys regardless of the backend's internal form.
+fn fe_canonical_bytes<F: FieldBackend>(fe: &FieldElement<F>) -> [u8; 32] {
+    let limbs = fe.to_canonical();
+    let mut bytes = [0u8; 32];
+    for (i, l) in limbs.iter().enumerate() {
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&l.to_le_bytes());
+    }
+    bytes
 }

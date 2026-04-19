@@ -217,16 +217,18 @@ fn instantiate_pow_zero() {
 
 #[test]
 fn instantiate_for_loop() {
+    // Runtime seed `y` prevents `Add(Const(0), x) -> x` from folding
+    // the first iteration away.
     let ir = compile_and_instantiate(
-        "public out\nmut acc = 0\nfor i in 0..3 { acc = acc + 1 }\nassert_eq(acc, out)",
+        "public x\npublic y\npublic out\nmut acc = y\nfor i in 0..3 { acc = acc + x }\nassert_eq(acc, out)",
     );
-    // Unrolled: 3 iterations, each adds 1
+    // Unrolled: 3 iterations, each adds x
     let adds = ir
         .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Add { .. }))
         .count();
-    assert_eq!(adds, 3, "3 iterations of acc + 1");
+    assert_eq!(adds, 3, "3 iterations of acc + x");
 }
 
 #[test]
@@ -387,8 +389,11 @@ fn instantiate_bool_and() {
 
 #[test]
 fn instantiate_user_fn() {
-    let ir =
-        compile_and_instantiate("public out\nfn double(x) { x * 2 }\nassert_eq(double(5), out)");
+    // Use a runtime input `y` instead of the literal 5, otherwise the
+    // peephole const-fold in emit_expr collapses `5 * 2` into Const(10).
+    let ir = compile_and_instantiate(
+        "public y\npublic out\nfn double(x) { x * 2 }\nassert_eq(double(y), out)",
+    );
     let muls = ir
         .instructions
         .iter()
@@ -441,10 +446,13 @@ fn integration_poseidon_preimage() {
 
 #[test]
 fn integration_accumulator_with_for() {
+    // Runtime seed `start` prevents `Add(Const(0), x) -> x` folding
+    // the first iteration away.
     let ir = compile_and_instantiate(
         "public total\n\
+         public start\n\
          witness vals[4]\n\
-         mut sum = Field::ZERO\n\
+         mut sum = start\n\
          for i in 0..4 { sum = sum + vals_0 }\n\
          assert_eq(sum, total)",
     );
@@ -882,32 +890,36 @@ fn spans_propagated_through_for_loop() {
 
 #[test]
 fn instantiate_indexed_assignment_constant() {
-    // mut arr = [0, 0, 0]; arr[1] = 42
+    // Use distinct values + a runtime witness to block Const dedup
+    // collapsing them all into a single entry.
     let ir = compile_and_instantiate(
-        "public out\nmut arr = [0, 0, 0]\narr[1] = 42\nassert_eq(arr[1], out)",
+        "public out\nwitness w\nmut arr = [w, 1, 2]\narr[1] = 42\nassert_eq(arr[1], out)",
     );
-    // After instantiation, arr_1 should be set to 42 (constant)
+    // After instantiation, arr_1 should be set to 42 (constant).
+    // Distinct Consts: 1, 2, 42 — each lives as one instruction
+    // thanks to dedup.
     let consts: Vec<_> = ir
         .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Const { .. }))
         .collect();
-    // Should have constants for 0, 0, 0, and 42
     assert!(
-        consts.len() >= 4,
-        "expected at least 4 Const instructions, got {}",
+        consts.len() >= 3,
+        "expected at least 3 Const instructions (1, 2, 42), got {}",
         consts.len()
     );
 }
 
 #[test]
 fn instantiate_indexed_assignment_in_loop() {
-    // mut arr = [0, 0, 0]; for i in 0..3 { arr[i] = i * 2 }
+    // `(i + 2) * x`: runtime `x` blocks the Const*Const fold, and the
+    // `+2` offset ensures no iteration lands on the `Mul by 0/1`
+    // identity shortcuts (i=0 would fold `0*x -> 0`, i=1 would fold
+    // `1*x -> x`).
     let ir = compile_and_instantiate(
-        "public out\nmut arr = [0, 0, 0]\nfor i in 0..3 { arr[i] = i * 2 }\nassert_eq(arr[2], out)",
+        "public out\npublic x\nmut arr = [0, 0, 0]\nfor i in 0..3 { arr[i] = x * (i + 2) }\nassert_eq(arr[2], out)",
     );
-    // Loop should unroll, producing Let assignments for arr_0, arr_1, arr_2
-    // After unroll: arr_0 = 0*2 = 0, arr_1 = 1*2 = 2, arr_2 = 2*2 = 4
+    // Loop should unroll, producing 3 Mul instructions: x*2, x*3, x*4.
     let muls: Vec<_> = ir
         .instructions
         .iter()
