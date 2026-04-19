@@ -42,6 +42,7 @@ pub(super) fn try_eval_array_init(
                 func,
                 args,
                 &params,
+                &env.known_array_values,
                 &ctx.functions,
                 ctx.inline_depth,
             )?;
