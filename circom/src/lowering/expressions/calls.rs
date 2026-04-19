@@ -145,18 +145,94 @@ fn inline_function_call(
         // succeeds, emit a WitnessCall node into the caller's
         // statement stream via `ctx.pending_nodes` and hand back a
         // `Var(output_binding)` expression.
+        // Pre-flight: infer per-parameter shape from the call-site
+        // arguments WITHOUT emitting any lowering side effects —
+        // the lift may still return None, in which case we must not
+        // have dirtied `ctx.pending_nodes` with half-lowered args.
+        // The shape of an `Expr::Ident { name }` is Array(len) iff
+        // the caller's env tracks `name` as an array; anything else
+        // is scalar.
+        use super::super::artik_lift::ParamShape;
+        let mut param_shapes: Vec<(String, ParamShape)> = Vec::with_capacity(func.params.len());
+        for (arg, param_name) in args.iter().zip(func.params.iter()) {
+            let shape = match arg {
+                crate::ast::Expr::Ident { name, .. } => match env.arrays.get(name.as_str()) {
+                    Some(&len) => match u32::try_from(len) {
+                        Ok(v) => ParamShape::Array(v),
+                        Err(_) => {
+                            ctx.inline_depth -= 1;
+                            return Err(LoweringError::new(
+                                format!(
+                                    "array argument `{name}` length {len} exceeds u32::MAX \
+                                     — Artik cannot bind this parameter"
+                                ),
+                                span,
+                            ));
+                        }
+                    },
+                    None => ParamShape::Scalar,
+                },
+                _ => ParamShape::Scalar,
+            };
+            param_shapes.push((param_name.clone(), shape));
+        }
+
         if let Some(lifted) =
-            super::super::artik_lift::lift_function_to_artik(name, &func.params, body, ctx, span)
+            super::super::artik_lift::lift_function_to_artik(name, &param_shapes, body, ctx, span)
         {
-            // Lower each argument expression in the caller's env so
-            // the WitnessCall node carries resolved circuit
-            // expressions (not the raw AST). This runs under the
-            // original `inline_depth` bump, so recursive lifts are
-            // guarded just like recursive inlines.
-            let mut lowered_args: Vec<CircuitExpr> = Vec::with_capacity(args.len());
-            for arg in args {
-                let lowered = lower_expr(arg, env, ctx)?;
-                lowered_args.push(lowered);
+            // Now lower each argument. Array args expand into one
+            // `CircuitExpr` per element (lookup via
+            // `env.resolve_array_element`); scalars lower directly.
+            let mut lowered_args: Vec<CircuitExpr> = Vec::new();
+            for (arg, (_, shape)) in args.iter().zip(param_shapes.iter()) {
+                match shape {
+                    ParamShape::Scalar => {
+                        let lowered = lower_expr(arg, env, ctx)?;
+                        lowered_args.push(lowered);
+                    }
+                    ParamShape::Array(len) => {
+                        let (arg_name, arg_span) = match arg {
+                            crate::ast::Expr::Ident { name, span } => (name, span),
+                            _ => unreachable!(
+                                "shape Array(_) was derived from an Ident arg just above"
+                            ),
+                        };
+                        // Element names (`arr_0`, `arr_1`, ...) are
+                        // materialized at instantiate time, not at
+                        // lower time — `lower_expr(Ident("inp_0"))`
+                        // would fail "undefined variable". Emit the
+                        // right `CircuitExpr` variant directly based
+                        // on the kind the array's base name resolves
+                        // to; the instantiate scaffold guarantees
+                        // each element is registered under its flat
+                        // name by then.
+                        use super::super::env::VarKind;
+                        let kind = env.resolve(arg_name).ok_or_else(|| {
+                            LoweringError::new(
+                                format!("array argument `{arg_name}` is not resolvable in scope"),
+                                arg_span,
+                            )
+                        })?;
+                        for i in 0..(*len as usize) {
+                            let elem_name =
+                                env.resolve_array_element(arg_name, i).ok_or_else(|| {
+                                    LoweringError::new(
+                                        format!(
+                                            "array argument `{arg_name}` has no element at \
+                                             index {i} — shape mismatch during Artik lift"
+                                        ),
+                                        arg_span,
+                                    )
+                                })?;
+                            let expr = match kind {
+                                VarKind::Input => CircuitExpr::Input(elem_name),
+                                VarKind::Local => CircuitExpr::Var(elem_name),
+                                VarKind::Capture => CircuitExpr::Capture(elem_name),
+                            };
+                            lowered_args.push(expr);
+                        }
+                    }
+                }
             }
 
             let span_range = Some(diagnostics::SpanRange::from_span(span));
