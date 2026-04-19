@@ -16,7 +16,9 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     if let Ok(source) = std::str::from_utf8(data) {
         // Try lowering as self-contained circuit source
-        // Errors are expected and fine — panics are not
-        let _ = ir::IrLowering::lower_self_contained(source);
+        // Errors are expected and fine, panics are not.
+        // IrLowering is generic over FieldBackend; BN254 is the
+        // default runtime target, so pin the fuzzer to it.
+        let _ = ir::IrLowering::<memory::Bn254Fr>::lower_self_contained(source);
     }
 });
