@@ -1588,6 +1588,87 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     );
 }
 
+/// Fase 2.3 lift extension: bitwise ops (`&`, `|`, `^`, `<<`, `>>`)
+/// and `~` lift through the int-promotion scaffold
+/// (`IntFromField U32` → `IBin` → `FieldFromInt U32`). Exercised by
+/// a SHA-256 σ0-style function mixing `>>`, `<<`, and `^`. The
+/// Artik payload is decoded, executed on a known 32-bit input, and
+/// the output cross-validated against the hand-computed reference.
+#[test]
+fn fn_witness_lift_handles_bit_ops() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bitops_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("bit-op lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+        .expect("bit-op payload must decode and validate");
+
+    // Structural evidence the lift emitted the int-promotion
+    // scaffold rather than silently bailing: IBin ops appear, and
+    // IntFromField / FieldFromInt bracket them.
+    let mut ibin = 0usize;
+    let mut ito_int = 0usize;
+    let mut ito_field = 0usize;
+    for instr in &prog.body {
+        match instr {
+            witness::Instr::IBin { .. } => ibin += 1,
+            witness::Instr::IntFromField { .. } => ito_int += 1,
+            witness::Instr::FieldFromInt { .. } => ito_field += 1,
+            _ => {}
+        }
+    }
+    assert!(ibin >= 7, "expected ≥7 IBin ops for σ0, got {ibin}");
+    assert!(ito_int >= 7, "expected ≥7 IntFromField, got {ito_int}");
+    assert!(ito_field >= 7, "expected ≥7 FieldFromInt, got {ito_field}");
+
+    // End-to-end correctness check: compute σ0(x) = rotr(x,7) ^
+    // rotr(x,18) ^ (x >> 3) at u32 width, then pick an input and
+    // compare the Artik output to the hand-computed reference.
+    fn rotr32(x: u32, k: u32) -> u32 {
+        // Explicit matching of circomlib expansion so we detect any
+        // discrepancy caused by the lift treating `<< k` or `>> k`
+        // differently (e.g., wider masking slipping through).
+        (x >> k) | (x.wrapping_shl(32 - k))
+    }
+    fn sigma0_ref(x: u32) -> u32 {
+        rotr32(x, 7) ^ rotr32(x, 18) ^ (x >> 3)
+    }
+
+    use memory::field::{Bn254Fr, FieldElement};
+    type FE = FieldElement<Bn254Fr>;
+
+    for &x in &[0u32, 1, 7, 0xDEAD_BEEF, 0x8000_0001, u32::MAX] {
+        let signals = [FE::from_u64(x as u64)];
+        let mut slots = [FE::zero()];
+        let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&signals, &mut slots);
+        witness::execute(&prog, &mut ctx).expect("execute σ0");
+        let expected = sigma0_ref(x);
+        assert_eq!(
+            slots[0],
+            FE::from_u64(expected as u64),
+            "σ0({:#010x}) mismatch: got {:?}, expected {:#010x}",
+            x,
+            slots[0],
+            expected,
+        );
+    }
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,

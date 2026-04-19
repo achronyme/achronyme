@@ -21,7 +21,11 @@
 //! - **Expressions**: `Ident` (parameter → signal, local → register,
 //!   loop var → compile-time constant), decimal / hex `Number`,
 //!   `BinOp` of `Add / Sub / Mul / Div` over field-typed operands,
-//!   `UnaryOp::Neg`.
+//!   `UnaryOp::Neg`. Bitwise ops
+//!   (`BitAnd / BitOr / BitXor / ShiftL / ShiftR / BitNot`) lower by
+//!   promoting operands to `IntW::U32`, applying the integer op, and
+//!   promoting back to Field — sufficient for SHA-256-family witness
+//!   functions whose internal state is u32.
 //!
 //! - **Control flow**:
 //!   - `if (cond) { ... } else { ... }` — compile-time-foldable
@@ -47,7 +51,7 @@
 use std::collections::HashMap;
 
 use diagnostics::Span;
-use witness::{ElemT, FieldFamily, IntW, ProgramBuilder, Reg};
+use witness::{ElemT, FieldFamily, IntBinOp, IntW, ProgramBuilder, Reg};
 
 use crate::ast::{BinOp, Expr, FunctionDef, PostfixOp, Stmt, UnaryOp};
 use crate::lowering::context::LoweringContext;
@@ -764,6 +768,17 @@ impl<'f> LiftState<'f> {
                 let r = self.lift_expr(operand)?;
                 Some(self.builder.fsub(zero, r))
             }
+            Expr::UnaryOp {
+                op: UnaryOp::BitNot,
+                operand,
+                ..
+            } => {
+                // `~x` — promote to u32, INot, promote back.
+                let r = self.lift_expr(operand)?;
+                let r_int = self.demote_to_u32(r);
+                let not_int = self.builder.inot(IntW::U32, r_int);
+                Some(self.promote_u32_to_field(not_int))
+            }
             Expr::Index { object, index, .. } => {
                 // `arr[i]` where `arr` is a declared array and `i`
                 // folds to a compile-time index. Emit PushConst →
@@ -871,14 +886,46 @@ impl<'f> LiftState<'f> {
         self.locals.get(name).copied()
     }
 
+    /// Apply a binary op to two field-typed registers. Field ops
+    /// (`+`, `-`, `*`, `/`) stay in the field; bit ops promote both
+    /// operands to `IntW::U32`, apply the integer op, and promote
+    /// back. The u32 width is a deliberate MVP choice — it covers
+    /// SHA-256, BLAKE2s, and every other 32-bit witness gadget we
+    /// care about today. Wider (u64) bit ops would need per-call
+    /// width inference.
     fn apply_field_binop(&mut self, op: BinOp, a: Reg, b: Reg) -> Option<Reg> {
         match op {
             BinOp::Add => Some(self.builder.fadd(a, b)),
             BinOp::Sub => Some(self.builder.fsub(a, b)),
             BinOp::Mul => Some(self.builder.fmul(a, b)),
             BinOp::Div => Some(self.builder.fdiv(a, b)),
+            BinOp::BitAnd => Some(self.apply_int_binop_u32(IntBinOp::And, a, b)),
+            BinOp::BitOr => Some(self.apply_int_binop_u32(IntBinOp::Or, a, b)),
+            BinOp::BitXor => Some(self.apply_int_binop_u32(IntBinOp::Xor, a, b)),
+            BinOp::ShiftL => Some(self.apply_int_binop_u32(IntBinOp::Shl, a, b)),
+            BinOp::ShiftR => Some(self.apply_int_binop_u32(IntBinOp::Shr, a, b)),
             _ => None,
         }
+    }
+
+    /// Demote a field reg to `IntW::U32` via `IntFromField`.
+    fn demote_to_u32(&mut self, field_reg: Reg) -> Reg {
+        self.builder.int_from_field(IntW::U32, field_reg)
+    }
+
+    /// Promote a `IntW::U32` reg back to field via `FieldFromInt`.
+    fn promote_u32_to_field(&mut self, int_reg: Reg) -> Reg {
+        self.builder.field_from_int(int_reg, IntW::U32)
+    }
+
+    /// Common scaffolding for bit ops: demote `a` and `b` to u32,
+    /// apply the integer op at u32 width, and promote the result
+    /// back to a field register.
+    fn apply_int_binop_u32(&mut self, op: IntBinOp, a: Reg, b: Reg) -> Reg {
+        let a_int = self.demote_to_u32(a);
+        let b_int = self.demote_to_u32(b);
+        let dst_int = self.builder.ibin(op, IntW::U32, a_int, b_int);
+        self.promote_u32_to_field(dst_int)
     }
 
     fn push_const_int(&mut self, v: ConstInt) -> Option<Reg> {
@@ -1091,6 +1138,11 @@ fn compound_to_binop(op: crate::ast::CompoundOp) -> Option<BinOp> {
         CompoundOp::Sub => Some(BinOp::Sub),
         CompoundOp::Mul => Some(BinOp::Mul),
         CompoundOp::Div => Some(BinOp::Div),
+        CompoundOp::ShiftL => Some(BinOp::ShiftL),
+        CompoundOp::ShiftR => Some(BinOp::ShiftR),
+        CompoundOp::BitAnd => Some(BinOp::BitAnd),
+        CompoundOp::BitOr => Some(BinOp::BitOr),
+        CompoundOp::BitXor => Some(BinOp::BitXor),
         _ => None,
     }
 }
