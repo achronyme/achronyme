@@ -10,6 +10,26 @@
 //! The IR is intentionally minimal: no GC, no heap, no tagged values at
 //! runtime. Type consistency for each register is enforced at validation
 //! time by walking the instruction stream.
+//!
+//! # Static limits
+//!
+//! The [`MAX_FRAME_SIZE`] and [`MAX_ARRAY_LEN`] constants bound what
+//! the validator will accept from a bytecode file. They prevent
+//! adversarial programs from forcing the executor to allocate tens of
+//! gigabytes before any real work starts.
+
+/// Upper bound on the register frame a single Artik program may
+/// declare. Limits worst-case allocation to about `MAX_FRAME_SIZE *
+/// size_of::<Cell<F>>()` bytes up front — a few MB on BN-like
+/// backends, which comfortably fits Poseidon-16 with hundreds of
+/// rounds, SHA-256 compression + message schedule, Pedersen 8×254,
+/// and EdDSA verification.
+pub const MAX_FRAME_SIZE: u32 = 1 << 16;
+
+/// Upper bound on the length of a single `AllocArray`. Caps one call
+/// at ~1M cells. Multiple `AllocArray` calls are then caught by the
+/// cumulative runtime limit (see `executor::MAX_ARRAY_MEMORY_CELLS`).
+pub const MAX_ARRAY_LEN: u32 = 1 << 20;
 
 /// A register index. Artik uses an SSA-style register file where each
 /// register is assigned at most once per function (enforced at the IR

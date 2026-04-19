@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use crate::error::ArtikError;
-use crate::ir::{ElemT, Instr, IntW, RegType};
+use crate::ir::{ElemT, Instr, IntW, RegType, MAX_ARRAY_LEN, MAX_FRAME_SIZE};
 use crate::program::Program;
 
 /// Validate a decoded program against the 8 invariants. `instr_offsets`
@@ -32,6 +32,17 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
     let const_count = prog.const_pool.len() as u32;
     let family = prog.header.family;
     let max_const = family.max_const_bytes();
+
+    // Static resource bound: register frame must fit our allocation
+    // ceiling. Without this check, an adversarial bytecode declaring
+    // `frame_size = u32::MAX` would force the executor to allocate
+    // a multi-gigabyte `Vec<Cell<F>>` before any instruction runs.
+    if frame > MAX_FRAME_SIZE {
+        return Err(ArtikError::FrameTooLarge {
+            frame_size: frame,
+            max: MAX_FRAME_SIZE,
+        });
+    }
 
     // Invariant 6: const pool sizes.
     for entry in &prog.const_pool {
@@ -168,7 +179,13 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 read(&reg_types, *src, RegType::Int(*w))?;
                 bind(&mut reg_types, *dst, RegType::Field)?;
             }
-            Instr::AllocArray { dst, len: _, elem } => {
+            Instr::AllocArray { dst, len, elem } => {
+                if *len > MAX_ARRAY_LEN {
+                    return Err(ArtikError::ArrayTooLarge {
+                        len: *len,
+                        max: MAX_ARRAY_LEN,
+                    });
+                }
                 bind(&mut reg_types, *dst, RegType::Array(*elem))?;
             }
             Instr::LoadArr { dst, arr, idx } => {

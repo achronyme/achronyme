@@ -44,6 +44,13 @@ use crate::program::Program;
 /// [`execute_with_budget`].
 pub const DEFAULT_BUDGET: u64 = 8_000_000;
 
+/// Cumulative cap on array cells allocated across a single
+/// [`execute`] call. 16M cells corresponds to ~512 MB for BN-like
+/// field arrays (32 B per element) or ~128 MB for U32 arrays. A
+/// program can still carve that up across many [`Instr::AllocArray`]
+/// calls, but it cannot exceed the sum.
+pub const MAX_ARRAY_MEMORY_CELLS: u64 = 1 << 24;
+
 /// Read-only signals + mutable witness slots the Artik program will
 /// touch. The executor never reads outside these two slices and never
 /// shares them with other callers.
@@ -108,12 +115,12 @@ pub fn execute_with_budget<F: FieldBackend>(
 
     let mut state = State::<F>::new(prog)?;
 
-    let mut budget_remaining = budget;
+    let mut ran: u64 = 0;
     loop {
-        if budget_remaining == 0 {
-            return Err(ArtikError::BudgetExhausted);
+        if ran >= budget {
+            return Err(ArtikError::BudgetExhausted { ran });
         }
-        budget_remaining -= 1;
+        ran += 1;
 
         let instr = &prog.body[state.pc as usize];
         match step(instr, &mut state, ctx, prog)? {
@@ -142,11 +149,24 @@ struct State<F: FieldBackend> {
     cells: Vec<Cell<F>>,
     arrays: Vec<ArrayBuf<F>>,
     offset_to_index: HashMap<u32, u32>,
+    /// Total cells allocated across all arrays so far. Incremented on
+    /// every [`Instr::AllocArray`] and checked against
+    /// [`MAX_ARRAY_MEMORY_CELLS`] before the allocation is accepted.
+    array_cells_used: u64,
     pc: u32,
 }
 
 impl<F: FieldBackend> State<F> {
     fn new(prog: &Program) -> Result<Self, ArtikError> {
+        // Validator already enforces this, but re-check here so the
+        // executor never trusts a caller-built `Program` that bypassed
+        // decode. Defense in depth against direct Program construction.
+        if prog.frame_size > crate::ir::MAX_FRAME_SIZE {
+            return Err(ArtikError::FrameTooLarge {
+                frame_size: prog.frame_size,
+                max: crate::ir::MAX_FRAME_SIZE,
+            });
+        }
         let frame = prog.frame_size as usize;
         let mut offset_to_index = HashMap::with_capacity(prog.body.len());
         let mut offset: u32 = 0;
@@ -158,6 +178,7 @@ impl<F: FieldBackend> State<F> {
             cells: vec![Cell::Undef; frame],
             arrays: Vec::new(),
             offset_to_index,
+            array_cells_used: 0,
             pc: 0,
         })
     }
@@ -352,12 +373,21 @@ fn step<F: FieldBackend>(
         }
 
         // ── Conversions ───────────────────────────────────────────
+        // `IntFromField` is an unsigned truncation to `width` bits —
+        // we take the low 64-bit limb of the canonical representation
+        // and mask. For values that fit in `width` bits (typical for
+        // SHA-256 u32 signals) this is exact; for full 256-bit field
+        // elements it is truncation. Signed interpretation of an I64
+        // conversion is the caller's responsibility.
         Instr::IntFromField { w, dst, src } => {
             let fe = *state.read_field(*src)?;
             let limbs = fe.to_canonical();
             state.write(*dst, Cell::Int(limbs[0] & w.mask()))?;
             Ok(Flow::Next)
         }
+        // `FieldFromInt` with `I64` treats the raw u64 as a two's
+        // complement signed value and maps negative inputs to
+        // `p - |v|` via `from_i64`. All other widths zero-extend.
         Instr::FieldFromInt { dst, src, w } => {
             let v = state.read_int(*src)?;
             let fe = match w {
@@ -370,6 +400,18 @@ fn step<F: FieldBackend>(
 
         // ── Arrays ─────────────────────────────────────────────────
         Instr::AllocArray { dst, len, elem } => {
+            // Cumulative runtime check: the validator caps each
+            // individual `len`, but a loop that allocates many arrays
+            // can still add up. Reject the whole execution cleanly.
+            let prospective = state.array_cells_used.saturating_add(*len as u64);
+            if prospective > MAX_ARRAY_MEMORY_CELLS {
+                return Err(ArtikError::ArrayMemoryExceeded {
+                    cells: prospective,
+                    max: MAX_ARRAY_MEMORY_CELLS,
+                });
+            }
+            state.array_cells_used = prospective;
+
             let handle = state.arrays.len() as u32;
             let buf = match elem {
                 ElemT::Field => ArrayBuf::Field(vec![FieldElement::<F>::zero(); *len as usize]),
@@ -397,7 +439,10 @@ fn step<F: FieldBackend>(
         Instr::LoadArr { dst, arr, idx } => {
             let handle = state.read_array(*arr)?;
             let idx_v = state.read_int(*idx)?;
-            let buf = &state.arrays[handle as usize];
+            let buf = state
+                .arrays
+                .get(handle as usize)
+                .ok_or(ArtikError::WrongCellKind { reg: *arr })?;
             let cell = load_array(buf, idx_v)?;
             state.write(*dst, cell)?;
             Ok(Flow::Next)
@@ -405,10 +450,22 @@ fn step<F: FieldBackend>(
         Instr::StoreArr { arr, idx, val } => {
             let handle = state.read_array(*arr)?;
             let idx_v = state.read_int(*idx)?;
-            // Read the source first, so the mutable array borrow below
-            // does not collide with the register read.
-            let src = state.cells[*val as usize].clone();
-            let buf = &mut state.arrays[handle as usize];
+            // Defensive lookup: clone the source cell via `.get()`
+            // rather than direct indexing so the executor stays
+            // non-panicking even if a caller hands it a Program that
+            // skipped `decode` / `validate`.
+            let src = state
+                .cells
+                .get(*val as usize)
+                .ok_or(ArtikError::RegisterOutOfRange {
+                    reg: *val,
+                    frame_size: state.cells.len() as u32,
+                })?
+                .clone();
+            let buf = state
+                .arrays
+                .get_mut(handle as usize)
+                .ok_or(ArtikError::WrongCellKind { reg: *arr })?;
             store_array(buf, idx_v, src, *val)?;
             Ok(Flow::Next)
         }
@@ -1244,7 +1301,8 @@ mod tests {
     #[test]
     fn budget_exhausted_on_tight_loop() {
         // Jump { target = 0 } creates an infinite loop back to the
-        // first instruction. Budget must fire.
+        // first instruction. Budget must fire with the accurate
+        // instructions-ran count.
         let body = vec![
             Instr::Jump { target: 0 },
             Instr::Return, // unreachable
@@ -1252,7 +1310,7 @@ mod tests {
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 0, Vec::new(), body));
         let mut ctx = ArtikContext::<F>::new(&[], &mut []);
         let err = execute_with_budget(&prog, &mut ctx, 10).unwrap_err();
-        assert_eq!(err, ArtikError::BudgetExhausted);
+        assert_eq!(err, ArtikError::BudgetExhausted { ran: 10 });
     }
 
     #[test]
@@ -1436,5 +1494,236 @@ mod tests {
         let mut slots = [FE::zero()];
         let err = run_bn(&prog, &[], &mut slots).unwrap_err();
         assert_eq!(err, ArtikError::UndefinedRegister { reg: 0 });
+    }
+
+    // ── Resource limits (DoS resistance) ───────────────────────────
+
+    #[test]
+    fn frame_too_large_rejected_by_validator() {
+        // `decode` calls `validate`. A hand-built program declaring a
+        // frame of `MAX_FRAME_SIZE + 1` must fail validation.
+        use crate::ir::MAX_FRAME_SIZE;
+        let body = vec![Instr::Return];
+        let prog = Program::new(FieldFamily::BnLike256, MAX_FRAME_SIZE + 1, Vec::new(), body);
+        let bytes = encode(&prog);
+        let err = decode(&bytes, Some(FieldFamily::BnLike256)).unwrap_err();
+        assert!(matches!(
+            err,
+            ArtikError::FrameTooLarge {
+                frame_size,
+                max,
+            } if frame_size == MAX_FRAME_SIZE + 1 && max == MAX_FRAME_SIZE
+        ));
+    }
+
+    #[test]
+    fn alloc_array_too_large_rejected_by_validator() {
+        use crate::ir::MAX_ARRAY_LEN;
+        let body = vec![
+            Instr::AllocArray {
+                dst: 0,
+                len: MAX_ARRAY_LEN + 1,
+                elem: ElemT::IntU32,
+            },
+            Instr::Return,
+        ];
+        let prog = Program::new(FieldFamily::BnLike256, 1, Vec::new(), body);
+        let bytes = encode(&prog);
+        let err = decode(&bytes, Some(FieldFamily::BnLike256)).unwrap_err();
+        assert!(matches!(
+            err,
+            ArtikError::ArrayTooLarge {
+                len,
+                max,
+            } if len == MAX_ARRAY_LEN + 1 && max == MAX_ARRAY_LEN
+        ));
+    }
+
+    #[test]
+    fn cumulative_array_memory_budget_enforced_at_runtime() {
+        // Each AllocArray is below MAX_ARRAY_LEN, but many of them
+        // together cross the runtime memory budget. The loop runs
+        // until `ArrayMemoryExceeded` fires; without this guard, a
+        // malicious bytecode would OOM the host.
+        //
+        // Layout: a single AllocArray re-executed in a tight loop.
+        //   [0] AllocArray dst=0 len=MAX_ARRAY_LEN elem=IntU8
+        //   [1] Jump target=0
+        let lead = vec![
+            Instr::AllocArray {
+                dst: 0,
+                len: crate::ir::MAX_ARRAY_LEN,
+                elem: ElemT::IntU8,
+            },
+            Instr::Jump { target: 0 },
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), lead));
+        let err = run_bn(&prog, &[], &mut []).unwrap_err();
+        match err {
+            ArtikError::ArrayMemoryExceeded { cells, max } => {
+                assert_eq!(max, MAX_ARRAY_MEMORY_CELLS);
+                assert!(cells > MAX_ARRAY_MEMORY_CELLS);
+            }
+            other => panic!("expected ArrayMemoryExceeded, got {other:?}"),
+        }
+    }
+
+    // ── Extra semantic gaps uncovered during audit ────────────────
+
+    #[test]
+    fn shr_i64_is_arithmetic_shift() {
+        // A 64-bit bit pattern with the high bit set must sign-extend
+        // under right shift in I64 width, matching hardware SAR.
+        //
+        // Note: `IntFromField` truncates to the low 64 bits of the
+        // canonical field representation (documented behavior). Pass
+        // the two's-complement bit pattern of -8 as a field element
+        // directly; `from_i64(-8)` would NOT round-trip, because the
+        // low limb of `p - 8` is not `0xFFFF_FFFF_FFFF_FFF8`.
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::IntFromField {
+                w: IntW::I64,
+                dst: 1,
+                src: 0,
+            },
+            Instr::ReadSignal {
+                dst: 2,
+                signal_id: 1,
+            },
+            Instr::IntFromField {
+                w: IntW::I64,
+                dst: 3,
+                src: 2,
+            },
+            Instr::IBin {
+                op: IntBinOp::Shr,
+                w: IntW::I64,
+                dst: 4,
+                a: 1,
+                b: 3,
+            },
+            Instr::FieldFromInt {
+                dst: 5,
+                src: 4,
+                w: IntW::I64,
+            },
+            Instr::WriteWitness { slot_id: 0, src: 5 },
+            Instr::Return,
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
+
+        let neg8_bits: u64 = (-8i64) as u64;
+        let sig = [FE::from_u64(neg8_bits), FE::from_u64(1)];
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &sig, &mut slots).unwrap();
+        // SAR on the raw bit pattern produces -4 in two's complement
+        // (0xFFFF_FFFF_FFFF_FFFC). `FieldFromInt I64` then maps the
+        // negative interpretation back to `p - 4`.
+        assert_eq!(slots[0], FE::from_i64(-4));
+    }
+
+    #[test]
+    fn int_array_store_load_roundtrips_values() {
+        // Fill an IntU32 array with [0xAAAA_AAAA, 0x5555_5555] and
+        // read them back; the masking in store_array / the width-tag
+        // on the buf must not corrupt the value.
+        let body = vec![
+            Instr::AllocArray {
+                dst: 0,
+                len: 2,
+                elem: ElemT::IntU32,
+            },
+            // idx0, idx1 from signals 2, 3.
+            Instr::ReadSignal {
+                dst: 1,
+                signal_id: 2,
+            },
+            Instr::IntFromField {
+                w: IntW::U32,
+                dst: 2,
+                src: 1,
+            },
+            Instr::ReadSignal {
+                dst: 3,
+                signal_id: 3,
+            },
+            Instr::IntFromField {
+                w: IntW::U32,
+                dst: 4,
+                src: 3,
+            },
+            // val0, val1 from signals 0, 1.
+            Instr::ReadSignal {
+                dst: 5,
+                signal_id: 0,
+            },
+            Instr::IntFromField {
+                w: IntW::U32,
+                dst: 6,
+                src: 5,
+            },
+            Instr::ReadSignal {
+                dst: 7,
+                signal_id: 1,
+            },
+            Instr::IntFromField {
+                w: IntW::U32,
+                dst: 8,
+                src: 7,
+            },
+            Instr::StoreArr {
+                arr: 0,
+                idx: 2,
+                val: 6,
+            },
+            Instr::StoreArr {
+                arr: 0,
+                idx: 4,
+                val: 8,
+            },
+            // Load back and XOR them so we get a single witness slot.
+            Instr::LoadArr {
+                dst: 9,
+                arr: 0,
+                idx: 2,
+            },
+            Instr::LoadArr {
+                dst: 10,
+                arr: 0,
+                idx: 4,
+            },
+            Instr::IBin {
+                op: IntBinOp::Xor,
+                w: IntW::U32,
+                dst: 11,
+                a: 9,
+                b: 10,
+            },
+            Instr::FieldFromInt {
+                dst: 12,
+                src: 11,
+                w: IntW::U32,
+            },
+            Instr::WriteWitness {
+                slot_id: 0,
+                src: 12,
+            },
+            Instr::Return,
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 13, Vec::new(), body));
+        let sig = [
+            FE::from_u64(0xAAAA_AAAA),
+            FE::from_u64(0x5555_5555),
+            FE::zero(),
+            FE::from_u64(1),
+        ];
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &sig, &mut slots).unwrap();
+        // 0xAAAA_AAAA ^ 0x5555_5555 == 0xFFFF_FFFF
+        assert_eq!(slots[0], FE::from_u64(0xFFFF_FFFF));
     }
 }

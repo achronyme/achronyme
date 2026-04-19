@@ -36,6 +36,14 @@ pub enum ArtikError {
     BadBodyLen { declared: u32, actual: usize },
     /// The declared const pool length does not match the body.
     BadConstPoolLen { declared: u32, actual: usize },
+    /// A program declares a register frame larger than Artik will
+    /// allocate. Prevents adversarial bytecode from forcing the
+    /// executor to allocate a huge `Vec<Cell<F>>` before any real work.
+    FrameTooLarge { frame_size: u32, max: u32 },
+    /// An `AllocArray` instruction declares a length larger than Artik
+    /// will allocate. Prevents adversarial bytecode from requesting a
+    /// multi-gigabyte buffer in one call.
+    ArrayTooLarge { len: u32, max: u32 },
 
     // ── Runtime (executor) ──────────────────────────────────────────
     /// A `PushConst` referenced bytes that could not be decoded as a
@@ -60,8 +68,14 @@ pub enum ArtikError {
     /// `LoadArr` / `StoreArr` saw an index >= the array length.
     ArrayIndexOutOfBounds { idx: u64, len: u32 },
     /// The interpreter executed more instructions than the caller's
-    /// budget allowed. Guards against non-terminating loops.
-    BudgetExhausted,
+    /// budget allowed. Guards against non-terminating loops. `ran`
+    /// carries how many instructions were actually dispatched so the
+    /// caller can size a retry or surface the failure in diagnostics.
+    BudgetExhausted { ran: u64 },
+    /// Cumulative array cells allocated across the whole execution
+    /// exceeded the per-call memory budget. Guards against programs
+    /// that call `AllocArray` inside a hot loop to exhaust memory.
+    ArrayMemoryExceeded { cells: u64, max: u64 },
 }
 
 impl fmt::Display for ArtikError {
@@ -132,9 +146,22 @@ impl fmt::Display for ArtikError {
             Self::ArrayIndexOutOfBounds { idx, len } => {
                 write!(f, "Artik array index {idx} out of bounds: length {len}")
             }
-            Self::BudgetExhausted => {
-                write!(f, "Artik execution budget exhausted")
+            Self::BudgetExhausted { ran } => {
+                write!(
+                    f,
+                    "Artik execution budget exhausted after {ran} instructions"
+                )
             }
+            Self::FrameTooLarge { frame_size, max } => {
+                write!(f, "Artik frame_size {frame_size} exceeds limit {max}")
+            }
+            Self::ArrayTooLarge { len, max } => {
+                write!(f, "Artik array length {len} exceeds per-alloc limit {max}")
+            }
+            Self::ArrayMemoryExceeded { cells, max } => write!(
+                f,
+                "Artik cumulative array cells {cells} exceeds limit {max}"
+            ),
         }
     }
 }
