@@ -433,6 +433,37 @@ fn lower_var_decl(
                     } else {
                         lower_expr(value, env, ctx)?
                     };
+
+                // Array-valued function-call init: when the lift (Artik)
+                // returns `LiftedShape::Array`, the call site stages a
+                // `LetArray { name: <synth>, elements }` in
+                // `ctx.pending_nodes` and returns `Var(<synth>)`. A naive
+                // scalar `Let { name: outCalc, value: Var(<synth>) }`
+                // would make `outCalc` an alias of the synth *array*
+                // binding — which trips a scalar/array type mismatch at
+                // instantiate time when the caller reads `outCalc[i]`.
+                // Rebind under the destination name as a LetArray so
+                // subsequent indexed reads resolve element-wise.
+                if let CircuitExpr::Var(source_name) = &lowered {
+                    let matching = ctx.pending_nodes.iter().find_map(|node| match node {
+                        CircuitNode::LetArray { name, elements, .. } if name == source_name => {
+                            Some(elements.clone())
+                        }
+                        _ => None,
+                    });
+                    if let Some(elements) = matching {
+                        let len = elements.len();
+                        nodes.push(CircuitNode::LetArray {
+                            name: names[0].clone(),
+                            elements,
+                            span: Some(SpanRange::from_span(span)),
+                        });
+                        env.register_array(names[0].clone(), len);
+                        env.locals.insert(names[0].clone());
+                        return Ok(());
+                    }
+                }
+
                 nodes.push(CircuitNode::Let {
                     name: names[0].clone(),
                     value: lowered,
