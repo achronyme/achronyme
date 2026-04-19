@@ -1197,47 +1197,55 @@ fn var_postdecl_padding_e2e() {
     assert_eq!(n, 513, "expected 513 constraints");
 }
 
-/// Gap E regression: a function that declares internal state (`var`
-/// declarations, loops) cannot be circuit-inlined when its arguments are
-/// runtime signals. Circom supports this pattern via witness calculators
-/// executed at prove time; Achronyme does not (yet). Before the fix the
-/// lowering would silently substitute only the `return` expression, and
-/// any local variable name in the function body (`var out[256]` in
-/// `sha256compression`) would resolve against the *caller's* scope —
-/// producing a bare `CircuitExpr::Var("out")` that collided with the
-/// template's `signal output out[256]` and exploded at instantiate time
-/// with a confusing "undeclared variable" / "expected scalar, got array"
-/// error two levels removed from the real cause.
+/// Gap E closed: a function that declares internal state (`var`
+/// arrays, loops, multi-statement computation) and returns the
+/// internal array now lowers to an Artik witness call instead of
+/// E212. The lift emits one witness slot per array element, and
+/// `inline_function_call` re-bundles the slots into a `LetArray` so
+/// the caller's `var tmp[4] = derive(in); out[i] <-- tmp[i];`
+/// pattern round-trips without hitting the old name-shadowing bug
+/// (`var out[256]` vs `signal output out[256]`).
 ///
-/// The fix detects non-trivial function bodies (anything beyond a single
-/// `return <expr>;`) and emits diagnostic E212 pointing at the call site.
+/// This test was originally the E212 regression asserted by Fase 1.
+/// With Fase 2.1's array-return support, the same fixture now
+/// compiles cleanly, so the assertion flips: we verify that the
+/// lift produced four output slots and a matching LetArray.
 #[test]
-fn fn_local_shadowing_emits_e212() {
+fn fn_local_shadowing_lifts_through_artik() {
+    use ir::prove_ir::types::CircuitNode;
+
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_local_shadowing_test.circom");
     let lib_dirs = vec![manifest_dir.join("test/circomlib")];
 
-    match circom::compile_file(&path, &lib_dirs) {
-        Ok(_) => panic!("expected E212, but compilation succeeded"),
-        Err(circom::CircomError::LoweringError(err)) => {
-            let code = err.diagnostic.code.as_deref();
-            assert_eq!(
-                code,
-                Some("E212"),
-                "expected E212 diagnostic code, got: {code:?}"
-            );
-            let msg = &err.diagnostic.message;
-            assert!(
-                msg.contains("witness calculator"),
-                "expected witness-calculator hint in diagnostic, got: {msg}"
-            );
-            assert!(
-                msg.contains("derive"),
-                "expected function name `derive` in diagnostic, got: {msg}"
-            );
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Gap E fixture failed to compile after lift: {e}"));
+
+    let mut witness_call_outputs: Option<Vec<String>> = None;
+    let mut let_array_len: Option<usize> = None;
+    for node in &result.prove_ir.body {
+        match node {
+            CircuitNode::WitnessCall {
+                output_bindings, ..
+            } => {
+                witness_call_outputs = Some(output_bindings.clone());
+            }
+            CircuitNode::LetArray { elements, .. } => {
+                if let_array_len.is_none() {
+                    let_array_len = Some(elements.len());
+                }
+            }
+            _ => {}
         }
-        Err(other) => panic!("expected LoweringError, got: {other:?}"),
     }
+
+    let outs = witness_call_outputs.expect("expected a WitnessCall in ProveIR");
+    assert_eq!(outs.len(), 4, "array-return should expose 4 witness slots");
+    assert_eq!(
+        let_array_len,
+        Some(4),
+        "expected a LetArray of length 4 re-bundling the 4 witness slots"
+    );
 }
 
 /// Fase 2 lift success: a function with a non-trivial body (one

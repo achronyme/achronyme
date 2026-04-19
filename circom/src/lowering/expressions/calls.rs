@@ -158,16 +158,55 @@ fn inline_function_call(
                 let lowered = lower_expr(arg, env, ctx)?;
                 lowered_args.push(lowered);
             }
-            let output_binding = lifted.outputs[0].clone();
-            ctx.pending_nodes
-                .push(ir::prove_ir::types::CircuitNode::WitnessCall {
-                    output_bindings: lifted.outputs,
-                    input_signals: lowered_args,
-                    program_bytes: lifted.program_bytes,
-                    span: Some(diagnostics::SpanRange::from_span(span)),
-                });
-            ctx.inline_depth -= 1;
-            return Ok(CircuitExpr::Var(output_binding));
+
+            let span_range = Some(diagnostics::SpanRange::from_span(span));
+            let output_bindings = lifted.outputs.clone();
+
+            match lifted.shape {
+                super::super::artik_lift::LiftedShape::Scalar => {
+                    let out_name = output_bindings[0].clone();
+                    ctx.pending_nodes
+                        .push(ir::prove_ir::types::CircuitNode::WitnessCall {
+                            output_bindings,
+                            input_signals: lowered_args,
+                            program_bytes: lifted.program_bytes,
+                            span: span_range,
+                        });
+                    ctx.inline_depth -= 1;
+                    return Ok(CircuitExpr::Var(out_name));
+                }
+                super::super::artik_lift::LiftedShape::Array(_) => {
+                    // Array-return: emit the WitnessCall (each slot
+                    // becomes its own witness-visibility input via
+                    // instantiate), then re-bundle the individual
+                    // names into a `LetArray` so the caller can read
+                    // the function's output as `arr[i]`. The array
+                    // binding name is the anon_id prefix without the
+                    // `_<i>` suffix — e.g.
+                    //   outputs = ["__artik_derive_0_out_0",
+                    //              "__artik_derive_0_out_1", ...]
+                    //   array   = "__artik_derive_0_out"
+                    let array_name = strip_index_suffix(&output_bindings[0]);
+                    ctx.pending_nodes
+                        .push(ir::prove_ir::types::CircuitNode::WitnessCall {
+                            output_bindings: output_bindings.clone(),
+                            input_signals: lowered_args,
+                            program_bytes: lifted.program_bytes,
+                            span: span_range.clone(),
+                        });
+                    ctx.pending_nodes
+                        .push(ir::prove_ir::types::CircuitNode::LetArray {
+                            name: array_name.clone(),
+                            elements: output_bindings
+                                .iter()
+                                .map(|n| CircuitExpr::Var(n.clone()))
+                                .collect(),
+                            span: span_range,
+                        });
+                    ctx.inline_depth -= 1;
+                    return Ok(CircuitExpr::Var(array_name));
+                }
+            }
         }
 
         ctx.inline_depth -= 1;
@@ -217,6 +256,17 @@ fn function_body_has_internal_state(stmts: &[crate::ast::Stmt]) -> bool {
         return false;
     }
     true
+}
+
+/// Strip the trailing `_<i>` suffix from an Artik array-slot binding
+/// name so the shared array name can be used as the `LetArray`
+/// identifier. For `"__artik_foo_0_out_3"` returns
+/// `"__artik_foo_0_out"`. Degenerates to a clone if no suffix.
+fn strip_index_suffix(s: &str) -> String {
+    match s.rsplit_once('_') {
+        Some((prefix, tail)) if tail.chars().all(|c| c.is_ascii_digit()) => prefix.to_string(),
+        _ => s.to_string(),
+    }
 }
 
 /// Find the return expression in a function body.

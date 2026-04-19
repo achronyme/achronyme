@@ -46,11 +46,23 @@ use crate::ast::{BinOp, Expr, PostfixOp, Stmt, UnaryOp};
 use crate::lowering::context::LoweringContext;
 
 /// Result of a successful lift: the serialized Artik program + the
-/// names of the witness slots the caller should bind to. The `outputs`
-/// list always has length 1 for v1 (single scalar `return` value).
+/// names of the witness slots the caller should bind to.
 pub struct LiftedWitnessCall {
     pub program_bytes: Vec<u8>,
     pub outputs: Vec<String>,
+    /// Shape the caller should expose. `Scalar` → a single binding
+    /// substitutes for the call site's returned CircuitExpr;
+    /// `Array(len)` → the lift wrote one slot per element and the
+    /// caller needs to re-bundle them into a `LetArray` before the
+    /// usage site can read the function's result as an array.
+    pub shape: LiftedShape,
+}
+
+/// Output shape the lift produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiftedShape {
+    Scalar,
+    Array(u32),
 }
 
 /// Attempt to compile `body` — the statements of a circom function —
@@ -89,12 +101,30 @@ pub fn lift_function_to_artik(
 
     let anon_id = ctx.next_anon_id();
     let _ = span;
-    let out_name = format!("__artik_{function_name}_{anon_id}_out");
+    let base = format!("__artik_{function_name}_{anon_id}_out");
+    let (outputs, shape) = match state.return_shape {
+        ReturnShape::Scalar => (vec![base], LiftedShape::Scalar),
+        ReturnShape::Array(len) => {
+            let names: Vec<String> = (0..len).map(|i| format!("{base}_{i}")).collect();
+            (names, LiftedShape::Array(len))
+        }
+    };
 
     Some(LiftedWitnessCall {
         program_bytes,
-        outputs: vec![out_name],
+        outputs,
+        shape,
     })
+}
+
+/// Internal bookkeeping — what the function returned. Populated by
+/// `lift_stmt` when it sees the `return` statement; consumed by the
+/// top-level `lift_function_to_artik` to pick between single-slot
+/// and multi-slot output naming.
+#[derive(Clone, Copy)]
+enum ReturnShape {
+    Scalar,
+    Array(u32),
 }
 
 // ============================================================================
@@ -121,11 +151,14 @@ struct LiftState {
     /// Writes via `arr[i] = expr` emit `StoreArr`; reads via
     /// `Expr::Index { object: Ident(arr), index }` emit `LoadArr`.
     arrays: HashMap<String, (Reg, u32)>,
-    /// Witness slot that the caller's `return` writes to.
-    out_slot: u32,
     /// Set to `true` once a `return` has been lowered. The outer loop
     /// stops walking more statements and the program is finalized.
     halted: bool,
+    /// What shape the `return` statement produced. Set on the
+    /// handling of the `return`, read by the caller of
+    /// `lift_function_to_artik` to decide how many witness slots the
+    /// program exposes.
+    return_shape: ReturnShape,
 }
 
 impl LiftState {
@@ -137,14 +170,13 @@ impl LiftState {
             let reg = builder.read_signal(sig);
             locals.insert(name.clone(), reg);
         }
-        let out_slot = builder.alloc_witness_slot();
         Self {
             builder,
             locals,
             const_locals: HashMap::new(),
             arrays: HashMap::new(),
-            out_slot,
             halted: false,
+            return_shape: ReturnShape::Scalar,
         }
     }
 
@@ -275,10 +307,31 @@ impl LiftState {
                 ..
             } => self.lift_if_else(condition, then_body, else_body.as_ref()),
             Stmt::Return { value, .. } => {
+                // Array-return: `return <local_array>;` — expose each
+                // element as its own witness slot so the caller can
+                // re-bundle them into a `CircuitNode::LetArray`.
+                if let Expr::Ident { name, .. } = value {
+                    if let Some(&(arr_reg, len)) = self.arrays.get(name) {
+                        for i in 0..len {
+                            let slot = self.builder.alloc_witness_slot();
+                            let idx_reg = self.push_int_const(i as u64)?;
+                            let val_reg = self.builder.load_arr(arr_reg, idx_reg);
+                            self.builder.write_witness(slot, val_reg);
+                        }
+                        self.builder.ret();
+                        self.halted = true;
+                        self.return_shape = ReturnShape::Array(len);
+                        return Some(());
+                    }
+                }
+
+                // Scalar return.
+                let slot = self.builder.alloc_witness_slot();
                 let r = self.lift_expr(value)?;
-                self.builder.write_witness(self.out_slot, r);
+                self.builder.write_witness(slot, r);
                 self.builder.ret();
                 self.halted = true;
+                self.return_shape = ReturnShape::Scalar;
                 Some(())
             }
             Stmt::Expr { expr, .. } => {
