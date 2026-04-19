@@ -1,9 +1,9 @@
+use akron::{CallFrame, VM};
 use compiler::Compiler;
 use memory::Function;
-use vm::{CallFrame, VM};
 
 /// Helper: compile source, run VM, return the VM (for inspecting error location).
-fn run_program(source: &str) -> (VM, Result<(), vm::RuntimeError>) {
+fn run_program(source: &str) -> (VM, Result<(), akron::RuntimeError>) {
     let mut compiler = Compiler::new();
     let bytecode = compiler.compile(source).expect("Compilation failed");
     let main_func = compiler.compilers.last().expect("No main compiler");

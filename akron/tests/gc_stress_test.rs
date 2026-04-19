@@ -1,6 +1,6 @@
+use akron::{CallFrame, VM};
 use compiler::Compiler;
 use memory::Function;
-use vm::{CallFrame, VM};
 
 /// Helper: compile and run Achronyme source with stress_mode enabled.
 fn run_stress(source: &str) -> Result<VM, String> {

@@ -9,7 +9,7 @@
 
 use achronyme_parser::ast::Stmt;
 use achronyme_parser::Diagnostic;
-use vm::opcode::OpCode;
+use akron::opcode::OpCode;
 
 use super::Compiler;
 use crate::error::CompilerError;

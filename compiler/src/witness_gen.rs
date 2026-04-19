@@ -212,10 +212,10 @@ impl std::error::Error for WitnessError {}
 /// Pick the Artik field family that matches the compile-time backend
 /// `F`. BN254-family primes share `BnLike256` — Goldilocks would need
 /// a separate family and no circom lift targets it today.
-fn artik_family<F: FieldBackend>() -> Option<witness::FieldFamily> {
+fn artik_family<F: FieldBackend>() -> Option<artik::FieldFamily> {
     use memory::PrimeId;
     match F::PRIME_ID {
-        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(witness::FieldFamily::BnLike256),
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(artik::FieldFamily::BnLike256),
         _ => None,
     }
 }
@@ -237,7 +237,7 @@ pub(crate) fn dispatch_artik_call<F: FieldBackend>(
 
     let signal_vec: Vec<FieldElement<F>> = inputs.iter().map(|v| witness[v.index()]).collect();
 
-    let program = witness::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
+    let program = artik::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
         WitnessError::ArtikCallFailed {
             primary_output: primary,
             reason: format!("decode failed: {e:?}"),
@@ -245,8 +245,8 @@ pub(crate) fn dispatch_artik_call<F: FieldBackend>(
     })?;
 
     let mut slot_vec: Vec<FieldElement<F>> = vec![FieldElement::<F>::zero(); outputs.len()];
-    let mut ctx = witness::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
-    witness::execute(&program, &mut ctx).map_err(|e| WitnessError::ArtikCallFailed {
+    let mut ctx = artik::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
+    artik::execute(&program, &mut ctx).map_err(|e| WitnessError::ArtikCallFailed {
         primary_output: primary,
         reason: format!("execute failed: {e:?}"),
     })?;

@@ -5,10 +5,10 @@
 //!
 //! Run with: cargo test -p vm --test native_call_bench -- --nocapture
 
+use akron::{CallFrame, VM};
 use compiler::Compiler;
 use memory::Function;
 use std::time::Instant;
-use vm::{CallFrame, VM};
 
 // ---------------------------------------------------------------------------
 // Helpers

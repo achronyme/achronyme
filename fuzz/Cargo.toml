@@ -14,7 +14,7 @@ ir = { path = "../ir" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 memory = { path = "../memory" }
-witness = { path = "../witness" }
+artik = { path = "../artik" }
 
 [workspace]
 members = ["."]

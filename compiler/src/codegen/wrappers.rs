@@ -9,8 +9,8 @@
 //! readable block without crowding `compile` or the resolver-state
 //! machinery.
 
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::OpCode;
 
 use super::Compiler;
 use crate::error::CompilerError;

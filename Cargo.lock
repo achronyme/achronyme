@@ -23,10 +23,10 @@ name = "achronyme-std"
 version = "0.1.0-beta.19"
 dependencies = [
  "ach-macros",
+ "akron",
  "compiler",
  "memory",
  "resolve",
- "vm",
 ]
 
 [[package]]
@@ -39,6 +39,19 @@ dependencies = [
  "once_cell",
  "version_check",
  "zerocopy",
+]
+
+[[package]]
+name = "akron"
+version = "0.1.0-beta.19"
+dependencies = [
+ "ach-macros",
+ "byteorder",
+ "compiler",
+ "constraints",
+ "ir",
+ "memory",
+ "resolve",
 ]
 
 [[package]]
@@ -331,6 +344,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "artik"
+version = "0.1.0-beta.19"
+dependencies = [
+ "memory",
+]
+
+[[package]]
 name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -451,6 +471,8 @@ checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 name = "circom"
 version = "0.1.0-beta.19"
 dependencies = [
+ "akron",
+ "artik",
  "compiler",
  "constraints",
  "diagnostics",
@@ -459,8 +481,6 @@ dependencies = [
  "proving",
  "tempfile",
  "toml",
- "vm",
- "witness",
 ]
 
 [[package]]
@@ -509,6 +529,7 @@ version = "0.1.0-beta.19"
 dependencies = [
  "achronyme-parser",
  "achronyme-std",
+ "akron",
  "anyhow",
  "byteorder",
  "circom",
@@ -527,7 +548,6 @@ dependencies = [
  "tempfile",
  "tiny_http",
  "toml",
- "vm",
 ]
 
 [[package]]
@@ -541,6 +561,8 @@ name = "compiler"
 version = "0.1.0-beta.19"
 dependencies = [
  "achronyme-parser",
+ "akron",
+ "artik",
  "circom",
  "constraints",
  "ir",
@@ -549,8 +571,6 @@ dependencies = [
  "resolve",
  "serde_json",
  "tempfile",
- "vm",
- "witness",
 ]
 
 [[package]]
@@ -880,13 +900,13 @@ name = "ir"
 version = "0.1.0-beta.19"
 dependencies = [
  "achronyme-parser",
+ "artik",
  "bincode",
  "constraints",
  "diagnostics",
  "memory",
  "resolve",
  "serde",
- "witness",
 ]
 
 [[package]]
@@ -1140,6 +1160,7 @@ dependencies = [
 name = "proving"
 version = "0.1.0-beta.19"
 dependencies = [
+ "akron",
  "ark-bls12-381",
  "ark-bn254",
  "ark-ec",
@@ -1156,7 +1177,6 @@ dependencies = [
  "rand 0.8.5",
  "serde_json",
  "sha2",
- "vm",
 ]
 
 [[package]]
@@ -1601,19 +1621,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vm"
-version = "0.1.0-beta.19"
-dependencies = [
- "ach-macros",
- "byteorder",
- "compiler",
- "constraints",
- "ir",
- "memory",
- "resolve",
-]
-
-[[package]]
 name = "wait-timeout"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1790,13 +1797,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "witness"
-version = "0.1.0-beta.19"
-dependencies = [
- "memory",
 ]
 
 [[package]]

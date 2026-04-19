@@ -1,6 +1,6 @@
+use akron::{CallFrame, VM};
 use compiler::Compiler;
 use memory::{Function, Value};
-use vm::{CallFrame, VM};
 
 /// Helper: compile + run a source string and return the result value.
 fn eval(source: &str) -> Value {

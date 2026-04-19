@@ -356,7 +356,7 @@ impl BuiltinRegistry {
 
     /// Number of VM-available entries (both `Vm` and `Both`).
     ///
-    /// This replaces the old `vm::specs::NATIVE_COUNT` constant — the
+    /// This replaces the old `akron::specs::NATIVE_COUNT` constant — the
     /// registry is now the single source of truth for how many native
     /// slots the VM must reserve.
     pub fn vm_native_count(&self) -> usize {

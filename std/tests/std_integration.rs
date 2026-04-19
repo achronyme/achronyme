@@ -30,7 +30,7 @@ fn std_native_table_matches_modules() {
 fn register_std_on_vm() {
     let native_count = resolve::BuiltinRegistry::default().vm_native_count();
 
-    let mut vm = vm::VM::new();
+    let mut vm = akron::VM::new();
     let builtin_count = vm.natives.len();
     assert_eq!(builtin_count, native_count);
 
@@ -101,7 +101,7 @@ fn e2e_std_natives() {
 
     let bytecode = compiler.compile(source).expect("compilation failed");
 
-    let mut vm = vm::VM::new();
+    let mut vm = akron::VM::new();
     for module in achronyme_std::std_modules() {
         vm.register_module(&*module)
             .expect("register_module failed");
@@ -148,7 +148,7 @@ fn e2e_std_natives() {
             upvalues: vec![],
         })
         .expect("alloc");
-    vm.frames.push(vm::CallFrame {
+    vm.frames.push(akron::CallFrame {
         closure: closure_idx,
         ip: 0,
         base: 0,

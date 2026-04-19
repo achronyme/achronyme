@@ -1,6 +1,6 @@
+use akron::{CallFrame, VM};
 use compiler::Compiler;
 use memory::Function;
-use vm::{CallFrame, VM};
 
 // ---------------------------------------------------------------------------
 // Test helpers

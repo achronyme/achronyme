@@ -5,10 +5,10 @@
 
 use std::collections::HashMap;
 
+use akron::ProveResult;
 use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use memory::FieldElement;
-use vm::ProveResult;
 
 fn fe(n: u64) -> FieldElement {
     FieldElement::from_u64(n)

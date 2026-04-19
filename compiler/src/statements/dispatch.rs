@@ -19,7 +19,7 @@ use crate::error::{span_box, CompilerError};
 use crate::expressions::ExpressionCompiler;
 use crate::functions::FunctionDefinitionCompiler;
 use achronyme_parser::ast::*;
-use vm::opcode::OpCode;
+use akron::opcode::OpCode;
 
 pub trait StatementCompiler {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), CompilerError>;

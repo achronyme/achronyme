@@ -8,7 +8,7 @@ use crate::scopes::ScopeCompiler;
 use crate::statements::{stmt_span, StatementCompiler};
 use achronyme_parser::ast::*;
 use achronyme_parser::Diagnostic;
-use vm::opcode::{instruction::encode_abx, OpCode};
+use akron::opcode::{instruction::encode_abx, OpCode};
 
 pub trait ControlFlowCompiler {
     fn compile_block(&mut self, block: &Block, target_reg: u8) -> Result<(), CompilerError>;

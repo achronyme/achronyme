@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use vm::specs::NativeMeta;
+use akron::specs::NativeMeta;
 
 use super::Compiler;
 use crate::function_compiler::FunctionCompiler;
@@ -80,7 +80,7 @@ impl Compiler {
         let main_compiler = FunctionCompiler::new("main".to_string(), 0);
 
         // Populate known method names from the prototype registry.
-        let known_methods: HashSet<String> = vm::known_method_names()
+        let known_methods: HashSet<String> = akron::known_method_names()
             .into_iter()
             .map(|s| s.to_string())
             .collect();

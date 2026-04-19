@@ -14,12 +14,12 @@ categories.workspace = true
 diagnostics = { path = "../diagnostics" }
 ir = { path = "../ir" }
 memory = { path = "../memory" }
-witness = { path = "../witness" }
+artik = { path = "../artik" }
 
 [dev-dependencies]
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 proving = { path = "../proving" }
-vm = { path = "../vm" }
+akron = { path = "../akron" }
 tempfile = "3"
 toml = "0.8"

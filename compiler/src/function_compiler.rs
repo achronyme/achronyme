@@ -1,8 +1,8 @@
 use crate::error::CompilerError;
 use crate::types::{Local, LoopContext, UpvalueInfo};
+use akron::opcode::instruction::{encode_abc, encode_abx};
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::instruction::{encode_abc, encode_abx};
-use vm::opcode::OpCode;
 
 /// State specific to ONE function being compiled
 pub struct FunctionCompiler {

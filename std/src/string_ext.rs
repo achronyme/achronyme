@@ -2,9 +2,9 @@
 //! (starts_with, ends_with, contains, repeat moved to String methods in beta.13)
 
 use ach_macros::{ach_module, ach_native};
+use akron::error::RuntimeError;
+use akron::machine::VM;
 use memory::Value;
-use vm::error::RuntimeError;
-use vm::machine::VM;
 
 #[ach_module(name = "string_ext")]
 pub mod string_ext_impl {

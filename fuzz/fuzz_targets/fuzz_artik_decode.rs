@@ -1,6 +1,6 @@
 //! Fuzz target: Artik bytecode decoder.
 //!
-//! Feeds arbitrary bytes to [`witness::bytecode::decode`]. The decoder
+//! Feeds arbitrary bytes to [`artik::bytecode::decode`]. The decoder
 //! must NEVER panic — it may return `Err(ArtikError)` for malformed
 //! input or `Ok(Program)` for well-formed input, but nothing else.
 //!
@@ -15,5 +15,5 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = witness::bytecode::decode(data, None);
+    let _ = artik::bytecode::decode(data, None);
 });

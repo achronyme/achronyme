@@ -110,8 +110,8 @@ pub(super) fn compile_circuit_decl(
 
     // Emit: load the bytes constant into a register, then define as global
     let reg = compiler.alloc_reg()?;
-    compiler.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
-    compiler.emit_abx(vm::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
+    compiler.emit_abx(akron::opcode::OpCode::LoadConst, reg, idx as u16)?;
+    compiler.emit_abx(akron::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
     compiler.free_reg(reg)?;
 
     Ok(())
@@ -192,8 +192,8 @@ pub(super) fn compile_import_circuit(
     );
 
     let reg = compiler.alloc_reg()?;
-    compiler.emit_abx(vm::opcode::OpCode::LoadConst, reg, idx as u16)?;
-    compiler.emit_abx(vm::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
+    compiler.emit_abx(akron::opcode::OpCode::LoadConst, reg, idx as u16)?;
+    compiler.emit_abx(akron::opcode::OpCode::DefGlobalLet, reg, global_idx)?;
     compiler.free_reg(reg)?;
 
     Ok(())

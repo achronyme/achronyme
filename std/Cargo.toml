@@ -12,7 +12,7 @@ io = []
 
 [dependencies]
 memory = { path = "../memory" }
-vm = { path = "../vm" }
+akron = { path = "../akron" }
 ach-macros = { path = "../ach-macros" }
 
 [dev-dependencies]

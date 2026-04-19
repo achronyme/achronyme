@@ -63,7 +63,8 @@ Source (.ach)                    Source (.circom)
 | `constraints` | `constraints/` | R1CS + Plonkish constraint systems, export | `ConstraintSystem`, `Variable`, `LinearCombination`, `PlonkishSystem` |
 | `ir` | `ir/` | SSA intermediate representation, lowering, optimization; also hosts `prove_ir::circom_interop` (trait-only surface for circom dispatch) | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering`, `CircomLibraryHandle`, `CircomCallable` |
 | `compiler` | `compiler/` | Bytecode compiler + ZK backends + compile-time circom handle/library registries | `R1CSCompiler`, `PlonkishCompiler`, `Compiler`, `CircomHandleInterner`, `CircomLibraryRegistry` |
-| `vm` | `vm/` | Virtual machine execution + `CallCircomTemplate` opcode dispatcher | `VM`, `CircomWitnessHandler`, `CircomCallResult` |
+| `akron` | `akron/` | General-purpose bytecode VM (tagged values, GC) + `CallCircomTemplate` opcode dispatcher | `VM`, `CircomWitnessHandler`, `CircomCallResult` |
+| `artik` | `artik/` | Dedicated witness-computation VM: register-based, Artik bytecode, executed at prove time for lifted circom functions | `ArtikContext`, `ArtikError`, `Program`, `execute` |
 | `proving` | `proving/` | Groth16 (arkworks), PlonK (halo2-KZG), Solidity verifier | `groth16_prove`, `halo2_prove` |
 | `achronyme-std` | `std/` | Standard library via `NativeModule` trait | `StdModule` |
 | `ach-macros` | `ach-macros/` | Proc-macros: `#[ach_native]`, `#[ach_module]` | — |
@@ -81,11 +82,13 @@ diagnostics (zero deps)
   │    │
   ├──→ circom ──→ ir
   │
-  └──→ compiler → ir, achronyme-parser, memory, constraints
+  └──→ compiler → ir, achronyme-parser, memory, constraints, artik
           │
-          └──→ cli → compiler, vm, proving
+          └──→ cli → compiler, akron, proving
                       │
-                      └──→ vm → memory
+                      └──→ akron → memory
+                      └──→ artik → memory   (witness-computation VM, side-channel
+                                             via ir::Instruction::WitnessCall)
 ```
 
 ## Field Architecture
@@ -295,20 +298,20 @@ The full-circuit path requires a `component main` in the `.circom` file — it's
 
 ### The dependency-cycle problem
 
-`circom` already depends on `ir` to reuse `CircuitExpr` / `CircuitNode` / `FieldConst`, so `ir` cannot reach back into `circom` without creating a cycle. The dispatcher has to work in both directions — `ir::prove_ir::compiler::ProveIrCompiler` needs to instantiate circom templates at compile time, and the `vm` crate (which sits below `circom` too) needs to invoke witness evaluation at run time.
+`circom` already depends on `ir` to reuse `CircuitExpr` / `CircuitNode` / `FieldConst`, so `ir` cannot reach back into `circom` without creating a cycle. The dispatcher has to work in both directions — `ir::prove_ir::compiler::ProveIrCompiler` needs to instantiate circom templates at compile time, and the `akron` crate (which sits below `circom` too) needs to invoke witness evaluation at run time.
 
 Both problems are solved the same way: define a trait in the lower crate, implement it in `circom`, and let the crate above both wire up the trait object.
 
 ```
-circom  →  ir  →  memory          (ir defines CircomLibraryHandle,
-    │                              circom impls it on CircomLibrary)
+circom  →  ir  →  memory             (ir defines CircomLibraryHandle,
+    │                                 circom impls it on CircomLibrary)
     ↓
-vm  →  memory                     (vm defines CircomWitnessHandler,
-    │                              cli impls it with Arc<CircomLibrary>)
+akron  →  memory                     (akron defines CircomWitnessHandler,
+    │                                 cli impls it with Arc<CircomLibrary>)
     ↓
-compiler  →  ir, vm, circom       (compiler wires both sides together)
+compiler  →  ir, akron, circom       (compiler wires both sides together)
     ↓
-cli  →  compiler                  (cli injects the concrete handler at run time)
+cli  →  compiler                     (cli injects the concrete handler at run time)
 ```
 
 ### Circuit mode dispatch (Phase 3)

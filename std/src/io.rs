@@ -1,9 +1,9 @@
 //! I/O natives (feature-gated): read_line, read_file, write_file.
 
 use ach_macros::{ach_module, ach_native};
+use akron::error::RuntimeError;
+use akron::machine::VM;
 use memory::Value;
-use vm::error::RuntimeError;
-use vm::machine::VM;
 
 #[ach_module(name = "io")]
 pub mod io_impl {

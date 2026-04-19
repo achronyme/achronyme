@@ -648,7 +648,7 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
             let result = proving::groth16_bn254::generate_proof(cs_bn254, wit_bn254, &cache_dir)
                 .map_err(|e| anyhow::anyhow!("proof generation failed: {e}"))?;
 
-            if let vm::ProveResult::Proof {
+            if let akron::ProveResult::Proof {
                 proof_json,
                 public_json,
                 vkey_json,
@@ -842,7 +842,7 @@ fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider>(
                 .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
 
             match result {
-                vm::ProveResult::Proof {
+                akron::ProveResult::Proof {
                     proof_json,
                     public_json,
                     vkey_json,
@@ -880,7 +880,7 @@ fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider>(
                         );
                     }
                 }
-                vm::ProveResult::VerifiedOnly => {
+                akron::ProveResult::VerifiedOnly => {
                     if verbose {
                         eprintln!("\n{}", style.green("Proof verified (no proof output)"));
                     } else {

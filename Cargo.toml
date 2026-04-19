@@ -2,7 +2,7 @@
 members = [
     "diagnostics",
     "memory",
-    "vm",
+    "akron",
     "compiler",
     "constraints",
     "achronyme-parser",
@@ -13,7 +13,7 @@ members = [
     "proving",
     "circom",
     "resolve",
-    "witness",
+    "artik",
 ]
 exclude = ["wasm"]
 resolver = "2"

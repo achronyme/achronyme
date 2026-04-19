@@ -12,13 +12,13 @@ categories.workspace = true
 
 [dependencies]
 memory = { path = "../memory" }
-vm = { path = "../vm" }
+akron = { path = "../akron" }
 constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
 circom = { path = "../circom" }
 resolve = { path = "../resolve" }
-witness = { path = "../witness" }
+artik = { path = "../artik" }
 
 [dev-dependencies]
 proptest = "1"

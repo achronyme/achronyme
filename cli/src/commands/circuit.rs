@@ -37,7 +37,7 @@ trait Bn254Ops: FieldBackend + PoseidonParamsProvider + Sized {
     fn halo2_proof(
         _compiler: PlonkishCompiler<Self>,
         _cache_dir: &std::path::Path,
-    ) -> Result<vm::ProveResult, String> {
+    ) -> Result<akron::ProveResult, String> {
         Err(format!("halo2 not supported for {}", Self::PRIME_ID.name()))
     }
 }
@@ -55,7 +55,7 @@ impl Bn254Ops for memory::Bn254Fr {
     fn halo2_proof(
         compiler: PlonkishCompiler<Self>,
         cache_dir: &std::path::Path,
-    ) -> Result<vm::ProveResult, String> {
+    ) -> Result<akron::ProveResult, String> {
         proving::halo2_proof::generate_plonkish_proof(compiler, cache_dir)
     }
 }
@@ -798,7 +798,7 @@ fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
                 .map_err(|e| anyhow::anyhow!("Plonkish proof generation error: {e}"))?;
 
             match result {
-                vm::ProveResult::Proof {
+                akron::ProveResult::Proof {
                     proof_json,
                     public_json,
                     vkey_json,
@@ -836,7 +836,7 @@ fn run_plonkish_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
                         );
                     }
                 }
-                vm::ProveResult::VerifiedOnly => {
+                akron::ProveResult::VerifiedOnly => {
                     if verbose {
                         eprintln!("\n{}", style.green("Proof verified (no proof output)"));
                     } else {

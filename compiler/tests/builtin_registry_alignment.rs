@@ -32,7 +32,7 @@ fn every_vm_registry_entry_has_a_real_native() {
     let reg = BuiltinRegistry::default();
     let vm_entries = reg.vm_entries_by_handle();
 
-    let modules = vm::module::builtin_modules();
+    let modules = akron::module::builtin_modules();
     let mut all_defs = Vec::new();
     for module in &modules {
         all_defs.extend(module.natives());
@@ -184,7 +184,7 @@ fn vm_arities_are_compatible() {
     let reg = BuiltinRegistry::default();
     let vm_entries = reg.vm_entries_by_handle();
 
-    let modules = vm::module::builtin_modules();
+    let modules = akron::module::builtin_modules();
     let mut all_defs = Vec::new();
     for module in &modules {
         all_defs.extend(module.natives());

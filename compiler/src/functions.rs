@@ -5,8 +5,8 @@ use crate::function_compiler::FunctionCompiler;
 use crate::types::Local;
 use achronyme_parser::ast::*;
 use achronyme_parser::Diagnostic;
+use akron::opcode::OpCode;
 use memory::Function;
-use vm::opcode::OpCode;
 
 pub trait FunctionDefinitionCompiler {
     fn compile_fn_core(

@@ -9,9 +9,9 @@ use std::path::Path;
 use ark_bls12_381::{Bls12_381, Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::pairing::Pairing;
 
+use akron::ProveResult;
 use constraints::r1cs::ConstraintSystem;
 use memory::FieldElement;
-use vm::ProveResult;
 
 use crate::groth16;
 

@@ -3,8 +3,8 @@ use crate::error::{span_box, CompilerError};
 use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
 use achronyme_parser::ast::*;
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::OpCode;
 
 /// Search all compiler scopes (locals and globals) for a variable with the
 /// given name that has an array type annotation. Returns the array size if found.

@@ -4,9 +4,9 @@ use wasm_bindgen::prelude::*;
 
 use compiler::Compiler;
 use memory::{Closure, Function, Value};
-use vm::error::RuntimeError;
-use vm::native::NativeObj;
-use vm::{CallFrame, ValueOps, VM};
+use akron::error::RuntimeError;
+use akron::native::NativeObj;
+use akron::{CallFrame, ValueOps, VM};
 
 // Thread-local buffer for capturing print() output.
 thread_local! {

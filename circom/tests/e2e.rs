@@ -962,7 +962,7 @@ fn escalarmulany_groth16() {
         .unwrap_or_else(|e| panic!("Groth16 proof generation failed: {e}"));
 
     match &result {
-        vm::ProveResult::Proof {
+        akron::ProveResult::Proof {
             proof_json,
             public_json,
             vkey_json,
@@ -1304,7 +1304,7 @@ fn fn_witness_lift_produces_artik_call() {
             _ => None,
         })
         .unwrap();
-    witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("Artik payload must decode and validate");
 }
 
@@ -1348,7 +1348,7 @@ fn fn_witness_lift_unrolls_for_loop() {
         bytes.len()
     );
 
-    witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("unrolled Artik payload must decode and validate");
 }
 
@@ -1376,7 +1376,7 @@ fn fn_witness_lift_folds_if_else_in_loop() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("payload must decode and validate");
 
     // Spot-check: no JumpIf / Jump should have been emitted — the
@@ -1385,7 +1385,7 @@ fn fn_witness_lift_folds_if_else_in_loop() {
         assert!(
             !matches!(
                 instr,
-                witness::Instr::Jump { .. } | witness::Instr::JumpIf { .. }
+                artik::Instr::Jump { .. } | artik::Instr::JumpIf { .. }
             ),
             "compile-time-folded branch should not emit Jump instructions"
         );
@@ -1419,7 +1419,7 @@ fn fn_witness_lift_handles_internal_array() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("array payload must decode and validate");
 
     let mut seen_alloc = false;
@@ -1427,9 +1427,9 @@ fn fn_witness_lift_handles_internal_array() {
     let mut seen_load = false;
     for instr in &prog.body {
         match instr {
-            witness::Instr::AllocArray { .. } => seen_alloc = true,
-            witness::Instr::StoreArr { .. } => seen_store = true,
-            witness::Instr::LoadArr { .. } => seen_load = true,
+            artik::Instr::AllocArray { .. } => seen_alloc = true,
+            artik::Instr::StoreArr { .. } => seen_store = true,
+            artik::Instr::LoadArr { .. } => seen_load = true,
             _ => {}
         }
     }
@@ -1466,13 +1466,13 @@ fn fn_witness_lift_inlines_nested_call() {
         witness_call_count, 1,
         "nested calls must be inlined into a single WitnessCall"
     );
-    let prog = witness::bytecode::decode(&payload.unwrap(), Some(witness::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&payload.unwrap(), Some(artik::FieldFamily::BnLike256))
         .expect("nested-lift payload must decode and validate");
 
     let return_count = prog
         .body
         .iter()
-        .filter(|i| matches!(i, witness::Instr::Return))
+        .filter(|i| matches!(i, artik::Instr::Return))
         .count();
     assert_eq!(
         return_count, 1,
@@ -1508,7 +1508,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("mux payload must decode and validate");
 
     // No control flow emitted — the mux is pure arithmetic.
@@ -1516,7 +1516,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
         assert!(
             !matches!(
                 instr,
-                witness::Instr::Jump { .. } | witness::Instr::JumpIf { .. }
+                artik::Instr::Jump { .. } | artik::Instr::JumpIf { .. }
             ),
             "runtime if/else should lower to a mux, not Jump instructions"
         );
@@ -1529,7 +1529,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     let feq_count = prog
         .body
         .iter()
-        .filter(|i| matches!(i, witness::Instr::FEq { .. }))
+        .filter(|i| matches!(i, artik::Instr::FEq { .. }))
         .count();
     assert_eq!(
         feq_count, 1,
@@ -1538,7 +1538,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     let field_from_int_count = prog
         .body
         .iter()
-        .filter(|i| matches!(i, witness::Instr::FieldFromInt { .. }))
+        .filter(|i| matches!(i, artik::Instr::FieldFromInt { .. }))
         .count();
     assert!(
         field_from_int_count >= 1,
@@ -1547,7 +1547,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     let fmul_count = prog
         .body
         .iter()
-        .filter(|i| matches!(i, witness::Instr::FMul { .. }))
+        .filter(|i| matches!(i, artik::Instr::FMul { .. }))
         .count();
     assert!(
         fmul_count >= 3,
@@ -1564,23 +1564,23 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     // cond=1, a=10, b=99 → select returns a + 1 == 11.
     let signals_true = [FE::from_u64(1), FE::from_u64(10), FE::from_u64(99)];
     let mut slots = [FE::zero()];
-    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&signals_true, &mut slots);
-    witness::execute(&prog, &mut ctx).expect("execute cond=1");
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&signals_true, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("execute cond=1");
     assert_eq!(slots[0], FE::from_u64(11), "mux cond=1 should pick a + 1");
 
     // cond=0, a=10, b=99 → select returns b * 2 == 198.
     let signals_false = [FE::from_u64(0), FE::from_u64(10), FE::from_u64(99)];
     let mut slots = [FE::zero()];
-    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&signals_false, &mut slots);
-    witness::execute(&prog, &mut ctx).expect("execute cond=0");
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&signals_false, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("execute cond=0");
     assert_eq!(slots[0], FE::from_u64(198), "mux cond=0 should pick b * 2");
 
     // cond=7 (non-zero, non-bool) exercises the FEq-normalization
     // prelude — circom treats any non-zero as true.
     let signals_seven = [FE::from_u64(7), FE::from_u64(10), FE::from_u64(99)];
     let mut slots = [FE::zero()];
-    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&signals_seven, &mut slots);
-    witness::execute(&prog, &mut ctx).expect("execute cond=7");
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&signals_seven, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("execute cond=7");
     assert_eq!(
         slots[0],
         FE::from_u64(11),
@@ -1666,7 +1666,7 @@ fn fn_witness_lift_e2e_groth16_triangle_sum() {
         .unwrap_or_else(|e| panic!("Groth16 proof generation failed: {e}"));
 
     match &result {
-        vm::ProveResult::Proof {
+        akron::ProveResult::Proof {
             proof_json,
             public_json,
             vkey_json,
@@ -1823,7 +1823,7 @@ fn fn_witness_lift_mux_admits_nested_calls() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("mux+calls payload must decode and validate");
 
     use memory::field::{Bn254Fr, FieldElement};
@@ -1832,15 +1832,15 @@ fn fn_witness_lift_mux_admits_nested_calls() {
     // cond=1 → triple(x) == 3x.
     let sigs = [FE::from_u64(1), FE::from_u64(17)];
     let mut slots = [FE::zero()];
-    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
-    witness::execute(&prog, &mut ctx).expect("execute cond=1");
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("execute cond=1");
     assert_eq!(slots[0], FE::from_u64(51), "cond=1 should pick triple(x)");
 
     // cond=0 → quadruple(x) == 4x.
     let sigs = [FE::from_u64(0), FE::from_u64(17)];
     let mut slots = [FE::zero()];
-    let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
-    witness::execute(&prog, &mut ctx).expect("execute cond=0");
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("execute cond=0");
     assert_eq!(
         slots[0],
         FE::from_u64(68),
@@ -1875,7 +1875,7 @@ fn fn_witness_lift_handles_bit_ops() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
         .expect("bit-op payload must decode and validate");
 
     // Structural evidence the lift emitted the int-promotion
@@ -1886,9 +1886,9 @@ fn fn_witness_lift_handles_bit_ops() {
     let mut ito_field = 0usize;
     for instr in &prog.body {
         match instr {
-            witness::Instr::IBin { .. } => ibin += 1,
-            witness::Instr::IntFromField { .. } => ito_int += 1,
-            witness::Instr::FieldFromInt { .. } => ito_field += 1,
+            artik::Instr::IBin { .. } => ibin += 1,
+            artik::Instr::IntFromField { .. } => ito_int += 1,
+            artik::Instr::FieldFromInt { .. } => ito_field += 1,
             _ => {}
         }
     }
@@ -1915,8 +1915,8 @@ fn fn_witness_lift_handles_bit_ops() {
     for &x in &[0u32, 1, 7, 0xDEAD_BEEF, 0x8000_0001, u32::MAX] {
         let signals = [FE::from_u64(x as u64)];
         let mut slots = [FE::zero()];
-        let mut ctx = witness::ArtikContext::<Bn254Fr>::new(&signals, &mut slots);
-        witness::execute(&prog, &mut ctx).expect("execute σ0");
+        let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&signals, &mut slots);
+        artik::execute(&prog, &mut ctx).expect("execute σ0");
         let expected = sigma0_ref(x);
         assert_eq!(
             slots[0],

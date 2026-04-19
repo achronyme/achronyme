@@ -1,7 +1,7 @@
+use akron::error::RuntimeError;
+use akron::opcode::{instruction::*, OpCode};
+use akron::{CallFrame, VM};
 use memory::{Function, Value, I60_MAX, I60_MIN};
-use vm::error::RuntimeError;
-use vm::opcode::{instruction::*, OpCode};
-use vm::{CallFrame, VM};
 
 fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
     let mut vm = VM::new();

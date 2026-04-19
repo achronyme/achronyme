@@ -1,7 +1,7 @@
 //! `achronyme-std` — Standard library modules for the Achronyme VM.
 //!
 //! Provides additional native functions beyond the VM builtins.
-//! Each module implements `vm::NativeModule` and is registered by the
+//! Each module implements `akron::NativeModule` and is registered by the
 //! CLI via `VM::register_module()`.
 
 pub mod conv;
@@ -9,8 +9,8 @@ pub mod conv;
 pub mod io;
 pub mod string_ext;
 
-use vm::module::NativeModule;
-use vm::specs::NativeMeta;
+use akron::module::NativeModule;
+use akron::specs::NativeMeta;
 
 /// Returns all std modules in registration order.
 ///

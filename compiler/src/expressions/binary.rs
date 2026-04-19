@@ -3,7 +3,7 @@ use crate::control_flow::ControlFlowCompiler;
 use crate::error::CompilerError;
 use crate::expressions::ExpressionCompiler;
 use achronyme_parser::ast::*;
-use vm::opcode::OpCode;
+use akron::opcode::OpCode;
 
 pub trait BinaryCompiler {
     fn compile_binop(&mut self, op: &BinOp, lhs: &Expr, rhs: &Expr) -> Result<u8, CompilerError>;

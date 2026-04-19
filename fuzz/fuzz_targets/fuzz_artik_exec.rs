@@ -1,7 +1,7 @@
 //! Fuzz target: Artik executor end-to-end.
 //!
 //! Feeds arbitrary bytes through `decode` and — when the validator
-//! accepts them — runs the resulting [`witness::Program`] under a
+//! accepts them — runs the resulting [`artik::Program`] under a
 //! tight budget. The executor must NEVER panic: traps return
 //! `Err(ArtikError)`; non-terminating loops are cut off by the budget
 //! limit; invalid cell accesses surface as `WrongCellKind` or
@@ -15,8 +15,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use memory::field::{Bn254Fr, FieldElement};
-use witness::bytecode::decode;
-use witness::executor::{execute_with_budget, ArtikContext};
+use artik::bytecode::decode;
+use artik::executor::{execute_with_budget, ArtikContext};
 
 const FUZZ_BUDGET: u64 = 10_000;
 

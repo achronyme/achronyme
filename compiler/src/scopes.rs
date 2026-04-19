@@ -65,7 +65,7 @@ impl ScopeCompiler for Compiler {
                     }
 
                     if local.is_captured {
-                        func.emit_abx(vm::opcode::OpCode::CloseUpvalue, local.reg, 0);
+                        func.emit_abx(akron::opcode::OpCode::CloseUpvalue, local.reg, 0);
                     }
                     func.free_reg(local.reg)?;
                 }

@@ -1,9 +1,9 @@
+use akron::{CallFrame, VM};
 use compiler::Compiler;
 use memory::{Function, Value};
-use vm::{CallFrame, VM};
 
 /// Helper: compile source, run VM, return the last value on the stack.
-fn run_program(source: &str) -> Result<Value, vm::RuntimeError> {
+fn run_program(source: &str) -> Result<Value, akron::RuntimeError> {
     let mut compiler = Compiler::new();
     let bytecode = compiler.compile(source).expect("Compilation failed");
     let main_func = compiler.compilers.last().expect("No main compiler");
@@ -58,7 +58,7 @@ fn run_ok(source: &str) {
 }
 
 /// Helper: compile, run, expect error.
-fn run_err(source: &str) -> vm::RuntimeError {
+fn run_err(source: &str) -> akron::RuntimeError {
     run_program(source).expect_err("Expected runtime error")
 }
 
@@ -122,7 +122,7 @@ fn test_poseidon_known_vector() {
 fn test_poseidon_arity_error() {
     let err = run_err("poseidon(1)");
     match err {
-        vm::RuntimeError::ArityMismatch(_) => {}
+        akron::RuntimeError::ArityMismatch(_) => {}
         other => panic!("Expected ArityMismatch, got {:?}", other),
     }
 }
@@ -131,7 +131,7 @@ fn test_poseidon_arity_error() {
 fn test_poseidon_type_error() {
     let err = run_err(r#"poseidon("hello", 1)"#);
     match err {
-        vm::RuntimeError::TypeMismatch(_) => {}
+        akron::RuntimeError::TypeMismatch(_) => {}
         other => panic!("Expected TypeMismatch, got {:?}", other),
     }
 }
@@ -176,7 +176,7 @@ fn test_poseidon_many_two_args_same_as_poseidon() {
 fn test_poseidon_many_arity_error() {
     let err = run_err("poseidon_many(1)");
     match err {
-        vm::RuntimeError::ArityMismatch(_) => {}
+        akron::RuntimeError::ArityMismatch(_) => {}
         other => panic!("Expected ArityMismatch, got {:?}", other),
     }
 }

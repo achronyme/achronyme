@@ -1,8 +1,8 @@
+use akron::{CallFrame, ProveError, ProveHandler, ProveResult, VerifyHandler, VM};
 use compiler::Compiler;
 use memory::FieldElement;
 use memory::{Function, ProofObject, Value};
 use std::collections::HashMap;
-use vm::{CallFrame, ProveError, ProveHandler, ProveResult, VerifyHandler, VM};
 
 /// Helper: compile and run Achronyme source, returning the VM after execution.
 /// Does NOT inject a prove handler.
@@ -188,7 +188,7 @@ fn prove_handler_not_configured() {
 
 #[test]
 fn value_to_field_element_field() {
-    use vm::machine::prove::value_to_field_element;
+    use akron::machine::prove::value_to_field_element;
     let mut heap = memory::Heap::new();
     let fe = FieldElement::from_u64(42);
     let handle = heap.alloc_field(fe).expect("alloc");
@@ -199,7 +199,7 @@ fn value_to_field_element_field() {
 
 #[test]
 fn value_to_field_element_int() {
-    use vm::machine::prove::value_to_field_element;
+    use akron::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
     let val = Value::int(123);
     let result = value_to_field_element(&heap, val);
@@ -208,7 +208,7 @@ fn value_to_field_element_int() {
 
 #[test]
 fn value_to_field_element_nil_returns_none() {
-    use vm::machine::prove::value_to_field_element;
+    use akron::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
     let val = Value::nil();
     let result = value_to_field_element(&heap, val);
@@ -217,7 +217,7 @@ fn value_to_field_element_nil_returns_none() {
 
 #[test]
 fn value_to_field_element_bool_returns_none() {
-    use vm::machine::prove::value_to_field_element;
+    use akron::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
     let val = Value::true_val();
     let result = value_to_field_element(&heap, val);
@@ -226,7 +226,7 @@ fn value_to_field_element_bool_returns_none() {
 
 #[test]
 fn value_to_field_element_int_seven() {
-    use vm::machine::prove::value_to_field_element;
+    use akron::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
     let val = Value::int(7);
     let result = value_to_field_element(&heap, val);
@@ -235,7 +235,7 @@ fn value_to_field_element_int_seven() {
 
 #[test]
 fn value_to_field_element_negative_int() {
-    use vm::machine::prove::value_to_field_element;
+    use akron::machine::prove::value_to_field_element;
     let heap = memory::Heap::new();
     let val = Value::int(-3);
     let result = value_to_field_element(&heap, val);

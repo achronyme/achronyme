@@ -5,8 +5,8 @@ use crate::scopes::ScopeCompiler;
 use crate::types::Local;
 use achronyme_parser::ast::*;
 use achronyme_parser::Diagnostic;
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::OpCode;
 
 pub trait DeclarationCompiler {
     fn compile_let_decl(

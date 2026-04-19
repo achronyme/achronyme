@@ -1,6 +1,6 @@
+use akron::opcode::{instruction::*, OpCode};
+use akron::{CallFrame, VM};
 use memory::{Function, Value};
-use vm::opcode::{instruction::*, OpCode};
-use vm::{CallFrame, VM};
 
 fn run_simple(chunk: Vec<u32>, constants: Vec<Value>) -> VM {
     let mut vm = VM::new();

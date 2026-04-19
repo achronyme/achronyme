@@ -31,7 +31,7 @@ open = "5"
 proving = { path = "../proving" }
 
 memory = { path = "../memory" }
-vm = { path = "../vm" }
+akron = { path = "../akron" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 ir = { path = "../ir" }

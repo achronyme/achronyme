@@ -3,10 +3,10 @@
 //! Covers: deep recursion stack overflow, GC stress, malicious bytecode
 //! with raw instruction encoding, prove with empty scope.
 
+use akron::opcode::instruction::{encode_abc, encode_abx};
+use akron::{CallFrame, OpCode, RuntimeError, MAX_FRAMES, VM};
 use compiler::Compiler;
 use memory::{Closure, Function, Value};
-use vm::opcode::instruction::{encode_abc, encode_abx};
-use vm::{CallFrame, OpCode, RuntimeError, MAX_FRAMES, VM};
 
 // ======================================================================
 // Helpers

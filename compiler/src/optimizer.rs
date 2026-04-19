@@ -5,9 +5,9 @@
 //! `Vec<(u32, u32)>` of (instruction_word, line_number) so that moving or
 //! removing instructions automatically preserves source-map correspondence.
 
+use akron::opcode::instruction::*;
+use akron::opcode::OpCode;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use vm::opcode::instruction::*;
-use vm::opcode::OpCode;
 
 // ── Instruction helpers ─────────────────────────────────────────────────
 
@@ -438,7 +438,7 @@ pub fn optimize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vm::opcode::OpCode;
+    use akron::opcode::OpCode;
 
     /// Helper: build an ABx instruction
     fn abx(op: OpCode, a: u8, bx: u16) -> u32 {

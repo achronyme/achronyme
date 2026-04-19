@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use akron::{CircomCallError, CircomCallResult, CircomOutputValue, CircomWitnessHandler};
 use memory::{Bn254Fr, CircomHandle, FieldElement};
-use vm::{CircomCallError, CircomCallResult, CircomOutputValue, CircomWitnessHandler};
 
 use circom::library::{evaluate_template_witness, resolve_entry, TemplateOutputValue};
 use circom::{CircomLibrary, DimensionExpr};

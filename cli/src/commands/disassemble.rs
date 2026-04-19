@@ -1,6 +1,6 @@
+use akron::opcode::{instruction::*, OpCode};
 use anyhow::{Context, Result};
 use std::fs;
-use vm::opcode::{instruction::*, OpCode};
 
 use achronyme_parser::ast::*;
 

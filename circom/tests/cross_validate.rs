@@ -132,7 +132,7 @@ fn achronyme_prove_snarkjs_verify(
         .map_err(|e| format!("Groth16 proof gen failed: {e}"))?;
 
     let (proof_json, public_json, vkey_json) = match result {
-        vm::ProveResult::Proof {
+        akron::ProveResult::Proof {
             proof_json,
             public_json,
             vkey_json,

@@ -5,8 +5,8 @@ use crate::expressions::ExpressionCompiler;
 use crate::scopes::ScopeCompiler;
 use crate::types::{Local, LoopContext};
 use achronyme_parser::ast::*;
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::OpCode;
 
 pub(super) fn enter_loop(compiler: &mut Compiler, start_label: usize) -> Result<(), CompilerError> {
     let depth = compiler.current()?.scope_depth;

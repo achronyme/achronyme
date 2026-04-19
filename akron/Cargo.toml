@@ -1,6 +1,6 @@
 [package]
-name = "vm"
-description = "Register-based virtual machine with tagged values and GC for Achronyme."
+name = "akron"
+description = "Akron — register-based general-purpose bytecode VM (tagged values, mark-sweep GC) for Achronyme. Partners with Artik for witness computation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

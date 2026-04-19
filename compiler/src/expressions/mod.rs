@@ -5,8 +5,8 @@ use crate::functions::FunctionDefinitionCompiler;
 use crate::scopes::ScopeCompiler;
 use crate::statements::circom_imports::CircomVmCallEmitter;
 use achronyme_parser::ast::*;
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::OpCode;
 
 pub mod binary;
 

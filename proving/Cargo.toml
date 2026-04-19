@@ -40,7 +40,7 @@ plonk-bn254 = ["dep:halo2_proofs", "dep:rand"]
 memory = { path = "../memory" }
 constraints = { path = "../constraints" }
 compiler = { path = "../compiler" }
-vm = { path = "../vm" }
+akron = { path = "../akron" }
 
 # Serialization
 serde_json = "1"

@@ -193,7 +193,7 @@ fn dispatch_witness_call<F: FieldBackend>(
         })
     })?;
 
-    let program = witness::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
+    let program = artik::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
         Box::new(EvalError::WitnessCallFailed {
             primary_output: primary,
             reason: format!("decode failed: {e:?}"),
@@ -201,8 +201,8 @@ fn dispatch_witness_call<F: FieldBackend>(
     })?;
 
     let mut slot_vec: Vec<FieldElement<F>> = vec![FieldElement::<F>::zero(); outputs.len()];
-    let mut ctx = witness::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
-    witness::execute(&program, &mut ctx).map_err(|e| {
+    let mut ctx = artik::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
+    artik::execute(&program, &mut ctx).map_err(|e| {
         Box::new(EvalError::WitnessCallFailed {
             primary_output: primary,
             reason: format!("execute failed: {e:?}"),
@@ -220,10 +220,10 @@ fn dispatch_witness_call<F: FieldBackend>(
 /// and BLS12-381 (both are 256-bit BN-like primes sharing the Artik
 /// encoding); Goldilocks would need its own family and no circom
 /// lift targets it today.
-fn witness_family<F: FieldBackend>() -> Option<witness::FieldFamily> {
+fn witness_family<F: FieldBackend>() -> Option<artik::FieldFamily> {
     use memory::PrimeId;
     match F::PRIME_ID {
-        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(witness::FieldFamily::BnLike256),
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(artik::FieldFamily::BnLike256),
         _ => None,
     }
 }

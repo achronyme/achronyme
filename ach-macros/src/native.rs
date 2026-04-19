@@ -165,7 +165,7 @@ pub fn ach_native_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
             let arg_pos = i + 1;
             quote! {
                 let #name: #ty = <#ty as ::memory::FromValue>::from_value(args[#idx])
-                    .map_err(|e| ::vm::error::RuntimeError::TypeMismatch(
+                    .map_err(|e| ::akron::error::RuntimeError::TypeMismatch(
                         format!("{}() argument {}: {}", #native_name, #arg_pos, e)
                     ))?;
             }
@@ -183,7 +183,7 @@ pub fn ach_native_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         );
         quote! {
             if args.len() != #expected {
-                return Err(::vm::error::RuntimeError::ArityMismatch(#msg.into()));
+                return Err(::akron::error::RuntimeError::ArityMismatch(#msg.into()));
             }
         }
     } else {
@@ -223,9 +223,9 @@ pub fn ach_native_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     let output = quote! {
         #(#fn_attrs)*
         #vis fn #fn_name(
-            vm: &mut ::vm::machine::VM,
+            vm: &mut ::akron::machine::VM,
             args: &[::memory::Value],
-        ) -> Result<::memory::Value, ::vm::error::RuntimeError> {
+        ) -> Result<::memory::Value, ::akron::error::RuntimeError> {
             #[inline(always)]
             fn __inner(#(#inner_sig_params),*) #inner_ret
                 #inner_body

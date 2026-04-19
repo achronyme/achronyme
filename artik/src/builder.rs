@@ -16,8 +16,8 @@
 //! Example usage — lift `function sq(x) { return x * x; }`:
 //!
 //! ```ignore
-//! use witness::builder::ProgramBuilder;
-//! use witness::FieldFamily;
+//! use artik::builder::ProgramBuilder;
+//! use artik::FieldFamily;
 //!
 //! let mut b = ProgramBuilder::new(FieldFamily::BnLike256);
 //! let x_sig = b.alloc_signal();           // caller binds x to signal 0

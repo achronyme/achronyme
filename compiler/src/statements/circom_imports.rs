@@ -20,9 +20,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use achronyme_parser::ast::{Expr, Span};
+use akron::opcode::OpCode;
 use ir::prove_ir::{CircomCallable, CircomLibraryHandle};
 use memory::{CircomHandle, Value};
-use vm::opcode::OpCode;
 
 use crate::codegen::Compiler;
 use crate::error::{span_box, CompilerError};

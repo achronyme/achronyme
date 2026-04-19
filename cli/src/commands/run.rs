@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
+use akron::{CallFrame, ValueOps, VM};
 use anyhow::{Context, Result};
 use memory::Function;
 use std::fs;
-use vm::{CallFrame, ValueOps, VM};
 
 use super::ErrorFormat;
 use crate::prove_handler::{DefaultProveHandler, ProveBackend, SharedProveHandler};
@@ -257,7 +257,7 @@ fn parse_size(s: &str) -> Option<usize> {
 }
 
 /// Format a runtime error with source location if available.
-fn format_runtime_error(vm: &VM, err: &vm::RuntimeError) -> String {
+fn format_runtime_error(vm: &VM, err: &akron::RuntimeError) -> String {
     match &vm.last_error_location {
         Some((func_name, line)) => format!("[line {line}] in {func_name}: {err}"),
         None => format!("Runtime error: {err}"),

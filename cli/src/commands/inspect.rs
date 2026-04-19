@@ -5,12 +5,12 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result};
 
+use akron::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 use compiler::r1cs_backend::R1CSCompiler;
 use ir::inspector::{build_inspector_graph, InspectorGraph};
 use ir::prove_ir::ProveIrCompiler;
 use ir::SsaVar;
 use memory::FieldElement;
-use vm::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 
 use super::ErrorFormat;
 
@@ -162,7 +162,7 @@ fn inspect_prove_block(
         target_name.to_string(),
         source.to_string(),
     ));
-    let mut vm = vm::VM::new();
+    let mut vm = akron::VM::new();
     super::register_std_modules(&mut vm)?;
     vm.prove_handler = Some(Box::new(SharedInspectorHandler(Rc::clone(&handler))));
     vm.verify_handler = Some(Box::new(SharedInspectorHandler(Rc::clone(&handler))));
@@ -206,7 +206,7 @@ fn inspect_prove_block(
         upvalues: vec![],
     })?;
 
-    vm.frames.push(vm::CallFrame {
+    vm.frames.push(akron::CallFrame {
         closure: closure_idx,
         ip: 0,
         base: 0,

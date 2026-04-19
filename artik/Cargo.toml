@@ -1,6 +1,6 @@
 [package]
-name = "witness"
-description = "Artik — dedicated witness-computation VM for Achronyme circuits."
+name = "artik"
+description = "Artik — dedicated witness-computation VM for Achronyme circuits. Partners with Akron for bytecode execution."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

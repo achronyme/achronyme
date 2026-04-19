@@ -20,8 +20,8 @@ use crate::codegen::Compiler;
 use crate::error::{span_box, CompilerError};
 use crate::statements::StatementCompiler;
 use achronyme_parser::ast::*;
+use akron::opcode::OpCode;
 use memory::Value;
-use vm::opcode::OpCode;
 
 pub(super) fn compile_import(
     compiler: &mut Compiler,

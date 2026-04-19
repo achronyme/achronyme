@@ -1,4 +1,4 @@
-extern crate self as vm;
+extern crate self as akron;
 
 pub mod error;
 pub mod globals;
@@ -24,5 +24,5 @@ pub mod specs;
 pub mod stdlib;
 pub use loader::LoaderError;
 
-// Re-export proc-macros so downstream crates use `vm::ach_native` / `vm::ach_module`
+// Re-export proc-macros so downstream crates use `akron::ach_native` / `akron::ach_module`
 pub use ach_macros::{ach_module, ach_native};

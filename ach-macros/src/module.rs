@@ -130,7 +130,7 @@ pub fn ach_module_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
             let fn_ident = &n.fn_ident;
             let arity = n.arity;
             quote! {
-                ::vm::module::NativeDef {
+                ::akron::module::NativeDef {
                     name: #name_str,
                     func: #mod_ident::#fn_ident,
                     arity: #arity as isize,
@@ -149,12 +149,12 @@ pub fn ach_module_impl(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         #[derive(Debug, Clone, Copy)]
         #mod_vis struct #struct_name;
 
-        impl ::vm::module::NativeModule for #struct_name {
+        impl ::akron::module::NativeModule for #struct_name {
             fn name(&self) -> &'static str {
                 #module_name_str
             }
 
-            fn natives(&self) -> Vec<::vm::module::NativeDef> {
+            fn natives(&self) -> Vec<::akron::module::NativeDef> {
                 vec![
                     #(#native_defs),*
                 ]
