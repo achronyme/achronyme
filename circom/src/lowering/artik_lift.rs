@@ -396,10 +396,31 @@ impl<'f> LiftState<'f> {
                 // prefer to mutate `const_locals` so downstream
                 // lookups keep folding — otherwise the variable
                 // transitions to a runtime register.
+                //
+                // Indexed target (`arr[i] += expr`): supported when
+                // `arr` is a declared array. Required by circomlib
+                // SHA-256's `H[i] += hin[i*32+j] << j` and
+                // `w[i] += inp[i*32+31-j] << j` accumulators.
+                let binop = compound_to_binop(*op)?;
+                if let Expr::Index { object, index, .. } = target {
+                    let Expr::Ident { name, .. } = object.as_ref() else {
+                        return None;
+                    };
+                    let (arr_reg, len) = self.arrays.get(name).copied()?;
+                    let idx = eval_const_expr(index, &self.const_locals)?;
+                    if !(0..i64::from(len)).contains(&idx) {
+                        return None;
+                    }
+                    let idx_reg = self.push_int_const(idx as u64)?;
+                    let cur = self.builder.load_arr(arr_reg, idx_reg);
+                    let rhs_reg = self.lift_expr(value)?;
+                    let new_val = self.apply_field_binop(binop, cur, rhs_reg)?;
+                    self.builder.store_arr(arr_reg, idx_reg, new_val);
+                    return Some(());
+                }
                 let Expr::Ident { name, .. } = target else {
                     return None;
                 };
-                let binop = compound_to_binop(*op)?;
                 if let Some(current) = self.const_locals.get(name).copied() {
                     if let Some(rhs_const) = eval_const_expr(value, &self.const_locals) {
                         let folded = match binop {
