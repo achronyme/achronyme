@@ -1588,6 +1588,96 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     );
 }
 
+/// SHA-256 compile probe — documents the current Fase 5 gap.
+///
+/// `circomlib/sha256compression_function.circom` takes array
+/// parameters (`hin[256]`, `inp[512]`), and our Artik lift only
+/// binds scalar parameters today: `LiftState::new` maps each
+/// `params[i]` to a single `ReadSignal`, not to an array of N
+/// signals. Expanding this requires (a) tracking each parameter's
+/// declared dimensions (circom does this via call-site inference,
+/// not the `FunctionDef` itself), (b) allocating N input signals
+/// per array param, (c) binding the param name to an array in
+/// `self.arrays`, and (d) expanding the call-site `input_signals`
+/// to one `CircuitExpr` per element.
+///
+/// Leaving the probe `#[ignore]` so the compile failure stays
+/// visible to anyone exploring SHA readiness, without blocking the
+/// suite. Run with `--ignored` to see the current E212 boundary.
+#[test]
+#[ignore = "SHA-256 needs array parameters in the Artik lift — Fase 5.1 scope"]
+fn sha256_64_compiles_via_artik_lift() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let _ = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+}
+
+/// Fase 3+4 end-to-end on a SHA-style bit-op body: the same σ0
+/// function that exercises `& | ^ >> <<` in the lift gets pushed
+/// through instantiate + R1CS + witness verify. The template pins
+/// `out === out` so there's no independent constraint on the σ0
+/// value — this test is specifically for "the Artik dispatch
+/// produces *some* value that satisfies the circuit", confirming
+/// the bit-op witness path runs end-to-end (decode → IntFromField →
+/// IBin at u32 → FieldFromInt → write slot → R1CS witness wire).
+#[test]
+fn fn_witness_lift_e2e_r1cs_bitops_dispatch() {
+    use compiler::r1cs_backend::R1CSCompiler;
+    use memory::{Bn254Fr, FieldElement};
+    use std::collections::{HashMap, HashSet};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bitops_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("bit-op E2E compile failed: {e}"));
+
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+
+    ir::passes::optimize(&mut program);
+
+    // Compute σ0 reference on the chosen input so we can supply the
+    // matching public-output value: `out === out` only tautologizes
+    // once `out` has a concrete binding on both sides of the R1CS
+    // wire, which requires a user-supplied public-input value.
+    fn sigma0_ref(x: u32) -> u32 {
+        let r7 = (x >> 7) | (x.wrapping_shl(25));
+        let r18 = (x >> 18) | (x.wrapping_shl(14));
+        let r3 = x >> 3;
+        (r7 ^ r18) ^ r3
+    }
+    let input_val: u32 = 0xDEAD_BEEF;
+    let expected_out = sigma0_ref(input_val);
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert(
+        "in".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(input_val as u64),
+    );
+    inputs.insert(
+        "out".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(expected_out as u64),
+    );
+
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    let witness = rc
+        .compile_ir_with_witness(&program, &inputs)
+        .expect("compile_ir_with_witness");
+    rc.cs
+        .verify(&witness)
+        .expect("R1CS should verify with Artik-dispatched σ0 witness");
+}
+
 /// Fase 3+4 end-to-end: an Artik-lifted circom function survives
 /// through instantiate → optimize → R1CS compile, with the lifted
 /// Artik program executed at witness-gen time to fill the output
