@@ -303,8 +303,21 @@ impl<'f> LiftState<'f> {
                 // Array declaration: `var arr[N];` — allocate backing
                 // storage once, at the declaration site. Multi-dim
                 // arrays (`[N][M]`) are out of scope for this release.
+                //
+                // Two init shapes are honored:
+                //   - no init (`var arr[N];`) — leave the backing
+                //     store empty; the body must write to it before
+                //     reading.
+                //   - array literal (`var arr[N] = [e0, e1, ...];`) —
+                //     lift each element into a field register at
+                //     declaration time and emit a StoreArr. Needed by
+                //     circomlib SHA-256 (`var k[64] = [0x..., ...]`
+                //     inside `sha256K`).
+                //
+                // Non-literal initializers (e.g. `var a[n] = b;`
+                // aliasing another array) still bail to the inliner.
                 if !dimensions.is_empty() {
-                    if init.is_some() || dimensions.len() != 1 {
+                    if dimensions.len() != 1 {
                         return None;
                     }
                     let size = eval_const_expr(&dimensions[0], &self.const_locals)?;
@@ -313,6 +326,21 @@ impl<'f> LiftState<'f> {
                     }
                     let len = size as u32;
                     let handle = self.builder.alloc_array(len, ElemT::Field);
+
+                    if let Some(init_expr) = init {
+                        let Expr::ArrayLit { elements, .. } = init_expr else {
+                            return None;
+                        };
+                        if usize::try_from(len).ok()? != elements.len() {
+                            return None;
+                        }
+                        for (i, elem) in elements.iter().enumerate() {
+                            let val_reg = self.lift_expr(elem)?;
+                            let idx_reg = self.push_int_const(i as u64)?;
+                            self.builder.store_arr(handle, idx_reg, val_reg);
+                        }
+                    }
+
                     self.arrays.insert(name.clone(), (handle, len));
                     return Some(());
                 }
