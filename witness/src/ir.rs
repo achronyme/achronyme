@@ -317,3 +317,36 @@ pub enum Instr {
         val: Reg,
     },
 }
+
+impl Instr {
+    /// Number of bytes this instruction occupies in the encoded stream,
+    /// including its opcode tag. Used by the executor to translate jump
+    /// targets (byte offsets) into indices into the decoded `body`.
+    pub fn encoded_size(&self) -> u32 {
+        match self {
+            Instr::Return => 1,
+            Instr::Trap { .. } => 1 + 2,
+            Instr::Jump { .. } => 1 + 4,
+            Instr::JumpIf { .. } => 1 + 4 + 4,
+            Instr::PushConst { .. } | Instr::ReadSignal { .. } | Instr::WriteWitness { .. } => {
+                1 + 4 + 4
+            }
+            Instr::FInv { .. } => 1 + 4 + 4,
+            Instr::FAdd { .. }
+            | Instr::FSub { .. }
+            | Instr::FMul { .. }
+            | Instr::FDiv { .. }
+            | Instr::FEq { .. }
+            | Instr::Rotl32 { .. }
+            | Instr::Rotr32 { .. }
+            | Instr::Rotl8 { .. }
+            | Instr::LoadArr { .. }
+            | Instr::StoreArr { .. } => 1 + 4 + 4 + 4,
+            Instr::IBin { .. } => 1 + 1 + 1 + 4 + 4 + 4,
+            Instr::INot { .. } | Instr::IntFromField { .. } | Instr::FieldFromInt { .. } => {
+                1 + 1 + 4 + 4
+            }
+            Instr::AllocArray { .. } => 1 + 1 + 4 + 4,
+        }
+    }
+}

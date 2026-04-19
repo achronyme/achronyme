@@ -14,6 +14,7 @@ ir = { path = "../ir" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 memory = { path = "../memory" }
+witness = { path = "../witness" }
 
 [workspace]
 members = ["."]
@@ -31,4 +32,14 @@ doc = false
 [[bin]]
 name = "fuzz_r1cs_pipeline"
 path = "fuzz_targets/fuzz_r1cs_pipeline.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_artik_decode"
+path = "fuzz_targets/fuzz_artik_decode.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_artik_exec"
+path = "fuzz_targets/fuzz_artik_exec.rs"
 doc = false

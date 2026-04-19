@@ -5,6 +5,7 @@ use std::fmt;
 /// Errors raised by the Artik subsystem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtikError {
+    // ── Decode / validation ─────────────────────────────────────────
     /// The bytecode header is malformed or carries an unsupported tag.
     BadHeader(&'static str),
     /// The bytecode was truncated — a read ran past the end of the buffer.
@@ -35,6 +36,32 @@ pub enum ArtikError {
     BadBodyLen { declared: u32, actual: usize },
     /// The declared const pool length does not match the body.
     BadConstPoolLen { declared: u32, actual: usize },
+
+    // ── Runtime (executor) ──────────────────────────────────────────
+    /// A `PushConst` referenced bytes that could not be decoded as a
+    /// canonical field element for the active backend (e.g. the value
+    /// is >= modulus, or a Goldilocks entry has non-zero bytes above
+    /// the low 8).
+    BadConstBytes { const_id: u32 },
+    /// A `Trap` opcode fired during execution.
+    ExecTrap { code: u16 },
+    /// A read reached a register that was never written.
+    UndefinedRegister { reg: u32 },
+    /// A read expected a different cell category than what is stored —
+    /// e.g. a field op reading from an int register. Indicates a
+    /// validator gap; execution aborts before corrupting state.
+    WrongCellKind { reg: u32 },
+    /// `FDiv` or `FInv` on zero.
+    FieldDivByZero,
+    /// `ReadSignal` referenced a signal index the caller did not provide.
+    SignalOutOfBounds { signal_id: u32, len: u32 },
+    /// `WriteWitness` referenced a slot index the caller did not provide.
+    WitnessSlotOutOfBounds { slot_id: u32, len: u32 },
+    /// `LoadArr` / `StoreArr` saw an index >= the array length.
+    ArrayIndexOutOfBounds { idx: u64, len: u32 },
+    /// The interpreter executed more instructions than the caller's
+    /// budget allowed. Guards against non-terminating loops.
+    BudgetExhausted,
 }
 
 impl fmt::Display for ArtikError {
@@ -78,6 +105,36 @@ impl fmt::Display for ArtikError {
                 f,
                 "Artik const pool length mismatch: header says {declared}, pool has {actual}"
             ),
+            Self::BadConstBytes { const_id } => {
+                write!(
+                    f,
+                    "Artik const #{const_id} is not a canonical field element"
+                )
+            }
+            Self::ExecTrap { code } => {
+                write!(f, "Artik trap fired with code {code:#06x}")
+            }
+            Self::UndefinedRegister { reg } => {
+                write!(f, "Artik read of undefined register r{reg}")
+            }
+            Self::WrongCellKind { reg } => {
+                write!(f, "Artik register r{reg} holds a value of the wrong kind")
+            }
+            Self::FieldDivByZero => write!(f, "Artik field division by zero"),
+            Self::SignalOutOfBounds { signal_id, len } => write!(
+                f,
+                "Artik signal {signal_id} out of bounds: caller provided {len} signal(s)"
+            ),
+            Self::WitnessSlotOutOfBounds { slot_id, len } => write!(
+                f,
+                "Artik witness slot {slot_id} out of bounds: caller provided {len} slot(s)"
+            ),
+            Self::ArrayIndexOutOfBounds { idx, len } => {
+                write!(f, "Artik array index {idx} out of bounds: length {len}")
+            }
+            Self::BudgetExhausted => {
+                write!(f, "Artik execution budget exhausted")
+            }
         }
     }
 }

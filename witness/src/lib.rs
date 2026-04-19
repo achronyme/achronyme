@@ -24,6 +24,7 @@
 //! - [`program`] — [`Program`] + [`FieldConstEntry`].
 //! - [`bytecode`] — [`encode`] / [`decode`].
 //! - [`validate`] — structural invariants (runs inside [`decode`]).
+//! - [`executor`] — [`execute`] / [`execute_with_budget`].
 //! - [`error`] — [`ArtikError`].
 //!
 //! [`Instr`]: ir::Instr
@@ -36,16 +37,20 @@
 //! [`FieldConstEntry`]: program::FieldConstEntry
 //! [`encode`]: bytecode::encode
 //! [`decode`]: bytecode::decode
+//! [`execute`]: executor::execute
+//! [`execute_with_budget`]: executor::execute_with_budget
 //! [`ArtikError`]: error::ArtikError
 
 pub mod bytecode;
 pub mod error;
+pub mod executor;
 pub mod header;
 pub mod ir;
 pub mod program;
 pub mod validate;
 
 pub use error::ArtikError;
+pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::{ArtikHeader, FieldFamily};
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
 pub use program::{FieldConstEntry, Program};
