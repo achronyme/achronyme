@@ -76,6 +76,18 @@ pub enum LiftedShape {
     Array(u32),
 }
 
+/// Shape of a function parameter at the call site. The lift needs
+/// to know this at binding time because an array parameter consumes
+/// N input signals (one per element, laid out in index order) while
+/// a scalar consumes one. Circom infers the shape from the argument
+/// passed at the call site, not from the function's declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamShape {
+    Scalar,
+    /// 1D array with the given element count.
+    Array(u32),
+}
+
 /// Attempt to compile `body` — the statements of a circom function —
 /// into an Artik program. Parameters are provided as signal ids in
 /// the order they appear in the function's `params` list; the caller
@@ -86,7 +98,7 @@ pub enum LiftedShape {
 /// to E212 in that case.
 pub fn lift_function_to_artik(
     function_name: &str,
-    params: &[String],
+    params: &[(String, ParamShape)],
     body: &[Stmt],
     ctx: &mut LoweringContext<'_>,
     span: &Span,
@@ -204,19 +216,62 @@ enum NestedResult {
 }
 
 impl<'f> LiftState<'f> {
-    fn new(params: &[String], functions: &'f HashMap<String, &'f FunctionDef>) -> Self {
+    fn new(
+        params: &[(String, ParamShape)],
+        functions: &'f HashMap<String, &'f FunctionDef>,
+    ) -> Self {
         let mut builder = ProgramBuilder::new(FieldFamily::BnLike256);
         let mut locals = HashMap::new();
-        for name in params {
-            let sig = builder.alloc_signal();
-            let reg = builder.read_signal(sig);
-            locals.insert(name.clone(), reg);
+        let mut arrays: HashMap<String, (Reg, u32)> = HashMap::new();
+
+        // Materialize a small index cache so the StoreArr sequence
+        // below doesn't emit a fresh PushConst+IntFromField pair for
+        // each (already-known) index — the validator still accepts it
+        // either way, but the body stays cleaner for disassembly.
+        let mut index_cache: HashMap<u32, Reg> = HashMap::new();
+
+        for (name, shape) in params {
+            match shape {
+                ParamShape::Scalar => {
+                    let sig = builder.alloc_signal();
+                    let reg = builder.read_signal(sig);
+                    locals.insert(name.clone(), reg);
+                }
+                ParamShape::Array(len) => {
+                    // Allocate backing storage + read each element
+                    // from its own dedicated input signal. The call
+                    // site is responsible for supplying exactly `len`
+                    // input_signals in the WitnessCall, laid out in
+                    // index order — the per-param offset is implicit
+                    // in the signal allocation order here.
+                    let handle = builder.alloc_array(*len, ElemT::Field);
+                    for i in 0..*len {
+                        let sig = builder.alloc_signal();
+                        let elem_reg = builder.read_signal(sig);
+                        let idx_reg = *index_cache.entry(i).or_insert_with(|| {
+                            let zero_bytes: Vec<u8> = (i as u128).to_le_bytes().to_vec();
+                            let trimmed: Vec<u8> = {
+                                let mut b = zero_bytes;
+                                while b.last() == Some(&0) && b.len() > 1 {
+                                    b.pop();
+                                }
+                                b
+                            };
+                            let cid = builder.intern_const(trimmed);
+                            let field_reg = builder.push_const(cid);
+                            builder.int_from_field(IntW::U32, field_reg)
+                        });
+                        builder.store_arr(handle, idx_reg, elem_reg);
+                    }
+                    arrays.insert(name.clone(), (handle, *len));
+                }
+            }
         }
         Self {
             builder,
             locals,
             const_locals: HashMap::new(),
-            arrays: HashMap::new(),
+            arrays,
             halted: false,
             return_shape: ReturnShape::Scalar,
             functions,
