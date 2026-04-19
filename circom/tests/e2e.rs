@@ -1588,24 +1588,85 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     );
 }
 
-/// SHA-256 compile probe — documents the current Fase 5 gap.
-///
-/// `circomlib/sha256compression_function.circom` takes array
-/// parameters (`hin[256]`, `inp[512]`), and our Artik lift only
-/// binds scalar parameters today: `LiftState::new` maps each
-/// `params[i]` to a single `ReadSignal`, not to an array of N
-/// signals. Expanding this requires (a) tracking each parameter's
-/// declared dimensions (circom does this via call-site inference,
-/// not the `FunctionDef` itself), (b) allocating N input signals
-/// per array param, (c) binding the param name to an array in
-/// `self.arrays`, and (d) expanding the call-site `input_signals`
-/// to one `CircuitExpr` per element.
-///
-/// Leaving the probe `#[ignore]` so the compile failure stays
-/// visible to anyone exploring SHA readiness, without blocking the
-/// suite. Run with `--ignored` to see the current E212 boundary.
+/// Fase 5.1 — array parameters in the Artik lift. A function with
+/// `arr[N]` as a formal parameter binds to N input signals (one
+/// per element). Verified by lifting `array_sum(arr[4])`, pushing
+/// it through instantiate + R1CS + Groth16, and confirming the
+/// proof verifies when the template constraints match the Artik
+/// witness.
 #[test]
-#[ignore = "SHA-256 needs array parameters in the Artik lift — Fase 5.1 scope"]
+fn fn_witness_lift_array_param_e2e_groth16() {
+    use std::collections::{HashMap, HashSet};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_array_param_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("array-param lift failed to compile: {e}"));
+
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+    ir::passes::optimize(&mut program);
+
+    // array_sum(inp) = inp[0] + 2*inp[1] + 3*inp[2] + 4*inp[3].
+    let inp = [3u64, 5, 7, 11];
+    let expected_out = inp[0] + 2 * inp[1] + 3 * inp[2] + 4 * inp[3];
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    for (i, v) in inp.iter().enumerate() {
+        inputs.insert(format!("inp_{i}"), FieldElement::<Bn254Fr>::from_u64(*v));
+    }
+    inputs.insert(
+        "out".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(expected_out),
+    );
+
+    let mut r1cs = R1CSCompiler::<Bn254Fr>::new();
+    let witness = r1cs
+        .compile_ir_with_witness(&program, &inputs)
+        .expect("R1CS compile + witness");
+    r1cs.cs.verify(&witness).expect("R1CS verify");
+
+    let cache_dir = std::env::temp_dir().join("achronyme_test_keys");
+    let result = proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &cache_dir)
+        .unwrap_or_else(|e| panic!("Groth16 proof failed: {e}"));
+
+    match &result {
+        akron::ProveResult::Proof {
+            proof_json,
+            public_json,
+            vkey_json,
+        } => {
+            let valid =
+                proving::groth16_bn254::verify_proof_from_json(proof_json, public_json, vkey_json)
+                    .unwrap_or_else(|e| panic!("Groth16 verify failed: {e}"));
+            assert!(valid, "Groth16 proof did not verify");
+            eprintln!("  ✓ array_sum(inp[4]={inp:?}) = {expected_out} — Artik→Groth16 VERIFIED");
+        }
+        _ => panic!("expected Proof variant from Groth16"),
+    }
+}
+
+/// SHA-256 compile probe — documents the remaining Fase 5 gap.
+///
+/// Array parameters are supported (Fase 5.1 closed). The next
+/// blocker is `var k[64] = [<literal>, <literal>, ...];` inside
+/// `sha256K` — the lift currently bails on `VarDecl` with both
+/// dimensions and an array-literal initializer. Closing that needs
+/// call-time const-array materialization (read the literal
+/// expression into a backing `AllocArray` + N StoreArrs at
+/// compile time, then treat `k[i]` reads through the existing
+/// folded-index path).
+///
+/// Run with `--ignored` to see the current E212 boundary.
+#[test]
+#[ignore = "SHA-256 needs var arr[N] = [<literal>] initializers in the Artik lift"]
 fn sha256_64_compiles_via_artik_lift() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/sha256_test.circom");
