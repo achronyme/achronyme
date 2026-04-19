@@ -69,12 +69,21 @@ pub fn lower_template_with_captures(
     // 2. Build lowering environment
     let mut env = LoweringEnv::new();
 
-    // Input signals → env.inputs
+    // Input signals → env.inputs. Array-valued inputs (e.g.
+    // `signal input hin[256]`) additionally register their length
+    // in `env.arrays` so call-site shape inference (Artik lift) and
+    // `env.resolve_array_element(name, i)` can find them.
     for input in &layout.public_inputs {
         env.inputs.insert(input.name.clone());
+        if let Some(ir::prove_ir::types::ArraySize::Literal(len)) = &input.array_size {
+            env.register_array(input.name.clone(), *len);
+        }
     }
     for input in &layout.witness_inputs {
         env.inputs.insert(input.name.clone());
+        if let Some(ir::prove_ir::types::ArraySize::Literal(len)) = &input.array_size {
+            env.register_array(input.name.clone(), *len);
+        }
     }
 
     // Output signals → env.locals (they'll be assigned in the body)
