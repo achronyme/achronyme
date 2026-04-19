@@ -13,6 +13,11 @@ pub(super) struct Parser {
     pub(super) pos: usize,
     /// Nesting depth: 0 = top-level, >0 = inside block/function.
     pub(super) block_depth: usize,
+    /// Expression parser recursion depth. Tracked separately from
+    /// `block_depth` because expression nesting (`[[[...]]]`,
+    /// `((((...))))`, chained postfix) can blow the stack without
+    /// ever entering a block. Bumped on `parse_expr_bp` entry.
+    pub(super) expr_depth: usize,
     /// Collected diagnostics from error recovery.
     pub(super) errors: Vec<Diagnostic>,
     /// Monotonic counter used to assign every constructed `Expr` a
@@ -23,11 +28,18 @@ pub(super) struct Parser {
 }
 
 impl Parser {
+    /// Maximum expression parser recursion depth. Adversarial input
+    /// like `[[[[...]]]` would otherwise overflow the stack before
+    /// hitting any block-level cap. 128 stays well under a 2 MB test
+    /// thread stack even in debug builds under ASAN.
+    pub(super) const MAX_EXPR_DEPTH: usize = 128;
+
     pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             pos: 0,
             block_depth: 0,
+            expr_depth: 0,
             errors: Vec::new(),
             next_expr_id: 0,
         }

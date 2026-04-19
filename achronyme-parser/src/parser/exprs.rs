@@ -15,6 +15,21 @@ impl Parser {
     }
 
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+        if self.expr_depth >= Self::MAX_EXPR_DEPTH {
+            let sp = self.span();
+            return Err(ParseError::new(
+                format!("expression nesting exceeds {} levels", Self::MAX_EXPR_DEPTH),
+                sp.line_start,
+                sp.col_start,
+            ));
+        }
+        self.expr_depth += 1;
+        let result = self.parse_expr_bp_inner(min_bp);
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn parse_expr_bp_inner(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
         // Prefix
         let mut lhs = self.parse_prefix()?;
 
