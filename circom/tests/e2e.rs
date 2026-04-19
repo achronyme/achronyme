@@ -2132,6 +2132,59 @@ fn sign_circomlib() {
     eprintln!("  Constraints: {n}");
 }
 
+/// EdDSAMiMCVerifier: BabyJubjub EdDSA signature verifier using MiMC7
+/// as the hash function. Covers the combination of every feature
+/// Fase 5 opened:
+///   - MultiMiMC7(5, 91) compile-time round constants
+///   - CompConstant(2736...) with `1 << 128` seed (BigVal)
+///   - BabyDbl + BabyAdd Edwards-curve component composition
+///   - EscalarMul with compile-time Pedersen-style base points
+///   - `pointAdd` field-aware division at compile time
+///
+/// Runs with `enabled=0` so the signature validity assertion is
+/// short-circuited — all other inputs still need to be valid
+/// curve points / field elements so `Num2Bits` and the doubling
+/// chain don't fail. Reuses the same Base8 coordinates as the
+/// EdDSAPoseidon test since both verifiers share the BabyJubjub
+/// curve.
+///
+/// Closes Fase 5.3.
+#[test]
+fn eddsamimc_r1cs() {
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert(
+        "Ax".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "Ay".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("S".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    inputs.insert(
+        "R8x".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "R8y".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("M".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+
+    let n = circomlib_e2e_verify_fe(
+        "EdDSAMiMC R1CS (enabled=0)",
+        "test/circomlib/eddsamimc_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for EdDSAMiMC verifier");
+}
+
 /// Pedersen_old(8): hash 8 bits using the legacy Pedersen
 /// template that delegates to `EscalarMul` + `EscalarMulWindow` +
 /// `EscalarMulW4Table`. The table-builder function does compile-
