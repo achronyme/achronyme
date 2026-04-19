@@ -122,6 +122,13 @@ pub fn execute_with_budget<F: FieldBackend>(
         }
         ran += 1;
 
+        // A PC that falls off the end of the program (including an
+        // empty body) is a validator gap, not a panic — adversarial
+        // bytecode could hit this by omitting the final `Halt`. Surface
+        // as `InvalidJumpTarget` so the caller sees a clean error.
+        if (state.pc as usize) >= prog.body.len() {
+            return Err(ArtikError::InvalidJumpTarget { target: state.pc });
+        }
         let instr = &prog.body[state.pc as usize];
         match step(instr, &mut state, ctx, prog)? {
             Flow::Next => state.pc += 1,
@@ -1484,6 +1491,30 @@ mod tests {
                 "Ch({x:#010x},{y:#010x},{z:#010x}) mismatch"
             );
         }
+    }
+
+    /// Regression: a program whose final instruction flows to Next
+    /// (no Halt/Return) must not panic — it should surface a clean
+    /// `InvalidJumpTarget` instead of indexing past the end of
+    /// `prog.body`. Discovered by fuzz_artik_exec on adversarial
+    /// bytecode that passed validation but omitted the tail Halt.
+    #[test]
+    fn pc_past_end_returns_error_not_panic() {
+        // PushConst 0 then fall off the end — no Halt/Return.
+        let prog = roundtrip(Program::new(
+            FieldFamily::BnLike256,
+            1,
+            vec![crate::program::FieldConstEntry { bytes: vec![0u8] }],
+            vec![Instr::PushConst {
+                dst: 0,
+                const_id: 0,
+            }],
+        ));
+        let err = run_bn(&prog, &[], &mut []).unwrap_err();
+        assert!(
+            matches!(err, ArtikError::InvalidJumpTarget { target: 1 }),
+            "expected InvalidJumpTarget, got {err:?}"
+        );
     }
 
     #[test]
