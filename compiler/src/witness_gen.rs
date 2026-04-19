@@ -67,6 +67,15 @@ pub enum WitnessOp<F: FieldBackend = Bn254Fr> {
         internal_start: usize,
         internal_count: usize,
     },
+    /// Artik witness program: decode + execute the embedded bytecode,
+    /// reading `inputs` from the current witness vector and writing
+    /// one element per `outputs`. Emitted by the R1CS backend for
+    /// every `Instruction::WitnessCall` in the IR.
+    ArtikCall {
+        outputs: Vec<Variable>,
+        inputs: Vec<Variable>,
+        program_bytes: Vec<u8>,
+    },
 }
 
 impl<F: FieldBackend> WitnessOp<F> {
@@ -90,6 +99,7 @@ impl<F: FieldBackend> WitnessOp<F> {
                 // Poseidon fills a range of internal wires — never substituted
                 vec![]
             }
+            WitnessOp::ArtikCall { outputs, .. } => outputs.clone(),
         }
     }
 
@@ -121,9 +131,11 @@ impl<F: FieldBackend> WitnessOp<F> {
             WitnessOp::Inverse { operand, .. } => apply_sub(operand, subs),
             WitnessOp::BitExtract { source, .. } => apply_sub(source, subs),
             WitnessOp::IsZero { diff, .. } => apply_sub(diff, subs),
-            WitnessOp::IntDivMod { .. } | WitnessOp::PoseidonHash { .. } => {
+            WitnessOp::IntDivMod { .. }
+            | WitnessOp::PoseidonHash { .. }
+            | WitnessOp::ArtikCall { .. } => {
                 // These reference Variables directly, not LCs — substitution
-                // doesn't apply (and Poseidon internal wires are never substituted).
+                // doesn't apply (and witness-side wires are not eliminated).
             }
         }
     }
@@ -159,6 +171,13 @@ pub enum WitnessError {
     MissingInput(String),
     /// Division by zero encountered during witness computation.
     DivisionByZero { variable_index: usize },
+    /// The embedded Artik witness program failed to decode, validate,
+    /// or execute. `reason` is the stringified underlying error.
+    ArtikCallFailed {
+        /// First output wire, for locating the failure in bug reports.
+        primary_output: usize,
+        reason: String,
+    },
 }
 
 impl fmt::Display for WitnessError {
@@ -173,11 +192,70 @@ impl fmt::Display for WitnessError {
                     "division by zero computing witness variable {variable_index}"
                 )
             }
+            WitnessError::ArtikCallFailed {
+                primary_output,
+                reason,
+            } => write!(
+                f,
+                "Artik witness call failed at wire {primary_output}: {reason}"
+            ),
         }
     }
 }
 
 impl std::error::Error for WitnessError {}
+
+// ============================================================================
+// Artik dispatch
+// ============================================================================
+
+/// Pick the Artik field family that matches the compile-time backend
+/// `F`. BN254-family primes share `BnLike256` — Goldilocks would need
+/// a separate family and no circom lift targets it today.
+fn artik_family<F: FieldBackend>() -> Option<witness::FieldFamily> {
+    use memory::PrimeId;
+    match F::PRIME_ID {
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(witness::FieldFamily::BnLike256),
+        _ => None,
+    }
+}
+
+/// Decode + execute an Artik program, reading `inputs` from the
+/// witness vector and writing one field element per `outputs` slot.
+pub(crate) fn dispatch_artik_call<F: FieldBackend>(
+    outputs: &[Variable],
+    inputs: &[Variable],
+    program_bytes: &[u8],
+    witness: &mut [FieldElement<F>],
+) -> Result<(), WitnessError> {
+    let primary = outputs.first().map(|v| v.index()).unwrap_or(0);
+
+    let family = artik_family::<F>().ok_or_else(|| WitnessError::ArtikCallFailed {
+        primary_output: primary,
+        reason: "no Artik field-family binding for this backend".to_string(),
+    })?;
+
+    let signal_vec: Vec<FieldElement<F>> = inputs.iter().map(|v| witness[v.index()]).collect();
+
+    let program = witness::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
+        WitnessError::ArtikCallFailed {
+            primary_output: primary,
+            reason: format!("decode failed: {e:?}"),
+        }
+    })?;
+
+    let mut slot_vec: Vec<FieldElement<F>> = vec![FieldElement::<F>::zero(); outputs.len()];
+    let mut ctx = witness::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
+    witness::execute(&program, &mut ctx).map_err(|e| WitnessError::ArtikCallFailed {
+        primary_output: primary,
+        reason: format!("execute failed: {e:?}"),
+    })?;
+
+    for (v, val) in outputs.iter().zip(slot_vec.iter()) {
+        witness[v.index()] = *val;
+    }
+    Ok(())
+}
 
 // ============================================================================
 // WitnessGenerator
@@ -365,6 +443,13 @@ impl<F: FieldBackend> WitnessGenerator<F> {
                 internal_count,
             } => {
                 self.fill_poseidon(witness, *left, *right, *internal_start, *internal_count)?;
+            }
+            WitnessOp::ArtikCall {
+                outputs,
+                inputs,
+                program_bytes,
+            } => {
+                dispatch_artik_call::<F>(outputs, inputs, program_bytes, witness)?;
             }
         }
         Ok(())

@@ -16,7 +16,7 @@ use super::utils::{fe_to_u64, fe_to_usize};
 use super::{InstEnvValue, Instantiator, MAX_INSTANTIATE_ITERATIONS};
 use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::*;
-use crate::types::{Instruction, Visibility};
+use crate::types::{Instruction, SsaVar, Visibility};
 
 impl<F: FieldBackend> Instantiator<F> {
     pub(super) fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
@@ -230,29 +230,45 @@ impl<F: FieldBackend> Instantiator<F> {
                 }
             }
             CircuitNode::WitnessCall {
-                output_bindings, ..
+                output_bindings,
+                input_signals,
+                program_bytes,
+                ..
             } => {
-                // Artik witness-calculator call. Fase 2 emits one
-                // witness-visibility IR input per output binding; the
-                // bytecode payload is threaded through untouched and
-                // consumed by the runtime handler wired up in Fase 4.
+                // Artik witness-calculator call. Emit an
+                // `Instruction::WitnessCall` carrying the bytecode +
+                // input SsaVars + output SsaVars. The prover's
+                // witness generator decodes + runs the Artik program
+                // at witness-gen time, filling each output wire with
+                // the value its slot writes.
                 //
-                // Output signals take precedence (same rule as
-                // `WitnessHint`): if the binding name is already a
-                // public output wire, skip the duplicate allocation.
-                for name in output_bindings {
-                    if self.output_pub_vars.contains_key(name) {
-                        continue;
-                    }
-                    let v = self.program.fresh_var();
-                    self.program.set_name(v, name.clone());
-                    self.push_inst(Instruction::Input {
-                        result: v,
-                        name: name.clone(),
-                        visibility: Visibility::Witness,
-                    });
-                    self.env.insert(name.clone(), InstEnvValue::Scalar(v));
+                // Output signals take precedence over the default
+                // witness wire (same rule as `WitnessHint`): if a
+                // binding name is already a public output wire, it
+                // was pre-allocated in `self.output_pub_vars`. The
+                // instruction writes directly into that wire so the
+                // public-output channel receives the Artik result.
+                let mut inputs: Vec<SsaVar> = Vec::with_capacity(input_signals.len());
+                for expr in input_signals {
+                    inputs.push(self.emit_expr(expr)?);
                 }
+                let mut outputs: Vec<SsaVar> = Vec::with_capacity(output_bindings.len());
+                for name in output_bindings {
+                    let v = if let Some(&existing) = self.output_pub_vars.get(name) {
+                        existing
+                    } else {
+                        let fresh = self.program.fresh_var();
+                        self.program.set_name(fresh, name.clone());
+                        self.env.insert(name.clone(), InstEnvValue::Scalar(fresh));
+                        fresh
+                    };
+                    outputs.push(v);
+                }
+                self.push_inst(Instruction::WitnessCall {
+                    outputs,
+                    inputs,
+                    program_bytes: program_bytes.clone(),
+                });
             }
         }
         Ok(())

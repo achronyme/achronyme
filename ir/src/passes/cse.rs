@@ -71,7 +71,8 @@ fn cse_key<F: FieldBackend>(inst: &Instruction<F>) -> Option<CseKey> {
         | Instruction::AssertEq { .. }
         | Instruction::Assert { .. }
         | Instruction::RangeCheck { .. }
-        | Instruction::Decompose { .. } => None,
+        | Instruction::Decompose { .. }
+        | Instruction::WitnessCall { .. } => None,
         Instruction::IntDiv {
             lhs, rhs, max_bits, ..
         } => Some(CseKey::IntDiv(*lhs, *rhs, *max_bits)),
@@ -208,6 +209,11 @@ fn rewrite_operands<F: FieldBackend>(
         Instruction::IntDiv { lhs, rhs, .. } | Instruction::IntMod { lhs, rhs, .. } => {
             r(lhs);
             r(rhs);
+        }
+        Instruction::WitnessCall { inputs, .. } => {
+            for v in inputs.iter_mut() {
+                r(v);
+            }
         }
     }
 }

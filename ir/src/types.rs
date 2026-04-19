@@ -207,6 +207,25 @@ pub enum Instruction<F: FieldBackend = Bn254Fr> {
         rhs: SsaVar,
         max_bits: u32,
     },
+
+    /// Artik witness-calculator call. The prover executes the embedded
+    /// Artik bytecode against the current values of `inputs` at
+    /// witness-generation time and assigns the results to `outputs` in
+    /// order. Emits no constraints — the outputs are witness-only
+    /// wires exactly like `Input { visibility: Witness }`, but their
+    /// values come from `program_bytes` instead of the caller's JSON.
+    ///
+    /// `outputs[0]` is the primary result wire; `outputs[1..]` are
+    /// extras (used when the lifted circom function returned an
+    /// array, one slot per element). At least one output is
+    /// guaranteed by the lift.
+    WitnessCall {
+        outputs: Vec<SsaVar>,
+        inputs: Vec<SsaVar>,
+        /// Serialized Artik program — validated once on emission; the
+        /// prover decodes + executes it at witness-gen time.
+        program_bytes: Vec<u8>,
+    },
 }
 
 impl<F: FieldBackend> Instruction<F> {
@@ -237,14 +256,20 @@ impl<F: FieldBackend> Instruction<F> {
             | Instruction::Decompose { result, .. }
             | Instruction::IntDiv { result, .. }
             | Instruction::IntMod { result, .. } => *result,
+            Instruction::WitnessCall { outputs, .. } => outputs
+                .first()
+                .copied()
+                .expect("WitnessCall must have at least one output — enforced by the lift"),
         }
     }
 
     /// Returns additional result variables beyond the primary `result`.
-    /// Currently only `Decompose` produces extra results (the bit variables).
+    /// `Decompose` produces the bit variables; `WitnessCall` produces
+    /// the secondary output slots (for array-return lifts).
     pub fn extra_result_vars(&self) -> &[SsaVar] {
         match self {
             Instruction::Decompose { bit_results, .. } => bit_results,
+            Instruction::WitnessCall { outputs, .. } if outputs.len() > 1 => &outputs[1..],
             _ => &[],
         }
     }
@@ -258,6 +283,7 @@ impl<F: FieldBackend> Instruction<F> {
                 | Instruction::RangeCheck { .. }
                 | Instruction::Assert { .. }
                 | Instruction::Decompose { .. }
+                | Instruction::WitnessCall { .. }
         )
     }
 
@@ -294,6 +320,7 @@ impl<F: FieldBackend> Instruction<F> {
             Instruction::IntDiv { lhs, rhs, .. } | Instruction::IntMod { lhs, rhs, .. } => {
                 vec![*lhs, *rhs]
             }
+            Instruction::WitnessCall { inputs, .. } => inputs.clone(),
         }
     }
 }
@@ -409,6 +436,27 @@ impl<F: FieldBackend> std::fmt::Display for Instruction<F> {
                 rhs,
                 max_bits,
             } => write!(f, "{result} = IntMod({lhs}, {rhs}, {max_bits})"),
+            Instruction::WitnessCall {
+                outputs,
+                inputs,
+                program_bytes,
+            } => {
+                let out_list = outputs
+                    .iter()
+                    .map(|v| format!("{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let in_list = inputs
+                    .iter()
+                    .map(|v| format!("{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(
+                    f,
+                    "[{out_list}] = WitnessCall([{in_list}], <{} bytes>)",
+                    program_bytes.len()
+                )
+            }
         }
     }
 }

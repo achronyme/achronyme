@@ -1588,6 +1588,57 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     );
 }
 
+/// Fase 3+4 end-to-end: an Artik-lifted circom function survives
+/// through instantiate → optimize → R1CS compile, with the lifted
+/// Artik program executed at witness-gen time to fill the output
+/// wires. Verified by running `compile_ir_with_witness` and checking
+/// that the R1CS verifier accepts the generated witness — this is
+/// only possible if the Artik executor produced the same value the
+/// downstream `===` constraint expects.
+#[test]
+fn fn_witness_lift_e2e_r1cs_artik_dispatch() {
+    use compiler::r1cs_backend::R1CSCompiler;
+    use memory::{Bn254Fr, FieldElement};
+    use std::collections::{HashMap, HashSet};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_loop_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Artik R1CS E2E test failed to compile: {e}"));
+
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+
+    ir::passes::optimize(&mut program);
+
+    // The loop-test function `triangle_sum(n)` returns
+    // `sum_{i=0..3} (n * i)` = 6*n; its template fixes that as the
+    // `===` constraint. We pick n = 7 → expected out = 42.
+    let n = 7u64;
+    let expected_out = 6 * n;
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(n));
+    inputs.insert(
+        "out".to_string(),
+        FieldElement::<Bn254Fr>::from_u64(expected_out),
+    );
+
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    let witness = rc
+        .compile_ir_with_witness(&program, &inputs)
+        .expect("compile_ir_with_witness");
+    rc.cs
+        .verify(&witness)
+        .expect("R1CS should verify after Artik dispatch");
+}
+
 /// Fase 2.4 mux extension: nested function calls on the RHS of
 /// assignments inside either arm of a runtime if/else are admissible.
 /// Each call inlines at nested_depth > 0 (return captured via

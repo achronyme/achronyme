@@ -16,5 +16,6 @@ constraints = { path = "../constraints" }
 diagnostics = { path = "../diagnostics" }
 achronyme-parser = { path = "../achronyme-parser" }
 resolve = { path = "../resolve" }
+witness = { path = "../witness" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"

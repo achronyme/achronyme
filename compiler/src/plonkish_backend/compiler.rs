@@ -638,6 +638,18 @@ impl<F: FieldBackend> PlonkishCompiler<F> {
                     let (_q_cell, r_cell) = self.emit_int_divmod(a_cell, b_cell, *max_bits)?;
                     self.val_map.insert(*result, PlonkVal::Cell(r_cell));
                 }
+                IrInstruction::WitnessCall { .. } => {
+                    // Plonkish backend does not yet know how to replay
+                    // an Artik witness program through its advice-cell
+                    // model. The R1CS backend handles this natively;
+                    // compiling a WitnessCall-bearing program through
+                    // Plonkish should be a dedicated Fase 5 effort.
+                    return Err(PlonkishError::MissingInput(
+                        "WitnessCall (Artik witness program) is not yet supported in the \
+                         Plonkish backend — use --prove-backend r1cs"
+                            .to_string(),
+                    ));
+                }
             }
         }
 

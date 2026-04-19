@@ -229,6 +229,15 @@ impl CircuitStats {
                     ConstraintCategory::Arithmetic,
                     1 + 2 * (*max_bits as usize + 1),
                 ),
+
+                // Artik witness call — each output is a raw witness
+                // wire, no constraints. Count each output slot toward
+                // the witness-input tally so size reports reflect the
+                // real witness surface, then skip category accounting.
+                Instruction::WitnessCall { outputs, .. } => {
+                    n_witness += outputs.len();
+                    continue;
+                }
             };
 
             n_instructions += 1;

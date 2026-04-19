@@ -550,6 +550,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "vm",
+ "witness",
 ]
 
 [[package]]
@@ -885,6 +886,7 @@ dependencies = [
  "memory",
  "resolve",
  "serde",
+ "witness",
 ]
 
 [[package]]

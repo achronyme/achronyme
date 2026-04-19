@@ -116,6 +116,7 @@ pub enum NodeKind {
     IsLe,
     IsLtBounded,
     IsLeBounded,
+    WitnessCall,
 }
 
 /// Status of a node in the inspector visualization.
@@ -336,6 +337,7 @@ fn node_kind<F: FieldBackend>(inst: &Instruction<F>) -> NodeKind {
         Instruction::Decompose { .. } => NodeKind::RangeCheck,
         Instruction::IntDiv { .. } => NodeKind::Div,
         Instruction::IntMod { .. } => NodeKind::Div,
+        Instruction::WitnessCall { .. } => NodeKind::WitnessCall,
     }
 }
 
@@ -393,6 +395,19 @@ fn node_label<F: FieldBackend>(inst: &Instruction<F>, program: &IrProgram<F>) ->
         }
         Instruction::IntDiv { result, .. } => label_with_name("IntDiv", *result, program),
         Instruction::IntMod { result, .. } => label_with_name("IntMod", *result, program),
+        Instruction::WitnessCall {
+            outputs,
+            program_bytes,
+            ..
+        } => {
+            let primary = outputs.first().copied().unwrap_or(SsaVar(0));
+            let bytes = program_bytes.len();
+            let base = format!("WitnessCall[{}x]({} bytes)", outputs.len(), bytes);
+            match program.get_name(primary) {
+                Some(name) => format!("{base} ({name})"),
+                None => base,
+            }
+        }
     }
 }
 

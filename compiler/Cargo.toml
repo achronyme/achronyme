@@ -18,6 +18,7 @@ achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
 circom = { path = "../circom" }
 resolve = { path = "../resolve" }
+witness = { path = "../witness" }
 
 [dev-dependencies]
 proptest = "1"

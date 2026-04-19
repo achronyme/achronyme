@@ -155,6 +155,19 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     )
                     .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
                 }
+                WitnessOp::ArtikCall {
+                    outputs,
+                    inputs,
+                    program_bytes,
+                } => {
+                    crate::witness_gen::dispatch_artik_call::<F>(
+                        outputs,
+                        inputs,
+                        program_bytes,
+                        &mut witness,
+                    )
+                    .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
+                }
             }
         }
 

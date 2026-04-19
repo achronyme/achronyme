@@ -701,6 +701,33 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                         lc_map.insert(*result, r_lc);
                     }
                 }
+                IrInstruction::WitnessCall {
+                    outputs,
+                    inputs,
+                    program_bytes,
+                } => {
+                    // Each output is a fresh witness wire — no
+                    // constraints are emitted here. The prover's
+                    // witness generator replays the Artik program
+                    // against `inputs` at witness-gen time to fill
+                    // the wires.
+                    let mut input_vars: Vec<Variable> = Vec::with_capacity(inputs.len());
+                    for v in inputs {
+                        let lc = lookup(&lc_map, v)?;
+                        input_vars.push(self.materialize_lc(&lc));
+                    }
+                    let mut output_vars: Vec<Variable> = Vec::with_capacity(outputs.len());
+                    for out_ssa in outputs {
+                        let out_var = self.cs.alloc_witness();
+                        output_vars.push(out_var);
+                        lc_map.insert(*out_ssa, LinearCombination::from_variable(out_var));
+                    }
+                    self.witness_ops.push(WitnessOp::ArtikCall {
+                        outputs: output_vars,
+                        inputs: input_vars,
+                        program_bytes: program_bytes.clone(),
+                    });
+                }
             }
 
             // Record which IR instruction generated each new constraint.

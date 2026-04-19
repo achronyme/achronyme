@@ -43,6 +43,12 @@ pub enum EvalError<F: FieldBackend = memory::Bn254Fr> {
         value: Option<FieldElement<F>>,
     },
     UndefinedVar(SsaVar),
+    /// The embedded Artik witness program failed to decode, validate,
+    /// or execute. `reason` is the stringified underlying error.
+    WitnessCallFailed {
+        primary_output: SsaVar,
+        reason: String,
+    },
 }
 
 /// Look up the source-level name for an SSA variable.
@@ -137,11 +143,90 @@ impl<F: FieldBackend> fmt::Display for EvalError<F> {
                 _ => write!(f, "if/else condition must be boolean (expected 0 or 1)"),
             },
             EvalError::UndefinedVar(var) => write!(f, "undefined variable #{}", var.0),
+            EvalError::WitnessCallFailed {
+                primary_output,
+                reason,
+            } => write!(
+                f,
+                "Artik witness call failed at primary output #{}: {reason}",
+                primary_output.0
+            ),
         }
     }
 }
 
 impl<F: FieldBackend> std::error::Error for EvalError<F> {}
+
+/// Dispatch an Artik `WitnessCall` instruction. Reads current values
+/// of `inputs` from `values`, runs the Artik program, and writes one
+/// field element per `outputs` slot back into `values`. Returns an
+/// `EvalError::WitnessCallFailed` wrapping the underlying Artik error
+/// on any decode / validate / execute failure.
+///
+/// Callers must not have already populated `outputs`; the Artik run
+/// is the source of truth for those slots.
+fn dispatch_witness_call<F: FieldBackend>(
+    inputs: &[SsaVar],
+    outputs: &[SsaVar],
+    program_bytes: &[u8],
+    values: &mut HashMap<SsaVar, FieldElement<F>>,
+) -> Result<(), Box<EvalError<F>>> {
+    let primary = outputs.first().copied().unwrap_or(SsaVar(0));
+
+    // Resolve input signals from the current values map.
+    let mut signal_vec: Vec<FieldElement<F>> = Vec::with_capacity(inputs.len());
+    for v in inputs {
+        let val = values
+            .get(v)
+            .copied()
+            .ok_or_else(|| Box::new(EvalError::UndefinedVar(*v)))?;
+        signal_vec.push(val);
+    }
+
+    // Family guard — the Artik decoder cross-checks the bytecode header
+    // against the expected family, which is determined by the backend
+    // the evaluator was instantiated with.
+    let family = witness_family::<F>().ok_or_else(|| {
+        Box::new(EvalError::WitnessCallFailed {
+            primary_output: primary,
+            reason: "no Artik field-family binding for this backend".to_string(),
+        })
+    })?;
+
+    let program = witness::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
+        Box::new(EvalError::WitnessCallFailed {
+            primary_output: primary,
+            reason: format!("decode failed: {e:?}"),
+        })
+    })?;
+
+    let mut slot_vec: Vec<FieldElement<F>> = vec![FieldElement::<F>::zero(); outputs.len()];
+    let mut ctx = witness::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
+    witness::execute(&program, &mut ctx).map_err(|e| {
+        Box::new(EvalError::WitnessCallFailed {
+            primary_output: primary,
+            reason: format!("execute failed: {e:?}"),
+        })
+    })?;
+
+    for (v, val) in outputs.iter().zip(slot_vec.iter()) {
+        values.insert(*v, *val);
+    }
+    Ok(())
+}
+
+/// Map the eval's `FieldBackend` to the Artik `FieldFamily` the
+/// bytecode header declares. The lift emits `BnLike256` for BN254
+/// and BLS12-381 (both are 256-bit BN-like primes sharing the Artik
+/// encoding); Goldilocks would need its own family and no circom
+/// lift targets it today.
+fn witness_family<F: FieldBackend>() -> Option<witness::FieldFamily> {
+    use memory::PrimeId;
+    match F::PRIME_ID {
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(witness::FieldFamily::BnLike256),
+        _ => None,
+    }
+}
 
 /// Evaluate an IR program with concrete inputs, returning all SSA variable values.
 ///
@@ -419,6 +504,13 @@ pub fn evaluate<F: FieldBackend + PoseidonParamsProvider>(
                 let (_, r) = int_divmod_field(&a, &b);
                 values.insert(*result, r);
             }
+            Instruction::WitnessCall {
+                outputs,
+                inputs,
+                program_bytes,
+            } => {
+                dispatch_witness_call(inputs, outputs, program_bytes, &mut values)?;
+            }
         }
     }
 
@@ -644,6 +736,25 @@ pub fn evaluate_lenient<F: FieldBackend + PoseidonParamsProvider>(
                 if let (Some(a), Some(b)) = (get(&values, lhs), get(&values, rhs)) {
                     let (_, r) = int_divmod_field(&a, &b);
                     values.insert(*result, r);
+                }
+            }
+            Instruction::WitnessCall {
+                outputs,
+                inputs,
+                program_bytes,
+            } => {
+                // Lenient eval tolerates missing inputs (leaves values
+                // absent); the Artik dispatch needs all inputs, so
+                // bail silently and record the failure index if any
+                // are unresolved. This matches the behaviour of other
+                // lenient arms that skip incomplete computations.
+                let all_resolved = inputs.iter().all(|v| values.contains_key(v));
+                if !all_resolved {
+                    failures.push(idx);
+                    continue;
+                }
+                if dispatch_witness_call(inputs, outputs, program_bytes, &mut values).is_err() {
+                    failures.push(idx);
                 }
             }
         }
