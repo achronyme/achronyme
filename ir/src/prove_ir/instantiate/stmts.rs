@@ -94,19 +94,32 @@ impl<F: FieldBackend> Instantiator<F> {
                 self.emit_for(var, range, body)?;
             }
             CircuitNode::If {
-                cond: _,
+                cond,
                 then_body,
                 else_body,
                 ..
             } => {
-                // In arithmetic circuits, both branches are always emitted
-                // (no conditional execution). The Mux selection is handled
-                // at the expression level (CircuitExpr::Mux).
-                for n in then_body {
-                    self.emit_node(n)?;
-                }
-                for n in else_body {
-                    self.emit_node(n)?;
+                // Compile-time-known conditions select exactly one branch.
+                // Circomlib patterns like `ShR`'s `if (i+r >= n) { out <== 0 }
+                // else { out <== in[i+r] }` rely on this — the untaken branch
+                // would access out-of-bounds signal slots. When cond depends
+                // on a runtime signal, fall back to emitting both branches
+                // (downstream Mux handles selection at the value level).
+                match self.eval_const_expr(cond) {
+                    Ok(c) => {
+                        let taken = if c.is_zero() { else_body } else { then_body };
+                        for n in taken {
+                            self.emit_node(n)?;
+                        }
+                    }
+                    Err(_) => {
+                        for n in then_body {
+                            self.emit_node(n)?;
+                        }
+                        for n in else_body {
+                            self.emit_node(n)?;
+                        }
+                    }
                 }
             }
             CircuitNode::Expr { expr, .. } => {
@@ -354,7 +367,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     .copied()
                     .ok_or_else(|| ProveIrError::UnsupportedOperation {
                         description: format!(
-                            "missing capture value `{name}` in loop bound expression"
+                            "missing capture value `{name}` in constant expression"
                         ),
                         span: None,
                     })
@@ -368,8 +381,23 @@ impl<F: FieldBackend> Instantiator<F> {
                     CircuitBinOp::Mul => Ok(l.mul(&r)),
                     CircuitBinOp::Div => {
                         l.div(&r).ok_or_else(|| ProveIrError::UnsupportedOperation {
-                            description: "division by zero in loop bound expression".into(),
+                            description: "division by zero in constant expression".into(),
                             span: None,
+                        })
+                    }
+                }
+            }
+            CircuitExpr::UnaryOp { op, operand } => {
+                let v = self.eval_const_expr(operand)?;
+                match op {
+                    CircuitUnaryOp::Neg => Ok(v.neg()),
+                    CircuitUnaryOp::Not => {
+                        // Logical NOT on 0/1: 1 - v. For non-bool values
+                        // circom treats this as (v == 0).
+                        Ok(if v.is_zero() {
+                            FieldElement::<F>::one()
+                        } else {
+                            FieldElement::<F>::zero()
                         })
                     }
                 }
@@ -395,6 +423,57 @@ impl<F: FieldBackend> Instantiator<F> {
                     ),
                     span: None,
                 })
+            }
+            // Integer-semantic ops: evaluate as u64 arithmetic, return as
+            // field element. Circomlib's rotation / shift templates
+            // (e.g. `RotR(n, r)`, `ShR(n, r)`) produce `(i+r) % n` and
+            // `i + r` on loop vars + captures — both must fold here so
+            // the downstream signal-array index resolves to a literal.
+            CircuitExpr::IntDiv { lhs, rhs, .. } => {
+                let l = self.eval_const_expr_u64(lhs)?;
+                let r = self.eval_const_expr_u64(rhs)?;
+                if r == 0 {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: "integer division by zero in constant expression".into(),
+                        span: None,
+                    });
+                }
+                Ok(FieldElement::<F>::from_u64(l / r))
+            }
+            CircuitExpr::IntMod { lhs, rhs, .. } => {
+                let l = self.eval_const_expr_u64(lhs)?;
+                let r = self.eval_const_expr_u64(rhs)?;
+                if r == 0 {
+                    return Err(ProveIrError::UnsupportedOperation {
+                        description: "modulo by zero in constant expression".into(),
+                        span: None,
+                    });
+                }
+                Ok(FieldElement::<F>::from_u64(l % r))
+            }
+            CircuitExpr::BitAnd { lhs, rhs, .. } => {
+                let l = self.eval_const_expr_u64(lhs)?;
+                let r = self.eval_const_expr_u64(rhs)?;
+                Ok(FieldElement::<F>::from_u64(l & r))
+            }
+            CircuitExpr::BitOr { lhs, rhs, .. } => {
+                let l = self.eval_const_expr_u64(lhs)?;
+                let r = self.eval_const_expr_u64(rhs)?;
+                Ok(FieldElement::<F>::from_u64(l | r))
+            }
+            CircuitExpr::BitXor { lhs, rhs, .. } => {
+                let l = self.eval_const_expr_u64(lhs)?;
+                let r = self.eval_const_expr_u64(rhs)?;
+                Ok(FieldElement::<F>::from_u64(l ^ r))
+            }
+            CircuitExpr::BitNot { operand, num_bits } => {
+                let v = self.eval_const_expr_u64(operand)?;
+                let mask = if *num_bits >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << num_bits) - 1
+                };
+                Ok(FieldElement::<F>::from_u64((!v) & mask))
             }
             CircuitExpr::ShiftL { operand, shift, .. } => {
                 // `x << s` is `x * 2^s` in the field. Use `FieldElement::pow`
@@ -428,8 +507,109 @@ impl<F: FieldBackend> Instantiator<F> {
                 };
                 Ok(FieldElement::<F>::from_u64(result))
             }
-            _ => Err(ProveIrError::UnsupportedOperation {
-                description: format!("unsupported expression in const eval: {expr:?}"),
+            CircuitExpr::Pow { base, exp } => {
+                let b = self.eval_const_expr(base)?;
+                Ok(b.pow(&[*exp, 0, 0, 0]))
+            }
+            CircuitExpr::ArrayLen(name) => match self.env.get(name) {
+                Some(InstEnvValue::Array(elems)) => {
+                    Ok(FieldElement::<F>::from_u64(elems.len() as u64))
+                }
+                _ => Err(ProveIrError::UnsupportedOperation {
+                    description: format!("`{name}` is not an array in const eval"),
+                    span: None,
+                }),
+            },
+            CircuitExpr::ArrayIndex { array, index } => {
+                let idx = fe_to_usize(&self.eval_const_expr(index)?, array)?;
+                match self.env.get(array) {
+                    Some(InstEnvValue::Array(elems)) => {
+                        let ssa = elems.get(idx).copied().ok_or_else(|| {
+                            ProveIrError::IndexOutOfBounds {
+                                name: array.clone(),
+                                index: idx,
+                                length: elems.len(),
+                                span: None,
+                            }
+                        })?;
+                        for inst in self.program.instructions.iter().rev() {
+                            if inst.result_var() == ssa {
+                                if let Instruction::Const { value, .. } = inst {
+                                    return Ok(*value);
+                                }
+                                break;
+                            }
+                        }
+                        Err(ProveIrError::UnsupportedOperation {
+                            description: format!("`{array}[{idx}]` is not a compile-time constant"),
+                            span: None,
+                        })
+                    }
+                    _ => Err(ProveIrError::UnsupportedOperation {
+                        description: format!("`{array}` is not an array"),
+                        span: None,
+                    }),
+                }
+            }
+            CircuitExpr::Comparison { op, lhs, rhs } => {
+                let l = self.eval_const_expr(lhs)?;
+                let r = self.eval_const_expr(rhs)?;
+                let (ok, descr): (bool, &str) = match op {
+                    CircuitCmpOp::Eq => (l == r, "=="),
+                    CircuitCmpOp::Neq => (l != r, "!="),
+                    // Ordering on field elements is treated as u64-signed
+                    // for small captures (loop bounds, array sizes). This
+                    // matches the sign of values template authors actually
+                    // use in const contexts.
+                    CircuitCmpOp::Lt => (fe_to_u64(&l, "<")? < fe_to_u64(&r, "<")?, "<"),
+                    CircuitCmpOp::Le => (fe_to_u64(&l, "<=")? <= fe_to_u64(&r, "<=")?, "<="),
+                    CircuitCmpOp::Gt => (fe_to_u64(&l, ">")? > fe_to_u64(&r, ">")?, ">"),
+                    CircuitCmpOp::Ge => (fe_to_u64(&l, ">=")? >= fe_to_u64(&r, ">=")?, ">="),
+                };
+                let _ = descr;
+                Ok(if ok {
+                    FieldElement::<F>::one()
+                } else {
+                    FieldElement::<F>::zero()
+                })
+            }
+            CircuitExpr::BoolOp { op, lhs, rhs } => {
+                let l = self.eval_const_expr(lhs)?;
+                let r = self.eval_const_expr(rhs)?;
+                let lb = !l.is_zero();
+                let rb = !r.is_zero();
+                let out = match op {
+                    CircuitBoolOp::And => lb && rb,
+                    CircuitBoolOp::Or => lb || rb,
+                };
+                Ok(if out {
+                    FieldElement::<F>::one()
+                } else {
+                    FieldElement::<F>::zero()
+                })
+            }
+            CircuitExpr::Mux {
+                cond,
+                if_true,
+                if_false,
+            } => {
+                let c = self.eval_const_expr(cond)?;
+                if !c.is_zero() {
+                    self.eval_const_expr(if_true)
+                } else {
+                    self.eval_const_expr(if_false)
+                }
+            }
+            // Nodes below emit gadgets (hash, merkle, range) or cannot
+            // appear in const position. Failing here tells the caller
+            // to fall back to emit + extract_const_index, which is the
+            // correct behaviour when the expression genuinely depends
+            // on a runtime signal.
+            CircuitExpr::PoseidonHash { .. }
+            | CircuitExpr::PoseidonMany(_)
+            | CircuitExpr::RangeCheck { .. }
+            | CircuitExpr::MerkleVerify { .. } => Err(ProveIrError::UnsupportedOperation {
+                description: "gadget expression not allowed in const eval".into(),
                 span: None,
             }),
         }

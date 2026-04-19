@@ -1738,6 +1738,72 @@ fn sha256_64_compiles_via_artik_lift() {
         .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
 }
 
+/// SHA-256 R1CS probe — reports where the pipeline breaks when
+/// going past lowering: instantiate, optimize, or R1CS build.
+/// Does NOT provide a correct witness — the goal is only to
+/// exercise the structural pipeline and surface constraint count
+/// or the first hard error (budget, memory, unsupported node).
+///
+/// Known limitation: aborts during `instantiate` with a ~4.8 GB
+/// allocation failure. The `If` branch-select change (stmts.rs)
+/// exposes a `Sha256(64)` expansion pattern — roughly 1.4M `If`
+/// visits before OOM — that's orthogonal to the branch-select
+/// logic itself (all 38 other circomlib E2E tests pass). Needs
+/// heaptrack/targeted instrumentation to isolate which sub-template
+/// (likely SigmaPlus or sha256compression) multiplies the work.
+#[test]
+#[ignore = "SHA-256 R1CS probe — diagnostic only; OOMs during instantiate, run with --ignored"]
+fn sha256_64_r1cs_probe() {
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let t0 = Instant::now();
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    eprintln!("  [compile]     {:?}", t0.elapsed());
+
+    let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    captures.insert("nBits".to_string(), FieldElement::<Bn254Fr>::from_u64(64));
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let t1 = Instant::now();
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+    eprintln!(
+        "  [instantiate] {:?}  instructions={}",
+        t1.elapsed(),
+        program.instructions.len()
+    );
+
+    let t2 = Instant::now();
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  [optimize]    {:?}  instructions={}",
+        t2.elapsed(),
+        program.instructions.len()
+    );
+
+    // Build R1CS without an inputs map — constraints still get emitted,
+    // the witness will just be wrong. We only care whether the pipeline
+    // survives to produce a constraint system.
+    let t3 = Instant::now();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    let inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let result = rc.compile_ir_with_witness(&program, &inputs);
+    eprintln!("  [r1cs build]  {:?}", t3.elapsed());
+
+    match result {
+        Ok(_w) => eprintln!("  ✓ R1CS built: constraints={}", rc.cs.num_constraints()),
+        Err(e) => eprintln!("  ✗ R1CS failed: {e}"),
+    }
+}
+
 /// Fase 4 deliverable check: a circom template whose `out <--`
 /// value comes from an Artik witness program goes all the way
 /// through Groth16 proof generation and verification on BN-254.
