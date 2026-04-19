@@ -863,18 +863,33 @@ impl<'f> LiftState<'f> {
                 Some(self.promote_u32_to_field(not_int))
             }
             Expr::Index { object, index, .. } => {
-                // `arr[i]` where `arr` is a declared array and `i`
-                // folds to a compile-time index. Emit PushConst →
-                // IntFromField for the index register, then LoadArr.
+                // `arr[i]` where `arr` is a declared array. Two
+                // index shapes are honored:
+                //   - compile-time index → range-check against the
+                //     declared length and materialize the index
+                //     register via PushConst → IntFromField.
+                //   - runtime index (e.g. a scalar parameter or a
+                //     register-valued local) → lift the index
+                //     expression into a field register, then
+                //     IntFromField U32 into the int register the
+                //     executor's LoadArr expects. Required by
+                //     circomlib's `sha256K(i)` (single indexed read
+                //     with a runtime `i`). The executor traps on
+                //     out-of-bounds access, so the bounds check is
+                //     deferred rather than duplicated here.
                 let Expr::Ident { name, .. } = object.as_ref() else {
                     return None;
                 };
                 let (arr_reg, len) = self.arrays.get(name).copied()?;
-                let idx = eval_const_expr(index, &self.const_locals)?;
-                if !(0..i64::from(len)).contains(&idx) {
-                    return None;
-                }
-                let idx_reg = self.push_int_const(idx as u64)?;
+                let idx_reg = if let Some(idx) = eval_const_expr(index, &self.const_locals) {
+                    if !(0..i64::from(len)).contains(&idx) {
+                        return None;
+                    }
+                    self.push_int_const(idx as u64)?
+                } else {
+                    let idx_field = self.lift_expr(index)?;
+                    self.builder.int_from_field(IntW::U32, idx_field)
+                };
                 Some(self.builder.load_arr(arr_reg, idx_reg))
             }
             Expr::Call { callee, args, .. } => {
