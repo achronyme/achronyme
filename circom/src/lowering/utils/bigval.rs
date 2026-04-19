@@ -217,6 +217,94 @@ impl BigVal {
         }
         result
     }
+
+    // ------------------------------------------------------------------
+    // Field-aware arithmetic (BN254 scalar field)
+    //
+    // Circom's `var` semantics are field arithmetic modulo the scalar
+    // field order, not signed 256-bit integer arithmetic. For patterns
+    // like Edwards-curve `pointAdd` (`(x1*y2 + y1*x2) / (1 + d*x1*...)`)
+    // the integer path wraps around and produces garbage; the field
+    // path produces the actual curve coordinate. Callers route `+ - * /`
+    // on values that may exceed u64 through these — index arithmetic
+    // and loop bounds continue to use the plain integer variants.
+    // ------------------------------------------------------------------
+
+    /// Reduce the integer representation to a BN254 field element.
+    ///
+    /// A BigVal with its top bit set is interpreted as a two's
+    /// complement negative (so `from_i64(-3)` is `-3`, not
+    /// `2^256 - 3`). Negatives canonicalize to `p - |v|`, matching
+    /// circom's semantics for `-3` stored in a `var`. Non-negative
+    /// values get the straight mod-p reduction via Horner over the
+    /// four u64 limbs so values up to `2^256 - 1` flow through.
+    fn to_bn254(self) -> memory::FieldElement<memory::Bn254Fr> {
+        if self.is_negative() {
+            let abs = self.abs();
+            return abs.to_bn254_unsigned().neg();
+        }
+        self.to_bn254_unsigned()
+    }
+
+    fn to_bn254_unsigned(self) -> memory::FieldElement<memory::Bn254Fr> {
+        let fc = self.to_field_const();
+        if let Some(fe) = fc.to_field::<memory::Bn254Fr>() {
+            return fe;
+        }
+        let limbs = self.0;
+        // 2^64 as a field element, used as the Horner base. Built
+        // via `(1 << 32) * (1 << 32)` since FieldElement lacks a
+        // direct `from_u128` constructor.
+        let base = {
+            let shift32 = memory::FieldElement::<memory::Bn254Fr>::from_u64(1u64 << 32);
+            shift32.mul(&shift32)
+        };
+        let mut acc = memory::FieldElement::<memory::Bn254Fr>::zero();
+        for &limb in limbs.iter().rev() {
+            acc = acc.mul(&base);
+            acc = acc.add(&memory::FieldElement::<memory::Bn254Fr>::from_u64(limb));
+        }
+        acc
+    }
+
+    fn from_bn254(fe: memory::FieldElement<memory::Bn254Fr>) -> Self {
+        let fc = FieldConst::from_field::<memory::Bn254Fr>(fe);
+        Self::from_field_const(fc)
+    }
+
+    /// Field-modular addition.
+    pub fn field_add(self, rhs: Self) -> Self {
+        Self::from_bn254(self.to_bn254().add(&rhs.to_bn254()))
+    }
+
+    pub fn field_sub(self, rhs: Self) -> Self {
+        Self::from_bn254(self.to_bn254().sub(&rhs.to_bn254()))
+    }
+
+    pub fn field_mul(self, rhs: Self) -> Self {
+        Self::from_bn254(self.to_bn254().mul(&rhs.to_bn254()))
+    }
+
+    /// Field-modular division (multiplication by modular inverse).
+    /// Returns `None` if the divisor is zero in the field.
+    pub fn field_div(self, rhs: Self) -> Option<Self> {
+        let a = self.to_bn254();
+        let b = rhs.to_bn254();
+        Some(Self::from_bn254(a.div(&b)?))
+    }
+
+    pub fn field_neg(self) -> Self {
+        Self::from_bn254(self.to_bn254().neg())
+    }
+
+    /// Canonicalize to the BN254 field representation. Negative
+    /// two's complement values map to `p - |v|`; out-of-range
+    /// positive values reduce modulo p. Used when an externally-
+    /// constructed BigVal (e.g. `from_i64(-3)`) enters the
+    /// evaluator and needs to be interpreted as a field element.
+    pub fn to_field_canonical(self) -> Self {
+        Self::from_bn254(self.to_bn254())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +443,44 @@ impl BigVal {
             (false, true) => Ordering::Greater,
             _ => self.cmp_unsigned(rhs), // same sign → unsigned order works
         }
+    }
+
+    /// Field-signed comparison: values in (p/2, p) are treated as
+    /// negative, values in [0, p/2] as non-negative. This matches
+    /// circom's semantics for `<`, `>`, `<=`, `>=` on `var` values.
+    pub fn cmp_field_signed(self, rhs: Self) -> Ordering {
+        let a = self.to_field_canonical();
+        let b = rhs.to_field_canonical();
+        let a_neg = a.is_field_negative();
+        let b_neg = b.is_field_negative();
+        match (a_neg, b_neg) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => a.cmp_unsigned(b),
+        }
+    }
+
+    /// True iff this value, interpreted as a BN254 field element,
+    /// lies in the "negative" half: `(p/2, p)`. Assumes the value
+    /// is already canonicalized to `[0, p)`.
+    pub fn is_field_negative(self) -> bool {
+        self.cmp_unsigned(Self::bn254_half_order()) == Ordering::Greater
+    }
+
+    /// `(p-1)/2` for the BN254 scalar field, cached after first use.
+    /// Values strictly greater than this half are treated as
+    /// negative under circom's `var` comparison semantics.
+    fn bn254_half_order() -> Self {
+        use memory::FieldBackend;
+        use std::sync::OnceLock;
+        static HALF: OnceLock<BigVal> = OnceLock::new();
+        *HALF.get_or_init(|| {
+            let mod_bytes = memory::Bn254Fr::modulus_le_bytes();
+            let fc = FieldConst::from_le_bytes(mod_bytes);
+            let p = Self::from_field_const(fc);
+            let p_minus_one = p.sub(Self::ONE);
+            p_minus_one.shr(1)
+        })
     }
 }
 
