@@ -139,6 +139,37 @@ fn inline_function_call(
     // prove time. Achronyme does not yet implement that subsystem, so surface
     // the gap explicitly instead of producing garbage `Var(name)` references.
     if function_body_has_internal_state(body) {
+        // Try the Artik witness-calculator lift first — succeeds on
+        // simple var + return bodies over parameters, returns None on
+        // anything else (control flow, arrays, nested calls). If it
+        // succeeds, emit a WitnessCall node into the caller's
+        // statement stream via `ctx.pending_nodes` and hand back a
+        // `Var(output_binding)` expression.
+        if let Some(lifted) =
+            super::super::artik_lift::lift_function_to_artik(name, &func.params, body, ctx, span)
+        {
+            // Lower each argument expression in the caller's env so
+            // the WitnessCall node carries resolved circuit
+            // expressions (not the raw AST). This runs under the
+            // original `inline_depth` bump, so recursive lifts are
+            // guarded just like recursive inlines.
+            let mut lowered_args: Vec<CircuitExpr> = Vec::with_capacity(args.len());
+            for arg in args {
+                let lowered = lower_expr(arg, env, ctx)?;
+                lowered_args.push(lowered);
+            }
+            let output_binding = lifted.outputs[0].clone();
+            ctx.pending_nodes
+                .push(ir::prove_ir::types::CircuitNode::WitnessCall {
+                    output_bindings: lifted.outputs,
+                    input_signals: lowered_args,
+                    program_bytes: lifted.program_bytes,
+                    span: Some(diagnostics::SpanRange::from_span(span)),
+                });
+            ctx.inline_depth -= 1;
+            return Ok(CircuitExpr::Var(output_binding));
+        }
+
         ctx.inline_depth -= 1;
         return Err(LoweringError::with_code(
             format!(

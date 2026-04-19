@@ -1240,6 +1240,66 @@ fn fn_local_shadowing_emits_e212() {
     }
 }
 
+/// Fase 2 lift success: a function with a non-trivial body (one
+/// `var` + a `return` over arithmetic on the parameter) now lowers
+/// through the Artik witness-call pass instead of E212. We verify
+/// that (a) compilation succeeds, (b) the ProveIR contains a
+/// `WitnessCall` node carrying an Artik bytecode payload, and (c)
+/// the payload round-trips through the witness decoder cleanly (so
+/// the structural validator accepts it).
+#[test]
+fn fn_witness_lift_produces_artik_call() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("witness lift test failed to compile: {e}"));
+
+    // Walk the ProveIR body looking for the new WitnessCall variant.
+    let mut call: Option<(Vec<String>, usize)> = None;
+    for node in &result.prove_ir.body {
+        if let CircuitNode::WitnessCall {
+            output_bindings,
+            program_bytes,
+            ..
+        } = node
+        {
+            call = Some((output_bindings.clone(), program_bytes.len()));
+            break;
+        }
+    }
+    let (outs, byte_len) = call.expect("expected a CircuitNode::WitnessCall in ProveIR");
+    assert_eq!(outs.len(), 1, "expected exactly one output binding");
+    assert!(
+        outs[0].starts_with("__artik_derive_scalar_"),
+        "unexpected output name: {}",
+        outs[0]
+    );
+    assert!(
+        byte_len > 16,
+        "Artik payload must be larger than the header"
+    );
+
+    // Round-trip the payload: if decode + validate accept it, the
+    // lift produced a structurally sound program.
+    //
+    // We grab the bytes again now that we know one exists.
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .unwrap();
+    witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+        .expect("Artik payload must decode and validate");
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,

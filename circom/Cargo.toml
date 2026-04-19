@@ -14,6 +14,7 @@ categories.workspace = true
 diagnostics = { path = "../diagnostics" }
 ir = { path = "../ir" }
 memory = { path = "../memory" }
+witness = { path = "../witness" }
 
 [dev-dependencies]
 compiler = { path = "../compiler" }

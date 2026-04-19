@@ -460,6 +460,7 @@ dependencies = [
  "tempfile",
  "toml",
  "vm",
+ "witness",
 ]
 
 [[package]]

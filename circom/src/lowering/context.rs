@@ -39,6 +39,13 @@ pub struct LoweringContext<'a> {
     /// Only entries with empty `const_inputs` and `array_args` are cached,
     /// since those guarantee identical lowered output.
     pub body_cache: HashMap<String, Vec<CircuitNode>>,
+    /// Side-channel for [`CircuitNode`]s produced during expression
+    /// lowering that must land in the enclosing body *before* the
+    /// statement whose expression emitted them. Populated by the
+    /// Artik witness-call lift pass when it replaces E212; flushed
+    /// by every statement-level lowering call before it pushes its
+    /// own node.
+    pub pending_nodes: Vec<CircuitNode>,
 }
 
 impl<'a> LoweringContext<'a> {
@@ -68,6 +75,17 @@ impl<'a> LoweringContext<'a> {
             bus_names,
             anon_counter: 0,
             body_cache: HashMap::new(),
+            pending_nodes: Vec::new(),
+        }
+    }
+
+    /// Drain [`Self::pending_nodes`] into the caller's body. Call this
+    /// from every statement-level lowering site, after lowering the
+    /// statement's expressions and before pushing the statement's own
+    /// node, so any witness-call side effects land in emission order.
+    pub fn flush_pending_nodes(&mut self, nodes: &mut Vec<CircuitNode>) {
+        if !self.pending_nodes.is_empty() {
+            nodes.append(&mut self.pending_nodes);
         }
     }
 
@@ -121,6 +139,7 @@ impl<'a> LoweringContext<'a> {
             param_values: HashMap::new(),
             bus_names: HashSet::new(),
             anon_counter: 0,
+            pending_nodes: Vec::new(),
         }
     }
 }

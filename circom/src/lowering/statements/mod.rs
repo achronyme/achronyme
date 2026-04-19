@@ -59,7 +59,19 @@ fn lower_stmts_with_pending<'a>(
     let mut nodes = Vec::new();
 
     for stmt in stmts {
+        // Remember where this statement's lowering will start so that
+        // any Artik `WitnessCall` side effects it emits (via
+        // `ctx.pending_nodes` during expression lowering) can be
+        // spliced in *before* the statement's own node(s). Without
+        // this splice, a `var x = witness_fn(sig);` would emit
+        // `Let x = __artik_0_out` followed by the WitnessCall that
+        // binds `__artik_0_out` — wrong order.
+        let stmt_start = nodes.len();
         lower_stmt(stmt, env, &mut nodes, ctx, pending)?;
+        if !ctx.pending_nodes.is_empty() {
+            let pending_nodes: Vec<_> = ctx.pending_nodes.drain(..).collect();
+            nodes.splice(stmt_start..stmt_start, pending_nodes);
+        }
     }
 
     // Inline any components that weren't triggered by wiring completion
